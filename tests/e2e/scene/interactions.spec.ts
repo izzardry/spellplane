@@ -116,10 +116,21 @@ test('dragging empty table pans and keeps gliding (inertia); 0 fits the table ag
   await settle(page);
   const cam0 = (await page.evaluate(() => window.__spellplane!.camera!())).position;
   const k = 900 / 2 / (cam0[2] * Math.tan((3 * Math.PI) / 180)); // px per mm
-  await page.mouse.move(900, 450);
-  await page.mouse.down();
-  for (let i = 1; i <= 8; i++) await page.mouse.move(900 - i * 25, 450);
-  await page.mouse.up();
+  // The fling needs the release within 80 ms of the last move. Driving the drag from inside the page keeps
+  // that timing independent of the test runner's round trips (on a loaded CI machine page.mouse.up arrived late).
+  await page.evaluate(async () => {
+    const canvas = document.querySelector('canvas')!;
+    const fire = (type: string, x: number, target: EventTarget) =>
+      target.dispatchEvent(
+        new PointerEvent(type, { pointerId: 1, pointerType: 'mouse', isPrimary: true, clientX: x, clientY: 450, button: 0, buttons: type === 'pointerup' ? 0 : 1, bubbles: true, cancelable: true, composed: true }),
+      );
+    fire('pointerdown', 900, canvas);
+    for (let i = 1; i <= 8; i++) {
+      await new Promise((r) => setTimeout(r, 16));
+      fire('pointermove', 900 - i * 25, canvas);
+    }
+    fire('pointerup', 700, canvas);
+  });
   await settle(page);
   const cam1 = (await page.evaluate(() => window.__spellplane!.camera!())).position;
   const movedPx = (cam1[0] - cam0[0]) * k;
