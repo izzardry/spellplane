@@ -400,7 +400,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M1-P2 Secrecy
 - [x] M1-P3 Stack and confirmation
 - [x] M1-P4 Combat and lines
-- [ ] M1-P5 Lobby and seats
+- [x] M1-P5 Lobby and seats
 - [x] M1-P6 Chat and log
 - [ ] M1-P7 Resume
 - [ ] M1-P8 Networked session
