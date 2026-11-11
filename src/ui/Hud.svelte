@@ -15,6 +15,8 @@
   import type { KeymapOverride } from '../store/types';
   import { tokensToCssVars } from '../themes/index';
   import { Commands, isEmptyChair, promptShowing, roundPassed, type UiHooks } from './commands';
+  import ConfirmPrompt from './confirm/ConfirmPrompt.svelte';
+  import { promptModel, roundWhat } from './confirm/model';
   import { parsePlainList } from './deck';
   import { logLines } from './describe';
   import Flashes from './chat/Flashes.svelte';
@@ -75,6 +77,9 @@
   let note = $state<{ target: { card: InstanceId } | { item: StackItemId }; x: number; y: number; text: string } | null>(null);
   /** The inline count prompt for draw N (Shift+D) and mill N (table menu). */
   let drawN = $state<{ text: string; what: 'draw' | 'mill' } | null>(null);
+  /** The inline Ask field (K): an optional short label, Enter asks (M1-P3). */
+  let askField = $state<{ text: string } | null>(null);
+  let askInput = $state<HTMLInputElement | undefined>();
   let revealTo = $state<{ cards: InstanceId[]; x: number; y: number } | null>(null);
   let tokenNear = $state<{ near: InstanceId | null } | null>(null);
   let deckOpen = $state(false);
@@ -160,6 +165,10 @@
       inspectId = card;
       // A library card is known here only from an open look (scry, search); never otherwise.
       inspectRef = card ? (refOf(card) ?? viewer?.looked?.find((l) => l.id === card)?.ref ?? null) : null;
+    },
+    openAsk() {
+      askField = { text: '' };
+      void tick().then(() => askInput?.focus());
     },
     openDrawN() {
       drawN = { text: '2', what: 'draw' };
@@ -390,7 +399,9 @@
   const glyphOf = (colour: number) => theme.tokens.colours.seats[colour]?.glyph ?? 'circle';
   const activeName = $derived(st.seats[st.turn.active]?.name ?? st.teams[st.turn.active]?.seats.map((s) => st.seats[s]?.name).join(' & ') ?? st.turn.active);
   const activeColour = $derived(st.seats[st.turn.active]?.colour ?? st.seats[st.teams[st.turn.active]?.seats[0] ?? '']?.colour ?? null);
-  const prompt = $derived(promptShowing(st, me) ? st.confirm : null);
+  const prompt = $derived(promptModel(st, me));
+  /** A manual round (not about a stack item) that still waits makes its asker's avatar pulse (DESIGN "Turn flow and confirmation", Prompt). */
+  const asking = (seat: string) => !!prompt && prompt.round.askedBy === seat && prompt.round.about === undefined && !prompt.allPassed;
   const top = $derived(st.stack[st.stack.length - 1] ?? null);
   const resolveLit = $derived(!!top && (!st.confirm || st.confirm.about !== top.id || roundPassed(st)));
   /**
@@ -591,6 +602,7 @@
           me={false}
           active={st.turn.active === seat.id || st.turn.active === seat.team}
           responding={st.confirm?.holder === seat.id}
+          asking={asking(seat.id)}
           glyph={glyphOf(seat.colour)}
           zones={zoneButtons(seat.id)}
           onlife={(delta) => session.dispatch({ type: 'life', seat: seat.id, delta })}
@@ -654,6 +666,7 @@
           me={true}
           active={st.turn.active === me || st.turn.active === st.seats[me].team}
           responding={st.confirm?.holder === me}
+          asking={asking(me)}
           glyph={glyphOf(st.seats[me].colour)}
           zones={zoneButtons(me)}
           onlife={(delta) => session.dispatch({ type: 'life', seat: me, delta })}
@@ -679,22 +692,18 @@
         </div>
       {/if}
       {#if prompt}
-        <div class="prompt" data-testid="confirm-prompt" role="alertdialog" aria-label="Confirmation">
-          {#key prompt.id + (prompt.holder ?? '')}
-            <span class="ring" class:paused={!!prompt.holder} style:animation-duration="{prompt.durationMs}ms" aria-hidden="true"></span>
-          {/key}
-          <span class="what">
-            <b>{st.seats[prompt.askedBy]?.name ?? prompt.askedBy}</b>
-            {#if prompt.label}asks “{prompt.label}”{:else if prompt.about}{@const item = st.stack.find((i) => i.id === prompt.about)}put {item?.card ? nameOf(item.card) : item?.source ? `an ability of ${nameOf(item.source)}` : 'something'} on the stack{:else}asks for responses{/if}
-          </span>
-          {#if prompt.holder === me}
-            <span>You hold the floor.</span>
-            <button type="button" data-testid="release" onclick={() => commands.run('confirmOk')}>Release <kbd>{keyOf('confirmOk', 'prompt')}</kbd></button>
-          {:else}
-            <button type="button" data-testid="prompt-ok" onclick={() => commands.run('confirmOk')}>OK <kbd>{keyOf('confirmOk', 'prompt')}</kbd></button>
-            <button type="button" data-testid="prompt-hold" onclick={() => commands.run('confirmHold')}>Hold <kbd>{keyOf('confirmHold', 'prompt')}</kbd></button>
-          {/if}
-        </div>
+        <ConfirmPrompt
+          model={prompt}
+          {me}
+          seatName={(seat) => st.seats[seat]?.name || seat}
+          seatColour={(seat) => st.seats[seat]?.colour ?? null}
+          what={roundWhat(st, prompt.round, nameOf)}
+          keys={{ ok: keyOf('confirmOk', 'prompt'), hold: keyOf('confirmHold', 'prompt') }}
+          reducedMotion={reducedMotion}
+          onok={() => commands.run('confirmOk')}
+          onhold={() => commands.run('confirmHold')}
+          onrelease={() => commands.run('confirmOk')}
+        />
       {/if}
     </div>
 
@@ -763,6 +772,30 @@
         }}
         onblur={() => (note = null)}
       />
+    </div>
+  {/if}
+
+  {#if askField}
+    <div class="inline draw-n" data-testid="ask-field">
+      <label
+        >Ask <input
+          bind:this={askInput}
+          bind:value={askField.text}
+          data-testid="ask-input"
+          class="ask"
+          maxlength="80"
+          placeholder="optional label, e.g. attacks? (Enter)"
+          aria-label="Ask label"
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+              const text = askField?.text ?? '';
+              askField = null;
+              commands.ask(text);
+            } else if (e.key === 'Escape') askField = null;
+          }}
+          onblur={() => (askField = null)}
+        /></label
+      >
     </div>
   {/if}
 
@@ -885,7 +918,6 @@
   .toolbar button,
   .stack-chip button,
   .offer button,
-  .prompt button,
   .inline button {
     background: var(--sp-surface, #fff);
     color: var(--sp-fg, #111);
@@ -973,8 +1005,7 @@
     color: var(--sp-bg, #fff);
     border-radius: var(--sp-radius-md, 4px);
   }
-  .offer,
-  .prompt {
+  .offer {
     pointer-events: auto;
     display: flex;
     align-items: center;
@@ -986,37 +1017,6 @@
   }
   .x {
     border: 0 !important;
-  }
-  .ring {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: conic-gradient(var(--sp-fg, #111) var(--p, 100%), transparent 0);
-    animation-name: drain;
-    animation-timing-function: linear;
-    animation-fill-mode: forwards;
-    border: 1px solid var(--sp-fg, #111);
-  }
-  .ring.paused {
-    animation-play-state: paused;
-  }
-  @property --p {
-    syntax: '<percentage>';
-    inherits: false;
-    initial-value: 100%;
-  }
-  @keyframes drain {
-    from {
-      --p: 100%;
-    }
-    to {
-      --p: 0%;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .ring {
-      animation: none;
-    }
   }
   .inline {
     position: fixed;
@@ -1047,6 +1047,9 @@
   }
   .draw-n input {
     width: 4em;
+  }
+  .draw-n input.ask {
+    width: min(18em, 60vw);
   }
   .muted {
     color: var(--sp-muted, #5f5f5f);

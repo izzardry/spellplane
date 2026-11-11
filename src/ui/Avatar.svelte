@@ -12,6 +12,7 @@
     me,
     active,
     responding,
+    asking = false,
     glyph,
     zones,
     onlife,
@@ -23,6 +24,8 @@
     me: boolean;
     active: boolean;
     responding: boolean;
+    /** Added by M1-P3: this seat asked a manual round that still waits; its avatar pulses (DESIGN "Turn flow and confirmation", Prompt). */
+    asking?: boolean;
     glyph: string;
     zones: { id: ZoneId; label: string; count: number }[];
     onlife: (delta: number) => void;
@@ -62,6 +65,7 @@
     <span class="name">{seat.name}</span>
     {#if active}<span class="tag" title="Active player">turn</span>{/if}
     {#if responding}<span class="tag" data-testid="responding">responding</span>{/if}
+    {#if asking}<span class="tag asking" data-testid="asking">asks</span>{/if}
     {#if seat.autoPass}<span class="tag" title="Passing until end of turn">auto-pass</span>{/if}
   </header>
   <div class="life" onwheel={wheel}>
@@ -156,6 +160,25 @@
     border: 1px solid currentColor;
     border-radius: var(--sp-radius-sm, 2px);
     padding: 0 3px;
+  }
+  .tag.asking {
+    animation: ask-pulse 900ms ease-in-out infinite alternate;
+  }
+  @keyframes ask-pulse {
+    from {
+      background: transparent;
+    }
+    to {
+      background: var(--seat);
+      color: var(--sp-surface, #fff);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tag.asking {
+      animation: none;
+      background: var(--seat);
+      color: var(--sp-surface, #fff);
+    }
   }
   .glyph {
     width: 10px;

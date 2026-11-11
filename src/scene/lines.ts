@@ -366,6 +366,14 @@ export interface LineViewHost {
   freePose(id: InstanceId): Pose | null;
   pxPerMm(): number;
   reduced(): boolean;
+  /**
+   * Where a stack item's line end is drawn and what it covers, when the scene draws the stack lane (scene/stack.ts:
+   * an item's visible title strip, a marker in its own slot); null when the item is not drawn. Without it, an item
+   * resolves to its card or source card, else the lane.
+   */
+  stackEnd?(item: string): { point: TablePoint; shape: EndShape } | null;
+  /** Further strokes drawn on the line layer (the stack lane's marker-to-source lines). */
+  extraLines?(): LineDraw[];
 }
 
 /** Radius of a seat's avatar spot on the table (line end, line target, ping ring), mm. */
@@ -457,6 +465,10 @@ export class LineView {
     }
     const item = state.stack.find((s) => s.id === a.id);
     if (!item) return null;
+    if (this.host.stackEnd) {
+      const end = this.host.stackEnd(item.id);
+      if (end) return end.point;
+    }
     const card = item.card ?? item.source;
     const p = card ? this.host.cardPose(card) : null;
     const lane = this.host.layout().stackLane;
@@ -468,6 +480,8 @@ export class LineView {
     if (a.kind === 'seat') return { kind: 'circle', r: AVATAR_R };
     const state = this.host.state();
     const item = a.kind === 'stackItem' ? state?.stack.find((s) => s.id === a.id) : undefined;
+    const end = item && this.host.stackEnd ? this.host.stackEnd(item.id) : null;
+    if (end) return end.shape;
     const id = a.kind === 'card' ? a.id : (item?.card ?? item?.source);
     const pose = id ? this.host.cardPose(id) : null;
     return pose ? { kind: 'card', pose } : { kind: 'point' };
@@ -532,6 +546,7 @@ export class LineView {
       const ends = this.ends.get(l.id) ?? { from: { kind: 'point' }, to: { kind: 'point' } };
       for (const sgm of strokeSegments(l, st, ends, px, l.source !== 'stub')) out.push({ ...sgm, colour: st.colour, widthPx: st.widthPx });
     }
+    if (this.host.extraLines) out.push(...this.host.extraLines());
     this.lines.sync(out);
   }
 

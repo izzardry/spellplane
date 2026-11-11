@@ -195,7 +195,9 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     }
     const segs = describe(a, d);
     if (!segs) continue;
-    const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: a.by, colour: st.seats[a.by]?.colour ?? null, actor: seatName(a.by), segs, at: e.at };
+    // An answer is the answering seat's line, also when the sequencer's clock sent it for that seat (a timeout).
+    const who = a.type === 'respond' ? a.seat : a.by;
+    const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: who, colour: st.seats[who]?.colour ?? null, actor: seatName(who), segs, at: e.at };
     if (a.type === 'chat') line.channel = a.channel;
     lines.push(line);
     merge = sig === null ? null : { line, sig, a, cards: [a.type === 'draw' ? t('a card') : card(cardOf(a)!)] };

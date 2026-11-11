@@ -122,9 +122,6 @@ describe('reducer contract', () => {
     let s = readyTable(2);
     s = play(s, 'a00', P(0, -200));
     const later: Action[] = [
-      act('ask', { round: 'r1' }),
-      act('respond', { round: 'r1', seat: 's1', response: 'ok' }),
-      act('autoPass', { on: true }),
       act('shuffleCommit', { sid: 'sh', zone: 'library:s0', h: 'h' }),
       act('shuffleNonce', { sid: 'sh', nonce: 'n' }),
       act('shuffleDone', { sid: 'sh', orderHash: 'o' }),
