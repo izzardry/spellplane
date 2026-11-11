@@ -247,7 +247,9 @@ function reviewPrompt(pkg, round, focus) {
     focus === 'deep'
       ? `Focus ONLY on: (1) determinism — reducer/protocol code that depends on wall clock, Math.random, object key order, Set/Map iteration order where order matters, floating-point drift across peers, non-canonical JSON for hashes, async races; (2) hidden information — any path by which a card identity, library order, hand content, nonce or salt could reach another peer, the shared state, the log, the debug hook of another page, or a store that syncs. Each concrete defect is blocking.`
       : `Hunt for: behaviour that contradicts the design; acceptance tests from the plan that are missing, hollow, or test the implementation instead of the design; real bugs (edge cases, off-by-one, state that goes stale, leaks of listeners/GPU resources); hard-rule violations (CLAUDE.md); boundary-rule evasions; files edited outside the package's ownership (${pkg.owns.join(', ')}). Style nits are minor.`,
-    pkg.reviewFocus ? `RETRY FOCUS (overrides the hunting brief above where they conflict): ${pkg.reviewFocus}` : '',
+    pkg.reviewFocus
+      ? `FOCUS (overrides the hunting brief above where they conflict): ${pkg.reviewFocus}`
+      : `Severity rule: mark a finding blocking only if you can demonstrate it (a failing scratch test or an exact reproduction), it contradicts an explicit design sentence or acceptance test, or it breaks a CLAUDE.md hard rule. Hardening ideas, design-interpretation questions and polish are minor; they go to the gate report.`,
     `Blocking = must be fixed before merge. Be concrete: file, line, what is wrong, which design sentence it violates, how to fix. Do not report things you have not verified. Return the schema; verdict=approve only if there are no blocking findings.`,
   ].join('\n')
 }
