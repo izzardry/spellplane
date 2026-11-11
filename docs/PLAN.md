@@ -4,7 +4,7 @@ Nov 10, 2026 · @Philipp
 
 ## How this plan works
 
-Spellplane is built in a bootstrap step and six milestones, each split into work packages that agents implement in parallel and each ending in an automated gate followed by a human playtest. The companion [design document](https://claude.ai/artifact/2zC6USXNUoSeHKvYDQYS8A) says what to build; this plan says in which order, in which files and how each piece is proven.
+Spellplane is built in a bootstrap step and six milestones, each split into work packages that agents implement in parallel and each ending in an automated gate. The run is unattended: all milestones are implemented continuously in one go, and the owner's playtests are deferred until the run has finished. The companion [design document](https://claude.ai/artifact/2zC6USXNUoSeHKvYDQYS8A) says what to build; this plan says in which order, in which files and how each piece is proven.
 
 **Source of truth.** Both documents are exported once to `docs/DESIGN.md` and `docs/PLAN.md` in the repository. From then on the repository copies win: agents read only those files, scope changes are made there, and progress is ticked there. The Claude Docs remain as readable originals.
 
@@ -18,7 +18,7 @@ Spellplane is built in a bootstrap step and six milestones, each split into work
 4. It is merged into the milestone branch by the integrator with the full suite green afterwards.
 5. Its checkbox is ticked in `docs/PLAN.md` in the same commit.
 
-**Definition of done for a milestone.** All packages done or explicitly parked, `pnpm e2e:gate -- M<n>` green, the screenshot review filed in `docs/gates/M<n>.md`, the milestone branch merged to `main`, the Pages deploy live, and the owner's playtest feedback received.
+**Definition of done for a milestone.** All packages done or explicitly parked, `pnpm e2e:gate -- M<n>` green, the screenshot review filed in `docs/gates/M<n>.md`, the milestone branch merged to `main`, and the Pages deploy live. Owner playtests are listed in the gate report and happen after the unattended run.
 
 **Conventions**
 
@@ -102,7 +102,7 @@ One player can paste a decklist and goldfish it on the Paper theme with every ca
 
 Two players in different homes play a complete game from a shared link, with hands and libraries that the other browser provably never receives. This is the highest-risk milestone and starts with a real-network spike.
 
-**Spike first (main session, before the workflow).** A throwaway page joins a Trystero room over Nostr and exchanges messages between two machines. Record time to connect and failures in `docs/DECISIONS.md`. There is no TURN fallback by decision; if the owner's own two networks cannot connect, stop and report before building further.
+**Connectivity check (owner, after the run).** A real two-machine test over Trystero and Nostr cannot be done unattended. The main session builds the `@network` smoke test and a `/#/diag` page that joins a room and reports time to connect, and lists the two-home test under "Owner checks" in the gate report. There is no TURN fallback by decision.
 
 | Package | Scope | Main files | Depends on |
 | --- | --- | --- | --- |
@@ -247,7 +247,7 @@ Four layers of checking stand between an agent's code and the owner's playtest, 
 
 ## Agent orchestration
 
-Each milestone is executed by one workflow of up to about 50 agents, started by the main session and ending in a pause for the owner's playtest. Contracts land first so that package agents can work in parallel worktrees without colliding on shared types.
+Each milestone is executed by one workflow of up to about 50 agents, started by the main session; when it ends, the main session deploys, writes the gate report and starts the next milestone without waiting. Contracts land first so that package agents can work in parallel worktrees without colliding on shared types.
 
 ```mermaid
 flowchart LR
@@ -257,8 +257,8 @@ flowchart LR
   integrator --> gate[Gate verifier: e2e, screenshots, fixes]
   gate --> deploy[Deploy: merge to main, Pages]
   deploy --> report[Gate report: plan ticked, parked listed]
-  report --> owner[Owner: playtests, says continue]
-  owner -->|feedback, next milestone| main
+  report -->|next milestone, no pause| main
+  report -.-> owner[Owner: playtests after the whole run]
 ```
 
 The top row is the workflow's build path; the bottom row runs right to left through verification, deployment and the report, and the owner's feedback starts the next run.
@@ -267,7 +267,7 @@ The top row is the workflow's build path; the bottom row runs right to left thro
 
 | Role | Count per milestone | Works in | Input | Output |
 | --- | --- | --- | --- | --- |
-| Main session | 1 | Repository root | `docs/PLAN.md`, owner feedback | Chooses the milestone, runs the spike or bootstrap, launches the workflow, retries parked packages, writes the gate report, pauses |
+| Main session | 1 | Repository root | `docs/PLAN.md`, owner feedback | Chooses the milestone, runs the spike or bootstrap, launches the workflow, retries parked packages, writes the gate report, continues with the next milestone |
 | Contracts agent | 1 | Milestone branch | The `M<n>-C` row and the design's specification sections | Shared types and compiling stubs, committed before any package starts |
 | Implementer | 1 per package (5 to 7) | Own worktree, branch `m<n>/<package>` | Its package row, acceptance tests, named design sections, the contracts | Code plus acceptance tests, `pnpm check` green |
 | Reviewer | 1 per package; 2 for `core/`, `net/`, `draft/` and secrecy | Read-only on the package branch | The diff and the design sections, not the implementer's reasoning | Structured findings, each marked blocking or not |
@@ -290,10 +290,10 @@ The top row is the workflow's build path; the bottom row runs right to left thro
 
 ## The execution prompt
 
-One resumable prompt runs the whole plan: paste it into Claude Code in the `spellplane` working directory, and paste it again (or say "continue") after each playtest. It reads the checkboxes in `docs/PLAN.md` to find where to pick up, so a fresh session loses nothing.
+One resumable prompt runs the whole plan: paste it once into Claude Code in the `spellplane` working directory and it implements every milestone without pausing; paste it again only if the session ends early or to hand over playtest feedback. It reads the checkboxes in `docs/PLAN.md` to find where to pick up, so a fresh session loses nothing.
 
 ```text
-Implement Spellplane by executing its implementation plan. This prompt is resumable: I will paste it again after every milestone, possibly in a fresh session.
+Implement Spellplane by executing its implementation plan. Run the bootstrap and all six milestones (B0, then M0 to M5) continuously in this one session, unattended, without waiting for me between milestones. The prompt is also resumable: if the session ends for any reason, I paste it again and you continue from the first unticked item.
 
 SOURCES OF TRUTH
 - docs/DESIGN.md (what to build) and docs/PLAN.md (order, packages, acceptance tests, gates) in this repository. The repo copies win.
@@ -305,7 +305,8 @@ SOURCES OF TRUTH
 STANDING AUTHORISATIONS (they hold for every run of this prompt)
 - Use a workflow: orchestrate each milestone with one multi-agent workflow of up to about 50 agents, as described in the plan's "Agent orchestration" section. Use subagents in isolated git worktrees for parallel packages.
 - Git and deploy: the remote is git@github.com:izzardry/spellplane.git (public, MIT). You may commit, create and push branches, merge milestone branches into main, enable and deploy GitHub Pages, and run CI, all without asking. Never force-push, never rewrite pushed history, never touch any other repository.
-- Dependencies: install what the plan names. Ask before adding any other runtime dependency.
+- Dependencies: install what the plan names. If another runtime dependency is clearly needed, add it and record why in docs/DECISIONS.md.
+- Unattended: I am away. Never wait for my input, never ask me a question, never stop for confirmation. Every decision is yours; record it.
 
 HARD CONSTRAINTS
 - Static site only: no backend, no serverless function, no TURN server, no accounts, no analytics.
@@ -318,7 +319,7 @@ PROCEDURE FOR EACH RUN
 1. Read docs/PLAN.md and docs/DECISIONS.md. Find the first unticked item.
    - If bootstrap B0 is unfinished, do it yourself inline, then continue.
    - If I gave playtest feedback in this message, turn it into fix tasks, do them first (inline or with a few subagents), and record them in the previous gate report.
-   - If the next milestone has a spike, do it yourself first and record the result.
+   - If the next milestone has a spike or check that needs a second machine or a human (for example the real-network connectivity test), skip it and list it under "Owner checks" in that milestone's gate report.
 2. Run the milestone workflow on branch m<n>:
    a. Contracts agent lands the M<n>-C types and stubs and commits them.
    b. Each package runs as an independent pipeline in its own worktree (branch m<n>/<package>): implement with its acceptance tests until `pnpm check` is green; then a reviewer that sees only the diff and the named design sections returns structured findings; a fixer resolves blocking findings; repeat review at most 3 times. core/, net/, draft/ and any secrecy code get a second reviewer focused on determinism and hidden-information leaks. A package that does not converge is parked with a written note, not merged.
@@ -328,17 +329,20 @@ PROCEDURE FOR EACH RUN
    Give every agent its package id, the exact sections to read, the files it owns, the commands that must pass and a return schema. Do not paste the documents into prompts. Log anything the workflow skips or truncates.
 3. When the workflow returns, read its result. Retry each parked package once yourself with full context.
 4. Tick the finished items in docs/PLAN.md, append agent decisions to docs/DECISIONS.md, write docs/gates/M<n>.md (live URL, commit, test counts, screenshot review, decisions made beyond the design, parked packages, my playtest checklist), merge m<n> into main, push, and confirm the Pages deploy is live and CI is green.
-5. Stop. Tell me in a few lines: the live URL, what to playtest, what is parked, and any decision you want me to confirm. Do not start the next milestone until I answer.
+5. Go straight back to step 1 for the next milestone. Do not pause for a playtest; owner playtests are deferred and listed in each gate report.
+   - If a gate is still failing after its fix round and your own retry, record exactly what fails in the gate report, leave the affected items unticked, and continue with the next milestone on a best-effort basis.
+   - If a blocker makes a whole milestone impossible (for example credentials or the remote are unavailable), keep working locally on everything that does not need it and record the blocker.
+6. When M5 is done, or nothing further can be done, write docs/gates/SUMMARY.md and tell me in a few lines: the live URL, what is finished per milestone, what is parked or failing, the owner checks and playtests waiting for me, and the decisions you made that I should review.
 
 QUALITY BAR
 - A package is done only as the plan's "Definition of done" says. Passing tests that do not test the design's behaviour do not count.
-- When the design does not specify something, choose the simplest behaviour consistent with it, write one line in docs/DECISIONS.md, and move on. Ask me only when a choice would contradict the design or cannot be undone.
+- When the design does not specify something, choose the simplest behaviour consistent with it, write one line in docs/DECISIONS.md, and move on. Where a choice would contradict the design, follow the design; where it cannot be undone, take the reversible alternative and flag it in the gate report.
 - Report failures plainly. Never mark a gate green that is not.
 
 Start now with step 1.
 ```
 
-**Using it.** Before the first paste, make sure `gh auth status` and `ssh -T git@github.com` work in the terminal, since the prompt authorises pushing and enabling Pages. After each pause, playtest on the live URL, then paste the prompt again with your feedback written above it.
+**Using it.** Before the first paste, make sure `gh auth status` and `ssh -T git@github.com` work in the terminal, since the prompt authorises pushing and enabling Pages. Run Claude Code in a permission mode that does not prompt for file edits and shell commands, otherwise the unattended run stalls at the first prompt. Afterwards, read `docs/gates/SUMMARY.md`, playtest on the live URL, and paste the prompt again with your feedback written above it.
 
 ## Decisions and open questions
 
@@ -353,7 +357,7 @@ Sixteen decisions from the second interview on 10 November 2026 shape this plan;
 | Rochester | Classic snake with configurable packs and burn count | One state machine for 2 to 4 seats; no team horseshoe variant. |
 | Publishing | Public repository, MIT, GitHub Pages | Remote `git@github.com:izzardry/spellplane.git`; Vite base `/spellplane/`; deploy on every push to `main`. |
 | Second game | Magic only | The game-definition seam stays, protected only by the lint rule that keeps Magic imports out of `core/`. |
-| Gates | Automated gate, then pause for the owner | Six pauses; playtest feedback becomes the first tasks of the next run. |
+| Gates | Automated gates only, run straight through (changed 10 November 2026: unattended overnight run) | No pauses. Owner playtests and the two-home connectivity test are deferred and listed in each gate report and in `docs/gates/SUMMARY.md`; feedback becomes fix tasks in a later run. |
 | Spec home | Exported to the repository; the repository wins | `docs/DESIGN.md` and `docs/PLAN.md`; the Claude Docs are not synced back. |
 | Parallelism | Contracts first, then parallel worktrees | A contracts package opens every milestone; folders have one owner per milestone. |
 | Review depth | Tests, one adversarial reviewer and a fix loop | Three rounds at most; a second reviewer for engine, network, draft and secrecy code. |
