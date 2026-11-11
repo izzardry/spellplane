@@ -132,6 +132,19 @@ describe('defaultDestination (DESIGN "The effect stack", Resolving)', () => {
     expect(mtg.defaultDestination({ id: 'm2', kind: 'copy', controller: 's0', copyOf: 'st1' }, { type_line: 'Instant' })).toBeNull();
   });
 
+  it.each([
+    ['Sorcery // Creature — Elf', 0, 'graveyard:s0'],
+    ['Sorcery // Creature — Elf', 1, 'battlefield:s1'],
+    ['Legendary Creature — Human Cleric // Legendary Planeswalker — Liliana', 1, 'battlefield:s1'],
+    ['Creature — Human Werewolf // Instant', 1, 'graveyard:s0'],
+  ] as const)("a double-faced card %j uses the instance's current face %i: %s", (typeLine, faceIndex, dest) => {
+    expect(mtg.defaultDestination(spell('s1'), { type_line: typeLine }, { ...inst('s0', 's1'), faceIndex })).toBe(dest);
+  });
+
+  it('a faceIndex beyond the type line falls back to the front face', () => {
+    expect(mtg.defaultDestination(spell('s1'), { type_line: 'Instant' }, { ...inst('s0', 's1'), faceIndex: 1 })).toBe('graveyard:s0');
+  });
+
   it("without the card instance, an instant goes to the controller's graveyard", () => {
     expect(mtg.defaultDestination(spell('s1'), { type_line: 'Instant' })).toBe('graveyard:s1');
   });

@@ -19,10 +19,15 @@ export const MTG_LAYOUT = {
   pileGap: GEOMETRY.pileColumnGap,
   /** Command and emblem area: room for two cards side by side plus margins. */
   command: { w: 150, d: 112 },
-  /** Row of card backs other viewers see for this seat's hand: seven backs at half overlap fit with room to spare. */
-  handRow: { w: 560, d: GEOMETRY.card.h },
+  /**
+   * Row of card backs other viewers see for this seat's hand ("at the seat"): outside the territory's near edge, so it
+   * never covers the owner's free-placement battlefield. Seven backs at half overlap (252) fit with room to spare.
+   */
+  handRow: { w: 420, d: GEOMETRY.card.h },
   /** Avatar centre distance outside the territory's near edge. */
   avatarOffset: 40,
+  /** Half-width of the avatar's footprint, kept clear of the hand row beside it. */
+  avatarRadius: 34,
 } as const;
 
 /** Formats whose layout is provisional until M3-P1. */
@@ -44,7 +49,7 @@ interface TerritorySpec {
 const TERRITORY_DEPTH = 440;
 
 /** The spec table: table size and one territory per seat in seat-index order. */
-function tableSpec(format: Format): { table: { w: number; d: number }; territories: TerritorySpec[] } {
+function tableSpec(format: Format): { table: { w: number; d: number }; centreBand: number; territories: TerritorySpec[] } {
   const d = TERRITORY_DEPTH;
   switch (format) {
     case '1v1': {
@@ -52,6 +57,7 @@ function tableSpec(format: Format): { table: { w: number; d: number }; territori
       const y = 1100 / 2 - d / 2;
       return {
         table: { w: 1400, d: 1100 },
+        centreBand: 1100 - 2 * d,
         territories: [
           { x: 0, y: -y, angle: 0, w: 1400, d },
           { x: 0, y, angle: 180, w: 1400, d },
@@ -64,6 +70,7 @@ function tableSpec(format: Format): { table: { w: number; d: number }; territori
       const y = 1300 / 2 - d / 2;
       return {
         table: { w: 2000, d: 1300 },
+        centreBand: 1300 - 2 * d,
         territories: [
           { x: 0, y: -y, angle: 0, w: 2000, d },
           { x: -500, y, angle: 180, w: 1000, d },
@@ -73,9 +80,12 @@ function tableSpec(format: Format): { table: { w: number; d: number }; territori
     }
     case 'ffa4': {
       // PROVISIONAL (M3-P1). One 1100 x 440 territory per side, seats clockwise: bottom, left, top, right.
+      // The spec's numbers overlap 90 x 90 at each corner (1100 + 2 x 440 > 1800) although it calls the corners
+      // unused; kept as specified until M3-P1 settles it (docs/DECISIONS.md).
       const o = 1800 / 2 - d / 2;
       return {
         table: { w: 1800, d: 1800 },
+        centreBand: 1800 - 2 * d,
         territories: [
           { x: 0, y: -o, angle: 0, w: 1100, d },
           { x: -o, y: 0, angle: 90, w: 1100, d },
@@ -90,6 +100,7 @@ function tableSpec(format: Format): { table: { w: number; d: number }; territori
       const y = 1100 / 2 - d / 2;
       return {
         table: { w: 2200, d: 1100 },
+        centreBand: 1100 - 2 * d,
         territories: [
           { x: -550, y: -y, angle: 0, w: 1100, d },
           { x: 550, y: -y, angle: 0, w: 1100, d },
@@ -124,8 +135,9 @@ function seatZones(t: TerritorySpec): SeatZoneAnchors {
     command: rect(-t.w / 2 + m + cmd.w / 2, -t.d / 2 + m + cmd.d / 2, cmd.w, cmd.d),
     // Avatar with the life total outside the near edge, centred.
     avatar: at(0, -t.d / 2 - MTG_LAYOUT.avatarOffset),
-    // Others see this seat's hand as a row of backs along its near edge, centred.
-    handRow: rect(0, -t.d / 2 + m + hand.d / 2, hand.w, hand.d),
+    // Others see this seat's hand as a row of backs at the seat: outside the near edge, one gap away, to the owner's
+    // right of the avatar. It never covers the battlefield.
+    handRow: rect(MTG_LAYOUT.avatarRadius + GEOMETRY.gap + hand.w / 2, -t.d / 2 - GEOMETRY.gap - hand.d / 2, hand.w, hand.d),
   };
 }
 
@@ -138,8 +150,17 @@ export function mtgLayout(format: Format): TableLayout {
     territory: { x: t.x, y: t.y, w: t.w, d: t.d, rot: normDeg(t.angle) },
     zones: seatZones(t),
   }));
+  return { format, table: { ...spec.table }, seats, stackLane: stackLane(spec.centreBand) };
+}
+
+/**
+ * The stack lane at the table centre. The spec's 200 x 320 lane is deeper than the 220 centre band of the 1v1 and
+ * Two-Headed Giant tables, and the design says the lane "never covers a battlefield", so its depth is clamped to the
+ * centre band (200 x 220 there); the cascade scrolls or collapses to its count badge once it outgrows the lane.
+ */
+function stackLane(centreBand: number): Rect {
   const lane = GEOMETRY.stackLane;
-  return { format, table: { ...spec.table }, seats, stackLane: { x: 0, y: 0, w: lane.w, d: lane.d, rot: 0 } };
+  return { x: 0, y: 0, w: lane.w, d: Math.min(lane.d, centreBand), rot: 0 };
 }
 
 /** Solo goldfish: the 1v1 table with seat 0 only (PLAN M0). */

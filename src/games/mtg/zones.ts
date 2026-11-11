@@ -23,7 +23,9 @@ export const MTG_ZONES: ZoneSpec[] = [
   { id: 'command', scope: 'seat', visibility: 'public', ordered: false, presentation: 'area', label: 'Command' },
   // Owner only; hidden during play, the builder table between games.
   { id: 'sideboard', scope: 'seat', visibility: 'owner', ordered: false, presentation: 'hidden', label: 'Sideboard / pool' },
-  // The pack a player currently holds; handed over on pass. Rochester's public pack is the draft package's concern (M2).
+  // The pack a player currently holds; handed over on pass.
+  // TODO(M2): Rochester draft needs a table-scoped public pack zone (DESIGN "Table model": Draft pack, "Table or
+  // player", "everyone in Rochester"); add it with the draft package.
   { id: 'pack', scope: 'seat', visibility: 'owner', ordered: false, presentation: 'fan', label: 'Draft pack' },
 ];
 

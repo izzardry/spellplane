@@ -7,7 +7,7 @@ import type { Format, Pose } from '../../../src/core/types';
 import { GEOMETRY } from '../../../src/core/geometry';
 import type { Rect, SeatLayout, TableLayout } from '../../../src/games/types';
 import { fromViewerFrame, rectFromViewerFrame, rectToViewerFrame, stackLaneForViewer, toViewerFrame, viewerAngle } from '../../../src/games/frame';
-import { isProvisionalLayout, mtg, soloLayout } from '../../../src/games/mtg/index';
+import { MTG_LAYOUT, isProvisionalLayout, mtg, soloLayout } from '../../../src/games/mtg/index';
 
 const EPS = 1e-6;
 const CARD = { w: GEOMETRY.card.w, d: GEOMETRY.card.h };
@@ -69,15 +69,25 @@ function overlaps(a: Rect, b: Rect): boolean {
   return Math.min(p.maxX, q.maxX) - Math.max(p.minX, q.minX) > EPS && Math.min(p.maxY, q.maxY) - Math.max(p.minY, q.minY) > EPS;
 }
 
-/** Everything a seat places on the table, in the canonical frame. */
-function seatPieces(seat: SeatLayout): { name: string; rect: Rect }[] {
+/** Everything a seat places inside its territory, in the canonical frame. */
+function territoryPieces(seat: SeatLayout): { name: string; rect: Rect }[] {
   return [
     { name: 'library', rect: cardRect(seat.zones.library) },
     { name: 'graveyard', rect: cardRect(seat.zones.graveyard) },
     { name: 'exile', rect: cardRect(seat.zones.exile) },
     { name: 'command', rect: seat.zones.command },
-    { name: 'handRow', rect: seat.zones.handRow },
   ];
+}
+
+/** Everything a seat places, including the hand row of backs at the seat (outside the territory). */
+function seatPieces(seat: SeatLayout): { name: string; rect: Rect }[] {
+  return [...territoryPieces(seat), { name: 'handRow', rect: seat.zones.handRow }];
+}
+
+/** The avatar's footprint: a square of the avatar radius around its centre. */
+function avatarRect(seat: SeatLayout): Rect {
+  const r = MTG_LAYOUT.avatarRadius;
+  return { ...seat.zones.avatar, w: 2 * r, d: 2 * r };
 }
 
 /** A pose seen by the seat's owner, relative to its territory: u to the owner's right, v away from the owner. */
@@ -115,9 +125,12 @@ describe('1v1 table geometry from the spec table', () => {
     expect(s0.territory.rot).toBe(0);
     expect(((s1.territory.rot % 360) + 360) % 360).toBe(180);
   });
-  it('puts a 200 x 320 stack lane at the table centre', () => {
-    expect(l.stackLane).toMatchObject({ x: 0, y: 0, w: 200, d: 320 });
+  it('puts the stack lane at the table centre, 200 wide and clamped to the 220-deep centre band (spec 320 would cover both battlefields)', () => {
+    expect(l.stackLane).toMatchObject({ x: 0, y: 0, w: 200, d: 220 });
     expect(insideTable(l, l.stackLane)).toBe(true);
+    const [s0, s1] = l.seats as [SeatLayout, SeatLayout];
+    expect(box(l.stackLane).minY).toBeCloseTo(box(s0.territory).maxY);
+    expect(box(l.stackLane).maxY).toBeCloseTo(box(s1.territory).minY);
   });
   it('is not provisional', () => {
     expect(isProvisionalLayout(l)).toBe(false);
@@ -147,9 +160,9 @@ describe.each(LAYOUTS)('$name: everything lies inside the table and nothing over
     for (const a of l.seats) for (const b of l.seats) if (a !== b) expect(overlaps(a.territory, b.territory)).toBe(false);
   });
 
-  it('every zone pile, the command area and the hand row lie inside the table and inside their own territory', () => {
+  it('every zone pile and the command area lie inside the table and inside their own territory', () => {
     for (const s of l.seats) {
-      for (const p of seatPieces(s)) {
+      for (const p of territoryPieces(s)) {
         expect(insideTable(l, p.rect), `${p.name} of seat ${s.index}`).toBe(true);
         expect(inside(s.territory, p.rect), `${p.name} of seat ${s.index}`).toBe(true);
       }
@@ -217,13 +230,48 @@ describe.each(LAYOUTS)('$name: zone placement within a territory, in the owner o
     }
   });
 
-  it("the hand row for others' card backs runs along the owner's near edge and holds at least seven backs side by side at half overlap", () => {
+  it("the hand row for others' card backs sits at the seat, just outside the owner's near edge, and holds at least seven backs at half overlap", () => {
     for (const s of l.seats) {
       const h = ownerLocal(s, s.zones.handRow);
-      expect(h.u).toBeCloseTo(0);
-      expect(h.v).toBeLessThan(0);
+      const near = -s.territory.d / 2;
+      // Outside the near edge, one standard gap away.
+      expect(h.v + s.zones.handRow.d / 2).toBeCloseTo(near - GEOMETRY.gap);
+      // Within the territory's width.
+      expect(Math.abs(h.u) + s.zones.handRow.w / 2).toBeLessThanOrEqual(s.territory.w / 2 + EPS);
       expect(s.zones.handRow.d).toBeGreaterThanOrEqual(CARD.d);
-      expect(s.zones.handRow.w).toBeGreaterThanOrEqual(CARD.w * 4);
+      expect(s.zones.handRow.w).toBeGreaterThanOrEqual(CARD.w + 6 * (CARD.w / 2));
+    }
+  });
+});
+
+const ALL_LAYOUTS: { name: string; layout: () => TableLayout }[] = [
+  ...LAYOUTS,
+  ...(['ffa3', 'ffa4', '2hg'] as const).map((f) => ({ name: `${f} (provisional)`, layout: () => mtg.layout(f) })),
+];
+
+describe.each(ALL_LAYOUTS)('$name: the stack lane and the hand rows never cover a battlefield', ({ layout }) => {
+  const l = layout();
+
+  it('the stack lane, as any viewer sees it, overlaps no territory', () => {
+    for (const viewer of [null, ...l.seats.map((s) => s.index)]) {
+      const lane = stackLaneForViewer(l, viewer);
+      for (const s of l.seats) expect(overlaps(lane, s.territory), `viewer ${viewer} vs seat ${s.index}`).toBe(false);
+    }
+  });
+
+  it('the stack lane lies inside the table', () => {
+    expect(insideTable(l, l.stackLane)).toBe(true);
+  });
+
+  it('every hand row overlaps no territory, no other hand row, no avatar and not the stack lane', () => {
+    for (const s of l.seats) {
+      const h = s.zones.handRow;
+      for (const o of l.seats) {
+        expect(overlaps(h, o.territory), `hand row of seat ${s.index} vs territory of seat ${o.index}`).toBe(false);
+        expect(overlaps(h, avatarRect(o)), `hand row of seat ${s.index} vs avatar of seat ${o.index}`).toBe(false);
+        if (o !== s) expect(overlaps(h, o.zones.handRow), `hand rows of seats ${s.index} and ${o.index}`).toBe(false);
+      }
+      expect(overlaps(h, l.stackLane)).toBe(false);
     }
   });
 });
@@ -260,8 +308,8 @@ describe('viewer frame', () => {
   it.each([0, 1, null])('the stack lane is rotated for viewer %s so it cascades toward them', (index) => {
     const l = mtg.layout('1v1');
     const lane = stackLaneForViewer(l, index);
-    expect(lane).toMatchObject({ x: 0, y: 0, w: 200, d: 320 });
-    expect(rectToViewerFrame(lane, viewerAngle(l, index))).toMatchObject({ x: 0, y: 0, w: 200, d: 320, rot: 0 });
+    expect(lane).toMatchObject({ x: 0, y: 0, w: 200, d: 220 });
+    expect(rectToViewerFrame(lane, viewerAngle(l, index))).toMatchObject({ x: 0, y: 0, w: 200, d: 220, rot: 0 });
   });
 
   it('round-trips poses through any viewer angle and keeps rot in [0, 360)', () => {
@@ -315,21 +363,21 @@ describe('the territory and anchors are canonical-frame positions in plain JSON'
 });
 
 describe('provisional multi-seat layouts (M3-P1) do not crash and follow the spec table', () => {
-  const cases: { format: Format; table: { w: number; d: number }; angles: number[] }[] = [
-    { format: 'ffa3', table: { w: 2000, d: 1300 }, angles: [0, 180, 180] },
-    { format: 'ffa4', table: { w: 1800, d: 1800 }, angles: [0, 90, 180, 270] },
-    { format: '2hg', table: { w: 2200, d: 1100 }, angles: [0, 0, 180, 180] },
+  const cases: { format: Format; table: { w: number; d: number }; angles: number[]; laneDepth: number }[] = [
+    { format: 'ffa3', table: { w: 2000, d: 1300 }, angles: [0, 180, 180], laneDepth: 320 },
+    { format: 'ffa4', table: { w: 1800, d: 1800 }, angles: [0, 90, 180, 270], laneDepth: 320 },
+    { format: '2hg', table: { w: 2200, d: 1100 }, angles: [0, 0, 180, 180], laneDepth: 220 },
   ];
-  it.each(cases)('$format', ({ format, table, angles }) => {
+  it.each(cases)('$format', ({ format, table, angles, laneDepth }) => {
     const l = mtg.layout(format);
     expect(isProvisionalLayout(l)).toBe(true);
     expect(l.format).toBe(format);
     expect(l.table).toEqual(table);
     expect(l.seats.map((s) => s.angle)).toEqual(angles);
-    expect(l.stackLane).toMatchObject({ x: 0, y: 0, w: 200, d: 320 });
+    expect(l.stackLane).toMatchObject({ x: 0, y: 0, w: 200, d: laneDepth });
     for (const s of l.seats) {
       expect(insideTable(l, s.territory)).toBe(true);
-      for (const p of seatPieces(s)) expect(inside(s.territory, p.rect), `${format} seat ${s.index} ${p.name}`).toBe(true);
+      for (const p of territoryPieces(s)) expect(inside(s.territory, p.rect), `${format} seat ${s.index} ${p.name}`).toBe(true);
       for (const o of l.seats) {
         if (o === s) continue;
         // The spec's four-player numbers (1100 x 440 centred on each side of 1800) overlap 90 x 90 at the corners;
