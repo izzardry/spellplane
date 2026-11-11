@@ -320,6 +320,42 @@ describe('authority', () => {
     expect(sim.peers[0]!.engine.peers().find((p) => p.peerId === 'peer9')!.seat).toBe('s3');
   });
 
+  it('players move chairs as M1-P5 stamps it (take the new chair as itself, then leave the old one), down and up', async () => {
+    // DESIGN "Players, seats and formats" (chair selection); Sequencing 3 with a sender that briefly holds two chairs.
+    const base = baseTable(4);
+    const free = { seq: base.seq + 1, state: reduce(base.state, { type: 'seatLeave', by: 's1', cid: 'free', seat: 's1', seq: base.seq + 1 }) };
+    const sim = makeSim({ engines: 0, seed: 22, start: free, ...DELAY });
+    const [a, , d] = [sim.add(0, free), sim.add(2, free), sim.add(3, free)];
+    await until(() => agreed(sim.peers), 20_000, 'connection');
+    let n = 0;
+    const move = (p: SimPeer, to: string): void => {
+      const from = p.engine.seat()!;
+      const group = `move-${++n}`;
+      expect(p.engine.propose({ type: 'seatTake', by: to, cid: `${group}-take`, seat: to, name: `P${p.index}`, colour: p.index, peer: p.peerId, group })).toBe(true);
+      expect(p.engine.propose({ type: 'seatLeave', by: from, cid: `${group}-leave`, seat: from, group })).toBe(true);
+    };
+    move(d, 's1'); // a follower, to a lower chair
+    await expectConverged(sim.peers);
+    expect(d.engine.seat()).toBe('s1');
+    move(d, 's3'); // and back up
+    await expectConverged(sim.peers);
+    expect(d.engine.seat()).toBe('s3');
+    move(d, 's1');
+    await expectConverged(sim.peers);
+    move(a, 's3'); // the sequencer itself, to a higher chair: peer3 (now s1) takes over
+    await until(() => agreed(sim.peers) && d.engine.isSequencing(), 20_000, 'handover to the lowest chair');
+    await expectConverged(sim.peers);
+    expect(a.engine.seat()).toBe('s3');
+    for (const p of sim.peers) expect(p.rolledBack, p.peerId).toEqual(new Map());
+    const seats = d.engine.state().seats;
+    expect([seats.s0!.peer, seats.s1!.peer, seats.s2!.peer, seats.s3!.peer]).toEqual([undefined, 'peer3', 'peer2', 'peer0']);
+    a.engine.propose(life({ ...a, seat: 's3' }, 'a-plays'));
+    d.engine.propose(life({ ...d, seat: 's1' }, 'd-plays'));
+    await expectConverged(sim.peers);
+    expect(d.engine.state().seats.s3!.life).toBe(19);
+    expect(d.engine.state().seats.s1!.life).toBe(19);
+  });
+
   it('a spectator never sequences and may only chat', async () => {
     const sim = makeSim({ engines: 0, seed: 11, ...DELAY });
     const spectator = sim.add(0, undefined, 'spectator'); // holds peer0, the lowest seat's id, but as a spectator
@@ -508,6 +544,50 @@ describe('meeting after acting alone, and reloads', () => {
     expect(a.engine.state().seats.s0!.life).toBe(17);
     expect(a.engine.state().seats.s1!.life).toBe(15);
     expect(a.engine.isSequencing()).toBe(true);
+  });
+
+  it.each([
+    { a: 5, b: 20, what: 'the other side is longer' },
+    { a: 6, b: 5, what: 'both sides reach the same seq' },
+  ])('a split that heals ($what): every follower re-verifies its history, acked actions are re-proposed, never lost', async ({ a: nA, b: nB }) => {
+    // DESIGN "Multiplayer architecture", Shared state: every peer applies the sequencer's order; PLAN M1-P1: no
+    // acknowledged action is lost. {peer0, peer1} and {peer2, peer3} split; each side sequences its own history
+    // (side B under peer2, which logs its handover). After healing, peer0 re-claims; whichever history it continues,
+    // every peer that holds the other one notices the fork and proposes its abandoned (acked) actions again — peer1
+    // too, whose sequencer was peer0 all along — before anyone acts again.
+    const sim = await connected({ engines: 4, seed: 5, ...DELAY });
+    const [a, b, c, d] = sim.peers as [SimPeer, SimPeer, SimPeer, SimPeer];
+    const sideA = new Set([tid(a), tid(b)]);
+    const split = { on: true };
+    for (const p of sim.peers) {
+      const mine = sideA.has(tid(p));
+      p.transport.dropIn = (_ch, _msg, from) => split.on && sideA.has(from) !== mine;
+    }
+    await until(() => c.engine.isSequencing() && agreed([c, d]) && agreed([a, b]), 4 * AWAY_AFTER_MS, 'two sides');
+    for (let i = 0; i < nA; i++) {
+      b.engine.propose(life(b, `b-${i}`));
+      await vi.advanceTimersByTimeAsync(60);
+    }
+    for (let i = 0; i < nB; i++) {
+      d.engine.propose({ type: 'life', by: 's3', cid: `d-${i}`, seat: 's3', delta: -1 });
+      await vi.advanceTimersByTimeAsync(60);
+    }
+    await until(() => b.acked.size === nA && d.acked.size === nB, 10_000, 'both sides sequenced');
+    if (nA === 6) expect(c.engine.seq()).toBe(a.engine.seq());
+    else expect(c.engine.seq()).toBeGreaterThan(a.engine.seq());
+    split.on = false;
+    await until(() => agreed(sim.peers) && a.engine.isSequencing(), 30_000, 'healed');
+    // Before anyone acts again: every confirmed state is the sequencer's.
+    await expectConverged(sim.peers, 15_000);
+    for (const p of sim.peers) expect(p.system.filter((t) => /hash mismatch/.test(t)), p.peerId).toEqual([]);
+    // Each acked cid ends up in the sequencer's history (none was refused, so none is rolled back).
+    const log = new Set([...a.log.values()].filter((x) => x.seq <= a.engine.seq()).map((x) => x.cid));
+    expect(b.rolledBack.size + d.rolledBack.size).toBe(0);
+    for (const cid of [...b.acked, ...d.acked]) expect(log.has(cid), cid).toBe(true);
+    for (const p of sim.peers) {
+      expect(p.engine.confirmedState().seats.s1!.life, p.peerId).toBe(20 - nA);
+      expect(p.engine.confirmedState().seats.s3!.life, p.peerId).toBe(20 - nB);
+    }
   });
 
   it('a reloaded page with the same identity replaces its old connection and catches up', async () => {

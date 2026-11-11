@@ -7,7 +7,7 @@ import type { Action } from '../../../src/core/actions';
 import { reduce } from '../../../src/core/reducer';
 import type { TableState } from '../../../src/core/types';
 import type { SequencedAction } from '../../../src/net/messages';
-import { applySequenced, createSequencer, createSyncEngine, electSequencer, Replica, RETAIN_ACTIONS } from '../../../src/net/sequencer';
+import { applySequenced, createSequencer, createSyncEngine, electSequencer, Replica, RETAIN_ACTIONS, seatOfPeer, senderSeat } from '../../../src/net/sequencer';
 import type { PeerInfo } from '../../../src/net/types';
 import { baseTable, libraryIds } from '../../sim/net/sim';
 import { TEST_GAME } from '../core/helpers';
@@ -126,6 +126,51 @@ describe('Sequencer.sequence', () => {
     const t = createSequencer(free.seq);
     expect(t.sequence(free, { type: 'seatTake', by: 's1', cid: 'move', seat: 's3', name: 'P1', colour: 1, peer: 'peer1' }, player('s1')).ok).toBe(true);
     expect(t.sequence(free, { type: 'seatLeave', by: 's1', cid: 'leave-old', seat: 's1' }, player('s1')).ok).toBe(true);
+  });
+
+  describe('moving chairs, with the sender’s seat as the engine passes it (senderSeat)', () => {
+    // DESIGN "Players, seats and formats" (chair selection); Sequencing 3: `by` is the sender's seat. M1-P5 stamps the
+    // move as `seatTake {seat: new, by: new}` then `seatLeave {seat: old, by: old}`; stamping the take with the
+    // current chair (`by: old`) works too. Either way, to a lower or a higher chair.
+    const moveCases = [
+      { what: 'to a lower chair, M1-P5 stamping', peer: 'peer3', from: 's3', to: 's1', takeBy: 'new' },
+      { what: 'to a lower chair, take stamped as the current chair', peer: 'peer3', from: 's3', to: 's1', takeBy: 'old' },
+      { what: 'to a higher chair, M1-P5 stamping', peer: 'peer1', from: 's1', to: 's3', takeBy: 'new' },
+      { what: 'to a higher chair, take stamped as the current chair', peer: 'peer1', from: 's1', to: 's3', takeBy: 'old' },
+    ] as const;
+    for (const c of moveCases) {
+      it(c.what, () => {
+        let st = reduce(state, { type: 'seatLeave', by: c.to, cid: 'free', seat: c.to, seq: state.seq + 1 });
+        const seqr = createSequencer(st.seq);
+        const send = (a: Action): void => {
+          const r = seqr.sequence(st, a, { seat: senderSeat(st, a, c.peer), role: 'player', self: false });
+          if (!r.ok) throw new Error(`${a.cid}: ${r.reason}`);
+          st = applySequenced(st, r.action);
+        };
+        send({ type: 'seatTake', by: c.takeBy === 'new' ? c.to : c.from, cid: 'take', seat: c.to, name: 'Mover', colour: 2, peer: c.peer });
+        expect(st.seats[c.to]!.peer).toBe(c.peer);
+        expect(st.seats[c.from]!.peer).toBe(c.peer); // two chairs, briefly
+        send({ type: 'seatLeave', by: c.from, cid: 'leave', seat: c.from });
+        expect(st.seats[c.from]!.peer).toBeUndefined();
+        expect(seatOfPeer(st, c.peer)).toBe(c.to);
+        // The freed chair is free for someone else; the mover plays from its new chair.
+        send(life(c.to, 'play'));
+        const other = { type: 'seatTake', by: c.from, cid: 'other', seat: c.from, name: 'Eve', colour: 5, peer: 'peer9' } as Action;
+        expect(seqr.sequence(st, other, { seat: senderSeat(st, other, 'peer9'), role: 'player', self: false }).ok).toBe(true);
+      });
+    }
+
+    it('still refuses acting for, leaving or taking a chair the sender does not hold', () => {
+      const st = reduce(state, { type: 'seatLeave', by: 's1', cid: 'free', seat: 's1', seq: state.seq + 1 });
+      const seqr = createSequencer(st.seq);
+      const as3 = (a: Action) => seqr.sequence(st, a, { seat: senderSeat(st, a, 'peer3'), role: 'player', self: false });
+      expect(senderSeat(st, life('s0', 'x'), 'peer3')).toBe('s3');
+      expect(as3(life('s0', 'forged'))).toEqual({ ok: false, reason: expect.stringMatching(/not the sender's seat s3/) });
+      expect(as3({ type: 'seatLeave', by: 's0', cid: 'kick', seat: 's0' }).ok).toBe(false);
+      expect(as3({ type: 'seatLeave', by: 's3', cid: 'kick2', seat: 's0' })).toEqual({ ok: false, reason: expect.stringMatching(/its own seat/) });
+      expect(as3({ type: 'seatTake', by: 's0', cid: 'grab', seat: 's0', name: 'X', colour: 1, peer: 'peer3' })).toEqual({ ok: false, reason: expect.stringMatching(/taken/) });
+      expect(as3({ type: 'seatTake', by: 's0', cid: 'grab2', seat: 's1', name: 'X', colour: 1, peer: 'peer3' })).toEqual({ ok: false, reason: expect.stringMatching(/not the sender's seat/) });
+    });
   });
 
   it('refuses what the reducer refuses on the confirmed state, with its reason', () => {

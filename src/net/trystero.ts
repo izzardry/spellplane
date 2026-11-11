@@ -26,6 +26,8 @@ export class TrysteroTransport implements Transport {
   private readonly peerHandlers: PeerHandler[] = [];
   private readonly streamHandlers: ((stream: MediaStream, from: PeerId) => void)[] = [];
   private readonly known = new Set<PeerId>();
+  /** Peers Trystero reported gone in this room: a late message from one does not list it again (only onPeerJoin does). */
+  private readonly gone = new Set<PeerId>();
   /** Bumped by `leave`, so a `join` still loading Trystero does not open a room after it. */
   private generation = 0;
   private joining: Promise<void> | null = null;
@@ -39,10 +41,13 @@ export class TrysteroTransport implements Transport {
 
   join(roomId: string, roomKey: string): Promise<void> {
     if (this.room) return Promise.resolve();
-    this.joining ??= this.open(roomId, roomKey).finally(() => {
-      this.joining = null;
+    if (this.joining) return this.joining;
+    // `leave` forgets a pending join, so a join after it starts afresh instead of reusing one that opens nothing.
+    const pending: Promise<void> = this.open(roomId, roomKey).finally(() => {
+      if (this.joining === pending) this.joining = null;
     });
-    return this.joining;
+    this.joining = pending;
+    return pending;
   }
 
   private async open(roomId: string, roomKey: string): Promise<void> {
@@ -61,12 +66,17 @@ export class TrysteroTransport implements Transport {
       this.senders.set(channel, action.send);
       action.onMessage = (data, ctx) => {
         if (typeof data !== 'object' || data === null || Array.isArray(data)) return;
+        if (this.gone.has(ctx.peerId)) return;
         this.see(ctx.peerId);
         for (const h of this.handlers.get(channel) ?? []) h(data as unknown as Message, ctx.peerId);
       };
     }
-    room.onPeerJoin = (peer) => this.see(peer);
+    room.onPeerJoin = (peer) => {
+      this.gone.delete(peer);
+      this.see(peer);
+    };
     room.onPeerLeave = (peer) => {
+      this.gone.add(peer);
       if (!this.known.delete(peer)) return;
       for (const h of this.peerHandlers) h('leave', peer);
     };
@@ -77,10 +87,12 @@ export class TrysteroTransport implements Transport {
 
   leave(): void {
     this.generation++;
+    this.joining = null;
     const room = this.room;
     if (!room) return;
     this.room = null;
     this.senders.clear();
+    this.gone.clear();
     for (const peer of [...this.known]) {
       this.known.delete(peer);
       for (const h of this.peerHandlers) h('leave', peer);

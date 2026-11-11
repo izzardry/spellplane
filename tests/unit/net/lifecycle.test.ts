@@ -80,4 +80,53 @@ describe('join and leave', () => {
     t.leave();
     expect(room.leave).toHaveBeenCalledTimes(1);
   });
+
+  it('a join after a leave that ran while Trystero was loading opens a room', async () => {
+    joinRoom.mockReset();
+    const room = { makeAction: () => ({ send: () => Promise.resolve(), onMessage: null }), leave: vi.fn(() => Promise.resolve()), addStream: vi.fn() };
+    joinRoom.mockReturnValue(room);
+    const t = new TrysteroTransport();
+    const first = t.join('amber-fox-93', 'k');
+    t.leave();
+    const second = t.join('amber-fox-93', 'k');
+    await Promise.all([first, second]);
+    expect(joinRoom).toHaveBeenCalledTimes(1);
+    expect(t.selfId).toBe('self-x');
+    t.leave();
+    expect(room.leave).toHaveBeenCalledTimes(1);
+  });
+
+  it('a late message from a peer Trystero reported gone does not list it again; only its next join does', async () => {
+    joinRoom.mockReset();
+    const actions: { onMessage: ((data: unknown, ctx: { peerId: string }) => void) | null }[] = [];
+    const room = {
+      makeAction: () => {
+        const a = { send: () => Promise.resolve(), onMessage: null };
+        actions.push(a);
+        return a;
+      },
+      leave: vi.fn(() => Promise.resolve()),
+      addStream: vi.fn(),
+      onPeerJoin: null as ((p: string) => void) | null,
+      onPeerLeave: null as ((p: string) => void) | null,
+    };
+    joinRoom.mockReturnValue(room);
+    const t = new TrysteroTransport();
+    const events: string[] = [];
+    const got: string[] = [];
+    t.onPeer((ev, p) => events.push(`${ev} ${p}`));
+    t.on('ctl', (_m, from) => got.push(from));
+    await t.join('amber-fox-93', 'k');
+    room.onPeerJoin!('ben');
+    actions[0]!.onMessage!({ v: 1, t: 'hb' }, { peerId: 'ben' });
+    room.onPeerLeave!('ben');
+    actions[0]!.onMessage!({ v: 1, t: 'hb' }, { peerId: 'ben' }); // delivered after the leave
+    expect(t.peers()).toEqual([]);
+    expect(events).toEqual(['join ben', 'leave ben']);
+    expect(got).toEqual(['ben']);
+    room.onPeerJoin!('ben');
+    expect(t.peers()).toEqual(['ben']);
+    expect(events).toEqual(['join ben', 'leave ben', 'join ben']);
+    t.leave();
+  });
 });

@@ -2,8 +2,9 @@
  * The net engine in real browsers (Chromium and WebKit) over the BroadcastChannel transport (?transport=local), with
  * the real ECDSA P-256 handshake (DESIGN "Multiplayer architecture"; "Specification: network protocol and secrecy":
  * Handshake, Sequencing, Liveness, Sync). Engine behaviour is asserted on state hashes and the engine's own reports,
- * never on pixels. Identities persist in IndexedDB on Chromium; Playwright's WebKit hangs when a CryptoKey is
- * written to IndexedDB, so WebKit pages keep their key pair in memory (decision M1-P1, reported to the integrator).
+ * never on pixels. Identities persist in IndexedDB on Chromium; on this branch's base store/identity.ts writes a
+ * CryptoKey to IndexedDB, which hangs Playwright's WebKit, so WebKit pages keep their key pair in memory. m1 stores
+ * the key pair as JWK (7b61414): drop this WebKit fallback after the merge (decision M1-P1, for the integrator).
  */
 import { expect, test, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
 import { harness, openHarness, routeHarness } from './bundle';
@@ -99,7 +100,7 @@ test('when the sequencer leaves, the other page takes over; when it comes back i
 });
 
 test('a reopened page finds its identity in IndexedDB and reclaims its seat', async ({ context }, info) => {
-  test.skip(!persist(info), 'Playwright WebKit hangs when a CryptoKey is written to IndexedDB');
+  test.skip(!persist(info), 'Playwright WebKit hangs when a CryptoKey is written to IndexedDB (until m1’s JWK identity is merged)');
   const { a: first, b, seats, room, pa } = await twoPages(context, info);
   await settled([first, b]);
   await first.close({ runBeforeUnload: true });

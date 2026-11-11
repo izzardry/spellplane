@@ -32,6 +32,18 @@ export function seatOfPeer(state: TableState, peerId: string): SeatId | null {
   return null;
 }
 
+/**
+ * The sender's seat for the sequencer's authority check (DESIGN "Specification: network protocol and secrecy",
+ * Sequencing 3: the sequencer rejects any propose whose `by` is not the sender's seat). A peer briefly holds two
+ * chairs while it moves (M1-P5 takes the new chair before leaving the old one), so the seat is the action's `by`
+ * when the sender holds that chair, else the first chair it holds (or null).
+ */
+export function senderSeat(state: TableState, action: { by?: unknown }, peerId: string): SeatId | null {
+  const by = action.by;
+  if (peerId && typeof by === 'string' && Object.hasOwn(state.seats, by) && state.seats[by]!.peer === peerId) return by;
+  return seatOfPeer(state, peerId);
+}
+
 function cardOwner(state: TableState, id: unknown): SeatId | null | undefined {
   if (typeof id !== 'string') return undefined;
   return state.cards[id]?.owner;
@@ -148,7 +160,9 @@ class SequencerImpl implements Sequencer {
       // An unseated player can only take a chair (DESIGN "Players, seats and formats").
       if (action.type !== 'seatTake') return `take a seat before sending ${action.type}`;
       if (action.by !== action.seat) return 'seatTake must be sent by the seat it takes';
-    } else if (action.by !== sender.seat) {
+    } else if (action.by !== sender.seat && !(action.type === 'seatTake' && action.by === action.seat)) {
+      // Taking a chair is stamped as the chair taken, seated or not (M1-P5 moves chairs that way); the engine checks
+      // that it is taken with the sender's own peer id, and the reducer that it is free.
       return `by ${action.by} is not the sender's seat ${sender.seat}`;
     }
     if (!sender.self && (SEQUENCER_ONLY.has(action.type) || (action.type === 'respond' && action.response === 'timeout'))) {
@@ -156,7 +170,8 @@ class SequencerImpl implements Sequencer {
     }
     if (action.type === 'respond' && action.response !== 'timeout' && action.seat !== action.by) return 'a seat answers only for itself';
     // A player leaves only its own chair: there is no host kick in the design (decision M1-P1). Taking a second chair
-    // while seated stays allowed (with the sender's own peer id, engine.ts): moving chairs takes the new one first.
+    // while seated stays allowed (with the sender's own peer id, engine.ts): moving chairs takes the new one first,
+    // then leaves the old one stamped as the old one (the engine passes `by` as the sender's seat while it holds it).
     if (action.type === 'seatLeave' && action.seat !== action.by) return 'a player leaves only its own seat';
     const hidden = hiddenOwnerCheck(state, action);
     if (hidden !== null) return hidden;

@@ -31,7 +31,7 @@ import {
   type WireOf,
 } from './messages';
 import { PresenceChannel } from './presence';
-import { createSequencer, electSequencer, Replica, RETAIN_ACTIONS, seatOfPeer } from './sequencer';
+import { createSequencer, electSequencer, Replica, RETAIN_ACTIONS, seatOfPeer, senderSeat } from './sequencer';
 import { CHANNELS, type Channel, type PeerId } from './transport';
 import {
   AWAY_AFTER_MS,
@@ -82,6 +82,8 @@ const QUEUE_LIMIT = 2_000;
 const KEEP_APPLY_TIMES = 1_000;
 /** Reported seqs remembered against re-reporting after a reload (more than a reload replays: the retained tail). */
 const KEEP_EMITTED = 2 * RETAIN_ACTIONS;
+/** Own cids remembered (to tell own actions apart, and own actions of an abandoned history): far beyond the retained tail. */
+const KEEP_OWN_CIDS = 4 * RETAIN_ACTIONS;
 
 interface PeerEntry {
   info: PeerInfo;
@@ -170,8 +172,17 @@ class Engine implements NetEngine {
   private adoptFrom: PeerId | null = null;
   private lostOwn: { action: Action; oldSeq: number }[] = [];
   private initialSynced = false;
-  /** Compare the overlap with the sequencer's history once it sends again (after a change of sequencer). */
+  /**
+   * Compare the overlap with the sequencer's history once it sends again (after a change of sequencer, or a claim
+   * from the current one, which may have adopted another history meanwhile); catch-up from it re-reads the overlap
+   * until then.
+   */
   private verifyNext = false;
+  /**
+   * While claiming: another browser whose history the room may hold instead of this replica's — a sequencer a
+   * connected peer names, or the peer whose history replaced this replica's after a fork found during the claim.
+   */
+  private claimRival: string | null = null;
   /** While claiming: the peer furthest ahead whose history this replica checked for a fork. */
   private claimChecked: PeerId | null = null;
   /**
@@ -308,7 +319,7 @@ class Engine implements NetEngine {
   propose(action: Action): boolean {
     if (this.closed) return false;
     if (!this.replica.applyOwn(action)) return false;
-    this.ownCids.add(action.cid);
+    this.noteOwn(action.cid);
     if (this.mode === 'active') this.sequenceOwn(action);
     else this.sendProposal(action);
     this.afterChange();
@@ -394,6 +405,17 @@ class Engine implements NetEngine {
 
   private system(level: 'info' | 'warn', text: string): void {
     this.systemEv.emit(level, text);
+  }
+
+  /** Remember an own cid; the oldest are forgotten beyond KEEP_OWN_CIDS (they left the retained tail long ago). */
+  private noteOwn(cid: string): void {
+    this.ownCids.delete(cid);
+    this.ownCids.add(cid);
+    while (this.ownCids.size > KEEP_OWN_CIDS) {
+      const oldest = this.ownCids.values().next();
+      if (oldest.done) break;
+      this.ownCids.delete(oldest.value);
+    }
   }
 
   private newCid(): string {
@@ -783,6 +805,11 @@ class Engine implements NetEngine {
   private noteNamed(e: PeerEntry, named: string | null): void {
     e.named = named;
     if (named === this.identity.peerId && this.mode === 'active') this.markReconciled();
+    if (this.mode === 'claiming') this.noteRival(named);
+  }
+
+  private noteRival(named: string | null | undefined): void {
+    if (this.claimRival === null && named && named !== this.identity.peerId) this.claimRival = named;
   }
 
   private markReconciled(): void {
@@ -840,6 +867,8 @@ class Engine implements NetEngine {
     if (prev !== null && prev !== this.identity.peerId) this.handoverFrom = prev;
     for (const [, e] of this.peerMap) e.claimAck = null;
     this.claimChecked = null;
+    this.claimRival = null;
+    for (const [, e] of this.connectedPeers()) this.noteRival(e.named);
     this.lastClaimAt = this.now();
     if (this.connectedPeers().length) this.send('ctl', { v: PROTOCOL_VERSION, t: 'claim', fromSeq: this.replica.seq(), seat: this.seat() ?? '' });
     this.checkClaim();
@@ -877,13 +906,17 @@ class Engine implements NetEngine {
     // Connected peers acknowledged the claim and this replica took over the history of the one furthest ahead.
     if (this.connectedPeers().length > 0) this.markReconciled();
     this.seqr = createSequencer(this.replica.seq());
-    const prev = this.handoverFrom;
+    // A claim while peers followed another sequencer (a split that healed, two browsers that met) is a handover from
+    // that history too: the logged record is a `seq` every follower verifies its copy against (it may hold the
+    // abandoned part, or the room's copy at the same length may be another history).
+    const prev = this.handoverFrom ?? this.claimRival;
     this.handoverFrom = null;
+    this.claimRival = null;
     const seat = seatOfPeer(this.replica.confirmed(), this.identity.peerId);
     if (prev !== null && seat !== null) {
       // A logged handover record (DESIGN "Data model and protocol", Meta: sequencerClaim).
       const claim: Action = { type: 'sequencerClaim', fromSeq: this.replica.seq(), peer: this.identity.peerId, by: seat, cid: this.newCid() };
-      this.ownCids.add(claim.cid);
+      this.noteOwn(claim.cid);
       this.replica.requeue([claim]);
     }
     for (const a of [...this.replica.pending()]) if (this.mode === 'active') this.sequenceOwn(a);
@@ -909,7 +942,7 @@ class Engine implements NetEngine {
   private onClaim(from: PeerId, e: PeerEntry, m: WireOf<'claim'>): void {
     // A claimant names itself, and holds at least the history it claims from.
     e.info.lastSeq = Math.max(e.info.lastSeq, m.fromSeq);
-    e.named = e.info.peerId;
+    this.noteNamed(e, e.info.peerId);
     this.recompute();
     if (this.sequencer === this.identity.peerId && !this.reconciled && this.outranks(e.info.peerId, m.fromSeq, m.seat)) {
       // Our claim rests on a state the room has not confirmed, and theirs ranks first: follow them and catch up.
@@ -917,6 +950,13 @@ class Engine implements NetEngine {
       this.recompute();
     }
     if (this.sequencer === e.info.peerId) {
+      // Our sequencer claims (again): it may adopt another history before it sequences (a split that healed), and
+      // this replica may hold the abandoned part. Drop what it buffered and re-read the overlap before trusting its
+      // next seqs (decision M1-P1, review round 3).
+      this.verifyNext = true;
+      this.replica.clearBuffer();
+      this.gapSince = null;
+      this.seqrHashes.clear();
       this.send('ctl', { v: PROTOCOL_VERSION, t: 'claimAck', lastSeq: this.replica.seq() }, from);
       this.resendPending();
       if (m.fromSeq > this.replica.seq()) this.maybeCatchUp();
@@ -954,7 +994,7 @@ class Engine implements NetEngine {
     const state = this.replica.confirmed();
     const me = this.identity.peerId;
     const bad = this.senderPeerCheck(action, me);
-    const r = bad !== null ? { ok: false as const, reason: bad } : this.seqr.sequence(state, action, { seat: seatOfPeer(state, me), role: this.role, self: true });
+    const r = bad !== null ? { ok: false as const, reason: bad } : this.seqr.sequence(state, action, { seat: senderSeat(state, action, me), role: this.role, self: true });
     if (r.ok) {
       this.broadcastSeq(r.action);
       this.replica.receive(r.action);
@@ -992,7 +1032,7 @@ class Engine implements NetEngine {
     const state = this.replica.confirmed();
     const peerId = e.info.peerId;
     const bad = this.senderPeerCheck(msg.action, peerId);
-    const r = bad !== null ? { ok: false as const, reason: bad } : this.seqr.sequence(state, msg.action, { seat: seatOfPeer(state, peerId), role: e.info.role, self: false });
+    const r = bad !== null ? { ok: false as const, reason: bad } : this.seqr.sequence(state, msg.action, { seat: senderSeat(state, msg.action, peerId), role: e.info.role, self: false });
     if (r.ok) {
       this.broadcastSeq(r.action);
       this.replica.receive(r.action);
@@ -1055,10 +1095,16 @@ class Engine implements NetEngine {
     const seq = this.replica.seq();
     const me = this.identity.peerId;
     const seqEntry = this.sequencer !== me ? this.entryOf(this.sequencer) : null;
-    if (seqEntry && !this.initialSynced) return this.requestSync(seqEntry[0], 'tail');
+    // Until the sequencer's history has been verified since it (re)claimed, catch-up from it re-reads the overlap.
+    const kind: SyncKind = this.verifyNext ? 'overlap' : 'tail';
+    if (seqEntry && !this.initialSynced) return this.requestSync(seqEntry[0], kind);
     // A gap may be plain reordering: give the missing seq a moment to arrive before asking.
-    if (seqEntry && gap && this.now() - (this.gapSince ?? 0) >= GAP_WAIT_MS) return this.requestSync(seqEntry[0], 'tail');
-    if (seqEntry && seqEntry[1].info.lastSeq > seq) return this.requestSync(seqEntry[0], 'tail');
+    if (seqEntry && gap && this.now() - (this.gapSince ?? 0) >= GAP_WAIT_MS) return this.requestSync(seqEntry[0], kind);
+    if (seqEntry && seqEntry[1].info.lastSeq > seq) return this.requestSync(seqEntry[0], kind);
+    // A reachable sequencer is the only source of history: a peer ahead of it holds seqs it has not continued yet
+    // (it is catching up in a claim, or that peer kept another side's history after a split), and a plain tail from
+    // that peer would land on top of whatever this replica holds without a fork check (review round 3).
+    if (seqEntry) return;
     let best: [PeerId, PeerEntry] | null = null;
     for (const pair of this.peerMap) {
       const e = pair[1];
@@ -1143,6 +1189,7 @@ class Engine implements NetEngine {
   private adopt(to: PeerId, forkSeq: number, why: string): void {
     if (this.mode === 'active' || !this.peerMap.has(to) || this.adoptFrom === to || this.forced === to) return;
     this.system('warn', `${why}: taking over the sequencer's history from there.`);
+    if (this.mode === 'claiming') this.noteRival(this.peerMap.get(to)?.info.peerId);
     const abandoned = this.replica.tail(forkSeq - 1) ?? [];
     this.lostOwn = abandoned.filter((a) => this.ownCids.has(a.cid)).map(({ seq, ...rest }) => ({ action: rest as Action, oldSeq: seq }));
     this.adoptFrom = to;
