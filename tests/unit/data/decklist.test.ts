@@ -194,6 +194,15 @@ describe('bad lines', () => {
     expect(list.side.map((e) => [e.name, e.line])).toEqual([['Dwindle', 7]]);
   });
 
+  it('names the bound a bad count breaks, also for counts too long to be exact', () => {
+    const { errors } = parseDecklist('0 Cancel\n1000 Island\n99999999999999999999 Island');
+    expect(errors.map((e) => [e.line, e.message])).toEqual([
+      [1, 'The count must be at least 1'],
+      [2, 'The count must be at most 999'],
+      [3, 'The count must be at most 999'],
+    ]);
+  });
+
   it('a list of only bad lines gives an empty deck and one error per line', () => {
     const { list, errors } = parseDecklist('foo\nbar baz');
     expect(errors.map((e) => e.line)).toEqual([1, 2]);

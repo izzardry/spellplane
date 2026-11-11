@@ -238,4 +238,20 @@ describe('FaceSource', () => {
     expect(await faces.faceFor({ sid: 'missing' }, 0, 'normal')).toEqual({ kind: 'placeholder', face: { name: 'Unknown card' } });
     expect(await faces.faceFor({ sid: 'no-image' }, 0, 'normal')).toMatchObject({ kind: 'placeholder', face: { name: 'Shock' } });
   });
+
+  it('a failed lookup rejects (retryable) instead of becoming "Unknown card"', async () => {
+    let fail = true;
+    const flaky: CardDataSource = {
+      ...source([shock]),
+      peek: () => null,
+      get: async (sid) => {
+        if (fail) throw new Error('network down');
+        return sid === shock.id ? shock : null;
+      },
+    };
+    const faces = new CardFaceSource(flaky, 'placeholder');
+    await expect(faces.faceFor({ sid: shock.id }, 0, 'normal')).rejects.toThrow('network down');
+    fail = false;
+    expect(await faces.faceFor({ sid: shock.id }, 0, 'normal')).toMatchObject({ kind: 'placeholder', face: { name: 'Shock' } });
+  });
 });

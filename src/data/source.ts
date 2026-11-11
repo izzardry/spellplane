@@ -4,18 +4,21 @@
  *
  * Lookup order: memory, then the `cards` store, then Scryfall (`/cards/collection`, batches of 75). Every fetched card
  * is written to the cache with its fetched-at time; cached entries older than 30 days are returned at once and
- * refreshed in the background.
+ * refreshed in the background. Ids asked for in the same tick share one cache read and one `/cards/collection` request;
+ * ids Scryfall does not return answer null for MISSING_TTL_MS without asking again.
  */
 import type { CardRef, ScryfallId } from '../core/types';
 import { CARD_REFRESH_AGE_MS, createCardCache } from '../store/cards';
 import type { CardCache } from '../store/types';
 import { relatedTokenIds, trimCard } from './cards';
 import { allEntries, nearMatches, normaliseName } from './decklist';
-import { identifierKey, ScryfallClient, type CardIdentifier } from './scryfall';
+import { COLLECTION_BATCH, identifierKey, ScryfallClient, type CardIdentifier } from './scryfall';
 import type { CardData, CardDataSource, DeckEntry, DeckList, ParseError, ResolvedDeck } from './types';
 
 /** Unresolved names that get a Scryfall fuzzy lookup for near matches; the rest use known names only. */
 export const MAX_FUZZY_LOOKUPS = 10;
+/** How long an id Scryfall did not return answers null without asking again (cleared by refreshStale). */
+export const MISSING_TTL_MS = 10 * 60 * 1000;
 
 export interface CardDataSourceOptions {
   client?: ScryfallClient;
@@ -53,11 +56,13 @@ export class ScryfallCardDataSource implements CardDataSource {
   private readonly now: () => number;
   private readonly refreshAgeMs: number;
   private readonly mem = new Map<ScryfallId, CardData>();
-  /** Ids being fetched from Scryfall, so concurrent lookups share one request. */
+  /** Ids being looked up (cache, then Scryfall), so concurrent lookups share one request. */
   private readonly inflight = new Map<ScryfallId, Promise<CardData | null>>();
   private queued: { sid: ScryfallId; resolve: (c: CardData | null) => void; reject: (e: unknown) => void }[] = [];
   private flushScheduled = false;
   private readonly refreshing = new Set<ScryfallId>();
+  /** Ids Scryfall did not return, with when (session only), so repeated lookups do not spend the rate limit. */
+  private readonly missing = new Map<ScryfallId, number>();
   private readonly background = new Set<Promise<void>>();
 
   constructor(opts: CardDataSourceOptions = {}) {
@@ -77,29 +82,17 @@ export class ScryfallCardDataSource implements CardDataSource {
 
   async getMany(sids: ScryfallId[]): Promise<Record<ScryfallId, CardData>> {
     const out: Record<ScryfallId, CardData> = {};
-    const ids = [...new Set(sids)];
-    let missing = ids.filter((sid) => {
+    const pending: { sid: ScryfallId; p: Promise<CardData | null> }[] = [];
+    // Everything up to the first await runs synchronously, so lookups made in the same tick join one batch.
+    for (const sid of new Set(sids)) {
       const c = this.mem.get(sid);
       if (c) out[sid] = c;
-      return !c;
-    });
-    if (missing.length > 0 && this.cache) {
-      const stale: ScryfallId[] = [];
-      const records = await this.cache.getMany(missing).catch(() => []);
-      for (const r of records) {
-        const card = trimCard(r.data);
-        if (!card || card.id !== r.id) continue;
-        if (!this.mem.has(card.id)) this.mem.set(card.id, card);
-        out[r.id] = this.mem.get(card.id)!;
-        if (r.fetchedAt < this.now() - this.refreshAgeMs) stale.push(r.id);
-      }
-      if (stale.length > 0) this.refreshInBackground(stale);
-      missing = missing.filter((sid) => !(sid in out));
+      else if (!this.isKnownMissing(sid)) pending.push({ sid, p: this.load(sid) });
     }
-    if (missing.length > 0) {
-      const fetched = await Promise.all(missing.map((sid) => this.fetchById(sid)));
-      fetched.forEach((c, i) => {
-        if (c) out[missing[i]!] = c;
+    if (pending.length > 0) {
+      const found = await Promise.all(pending.map((q) => q.p));
+      found.forEach((c, i) => {
+        if (c) out[pending[i]!.sid] = c;
       });
     }
     return out;
@@ -170,7 +163,8 @@ export class ScryfallCardDataSource implements CardDataSource {
   /** Fetches cached entries older than 30 days again (call at start-up); resolves when done. */
   async refreshStale(): Promise<void> {
     if (!this.cache) return;
-    const ids = await this.cache.stale(this.now() - this.refreshAgeMs).catch(() => []);
+    this.missing.clear();
+    const ids = (await this.cache.stale(this.now() - this.refreshAgeMs).catch(() => [])).filter((id) => !this.refreshing.has(id));
     if (ids.length > 0) await this.refresh(ids);
   }
 
@@ -223,7 +217,16 @@ export class ScryfallCardDataSource implements CardDataSource {
     if (this.cache) await this.cache.put(cards.map((c) => ({ id: c.id, data: c, fetchedAt: at }))).catch(() => undefined);
   }
 
-  private fetchById(sid: ScryfallId): Promise<CardData | null> {
+  private isKnownMissing(sid: ScryfallId): boolean {
+    const at = this.missing.get(sid);
+    if (at === undefined) return false;
+    if (this.now() - at < MISSING_TTL_MS) return true;
+    this.missing.delete(sid);
+    return false;
+  }
+
+  /** One id through the cache and Scryfall; concurrent loads of an id share one promise, and all ids queued in a tick share one batch. */
+  private load(sid: ScryfallId): Promise<CardData | null> {
     const existing = this.inflight.get(sid);
     if (existing) return existing;
     const p = new Promise<CardData | null>((resolve, reject) => {
@@ -232,23 +235,56 @@ export class ScryfallCardDataSource implements CardDataSource {
     this.inflight.set(sid, p);
     if (!this.flushScheduled) {
       this.flushScheduled = true;
-      // Lookups made in the same tick share one /cards/collection request.
       queueMicrotask(() => void this.flush());
     }
     return p;
   }
 
+  /** Serves a tick's batch: one cache read for all of it, then `/cards/collection` (75 per request) for the rest. */
   private async flush(): Promise<void> {
     this.flushScheduled = false;
-    const batch = this.queued;
+    let batch = this.queued;
     this.queued = [];
-    try {
-      const res = await this.client.collection(batch.map((q) => ({ id: q.sid })));
-      const found = res.cards.filter((c): c is CardData => c !== null);
-      await this.remember(found);
-      batch.forEach((q, i) => q.resolve(res.cards[i] ?? null));
-    } catch (e) {
-      for (const q of batch) q.reject(e);
+    // A card that reached memory since it was queued (a deck import, a set load) needs no lookup.
+    batch = batch.filter((q) => {
+      const c = this.mem.get(q.sid);
+      if (c) q.resolve(c);
+      return !c;
+    });
+    if (batch.length > 0 && this.cache) {
+      const stale: ScryfallId[] = [];
+      const hits = new Map<ScryfallId, CardData>();
+      const records = await this.cache.getMany(batch.map((q) => q.sid)).catch(() => []);
+      for (const r of records) {
+        const card = trimCard(r.data);
+        if (!card || card.id !== r.id) continue;
+        if (!this.mem.has(card.id)) this.mem.set(card.id, card);
+        hits.set(r.id, this.mem.get(card.id)!);
+        if (r.fetchedAt < this.now() - this.refreshAgeMs) stale.push(r.id);
+      }
+      if (stale.length > 0) this.refreshInBackground(stale);
+      batch = batch.filter((q) => {
+        const c = hits.get(q.sid) ?? this.mem.get(q.sid);
+        if (c) q.resolve(c);
+        return !c;
+      });
+    }
+    for (let i = 0; i < batch.length; i += COLLECTION_BATCH) {
+      const chunk = batch.slice(i, i + COLLECTION_BATCH);
+      try {
+        const res = await this.client.collection(chunk.map((q) => ({ id: q.sid })));
+        await this.remember(res.cards.filter((c): c is CardData => c !== null));
+        const at = this.now();
+        chunk.forEach((q, j) => {
+          const c = res.cards[j] ?? null;
+          if (!c) this.missing.set(q.sid, at);
+          q.resolve(c);
+        });
+      } catch (e) {
+        // Give up on the rest too: the limiter has just backed off or Scryfall is failing.
+        for (const q of batch.slice(i)) q.reject(e);
+        return;
+      }
     }
   }
 
@@ -263,8 +299,11 @@ export class ScryfallCardDataSource implements CardDataSource {
   private async refresh(ids: ScryfallId[]): Promise<void> {
     for (const id of ids) this.refreshing.add(id);
     try {
-      const res = await this.client.collection(ids.map((id) => ({ id })));
-      await this.remember(res.cards.filter((c): c is CardData => c !== null));
+      // One request per 75 ids, each remembered before the next, so a later failure keeps what was refreshed.
+      for (let i = 0; i < ids.length; i += COLLECTION_BATCH) {
+        const res = await this.client.collection(ids.slice(i, i + COLLECTION_BATCH).map((id) => ({ id })));
+        await this.remember(res.cards.filter((c): c is CardData => c !== null));
+      }
     } finally {
       for (const id of ids) this.refreshing.delete(id);
     }

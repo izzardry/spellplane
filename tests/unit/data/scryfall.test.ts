@@ -2,7 +2,7 @@
 // via /cards/search with next_page paging, /cards/collection in batches of 75, token search. Fixtures only.
 import { describe, expect, it } from 'vitest';
 import { RateLimiter } from '../../../src/data/limiter';
-import { COLLECTION_BATCH, ScryfallClient, type FetchLike } from '../../../src/data/scryfall';
+import { COLLECTION_BATCH, ScryfallClient, ScryfallError, type FetchLike } from '../../../src/data/scryfall';
 import { FakeScryfall, loadFixtureSet } from './fakeScryfall';
 
 /** A limiter that never waits, so these tests run on real timers. */
@@ -50,6 +50,10 @@ describe('set loading', () => {
   });
 
   it('throws on server errors other than 404 and 429', async () => {
+    const portal: FetchLike = async () => new Response('<html>captive portal</html>', { status: 200 });
+    const err: unknown = await new ScryfallClient({ fetch: portal, limiter: unlimited() }).loadSet('m19').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ScryfallError);
+    expect(err).toMatchObject({ status: 200, message: 'Scryfall: invalid JSON' });
     const broken: FetchLike = async () => new Response('{}', { status: 500 });
     await expect(new ScryfallClient({ fetch: broken, limiter: unlimited() }).loadSet('m19')).rejects.toMatchObject({ status: 500 });
   });

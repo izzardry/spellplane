@@ -49,8 +49,8 @@ export function parseCardLine(text: string): Omit<DeckEntry, 'section' | 'line'>
     return /^\d/.test(text) ? 'Expected "<count> <card name>" with a card name after the count' : 'Expected "<count> <card name>", e.g. "4 Lightning Bolt"';
   }
   const count = Number(m[1]);
-  if (!Number.isSafeInteger(count) || count < 1) return 'The count must be at least 1';
-  if (count > MAX_LINE_COUNT) return `The count must be at most ${MAX_LINE_COUNT}`;
+  if (count > MAX_LINE_COUNT || !Number.isSafeInteger(count)) return `The count must be at most ${MAX_LINE_COUNT}`;
+  if (count < 1) return 'The count must be at least 1';
   const name = m[2]!.replace(/\s+/g, ' ').trim();
   if (!/[\p{L}\p{N}]/u.test(name)) return 'Missing card name';
   const entry: Omit<DeckEntry, 'section' | 'line'> = { count, name };

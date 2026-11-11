@@ -100,7 +100,13 @@ export class ScryfallClient {
       }
       if (res.status === 404) return null;
       if (!res.ok) throw new ScryfallError(`Scryfall ${res.status}`, res.status, url);
-      const body: unknown = await res.json();
+      let body: unknown;
+      try {
+        body = await res.json();
+      } catch {
+        // A proxy or captive-portal page, or a truncated body.
+        throw new ScryfallError('Scryfall: invalid JSON', res.status, url);
+      }
       if (typeof body !== 'object' || body === null) throw new ScryfallError('Scryfall: unexpected response', res.status, url);
       return body as Json;
     }

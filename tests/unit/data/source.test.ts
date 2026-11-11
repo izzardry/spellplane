@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { parseDecklist } from '../../../src/data/decklist';
 import { RateLimiter } from '../../../src/data/limiter';
 import { ScryfallClient } from '../../../src/data/scryfall';
-import { ScryfallCardDataSource } from '../../../src/data/source';
+import { MISSING_TTL_MS, ScryfallCardDataSource } from '../../../src/data/source';
 import { CARD_REFRESH_AGE_MS, IdbCardCache, MemoryCardCache } from '../../../src/store/cards';
 import { openDb } from '../../../src/store/db';
 import { FakeScryfall, fixtureDecklist, loadFixtureSet } from './fakeScryfall';
@@ -204,6 +204,47 @@ describe('card cache', () => {
     expect(await cache!.stale(now - CARD_REFRESH_AGE_MS)).toEqual([]);
   });
 
+  it('refreshStale keeps the batches that succeeded when a later batch fails', async () => {
+    const now = 1_000 * DAY;
+    const fake = new FakeScryfall();
+    let posts = 0;
+    const fetch = (input: string, init?: RequestInit) =>
+      init?.method === 'POST' && ++posts === 2 ? Promise.resolve(new Response('{}', { status: 500 })) : fake.fetch(input, init);
+    const client = new ScryfallClient({ fetch, limiter: new RateLimiter({ perWindow: 1_000_000 }) });
+    const cache = new MemoryCardCache();
+    const source = new ScryfallCardDataSource({ client, cache, now: () => now });
+    const cards = m19.slice(0, 100);
+    await cache.put(cards.map((c) => ({ id: c.id, data: c, fetchedAt: now - 40 * DAY })));
+    await expect(source.refreshStale()).rejects.toMatchObject({ status: 500 });
+    expect((await cache.stale(now - CARD_REFRESH_AGE_MS)).length).toBe(25);
+  });
+
+  it('refreshStale skips ids a background refresh is already fetching', async () => {
+    const now = 1_000 * DAY;
+    const fake = new FakeScryfall();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let posts = 0;
+    // The first POST (the background refresh of Shock) is held until refreshStale has run.
+    const fetch = async (input: string, init?: RequestInit) => {
+      if (init?.method === 'POST' && ++posts === 1) await gate;
+      return fake.fetch(input, init);
+    };
+    const client = new ScryfallClient({ fetch, limiter: new RateLimiter({ perWindow: 1_000_000 }) });
+    const cache = new MemoryCardCache();
+    const source = new ScryfallCardDataSource({ client, cache, now: () => now });
+    await cache.put([
+      { id: shock.id, data: shock, fetchedAt: now - 40 * DAY },
+      { id: angel.id, data: angel, fetchedAt: now - 40 * DAY },
+    ]);
+    await source.get(shock.id);
+    await source.refreshStale();
+    release();
+    await source.idle();
+    const ids = fake.callsTo('/cards/collection').map((c) => (c.body as { identifiers: { id: string }[] }).identifiers.map((i) => i.id));
+    expect(ids.sort()).toEqual([[angel.id], [shock.id]].sort());
+  });
+
   it('ignores a corrupt cache record and fetches the card instead', async () => {
     const { source, cache, fake } = setup({ cache: 'memory' });
     await cache!.put([{ id: shock.id, data: { nonsense: true }, fetchedAt: 1_000 * DAY }]);
@@ -217,12 +258,77 @@ describe('card cache', () => {
     expect(await source.get('00000000-0000-0000-0000-000000000000')).toBeNull();
   });
 
-  it('concurrent lookups made together share one /cards/collection request', async () => {
-    const { source, fake } = setup({ cache: null });
-    const ids = m19.slice(0, 30).map((c) => c.id);
-    const cards = await Promise.all([...ids, ...ids].map((id) => source.get(id)));
-    expect(cards.map((c) => c?.id)).toEqual([...ids, ...ids]);
+  for (const cache of ['idb', 'memory', null] as const) {
+    it(`concurrent lookups made together share one /cards/collection request (cold ${cache ?? 'no'} cache)`, async () => {
+      const { source, fake } = setup({ cache });
+      const ids = m19.slice(0, 30).map((c) => c.id);
+      const cards = await Promise.all([...ids, ...ids].map((id) => source.get(id)));
+      expect(cards.map((c) => c?.id)).toEqual([...ids, ...ids]);
+      const posts = fake.callsTo('/cards/collection');
+      expect(posts).toHaveLength(1);
+      expect((posts[0]!.body as { identifiers: unknown[] }).identifiers).toHaveLength(30);
+    });
+  }
+
+  it('concurrent lookups share one request when IndexedDB fails to open', async () => {
+    const fake = new FakeScryfall();
+    const client = new ScryfallClient({ fetch: fake.fetch, limiter: new RateLimiter({ perWindow: 1_000_000 }) });
+    const cache = new IdbCardCache(() => Promise.reject(new Error('blocked')));
+    const source = new ScryfallCardDataSource({ client, cache, now: () => 1_000 * DAY });
+    const ids = m19.slice(0, 20).map((c) => c.id);
+    expect((await Promise.all(ids.map((id) => source.get(id)))).map((c) => c?.id)).toEqual(ids);
     expect(fake.callsTo('/cards/collection')).toHaveLength(1);
+  });
+
+  it('concurrent lookups of a partly cached board fetch only the uncached cards, in one request', async () => {
+    const first = setup();
+    const cached = m19.slice(0, 10);
+    await first.source.getMany(cached.map((c) => c.id));
+    const fake = new FakeScryfall();
+    const client = new ScryfallClient({ fetch: fake.fetch, limiter: new RateLimiter({ perWindow: 1_000_000 }) });
+    const source = new ScryfallCardDataSource({ client, cache: new IdbCardCache(() => openDb(first.dbName)), now: () => 1_000 * DAY });
+    const ids = m19.slice(0, 40).map((c) => c.id);
+    expect((await Promise.all(ids.map((id) => source.get(id)))).map((c) => c?.id)).toEqual(ids);
+    const posts = fake.callsTo('/cards/collection');
+    expect(posts).toHaveLength(1);
+    expect((posts[0]!.body as { identifiers: { id: string }[] }).identifiers.map((i) => i.id)).toEqual(ids.slice(10));
+  });
+
+  it('more than 75 concurrent lookups go out in batches of 75', async () => {
+    const { source, fake } = setup();
+    const ids = m19.slice(0, 100).map((c) => c.id);
+    expect((await Promise.all(ids.map((id) => source.get(id)))).map((c) => c?.id)).toEqual(ids);
+    expect(fake.callsTo('/cards/collection').map((c) => (c.body as { identifiers: unknown[] }).identifiers.length)).toEqual([75, 25]);
+  });
+
+  it('an id Scryfall does not return is remembered as missing for a while, and refreshStale forgets it', async () => {
+    let now = 1_000 * DAY;
+    const { source, fake } = setup({ now: () => now });
+    const unknown = '00000000-0000-0000-0000-000000000000';
+    expect(await source.get(unknown)).toBeNull();
+    expect(await source.get(unknown)).toBeNull();
+    expect(await source.getMany([unknown, shock.id])).toEqual({ [shock.id]: shock });
+    expect(fake.callsTo('/cards/collection')).toHaveLength(2);
+    now += MISSING_TTL_MS;
+    expect(await source.get(unknown)).toBeNull();
+    expect(fake.callsTo('/cards/collection')).toHaveLength(3);
+    expect(await source.get(unknown)).toBeNull();
+    expect(fake.callsTo('/cards/collection')).toHaveLength(3);
+    await source.refreshStale();
+    expect(await source.get(unknown)).toBeNull();
+    expect(fake.callsTo('/cards/collection')).toHaveLength(4);
+  });
+
+  it('a failed lookup is not remembered as missing and rejects every waiting caller', async () => {
+    const fake = new FakeScryfall();
+    let down = true;
+    const fetch = (input: string, init?: RequestInit) => (down ? Promise.resolve(new Response('{}', { status: 503 })) : fake.fetch(input, init));
+    const client = new ScryfallClient({ fetch, limiter: new RateLimiter({ perWindow: 1_000_000 }) });
+    const source = new ScryfallCardDataSource({ client, cache: new MemoryCardCache(), now: () => 1_000 * DAY });
+    const results = await Promise.allSettled([source.get(shock.id), source.get(angel.id)]);
+    expect(results.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    down = false;
+    expect(await source.get(shock.id)).toEqual(shock);
   });
 
   it('getMany returns only found cards, keyed by id', async () => {

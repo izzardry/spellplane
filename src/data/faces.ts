@@ -15,8 +15,12 @@ export class CardFaceSource implements FaceSource {
     readonly mode: FaceMode = flags().faces,
   ) {}
 
+  /**
+   * "Unknown card" only when Scryfall definitely has no such card; a failed lookup (network error, 429 give-up)
+   * rejects, so the caller can ask again later instead of keeping a placeholder.
+   */
   async faceFor(ref: CardRef, faceIndex: 0 | 1, tier: ImageTier): Promise<FaceImage> {
-    const card = this.cards.peek(ref.sid) ?? (await this.cards.get(ref.sid).catch(() => null));
+    const card = this.cards.peek(ref.sid) ?? (await this.cards.get(ref.sid));
     if (!card) return { kind: 'placeholder', face: { name: 'Unknown card' } };
     if (this.mode === 'scryfall') {
       const url = imageUrl(card, faceIndex, tier);
