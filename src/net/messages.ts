@@ -85,8 +85,13 @@ export type ByeMessage = Envelope<'bye', { reason: 'leave' | 'version' | 'badSig
 
 // --- act: reliable, ordered -------------------------------------------------------------------------
 
-/** Peer to sequencer: an action already applied optimistically (DESIGN "Specification: network protocol and secrecy", Sequencing 2). `cid === action.cid`. */
-export type ProposeMessage = Envelope<'propose', { cid: string; action: Action }>;
+/**
+ * Peer to sequencer: an action already applied optimistically (DESIGN "Specification: network protocol and secrecy", Sequencing 2). `cid === action.cid`.
+ * `prev` (added by M1-P1) is the cid of the proposer's previous still-pending proposal when this one was sent, or
+ * absent/null when none was pending: the sequencer holds a proposal until `prev` is sequenced or refused, so one
+ * proposer's actions are sequenced in the order it applied them even when a proposal is lost and resent.
+ */
+export type ProposeMessage = Envelope<'propose', { cid: string; action: Action; prev?: string | null }>;
 
 /** Sequencer to all: the stamped action (DESIGN "Specification: network protocol and secrecy", Sequencing 3). Also used to resend missing seqs after a handover. */
 export type SeqMessage = Envelope<'seq', { seq: number; cid: string; action: SequencedAction }>;
