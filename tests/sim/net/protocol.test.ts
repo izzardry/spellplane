@@ -15,12 +15,12 @@ import { stream } from './scenarios';
 import { createNetEngine, HOLD_PREV_MS } from '../../../src/net/engine';
 import { boundNonce } from '../../../src/net/hello';
 import { LoopbackNetwork } from '../../../src/net/loopback';
-import { handshakeText, type SequencedAction } from '../../../src/net/messages';
+import { handshakeText, PROTOCOL_VERSION, toMessage, type SequencedAction } from '../../../src/net/messages';
 import { applySequenced } from '../../../src/net/sequencer';
 import type { Message } from '../../../src/net/transport';
 import { TEST_GAME } from '../../unit/core/helpers';
 import { fakeNetIdentity } from './fake-identity';
-import { agreed, baseTable, expectConverged, hashOf, historyWhenReached, KEY, libraryIds, makeSim, replay, ROOM, until, type Sim, type SimPeer } from './sim';
+import { agreed, baseTable, converged, expectConverged, hashOf, historyWhenReached, KEY, libraryIds, makeSim, replay, ROOM, until, type Sim, type SimPeer } from './sim';
 
 vi.mock('../../../src/net/identity', async () => (await import('./fake-identity')).fakeIdentityModule);
 
@@ -240,12 +240,91 @@ describe('gaps, catch-up and consistency', () => {
     const rand = mulberry32(8);
     await stream(sim, 120, rand, { gapMs: 60 });
     await expectConverged(sim.peers);
-    expect(c.system.some((t) => /hash mismatch/.test(t))).toBe(true);
+    // Found by the periodic hash exchange, or already when C verified its sequencer's history: the sequencer's
+    // snapshot at C's head has another state hash (review M1-P1 retry round 1).
+    expect(c.system.some((t) => /hash mismatch|state hashes differ/.test(t))).toBe(true);
     // The reload replays the tail after the snapshot; actions already reported are not reported again.
     expect([...emitted].filter(([, n]) => n > 1)).toEqual([]);
     expect(c.engine.state().seats.s2!.life).toBe(sim.peers[0]!.engine.state().seats.s2!.life);
     const log = new Set([...sim.peers[0]!.log.values()].map((a) => a.cid));
     for (const cid of c.proposed) expect(log.has(cid) !== c.rolledBack.has(cid), cid).toBe(true);
+  });
+});
+
+describe('stale answers, unnoticed forks and held proposals', () => {
+  it('a catch-up answer that fits no outstanding request is not applied, not even from the sequencer', async () => {
+    // Review M1-P1 retry round 1, finding 2: a late answer (to a request from before a claim, or from a peer this
+    // replica no longer asks) may describe a history that has since been replaced.
+    const sim = await connected({ engines: 3, seed: 10, ...DELAY });
+    const [a, b, c] = sim.peers as [SimPeer, SimPeer, SimPeer];
+    await expectConverged(sim.peers);
+    const n = c.engine.seq();
+    const late = (cid: string): SequencedAction => ({ type: 'life', by: 's1', cid, seat: 's1', delta: -5, seq: n + 1 });
+    b.transport.inner.send('ctl', toMessage({ v: PROTOCOL_VERSION, t: 'syncRes', snapshot: null, tail: [late('late-peer')] }), tid(c));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(c.engine.seq(), 'a peer’s unasked answer').toBe(n);
+    a.transport.inner.send('ctl', toMessage({ v: PROTOCOL_VERSION, t: 'syncRes', snapshot: null, tail: [late('late-seqr')] }), tid(c));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(c.engine.seq(), 'the sequencer’s unasked answer').toBe(n);
+    a.engine.propose(life(a, 'after'));
+    await expectConverged(sim.peers);
+    for (const cid of ['late-peer', 'late-seqr']) expect([...c.log.values()].some((x) => x.cid === cid), cid).toBe(false);
+    expect(c.engine.confirmedState().seats.s1!.life).toBe(20);
+  });
+
+  it('a hash mismatch from a history that diverged unnoticed proposes the own actions the sequencer lacks again', async () => {
+    // Review M1-P1 retry round 1 (hardening): C holds its own `ghost` at the seq where the sequencer has `real`, and
+    // never sees `real` there, so no fork check notices. The state hashes disagree at the next multiple of
+    // HASH_EVERY; the reload must not silently drop `ghost`, which C saw sequenced.
+    const sim = await connected({ engines: 3, seed: 9, ...DELAY });
+    const [a, , c] = sim.peers as [SimPeer, SimPeer, SimPeer];
+    // A first seq lets C verify its sequencer's history (until then it re-reads rather than applies seqs).
+    a.engine.propose(life(a, 'warm-up', 0));
+    await expectConverged(sim.peers);
+    let first = true;
+    c.transport.dropOut = (_ch, msg) => msg.t === 'propose' && (msg as unknown as { cid: string }).cid === 'ghost' && first && !(first = false);
+    c.transport.dropIn = (_ch, msg) => msg.t === 'seq' && (msg as unknown as { cid: string }).cid === 'real';
+    const n = a.engine.seq() + 1;
+    const ghost = life(c, 'ghost', -3);
+    c.engine.propose(ghost);
+    a.transport.inner.send('act', toMessage({ v: PROTOCOL_VERSION, t: 'seq', seq: n, cid: 'ghost', action: { ...ghost, seq: n } }), tid(c));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(c.acked.has('ghost')).toBe(true);
+    a.engine.propose(life(a, 'real'));
+    for (let i = 0; a.engine.seq() < Math.ceil(n / HASH_EVERY) * HASH_EVERY + 2; i++) {
+      a.engine.propose(life(a, `more-${i}`, 0));
+      await vi.advanceTimersByTimeAsync(20);
+    }
+    await expectConverged(sim.peers);
+    expect(c.system.some((t) => /hash mismatch/.test(t))).toBe(true);
+    const log = new Set([...a.log.values()].map((x) => x.cid));
+    expect(log.has('ghost'), 'ghost proposed again and sequenced').toBe(true);
+    expect(log.has('real')).toBe(true);
+    expect(c.rolledBack.size).toBe(0);
+    expect(a.engine.confirmedState().seats.s2!.life).toBe(17);
+  });
+
+  it('a proposer flooding proposals whose `prev` never comes cannot push another proposer’s held proposal out of order', async () => {
+    // Review M1-P1 retry round 1 (minor): the pool of held proposals is bounded; the flooding proposer's own oldest
+    // goes on without its prev, not someone else's.
+    const sim = await connected({ engines: 3, seed: 3, ...DELAY });
+    const [a, b, c] = sim.peers as [SimPeer, SimPeer, SimPeer];
+    let block = true;
+    c.transport.dropOut = (_ch, msg) => block && msg.t === 'propose' && (msg as unknown as { cid: string }).cid === 'first';
+    c.engine.propose(life(c, 'first', -1));
+    c.engine.propose(life(c, 'second', -2));
+    await vi.advanceTimersByTimeAsync(200);
+    for (let i = 0; i < 2_100; i++) {
+      const action = life(b, `flood-${i}`, 0);
+      b.transport.inner.send('act', toMessage({ v: PROTOCOL_VERSION, t: 'propose', cid: action.cid, action, prev: 'never' }), tid(a));
+    }
+    await vi.advanceTimersByTimeAsync(300);
+    expect(a.engine.state().seats.s2!.life, 'still held for its prev').toBe(20);
+    block = false;
+    await expectConverged(sim.peers);
+    const order = [...a.log.values()].filter((x) => x.cid === 'first' || x.cid === 'second').sort((x, y) => x.seq - y.seq).map((x) => x.cid);
+    expect(order).toEqual(['first', 'second']);
+    expect(c.rolledBack.size).toBe(0);
   });
 });
 
@@ -658,6 +737,94 @@ describe('meeting after acting alone, and reloads', () => {
       expect(p.engine.confirmedState().seats.s0!.away, `${p.peerId}: nobody is away once healed`).toBeUndefined();
       expect(p.engine.confirmedState().seats.s2!.away, `${p.peerId}: nobody is away once healed`).toBeUndefined();
     }
+  });
+
+  it.each([
+    { seed: 13, drop: 0.05 },
+    { seed: 100, drop: 0 },
+    { seed: 106, drop: 0 },
+    { seed: 133, drop: 0.05 },
+    { seed: 182, drop: 0 },
+  ])('a split that heals while followers keep acting (seed $seed): no follower stacks the new history on its old one', async ({ seed, drop }) => {
+    // Review M1-P1 retry round 1, finding 1: a stamp the sequencer made before its claim, delivered late, made a
+    // follower re-read the overlap while the sequencer was still claiming; it took that answer (the history about to
+    // be abandoned) as the verification and later stacked the adopted history on its forked copy, losing its acked
+    // actions as a "reducer bug". A claimant now answers catch-up only once it has taken over, and only the overlap
+    // read sent after the claim verifies it. Condition (the reviewer's): every peer's history when it first reaches
+    // any seq above the pre-heal heads is the final history, no hash mismatch, every acked action is in the log.
+    const start = baseTable(4);
+    const sim = await connected({ engines: 4, seed, start, ...DELAY, drop });
+    const [a, b, c, d] = sim.peers as [SimPeer, SimPeer, SimPeer, SimPeer];
+    const sideA = new Set([tid(a), tid(b)]);
+    const split = { on: true };
+    for (const p of sim.peers) {
+      const mine = sideA.has(tid(p));
+      p.transport.dropIn = (_ch, _msg, from) => split.on && sideA.has(from) !== mine;
+    }
+    await until(() => c.engine.isSequencing() && agreed([c, d]) && agreed([a, b]), 6 * AWAY_AFTER_MS, 'two sides');
+    for (let i = 0; i < 5; i++) {
+      b.engine.propose(life(b, `b-${i}`));
+      await vi.advanceTimersByTimeAsync(60);
+    }
+    for (let i = 0; i < 20; i++) {
+      d.engine.propose(life(d, `d-${i}`));
+      await vi.advanceTimersByTimeAsync(60);
+    }
+    await until(() => b.acked.size === 5 && d.acked.size === 20, 20_000, 'both sides sequenced');
+    const heads = Math.max(a.engine.seq(), c.engine.seq());
+    split.on = false;
+    for (let i = 0; i < 6; i++) {
+      b.engine.propose(life(b, `bx-${i}`));
+      c.engine.propose(life(c, `cx-${i}`));
+      d.engine.propose(life(d, `dx-${i}`));
+      await vi.advanceTimersByTimeAsync(150);
+    }
+    await until(() => agreed(sim.peers) && converged(sim.peers), 60_000, 'healed and converged');
+    const seqr = sim.peers.find((p) => p.engine.isSequencing())!;
+    const final = new Map([...seqr.log.values()].map((x) => [x.seq, x.cid]));
+    for (const p of sim.peers) {
+      for (const x of p.trace) {
+        if (x.seq <= heads) continue;
+        const h = historyWhenReached(p, x.seq)!;
+        for (let q = start.seq + 1; q <= x.seq; q++) expect(h.get(q)?.cid, `${p.peerId} at its first ${x.seq}, seq ${q}`).toBe(final.get(q));
+      }
+      expect(p.system.filter((t) => /mismatch/.test(t)), p.peerId).toEqual([]);
+      expect(p.rolledBack.size, p.peerId).toBe(0);
+    }
+    const all = new Set(final.values());
+    for (const p of sim.peers) for (const cid of p.acked) if (!/^peer\d/.test(cid)) expect(all.has(cid), `${p.peerId} acked ${cid}`).toBe(true);
+    const st = seqr.engine.confirmedState();
+    expect([st.seats.s0!.life, st.seats.s1!.life, st.seats.s2!.life, st.seats.s3!.life]).toEqual([20, 9, 14, -6]);
+  });
+
+  it.each([
+    { seed: 1, drop: 0.05, groups: [0, 1, 2, 2], what: 'a claimant whose checked peer rewound below its claimAck asks again' },
+    { seed: 16, drop: 0, groups: [0, 1, 1, 2], what: 'a follower drops a catch-up answer it no longer waits for' },
+  ])('a three-way split heals (seed $seed): $what', async ({ seed, drop, groups }) => {
+    // Review M1-P1 retry round 1, findings 2 and 3: {peer0}, {peer1}, {peer2, peer3} (or {peer1, peer2}, {peer3})
+    // each sequence alone, then heal. Seed 16 once applied a late answer from a former sequencer on top of a
+    // replica rewound to adopt the new one's history (a mixed confirmed state, logged as a hash mismatch); seed 1 once
+    // left peer0 claiming for ever on a claimAck its checked peer had since rewound below.
+    const n = [10, 1, 6, 3];
+    const sim = await connected({ engines: 4, seed, start: baseTable(4), ...DELAY, drop });
+    const g = new Map(sim.peers.map((p, i) => [tid(p), groups[i]!]));
+    const split = { on: true };
+    for (const p of sim.peers) p.transport.dropIn = (_ch, _msg, from) => split.on && g.get(from) !== g.get(tid(p));
+    await vi.advanceTimersByTimeAsync(4 * AWAY_AFTER_MS);
+    for (let k = 0; k < 12; k++) {
+      for (const [i, p] of sim.peers.entries()) {
+        if (k >= n[i]!) continue;
+        p.engine.propose(life(p, `x${i}-${k}`));
+        await vi.advanceTimersByTimeAsync(30);
+      }
+    }
+    await until(() => sim.peers.every((p, i) => [...p.acked].filter((cid) => cid.startsWith('x')).length === n[i]), 20_000, 'each side sequenced');
+    split.on = false;
+    await until(() => agreed(sim.peers) && converged(sim.peers), 60_000, 'convergence after the heal', 100);
+    for (const p of sim.peers) expect(p.system.filter((t) => /mismatch/.test(t)), p.peerId).toEqual([]);
+    for (const p of sim.peers) expect(p.engine.isSequencing() || p.engine.status() === 'connected', p.peerId).toBe(true);
+    const st = sim.peers[0]!.engine.confirmedState();
+    for (let i = 0; i < 4; i++) expect(st.seats[`s${i}`]!.life).toBe(20 - n[i]!);
   });
 
   it.each([

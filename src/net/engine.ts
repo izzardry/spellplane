@@ -76,6 +76,18 @@ export const OVERLAP = 64;
  * actions to detect a fork, `snapshot` asks for the other copy's snapshot.
  */
 type SyncKind = 'tail' | 'overlap' | 'snapshot';
+/** A catch-up request: to whom, when, what, and in which verification epoch (see Engine.asks). */
+interface Ask {
+  to: PeerId;
+  at: number;
+  kind: SyncKind;
+  haveSeq: number;
+  epoch: number;
+}
+/** An unanswered catch-up request is forgotten after this long (its answer, if it still comes, is dropped). */
+const STALE_ASK_MS = 4 * SYNC_RETRY_MS;
+/** Catch-up requests remembered for matching answers (see Engine.asks). */
+const KEEP_ASKS = 256;
 /** Actions the sequencer proposes as records of its own view, never re-proposed from an abandoned history. */
 const DUTY_RECORDS: ReadonlySet<string> = new Set(['away', 'sequencerClaim']);
 /** Reason of a `nack` for a proposal that was already sequenced (the proposer drops it silently). */
@@ -183,7 +195,29 @@ class Engine implements NetEngine {
   private cidCounter = 0;
   private readonly cidPrefix: string;
 
-  private sync: { to: PeerId; at: number; kind: SyncKind } | null = null;
+  /** The catch-up request this replica waits for (one at a time); `epoch` is the verification epoch it was sent in. */
+  private sync: Ask | null = null;
+  /**
+   * Catch-up requests sent and not yet answered, oldest first (forgotten after STALE_ASK_MS). syncRes carries no
+   * request id, so an answer is matched to the oldest request to its sender that it fits (a snapshot, or a tail
+   * starting right after `haveSeq`); it is used only when that is the request this replica still waits for (or an
+   * identical resend of it). Any other answer is a late one, to a request from before a claim or a change of
+   * sequencer, and may describe a history that has since been replaced: nothing of it is taken (review M1-P1 retry
+   * round 1).
+   */
+  private asks: Ask[] = [];
+  /**
+   * Bumped when this replica starts to verify its sequencer again (a change of sequencer, or a claim from the current
+   * one); only the answer to an overlap read sent in the current epoch completes the verification.
+   */
+  private verifyEpoch = 0;
+  /**
+   * While claiming: catch-up requests from peers (the latest per peer), answered once this browser has taken over
+   * (activate) and dropped if it gives the claim up. An answer during the claim would describe a history the claim may
+   * still replace (review M1-P1 retry round 1: a follower took such an answer as the verification of the sequencer's
+   * new history).
+   */
+  private readonly deferredSync = new Map<PeerId, number>();
   private gapSince: number | null = null;
   /** The peer whose snapshot replaces this replica's state (a hash mismatch, or a fork too old to rewind). */
   private forced: PeerId | null = null;
@@ -192,10 +226,11 @@ class Engine implements NetEngine {
   private lostOwn: { action: Action; oldSeq: number }[] = [];
   private initialSynced = false;
   /**
-   * Compare the overlap with the sequencer's history once it sends again (after a change of sequencer, or a claim
-   * from the current one, which may have adopted another history meanwhile): 'next' until its first `seq`, then
-   * 'waiting' for the overlap read that seq triggered. Catch-up from it re-reads the overlap, and its seqs are not
-   * applied, until the read answered.
+   * Compare the overlap with the sequencer's history once it has taken over: after a change of sequencer 'next' until
+   * its first `seq`, then 'waiting' for the overlap read that seq triggered; after a claim from the current one (which
+   * may adopt another history meanwhile) 'waiting' at once, for the overlap read sent with the claimAck, which the
+   * claimant answers once it has taken over. Catch-up from it re-reads the overlap, and its seqs are not applied, until
+   * a read of the current verification epoch that covers this replica's head answered.
    */
   private verify: 'no' | 'next' | 'waiting' = 'no';
   /**
@@ -491,10 +526,13 @@ class Engine implements NetEngine {
     this.peerMap.delete(peer);
     this.presence.forget(peer);
     if (this.sync?.to === peer) this.sync = null;
+    this.asks = this.asks.filter((a) => a.to !== peer);
+    this.deferredSync.delete(peer);
     if (this.forced === peer || this.adoptFrom === peer) {
+      // The repair source left: own actions of the abandoned part are proposed again (the sequencer drops any it
+      // already holds), not forgotten; whoever this replica follows next re-verifies its history.
       this.forced = null;
-      this.adoptFrom = null;
-      this.lostOwn = [];
+      this.requeueLost(() => true);
     }
     if (this.claimChecked === peer) this.claimChecked = null;
     this.toldHeadAt.delete(peer);
@@ -782,8 +820,19 @@ class Engine implements NetEngine {
     this.replica.clearBuffer();
     this.gapSince = null;
     this.verify = next !== null && next !== me ? 'next' : 'no';
+    this.newVerifyEpoch(next);
     // Hashes the former sequencer sent may describe a history the new one does not continue.
     this.seqrHashes.clear();
+    // A repair from another peer (left from a claim, or from following another sequencer) stops: the new sequencer's
+    // history is verified afresh, and own actions of the abandoned part are proposed to it again.
+    if (next !== me) {
+      const target = this.entryOf(next)?.[0] ?? null;
+      if (this.forced !== null && this.forced !== target) {
+        this.forced = null;
+        this.requeueLost(() => true);
+      }
+      if (this.adoptFrom !== null && this.adoptFrom !== target) this.requeueLost(() => true);
+    }
     if (next === me) {
       this.startClaim(prev);
     } else {
@@ -872,6 +921,27 @@ class Engine implements NetEngine {
     this.queued = [];
     this.clearHeld();
     this.clearDeadlines();
+    // Requests held during a claim given up are not answered from a history that may be half repaired: their
+    // senders ask again (resend, or catch-up), and are answered from whatever this replica then holds.
+    this.deferredSync.clear();
+  }
+
+  /** Answer the catch-up requests held during the claim, from the history this browser now continues. */
+  private answerDeferred(): void {
+    const list = [...this.deferredSync];
+    this.deferredSync.clear();
+    for (const [from, haveSeq] of list) if (this.peerMap.has(from)) this.onSyncReq(from, haveSeq);
+  }
+
+  /**
+   * Start a verification epoch against `sequencer` (see `verifyEpoch`): a request to it still outstanding was sent
+   * before this point, so its answer may describe the history from before its claim; this replica stops waiting for
+   * it (asks still matches its answer, which is then dropped).
+   */
+  private newVerifyEpoch(sequencer: string | null): void {
+    this.verifyEpoch++;
+    const target = this.entryOf(sequencer)?.[0];
+    if (target !== undefined && this.sync?.to === target) this.sync = null;
   }
 
   /**
@@ -952,6 +1022,8 @@ class Engine implements NetEngine {
     const queued = this.queued;
     this.queued = [];
     for (const q of queued) this.onPropose(q.from, q.msg);
+    // Requests held during the claim are answered from the history this browser now continues.
+    if (this.mode === 'active') this.answerDeferred();
     this.heartbeat();
     this.announce(this.identity.peerId);
     this.syncAwaySeats();
@@ -981,14 +1053,18 @@ class Engine implements NetEngine {
     if (this.sequencer === e.info.peerId) {
       // Our sequencer claims (again): it may adopt another history before it sequences (a split that healed), and
       // this replica may hold the abandoned part. Drop what it buffered and re-read the overlap before trusting its
-      // next seqs (decision M1-P1, review round 3).
-      this.verify = 'next';
+      // next seqs (decision M1-P1, review round 3). The read goes out at once: it reaches the claimant while it
+      // claims, and a claimant answers catch-up only once it has taken over (deferredSync), so the answer describes
+      // the history it continues; its seqs are dropped until then, since a stamp from before the claim may still
+      // arrive late (review M1-P1 retry round 1).
+      this.verify = 'waiting';
+      this.newVerifyEpoch(this.sequencer);
       this.replica.clearBuffer();
       this.gapSince = null;
       this.seqrHashes.clear();
       this.send('ctl', { v: PROTOCOL_VERSION, t: 'claimAck', lastSeq: this.replica.seq() }, from);
       this.resendPending();
-      if (m.fromSeq > this.replica.seq()) this.maybeCatchUp();
+      this.requestSync(from, 'overlap');
     } else if (this.sequencer === this.identity.peerId) {
       // Two claimants: the lower seat index wins; tell the other one, at most once per CLAIM_RETRY_MS, so two engines
       // whose states disagree cannot bounce claims back and forth.
@@ -1091,10 +1167,12 @@ class Engine implements NetEngine {
     const at = this.unhold(msg.cid)?.at ?? this.now();
     this.held.set(prev, [...(this.held.get(prev) ?? []), { from, msg, at }]);
     this.heldPrev.set(msg.cid, prev);
-    // Bounded: beyond QUEUE_LIMIT the oldest held proposal goes on without its prev.
+    // Bounded: beyond QUEUE_LIMIT the oldest proposal held for this proposer goes on without its prev, so one peer
+    // flooding proposals whose prev never comes cannot push other proposers' held proposals out of order.
     if (this.heldPrev.size > QUEUE_LIMIT) {
-      const oldest = this.heldPrev.keys().next().value!;
-      const h = this.unhold(oldest);
+      let oldest: Held | null = null;
+      for (const list of this.held.values()) for (const x of list) if (x.from === from && (!oldest || x.at < oldest.at)) oldest = x;
+      const h = this.unhold(oldest?.msg.cid ?? this.heldPrev.keys().next().value!);
       if (h) this.onPropose(h.from, h.msg, true);
     }
   }
@@ -1155,10 +1233,6 @@ class Engine implements NetEngine {
       return;
     }
     this.heardSequencer = true;
-    if (this.verify === 'next' && (this.forced !== null || this.adoptFrom !== null)) {
-      // An authoritative fetch from the sequencer is already under way (a fork being repaired, a snapshot reload).
-      this.verify = 'no';
-    }
     if (this.verify !== 'no') {
       // The sequencer sends, so it has taken over (it may have adopted another history meanwhile). Its seqs are not
       // applied on top of a copy that may hold an abandoned part: the overlap read checks this replica's recent
@@ -1198,8 +1272,19 @@ class Engine implements NetEngine {
   private requestSync(to: PeerId, kind: SyncKind): void {
     const seq = this.replica.seq();
     const theirs = this.peerMap.get(to)?.info.lastSeq ?? seq;
-    const haveSeq = kind === 'snapshot' || seq === 0 ? 0 : kind === 'overlap' ? Math.max(1, Math.min(seq, theirs) - OVERLAP) : seq;
-    this.sync = { to, at: this.now(), kind: haveSeq === 0 ? 'snapshot' : kind };
+    let haveSeq = kind === 'snapshot' || seq === 0 ? 0 : kind === 'overlap' ? Math.max(1, Math.min(seq, theirs) - OVERLAP) : seq;
+    // An overlap read re-reads at least this replica's head (else a snapshot).
+    if (kind === 'overlap' && haveSeq >= seq) haveSeq = 0;
+    // A verification read whose answer could be taken for the late answer of a request from an earlier epoch re-reads
+    // a little more instead (down to a snapshot).
+    if (this.verify !== 'no' && kind === 'overlap') {
+      const stale = new Set(this.asks.filter((a) => a.to === to && a.epoch !== this.verifyEpoch).map((a) => a.haveSeq));
+      while (haveSeq > 0 && stale.has(haveSeq)) haveSeq--;
+    }
+    const ask: Ask = { to, at: this.now(), kind: haveSeq === 0 ? 'snapshot' : kind, haveSeq, epoch: this.verifyEpoch };
+    this.sync = ask;
+    this.asks.push(ask);
+    if (this.asks.length > KEEP_ASKS) this.asks.shift();
     this.send('ctl', { v: PROTOCOL_VERSION, t: 'syncReq', haveSeq }, to);
     this.updateStatus();
   }
@@ -1234,6 +1319,12 @@ class Engine implements NetEngine {
   }
 
   private onSyncReq(from: PeerId, haveSeq: number): void {
+    if (this.mode === 'claiming') {
+      // Answered once the claim is over (deferredSync). Another claimant never waits for this: a claim completes
+      // only when every connected peer acknowledged it, which a rival claimant does not.
+      this.deferredSync.set(from, haveSeq);
+      return;
+    }
     const seq = this.replica.seq();
     let res: SyncResMessage;
     const tail = haveSeq === 0 || seq - haveSeq > SYNC_TAIL_LIMIT ? null : this.replica.tail(haveSeq);
@@ -1247,38 +1338,58 @@ class Engine implements NetEngine {
   }
 
   private onSyncRes(from: PeerId, e: PeerEntry, m: SyncResMessage): void {
-    const asked = this.sync?.to === from ? this.sync : null;
-    if (asked) this.sync = null;
+    // Match the answer to a request (see `asks`); a late answer is dropped.
+    const now = this.now();
+    this.asks = this.asks.filter((a) => now - a.at < STALE_ASK_MS);
+    const i = this.asks.findIndex((a) => a.to === from && (m.snapshot !== null || m.tail.length === 0 || m.tail[0]!.seq === a.haveSeq + 1));
+    if (i < 0) return;
+    const answered = this.asks[i]!;
+    this.asks.splice(i, 1);
+    const asked = this.sync;
+    if (asked === null || asked.to !== from || asked.epoch !== answered.epoch || asked.kind !== answered.kind || asked.haveSeq !== answered.haveSeq) return;
+    if (answered !== asked) this.asks = this.asks.filter((a) => a !== asked);
+    this.sync = null;
     const fromSequencer = e.info.peerId === this.sequencer && this.mode !== 'active' && this.mode !== 'claiming';
     // A claimant takes over the history of the peer it asked; a follower that of its sequencer.
-    const authoritative = fromSequencer || (this.mode === 'claiming' && asked !== null);
+    const authoritative = fromSequencer || this.mode === 'claiming';
     if (fromSequencer) {
       this.initialSynced = true;
       this.markReconciled();
     }
     const adopting = this.adoptFrom === from;
     const seq = this.replica.seq();
-    // The sequencer's answer re-read this replica's recent history (a snapshot, or a tail from at or before its head):
-    // the fork check below has run against the sequencer's history once it took over.
-    if (fromSequencer && this.verify === 'waiting' && (m.snapshot !== null || (m.tail[0]?.seq ?? Infinity) <= seq)) this.verify = 'no';
-    if (m.snapshot) {
-      const forced = this.forced === from;
-      const fresh = asked?.kind === 'snapshot' && seq === 0 && authoritative;
-      if (forced || fresh || m.snapshot.seq > seq) {
-        this.replica.clearBuffer();
-        this.replica.load(m.snapshot, m.tail);
-        this.myHashes.clear();
-        this.forced = null;
-        // Own actions of an abandoned history after the snapshot that its tail does not hold are proposed again;
-        // older ones may be inside the snapshot, where their cids cannot be told apart, so they are not.
-        if (forced || adopting) this.requeueLost((x) => x.oldSeq > m.snapshot!.seq);
-        if (this.mode === 'claiming' && asked) this.claimChecked = from;
-        this.afterChange();
-        this.checkClaim();
-        this.maybeCatchUp();
-        this.updateStatus();
+    // Verification: the sequencer's answer to the overlap read of the current epoch (an earlier request's answer may
+    // predate its claim) re-read this replica's history up to its head: a snapshot loaded in place of this replica's
+    // state, one at exactly its head (the states are compared), or a tail that starts at or before the head and
+    // reaches it (the fork check below compares it). An answer that ends below the head (the sequencer holds less, for
+    // now) verifies nothing about the rest: the replica keeps waiting (onSeq tells a sequencer behind it its head, and
+    // it claims again).
+    const verifying = fromSequencer && this.verify === 'waiting' && asked.epoch === this.verifyEpoch && asked.kind !== 'tail';
+    const loads = m.snapshot !== null && (this.forced === from || (asked.kind === 'snapshot' && seq === 0 && authoritative) || m.snapshot.seq > seq);
+    if (verifying && !loads && m.snapshot !== null && m.snapshot.seq === seq) {
+      this.verify = 'no';
+      if (sha256Sync(canonicalJson(m.snapshot.state)) !== sha256Sync(canonicalJson(this.replica.confirmed()))) {
+        this.resyncState(from, `History diverged at or before seq ${seq} (state hashes differ)`);
         return;
       }
+    } else if (verifying && (loads || ((m.tail[0]?.seq ?? Infinity) <= seq && (m.tail.at(-1)?.seq ?? -1) >= seq))) {
+      this.verify = 'no';
+    }
+    if (m.snapshot && loads) {
+      const forced = this.forced === from;
+      this.replica.clearBuffer();
+      this.replica.load(m.snapshot, m.tail);
+      this.myHashes.clear();
+      this.forced = null;
+      // Own actions of an abandoned history after the snapshot that its tail does not hold are proposed again;
+      // older ones may be inside the snapshot, where their cids cannot be told apart, so they are not.
+      if (forced || adopting) this.requeueLost((x) => x.oldSeq > m.snapshot!.seq);
+      if (this.mode === 'claiming') this.claimChecked = from;
+      this.afterChange();
+      this.checkClaim();
+      this.maybeCatchUp();
+      this.updateStatus();
+      return;
     }
     if (this.forced === from) {
       // Asked for a snapshot and got none to load; ask again.
@@ -1295,7 +1406,14 @@ class Engine implements NetEngine {
       this.replica.receive(a);
     }
     if (adopting) this.requeueLost(() => true);
-    if (this.mode === 'claiming' && asked && (asked.kind === 'overlap' || adopting)) this.claimChecked = from;
+    if (this.mode === 'claiming' && (asked.kind === 'overlap' || adopting)) this.claimChecked = from;
+    if (this.mode === 'claiming' && asked.kind === 'tail' && e.claimAck !== null && (m.tail.at(-1)?.seq ?? this.replica.seq()) < e.claimAck) {
+      // A tail always runs to the answering peer's head: this peer went back below the seq it acknowledged (it
+      // rewound to adopt another history meanwhile). Its claimAck is stale; ask it again rather than waiting for ever
+      // for seqs it no longer holds (review M1-P1 retry round 1).
+      e.claimAck = null;
+      this.send('ctl', { v: PROTOCOL_VERSION, t: 'claim', fromSeq: this.replica.seq(), seat: this.seat() ?? '' }, from);
+    }
     this.afterChange();
     this.checkClaim();
     this.maybeCatchUp();
@@ -1309,15 +1427,19 @@ class Engine implements NetEngine {
    * (DESIGN: no acknowledged action is lost; the abandoned part was acknowledged by no one else).
    */
   private adopt(to: PeerId, forkSeq: number, why: string): void {
-    if (this.mode === 'active' || !this.peerMap.has(to) || this.adoptFrom === to || this.forced === to) return;
+    // A fork found again from the source this replica already adopts from lies at or below the point it rewound to
+    // (an older fork the first one hid): it rewinds further (review M1-P1 retry round 1).
+    if (this.mode === 'active' || !this.peerMap.has(to) || this.forced === to) return;
     this.system('warn', `${why}: taking over the sequencer's history from there.`);
     if (this.mode === 'claiming') this.noteRival(this.peerMap.get(to)?.info.peerId);
     const abandoned = this.replica.tail(forkSeq - 1) ?? [];
     // The sequencer's own records of its view at the time (`away`, `sequencerClaim`) are not proposed again: they
-    // described the abandoned history, and the sequencer derives them afresh once it is active.
-    this.lostOwn = abandoned
-      .filter((a) => this.ownCids.has(a.cid) && !DUTY_RECORDS.has(a.type))
-      .map(({ seq, ...rest }) => ({ action: rest as Action, oldSeq: seq }));
+    // described the abandoned history, and the sequencer derives them afresh once it is active. Own actions of an
+    // earlier abandoned part still waiting (another fork found before this one was repaired) are kept, oldest first.
+    this.lostOwn = this.mergeLost(
+      this.lostOwn,
+      abandoned.filter((a) => this.ownCids.has(a.cid) && !DUTY_RECORDS.has(a.type)).map(({ seq, ...rest }) => ({ action: rest as Action, oldSeq: seq })),
+    );
     this.adoptFrom = to;
     // Own hashes from the fork point on describe the abandoned history: the sequencer's hash of such a seq may arrive
     // before this replica re-applies it from the adopted history, and must not be compared with them.
@@ -1330,6 +1452,12 @@ class Engine implements NetEngine {
       this.requestSync(to, 'snapshot');
     }
     this.afterChange();
+  }
+
+  /** Own actions of abandoned history parts: `a` first, then those of `b` not in it. */
+  private mergeLost(a: readonly { action: Action; oldSeq: number }[], b: readonly { action: Action; oldSeq: number }[]): { action: Action; oldSeq: number }[] {
+    const seen = new Set(a.map((x) => x.action.cid));
+    return [...a, ...b.filter((x) => !seen.has(x.action.cid))];
   }
 
   /** After adopting another history: propose again the abandoned own actions it lacks (and `keep` allows). */
@@ -1345,6 +1473,13 @@ class Engine implements NetEngine {
   private resyncState(to: PeerId, why: string): void {
     if (this.mode === 'active' || !this.peerMap.has(to) || this.forced === to) return;
     this.system('warn', `${why}: resyncing from the sequencer's snapshot.`);
+    // The mismatch may come from a history that diverged unnoticed: own actions of the retained tail that the
+    // sequencer's snapshot tail lacks are proposed again once it is loaded (requeueLost filters those it holds).
+    const retained = this.replica.forget(0);
+    this.lostOwn = this.mergeLost(
+      this.lostOwn,
+      retained.filter((a) => this.ownCids.has(a.cid) && !DUTY_RECORDS.has(a.type)).map(({ seq, ...rest }) => ({ action: rest as Action, oldSeq: seq })),
+    );
     this.forced = to;
     this.replica.clearBuffer();
     this.requestSync(to, 'snapshot');
