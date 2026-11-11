@@ -15,7 +15,7 @@ describe('fixture decklists', () => {
       [2, 'Revitalize'],
       [1, 'Gigantosaurus'],
     ]);
-    expect(list.main[0]).toEqual({ count: 12, name: 'Forest', section: 'main', line: 2 });
+    expect(list.main[0]).toEqual({ count: 12, name: 'Forest', section: 'main', line: 2, text: '12 Forest' });
     expect(list.main[4]).toMatchObject({ count: 3, name: 'Daybreak Chaplain', line: 6 });
     expect(list.main.find((e) => e.name === "Ajani's Pridemate")).toBeDefined();
     expect(list.side[0]!.line).toBe(21);
@@ -39,6 +39,7 @@ describe('fixture decklists', () => {
       collectorNumber: '218',
       section: 'main',
       line: 14,
+      text: '1 Nicol Bolas, the Ravager (M19) 218',
     });
     expect(list.side.map((e) => e.name)).toEqual(['Sift', 'Tormenting Voice']);
   });
@@ -47,10 +48,10 @@ describe('fixture decklists', () => {
     const { list, errors } = parseDecklist(fixtureDecklist('mixed-40.mtgo.txt'));
     expect(errors).toEqual([]);
     expect(sectionCount(list.main)).toBe(40);
-    expect(list.main.find((e) => e.name === 'Llanowar Elves')).toEqual({ count: 2, name: 'Llanowar Elves', section: 'main', line: 4 });
+    expect(list.main.find((e) => e.name === 'Llanowar Elves')).toEqual({ count: 2, name: 'Llanowar Elves', section: 'main', line: 4, text: '2x Llanowar Elves' });
     expect(list.side).toEqual([
-      { count: 1, name: 'Tormenting Voice', section: 'side', line: 16 },
-      { count: 1, name: 'Not A Real Card Name', section: 'side', line: 17 },
+      { count: 1, name: 'Tormenting Voice', section: 'side', line: 16, text: 'SB: 1 Tormenting Voice' },
+      { count: 1, name: 'Not A Real Card Name', section: 'side', line: 17, text: 'SB: 1 Not A Real Card Name' },
     ]);
   });
 });
@@ -98,6 +99,27 @@ describe('grammar', () => {
     expect(list.side.map((e) => e.name)).toEqual(['Sift']);
   });
 
+  it('a blank line ends a commander or companion block: back to the main deck, or the sideboard once main has cards', () => {
+    const { list } = parseDecklist('Commander\n1 Nicol Bolas, the Ravager\n\n4 Shock\n4 Cancel\n\n2 Sift');
+    expect(list.commander.map((e) => e.name)).toEqual(['Nicol Bolas, the Ravager']);
+    expect(list.main.map((e) => e.name)).toEqual(['Shock', 'Cancel']);
+    expect(list.side.map((e) => e.name)).toEqual(['Sift']);
+    const later = parseDecklist('4 Shock\nCompanion\n1 Skyscanner\n\n2 Sift').list;
+    expect(later.main.map((e) => e.name)).toEqual(['Shock']);
+    expect(later.companion.map((e) => e.name)).toEqual(['Skyscanner']);
+    expect(later.side.map((e) => e.name)).toEqual(['Sift']);
+    // A blank line straight after the header (before any card) does not end the block.
+    const gap = parseDecklist('Commander\n\n1 Nicol Bolas, the Ravager\n\n4 Shock').list;
+    expect(gap.commander.map((e) => e.name)).toEqual(['Nicol Bolas, the Ravager']);
+    expect(gap.main.map((e) => e.name)).toEqual(['Shock']);
+  });
+
+  it('keeps each entry\'s source line as pasted', () => {
+    const { list } = parseDecklist('  2x Foo (abc) 12\nSB: 1 Bar');
+    expect(list.main[0]!.text).toBe('  2x Foo (abc) 12');
+    expect(list.side[0]!.text).toBe('SB: 1 Bar');
+  });
+
   it('a Deck header after the sideboard returns to the main deck', () => {
     const { list } = parseDecklist('4 Shock\n\n2 Sift\nDeck\n4 Cancel');
     expect(list.main.map((e) => e.name)).toEqual(['Shock', 'Cancel']);
@@ -117,15 +139,15 @@ describe('grammar', () => {
     const { list } = parseDecklist('1 Island (m19) 268\n1 Forest (M21) 273a\n1 Some Card (Showcase)\n1 Fire // Ice');
     expect(list.main[0]).toMatchObject({ name: 'Island', set: 'm19', collectorNumber: '268' });
     expect(list.main[1]).toMatchObject({ name: 'Forest', set: 'm21', collectorNumber: '273a' });
-    expect(list.main[2]).toEqual({ count: 1, name: 'Some Card (Showcase)', section: 'main', line: 3 });
+    expect(list.main[2]).toEqual({ count: 1, name: 'Some Card (Showcase)', section: 'main', line: 3, text: '1 Some Card (Showcase)' });
     expect(list.main[3]!.name).toBe('Fire // Ice');
   });
 
   it('a set code without a collector number pins the set only', () => {
     const { list, errors } = parseDecklist('4 Shock (M19)\n2 Island (M20)');
     expect(errors).toEqual([]);
-    expect(list.main[0]).toEqual({ count: 4, name: 'Shock', set: 'm19', section: 'main', line: 1 });
-    expect(list.main[1]).toEqual({ count: 2, name: 'Island', set: 'm20', section: 'main', line: 2 });
+    expect(list.main[0]).toEqual({ count: 4, name: 'Shock', set: 'm19', section: 'main', line: 1, text: '4 Shock (M19)' });
+    expect(list.main[1]).toEqual({ count: 2, name: 'Island', set: 'm20', section: 'main', line: 2, text: '2 Island (M20)' });
   });
 
   it('handles CRLF line endings, a BOM, tabs and surrounding spaces', () => {

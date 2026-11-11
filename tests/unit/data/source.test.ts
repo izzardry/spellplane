@@ -60,7 +60,7 @@ describe('resolveDeck', () => {
     expect(deck.main).toHaveLength(40);
     expect(deck.side.map((r) => deck.cards[r.sid]!.name)).toEqual(['Tormenting Voice']);
     expect(deck.errors).toHaveLength(1);
-    expect(deck.errors[0]).toMatchObject({ line: 17, kind: 'unresolved', text: '1 Not A Real Card Name' });
+    expect(deck.errors[0]).toMatchObject({ line: 17, kind: 'unresolved', text: 'SB: 1 Not A Real Card Name' });
     expect(deck.errors[0]!.message).toContain('Not A Real Card Name');
   });
 
@@ -72,6 +72,30 @@ describe('resolveDeck', () => {
       [2, 'Llanowar Elves'],
       [3, 'Gigantosaurus'],
     ]);
+  });
+
+  it('reports an unresolved line with the text as pasted', async () => {
+    const { source } = setup();
+    const deck = await source.resolveDeck(parseDecklist('4 Shock\n2x Foo Bar Baz (abc) 12').list);
+    expect(deck.errors.map((e) => [e.line, e.text])).toEqual([[2, '2x Foo Bar Baz (abc) 12']]);
+  });
+
+  it('a set and number that is a different card is not accepted: the named card is resolved by name', async () => {
+    const { source } = setup();
+    const bolas = m19.find((c) => c.collector_number === '218')!;
+    expect(bolas.name).not.toBe('Shock');
+    const deck = await source.resolveDeck(parseDecklist('4 Shock (M19) 218\n1 Nicol Bolas, the Ravager (M19) 218').list);
+    expect(deck.errors).toEqual([]);
+    expect(deck.main).toEqual([...Array(4).fill({ sid: shock.id }), { sid: bolas.id }]);
+  });
+
+  it('a set and number that is a different card, with a name Scryfall does not know, is reported, not replaced', async () => {
+    const { source } = setup();
+    const deck = await source.resolveDeck(parseDecklist('4 Not A Real Card Name (M19) 218').list);
+    expect(deck.main).toEqual([]);
+    expect(deck.cards).toEqual({});
+    expect(deck.errors).toHaveLength(1);
+    expect(deck.errors[0]).toMatchObject({ line: 1, kind: 'unresolved', text: '4 Not A Real Card Name (M19) 218' });
   });
 
   it('an unknown set and number falls back to the name', async () => {

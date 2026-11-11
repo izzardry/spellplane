@@ -88,7 +88,11 @@ export class ScryfallClient {
    */
   async request(url: string, init?: RequestInit): Promise<Json | null> {
     for (let attempt = 1; ; attempt++) {
-      const res = await this.limiter.schedule(() => this.fetchFn(url, { ...init, headers: { Accept: 'application/json', ...(init?.headers ?? {}) } }));
+      // A retry after a 429 goes to the front of the queue so it keeps its place ahead of later requests.
+      const res = await this.limiter.schedule(
+        () => this.fetchFn(url, { ...init, headers: { Accept: 'application/json', ...(init?.headers ?? {}) } }),
+        { front: attempt > 1 },
+      );
       if (res.status === 429) {
         this.limiter.backOff();
         if (attempt >= MAX_ATTEMPTS) throw new ScryfallError('Scryfall rate limit (429)', 429, url);

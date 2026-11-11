@@ -15,6 +15,10 @@ export interface ImageUris {
 /** One face of a multi-faced card (DESIGN "Specification: card data, packs and draft formats": card_faces with the same fields per face). */
 export interface CardFaceData {
   name: string;
+  /** Per-face fields Scryfall sets only on some layouts (e.g. `reversible_card`); added by M0-P2, additive. */
+  oracle_id?: string;
+  layout?: string;
+  cmc?: number;
   mana_cost?: string;
   type_line?: string;
   oracle_text?: string;
@@ -112,6 +116,8 @@ export interface DeckEntry {
   section: DeckSection;
   /** 1-based source line. */
   line: number;
+  /** The source line as pasted, for error reports (added by M0-P2, additive). */
+  text?: string;
 }
 
 /** A parsed decklist (DESIGN "Specification: card data, packs and draft formats"). */

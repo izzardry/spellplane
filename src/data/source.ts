@@ -10,7 +10,7 @@ import type { CardRef, ScryfallId } from '../core/types';
 import { CARD_REFRESH_AGE_MS, createCardCache } from '../store/cards';
 import type { CardCache } from '../store/types';
 import { relatedTokenIds, trimCard } from './cards';
-import { allEntries, nearMatches } from './decklist';
+import { allEntries, nearMatches, normaliseName } from './decklist';
 import { identifierKey, ScryfallClient, type CardIdentifier } from './scryfall';
 import type { CardData, CardDataSource, DeckEntry, DeckList, ParseError, ResolvedDeck } from './types';
 
@@ -25,7 +25,19 @@ export interface CardDataSourceOptions {
   refreshAgeMs?: number;
 }
 
+/**
+ * Whether a card is the one a decklist line names: its full name, one of its faces' names or a ` // ` part, compared
+ * normalised. A set and collector number from an export can point at a different card (Arena-only or promo numbers).
+ */
+export function namesCard(card: CardData, name: string): boolean {
+  const n = normaliseName(name);
+  if (!n) return false;
+  const names = [card.name, ...card.name.split(' // '), ...(card.card_faces ?? []).map((f) => f.name)];
+  return names.some((c) => normaliseName(c) === n);
+}
+
 function entryText(e: DeckEntry): string {
+  if (e.text !== undefined) return e.text;
   const suffix = e.set ? ` (${e.set.toUpperCase()})${e.collectorNumber ? ` ${e.collectorNumber}` : ''}` : '';
   return `${e.count} ${e.name}${suffix}`;
 }
@@ -118,15 +130,19 @@ export class ScryfallCardDataSource implements CardDataSource {
     for (const e of entries) byKey.set(identifierKey(entryIdentifier(e)), entryIdentifier(e));
     const resolved = new Map<string, CardData>();
     await this.lookup([...byKey.values()], resolved);
-    // A set (and collector number) Scryfall does not know falls back to the name alone.
+    // The printing a line pins counts only if it is the card the line names.
+    const pinned = (e: DeckEntry): CardData | undefined => {
+      const c = resolved.get(identifierKey(entryIdentifier(e)));
+      return c && namesCard(c, e.name) ? c : undefined;
+    };
+    // A set (and collector number) Scryfall does not know, or one that is another card, falls back to the name alone.
     const fallback = new Map<string, CardIdentifier>();
     for (const e of entries) {
-      if (!resolved.has(identifierKey(entryIdentifier(e))) && e.set) fallback.set(identifierKey({ name: e.name }), { name: e.name });
+      if (e.set && !pinned(e)) fallback.set(identifierKey({ name: e.name }), { name: e.name });
     }
     if (fallback.size > 0) await this.lookup([...fallback.values()], resolved);
 
-    const cardFor = (e: DeckEntry): CardData | undefined =>
-      resolved.get(identifierKey(entryIdentifier(e))) ?? resolved.get(identifierKey({ name: e.name }));
+    const cardFor = (e: DeckEntry): CardData | undefined => pinned(e) ?? resolved.get(identifierKey({ name: e.name }));
     const cards: Record<ScryfallId, CardData> = {};
     const unresolved: DeckEntry[] = [];
     const refs = (section: DeckEntry[]): CardRef[] => {

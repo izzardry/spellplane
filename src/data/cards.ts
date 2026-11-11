@@ -30,10 +30,16 @@ export const STORED_CARD_FIELDS = [
   'artist',
 ] as const;
 
-/** The fields kept per entry of `card_faces` ("with the same fields per face", as far as Scryfall has them on faces). */
+/**
+ * The fields kept per entry of `card_faces` ("with the same fields per face"): the stored fields Scryfall can put on a
+ * face. `oracle_id`, `layout` and `cmc` appear on faces of `reversible_card` only, and are kept when present.
+ */
 export const STORED_FACE_FIELDS = [
+  'oracle_id',
   'name',
+  'layout',
   'mana_cost',
+  'cmc',
   'type_line',
   'oracle_text',
   'colors',
@@ -69,7 +75,10 @@ function trimFace(v: unknown): CardFaceData | null {
   const name = str(v.name);
   if (name === undefined) return null;
   const face: CardFaceData = { name };
+  setIf(face, 'oracle_id', str(v.oracle_id));
+  setIf(face, 'layout', str(v.layout));
   setIf(face, 'mana_cost', str(v.mana_cost));
+  if (typeof v.cmc === 'number' && Number.isFinite(v.cmc)) face.cmc = v.cmc;
   setIf(face, 'type_line', str(v.type_line));
   setIf(face, 'oracle_text', str(v.oracle_text));
   setIf(face, 'colors', strArr(v.colors));
@@ -78,7 +87,10 @@ function trimFace(v: unknown): CardFaceData | null {
   setIf(face, 'loyalty', str(v.loyalty));
   setIf(face, 'image_uris', trimImageUris(v.image_uris));
   setIf(face, 'artist', str(v.artist));
-  return face;
+  // Key order follows STORED_FACE_FIELDS so records compare and serialise stably.
+  const ordered: Obj = {};
+  for (const k of STORED_FACE_FIELDS) if ((face as unknown as Obj)[k] !== undefined) ordered[k] = (face as unknown as Obj)[k];
+  return ordered as unknown as CardFaceData;
 }
 
 function trimPart(v: unknown): RelatedCard | null {

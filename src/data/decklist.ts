@@ -5,7 +5,8 @@
  *   line     = <count>[x] <name> [(<SET>) <collector number>]
  *   SB: line = a sideboard card
  *   headers  = Deck | Sideboard | Commander | Companion   (switch section)
- *   blank    = after the main deck, starts the sideboard
+ *   blank    = after the main deck, starts the sideboard; after a commander or companion block, ends it (back to
+ *              the main deck, or to the sideboard if the main deck already has cards)
  *   comments = lines starting with // or #
  *
  * Bad lines are reported with their 1-based line number and never stop the rest of the list from parsing.
@@ -63,6 +64,8 @@ export function parseDecklist(text: string): ParseResult {
   const list = emptyDeckList();
   const errors: ParseError[] = [];
   let section: DeckSection | 'about' = 'main';
+  /** Whether a card line was read since the last header (a blank line ends a commander or companion block). */
+  let sectionHasCards = false;
   const lines = text.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
   lines.forEach((raw, i) => {
     const line = i + 1;
@@ -71,12 +74,17 @@ export function parseDecklist(text: string): ParseResult {
       // A blank line after the main deck starts the sideboard; it ends an "About" block too.
       if (section === 'about') section = 'main';
       else if (section === 'main' && list.main.length > 0) section = 'side';
+      else if ((section === 'commander' || section === 'companion') && sectionHasCards) {
+        section = list.main.length > 0 ? 'side' : 'main';
+        sectionHasCards = false;
+      }
       return;
     }
     if (t.startsWith('//') || t.startsWith('#')) return;
     const h = header(t);
     if (h) {
       section = h;
+      sectionHasCards = false;
       return;
     }
     if (section === 'about') return;
@@ -92,7 +100,8 @@ export function parseDecklist(text: string): ParseResult {
       errors.push(syntaxError(line, raw, parsed));
       return;
     }
-    list[target].push({ ...parsed, section: target, line });
+    list[target].push({ ...parsed, section: target, line, text: raw });
+    sectionHasCards = true;
   });
   return { list, errors };
 }

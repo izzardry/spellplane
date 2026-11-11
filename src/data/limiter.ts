@@ -3,7 +3,9 @@
  * at most 2 requests per second across all calls, and a 30 s pause after a 429.
  *
  * The rate is a sliding window: a request may start only if fewer than `perWindow` requests started in the last
- * `windowMs`. Requests start in the order they were scheduled.
+ * `windowMs`. Requests start in the order they were scheduled, except retries scheduled with `{ front: true }`, which
+ * go ahead of the queue (a request that hit a 429 keeps its place instead of waiting behind later requests).
+ * Time comes from a monotonic clock, so a system clock change cannot stretch the window or the lock-out.
  */
 
 /** Requests allowed per window (DESIGN: 2 requests/s). */
@@ -15,8 +17,13 @@ export interface LimiterOptions {
   perWindow?: number;
   windowMs?: number;
   backoffMs?: number;
-  /** Clock in ms; defaults to Date.now (faked by Vitest fake timers). */
+  /** Monotonic clock in ms; defaults to performance.now (faked by Vitest fake timers). */
   now?: () => number;
+}
+
+export interface ScheduleOptions {
+  /** Put the task at the front of the queue (for retries), so it starts before requests scheduled after it. */
+  front?: boolean;
 }
 
 interface Pending {
@@ -38,13 +45,13 @@ export class RateLimiter {
     this.perWindow = opts.perWindow ?? SCRYFALL_REQUESTS_PER_SECOND;
     this.windowMs = opts.windowMs ?? 1000;
     this.backoffMs = opts.backoffMs ?? SCRYFALL_BACKOFF_MS;
-    this.now = opts.now ?? (() => Date.now());
+    this.now = opts.now ?? (() => performance.now());
   }
 
   /** Runs `task` once a slot is free; the slot is taken when the task starts. */
-  schedule<T>(task: () => Promise<T>): Promise<T> {
+  schedule<T>(task: () => Promise<T>, opts: ScheduleOptions = {}): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      this.queue.push({
+      const pending: Pending = {
         run: () => {
           let p: Promise<T>;
           try {
@@ -54,7 +61,9 @@ export class RateLimiter {
           }
           p.then(resolve, reject);
         },
-      });
+      };
+      if (opts.front) this.queue.unshift(pending);
+      else this.queue.push(pending);
       this.pump();
     });
   }

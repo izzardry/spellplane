@@ -53,6 +53,47 @@ describe('trimCard', () => {
     expect(card).toEqual(bolas);
   });
 
+  it('keeps oracle_id, layout and cmc on faces when Scryfall puts them there (reversible_card)', () => {
+    const img = (n: string) => ({ small: `s${n}`, normal: `n${n}`, large: `l${n}`, png: 'dropped' });
+    const face = (n: string) => ({
+      object: 'card_face',
+      oracle_id: `oracle-${n}`,
+      name: 'Zndrsplt, Eye of Wisdom',
+      layout: 'normal',
+      mana_cost: '{4}{U}',
+      cmc: 5,
+      type_line: 'Legendary Creature — Homunculus',
+      oracle_text: 'Text',
+      colors: ['U'],
+      power: '1',
+      toughness: '4',
+      image_uris: img(n),
+      artist: 'Someone',
+      illustration_id: 'dropped',
+    });
+    const card = trimCard({ object: 'card', id: 'rev-1', name: 'Zndrsplt, Eye of Wisdom // Zndrsplt, Eye of Wisdom', set: 'sld', collector_number: '379', layout: 'reversible_card', card_faces: [face('a'), face('b')] })!;
+    expect(card.oracle_id).toBeUndefined();
+    expect(card.card_faces).toHaveLength(2);
+    expect(card.card_faces![0]).toEqual({
+      oracle_id: 'oracle-a',
+      name: 'Zndrsplt, Eye of Wisdom',
+      layout: 'normal',
+      mana_cost: '{4}{U}',
+      cmc: 5,
+      type_line: 'Legendary Creature — Homunculus',
+      oracle_text: 'Text',
+      colors: ['U'],
+      power: '1',
+      toughness: '4',
+      image_uris: { small: 'sa', normal: 'na', large: 'la' },
+      artist: 'Someone',
+    });
+    expect(Object.keys(card.card_faces![0]!)).toEqual(STORED_FACE_FIELDS.filter((k) => k !== 'loyalty'));
+    expect(card.card_faces![1]!.oracle_id).toBe('oracle-b');
+    // A malformed per-face cmc is dropped rather than stored.
+    expect(trimCard({ id: 'x', name: 'X', set: 's', collector_number: '1', card_faces: [{ name: 'X', cmc: 'five' }] })!.card_faces).toEqual([{ name: 'X' }]);
+  });
+
   it('is the identity on every recorded fixture card (they are stored trimmed)', () => {
     for (const c of allFixtureCards()) expect(trimCard(c)).toEqual(c);
   });

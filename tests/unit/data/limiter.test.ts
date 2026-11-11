@@ -74,6 +74,35 @@ describe('rate limiter', () => {
     expect(maxPerSecond(fake.calls.map((c) => c.at))).toBeLessThanOrEqual(2);
   });
 
+  it('runs on a monotonic clock: setting the system clock back neither stalls the window nor the lock-out', async () => {
+    vi.setSystemTime(1_000_000_000);
+    const limiter = new RateLimiter();
+    const order: number[] = [];
+    const ps = Array.from({ length: 4 }, (_, i) => limiter.schedule(async () => order.push(i)));
+    expect(order).toEqual([0, 1]);
+    vi.setSystemTime(1_000_000_000 - 1_000_000);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(order).toEqual([0, 1, 2, 3]);
+    await Promise.all(ps);
+    limiter.backOff();
+    const late = limiter.schedule(async () => order.push(4));
+    vi.setSystemTime(1_000_000_000 - 2_000_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await late;
+    expect(order).toEqual([0, 1, 2, 3, 4]);
+  });
+
+  it('a task scheduled with front: true starts before tasks already queued', async () => {
+    vi.setSystemTime(0);
+    const limiter = new RateLimiter();
+    const order: string[] = [];
+    const ps = ['a', 'b', 'c', 'd'].map((n) => limiter.schedule(async () => order.push(n)));
+    ps.push(limiter.schedule(async () => order.push('retry'), { front: true }));
+    await vi.advanceTimersByTimeAsync(2000);
+    await Promise.all(ps);
+    expect(order).toEqual(['a', 'b', 'retry', 'c', 'd']);
+  });
+
   it('a failing request still counts and does not block the queue', async () => {
     vi.setSystemTime(0);
     const limiter = new RateLimiter();
@@ -107,6 +136,19 @@ describe('429 back-off', () => {
     expect(r2.cards[0]?.id).toBe(fake.cards[1]!.id);
     const later = fake.calls.slice(1).map((c) => c.at);
     expect(later.every((t) => t >= 30_000)).toBe(true);
+  });
+
+  it('the request that hit a 429 is retried ahead of requests queued after it', async () => {
+    vi.setSystemTime(0);
+    const fake = new FakeScryfall({ rateLimitCalls: [0] });
+    const client = new ScryfallClient({ fetch: fake.fetch, limiter: new RateLimiter() });
+    const ids = fake.cards.slice(0, 4).map((c) => c.id);
+    // a and b start at once (2 per second); a gets the 429 while c and d wait in the queue.
+    const all = Promise.all(ids.map((id) => client.collection([{ id }])));
+    await vi.advanceTimersByTimeAsync(40_000);
+    await all;
+    const order = fake.calls.map((c) => ((c.body as { identifiers: { id: string }[] }).identifiers[0]!.id));
+    expect(order).toEqual([ids[0], ids[1], ids[0], ids[2], ids[3]]);
   });
 
   it('gives up with an error after repeated 429s instead of retrying forever', async () => {
