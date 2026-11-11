@@ -4,7 +4,7 @@
  * action can interleave with a shuffle or a deck import half way through. Web Crypto's digest is asynchronous only;
  * the unit tests check this implementation against it byte for byte.
  */
-import { base64url } from '../core/hash';
+import { base64url } from './hash';
 
 const K = new Uint32Array([
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,

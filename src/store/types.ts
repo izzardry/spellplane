@@ -129,13 +129,25 @@ export interface LoadedTable {
   secrets: SecretStore | null;
 }
 
-/** Table persistence (DESIGN "Local persistence": log, tables and secrets for one action in one transaction). Implementer: M0-P5 (solo), M1-P7. */
+/** Table persistence (DESIGN "Local persistence": log, tables and secrets for one action in one transaction). Implementer: M0-P5 (solo), M1-C (loadLog, saveSecrets), M1-P7. */
 export interface TableStore {
   /** Writes the log entry, the table record and (if given) the secrets in ONE transaction. */
   saveAction(roomId: string, entry: LogRecord, table: TableRecord, secrets: SecretStore | null): Promise<void>;
   /** Writes a snapshot into the table record (and secrets) without a log entry. */
   saveSnapshot(table: TableRecord, secrets: SecretStore | null): Promise<void>;
   loadTable(roomId: string): Promise<LoadedTable | null>;
+  /**
+   * Stored log records of a room with `seq > afterSeq` (default: all), ascending (DESIGN "Turn flow and confirmation",
+   * Action log: the log is what gets saved for resume). Added by M1-C for the full log after a reload (M0-P7 known
+   * limit). Entries past the table record's `lastSeq` belong to an abandoned timeline; callers stop there.
+   */
+  loadLog(roomId: string, afterSeq?: number): Promise<LogRecord[]>;
+  /**
+   * Writes the secret store alone (DESIGN "Local persistence": `secrets` keyed by roomId). Added by M1-C for networked
+   * tables, whose secret store also changes without an own logged action (an identity received on the pair channel,
+   * a peer's shuffle nonce folded into the order).
+   */
+  saveSecrets(roomId: string, secrets: SecretStore): Promise<void>;
   listTables(): Promise<TableRecord[]>;
   deleteTable(roomId: string): Promise<void>;
 }

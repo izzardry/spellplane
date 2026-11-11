@@ -99,6 +99,11 @@ describe('reload', () => {
       },
       loadTable: (): Promise<LoadedTable | null> =>
         Promise.resolve(memory.table ? { table: memory.table, log: memory.log.filter((r) => r.seq > memory.table!.snapshotSeq), secrets: memory.secrets } : null),
+      loadLog: (_room, afterSeq = -Infinity) => Promise.resolve(memory.log.filter((r) => r.seq > afterSeq)),
+      saveSecrets(_room, secrets) {
+        memory.secrets = secrets;
+        return Promise.resolve();
+      },
       listTables: () => Promise.resolve([]),
       deleteTable: () => Promise.resolve(),
     };

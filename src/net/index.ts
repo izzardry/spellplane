@@ -1,3 +1,10 @@
 export * from './transport';
+export * from './messages';
+export * from './types';
 export { LoopbackNetwork, LoopbackTransport, type LoopbackOptions } from './loopback';
 export { BroadcastTransport } from './broadcast';
+export { createNetEngine } from './engine';
+export { createSequencer, createSyncEngine, electSequencer } from './sequencer';
+export { createNetIdentity, verifySignature, peerIdOfPubKey } from './identity';
+export { createPrivateChannel } from './private';
+export { chooseResume, type ResumeChoice, type ResumeOffer } from './sync';

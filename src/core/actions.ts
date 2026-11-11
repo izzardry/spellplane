@@ -204,6 +204,12 @@ export type PlayerCounterAction = A<'playerCounter', { seat: SeatId; kind: strin
 export type SeatTakeAction = A<'seatTake', { seat: SeatId; name: string; colour: SeatColourIndex; peer?: string; team?: TeamId }>;
 /** Leave a chair (DESIGN "Players, seats and formats"). */
 export type SeatLeaveAction = A<'seatLeave', { seat: SeatId }>;
+/**
+ * The sequencer marks a seat away when its peer has been silent for 6 s, and back when it returns (DESIGN
+ * "Multiplayer architecture", Resume: a disconnected player's seat is marked away; "Specification: network protocol
+ * and secrecy", Liveness). Added by M1-C; reducer: M1-P7. Only the sequencer proposes it.
+ */
+export type AwayAction = A<'away', { seat: SeatId; away: boolean }>;
 /** Ready with the deck commitment and the sorted public opaque ids; creates the hidden library instances (DESIGN "Specification: network protocol and secrecy", Commitments). */
 export type ReadyAction = A<'ready', { commits: string[]; instanceIds: InstanceId[]; zone: ZoneId }>;
 
@@ -213,6 +219,12 @@ export type ReadyAction = A<'ready', { commits: string[]; instanceIds: InstanceI
 export type RngCommitAction = A<'rngCommit', { rid: RngId; purpose: RngPurpose; n: number; h: string }>;
 /** Reveal the committed nonce (Public randomness 3). */
 export type RngRevealAction = A<'rngReveal', { rid: RngId; nonce: string }>;
+/**
+ * The sequencer's clock closes a commit window `COMMIT_WINDOW_MS` after the round started (Public randomness 2:
+ * peers that do not commit within 3 s are excluded; Secret shuffle 2: likewise for peer nonces). Added by M1-C;
+ * reducer: M1-P2. Only the sequencer proposes it (core/types.ts Deadline).
+ */
+export type CommitCloseAction = A<'commitClose', { kind: 'rng' | 'shuffle'; id: RngId | ShuffleId }>;
 
 // --- Draft (DESIGN "Specification: network protocol and secrecy", Draft packs; M2 refines the state) -------
 
@@ -294,8 +306,10 @@ export type Action =
   | SeatTakeAction
   | SeatLeaveAction
   | ReadyAction
+  | AwayAction
   | RngCommitAction
   | RngRevealAction
+  | CommitCloseAction
   | PackOpenAction
   | PickAction
   | PackPassAction
@@ -371,8 +385,10 @@ export const ACTION_FAMILIES: Readonly<Record<ActionType, ActionFamily>> = {
   seatTake: 'players',
   seatLeave: 'players',
   ready: 'players',
+  away: 'players',
   rngCommit: 'randomness',
   rngReveal: 'randomness',
+  commitClose: 'randomness',
   packOpen: 'draft',
   pick: 'draft',
   packPass: 'draft',

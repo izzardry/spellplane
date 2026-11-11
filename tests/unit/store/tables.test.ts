@@ -65,6 +65,23 @@ describe('table round-trip', () => {
     expect(loaded.secrets).toBeNull();
   });
 
+  it('loads the full log of one room, or the part after a seq, in numeric order (M1-C loadLog)', async () => {
+    const s = await stores();
+    for (const seq of [11, 2, 10, 1, 3, 9]) await s.db.put('log', logEntry('amber-fox-93', seq));
+    await s.db.put('log', logEntry('amber-fox-930', 4));
+    expect((await s.tables.loadLog('amber-fox-93')).map((e) => e.seq)).toEqual([1, 2, 3, 9, 10, 11]);
+    expect((await s.tables.loadLog('amber-fox-93', 3)).map((e) => e.seq)).toEqual([9, 10, 11]);
+    expect(await s.tables.loadLog('nobody')).toEqual([]);
+  });
+
+  it('saves the secret store alone (M1-C saveSecrets)', async () => {
+    const s = await stores();
+    await s.tables.saveSnapshot(tableRecord('amber-fox-93', 0, sampleState(0), 0), null);
+    const secrets = { ...sampleSecrets(), hand: ['h9'] };
+    await s.tables.saveSecrets('amber-fox-93', secrets);
+    expect((await (await reopen(s)).tables.loadTable('amber-fox-93'))!.secrets).toEqual(secrets);
+  });
+
   it('keeps rooms apart, including a room whose id extends another', async () => {
     const s = await stores();
     for (const room of ['solo', 'solo-2', 'sol']) {

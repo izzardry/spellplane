@@ -10,7 +10,7 @@
  * table's shape use `null` (e.g. `confirm: null`). Records keyed by id are plain objects.
  */
 
-import type { Action } from './actions';
+import type { Action, ActionDraft } from './actions';
 
 // ---------------------------------------------------------------------------
 // Ids
@@ -257,6 +257,12 @@ export interface ConfirmRound {
   responses: Record<SeatId, ConfirmResponse>;
   /** Seat currently holding the floor, if any. */
   holder?: SeatId;
+  /**
+   * Added by M1-C. The seq from which the current countdown runs when it is not `startSeq`: the action that released
+   * the last hold (DESIGN "Turn flow and confirmation", Hold stops everyone's timers). Absent: the countdown runs
+   * from `startSeq`. Every client animates from the moment it applied that action; the sequencer's clock decides.
+   */
+  timerSeq?: number;
 }
 
 /** A seat's deck commitment published on Ready (DESIGN "Specification: network protocol and secrecy", Commitments). */
@@ -286,6 +292,8 @@ export interface RngRound {
   reveals: Record<SeatId, string>;
   /** 0-based outcome once all reveals arrived and verified; null while pending. */
   result: number | null;
+  /** Added by M1-C. Seq of the sequencer's `commitClose`: commits after it are refused, and seats without one are excluded (Public randomness 2). */
+  closedSeq?: number;
 }
 
 /** A secret shuffle (or pack generation) in progress or finished (DESIGN "Specification: network protocol and secrecy", Secret shuffle). */
@@ -301,6 +309,8 @@ export interface ShuffleRound {
   nonces: Record<SeatId, string>;
   /** Set by `shuffleDone`. */
   orderHash: string | null;
+  /** Added by M1-C. Seq of the sequencer's `commitClose`: nonces after it are refused, so the seed uses the nonces sequenced before it (Secret shuffle 2). */
+  closedSeq?: number;
 }
 
 /** Table-wide settings the host can change (DESIGN "Turn flow and confirmation", "Players, seats and formats"). */
@@ -335,6 +345,22 @@ export interface TableState {
   rng: Record<RngId, RngRound>;
   shuffles: Record<ShuffleId, ShuffleRound>;
   settings: TableSettings;
+}
+
+/**
+ * A deadline that only the sequencer's clock enforces (DESIGN "Specification: network protocol and secrecy", Timers,
+ * Public randomness 2, Secret shuffle 2). Added by M1-C. `afterMs` after the sequencer applied action `fromSeq`, it
+ * stamps `emit` with its own seat and sequences it, unless the state no longer yields a deadline with this `key`.
+ * Pure data derived from TableState (core/deadlines.ts), so every peer computes the same list and a new sequencer
+ * after a handover restarts the same timers from its own apply times.
+ */
+export interface Deadline {
+  /** Stable identity, e.g. 'confirm:<roundId>:<timerSeq>' or 'rng:<rid>'; a timer is re-armed only when the key changes. */
+  key: string;
+  fromSeq: number;
+  afterMs: number;
+  /** Drafts the sequencer dispatches as itself (e.g. `respond {seat, 'timeout'}` per silent seat, `commitClose`). */
+  emit: ActionDraft[];
 }
 
 // ---------------------------------------------------------------------------

@@ -26,6 +26,8 @@ import {
   type InstanceId,
   type LogEntry,
   type Pose,
+  type RngPurpose,
+  type SeatColourIndex,
   type SecretIdentity,
   type SecretStore,
   type SeatId,
@@ -38,7 +40,10 @@ import { SOLO_ROOM_ID } from '../store/tables';
 import type { LogRecord, TableRecord } from '../store/types';
 import { commitFor, orderHash, randomId, randomSalt, shuffledOrder, shuffleSeed } from './secrecy';
 import { emptySecrets, reconcileSecrets, type LibraryPlacement } from './secrets';
-import type { DeckImport, LookedCard, SessionListener, SoloSessionOptions, TableSession } from './types';
+import type { ChatChannel } from '../net/messages';
+import type { Presence } from '../net/types';
+import { NULL_PRESENCE } from './presence';
+import type { DeckImport, LookedCard, NetStatusListener, SessionListener, SessionNetStatus, SoloSessionOptions, TableSession } from './types';
 
 /** Room id of the solo table: the store's own constant, re-exported so the two cannot drift apart. */
 export const SOLO_ROOM = SOLO_ROOM_ID;
@@ -73,7 +78,7 @@ export interface SoloSession extends TableSession {
    * Put an own hand or library card onto a battlefield or into exile face down, keeping its identity in this browser
    * (DESIGN "Table model": face-down on the battlefield, face-down exile; other public zones show faces). No `reveal`
    * is emitted; turning it face up, or moving it into a zone that shows faces, reveals it.
-   * Not yet on TableSession: the contract has no face-down placement (reported to the integrator).
+   * On TableSession since M1-C.
    */
   playFaceDown(card: InstanceId, to: ZoneId, pose?: Pose): Action;
 }
@@ -208,6 +213,33 @@ class Solo implements SoloSession {
   dispose(): void {
     this.disposed = true;
     this.listeners.clear();
+  }
+
+  // --- Network members (TableSession, M1-C): a solo table has no peers --------------------------------
+
+  readonly presence: Presence = NULL_PRESENCE;
+
+  netStatus(): SessionNetStatus {
+    return { mode: 'solo', connection: 'solo', peers: [], sequencer: null, seq: this.state.seq };
+  }
+
+  subscribeNet(_listener: NetStatusListener): () => void {
+    return () => undefined;
+  }
+
+  chat(text: string, channel: ChatChannel = 'table'): Action {
+    return this.dispatch({ type: 'chat', text, channel });
+  }
+
+  takeSeat(seat: SeatId, colour: SeatColourIndex): Action {
+    const action = this.stamp({ type: 'seatTake', seat, name: this.state.seats[this.seat]?.name ?? '', colour });
+    this.warn('The solo table has one chair');
+    this.notify();
+    return action;
+  }
+
+  roll(_purpose: RngPurpose, _n: number): Promise<number> {
+    return Promise.reject(new Error('not implemented: M1-P8'));
   }
 
   // --- Public actions ------------------------------------------------------------------------------
