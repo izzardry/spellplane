@@ -6,7 +6,7 @@
  * Later packages add their cases to HANDLERS: ask, respond and autoPass (M1-P3, confirm.ts), draft actions (M2). The
  * secret shuffle, public randomness and verified reveals are M1-P2's (secret.ts). M1-P4 extends moveTemp and settle in temp.ts.
  */
-import { ACTION_FAMILIES, UNDOABLE_TYPES, type Action, type ActionOf, type ActionType } from '../actions';
+import { ACTION_FAMILIES, isUndoable, type Action, type ActionOf, type ActionType } from '../actions';
 import { checkInvariants } from '../invariants';
 import type { CoreGameSpec, Format, SeatColourIndex, TableState, Team, Zone } from '../types';
 import { DEFAULT_TABLE_SETTINGS } from '../types';
@@ -118,12 +118,18 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   recoverCommit: later('M1-P7'),
 };
 
-const UNDOABLE = new Set<string>(UNDOABLE_TYPES);
-
+/**
+ * `undo {of, inverse}`: apply the inverse. The handlers authorise on the inverse's own `by`, so it must be the undo's
+ * sender (DESIGN "Specification: network protocol and secrecy", Handshake: the sequencer rejects any propose whose
+ * `by` is not the sender's seat; checking only the outer `by` would let a seat act, and reveal, in another's name),
+ * except a `lineAdd` that restores a removed line with its creator. An inverse never carries an identity (`isUndoable`: a flip with `ref` is a reveal, not an inverse).
+ */
 function applyUndo(d: Draft, a: ActionOf<'undo'>): void {
   checkString(a.of);
   const inv: unknown = a.inverse;
-  if (!isObj(inv) || typeof inv.type !== 'string' || !UNDOABLE.has(inv.type)) reject('undo carries an action that is not undoable');
+  if (!isObj(inv) || typeof inv.type !== 'string' || !isUndoable(inv as unknown as Action)) reject('undo carries an action that is not undoable');
+  // The one exception is a removed line coming back: its `by` names the line's creator and authorises nothing.
+  if (inv.by !== a.by && inv.type !== 'lineAdd') reject('an undo carries an inverse in its own sender\'s name only');
   const inverse = inv as unknown as Action;
   handle(d, inverse);
   if (inverse.restore !== undefined) applyRestore(d, inverse.restore);
@@ -159,6 +165,8 @@ function step(state: TableState, action: Action): Step {
     const next = changed === state ? changed : secret.sealCompleteRounds(changed, action.seq ?? state.seq + 1);
     // A zone being shuffled with a fixed seed keeps its cards until the shuffle is done (M1-P2, secret.ts).
     if (next !== state) secret.checkFrozenZones(state, next, action);
+    // A round's own owner or initiator cannot stop it waiting for a peer (M1-P2, secret.ts).
+    if (next !== state) secret.checkRoundParticipants(state, next, action);
     if (hasRestore(action) && next !== state) {
       const broken = checkInvariants(next);
       if (broken.length) reject(`the restore patch would break the table: ${broken[0]}`);

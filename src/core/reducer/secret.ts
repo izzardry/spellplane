@@ -5,17 +5,20 @@
  *
  * - `reveal` and a `flip` carrying an identity are checked against the owner's deck commitment. A mismatch is not
  *   refused: the identity becomes public and the card is marked `suspect` in shared state, so every peer flags it.
- * - The secret shuffle: `shuffleCommit` (owner, `h = SHA-256(ownerNonce)`), `shuffleNonce` (every other connected
- *   seated seat, in the clear), `shuffleDone` (owner, order hash, fresh opaque ids only where needed). A round's
+ * - The secret shuffle: `shuffleCommit` (owner, `h = SHA-256(ownerNonce)`), `shuffleNonce` (every other seated
+ *   seat, in the clear; an away seat is still waited for, `expectedParticipants`), `shuffleDone` (owner, order hash, fresh opaque ids only where needed). A round's
  *   owner nonce is fixed by its commit, and a zone with an unfinished round takes no new round, so the owner cannot
  *   change its nonce after seeing the others' (a sequencer owner sees a peer's nonce proposal before it sequences
  *   it). From the commit until `shuffleDone` the zone's cards are frozen (`checkFrozenZones`), so the owner cannot
  *   pick the order by choosing which ids get shuffled.
  * - Public randomness: `rngCommit` per seat, `rngReveal` once the commit phase is complete, the result drawn from the
  *   seed of all reveals. `commitClose` (proposed by the sequencer's clock) excludes the seats that missed the window;
- *   a round's own initiator (or a shuffle's owner) cannot close it, or it could decide alone.
+ *   a round's own initiator (or a shuffle's owner) cannot close it, or it could decide alone. For the same reason
+ *   marking a seat away does not stop it being waited for, and the owner or initiator cannot make a seat its round
+ *   waits for leave (`checkRoundParticipants`): in 1v1 the sequencer is that owner and could otherwise shut the peer
+ *   out before or after committing and decide alone with a nonce ground offline.
  * - A round is sealed (`closedSeq` set) in the step that completes it, whatever that step was (the last nonce or
- *   commit, or a seat leaving or going away), so its participant set and nonces never change once the owner could
+ *   commit, or a seat leaving), so its participant set and nonces never change once the owner could
  *   compute the result: a seat that sits down or comes back later does not join it (`sealCompleteRounds`).
  * - Rng ids and shuffle ids are separate namespaces; an id already used by the other kind is refused.
  * - Re-issue of opaque ids (`shuffleDone.reissue`, `reorder.reissue`): every id of the zone is replaced by a fresh one
@@ -175,7 +178,7 @@ export function isOpen(r: ShuffleRound): boolean {
   return r.orderHash === null;
 }
 
-/** `shuffleNonce {sid, nonce}`: another connected seated seat's nonce, once, before the window closes (Secret shuffle 2). */
+/** `shuffleNonce {sid, nonce}`: another seated seat's nonce, once, before the window closes (Secret shuffle 2). */
 export function shuffleNonce(d: Draft, a: ActionOf<'shuffleNonce'>): void {
   const sid = checkId(a.sid, 'shuffle');
   const by = d.seats.need(checkId(a.by, 'seat')).id;
@@ -185,7 +188,7 @@ export function shuffleNonce(d: Draft, a: ActionOf<'shuffleNonce'>): void {
   if (r.orderHash !== null) reject(`shuffle ${sid} is finished`);
   if (r.closedSeq !== undefined) reject(`the nonce window of shuffle ${sid} is closed`);
   if (Object.hasOwn(r.nonces, by)) reject(`${by} already sent its nonce for shuffle ${sid}`);
-  if (!expectedParticipants(d.base, sid, 'shuffle').includes(by)) reject(`${by} is not a connected seated player of this shuffle`);
+  if (!expectedParticipants(d.base, sid, 'shuffle').includes(by)) reject(`${by} is not a seated player of this shuffle`);
   const nonce = checkString(a.nonce, 'nonce', MAX_SECRET);
   if (nonce === '') reject('a nonce cannot be empty');
   d.shuffles.w(sid).nonces[by] = nonce;
@@ -228,7 +231,7 @@ export function rngCommit(d: Draft, a: ActionOf<'rngCommit'>): void {
   if (r.closedSeq !== undefined) reject(`the commit window of round ${rid} is closed`);
   if (Object.keys(r.reveals).length > 0) reject(`round ${rid} is already revealing`);
   if (Object.hasOwn(r.commits, by)) reject(`${by} already committed to round ${rid}`);
-  if (!expectedParticipants(d.base, rid, 'rng').includes(by)) reject(`${by} is not a connected seated player of round ${rid}`);
+  if (!expectedParticipants(d.base, rid, 'rng').includes(by)) reject(`${by} is not a seated player of round ${rid}`);
   d.rng.w(rid).commits[by] = h;
 }
 
@@ -287,7 +290,7 @@ function isSeated(d: Draft, seat: SeatId): boolean {
  * Seal every open round that has everything it waits for: a randomness round whose expected commits are all in, a
  * shuffle whose expected peer nonces are all in (DESIGN "Public randomness" 2-3, "Secret shuffle" 2-3). Run after
  * every applied action, so a round is sealed in the very step that completes it, also when that step is a seat
- * leaving or going away. From then on no commit or nonce is taken, so the owner's order (or the dice result) is
+ * leaving. From then on no commit or nonce is taken, so the owner's order (or the dice result) is
  * computed from a set that cannot grow behind its back. `closedSeq` is the seq of that step. Pure; returns `state`
  * itself when nothing is sealed.
  */
@@ -322,7 +325,8 @@ function zoneIds(state: TableState, zone: string): string {
  * having committed first"). Once it sees the peers' nonces (as the sequencer, even before they are sequenced) the
  * owner can compute the outcome for any set of ids, so adding, removing or re-issuing a card before `shuffleDone`
  * would let it pick the order. Checked for every action (draws, moves, mills, re-issues, undo), whoever sends it.
- * A lost peer still unblocks the round: the window closes (`commitClose`) or the peer is marked away (M1-P7).
+ * A lost peer still unblocks the round when another seat sequences (its `commitClose`); a sequencer owner's round
+ * waits for the peer to return or leave (M1-P7 recovery), see `checkRoundParticipants`.
  */
 export function checkFrozenZones(prior: TableState, next: TableState, action: { type: string; sid?: unknown }): void {
   for (const r of Object.values(prior.shuffles)) {
@@ -330,5 +334,39 @@ export function checkFrozenZones(prior: TableState, next: TableState, action: { 
     if (action.type === 'shuffleDone' && action.sid === r.id) continue;
     if (own(prior.zones, r.zone) === own(next.zones, r.zone)) continue;
     if (zoneIds(prior, r.zone) !== zoneIds(next, r.zone)) reject(`${r.zone} is being shuffled (${r.id}); its cards cannot change until the shuffle is done`);
+  }
+}
+
+/** The seats an open round still waits for (expected and not yet contributed), or null for a sealed or finished round. */
+function stillWaiting(state: TableState, kind: 'rng' | 'shuffle', id: string): SeatId[] | null {
+  if (kind === 'rng') {
+    const r = state.rng[id]!;
+    if (r.result !== null || r.closedSeq !== undefined) return null;
+    return expectedParticipants(state, id, 'rng').filter((s) => !Object.hasOwn(r.commits, s));
+  }
+  const r = state.shuffles[id]!;
+  if (r.orderHash !== null || r.closedSeq !== undefined) return null;
+  return expectedParticipants(state, id, 'shuffle').filter((s) => !Object.hasOwn(r.nonces, s));
+}
+
+/**
+ * Refuse a step by a round's own initiator (rng) or owner (shuffle) that stops that round waiting for a seat that has
+ * not contributed yet (DESIGN "Multiplayer architecture", Hidden information 3: "The owner cannot choose the order";
+ * "Dice and coin flips use the same commit-then-reveal exchange, so no single browser picks the result"). Today the
+ * only such step is a `seatLeave` of the peer's chair sent under the owner's name; the check is generic so no later
+ * action opens the same hole. The seat itself may still leave, and a third seat's `commitClose` still excludes it.
+ */
+export function checkRoundParticipants(prior: TableState, next: TableState, action: { by?: unknown }): void {
+  const rounds: ['rng' | 'shuffle', string, SeatId][] = [
+    ...Object.values(prior.rng).map((r): ['rng', string, SeatId] => ['rng', r.id, r.by]),
+    ...Object.values(prior.shuffles).map((r): ['shuffle', string, SeatId] => ['shuffle', r.id, r.owner]),
+  ];
+  for (const [kind, id, owner] of rounds) {
+    if (owner !== action.by) continue;
+    const before = stillWaiting(prior, kind, id);
+    if (!before || before.length === 0) continue;
+    const after = new Set(expectedParticipants(next, id, kind));
+    const dropped = before.find((s) => !after.has(s));
+    if (dropped !== undefined) reject(`${owner} cannot stop its ${kind === 'rng' ? 'round' : 'shuffle'} ${id} waiting for ${dropped}`);
   }
 }

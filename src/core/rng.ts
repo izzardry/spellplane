@@ -107,24 +107,30 @@ export function participantOrder(state: TableState, seats: readonly SeatId[]): S
   return [...new Set(seats)].sort((a, b) => index(a) - index(b) || (a < b ? -1 : a > b ? 1 : 0));
 }
 
-/** A seat that takes part in joint randomness: taken (named) and not away (DESIGN "Public randomness" 2: connected seated peers). */
-function seated(state: TableState, seat: SeatId): boolean {
-  if (!Object.hasOwn(state.seats, seat)) return false;
-  const s = state.seats[seat]!;
-  return s.name.trim() !== '' && s.away !== true;
+/**
+ * A seat that takes part in joint randomness: a taken chair (non-empty name), away or not. An away seat is still
+ * waited for, so marking a peer away (a sequencer-only action, and in 1v1 the sequencer is the owner or initiator)
+ * can never reduce a round to the owner's own nonce, before or after the commit. A silent seat is excluded only by
+ * the commit window (`commitClose` from a seat other than the owner or initiator) or by leaving its chair (DESIGN
+ * "Multiplayer architecture", Hidden information 3: "The owner cannot choose the order"; "Dice and coin flips use the
+ * same commit-then-reveal exchange, so no single browser picks the result"). Decision M1-P2.
+ */
+function named(state: TableState, seat: SeatId): boolean {
+  return Object.hasOwn(state.seats, seat) && state.seats[seat]!.name.trim() !== '';
 }
 
 /** Which kind of joint-randomness record an id names: rng ids and shuffle ids are separate namespaces. */
 export type RoundKind = 'rng' | 'shuffle';
 
 /**
- * The seats a randomness round or shuffle waits for: every other connected (not away) seated seat (DESIGN "Public
- * randomness" 2, "Secret shuffle" 2), in seat order. "Other" is relative to the round's initiator (rng) or the zone's
- * owner (shuffle). Evaluated on the current state while the round is open, so a seat that goes away is no longer
- * waited for; the reducer seals a round (sets `closedSeq`) the moment it has everything it waits for, so a seat that
- * sits down or comes back afterwards never joins it. Empty for an unknown id. `kind` picks the record; without it the
- * id must name exactly one record (the reducer refuses an id used by the other kind, so this only matters for
- * hand-built states).
+ * The seats a randomness round or shuffle waits for: every other seated seat, away or not (DESIGN "Public
+ * randomness" 2, "Secret shuffle" 2; see `named` for why away seats count), in seat order. "Other" is relative to the
+ * round's initiator (rng) or the zone's owner (shuffle). Evaluated on the current state while the round is open, so a
+ * seat that leaves its chair is no longer waited for (the reducer refuses a `seatLeave` of a waited-for seat sent by
+ * the round's own owner or initiator); the reducer seals a round (sets `closedSeq`) the moment it has everything it
+ * waits for, so a seat that sits down afterwards never joins it. Empty for an unknown id. `kind` picks the record;
+ * without it the id must name exactly one record (the reducer refuses an id used by the other kind, so this only
+ * matters for hand-built states).
  */
 export function expectedParticipants(state: TableState, id: RngId | ShuffleId, kind?: RoundKind): SeatId[] {
   const r = kind !== 'shuffle' && Object.hasOwn(state.rng, id) ? state.rng[id]! : null;
@@ -134,7 +140,7 @@ export function expectedParticipants(state: TableState, id: RngId | ShuffleId, k
   if (by === null) return [];
   return participantOrder(
     state,
-    Object.keys(state.seats).filter((s) => s !== by && seated(state, s)),
+    Object.keys(state.seats).filter((s) => s !== by && named(state, s)),
   );
 }
 

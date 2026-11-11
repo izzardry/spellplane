@@ -151,17 +151,21 @@ describe('secret shuffle rounds', () => {
     expect(t.state.shuffles.sh1!.nonces).toEqual({ s1: 'n1', s2: 'n2' });
   });
 
-  it('an away or unseated seat is neither waited for nor accepted', () => {
+  it('an away seat is still waited for and accepted; an unseated seat is neither', () => {
     const t = readySecretTable(['Anna', 'Ben', 'Cleo']);
     t.apply('s0', commit());
     t.state = withAway(t.state, 's2');
-    t.refuse('s2', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n2' }, /not a connected seated player/);
+    expect(expectedParticipants(t.state, 'sh1')).toEqual(['s1', 's2']);
+    t.apply('s2', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n2' });
+    t.apply('s2', { type: 'seatLeave', seat: 's2' });
+    t.refuse('s2', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n2b' }, /already sent/);
     expect(expectedParticipants(t.state, 'sh1')).toEqual(['s1']);
     t.apply('s1', { type: 'seatLeave', seat: 's1' });
     expect(expectedParticipants(t.state, 'sh1')).toEqual([]);
     // The seat leaving completed the round, so it was sealed in that step.
     expect(t.state.shuffles.sh1!.closedSeq).toBe(t.state.seq);
     t.refuse('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n1' }, /closed/);
+    expect(t.state.shuffles.sh1!.nonces).toEqual({ s2: 'n2' });
   });
 
   it('a seat that comes back or sits down after the round was complete does not join it, so the owner\u2019s order stands', () => {
@@ -506,11 +510,13 @@ describe('commit windows the sequencer closes', () => {
     expect(commitWindowDeadlines(t.state)).toEqual([]);
   });
 
-  it('a seat going away stops being waited for', () => {
+  it('a seat going away is still waited for; leaving its chair ends the wait', () => {
     const t = readySecretTable(['Anna', 'Ben']);
     t.apply('s0', { type: 'rngCommit', rid: 'd1', purpose: 'die', n: 6, h: nonceHash('a') });
     expect(commitWindowDeadlines(t.state)).toHaveLength(1);
-    expect(commitWindowDeadlines(withAway(t.state, 's1'))).toEqual([]);
+    expect(commitWindowDeadlines(withAway(t.state, 's1'))).toHaveLength(1);
+    t.apply('s1', { type: 'seatLeave', seat: 's1' });
+    expect(commitWindowDeadlines(t.state)).toEqual([]);
   });
 
   it('expected participants are the other seated seats in seat order', () => {
