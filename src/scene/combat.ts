@@ -15,7 +15,7 @@
  */
 import type { ActionDraft } from '../core/actions';
 import { GEOMETRY } from '../core/geometry';
-import type { CardInstance, InstanceId, Line, Pose, SeatId, TableState } from '../core/types';
+import type { Anchor, CardInstance, InstanceId, Line, LineKind, Pose, SeatId, TableState } from '../core/types';
 import { rot2 } from './math';
 import type { TablePoint } from './types';
 
@@ -93,7 +93,13 @@ function defenderOf(state: TableState, blockers: readonly InstanceId[], fallback
 export function blockersOf(state: TableState, attacker: InstanceId, ctx: Pick<CombatContext, 'angleOf'>): InstanceId[] {
   const a = state.cards[attacker];
   if (!a) return [];
-  const ids = [...new Set(blockLines(state).filter((l) => l.to.id === attacker && state.cards[l.from.id]).map((l) => l.from.id))];
+  // Only blockers still on a battlefield: a blocker that died and went to the graveyard by hand keeps its line (lines
+  // drop only on entering a hidden zone) but is no longer part of the fan.
+  const live = (id: InstanceId): boolean => {
+    const c = state.cards[id];
+    return !!c && onBattlefield(state, c);
+  };
+  const ids = [...new Set(blockLines(state).filter((l) => l.to.id === attacker && live(l.from.id)).map((l) => l.from.id))];
   const defender = defenderOf(state, [...ids].sort(), null);
   if (defender === null) return [];
   const angle = ctx.angleOf(defender);
@@ -113,17 +119,24 @@ export function fanAttacker(state: TableState, target: InstanceId): InstanceId |
   return null;
 }
 
+/** Whether two seats oppose each other: different seats, not teammates (DESIGN "Players, seats and formats", Two-Headed Giant). */
+export function opposing(state: TableState, a: SeatId, b: SeatId): boolean {
+  if (a === b) return false;
+  const ta = state.seats[a]?.team;
+  return ta === undefined || ta !== state.seats[b]?.team;
+}
+
 /**
  * Whether dropping `dragged` onto `attacker` declares (or rearranges) blocks: the attacker is attacking on a
- * battlefield, and every dragged card is another seat's card on a battlefield (a card dropped onto its own
- * controller's attacker is an ordinary drop: a pile).
+ * battlefield, and every dragged card is an opposing seat's card on a battlefield (a card dropped onto its own or a
+ * teammate's attacker is an ordinary drop: a pile).
  */
 export function canBlock(state: TableState, dragged: readonly InstanceId[], attacker: InstanceId): boolean {
   const a = state.cards[attacker];
   if (!a || a.combat !== 'attack' || !onBattlefield(state, a) || dragged.length === 0) return false;
   return dragged.every((id) => {
     const c = state.cards[id];
-    return !!c && id !== attacker && c.controller !== a.controller && onBattlefield(state, c) && c.attachedTo === undefined;
+    return !!c && id !== attacker && opposing(state, c.controller, a.controller) && onBattlefield(state, c) && c.attachedTo === undefined;
   });
 }
 
@@ -209,6 +222,60 @@ export function unblockDrafts(state: TableState, moved: readonly InstanceId[], c
     refans.push(...fanDrafts(state, o, rest, ctx, poses));
   }
   return [...removes, ...refans];
+}
+
+/**
+ * An ordinary drop of `moved` (its `actions`) plus the unblocking of any blockers among them, as one undo group. The
+ * unblocking goes first: a drop into a hidden zone (a bounce to hand) drops the card's lines itself, so a lineRemove
+ * after it would name a line that is gone and be refused.
+ */
+export function withUnblock(state: TableState, actions: ActionDraft[], moved: readonly InstanceId[], ctx: CombatContext): ActionDraft[] {
+  const unblock = unblockDrafts(state, moved, ctx);
+  return unblock.length ? regroup([...unblock, ...actions], ctx) : actions;
+}
+
+/**
+ * The kind of line a right-drag from `source` to `target` draws (DESIGN "Combat and annotation", Connection lines):
+ * Shift draws a persistent mark; from an attacking creature to an opposing seat's avatar or to an opposing seat's
+ * permanent (a planeswalker or battle it attacks) it is the attack line; everything else is a target line, so an
+ * attacker can still point at the target of an ability. With nothing under the pointer yet (the line being drawn),
+ * an attacker's line previews as an attack line.
+ */
+export function lineKindFor(state: TableState, source: Anchor, target: Anchor | null, shift: boolean): LineKind {
+  if (shift) return 'mark';
+  if (source.kind !== 'card') return 'target';
+  const a = state.cards[source.id];
+  if (!a || a.combat !== 'attack' || !onBattlefield(state, a)) return 'target';
+  if (target === null) return 'attack';
+  if (target.kind === 'seat') return opposing(state, a.controller, target.id) ? 'attack' : 'target';
+  if (target.kind !== 'card') return 'target';
+  const t = state.cards[target.id];
+  return t && onBattlefield(state, t) && opposing(state, a.controller, t.controller) ? 'attack' : 'target';
+}
+
+/**
+ * Which cards a state change sends home in a settle, with their stagger slot (DESIGN "Specification: geometry, layout
+ * and motion", Motion: settle 260 ms with a 20 ms stagger per card). A card goes home when it had a home slot, has none
+ * now and stands on it. An attachment of a card going home takes its host's slot (it rides along), unless it goes home
+ * itself. `ids` is the drawing order the slots are dealt in; `prevOf` gives a card as it was before the change.
+ */
+export function settleSlots(state: TableState, ids: Iterable<InstanceId>, prevOf: (id: InstanceId) => CardInstance | undefined): Map<InstanceId, number> {
+  const slots = new Map<InstanceId, number>();
+  const all = [...ids];
+  for (const id of all) {
+    const c = state.cards[id];
+    const p = prevOf(id);
+    if (!c || !p?.home || c.home !== undefined || !onBattlefield(state, c)) continue;
+    if (c.pose.x === p.home.x && c.pose.y === p.home.y && c.pose.rot === p.home.rot) slots.set(id, slots.size);
+  }
+  for (const id of all) {
+    if (slots.has(id)) continue;
+    // Follow the attachment chain up to the first host going home (bounded by the card count against cycles).
+    let host = state.cards[id]?.attachedTo;
+    for (let guard = 0; host !== undefined && !slots.has(host) && guard < all.length; guard++) host = state.cards[host]?.attachedTo;
+    if (host !== undefined && slots.has(host)) slots.set(id, slots.get(host)!);
+  }
+  return slots;
 }
 
 /** One group id over a list of drafts, so the gesture is undone as one step (a single draft needs none). */

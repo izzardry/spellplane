@@ -16,7 +16,7 @@
 import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
 import { CAMERA, GEOMETRY } from '../core/geometry';
-import type { Anchor, CardInstance, InstanceId, Line, LineKind, Pose, SeatId, TableState, ZoneId } from '../core/types';
+import type { CardInstance, InstanceId, Pose, SeatId, TableState, ZoneId } from '../core/types';
 import type { TableLayout } from '../games/types';
 import type { ThemeInstance } from '../themes/types';
 import { registerDebug } from '../util/debug';
@@ -25,9 +25,9 @@ import { CardLayer, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
 import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
 import { LAYER, compareSort, displayedRot, dropTargets, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
-import { blockPlan, fanAttacker, regroup, unblockDrafts, type CombatContext } from './combat';
+import { blockPlan, fanAttacker, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
-import { LineLayer, cardRing, circleRing, drawnLines, pingAlpha, pingPad, strokeSegments, type AnchorResolver, type DebugPing, type DrawnLine, type EndShape, type LineDraw } from './lines';
+import { LineLayer, LineView, lineSourceOf, type DebugPing, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion } from './motion';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
@@ -68,10 +68,7 @@ export interface SceneDebugCard extends DebugCard {
   ghost: Pose | null;
 }
 
-/** A state line as the debug hook reports it: plus the centres its ends are drawn at, or null while one is not drawn. */
-export interface SceneDebugLine extends Line {
-  ends: { from: TablePoint; to: TablePoint } | null;
-}
+export type { SceneDebugLine };
 
 /** The scene's debug parts plus extras for its own tests. */
 export interface SceneDebug extends SceneDebugParts {
@@ -127,7 +124,7 @@ type Gesture =
   | { kind: 'press'; pointerId: number; button: number; card: InstanceId | null; x0: number; y0: number; shift: boolean; alt: boolean; pileGrab: boolean }
   | { kind: 'pan'; pointerId: number; last: { x: number; y: number }; samples: { x: number; y: number; t: number }[] }
   | { kind: 'marquee'; pointerId: number; x0: number; y0: number; x1: number; y1: number; base: InstanceId[] }
-  | { kind: 'line'; pointerId: number; source: Anchor; sourceCard: InstanceId; cur: TablePoint; shift: boolean }
+  | { kind: 'line'; pointerId: number }
   | { kind: 'drag' }
   | { kind: 'pinch' };
 
@@ -140,12 +137,6 @@ const COUNTER_MAX_SCALE = 3;
 /** Stroke widths of ghost outlines and displacement markers, CSS px. */
 const GHOST_WIDTH_PX = 1;
 const MARKER_WIDTH_PX = 2;
-/** Line label type size on the table, mm. */
-const LABEL_SIZE = 4.5;
-/** Stroke width of a ping ring, CSS px. */
-const PING_WIDTH_PX = 2.5;
-/** Radius of a seat's avatar spot on the table (line end, line target, ping ring), mm. */
-const AVATAR_R = 30;
 /** After a right-drag drew a line, the context menu that some platforms fire on release is ignored this long, ms. */
 const MENU_SUPPRESS_MS = 400;
 const TOUCH_THRESHOLD_PX = 8;
@@ -211,19 +202,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   labels.object.addEventListener('synccomplete', () => (dirty = true));
   scene.add(text.object);
   scene.add(labels.object);
-  const lineLayer = new LineLayer();
-  scene.add(lineLayer.object);
   // Ghost outlines at the home slots of displaced cards (under the cards) and their displacement markers (over them).
   const ghostLayer = new LineLayer({ renderOrder: 1, opacity: theme.cardDressing.ghost.opacity, name: 'ghosts' });
   const markerLayer = new LineLayer({ renderOrder: 4, name: 'displacement-markers' });
   scene.add(ghostLayer.object);
   scene.add(markerLayer.object);
-  // Ping rings over everything (DESIGN "Combat and annotation", Ping).
-  const pingLayer = new LineLayer({ renderOrder: 5, name: 'pings' });
-  scene.add(pingLayer.object);
-  /** First time this page drew each ping (its fade starts there). */
-  const pingSeen = new Map<string, number>();
-  let drawn: DrawnLine[] = [];
   const markGeometry = new THREE.BufferGeometry();
   const markMaterial = new THREE.LineBasicMaterial({ color: theme.tokens.colours.border, depthTest: false, depthWrite: false, transparent: true });
   const marks = new THREE.LineSegments(markGeometry, markMaterial);
@@ -252,6 +235,26 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const newId = (p: string) => `${p}-${idPrefix}-${(++idCounter).toString(36)}`;
   const reduced = () => view.reducedMotion;
 
+  // Connection lines and ping rings (DESIGN "Combat and annotation"; scene/lines.ts).
+  const lineView = new LineView({
+    state: () => state,
+    pings: () => view.pings,
+    layout: () => layout,
+    viewerSeat: () => viewerSeat,
+    theme: () => theme,
+    cardPose: (id) => rcards.get(id)?.motion.pose ?? null,
+    freePose: (id) => {
+      const rc = rcards.get(id);
+      return rc && rc.place.kind === 'free' ? rc.motion.pose : null;
+    },
+    pxPerMm: () => rig.pxPerMm(),
+    reduced,
+  });
+  scene.add(lineView.lines.object);
+  scene.add(lineView.pingRings.object);
+  const seatAngleOf = (seat: SeatId): number => (state ? (seatLayoutOf(state, layout, seat)?.angle ?? 0) : 0);
+  const combatCtx: CombatContext = { angleOf: seatAngleOf, newId };
+
   const dispatch = (actions: ActionDraft[]) => {
     for (const a of actions) opts.dispatch(a);
   };
@@ -274,9 +277,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (!state) return;
     const places = placeCards(state, view, { game: opts.game, layout, viewerSeat });
     for (const id of [...rcards.keys()]) if (!places.has(id) && !drag?.ids.includes(id)) rcards.delete(id);
-    // Cards a settle sends home move together with the settle timing, staggered (DESIGN "Specification: geometry,
-    // layout and motion", Motion).
-    let settling = 0;
+    // Cards a settle sends home move together with the settle timing, staggered, their attachments riding along
+    // (DESIGN "Specification: geometry, layout and motion", Motion).
+    const settling = settleSlots(state, places.keys(), (id) => rcards.get(id)?.inst);
     for (const [id, place] of places) {
       const inst = state.cards[id]!;
       if (place.ref) faces.register(place.ref, place.faceIndex);
@@ -303,9 +306,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       // to the state's pose if the confirmation never comes.
       if (rc.expect && now < rc.expect.until) continue;
       const onlyRot = Math.abs(t.x - place.rest.x) < 1e-6 && Math.abs(t.y - place.rest.y) < 1e-6;
-      const goingHome = prev.home !== undefined && inst.home === undefined && place.kind === 'free' && samePose(inst.pose, prev.home);
-      if (goingHome) {
-        rc.motion.moveTo(place.rest, 'settle', now, theme.motion, reduced(), settling++ * theme.motion.settleStaggerMs);
+      const slot = place.kind === 'free' ? settling.get(id) : undefined;
+      if (slot !== undefined) {
+        rc.motion.moveTo(place.rest, 'settle', now, theme.motion, reduced(), slot * theme.motion.settleStaggerMs);
         continue;
       }
       const kind = prev.tapped !== inst.tapped && onlyRot ? 'tap' : now < rc.localUntil ? 'spring' : 'remote';
@@ -344,10 +347,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const vp = viewport();
     renderer.setSize(vp.w, vp.h, false);
     rig.resize(vp);
-    lineLayer.setResolution(vp.w, vp.h);
+    lineView.setResolution(vp.w, vp.h);
     ghostLayer.setResolution(vp.w, vp.h);
     markerLayer.setResolution(vp.w, vp.h);
-    pingLayer.setResolution(vp.w, vp.h);
     dirty = true;
   }
 
@@ -426,156 +428,6 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return n;
   }
 
-  // --- Lines and pings (DESIGN "Combat and annotation") -----------------------------------------------------------
-  /** Where a line end is drawn: a card's displayed centre, a seat's avatar spot, a stack item's card (else the lane). */
-  function anchorPoint(a: Anchor): TablePoint | null {
-    if (!state) return null;
-    if (a.kind === 'card') {
-      const rc = rcards.get(a.id);
-      return rc ? { x: rc.motion.pose.x, y: rc.motion.pose.y } : null;
-    }
-    if (a.kind === 'seat') {
-      const sl = seatLayoutOf(state, layout, a.id);
-      return sl ? { x: sl.zones.avatar.x, y: sl.zones.avatar.y } : null;
-    }
-    const item = state.stack.find((s) => s.id === a.id);
-    if (!item) return null;
-    const card = item.card ?? item.source;
-    const rc = card ? rcards.get(card) : undefined;
-    return rc ? { x: rc.motion.pose.x, y: rc.motion.pose.y } : { x: layout.stackLane.x, y: layout.stackLane.y };
-  }
-
-  /** What a line end covers, so strokes start at its edge. */
-  function anchorShape(a: Anchor): EndShape {
-    if (a.kind === 'seat') return { kind: 'circle', r: AVATAR_R };
-    const item = a.kind === 'stackItem' ? state?.stack.find((s) => s.id === a.id) : undefined;
-    const id = a.kind === 'card' ? a.id : (item?.card ?? item?.source);
-    const rc = id ? rcards.get(id) : undefined;
-    return rc ? { kind: 'card', pose: rc.motion.pose } : { kind: 'point' };
-  }
-  const anchors: AnchorResolver = { point: anchorPoint, shape: anchorShape };
-
-  const seatAngleOf = (seat: SeatId): number => (state ? (seatLayoutOf(state, layout, seat)?.angle ?? 0) : 0);
-  const combatCtx: CombatContext = { angleOf: seatAngleOf, newId };
-
-  /** Seats that are not `seat` and not its teammates (DESIGN "Combat and annotation", Attack target). */
-  function opponentsOf(seat: SeatId): number {
-    if (!state) return 0;
-    const me = state.seats[seat];
-    return Object.values(state.seats).filter((s) => s.id !== seat && (me?.team === undefined || s.team !== me.team)).length;
-  }
-
-  /** Displayed pose of a card drawn on a battlefield, or null. */
-  function freePose(id: InstanceId): Pose | null {
-    const rc = rcards.get(id);
-    return rc && rc.place.kind === 'free' ? rc.motion.pose : null;
-  }
-
-  /** The kind a right-drag from `card` draws (Shift: a persistent mark; from an attacker: its attack target). */
-  function lineKindFrom(source: Anchor, card: InstanceId, shift: boolean): LineKind {
-    if (shift) return 'mark';
-    return source.kind === 'card' && state?.cards[card]?.combat === 'attack' ? 'attack' : 'target';
-  }
-
-  /** The ends each drawn line covers, by drawn line id (filled with `drawn`). */
-  const drawnEnds = new Map<string, { from: EndShape; to: EndShape }>();
-
-  function computeDrawn(): DrawnLine[] {
-    drawnEnds.clear();
-    if (!state) return [];
-    const out = drawnLines(state, anchors, freePose, opponentsOf, (seat) => forward(seatAngleOf(seat)));
-    for (const l of out) {
-      if (l.source === 'state') {
-        const sl = state.lines[l.id]!;
-        drawnEnds.set(l.id, { from: anchorShape(sl.from), to: anchorShape(sl.to) });
-      } else if (l.source === 'attach') {
-        const c = state.cards[l.id.slice('attach:'.length)]!;
-        drawnEnds.set(l.id, { from: anchorShape({ kind: 'card', id: c.id }), to: anchorShape({ kind: 'card', id: c.attachedTo! }) });
-      } else {
-        drawnEnds.set(l.id, { from: anchorShape({ kind: 'card', id: l.id.slice('stub:'.length) }), to: { kind: 'point' } });
-      }
-    }
-    const g = gesture;
-    if (g?.kind === 'line') {
-      const from = anchorPoint(g.source);
-      const by = viewerSeat && state.seats[viewerSeat] ? viewerSeat : (Object.keys(state.seats).sort()[0] ?? '');
-      if (from) {
-        out.push({ id: 'draft', kind: lineKindFrom(g.source, g.sourceCard, g.shift), by, from, to: g.cur, source: 'draft', dashed: true });
-        drawnEnds.set('draft', { from: anchorShape(g.source), to: { kind: 'point' } });
-      }
-    }
-    return out;
-  }
-
-  const seatColourOf = (seat: SeatId) => {
-    const c = state?.seats[seat]?.colour ?? 0;
-    return theme.tokens.colours.seats[c] ?? theme.tokens.colours.seats[0]!;
-  };
-
-  function lineDraws(): LineDraw[] {
-    drawn = computeDrawn();
-    const px = rig.pxPerMm();
-    const out: LineDraw[] = [];
-    for (const l of drawn) {
-      const st = theme.lineStyle(l.kind, seatColourOf(l.by));
-      const ends = drawnEnds.get(l.id) ?? { from: { kind: 'point' }, to: { kind: 'point' } };
-      for (const sgm of strokeSegments(l, st, ends, px, l.source !== 'stub')) out.push({ ...sgm, colour: st.colour, widthPx: st.widthPx });
-    }
-    return out;
-  }
-
-  /** The ring a ping draws around its target, `pad` mm out. */
-  function pingRing(target: Anchor, pad: number) {
-    const sh = target.kind === 'seat' ? null : anchorShape(target);
-    if (sh?.kind === 'card') return cardRing(sh.pose, pad);
-    const at = anchorPoint(target);
-    return at ? circleRing(at, (target.kind === 'seat' ? AVATAR_R : 20) + pad) : [];
-  }
-
-  function pingAge(id: string, now: number): number {
-    let t0 = pingSeen.get(id);
-    if (t0 === undefined) {
-      t0 = now;
-      pingSeen.set(id, t0);
-    }
-    return now - t0;
-  }
-
-  /** Draw the pings of the view; returns whether one is still fading. */
-  function syncPings(now: number): boolean {
-    const fade = theme.motion.pingFadeMs;
-    const live = new Set(view.pings.map((p) => p.id));
-    for (const id of [...pingSeen.keys()]) if (!live.has(id)) pingSeen.delete(id);
-    const segs: LineDraw[] = [];
-    let alpha = 0;
-    for (const p of view.pings) {
-      const age = pingAge(p.id, now);
-      const a = pingAlpha(age, fade);
-      if (a <= 0) continue;
-      // With reduced motion the ring does not pulse; it still fades.
-      const pad = reduced() ? 3 : pingPad(age);
-      alpha = Math.max(alpha, a);
-      const colour = seatColourOf(p.seat).colour;
-      for (const sgm of pingRing(p.target, pad)) segs.push({ ...sgm, colour, widthPx: PING_WIDTH_PX });
-    }
-    pingLayer.setOpacity(alpha);
-    pingLayer.sync(segs);
-    return alpha > 0;
-  }
-  let pingsLive = false;
-
-  /** Line labels at their midpoints, upright for the viewer (DESIGN "Combat and annotation": an optional short label). */
-  function lineLabelSpecs(specs: Map<string, TextSpec>): void {
-    const t = theme.tokens.colours;
-    const rot = viewerAngle(state, layout, viewerSeat);
-    // Like counter badges, labels keep a legible type size at far zoom.
-    const scale = Math.min(COUNTER_MAX_SCALE, Math.max(1, Math.ceil((COUNTER_MIN_PX / (LABEL_SIZE * rig.pxPerMm())) * 4) / 4));
-    for (const l of drawn) {
-      if (!l.label) continue;
-      specs.set(`ln:${l.id}`, { text: l.label.slice(0, 40), x: (l.from.x + l.to.x) / 2, y: (l.from.y + l.to.y) / 2, z: 30, rot, size: LABEL_SIZE, scale, colour: t.fg, outline: t.surface, anchorX: 'center', anchorY: 'middle' });
-    }
-  }
-
   /** Ghost outlines at home slots and displacement markers (DESIGN "Combat and annotation", Temporary move). */
   function syncDisplaced(): void {
     const dressing = theme.cardDressing;
@@ -597,6 +449,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (!rc.inst.home || rc.place.kind !== 'free' || drag?.ids.includes(rc.id)) return null;
     return rc.inst.home;
   }
+
+  /** A ping is still fading: keep drawing. */
+  let pingsLive = false;
 
   function draw(): void {
     const t0 = performance.now();
@@ -632,13 +487,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     cards.setTextures(faces.textures());
     cards.write(draws);
-    lineLayer.sync(lineDraws());
+    lineView.sync();
     const specs = textSpecs();
-    lineLabelSpecs(specs);
+    lineView.labelSpecs(specs);
     text.sync(specs);
     labels.sync(labelSpecs());
     syncDisplaced();
-    pingsLive = syncPings(performance.now());
+    pingsLive = lineView.syncPings(performance.now());
     themeInstance.update(0);
     renderer.render(scene, camera);
     stats = { drawCalls: renderer.info.render.calls, textureBytes: faces.bytes, frameMs: performance.now() - t0 };
@@ -872,9 +727,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (actions.length === 0) return back();
     // Drag poses are drawn poses; the state stores tapped cards without their tap turn.
     actions = toStoredPoses(state, actions);
-    // A blocker dragged away from its fan no longer blocks: its block lines go and the fan closes up.
-    const unblock = unblockDrafts(state, d.ids, combatCtx);
-    if (unblock.length) actions = regroup([...actions, ...unblock], { newId });
+    // A blocker dragged away from its fan no longer blocks: its block lines go (before the drop) and the fan closes up.
+    actions = withUnblock(state, actions, d.ids, combatCtx);
     markLocal(d, predicted, now);
     dispatch(actions);
   }
@@ -936,49 +790,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
   }
 
-  /** The anchor a right-drag from this card draws from: the card, or its stack item while it is a spell on the stack. */
-  function lineSource(rc: RCard): Anchor | null {
-    if (!state) return null;
-    const z = state.zones[rc.inst.zone];
-    if (!z || z.visibility !== 'public') return null;
-    const item = state.stack.find((i) => i.card === rc.id);
-    return item ? { kind: 'stackItem', id: item.id } : { kind: 'card', id: rc.id };
-  }
+  /** The anchor a right-drag from this card draws from (scene/lines.ts lineSourceOf). */
+  const lineSource = (rc: RCard) => (state ? lineSourceOf(state, rc.id) : null);
 
   /** The thing under a screen point a line can end at: a public card (its stack item on the stack) or a seat's avatar spot. */
-  function lineTargetAt(x: number, y: number, exclude: InstanceId): Anchor | null {
-    if (!state) return null;
+  function lineTargetAt(x: number, y: number, exclude: InstanceId) {
     const rc = pick(x, y, new Set([exclude]));
-    if (rc) return lineSource(rc);
-    const p = screenToTable(x, y);
-    for (const seat of Object.values(state.seats).sort((a, b) => a.index - b.index)) {
-      const sl = seatLayoutOf(state, layout, seat.id);
-      if (sl && Math.hypot(p.x - sl.zones.avatar.x, p.y - sl.zones.avatar.y) <= AVATAR_R) return { kind: 'seat', id: seat.id };
-    }
-    return null;
-  }
-
-  const sameAnchor = (a: Anchor, b: Anchor) => a.kind === b.kind && a.id === b.id;
-
-  /**
-   * Release of a right-drag (DESIGN "Combat and annotation", Connection lines): a line of the drawn kind from the
-   * source to what is under the pointer. Drawing a line that already exists (same kind and ends) removes it, the
-   * manual removal. An attacker has one attack target: a new one replaces the old.
-   */
-  function finishLine(g: Extract<Gesture, { kind: 'line' }>, x: number, y: number, shift: boolean): void {
-    if (!state) return;
-    const to = lineTargetAt(x, y, g.sourceCard);
-    if (!to || sameAnchor(to, g.source)) return;
-    const kind = lineKindFrom(g.source, g.sourceCard, shift || g.shift);
-    const lines = Object.values(state.lines).sort((a, b) => (a.id < b.id ? -1 : 1));
-    const same = lines.find((l) => l.kind === kind && sameAnchor(l.from, g.source) && sameAnchor(l.to, to));
-    let out: ActionDraft[];
-    if (same) out = [{ type: 'lineRemove', line: same.id }];
-    else {
-      out = kind === 'attack' ? lines.filter((l) => l.kind === 'attack' && sameAnchor(l.from, g.source)).map((l): ActionDraft => ({ type: 'lineRemove', line: l.id })) : [];
-      out.push({ type: 'lineAdd', line: newId('ln'), kind, from: g.source, to });
-    }
-    dispatch(regroup(out, { newId }));
+    return rc ? lineSource(rc) : lineView.avatarAt(screenToTable(x, y));
   }
 
   function onPileBadge(rc: RCard, x: number, y: number): boolean {
@@ -1013,8 +831,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return;
     }
     if (gesture?.kind === 'line' && e.pointerId === gesture.pointerId) {
-      gesture.cur = screenToTable(e.clientX, e.clientY);
-      gesture.shift = e.shiftKey;
+      const dr = lineView.draft;
+      if (dr) {
+        dr.cur = screenToTable(e.clientX, e.clientY);
+        dr.target = lineTargetAt(e.clientX, e.clientY, dr.sourceCard);
+        dr.shift = e.shiftKey;
+      }
       dirty = true;
       return;
     }
@@ -1032,7 +854,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (g.button === 2) {
         const source = rc ? lineSource(rc) : null;
         menuPending = null;
-        gesture = source && rc ? { kind: 'line', pointerId: g.pointerId, source, sourceCard: rc.id, cur: screenToTable(e.clientX, e.clientY), shift: e.shiftKey || g.shift } : null;
+        lineView.draft = source && rc ? { pointerId: g.pointerId, source, sourceCard: rc.id, target: lineTargetAt(e.clientX, e.clientY, rc.id), cur: screenToTable(e.clientX, e.clientY), shift: e.shiftKey || g.shift } : null;
+        gesture = lineView.draft ? { kind: 'line', pointerId: g.pointerId } : null;
         if (!gesture) release(e);
         setHover(null);
         dirty = true;
@@ -1100,7 +923,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     release(e);
     if (g.kind === 'line') {
       menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
-      finishLine(g, e.clientX, e.clientY, e.shiftKey);
+      const dr = lineView.draft;
+      dispatch(lineView.finish(dr ? lineTargetAt(e.clientX, e.clientY, dr.sourceCard) : null, e.shiftKey, newId));
       dirty = true;
       return;
     }
@@ -1156,6 +980,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (drag && drag.pointerId === e.pointerId) finishDrag(false, true);
     if (gesture?.kind === 'marquee') marqueeEl.style.display = 'none';
     if (gesture?.kind === 'line') dirty = true;
+    lineView.draft = null;
     gesture = null;
     pinch = null;
     menuPending = null;
@@ -1256,6 +1081,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (e.key === 'Escape' && gesture?.kind === 'line') {
       // Escape abandons a line being drawn; the release then does nothing.
       menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
+      lineView.draft = null;
       gesture = null;
       dirty = true;
     }
@@ -1329,23 +1155,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const v = rig.view;
       return { rig: 'birdseye', fov: rig.fovDeg, position: [v.cx, v.cy, v.dist], pitch: 90 };
     },
-    lines() {
-      if (!state) return [];
-      return Object.values(state.lines)
-        .sort((a, b) => (a.id < b.id ? -1 : 1))
-        .map((l) => {
-          const from = anchorPoint(l.from);
-          const to = anchorPoint(l.to);
-          return { ...l, ends: from && to ? { from, to } : null };
-        });
-    },
-    drawnLines() {
-      return computeDrawn().map((l) => ({ ...l, from: { ...l.from }, to: { ...l.to } }));
-    },
-    pings() {
-      const now = performance.now();
-      return view.pings.map((p) => ({ id: p.id, target: p.target, seat: p.seat, at: anchorPoint(p.target), alpha: pingAlpha(pingAge(p.id, now), theme.motion.pingFadeMs) }));
-    },
+    lines: () => lineView.debugLines(),
+    drawnLines: () => lineView.debugDrawn(),
+    pings: () => lineView.debugPings(performance.now()),
     frameStats() {
       return { ...stats };
     },
@@ -1514,10 +1326,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       cards.dispose();
       text.dispose();
       labels.dispose();
-      lineLayer.dispose();
+      lineView.dispose();
       ghostLayer.dispose();
       markerLayer.dispose();
-      pingLayer.dispose();
       markGeometry.dispose();
       markMaterial.dispose();
       renderer.dispose();

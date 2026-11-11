@@ -7,9 +7,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { Anchor, LineKind, Pose, TableState } from '../../../src/core/types';
-import { ATTACH_APART, STUB_LEN, arrowSegments, cardReach, cardRing, dashSegment, drawnLines, pingAlpha, strokeSegments, trimLine, type AnchorResolver } from '../../../src/scene/lines';
+import { lineKindFor } from '../../../src/scene/combat';
+import { ATTACH_APART, STUB_LEN, arrowSegments, cardReach, cardRing, dashSegment, drawnLines, lineDrafts, lineSourceOf, pingAlpha, pingPad, strokeSegments, trimLine, type AnchorResolver } from '../../../src/scene/lines';
 import { paper } from '../../../src/themes/paper';
-import { P, act, board, line, ok } from './helpers';
+import { P, act, applyDrafts, board, line, ok } from './helpers';
 
 const resolver = (s: TableState): AnchorResolver => ({
   point: (a: Anchor) => {
@@ -161,5 +162,62 @@ describe('ping', () => {
     expect(ring).toHaveLength(4);
     const xs = ring.map((s) => s.from.x);
     expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(88 + 6);
+  });
+});
+
+describe('ping pulse', () => {
+  it('pulses out twice over the first second, then rests just outside the card while it fades', () => {
+    expect(pingPad(0)).toBe(2);
+    expect(pingPad(250)).toBe(4);
+    expect(pingPad(750)).toBe(4);
+    for (const t of [1000, 1250, 1500, 1999]) expect(pingPad(t)).toBe(2);
+  });
+});
+
+describe('what a right-drag draws', () => {
+  const card = (id: string): Anchor => ({ kind: 'card', id });
+  const seat = (id: string): Anchor => ({ kind: 'seat', id });
+  const attacking = () => ok(board(), act('moveTemp', { card: 'a00', pose: P(-150, -90), combat: 'attack', tap: true }));
+
+  it('from an attacker: an attack line to an opposing player or permanent, a target line to anything else', () => {
+    const s = attacking();
+    expect(lineKindFor(s, card('a00'), seat('s1'), false)).toBe('attack');
+    expect(lineKindFor(s, card('a00'), card('b00'), false)).toBe('attack');
+    // An ability's target: own permanent, own avatar.
+    expect(lineKindFor(s, card('a00'), card('a01'), false)).toBe('target');
+    expect(lineKindFor(s, card('a00'), seat('s0'), false)).toBe('target');
+    // While nothing is under the pointer the attacker's line previews as an attack line.
+    expect(lineKindFor(s, card('a00'), null, false)).toBe('attack');
+    // Shift: a persistent mark, whatever the ends.
+    expect(lineKindFor(s, card('a00'), seat('s1'), true)).toBe('mark');
+    // A creature that does not attack draws target lines.
+    expect(lineKindFor(s, card('a01'), seat('s1'), false)).toBe('target');
+  });
+
+  it('an attacker can point at a target without losing its attack line; a new attack target replaces the old', () => {
+    let s = attacking();
+    let n = 0;
+    const newId = (p: string) => `${p}-${++n}`;
+    s = applyDrafts(s, lineDrafts(s, card('a00'), seat('s1'), false, newId));
+    s = applyDrafts(s, lineDrafts(s, card('a00'), card('a01'), false, newId));
+    const kinds = () => Object.values(s.lines).map((l) => `${l.kind}:${l.to.id}`).sort();
+    expect(kinds()).toEqual(['attack:s1', 'target:a01']);
+    const swap = lineDrafts(s, card('a00'), card('b00'), false, newId);
+    expect(new Set(swap.map((d) => d.group)).size).toBe(1);
+    s = applyDrafts(s, swap);
+    expect(kinds()).toEqual(['attack:b00', 'target:a01']);
+    // Drawing an existing line again removes it.
+    s = applyDrafts(s, lineDrafts(s, card('a00'), card('a01'), false, newId));
+    expect(kinds()).toEqual(['attack:b00']);
+    // Onto nothing, or onto itself: no line.
+    expect(lineDrafts(s, card('a00'), null, false, newId)).toEqual([]);
+    expect(lineDrafts(s, card('a00'), card('a00'), false, newId)).toEqual([]);
+  });
+
+  it('only public cards are line sources', () => {
+    const s = board();
+    expect(lineSourceOf(s, 'a00')).toEqual(card('a00'));
+    expect(lineSourceOf(s, 'a05')).toBeNull();
+    expect(lineSourceOf(s, 'nope')).toBeNull();
   });
 });

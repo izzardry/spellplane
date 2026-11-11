@@ -7,8 +7,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { TableState } from '../../../src/core/types';
-import { blockPlan, blockersOf, canBlock, fanAttacker, fanAxes, fanPositions, unblockDrafts } from '../../../src/scene/combat';
-import { P, act, applyDrafts, board, card, ctxFor, ok, press } from './helpers';
+import { blockPlan, blockersOf, canBlock, fanAttacker, fanAxes, fanPositions, settleSlots, unblockDrafts, withUnblock } from '../../../src/scene/combat';
+import { P, act, applyDrafts, board, card, ctxFor, ok, play, press, readyTable } from './helpers';
 
 /** Board with a00 (seat 0) and b02 (seat 1) attacking. a00 ends at (-150, -90); b02 at (150, 90). */
 function attacking(): TableState {
@@ -210,5 +210,99 @@ describe('what counts as a block drop', () => {
     s = applyDrafts(s, press(s, 'settle'));
     expect(fanAttacker(s, 'a00')).toBeNull();
     expect(fanAttacker(s, 'b00')).toBeNull();
+  });
+});
+
+describe('a blocker that died leaves the fan (it is moved to the graveyard by hand)', () => {
+  /** a00 attacks; b00 and b01 block it; b00 dies (moved to its graveyard by hand, keeping its block line). */
+  function oneDied(): TableState {
+    let s = attacking();
+    s = block(s, ['b00'], 'a00');
+    s = block(s, ['b01'], 'a00', P(-100, 6));
+    s = ok(s, act('move', { card: 'b00', to: 'graveyard:s1' }, 's1'));
+    // Lines drop only on entering a hidden zone: the dead blocker's line is still there.
+    expect(blockLines(s)).toEqual(['b00>a00', 'b01>a00']);
+    return s;
+  }
+
+  it('the fan is only the blockers still on a battlefield', () => {
+    const s = oneDied();
+    expect(blockersOf(s, 'a00', ctxFor(s))).toEqual(['b01']);
+  });
+
+  it('another blocker joins: every draft applies and the two live blockers sit 69 apart, centred on the attacker', () => {
+    let s = oneDied();
+    const plan = blockPlan(s, ['b02'], 'a00', P(-80, 6), ctxFor(s))!;
+    expect(plan.actions.filter((a) => a.type === 'moveTemp' && a.card === 'b00')).toEqual([]);
+    s = applyDrafts(s, plan.actions, 's1');
+    expect(blockersOf(s, 'a00', ctxFor(s))).toEqual(['b01', 'b02']);
+    expect(card(s, 'b01').pose).toEqual(P(-184.5, 6, 180));
+    expect(card(s, 'b02').pose).toEqual(P(-115.5, 6, 180));
+    // Re-ordering the survivors (first-strike damage dealt, damage order changed) applies too.
+    s = block(s, ['b01'], 'a00', P(-90, 6));
+    expect(blockersOf(s, 'a00', ctxFor(s))).toEqual(['b02', 'b01']);
+    expect(card(s, 'b02').pose).toEqual(P(-184.5, 6, 180));
+    expect(card(s, 'b01').pose).toEqual(P(-115.5, 6, 180));
+  });
+
+  it('dragging the survivor away applies cleanly and leaves no fan', () => {
+    let s = oneDied();
+    s = applyDrafts(s, withUnblock(s, [{ type: 'move', card: 'b01', to: 'battlefield:s1', pose: P(0, 250, 180) }], ['b01'], ctxFor(s)), 's1');
+    expect(blockersOf(s, 'a00', ctxFor(s))).toEqual([]);
+  });
+});
+
+describe('a blocker dropped into a hidden zone (a bounce to hand)', () => {
+  it('unblocks before the move: every draft of the group applies, the rest of the fan closes up', () => {
+    let s = attacking();
+    s = block(s, ['b00'], 'a00');
+    s = block(s, ['b01'], 'a00', P(-100, 6));
+    const drafts = withUnblock(s, [{ type: 'toZone', card: 'b01', to: 'hand:s1', position: 'any' }], ['b01'], ctxFor(s));
+    expect(drafts[0]).toMatchObject({ type: 'lineRemove' });
+    expect(new Set(drafts.map((d) => d.group)).size).toBe(1);
+    s = applyDrafts(s, drafts, 's1');
+    expect(card(s, 'b01').zone).toBe('hand:s1');
+    expect(blockLines(s)).toEqual(['b00>a00']);
+    expect(card(s, 'b00').pose).toEqual(P(-150, 6, 180));
+  });
+
+  it('a drop of a card that blocks nothing is left as it is', () => {
+    const s = attacking();
+    const drop = [{ type: 'toZone' as const, card: 'b01', to: 'hand:s1', position: 'any' as const }];
+    expect(withUnblock(s, drop, ['b01'], ctxFor(s))).toBe(drop);
+  });
+});
+
+describe('Two-Headed Giant: a teammate is no blocker', () => {
+  it("dropping a teammate's creature onto your own attacker is an ordinary drop; an opponent's blocks", () => {
+    let s = readyTable(4, '2hg', 4);
+    s = play(s, 'a00', P(-150, -200));
+    s = play(s, 'b00', P(150, -200), 's1');
+    s = play(s, 'c00', P(-150, 200, 180), 's2');
+    s = ok(s, act('moveTemp', { card: 'a00', pose: P(-150, -90), combat: 'attack', tap: true }));
+    expect(canBlock(s, ['b00'], 'a00')).toBe(false);
+    expect(canBlock(s, ['c00'], 'a00')).toBe(true);
+    expect(canBlock(s, ['b00', 'c00'], 'a00')).toBe(false);
+  });
+});
+
+describe('settle: who goes home with which stagger slot', () => {
+  it('displaced cards get slots in drawing order; an attachment rides along in its host’s slot', () => {
+    let s = attacking();
+    s = block(s, ['b00'], 'a00');
+    s = ok(s, act('reveal', { instanceId: 'a03', ref: { sid: 'sid-a03' }, salt: 'salt-a03' }));
+    s = ok(s, act('move', { card: 'a03', to: 'battlefield:s0', pose: P(300, -200) }));
+    s = ok(s, act('attach', { card: 'a03', to: 'a00' }));
+    const before = s;
+    const after = applyDrafts(s, press(s, 'settle'));
+    const slots = settleSlots(after, ['a03', 'b00', 'a00', 'b02', 'a01'], (id) => before.cards[id]);
+    expect([...slots]).toEqual([
+      ['b00', 0],
+      ['a00', 1],
+      ['b02', 2],
+      ['a03', 1],
+    ]);
+    // Nothing settled: no slots.
+    expect(settleSlots(before, Object.keys(before.cards), (id) => before.cards[id]).size).toBe(0);
   });
 });

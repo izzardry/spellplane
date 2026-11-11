@@ -177,9 +177,13 @@ test('right-drag draws a target line, Shift+right-drag a mark; settle (B) brings
   // An attack target drawn from an attacker is an attack line.
   await rightDrag(page, 'a1', 'b1');
   await expect.poll(async () => Object.values((await state(page)).lines).filter((l) => l.kind === 'attack').length).toBe(1);
+  // From an attacker to its own side's permanent it is a target line (an ability's target); the attack line stays.
+  await rightDrag(page, 'a1', 'a2');
+  await expect.poll(async () => Object.values((await state(page)).lines).filter((l) => l.from.id === 'a1' && l.to.id === 'a2').map((l) => l.kind)).toEqual(['target']);
+  expect(Object.values((await state(page)).lines).filter((l) => l.kind === 'attack')).toMatchObject([{ from: { id: 'a1' }, to: { id: 'b1' } }]);
   await dispatch(page, { type: 'moveTemp', card: 'b0', pose: { x: -150, y: 6, rot: 180 }, combat: 'block' }, 's1');
   await dispatch(page, { type: 'lineAdd', line: 'blk', kind: 'block', from: { kind: 'card', id: 'b0' }, to: { kind: 'card', id: 'a0' } }, 's1');
-  await expect.poll(async () => Object.keys((await state(page)).lines).length).toBe(4);
+  await expect.poll(async () => Object.keys((await state(page)).lines).length).toBe(5);
   // The mark follows a1 into the attack.
   await idle(page);
   const markEnds = (await lines(page)).find((l) => l.kind === 'mark')!.ends!;
@@ -192,7 +196,7 @@ test('right-drag draws a target line, Shift+right-drag a mark; settle (B) brings
   expect(st.cards.a0).toMatchObject({ pose: { x: -150, y: -200, rot: 0 }, tapped: true });
   expect(st.cards.a1).toMatchObject({ pose: { x: 0, y: -200, rot: 0 }, tapped: true });
   expect(st.cards.b0!.pose).toEqual({ x: 0, y: 200, rot: 180 });
-  expect(Object.values(st.lines).map((l) => l.kind).sort()).toEqual(['mark', 'target']);
+  expect(Object.values(st.lines).map((l) => l.kind).sort()).toEqual(['mark', 'target', 'target']);
   await idle(page);
   expect((await shown(page)).some((c) => c.displaced)).toBe(false);
   // The mark's end came home with a1.
