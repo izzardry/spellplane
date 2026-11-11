@@ -5,8 +5,8 @@
  * One engine per browser and room. It owns the replica (net/sequencer.ts Replica): own actions apply optimistically
  * and are proposed to the sequencer; sequenced actions apply strictly in order; gaps are filled by catch-up. The
  * engine survives a transport that drops, delays and reorders (the simulated network of tests/sim): handshakes,
- * proposals, claims and catch-up requests are resent until answered, and a proposal names the proposer's previous
- * pending proposal (`prev`) so one proposer's actions are sequenced in the order it applied them.
+ * proposals, claims and catch-up requests are resent until answered. Pending proposals are sent and resent in the
+ * order they were applied; on the design's reliable ordered `act` channel they reach the sequencer in that order.
  *
  * Timers use the global setTimeout/setInterval and the injected clock, so Vitest fake timers drive the engine.
  */
@@ -31,7 +31,7 @@ import {
   type WireOf,
 } from './messages';
 import { PresenceChannel } from './presence';
-import { createSequencer, electSequencer, Replica, seatOfPeer } from './sequencer';
+import { createSequencer, electSequencer, Replica, RETAIN_ACTIONS, seatOfPeer } from './sequencer';
 import { CHANNELS, type Channel, type PeerId } from './transport';
 import {
   AWAY_AFTER_MS,
@@ -77,6 +77,8 @@ const KEEP_HASHES = 64;
 const KEEP_NACKS = 5_000;
 const QUEUE_LIMIT = 2_000;
 const KEEP_APPLY_TIMES = 1_000;
+/** Reported seqs remembered against re-reporting after a reload (more than a reload replays: the retained tail). */
+const KEEP_EMITTED = 2 * RETAIN_ACTIONS;
 
 interface PeerEntry {
   info: PeerInfo;
@@ -140,11 +142,12 @@ class Engine implements NetEngine {
 
   private sequencer: string | null = null;
   private mode: 'idle' | 'claiming' | 'active' = 'idle';
+  /** A `seq` from the current (remote) sequencer was applied since it became the sequencer. */
+  private heardSequencer = false;
   private seqr: Sequencer | null = null;
   private handoverFrom: string | null = null;
   private lastClaimAt = 0;
   private queued: { from: PeerId; msg: ProposeMessage }[] = [];
-  private readonly holding = new Map<string, { from: PeerId; msg: ProposeMessage }[]>();
   private readonly nacked = new Map<string, string>();
 
   private readonly ownCids = new Set<string>();
@@ -173,6 +176,8 @@ class Engine implements NetEngine {
   private readonly firedDeadlines = new Set<string>();
 
   private applied: { action: SequencedAction; own: boolean }[] = [];
+  /** The cid reported to onSequenced at each recent seq: a snapshot reload replays actions already reported. */
+  private readonly emitted = new Map<number, string>();
   private flushing = false;
   private lastView: TableState | null = null;
   private lastSeats: TableState['seats'] | null = null;
@@ -222,7 +227,11 @@ class Engine implements NetEngine {
     if (this.joined || this.closed) return;
     this.setStatus('joining');
     await this.opts.transport.join(this.opts.roomId, this.opts.roomKey);
-    if (this.closed) return;
+    if (this.closed) {
+      // leave() ran while the transport was joining; its leave may have come before the room existed.
+      this.opts.transport.leave();
+      return;
+    }
     this.joined = true;
     this.tickTimer = setInterval(() => this.tick(), TICK_MS);
     this.hbTimer = setInterval(() => this.heartbeat(), HEARTBEAT_MS);
@@ -687,8 +696,13 @@ class Engine implements NetEngine {
     }
     // This browser announces itself once it has taken over (activate), with the seq it continues from.
     if (next !== me) this.announce(next);
-    // A handover from a remote sequencer is logged; settling on a sequencer when peers first meet is not.
-    if (prev !== null && prev !== me && next !== null) this.system('info', next === me ? 'This browser now sequences the table.' : 'Another browser now sequences the table.');
+    // A handover from a remote sequencer is logged; settling on a sequencer when peers first meet is not. It was a
+    // handover when the former one really sequenced for this browser (a `seq` came from it) or is gone (away, left):
+    // a joiner that verified a higher seat before the lowest one merely settles.
+    const former = prev !== null && prev !== me ? this.entryOf(prev) : null;
+    const handedOver = prev !== null && prev !== me && (this.heardSequencer || !former || former[1].info.status !== 'connected');
+    this.heardSequencer = false;
+    if (handedOver && next !== null) this.system('info', next === me ? 'This browser now sequences the table.' : 'Another browser now sequences the table.');
     this.updateStatus();
   }
 
@@ -696,7 +710,6 @@ class Engine implements NetEngine {
     this.mode = 'idle';
     this.seqr = null;
     this.queued = [];
-    this.holding.clear();
     this.clearDeadlines();
   }
 
@@ -797,17 +810,11 @@ class Engine implements NetEngine {
 
   // --- proposing and sequencing -----------------------------------------------------------------------------
 
-  private prevOf(cid: string): string | null {
-    const pending = this.replica.pending();
-    const i = pending.findIndex((a) => a.cid === cid);
-    return i > 0 ? pending[i - 1]!.cid : null;
-  }
-
   private sendProposal(action: Action): void {
     const target = this.entryOf(this.sequencer);
     if (!target || this.sequencer === this.identity.peerId) return;
     this.sentAt.set(action.cid, this.now());
-    this.send('act', { v: PROTOCOL_VERSION, t: 'propose', cid: action.cid, action, prev: this.prevOf(action.cid) }, target[0]);
+    this.send('act', { v: PROTOCOL_VERSION, t: 'propose', cid: action.cid, action }, target[0]);
   }
 
   private resendPending(): void {
@@ -860,14 +867,6 @@ class Engine implements NetEngine {
       this.send('act', { v: PROTOCOL_VERSION, t: 'nack', cid, reason: refused }, from);
       return;
     }
-    const prev = msg.prev ?? null;
-    if (prev !== null && this.replica.seqOf(prev) === undefined && !this.nacked.has(prev)) {
-      const list = (this.holding.get(prev) ?? []).filter((h) => h.msg.cid !== cid);
-      list.push({ from, msg });
-      this.holding.set(prev, list);
-      trimMap(this.holding, QUEUE_LIMIT);
-      return;
-    }
     const state = this.replica.confirmed();
     const peerId = e.info.peerId;
     const bad = this.senderPeerCheck(msg.action, peerId);
@@ -879,11 +878,6 @@ class Engine implements NetEngine {
       this.nacked.set(cid, r.reason);
       trimMap(this.nacked, KEEP_NACKS);
       this.send('act', { v: PROTOCOL_VERSION, t: 'nack', cid, reason: r.reason }, from);
-    }
-    const held = this.holding.get(cid);
-    if (held) {
-      this.holding.delete(cid);
-      for (const h of held) this.onPropose(h.from, h.msg);
     }
     this.afterChange();
   }
@@ -900,6 +894,7 @@ class Engine implements NetEngine {
       return;
     }
     this.replica.receive(a);
+    this.heardSequencer = true;
     if (this.replica.gap() !== null && this.gapSince === null) this.gapSince = this.now();
     // The sequencer sends, so it has taken over: check once that this replica's recent history is its history.
     if (this.verifyNext && !this.sync) {
@@ -1098,7 +1093,13 @@ class Engine implements NetEngine {
       while (this.applied.length) {
         const batch = this.applied;
         this.applied = [];
-        for (const { action, own } of batch) this.sequencedEv.emit(action, own);
+        for (const { action, own } of batch) {
+          if (this.emitted.get(action.seq) === action.cid) continue;
+          this.emitted.delete(action.seq);
+          this.emitted.set(action.seq, action.cid);
+          trimMap(this.emitted, KEEP_EMITTED);
+          this.sequencedEv.emit(action, own);
+        }
       }
       const seats = this.replica.confirmed().seats;
       if (seats !== this.lastSeats) {

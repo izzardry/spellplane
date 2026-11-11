@@ -60,6 +60,44 @@ describe('Sequencer.sequence', () => {
     expect(s.sequence(state, { type: 'tap', by: 's1', cid: 'tp', card: theirs.id, tapped: true }, player('s1')).ok).toBe(true);
   });
 
+  it('refuses every action on a card in another seat’s hidden zone, and allows it for the owner', () => {
+    const s = createSequencer(state.seq);
+    const lib0 = state.zones['library:s0']!.ids;
+    const [h0, h1, h2] = lib0 as [string, string, string];
+    const inHand = reduce(state, { type: 'draw', by: 's0', cid: 'dr', instanceId: h0, seq: state.seq + 1 });
+    const pub1 = Object.values(state.cards).find((c) => c.zone === 'battlefield:s1')!.id;
+    const refused: Action[] = [
+      { type: 'move', by: 's1', cid: 'm1', card: h1, to: 'battlefield:s1' },
+      { type: 'move', by: 's1', cid: 'm2', card: h1, to: 'graveyard:s0' },
+      { type: 'toZone', by: 's1', cid: 'z1', card: h1, to: 'hand:s0', position: 'top' },
+      { type: 'moveTemp', by: 's1', cid: 'mt', card: h1, pose: { x: 0, y: 0, rot: 0 } },
+      { type: 'stackPush', by: 's1', cid: 'sp1', item: 'i1', kind: 'spell', card: h1 },
+      { type: 'stackPush', by: 's1', cid: 'sp2', item: 'i2', kind: 'ability', source: h1 },
+      { type: 'attach', by: 's1', cid: 'at1', card: h1, to: pub1 },
+      { type: 'attach', by: 's1', cid: 'at2', card: pub1, to: h1 },
+      { type: 'copy', by: 's1', cid: 'cp', card: 'tok-x', of: h1, pose: { x: 0, y: 0, rot: 0 } },
+      { type: 'remove', by: 's1', cid: 'rm', card: h1 },
+      { type: 'pile', by: 's1', cid: 'pl', card: h1, pile: null },
+      { type: 'flip', by: 's1', cid: 'fl', card: h1, face: 'up' },
+      { type: 'tap', by: 's1', cid: 'tp', card: h1, tapped: true },
+      { type: 'settle', by: 's1', cid: 'st', cards: [h1] },
+      { type: 'undo', by: 's1', cid: 'un', of: 'whatever', inverse: { type: 'move', by: 's1', cid: 'inv', card: h1, to: 'battlefield:s1' } },
+    ] as Action[];
+    for (const a of refused) {
+      expect(s.sequence(state, a, player('s1')), a.type).toEqual({ ok: false, reason: expect.stringMatching(/hidden-zone actions come from the zone's owner.*library:s0/) });
+    }
+    // The opponent's hand is just as closed.
+    expect(s.sequence(inHand, { type: 'move', by: 's1', cid: 'mh', card: h0, to: 'battlefield:s1' } as Action, player('s1'))).toEqual({ ok: false, reason: expect.stringMatching(/hand:s0/) });
+    expect(s.sequence(inHand, { type: 'stackPush', by: 's1', cid: 'sh', item: 'i3', kind: 'spell', card: h0 } as Action, player('s1')).ok).toBe(false);
+    // The owner may move its own hidden cards (mill, play from hand).
+    expect(s.sequence(state, { type: 'move', by: 's0', cid: 'om', card: h2, to: 'graveyard:s0' } as Action, player('s0')).ok).toBe(true);
+    expect(s.sequence(inHand, { type: 'toZone', by: 's0', cid: 'oz', card: h0, to: 'library:s0', position: 'bottom' } as Action, player('s0')).ok).toBe(true);
+    // A public card may go into another seat's hidden zone (bounce to its owner's hand); its identity was public.
+    expect(s.sequence(state, { type: 'toZone', by: 's0', cid: 'bn', card: pub1, to: 'hand:s1', position: 'top' } as Action, player('s0')).ok).toBe(true);
+    // Looking at another seat's hidden cards is the asker's public record; the owner answers on the pair channel.
+    expect(s.sequence(state, { type: 'lookAt', by: 's1', cid: 'lk', zone: 'library:s0', count: 2 } as Action, player('s1')).ok).toBe(true);
+  });
+
   it('lets a spectator chat but not act for a seat', () => {
     const s = createSequencer(state.seq);
     const spectator = { seat: null, role: 'spectator' as const, self: false };

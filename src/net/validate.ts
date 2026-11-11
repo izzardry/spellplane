@@ -74,7 +74,7 @@ export function validPayload(m: WireMessage): boolean {
     case 'bye':
       return typeof r.reason === 'string' && typeof r.version === 'number';
     case 'propose':
-      return isId(r.cid) && isActionShape(r.action) && r.action.cid === r.cid && (r.prev === undefined || r.prev === null || isId(r.prev));
+      return isId(r.cid) && isActionShape(r.action) && r.action.cid === r.cid;
     case 'seq':
       return isSeq(r.seq) && isId(r.cid) && isSequenced(r.action) && (r.action as Rec).seq === r.seq && (r.action as Rec).cid === r.cid;
     case 'nack':

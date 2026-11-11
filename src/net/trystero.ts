@@ -26,6 +26,9 @@ export class TrysteroTransport implements Transport {
   private readonly peerHandlers: PeerHandler[] = [];
   private readonly streamHandlers: ((stream: MediaStream, from: PeerId) => void)[] = [];
   private readonly known = new Set<PeerId>();
+  /** Bumped by `leave`, so a `join` still loading Trystero does not open a room after it. */
+  private generation = 0;
+  private joining: Promise<void> | null = null;
 
   constructor(private readonly options: TrysteroOptions = {}) {}
 
@@ -34,9 +37,19 @@ export class TrysteroTransport implements Transport {
     return this.self;
   }
 
-  async join(roomId: string, roomKey: string): Promise<void> {
-    if (this.room) return;
+  join(roomId: string, roomKey: string): Promise<void> {
+    if (this.room) return Promise.resolve();
+    this.joining ??= this.open(roomId, roomKey).finally(() => {
+      this.joining = null;
+    });
+    return this.joining;
+  }
+
+  private async open(roomId: string, roomKey: string): Promise<void> {
+    const gen = this.generation;
     const trystero = await import('trystero/nostr');
+    // `leave` ran while Trystero was loading: open nothing (no relay sockets, no peer connections).
+    if (gen !== this.generation) return;
     this.self = trystero.selfId;
     const room = trystero.joinRoom(
       { appId: APP_ID, password: roomKey, ...(this.options.relayUrls ? { relayConfig: { urls: this.options.relayUrls } } : {}) },
@@ -63,6 +76,7 @@ export class TrysteroTransport implements Transport {
   }
 
   leave(): void {
+    this.generation++;
     const room = this.room;
     if (!room) return;
     this.room = null;

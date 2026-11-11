@@ -28,7 +28,7 @@ export async function stream(
   sim: Sim,
   count: number,
   rand: () => number,
-  opts: { gapMs?: number; from?: () => SimPeer[]; onEach?: (n: number) => void } = {},
+  opts: { gapMs?: number; from?: () => SimPeer[]; onEach?: (n: number, proposer: SimPeer, action: Action) => void } = {},
 ): Promise<number> {
   let accepted = 0;
   let tries = 0;
@@ -39,7 +39,7 @@ export async function stream(
     if (a && p.engine.propose(a)) {
       p.proposed.push(a.cid);
       accepted++;
-      opts.onEach?.(accepted);
+      opts.onEach?.(accepted, p, a);
     }
     await vi.advanceTimersByTimeAsync(Math.floor(rand() * (opts.gapMs ?? 40)));
   }
@@ -98,9 +98,20 @@ export async function handover(seed: number, silent: boolean): Promise<void> {
   const survivors = (): SimPeer[] => sim.peers.filter((p) => p !== old);
   let killedAt = -1;
   const before = new Map<number, string>();
+  // The first action proposed after the kill, and when the new sequencer answered it (sequenced or refused).
+  let firstAfter: { peer: SimPeer; cid: string } | null = null;
+  let answeredAt = -1;
+  for (const p of sim.peers) {
+    const answered = (cid: string): void => {
+      if (answeredAt < 0 && firstAfter?.peer === p && firstAfter.cid === cid) answeredAt = Date.now();
+    };
+    p.engine.onSequenced((a, own) => own && answered(a.cid));
+    p.engine.onRollback((a) => answered(a.cid));
+  }
   await stream(sim, 600, rand, {
     from: () => (killedAt < 0 ? sim.peers : survivors()),
-    onEach: (k) => {
+    onEach: (k, proposer, action) => {
+      if (k > 300 && firstAfter === null) firstAfter = { peer: proposer, cid: action.cid };
       if (k !== 300) return;
       // What a survivor has applied was acknowledged by the table; it must keep its place after the handover.
       for (const p of survivors()) for (const [s, a] of p.log) before.set(s, a.cid);
@@ -109,13 +120,14 @@ export async function handover(seed: number, silent: boolean): Promise<void> {
       else sim.net.kill(old.transport.selfId);
     },
   });
-  const tookMs = (await until(() => agreed(survivors()), 30_000, 'handover', 50).then(() => Date.now())) - killedAt;
+  await until(() => agreed(survivors()), 30_000, 'handover', 50);
   const h = await expectConverged(survivors(), 120_000);
   const next = survivors().find((p) => p.engine.isSequencing())!;
   expect(next.peerId).toBe('peer1'); // the connected seat with the lowest index
-  // The stream kept going after the kill, so "agreed" may come late; the handover itself is bounded by when the
-  // first action proposed after the kill got sequenced.
-  expect(tookMs).toBeGreaterThanOrEqual(0);
+  // The handover, mid-stream: the first action proposed after the kill is answered by the new sequencer in time.
+  expect(firstAfter, 'an action was proposed after the kill').not.toBeNull();
+  expect(answeredAt, 'the first action after the kill was answered').toBeGreaterThanOrEqual(killedAt);
+  expect(answeredAt - killedAt).toBeLessThanOrEqual(silent ? HANDOVER_BOUND_MS.silent : HANDOVER_BOUND_MS.leave);
 
   const final = survivors()[0]!.engine.confirmedState();
   const log = new Map<number, string>();

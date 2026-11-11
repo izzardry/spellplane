@@ -69,7 +69,23 @@ describe('nack and rollback', () => {
     expect(b.engine.state().cards['tok-1']).toBeUndefined();
   });
 
-  it('one proposer’s actions are sequenced in the order it applied them, even when the first proposal is lost', async () => {
+  it('one proposer’s actions are sequenced in the order it applied them on the ordered `act` channel', async () => {
+    // DESIGN channel table: `act` is reliable and ordered, so proposals reach the sequencer in the order sent.
+    const sim = await connected({ engines: 2, seed: 3, ...DELAY, ordered: true });
+    const b = sim.peers[1]!;
+    b.engine.propose({ type: 'createToken', by: 's1', cid: 'make', card: 'tok-b', zone: 'battlefield:s1', pose: { x: 0, y: 0, rot: 0 }, ref: { sid: 'cat' } });
+    b.engine.propose({ type: 'tap', by: 's1', cid: 'tap', card: 'tok-b', tapped: true });
+    b.engine.propose({ type: 'counter', by: 's1', cid: 'count', card: 'tok-b', kind: '+1/+1', delta: 1 });
+    await expectConverged(sim.peers);
+    expect(b.rolledBack.size).toBe(0);
+    const order = [...b.log.values()].filter((x) => ['make', 'tap', 'count'].includes(x.cid)).sort((x, y) => x.seq - y.seq).map((x) => x.cid);
+    expect(order).toEqual(['make', 'tap', 'count']);
+    expect(sim.peers[0]!.engine.state().cards['tok-b']).toMatchObject({ tapped: true, counters: { '+1/+1': 1 } });
+  });
+
+  it('a lost proposal is resent and sequenced; later ones that overtook it are sequenced or rolled back, never lost', async () => {
+    // Outside the design's reliable channel (the simulated loss) the wire carries no per-proposer order, so a later
+    // proposal can overtake a lost one (decision M1-P1; a `prev` field on `propose` would need a contract change).
     const sim = await connected({ engines: 2, seed: 3, ...DELAY });
     const b = sim.peers[1]!;
     let dropped = 0;
@@ -79,10 +95,11 @@ describe('nack and rollback', () => {
     b.engine.propose({ type: 'counter', by: 's1', cid: 'count', card: 'tok-b', kind: '+1/+1', delta: 1 });
     await expectConverged(sim.peers);
     expect(dropped).toBe(2); // the first copy was lost, the resend went through
-    expect(b.rolledBack.size).toBe(0);
-    const order = [...b.log.values()].filter((x) => ['make', 'tap', 'count'].includes(x.cid)).sort((x, y) => x.seq - y.seq).map((x) => x.cid);
-    expect(order).toEqual(['make', 'tap', 'count']);
-    expect(sim.peers[0]!.engine.state().cards['tok-b']).toMatchObject({ tapped: true, counters: { '+1/+1': 1 } });
+    const logged = new Set([...b.log.values()].map((x) => x.cid));
+    expect(logged.has('make')).toBe(true);
+    for (const cid of ['tap', 'count']) expect(logged.has(cid) !== b.rolledBack.has(cid), `${cid} sequenced xor rolled back`).toBe(true);
+    expect(b.rolledBack.get('tap')).toMatch(/tok-b/);
+    expect(sim.peers[0]!.engine.state().cards['tok-b']).toMatchObject({ tapped: false });
   });
 
   it('a resent proposal that was already sequenced is not sequenced twice', async () => {
@@ -162,11 +179,15 @@ describe('gaps, catch-up and consistency', () => {
     const corrupt = { seq: start.seq, state: { ...start.state, seats: { ...start.state.seats, s2: { ...start.state.seats.s2!, life: 7 } } } };
     const sim = makeSim({ engines: 2, seed: 8, start, ...DELAY });
     const c = sim.add(2, corrupt);
+    const emitted = new Map<number, number>();
+    c.engine.onSequenced((a) => emitted.set(a.seq, (emitted.get(a.seq) ?? 0) + 1));
     await until(() => agreed(sim.peers), 20_000, 'connection');
     const rand = mulberry32(8);
     await stream(sim, 120, rand, { gapMs: 60 });
     await expectConverged(sim.peers);
     expect(c.system.some((t) => /hash mismatch/.test(t))).toBe(true);
+    // The reload replays the tail after the snapshot; actions already reported are not reported again.
+    expect([...emitted].filter(([, n]) => n > 1)).toEqual([]);
     expect(c.engine.state().seats.s2!.life).toBe(sim.peers[0]!.engine.state().seats.s2!.life);
     const log = new Set([...sim.peers[0]!.log.values()].map((a) => a.cid));
     for (const cid of c.proposed) expect(log.has(cid) !== c.rolledBack.has(cid), cid).toBe(true);
@@ -183,6 +204,34 @@ describe('authority', () => {
     expect(b.rolledBack.get('forged')).toMatch(/sender's seat/);
     expect(b.rolledBack.get('usurp')).toMatch(/only the sequencer/);
     expect(sim.peers[0]!.engine.state().seats.s0!.life).toBe(20);
+  });
+
+  it('leak scenario: a non-owner cannot pull a hidden card public or onto the stack; nothing of it leaves its owner', async () => {
+    // CLAUDE.md shared leak test; DESIGN Sequencing 3: hidden-zone actions come from the zone's owner.
+    const sim = await connected({ engines: 3, seed: 14, ...DELAY });
+    const [a, b, c] = sim.peers as [SimPeer, SimPeer, SimPeer];
+    const hidden = a.engine.state().zones['library:s0']!.ids.slice(0, 3) as [string, string, string];
+    // What only A's browser knows about those cards (its secret store in a real session).
+    const secrets = hidden.flatMap((id) => [`secret-sid-${id}`, `secret-salt-${id}`]);
+    const before = hashOf(a.engine.confirmedState());
+    b.engine.propose({ type: 'move', by: 's1', cid: 'grab', card: hidden[0], to: 'battlefield:s1', pose: { x: 0, y: 0, rot: 0 } });
+    b.engine.propose({ type: 'stackPush', by: 's1', cid: 'cast', item: 'stolen', kind: 'spell', card: hidden[1] });
+    c.engine.propose({ type: 'toZone', by: 's2', cid: 'shuffle-in', card: hidden[2], to: 'hand:s0', position: 'top' });
+    await expectConverged(sim.peers);
+    expect(b.rolledBack.get('grab')).toMatch(/zone's owner/);
+    expect(b.rolledBack.get('cast')).toMatch(/zone's owner/);
+    expect(c.rolledBack.get('shuffle-in')).toMatch(/zone's owner/);
+    expect(hashOf(a.engine.confirmedState())).toBe(before);
+    for (const p of sim.peers) {
+      for (const id of hidden) expect(p.engine.state().cards[id]).toMatchObject({ zone: 'library:s0' });
+      for (const id of hidden) expect(p.engine.state().cards[id]!.identity).toBeUndefined();
+    }
+    // A was never asked to publish anything: nothing reached B or C that names these cards' identities.
+    expect(sim.net.delivered.filter((d) => d.from === tid(a) && ['seq', 'reveal'].includes(d.msg.t))).toEqual([]);
+    for (const p of [b, c]) {
+      const seen = [sim.net.delivered.filter((d) => d.to === tid(p)), p.engine.messages(), p.engine.state()];
+      expect(scan(seen, secrets)).toEqual([]);
+    }
   });
 
   it('an unseated player can take a free chair with its own peer id only, then play', async () => {
@@ -284,6 +333,28 @@ describe('liveness and the sequencer’s clock', () => {
       ['peer2', ['peer1']],
     ]);
     expect(b.engine.seq()).toBeGreaterThanOrEqual(seqAtLeave);
+  });
+
+  it('a joiner that meets a higher seat before the sequencer settles without logging a handover', async () => {
+    const sim = await connected({ engines: 2, seed: 15, ...DELAY });
+    const [a] = sim.peers as [SimPeer, SimPeer];
+    a.engine.propose(life(a, 'early'));
+    await expectConverged(sim.peers);
+    // The joiner's transport id is t2-2 (sim.add); the sequencer's first hello to it is lost, so it verifies seat 1
+    // first, elects it for a moment, then settles on seat 0.
+    let lost = 0;
+    a.transport.dropOut = (_ch, msg, to) => msg.t === 'hello' && to === 't2-2' && lost++ === 0;
+    const elected: (string | null)[] = [];
+    const c = sim.add(2);
+    c.engine.onSequencerChange((s) => elected.push(s));
+    await until(() => agreed(sim.peers), 20_000, 'joiner settles');
+    await expectConverged(sim.peers);
+    expect(lost).toBeGreaterThan(0);
+    expect(elected).toContain('peer1'); // it did elect seat 1 on the way
+    expect(elected.at(-1)).toBe('peer0');
+    expect(c.engine.sequencerId()).toBe('peer0');
+    expect(c.system.filter((t) => /now sequences/.test(t))).toEqual([]);
+    expect(sim.peers.flatMap((p) => p.system).filter((t) => /now sequences/.test(t))).toEqual([]);
   });
 
   it('marks a silent peer away after 6 s, and connected again when it speaks', async () => {

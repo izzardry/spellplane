@@ -43,12 +43,61 @@ function zoneOwner(state: TableState, id: unknown): SeatId | null | undefined {
 }
 
 /**
+ * The existing cards an action acts on (besides those the specific owner checks name): the card it moves, taps,
+ * casts, attaches, copies or settles, and the host or source it names. A `lookAt` is left out: looking at another
+ * seat's hidden cards is the asker's public record, answered by the owner on the pair channel (DESIGN "Multiplayer
+ * architecture", Private looks; decision M1-C), and a `createToken` names a card that does not exist yet.
+ */
+function actedOnCards(a: Action): unknown[] {
+  switch (a.type) {
+    case 'lookAt':
+    case 'createToken':
+      return [];
+    case 'copy':
+      return [a.card, a.of];
+    case 'attach':
+      return [a.card, a.to];
+    case 'stackPush':
+      return [a.card, a.source];
+    case 'settle':
+      return Array.isArray(a.cards) ? a.cards : [];
+    case 'tidy':
+      return typeof a.poses === 'object' && a.poses !== null ? Object.keys(a.poses) : [];
+    case 'draw':
+    case 'reveal':
+    case 'revealTo':
+      return [a.instanceId];
+    default: {
+      const r = a as unknown as Record<string, unknown>;
+      return [r.card];
+    }
+  }
+}
+
+/**
  * Hidden-zone actions come from the zone's owner (DESIGN "Specification: network protocol and secrecy", Sequencing 3):
- * only the owner holds the order and identities they publish. Null when allowed, else the reason.
+ * only the owner holds the order and identities they publish. Any action on a card that lies in another seat's
+ * hidden zone is refused (moving it out, casting it, attaching or copying it, re-sorting it between that seat's
+ * zones), and so are the owner-only secrecy steps. Moving a public card into another seat's hidden zone (returning
+ * an opponent's creature to its owner's hand) stays allowed: its identity was public. An undo is checked by the
+ * inverse it applies. Null when allowed, else the reason.
  */
 function hiddenOwnerCheck(state: TableState, a: Action): string | null {
   const own = (owner: SeatId | null | undefined, what: string): string | null =>
     owner === undefined || owner === null || owner === a.by ? null : `${what} belongs to ${owner}, not ${a.by}`;
+  if (a.type === 'undo') {
+    const inv = a.inverse as unknown;
+    return typeof inv === 'object' && inv !== null && typeof (inv as { type?: unknown }).type === 'string' && Object.hasOwn(ACTION_FAMILIES, (inv as { type: string }).type)
+      ? hiddenOwnerCheck(state, { ...(inv as Action), by: a.by } as Action)
+      : null;
+  }
+  for (const id of actedOnCards(a)) {
+    if (typeof id !== 'string' || !Object.hasOwn(state.cards, id)) continue;
+    const zone = state.zones[state.cards[id]!.zone];
+    if (zone && zone.visibility !== 'public' && zone.owner !== null && zone.owner !== a.by) {
+      return `hidden-zone actions come from the zone's owner: card ${id} is in ${zone.id}, which belongs to ${zone.owner}, not ${a.by}`;
+    }
+  }
   switch (a.type) {
     case 'draw': {
       const c = typeof a.instanceId === 'string' ? state.cards[a.instanceId] : undefined;
