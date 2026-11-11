@@ -18,7 +18,7 @@
   import { logLines } from './describe';
   import { inZoneKind, layoutOf } from './geometry';
   import { handOrder } from './hand';
-  import { applyOverrides, chordToString, findConflict, isTextEntry, KeyEngine, keyLabel } from './keymap';
+  import { applyOverrides, chordToString, findConflict, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS, reservedConflict, validOverrides } from './keymap';
   import { cardMenu, tableMenu, type MenuEntry } from './menu';
   import type { HudProps } from './props';
   import Avatar from './Avatar.svelte';
@@ -67,7 +67,8 @@
   let viewer = $state<{ zone: ZoneId; looked: LookedCard[] | null; looking: 'top' | 'search' | null; shuffleOnClose: boolean } | null>(null);
   let menu = $state<{ title: string; entries: MenuEntry[]; x: number; y: number } | null>(null);
   let note = $state<{ target: { card: InstanceId } | { item: StackItemId }; x: number; y: number; text: string } | null>(null);
-  let drawN = $state<{ text: string } | null>(null);
+  /** The inline count prompt for draw N (Shift+D) and mill N (table menu). */
+  let drawN = $state<{ text: string; what: 'draw' | 'mill' } | null>(null);
   let revealTo = $state<{ cards: InstanceId[]; x: number; y: number } | null>(null);
   let tokenNear = $state<{ near: InstanceId | null } | null>(null);
   let deckOpen = $state(false);
@@ -116,10 +117,19 @@
 
   // --- Commands and keys ----------------------------------------------------------------------------------------
   let toastSeq = 0;
+  /** Timeouts the HUD owns (toast, ping fade); cleared when it unmounts. */
+  let timers: ReturnType<typeof setTimeout>[] = [];
+  function later(fn: () => void, ms: number) {
+    const t = setTimeout(() => {
+      timers = timers.filter((x) => x !== t);
+      fn();
+    }, ms);
+    timers.push(t);
+  }
   function notify(text: string) {
     const id = ++toastSeq;
     toast = { text, id };
-    setTimeout(() => {
+    later(() => {
       if (toast?.id === id) toast = null;
     }, 3500);
   }
@@ -135,10 +145,11 @@
     },
     inspect(card) {
       inspectId = card;
-      inspectRef = card ? refOf(card) : null;
+      // A library card is known here only from an open look (scry, search); never otherwise.
+      inspectRef = card ? (refOf(card) ?? viewer?.looked?.find((l) => l.id === card)?.ref ?? null) : null;
     },
     openDrawN() {
-      drawN = { text: '2' };
+      drawN = { text: '2', what: 'draw' };
       void tick().then(() => drawInput?.select());
     },
     openTokenSearch(near) {
@@ -157,9 +168,6 @@
       else voice = { ...voice, talking: phase === 'start' ? action : null };
     },
     notify,
-    offerUntapDraw() {
-      untapOffer = true;
-    },
   };
 
   const makeId = (prefix: string) => newId?.(prefix) ?? `${prefix}-${me}-${crypto.getRandomValues(new Uint32Array(2)).reduce((s, n) => s + n.toString(36), '')}`;
@@ -191,12 +199,17 @@
     }
   }
 
-  function closeTop(): boolean {
+  /**
+   * Close the topmost overlay for Esc. While a confirmation prompt shows, Esc means Hold, except that a transient
+   * overlay (menu, reveal-to, token search, inspect, cheat sheet) closes first; pile viewers and the deck dialog stay.
+   */
+  function closeTop(promptUp: boolean): boolean {
     if (menu) menu = null;
     else if (revealTo) revealTo = null;
     else if (tokenNear) tokenNear = null;
     else if (inspectId) hooks.inspect(null);
     else if (cheatOpen) cheatOpen = false;
+    else if (promptUp) return false;
     else if (viewer) closeViewer();
     else if (deckOpen) deckOpen = false;
     else return false;
@@ -209,11 +222,11 @@
     const plain = !e.ctrlKey && !e.altKey && !e.metaKey;
     // Enter and Space on a keyboard-focused control (button, link, checkbox) activate that control.
     if (plain && (e.key === 'Enter' || e.key === ' ') && isControl(e.target)) return;
-    if (e.key === 'Escape' && plain && !promptShowing(st, me) && closeTop()) {
+    if (e.key === 'Escape' && plain && closeTop(promptShowing(st, me))) {
       e.preventDefault();
       return;
     }
-    if (untapOffer && plain && !e.shiftKey && e.key.toLowerCase() === 'u') {
+    if (untapOffer && !e.repeat && RESERVED_KEYS.some((r) => matchesChord(r.chord, e))) {
       e.preventDefault();
       untapOffer = false;
       commands.untapAndDraw();
@@ -239,13 +252,17 @@
 
   // --- Remapping (persisted through settings) ---------------------------------------------------------------------
   function remap(action: ActionId, context: KeyContext, chord: KeyChord): string | null {
-    const clash = findConflict(keymap, chord, context, action);
-    if (clash) return `${chordToString(chord)} is already “${clash.label}”.`;
+    const clash = findConflict(keymap, chord, context, action)?.label ?? reservedConflict(chord, context);
+    if (clash) return `${chordToString(chord)} is already “${clash}”.`;
+    remapped = true;
     overrides = [...overrides.filter((o) => !(o.action === action && o.context === context)), { action, context, chord }];
     void settings?.set('keymap', overrides);
     return null;
   }
+  /** Set once the player remaps in this session, so a late settings load never overwrites it. */
+  let remapped = false;
   function resetKeys() {
+    remapped = true;
     overrides = [];
     void settings?.set('keymap', []);
   }
@@ -262,11 +279,13 @@
     if (hudHover && v?.looked?.some((l) => l.id === hudHover)) hudHover = null;
     if (v?.looking === 'search' && v.shuffleOnClose) void session.shuffle(v.zone);
   }
-  async function libraryAction(what: 'draw' | 'drawN' | 'shuffle' | 'look' | 'search' | 'mulligan', n?: number) {
+  async function libraryAction(what: 'draw' | 'drawN' | 'shuffle' | 'look' | 'search' | 'mulligan' | 'mill' | 'revealTop', n?: number) {
     const v = viewer;
     if (!v) return;
     if (what === 'draw') commands.run('draw');
     else if (what === 'drawN') commands.run('drawN');
+    else if (what === 'mill') commands.mill(n ?? 1);
+    else if (what === 'revealTop') commands.revealTop();
     else if (what === 'shuffle') {
       v.looked = null;
       v.looking = null;
@@ -296,8 +315,22 @@
   // --- Menus ----------------------------------------------------------------------------------------------------
   function openMenu(card: InstanceId | null, x: number, y: number) {
     const c = card ? st.cards[card] : undefined;
-    menu = c ? { title: nameOf(c.id), entries: cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), x, y } : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a)), x, y };
+    menu = c ? { title: nameOf(c.id), entries: cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), x, y } : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y };
   }
+
+  /** Keyless library actions for the table menu (DESIGN "Card manipulation", Library actions: reveal top, mill N). */
+  const libraryExtras: MenuEntry[] = [
+    { id: 'revealTop', label: 'Reveal top card', key: null, run: () => commands.revealTop() },
+    {
+      id: 'mill',
+      label: 'Mill N…',
+      key: null,
+      run: () => {
+        drawN = { text: '1', what: 'mill' };
+        void tick().then(() => drawInput?.select());
+      },
+    },
+  ];
 
   // --- Inline prompts ---------------------------------------------------------------------------------------------
   function submitNote() {
@@ -309,9 +342,12 @@
     else session.dispatch({ type: 'stackNote', item: n.target.item, note: text });
   }
   function submitDrawN() {
+    const what = drawN?.what;
     const n = Math.floor(Number(drawN?.text ?? ''));
     drawN = null;
-    if (Number.isFinite(n) && n >= 1) void session.draw(n);
+    if (!Number.isFinite(n) || n < 1) return;
+    if (what === 'mill') commands.mill(n);
+    else void session.draw(n);
   }
   function doRevealTo(seats: string[]) {
     const r = revealTo;
@@ -344,6 +380,31 @@
   const prompt = $derived(promptShowing(st, me) ? st.confirm : null);
   const top = $derived(st.stack[st.stack.length - 1] ?? null);
   const resolveLit = $derived(!!top && (!st.confirm || st.confirm.about !== top.id || roundPassed(st)));
+  /**
+   * Where the top spell may resolve to, default first (DESIGN "The effect stack", Resolving 2: Resolve asks where the
+   * item goes; one key, R, accepts the default). Markers vanish, so they get no choice.
+   */
+  const resolveTargets = $derived.by(() => {
+    const card = top?.card ? st.cards[top.card] : undefined;
+    if (!top || !card) return [];
+    const ref = refOf(card.id);
+    let def: ZoneId | null = null;
+    try {
+      def = game.defaultDestination(top, dataOf(ref) ?? undefined, card);
+    } catch {
+      def = null;
+    }
+    const zones: { zone: ZoneId; label: string }[] = [
+      { zone: `battlefield:${top.controller}`, label: 'Battlefield' },
+      { zone: `graveyard:${card.owner}`, label: 'Graveyard' },
+      { zone: `exile:${card.owner}`, label: 'Exile' },
+      { zone: `hand:${card.owner}`, label: 'Hand' },
+    ];
+    return zones
+      .filter((z) => st.zones[z.zone])
+      .map((z) => ({ ...z, isDefault: z.zone === def }))
+      .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
+  });
   const lines = $derived(
     logLines(entries, {
       state: st,
@@ -354,9 +415,23 @@
   const inspectCard = $derived<CardInstance | null>(inspectId ? (st.cards[inspectId] ?? null) : null);
   const keyOf = (a: ActionId, ctx: KeyContext = 'table') => keyLabel(keymap, a, ctx);
 
-  // Close the untap offer once the turn moves on.
+  // On Next turn, offer the new active player (or team) untap-and-draw; close the offer once the turn moves on
+  // (DESIGN "Turn flow and confirmation": offered a single key, never done for them).
+  let seenTurn = untrack(() => st.turn.number);
   $effect(() => {
-    if (st.turn.active !== me && st.seats[me]?.team !== st.turn.active) untapOffer = false;
+    const mine = st.turn.active === me || (!!st.seats[me]?.team && st.seats[me]?.team === st.turn.active);
+    const turn = st.turn.number;
+    if (!mine) untapOffer = false;
+    else if (turn !== seenTurn) untapOffer = true;
+    seenTurn = turn;
+  });
+  // A HUD hover lasts only while its card is shown in a HUD surface: a card that leaves the hand (cast, G, E, …) or
+  // a pile viewer that closes fires no pointerleave, and a stale hover would steal keys meant for the table.
+  $effect(() => {
+    const h = hudHover;
+    if (!h) return;
+    const shown = hand.includes(h) || viewerCards.some((c) => c.id === h) || (logOpen && preview?.card === h);
+    if (!shown) hudHover = null;
   });
   // Drop selection entries for cards that left the table.
   $effect(() => {
@@ -379,7 +454,7 @@
       if (e?.kind === 'action' && e.action.type === 'ping') {
         const ping: ActivePing = { id: `${e.action.cid}`, target: e.action.target, seat: e.action.by };
         pings = [...pings, ping];
-        setTimeout(() => (pings = pings.filter((p) => p !== ping)), fade);
+        later(() => (pings = pings.filter((p) => p !== ping)), fade);
       }
     }
     seenLog = log.length;
@@ -397,7 +472,7 @@
     void settings
       ?.get('keymap')
       .then((o) => {
-        overrides = Array.isArray(o) ? o : [];
+        if (!remapped) overrides = validOverrides(o);
       })
       .catch(() => {});
     try {
@@ -416,7 +491,9 @@
           inspect: (id) => hooks.inspect(id),
           pileOpen: (id) => {
             const kind = id.split(':')[0];
-            if (st.zones[id] && (kind === 'library' || kind === 'graveyard' || kind === 'exile')) openViewer(id);
+            // Double-click draws from the own library and opens any other pile (DESIGN "Input and interaction design", Mouse).
+            if (id === `library:${me}`) commands.run('draw');
+            else if (st.zones[id] && (kind === 'library' || kind === 'graveyard' || kind === 'exile')) openViewer(id);
             else openPile = openPile === id ? null : id;
           },
           selectionChange: (ids) => (selection = [...ids]),
@@ -428,6 +505,8 @@
     }
     return () => {
       unsub();
+      for (const t of timers) clearTimeout(t);
+      timers = [];
       engine.blur();
       scene?.dispose();
       scene = null;
@@ -495,6 +574,13 @@
         <div class="stack-chip" data-testid="stack-chip">
           Stack {st.stack.length}
           <button type="button" class:lit={resolveLit} data-testid="resolve" onclick={() => commands.run('resolve')}>Resolve {#if keyOf('resolve')}<kbd>{keyOf('resolve')}</kbd>{/if}</button>
+          {#if resolveTargets.length}
+            <span class="to" data-testid="resolve-to">to
+              {#each resolveTargets as t (t.zone)}
+                <button type="button" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
+              {/each}
+            </span>
+          {/if}
           <button type="button" onclick={() => commands.run('counterTop')}>Counter {#if keyOf('counterTop')}<kbd>{keyOf('counterTop')}</kbd>{/if}</button>
         </div>
       {/if}
@@ -592,6 +678,7 @@
         count={zone.ids.length}
         kind={zone.kind}
         own={zone.owner === me}
+        hidden={zone.visibility !== 'public'}
         cards={viewerCards}
         looking={viewer.looking}
         bind:shuffleOnClose={viewer.shuffleOnClose}
@@ -603,10 +690,7 @@
         keys={{ draw: keyOf('draw'), drawN: keyOf('drawN'), shuffle: keyOf('shuffle'), mulligan: keyOf('mulligan') }}
         onhover={(id) => (hudHover = id)}
         oncontext={(id, x, y) => openMenu(id, x, y)}
-        oninspect={(id) => {
-          hooks.inspect(id);
-          inspectRef = viewerCards.find((c) => c.id === id)?.ref ?? inspectRef;
-        }}
+        oninspect={(id) => hooks.inspect(id)}
         ondragout={(id, x, y) => scene?.startDrag(id, x, y)}
         onlibrary={libraryAction}
         onclose={closeViewer}
@@ -638,7 +722,7 @@
 
   {#if drawN}
     <div class="inline draw-n" data-testid="draw-n">
-      <label>Draw how many? <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => (drawN = null)} /></label>
+      <label>{drawN.what === 'mill' ? 'Mill how many?' : 'Draw how many?'} <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => (drawN = null)} /></label>
     </div>
   {/if}
 
@@ -799,6 +883,19 @@
   }
   .stack-chip button.lit {
     opacity: 1;
+    border-color: var(--sp-fg, #111);
+  }
+  .stack-chip .to {
+    display: inline-flex;
+    gap: 2px;
+    align-items: center;
+    color: var(--sp-muted, #5f5f5f);
+  }
+  .stack-chip .to button {
+    opacity: 1;
+    padding: 0 4px;
+  }
+  .stack-chip .to button.default {
     border-color: var(--sp-fg, #111);
   }
   .right {

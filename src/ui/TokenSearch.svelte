@@ -11,7 +11,6 @@
   let related = $state<CardData[]>([]);
   let results = $state<CardData[]>([]);
   let input = $state<HTMLInputElement | undefined>();
-  let timer: ReturnType<typeof setTimeout> | null = null;
   let seq = 0;
 
   $effect(() => {
@@ -32,15 +31,15 @@
       live = false;
     };
   });
+  // Debounced search; the cleanup cancels a pending search when the query changes or the panel closes.
   $effect(() => {
     const q = query.trim();
-    if (timer) clearTimeout(timer);
     if (!q) {
       results = [];
       return;
     }
     const my = ++seq;
-    timer = setTimeout(() => {
+    const timer = setTimeout(() => {
       cardData
         .searchTokens(q)
         .then((r) => {
@@ -50,6 +49,10 @@
           if (my === seq) results = [];
         });
     }, 200);
+    return () => {
+      clearTimeout(timer);
+      seq++;
+    };
   });
 
   const shownRelated = $derived(related.filter((t) => !query.trim() || t.name.toLowerCase().includes(query.trim().toLowerCase())));

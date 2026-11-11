@@ -139,7 +139,7 @@ test.describe('pile viewers (DESIGN "Table model", "Card manipulation" library a
 
   test('searching the library shuffles it on close by default', async ({ page }) => {
     await openHud(page);
-    await page.locator('[data-testid="scene-pile"][data-zone="library:s0"]').dblclick();
+    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
     const viewer = page.getByTestId('pile-viewer');
     await viewer.getByTestId('search-library').click();
     await expect(viewer.getByTestId('pile-card')).toHaveCount(3);
@@ -149,6 +149,58 @@ test.describe('pile viewers (DESIGN "Table model", "Card manipulation" library a
       { method: 'lookAt', args: ['library:s0', 3] },
       { method: 'shuffle', args: ['library:s0'] },
     ]);
+  });
+
+  test('double-clicking your own library draws a card and opens no viewer (DESIGN "Input and interaction design", Mouse)', async ({ page }) => {
+    await openHud(page);
+    await page.locator('[data-testid="scene-pile"][data-zone="library:s0"]').dblclick();
+    await expect.poll(() => ui(page, 'calls')).toEqual([{ method: 'draw', args: [1] }]);
+    await expect(page.getByTestId('pile-viewer')).toHaveCount(0);
+    await expect(page.locator('[data-testid="hand-card"][data-card="lib1"]')).toHaveCount(1);
+    // Another seat's library still opens as a count-only viewer.
+    await page.locator('[data-testid="scene-pile"][data-zone="library:s1"]').dblclick();
+    await expect(page.getByTestId('pile-viewer').getByTestId('pile-count')).toHaveText('1');
+  });
+
+  test('mill N moves the top N cards to the graveyard as one group; reveal top shows the top card to the others', async ({ page }) => {
+    await openHud(page);
+    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
+    const viewer = page.getByTestId('pile-viewer');
+    await viewer.getByTestId('library-n').fill('2');
+    await viewer.getByTestId('mill').click();
+    await expect.poll(() => drafts(page)).toEqual([
+      { type: 'move', card: 'lib1', to: 'graveyard:s0', group: 'g1' },
+      { type: 'move', card: 'lib2', to: 'graveyard:s0', group: 'g1' },
+    ]);
+    await expect(viewer.getByTestId('pile-count')).toHaveText('1');
+    await viewer.getByTestId('reveal-top').click();
+    expect((await drafts(page)).at(-1)).toEqual({ type: 'revealTo', instanceId: 'lib3', seats: ['s1'] });
+    expect(await ui(page, 'calls')).toEqual([]); // no private look was logged
+  });
+
+  test('the table menu offers reveal top and mill N, which asks for the count inline', async ({ page }) => {
+    await openHud(page);
+    await page.mouse.click(700, 150, { button: 'right' });
+    const menu = page.getByTestId('context-menu');
+    await menu.locator('[data-action="mill"]').click();
+    const input = page.getByTestId('draw-n-input');
+    await expect(input).toBeFocused();
+    await expect(page.getByTestId('draw-n')).toContainText('Mill how many?');
+    await input.fill('1');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => drafts(page)).toEqual([{ type: 'move', card: 'lib1', to: 'graveyard:s0' }]);
+    await page.mouse.click(700, 150, { button: 'right' });
+    await page.getByTestId('context-menu').locator('[data-action="revealTop"]').click();
+    expect((await drafts(page)).at(-1)).toEqual({ type: 'revealTo', instanceId: 'lib2', seats: ['s1'] });
+  });
+
+  test('another player\'s hand shows its count and a hidden note, not "Empty."', async ({ page }) => {
+    await openHud(page);
+    await page.locator('[data-testid="zone-button"][data-zone="hand:s1"]').click();
+    const viewer = page.getByTestId('pile-viewer');
+    await expect(viewer.getByTestId('pile-count')).toHaveText('1');
+    await expect(viewer.getByTestId('hidden-note')).toHaveText('Hidden. Only the count is known.');
+    await expect(viewer).not.toContainText('Empty.');
   });
 
   test('another player\'s library shows its count only, without look or search', async ({ page }) => {
@@ -161,7 +213,59 @@ test.describe('pile viewers (DESIGN "Table model", "Card manipulation" library a
   });
 });
 
+test.describe('stale hover (DESIGN "Input and interaction design": a bare key acts on the card under the cursor)', () => {
+  test('after casting a hand card, a key on a table card acts on the table card', async ({ page }) => {
+    await openHud(page);
+    await hoverCard(page, 'h1');
+    await page.keyboard.press('KeyC');
+    await expect.poll(() => drafts(page)).toEqual([{ type: 'stackPush', item: 'si1', kind: 'spell', card: 'h1', controller: 's0', round: 'r2' }]);
+    await hoverCard(page, 'bf1');
+    await page.keyboard.press('KeyG');
+    await expect.poll(async () => (await drafts(page)).at(-1)).toEqual({ type: 'move', card: 'bf1', to: 'graveyard:s0' });
+  });
+
+  test('after closing the graveyard viewer with Esc, a key on a table card acts on the table card', async ({ page }) => {
+    await openHud(page);
+    await page.locator('[data-testid="scene-pile"][data-zone="graveyard:s0"]').dblclick();
+    await page.getByTestId('pile-viewer').locator('[data-card="gy1"]').hover();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('pile-viewer')).toHaveCount(0);
+    await hoverCard(page, 'bf1');
+    await page.keyboard.press('KeyE');
+    await expect.poll(() => drafts(page)).toEqual([{ type: 'move', card: 'bf1', to: 'exile:s0' }]);
+  });
+});
+
 test.describe('inspect (DESIGN "Card manipulation", Inspect; Screen layer: 85% of viewport height)', () => {
+  test('hold Space on a looked-at library card shows its face', async ({ page }) => {
+    await openHud(page);
+    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
+    const viewer = page.getByTestId('pile-viewer');
+    await viewer.getByTestId('look-top').click();
+    await viewer.locator('[data-card="lib1"]').hover();
+    await page.keyboard.down('Space');
+    await expect(page.getByTestId('inspect-text')).toContainText('Verdant Field');
+    await expect(page.getByTestId('inspect-text')).not.toContainText('hidden');
+    await page.keyboard.up('Space');
+  });
+
+  test('while a prompt shows, Esc closes an open cheat sheet first and Hold stays a key away', async ({ page }) => {
+    await openHud(page);
+    await page.evaluate(() =>
+      window.__uiHarness!.update((s) => {
+        s.confirm = { id: 'r9', askedBy: 's1', durationMs: 60000, startSeq: 0, responses: {} };
+      }),
+    );
+    await hoverNothing(page);
+    await page.keyboard.press('Shift+Slash');
+    await expect(page.getByTestId('cheat-sheet')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('cheat-sheet')).toHaveCount(0);
+    expect(await ui(page, 'actions')).toEqual([]);
+    await page.keyboard.press('Escape');
+    await expect.poll(() => drafts(page)).toEqual([{ type: 'respond', round: 'r9', seat: 's0', response: 'hold' }]);
+  });
+
   test('middle-click opens a large upright view with both faces and Oracle text', async ({ page }) => {
     await openHud(page);
     await page.locator('[data-testid="scene-card"][data-card="dfc"]').click({ button: 'middle' });
@@ -278,6 +382,39 @@ test.describe('turn strip (DESIGN "Turn flow and confirmation", Turn and phase s
     await expect(page.getByTestId('untap-offer')).toHaveCount(0);
     expect(await ui(page, 'calls')).toEqual([{ method: 'draw', args: [1] }]);
     expect((await drafts(page)).slice(1)).toEqual([{ type: 'tap', card: 'bf2', tapped: false }]);
+  });
+});
+
+test.describe('turn change and the stack chip (DESIGN "Turn flow and confirmation"; "The effect stack", Resolving)', () => {
+  test('when another player passes the turn to you, you are offered untap-and-draw', async ({ page }) => {
+    await openHud(page);
+    await expect(page.getByTestId('untap-offer')).toHaveCount(0);
+    await page.evaluate(() =>
+      window.__uiHarness!.update((s) => {
+        s.turn = { number: 2, active: 's1', phase: 'untap' };
+      }),
+    );
+    await expect(page.getByTestId('untap-offer')).toHaveCount(0);
+    await page.evaluate(() =>
+      window.__uiHarness!.update((s) => {
+        s.turn = { number: 3, active: 's0', phase: 'untap' };
+      }),
+    );
+    await expect(page.getByTestId('untap-offer')).toBeVisible();
+  });
+
+  test('the stack chip offers the destinations with the default first; picking one resolves there', async ({ page }) => {
+    await openHud(page);
+    await page.evaluate(() =>
+      window.__uiHarness!.update((s) => {
+        s.stack = [{ id: 'si9', kind: 'spell', controller: 's0', card: 'bf1' }];
+      }),
+    );
+    const to = page.getByTestId('resolve-to');
+    await expect(to.getByRole('button')).toHaveText(['Battlefield', 'Graveyard', 'Exile', 'Hand']);
+    await expect(to.getByRole('button', { name: /default/ })).toHaveText('Battlefield');
+    await to.getByRole('button', { name: 'Resolve to Exile' }).click();
+    expect(await drafts(page)).toEqual([{ type: 'stackResolve', item: 'si9', to: 'exile:s0' }]);
   });
 });
 

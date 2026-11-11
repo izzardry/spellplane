@@ -62,7 +62,9 @@ export function cardMenu(card: CardInstance, keymap: Keymap, commands: Commands,
   return entries;
 }
 
-/** Entries for the empty table. */
-export function tableMenu(keymap: Keymap, run: (action: ActionId) => void): MenuEntry[] {
-  return TABLE_MENU.map((a) => ({ id: a, label: labelOf(keymap, a), key: keyLabel(keymap, a), run: () => run(a) }));
+/** Entries for the empty table; `library` (keyless library actions such as mill and reveal top) follow shuffle. */
+export function tableMenu(keymap: Keymap, run: (action: ActionId) => void, library: readonly MenuEntry[] = []): MenuEntry[] {
+  const entries: MenuEntry[] = TABLE_MENU.map((a) => ({ id: a, label: labelOf(keymap, a), key: keyLabel(keymap, a), run: () => run(a) }));
+  entries.splice(entries.findIndex((e) => e.id === 'shuffle') + 1, 0, ...library);
+  return entries;
 }

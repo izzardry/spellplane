@@ -292,6 +292,9 @@ describe('context menus (DESIGN "Input and interaction design": the key beside e
     expect(hand).not.toContain('tap');
     const table = tableMenu(MTG_KEYMAP, () => {});
     expect(table.find((e) => e.id === 'untapAll')!.key).toBe('Ctrl+U');
+    const extra = { id: 'mill', label: 'Mill N…', key: null, run: () => {} };
+    const withLibrary = tableMenu(MTG_KEYMAP, () => {}, [extra]).map((e) => e.id);
+    expect(withLibrary.indexOf('mill')).toBe(withLibrary.indexOf('shuffle') + 1);
   });
 
   it('a named counter from the menu adds that kind', () => {

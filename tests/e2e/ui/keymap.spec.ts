@@ -5,6 +5,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { MTG_KEYMAP, chordToString } from '../../../src/games/mtg/keymap';
+import { RESERVED_KEYS } from '../../../src/ui/keymap';
 import type { ActionId } from '../../../src/games/types';
 import { drafts, hoverCard, hoverNothing, openHud, pwKey, ui } from './harness';
 
@@ -258,7 +259,8 @@ test.describe('cheat sheet (PLAN M0-P4)', () => {
     const sheet = page.getByTestId('cheat-sheet');
     await expect(sheet).toBeVisible();
     const keys = await sheet.getByTestId('cheat-key').allTextContents();
-    expect(keys.sort()).toEqual(MTG_KEYMAP.map((b) => chordToString(b.chord)).sort());
+    expect(keys.sort()).toEqual([...MTG_KEYMAP, ...RESERVED_KEYS].map((b) => chordToString(b.chord)).sort());
+    await expect(sheet.locator('[data-testid="cheat-row"][data-reserved="true"]')).toContainText('Untap all and draw');
     for (const b of MTG_KEYMAP) {
       await expect(sheet.locator(`[data-testid="cheat-row"][data-action="${b.action}"][data-context="${b.context}"]`).getByTestId('cheat-key').filter({ hasText: new RegExp(`^${chordToString(b.chord).replace(/[+?]/g, '\\$&')}$`) })).toHaveCount(1);
     }
@@ -275,6 +277,9 @@ test.describe('cheat sheet (PLAN M0-P4)', () => {
     // A taken key is refused.
     await page.keyboard.press('KeyG');
     await expect(page.getByTestId('capture')).toContainText('already');
+    // So is the reserved untap-and-draw offer key.
+    await page.keyboard.press('KeyU');
+    await expect(page.getByTestId('capture')).toContainText('Untap all and draw');
     await page.keyboard.press('KeyJ');
     await expect(row.getByTestId('cheat-key')).toHaveText(['J']);
     expect(await ui(page, 'settingsWrites')).toEqual([{ name: 'keymap', value: [{ action: 'tap', context: 'table', chord: { key: 'j' } }] }]);

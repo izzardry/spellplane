@@ -102,6 +102,40 @@ export function findConflict(keymap: Keymap, chord: KeyChord, context: KeyContex
   return keymap.find((b) => b.context === context && b.action !== action && sameChord(b.chord, chord)) ?? null;
 }
 
+/**
+ * Keys the HUD reserves outside the keymap (DESIGN "Turn flow and confirmation": on Next turn the new active player is
+ * offered a single key that untaps everything and draws). `ActionId` is a contract type, so the offer key is not a
+ * remappable binding; remapping refuses it and the cheat sheet lists it.
+ */
+export const RESERVED_KEYS: readonly { chord: KeyChord; context: KeyContext; label: string }[] = [{ chord: { key: 'u' }, context: 'table', label: 'Untap all and draw (when offered)' }];
+
+/** The reserved key's label when `chord` is reserved in `context`, else null. */
+export function reservedConflict(chord: KeyChord, context: KeyContext): string | null {
+  return RESERVED_KEYS.find((r) => r.context === context && sameChord(r.chord, chord))?.label ?? null;
+}
+
+/**
+ * Keymap overrides as loaded from settings, keeping only well-formed records (a stored value may come from an older
+ * build or be corrupted; a malformed entry must not break the keymap).
+ */
+export function validOverrides(value: unknown): KeymapOverride[] {
+  if (!Array.isArray(value)) return [];
+  const out: KeymapOverride[] = [];
+  for (const v of value as unknown[]) {
+    if (!v || typeof v !== 'object') continue;
+    const o = v as Record<string, unknown>;
+    const c = o.chord as Record<string, unknown> | null | undefined;
+    if (typeof o.action !== 'string' || (o.context !== 'table' && o.context !== 'prompt')) continue;
+    if (!c || typeof c !== 'object' || typeof c.key !== 'string' || c.key === '') continue;
+    const chord: KeymapOverride['chord'] = { key: c.key };
+    if (c.ctrl === true) chord.ctrl = true;
+    if (c.alt === true) chord.alt = true;
+    if (c.shift === true) chord.shift = true;
+    out.push({ action: o.action, context: o.context, chord });
+  }
+  return out;
+}
+
 /** The binding for a key event: prompt bindings take precedence while a prompt shows and are dead otherwise. */
 export function findBinding(keymap: Keymap, e: KeyInput, promptShowing: boolean): KeyBinding | null {
   if (promptShowing) {

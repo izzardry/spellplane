@@ -1,7 +1,7 @@
 <!--
   Pile viewer (DESIGN "Table model": graveyard opens as an ordered fan, exile beside it, library shows a count only;
   "Card manipulation", Library actions: draw, draw N, shuffle, look at top N, search with shuffle on close, mulligan).
-  Cards in the viewer take hover keys, the context menu, middle-click inspect and drag out to the table.
+  Also reveal top and mill N. Cards in the viewer take hover keys, the context menu, middle-click inspect and drag out to the table.
 -->
 <script lang="ts">
   import type { CardRef, InstanceId } from '../core/types';
@@ -15,6 +15,7 @@
     count,
     kind,
     own,
+    hidden,
     cards,
     looking,
     shuffleOnClose = $bindable(true),
@@ -35,6 +36,8 @@
     count: number;
     kind: string;
     own: boolean;
+    /** A hidden zone (library, another seat's hand): only the count is known unless you look. */
+    hidden: boolean;
     /** In display order: bottom first for public piles, top first for a look at the library. */
     cards: { id: InstanceId; ref: CardRef | null; name: string }[];
     /** 'top' after looking at the top N, 'search' while searching, null otherwise. */
@@ -50,7 +53,7 @@
     oncontext: (id: InstanceId, x: number, y: number) => void;
     oninspect: (id: InstanceId) => void;
     ondragout: (id: InstanceId, x: number, y: number) => void;
-    onlibrary: (what: 'draw' | 'drawN' | 'shuffle' | 'look' | 'search' | 'mulligan', n?: number) => void;
+    onlibrary: (what: 'draw' | 'drawN' | 'shuffle' | 'look' | 'search' | 'mulligan' | 'mill' | 'revealTop', n?: number) => void;
     onclose: () => void;
   } = $props();
 
@@ -91,9 +94,11 @@
         <button type="button" onclick={() => onlibrary('drawN')}>Draw N{k('drawN')}</button>
         <button type="button" onclick={() => onlibrary('shuffle')}>Shuffle{k('shuffle')}</button>
         <span class="look">
-          <button type="button" data-testid="look-top" onclick={() => onlibrary('look', lookN)}>Look at top</button>
-          <input type="number" min="1" max={count} bind:value={lookN} aria-label="How many cards to look at" />
+          <input type="number" min="1" max={count} bind:value={lookN} aria-label="How many cards (N)" data-testid="library-n" />
+          <button type="button" data-testid="look-top" onclick={() => onlibrary('look', lookN)}>Look at top N</button>
+          <button type="button" data-testid="mill" onclick={() => onlibrary('mill', lookN)}>Mill N</button>
         </span>
+        <button type="button" data-testid="reveal-top" onclick={() => onlibrary('revealTop')}>Reveal top</button>
         <button type="button" data-testid="search-library" onclick={() => onlibrary('search')}>Search</button>
         <button type="button" onclick={() => onlibrary('mulligan')}>Mulligan{k('mulligan')}</button>
         {#if looking === 'search'}
@@ -103,8 +108,8 @@
     {/if}
     <button type="button" class="close" onclick={onclose} aria-label="Close {title}">×</button>
   </header>
-  {#if kind === 'library' && !looking}
-    <p class="hidden-note">{own ? 'Hidden. Look at the top cards or search to see them.' : 'Hidden. Only the count is known.'}</p>
+  {#if hidden && !looking}
+    <p class="hidden-note" data-testid="hidden-note">{own && kind === 'library' ? 'Hidden. Look at the top cards or search to see them.' : 'Hidden. Only the count is known.'}</p>
   {:else if cards.length === 0}
     <p class="hidden-note">Empty.</p>
   {:else}

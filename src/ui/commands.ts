@@ -8,7 +8,7 @@
 import type { ActionDraft } from '../core/actions';
 import { GEOMETRY } from '../core/geometry';
 import { sha256 } from '../core/hash';
-import type { CardInstance, InstanceId, SeatId, StackItem, StackItemId, TableState } from '../core/types';
+import type { CardInstance, InstanceId, SeatId, StackItem, StackItemId, TableState, ZoneId } from '../core/types';
 import type { ActionId, GameDefinition } from '../games/types';
 import type { TableScene } from '../scene/types';
 import type { TableSession } from '../session/types';
@@ -37,8 +37,6 @@ export interface UiHooks {
   /** Voice controls (milestone 3 wires the engine): hold to talk, team talk, mute toggle. */
   voice(action: 'talk' | 'teamTalk' | 'mute', phase: 'start' | 'end'): void;
   notify(text: string): void;
-  /** Offer the new active player the single "untap all and draw" key (DESIGN "Turn flow and confirmation"). */
-  offerUntapDraw(): void;
 }
 
 /** What the commands act through. */
@@ -305,28 +303,9 @@ export class Commands {
       // --- Stack
       case 'ability':
         return forCards((c) => ({ type: 'stackPush', item: this.host.newId('si'), kind: 'ability', source: c.id, controller: me, round: this.host.newId('r') }));
-      case 'resolve': {
-        const top = st.stack[st.stack.length - 1];
-        if (!top) {
-          this.host.ui.notify('The stack is empty');
-          return;
-        }
-        const pending = st.confirm && st.confirm.about === top.id && !roundPassed(st);
-        if (!pending) {
-          this.pendingForce = null;
-          this.host.session.dispatch({ type: 'stackResolve', item: top.id });
-          return;
-        }
-        const now = this.host.now();
-        if (this.pendingForce && this.pendingForce.item === top.id && now - this.pendingForce.at <= FORCE_RESOLVE_MS) {
-          this.pendingForce = null;
-          this.host.session.dispatch({ type: 'stackResolve', item: top.id, force: true });
-          return;
-        }
-        this.pendingForce = { item: top.id, at: now };
-        this.host.ui.notify('Not everyone has passed. Press R again to resolve anyway');
+      case 'resolve':
+        this.resolveTop();
         return;
-      }
       case 'counterTop': {
         const top = st.stack[st.stack.length - 1];
         if (top) this.host.session.dispatch({ type: 'stackCounter', item: top.id });
@@ -344,8 +323,8 @@ export class Commands {
       }
       case 'nextTurn': {
         const to = nextActive(st);
+        // The new active player's client offers untap-and-draw when it sees the turn change (Hud.svelte).
         this.host.session.dispatch({ type: 'turnPass', to });
-        if (to === me || st.seats[me]?.team === to) this.host.ui.offerUntapDraw();
         return;
       }
       case 'untapAll':
@@ -422,6 +401,70 @@ export class Commands {
         this.host.ui.toggleCheatSheet();
         return;
     }
+  }
+
+  /**
+   * Resolve the top item (DESIGN "The effect stack", Resolving): to `to`, or to the game's default destination when
+   * omitted. Before everyone passed it needs a second press within FORCE_RESOLVE_MS, which resolves with `force`
+   * ("Turn flow and confirmation", All passed).
+   */
+  resolveTop(to?: ZoneId): void {
+    const st = this.state;
+    const top = st.stack[st.stack.length - 1];
+    if (!top) {
+      this.host.ui.notify('The stack is empty');
+      return;
+    }
+    const dest = to ? { to } : {};
+    const pending = st.confirm && st.confirm.about === top.id && !roundPassed(st);
+    if (!pending) {
+      this.pendingForce = null;
+      this.host.session.dispatch({ type: 'stackResolve', item: top.id, ...dest });
+      return;
+    }
+    const now = this.host.now();
+    if (this.pendingForce && this.pendingForce.item === top.id && now - this.pendingForce.at <= FORCE_RESOLVE_MS) {
+      this.pendingForce = null;
+      this.host.session.dispatch({ type: 'stackResolve', item: top.id, ...dest, force: true });
+      return;
+    }
+    this.pendingForce = { item: top.id, at: now };
+    this.host.ui.notify('Not everyone has passed. Resolve again to resolve anyway');
+  }
+
+  /** Mill N: the top `n` cards of the own library to the own graveyard, one move each with a shared group (DESIGN "Card manipulation", Library actions). */
+  mill(n: number): void {
+    const me = this.me;
+    const k = Math.max(0, Math.floor(n));
+    const ids = this.host.session.secrets().libraryOrder.slice(0, k);
+    if (ids.length === 0) {
+      this.host.ui.notify('Your library is empty');
+      return;
+    }
+    this.dispatchAll(ids.map((id): ActionDraft => ({ type: 'move', card: id, to: `graveyard:${me}` })));
+  }
+
+  /**
+   * Reveal top: show the top card of the own library to every other seat (DESIGN "Card manipulation", Library
+   * actions). It goes through the targeted-reveal path, so the card stays hidden in shared state.
+   */
+  revealTop(): void {
+    const st = this.state;
+    const me = this.me;
+    const top = this.host.session.secrets().libraryOrder[0];
+    if (!top) {
+      this.host.ui.notify('Your library is empty');
+      return;
+    }
+    const seats = Object.values(st.seats)
+      .filter((s) => s.id !== me)
+      .sort((a, b) => a.index - b.index)
+      .map((s) => s.id);
+    if (seats.length === 0) {
+      this.host.ui.notify('No other players to reveal to');
+      return;
+    }
+    this.host.session.dispatch({ type: 'revealTo', instanceId: top, seats });
   }
 
   /** Ctrl+U: untap everything the local player controls (DESIGN "Card manipulation"). */

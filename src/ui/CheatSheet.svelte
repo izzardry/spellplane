@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import type { ActionId, KeyChord, KeyContext, Keymap } from '../games/types';
-  import { cheatSheet, chordFromEvent, chordToString } from './keymap';
+  import { cheatSheet, chordFromEvent, chordToString, RESERVED_KEYS } from './keymap';
 
   let {
     keymap,
@@ -86,13 +86,22 @@
                 </td>
               </tr>
             {/each}
+            {#if g.group === 'Turn'}
+              {#each RESERVED_KEYS as r (r.label)}
+                <tr data-testid="cheat-row" data-reserved="true" data-context={r.context}>
+                  <td class="label">{r.label}</td>
+                  <td class="keys"><kbd data-testid="cheat-key">{chordToString(r.chord)}</kbd></td>
+                  <td class="fixed" title="This key cannot be changed">fixed</td>
+                </tr>
+              {/each}
+            {/if}
           </tbody>
         </table>
       </div>
     {/each}
   </div>
   <p class="mouse">
-    Mouse: drag moves, Alt+drag moves temporarily, right-drag draws a line, Shift+right-drag a lasting mark, right-click opens the menu, double-click taps, middle-click inspects.
+    Mouse: drag moves, Alt+drag moves temporarily, right-drag draws a line, Shift+right-drag a lasting mark, right-click opens the menu, double-click taps a card, draws from your library and opens a pile, middle-click inspects.
   </p>
 </section>
 

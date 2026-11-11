@@ -319,7 +319,7 @@ describe('stack and turn keys (DESIGN "The effect stack", "Turn flow and confirm
     expect(r.session.dispatched).toEqual([]);
   });
 
-  it('Tab at the last step does not wrap; Ctrl+Enter passes the turn and offers untap-and-draw to the new active player', () => {
+  it('Tab at the last step does not wrap; Ctrl+Enter passes the turn and does nothing else (the new active player\'s HUD offers untap-and-draw)', () => {
     const r = rig({ names: ['Anna'] });
     const st = r.session.getState();
     r.session.setState({ ...st, turn: { ...st.turn, phase: 'end' } });
@@ -327,7 +327,8 @@ describe('stack and turn keys (DESIGN "The effect stack", "Turn flow and confirm
     expect(r.session.dispatched).toEqual([]);
     r.press({ key: 'Enter', ctrl: true });
     expect(drafts(r)).toEqual([{ type: 'turnPass', to: 's0' }]);
-    expect(r.ui.map((u) => u.hook)).toContain('offerUntapDraw');
+    expect(r.ui.map((u) => u.hook)).toEqual(['notify']); // only Tab's 'last step' hint
+    expect(r.session.calls).toEqual([]);
   });
 
   it('untap-and-draw untaps everything the player controls and draws one card', () => {
@@ -365,5 +366,47 @@ describe('stack and turn keys (DESIGN "The effect stack", "Turn flow and confirm
     r.session.undoResult = false;
     r.press({ key: 'z', ctrl: true });
     expect(r.ui.map((u) => u.hook)).toEqual(['notify']);
+  });
+});
+
+describe('library and resolve extras (DESIGN "Card manipulation", Library actions; "The effect stack", Resolving)', () => {
+  it('mill N moves the top N library cards to the graveyard as one group', () => {
+    const r = rig();
+    r.commands.mill(2);
+    expect(drafts(r)).toEqual([
+      { type: 'move', card: 'lib1', to: 'graveyard:s0', group: 'g1' },
+      { type: 'move', card: 'lib2', to: 'graveyard:s0', group: 'g1' },
+    ]);
+  });
+
+  it('mill 1 is a single ungrouped move; milling an empty library only notifies', () => {
+    const r = rig();
+    r.commands.mill(1);
+    expect(drafts(r)).toEqual([{ type: 'move', card: 'lib1', to: 'graveyard:s0' }]);
+    const empty = rig({ cards: [] });
+    empty.commands.mill(3);
+    expect(empty.session.dispatched).toEqual([]);
+    expect(empty.ui.map((u) => u.hook)).toEqual(['notify']);
+  });
+
+  it('reveal top shows the top library card to every other seat through a targeted reveal', () => {
+    const r = rig({ names: ['Anna', 'Ben', 'Cleo'] });
+    r.commands.revealTop();
+    expect(drafts(r)).toEqual([{ type: 'revealTo', instanceId: 'lib1', seats: ['s1', 's2'] }]);
+    const solo = rig({ names: ['Anna'] });
+    solo.commands.revealTop();
+    expect(solo.session.dispatched).toEqual([]);
+    expect(solo.ui.map((u) => u.hook)).toEqual(['notify']);
+  });
+
+  it('resolving to a chosen zone carries `to`; before everyone passed it still needs the second press', () => {
+    const r = rig({ stack: [spellOnStack] });
+    r.commands.resolveTop('exile:s0');
+    expect(drafts(r)).toEqual([{ type: 'stackResolve', item: 'si9', to: 'exile:s0' }]);
+    const p = rig({ names: ['Anna', 'Ben'], stack: [spellOnStack], confirm: { id: 'r1', askedBy: 's0', about: 'si9', durationMs: 5000, startSeq: 0, responses: {} } });
+    p.commands.resolveTop('hand:s0');
+    expect(p.session.dispatched).toEqual([]);
+    p.commands.resolveTop('hand:s0');
+    expect(drafts(p)).toEqual([{ type: 'stackResolve', item: 'si9', to: 'hand:s0', force: true }]);
   });
 });

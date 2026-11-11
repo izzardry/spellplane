@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { MTG_KEYMAP, chordToString } from '../../../src/games/mtg/keymap';
-import { applyOverrides, cheatSheet, chordFromEvent, findConflict, isTextEntry, matchesChord, normalizeKey } from '../../../src/ui/keymap';
+import { applyOverrides, cheatSheet, chordFromEvent, findConflict, isTextEntry, matchesChord, normalizeKey, reservedConflict, validOverrides } from '../../../src/ui/keymap';
 import { drafts, eventFor, rig } from './setup';
 
 describe('no key fires while a text field has focus (PLAN M0-P4)', () => {
@@ -184,5 +184,29 @@ describe('remapping (DESIGN "Input and interaction design": all keys are remappa
     expect(chordFromEvent({ key: 'Shift', shiftKey: true })).toBeNull();
     expect(chordFromEvent({ key: 'k', metaKey: true })).toBeNull();
     expect(chordFromEvent({ key: 'Enter', ctrlKey: true })).toEqual({ key: 'Enter', ctrl: true });
+  });
+});
+
+describe('stored overrides and reserved keys (DESIGN "Input and interaction design", Discoverable)', () => {
+  it('keeps only well-formed overrides from settings, so a corrupt entry cannot break the keymap', () => {
+    const loaded = validOverrides([
+      { action: 'tap', context: 'table', chord: { key: 'j', shift: true, ctrl: 'yes' } },
+      { action: 'flip', context: 'table' },
+      { action: 'flip', context: 'table', chord: null },
+      { action: 'flip', context: 'nowhere', chord: { key: 'k' } },
+      { action: 7, context: 'table', chord: { key: 'k' } },
+      null,
+      'tap',
+    ]);
+    expect(loaded).toEqual([{ action: 'tap', context: 'table', chord: { key: 'j', shift: true } }]);
+    expect(validOverrides({ tap: 'j' })).toEqual([]);
+    expect(() => applyOverrides(MTG_KEYMAP, validOverrides([{ action: 'tap', context: 'table' }]))).not.toThrow();
+  });
+
+  it('the untap-and-draw offer key U is reserved in the table context', () => {
+    expect(reservedConflict({ key: 'u' }, 'table')).toMatch(/untap all and draw/i);
+    expect(reservedConflict({ key: 'u', ctrl: true }, 'table')).toBeNull();
+    expect(reservedConflict({ key: 'u' }, 'prompt')).toBeNull();
+    expect(MTG_KEYMAP.some((b) => b.context === 'table' && b.chord.key === 'u' && !b.chord.ctrl && !b.chord.alt && !b.chord.shift)).toBe(false);
   });
 });
