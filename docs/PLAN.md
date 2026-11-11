@@ -399,7 +399,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M1-P1 Transport and sequencer
 - [ ] M1-P2 Secrecy
 - [ ] M1-P3 Stack and confirmation
-- [ ] M1-P4 Combat and lines
+- [x] M1-P4 Combat and lines
 - [ ] M1-P5 Lobby and seats
 - [x] M1-P6 Chat and log
 - [ ] M1-P7 Resume
