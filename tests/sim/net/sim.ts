@@ -11,6 +11,7 @@ import { createTable, explain, reduce } from '../../../src/core/reducer';
 import { sha256Sync } from '../../../src/core/sha256';
 import type { Deadline, SeatId, TableState } from '../../../src/core/types';
 import { createNetEngine, type NetEngineImpl } from '../../../src/net/engine';
+import { applySequenced } from '../../../src/net/sequencer';
 import { LoopbackNetwork, type LoopbackOptions, type LoopbackTransport } from '../../../src/net/loopback';
 import type { SequencedAction } from '../../../src/net/messages';
 import type { Channel, Message, MessageHandler, PeerHandler, PeerId, Transport } from '../../../src/net/transport';
@@ -113,6 +114,8 @@ export interface SimPeer {
   engine: NetEngineImpl;
   /** Every action this engine applied in order, by seq (from onSequenced). */
   log: Map<number, SequencedAction>;
+  /** Every onSequenced report in the order it came (a rewound history's seqs are reported again when replaced). */
+  trace: SequencedAction[];
   /** Cids of own actions that came back sequenced (acknowledged). */
   acked: Set<string>;
   /** Own actions rolled back after a nack, with the reason. */
@@ -159,9 +162,10 @@ export function makeSim(opts: SimOptions): Sim {
         now: () => Date.now(),
         ...(opts.deadlines ? { deadlines: opts.deadlines } : {}),
       }) as NetEngineImpl;
-      const p: SimPeer = { index, peerId: peerIdOf(index), seat: seatOf(index), transport, engine, log: new Map(), acked: new Set(), rolledBack: new Map(), proposed: [], system: [] };
+      const p: SimPeer = { index, peerId: peerIdOf(index), seat: seatOf(index), transport, engine, log: new Map(), trace: [], acked: new Set(), rolledBack: new Map(), proposed: [], system: [] };
       engine.onSequenced((a, own) => {
         p.log.set(a.seq, a);
+        p.trace.push(a);
         if (own) p.acked.add(a.cid);
       });
       engine.onRollback((a, reason) => p.rolledBack.set(a.cid, reason));
@@ -199,7 +203,7 @@ export function agreed(peers: SimPeer[]): boolean {
 
 /** All live engines hold the same confirmed state, nothing pending, view equal to confirmed. */
 export function converged(peers: SimPeer[]): boolean {
-  if (peers.some((p) => p.engine.pendingActions().length > 0 || p.engine.state() !== p.engine.confirmedState())) return false;
+  if (peers.some((p) => p.engine.pending().length > 0 || p.engine.state() !== p.engine.confirmedState())) return false;
   const seq = peers[0]!.engine.seq();
   if (peers.some((p) => p.engine.seq() !== seq)) return false;
   const h = hashOf(peers[0]!.engine.confirmedState());
@@ -212,4 +216,28 @@ export async function expectConverged(peers: SimPeer[], maxMs = 60_000): Promise
   const hashes = peers.map((p) => hashOf(p.engine.confirmedState()));
   expect(new Set(hashes).size).toBe(1);
   return hashes[0]!;
+}
+
+/**
+ * The history (seq -> action) `p` had applied when it first reported seq `n`, rebuilt from its reports: replicas
+ * apply strictly in order, so at that moment every seq up to `n` holds the action last reported for it. Null when
+ * `p` never reported `n`.
+ */
+export function historyWhenReached(p: SimPeer, n: number): Map<number, SequencedAction> | null {
+  const at = p.trace.findIndex((a) => a.seq === n);
+  if (at < 0) return null;
+  const h = new Map<number, SequencedAction>();
+  for (const a of p.trace.slice(0, at + 1)) if (a.seq <= n) h.set(a.seq, a);
+  return h;
+}
+
+/** Replay `history` (seqs after `start.seq` up to `n`, gap-free) through the reducer as every replica does. */
+export function replay(start: { seq: number; state: TableState }, history: Map<number, SequencedAction>, n: number): TableState {
+  let s = start.state;
+  for (let q = start.seq + 1; q <= n; q++) {
+    const a = history.get(q);
+    if (!a) throw new Error(`history has no seq ${q}`);
+    s = applySequenced(s, a);
+  }
+  return s;
 }

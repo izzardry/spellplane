@@ -65,7 +65,7 @@ export async function openHarness(context: BrowserContext, profile: string): Pro
 }
 
 type Harness = {
-  identity(nickname: string, persist?: boolean): Promise<{ peerId: string }>;
+  identity(nickname: string): Promise<{ peerId: string }>;
   close(): void;
   start(room: string, peers: string[], kind?: 'local' | 'trystero'): Promise<void>;
   propose(a: unknown): boolean;

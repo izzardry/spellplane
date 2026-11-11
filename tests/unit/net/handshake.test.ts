@@ -14,7 +14,7 @@ import { scan } from '../../leak/scan';
 import { handshakeText, type WireMessage } from '../../../src/net/messages';
 import type { Message } from '../../../src/net/transport';
 import type { NetEngine, NetIdentity } from '../../../src/net/types';
-import { generateIdentity } from '../../../src/store/identity';
+import { generateIdentity, toIdentityRecord } from '../../../src/store/identity';
 import { TEST_GAME } from '../core/helpers';
 
 const ROOM = 'amber-fox-93';
@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 async function realIdentity(nickname: string): Promise<NetIdentity> {
-  const rec = await generateIdentity();
+  const rec = await toIdentityRecord(await generateIdentity());
   return createNetIdentity(rec.keyPair, rec.peerId, nickname);
 }
 

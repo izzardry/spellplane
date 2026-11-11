@@ -6,11 +6,11 @@
 import { describe, expect, it } from 'vitest';
 import { handshakeText } from '../../../src/net/messages';
 import { createNetIdentity, fromBase64url, peerIdOfPubKey, verifySignature } from '../../../src/net/identity';
-import { generateIdentity } from '../../../src/store/identity';
+import { generateIdentity, toIdentityRecord } from '../../../src/store/identity';
 
 describe('net identity', () => {
   it('exports the stored key pair as base64url SPKI whose hash is the stored peer id', async () => {
-    const rec = await generateIdentity();
+    const rec = await toIdentityRecord(await generateIdentity());
     const id = await createNetIdentity(rec.keyPair, rec.peerId, 'Anna');
     expect(id.peerId).toBe(rec.peerId);
     expect(id.nickname).toBe('Anna');
@@ -20,13 +20,13 @@ describe('net identity', () => {
   });
 
   it('refuses a peer id that does not belong to the key pair', async () => {
-    const rec = await generateIdentity();
+    const rec = await toIdentityRecord(await generateIdentity());
     await expect(createNetIdentity(rec.keyPair, '0123456789abcdef', 'x')).rejects.toThrow(/does not belong/);
   });
 
   it('signs the handshake text so that only the right key and text verify', async () => {
-    const a = await generateIdentity();
-    const b = await generateIdentity();
+    const a = await toIdentityRecord(await generateIdentity());
+    const b = await toIdentityRecord(await generateIdentity());
     const ida = await createNetIdentity(a.keyPair, a.peerId, 'A');
     const idb = await createNetIdentity(b.keyPair, b.peerId, 'B');
     const text = handshakeText('amber-fox-93', 'nonce-1', ida.peerId);
@@ -45,7 +45,7 @@ describe('net identity', () => {
   });
 
   it('treats malformed keys and signatures as invalid instead of throwing', async () => {
-    const a = await generateIdentity();
+    const a = await toIdentityRecord(await generateIdentity());
     const id = await createNetIdentity(a.keyPair, a.peerId, 'A');
     const sig = await id.sign('x');
     expect(await verifySignature('not base64 !', 'x', sig)).toBe(false);

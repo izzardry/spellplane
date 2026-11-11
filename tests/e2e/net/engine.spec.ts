@@ -2,9 +2,7 @@
  * The net engine in real browsers (Chromium and WebKit) over the BroadcastChannel transport (?transport=local), with
  * the real ECDSA P-256 handshake (DESIGN "Multiplayer architecture"; "Specification: network protocol and secrecy":
  * Handshake, Sequencing, Liveness, Sync). Engine behaviour is asserted on state hashes and the engine's own reports,
- * never on pixels. Identities persist in IndexedDB on Chromium; on this branch's base store/identity.ts writes a
- * CryptoKey to IndexedDB, which hangs Playwright's WebKit, so WebKit pages keep their key pair in memory. m1 stores
- * the key pair as JWK (7b61414): drop this WebKit fallback after the merge (decision M1-P1, for the integrator).
+ * never on pixels. Identities persist in IndexedDB (store/identity.ts keeps the key pair as JWK) on both browsers.
  */
 import { expect, test, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
 import { harness, openHarness, routeHarness } from './bundle';
@@ -16,8 +14,6 @@ const life = (seat: string, cid: string, delta: number) => ({ type: 'life', by: 
 function profile(name: string, info: TestInfo): string {
   return `net-${name}-${info.project.name.slice(0, 3)}-${info.workerIndex}-${Math.random().toString(36).slice(2, 8)}`;
 }
-
-const persist = (info: TestInfo): boolean => info.project.name === 'chromium';
 
 /** Every page connected, nothing pending, one state hash (and `seq` when given). */
 async function settled(pages: Page[], seq?: number): Promise<string> {
@@ -42,8 +38,8 @@ async function twoPages(context: BrowserContext, info: TestInfo): Promise<{ a: P
   const pa = profile('a', info);
   const a = await openHarness(context, pa);
   const b = await openHarness(context, profile('b', info));
-  const ida = await harness(a, 'identity', 'Anna', persist(info));
-  const idb = await harness(b, 'identity', 'Ben', persist(info));
+  const ida = await harness(a, 'identity', 'Anna');
+  const idb = await harness(b, 'identity', 'Ben');
   expect(ida.peerId).toMatch(/^[0-9a-f]{16}$/);
   expect(idb.peerId).not.toBe(ida.peerId);
   const seats = [ida.peerId, idb.peerId];
@@ -100,14 +96,16 @@ test('when the sequencer leaves, the other page takes over; when it comes back i
 });
 
 test('a reopened page finds its identity in IndexedDB and reclaims its seat', async ({ context }, info) => {
-  test.skip(!persist(info), 'Playwright WebKit hangs when a CryptoKey is written to IndexedDB (until m1’s JWK identity is merged)');
   const { a: first, b, seats, room, pa } = await twoPages(context, info);
   await settled([first, b]);
-  await first.close({ runBeforeUnload: true });
+  // Leave as closing the tab does (bye), then close the page. A plain close: Playwright's WebKit never closes a page
+  // asked to runBeforeUnload (decision M1-G fix).
+  await harness(first, 'close');
+  await first.close();
   await expect.poll(async () => (await harness(b, 'info')).sequencing, { timeout: 10_000 }).toBe(true);
   await harness(b, 'propose', life('s1', 'meanwhile', -4));
   const a = await openHarness(context, pa);
-  const again = await harness(a, 'identity', 'Anna', true);
+  const again = await harness(a, 'identity', 'Anna');
   expect(again.peerId).toBe(seats[0]);
   await harness(a, 'start', room, seats);
   await settled([a, b]);

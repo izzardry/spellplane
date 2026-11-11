@@ -6,13 +6,13 @@
  * of window.__spellplane (DESIGN "Specification: code interfaces", SpellplaneDebug) and window.__netHarness.
  */
 import type { Action } from '../../../src/core/actions';
-import { base64url, canonicalJson } from '../../../src/core/hash';
+import { canonicalJson } from '../../../src/core/hash';
 import { createTable } from '../../../src/core/reducer';
 import { sha256Sync } from '../../../src/core/sha256';
 import type { CoreGameSpec } from '../../../src/core/types';
 import { BroadcastTransport } from '../../../src/net/broadcast';
 import { createNetEngine, type NetEngineImpl } from '../../../src/net/engine';
-import { createNetIdentity, peerIdOfPubKey } from '../../../src/net/identity';
+import { createNetIdentity } from '../../../src/net/identity';
 import type { Channel, Message, MessageHandler, PeerHandler, PeerId, Transport } from '../../../src/net/transport';
 import type { NetIdentity } from '../../../src/net/types';
 import { openStores } from '../../../src/store/stores';
@@ -74,25 +74,12 @@ const need = (): NetEngineImpl => {
 };
 
 const harness = {
-  /**
-   * This page's identity: with `persist`, the profile's key pair from IndexedDB (store/identity.ts, created on first
-   * visit); without, a fresh non-extractable ECDSA P-256 key pair kept in memory (Playwright's WebKit hangs when a
-   * CryptoKey is written to IndexedDB, so WebKit specs use this).
-   */
-  async identity(nickname: string, persist = true): Promise<{ peerId: string; pubKey: string }> {
-    let keyPair: CryptoKeyPair;
-    let peerId: string;
-    if (persist) {
-      const stores = await openStores();
-      const rec = await stores.identity.get();
-      stores.close();
-      keyPair = rec.keyPair;
-      peerId = rec.peerId;
-    } else {
-      keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
-      peerId = await peerIdOfPubKey(base64url(new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey))));
-    }
-    identity = await createNetIdentity(keyPair, peerId, nickname);
+  /** This page's identity: the profile's key pair from IndexedDB (store/identity.ts, created on first visit, kept as JWK). */
+  async identity(nickname: string): Promise<{ peerId: string; pubKey: string }> {
+    const stores = await openStores();
+    const rec = await stores.identity.get();
+    stores.close();
+    identity = await createNetIdentity(rec.keyPair, rec.peerId, nickname);
     return { peerId: identity.peerId, pubKey: identity.pubKey };
   },
   /** Leave cleanly (bye), as closing the tab does. */
@@ -152,7 +139,7 @@ const harness = {
       sequencer: e.sequencerId(),
       sequencing: e.isSequencing(),
       seat: e.seat(),
-      pending: e.pendingActions().length,
+      pending: e.pending().length,
       peers: e.peers().filter((p) => p.status === 'connected').length,
       system: [...system],
     };
