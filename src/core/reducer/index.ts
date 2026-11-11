@@ -3,8 +3,8 @@
  * `reduce` is pure and total: an action that does not apply returns the state unchanged (same object),
  * with the reason available from `explain`. It never reads the clock, randomness or the secret store.
  *
- * Later packages add their cases to HANDLERS: ask, respond and autoPass (M1-P3, confirm.ts), the secret shuffle and
- * public randomness (M1-P2), draft actions (M2). M1-P4 extends moveTemp and settle in temp.ts.
+ * Later packages add their cases to HANDLERS: ask, respond and autoPass (M1-P3, confirm.ts), draft actions (M2). The
+ * secret shuffle, public randomness and verified reveals are M1-P2's (secret.ts). M1-P4 extends moveTemp and settle in temp.ts.
  */
 import { ACTION_FAMILIES, UNDOABLE_TYPES, type Action, type ActionOf, type ActionType } from '../actions';
 import { checkInvariants } from '../invariants';
@@ -17,6 +17,7 @@ import { STACK_ZONE } from './place';
 import * as stack from './stack';
 import * as table from './table';
 import { applyRestore } from './restore';
+import * as secret from './secret';
 import * as temp from './temp';
 import { Rejection, checkId, isObj, reject } from './util';
 import * as zones from './zones';
@@ -55,7 +56,7 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   moveTemp: temp.moveTemp,
   settle: temp.settle,
   tap: cards.tap,
-  flip: cards.flip,
+  flip: secret.flip,
   transform: cards.transform,
   rotate: cards.rotate,
   counter: cards.counter,
@@ -69,13 +70,13 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   remove: cards.remove,
   toZone: zones.toZone,
   draw: zones.draw,
-  reveal: zones.reveal,
+  reveal: secret.reveal,
   revealTo: zones.revealTo,
   hide: zones.hide,
-  shuffleCommit: later('M1-P2'),
-  shuffleNonce: later('M1-P2'),
-  shuffleDone: later('M1-P2'),
-  reorder: zones.reorder,
+  shuffleCommit: secret.shuffleCommit,
+  shuffleNonce: secret.shuffleNonce,
+  shuffleDone: secret.shuffleDone,
+  reorder: secret.reorder,
   lookAt: zones.lookAt,
   mulligan: zones.mulligan,
   stackPush: stack.stackPush,
@@ -97,9 +98,9 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   seatLeave: table.seatLeave,
   ready: table.ready,
   away: later('M1-P7'),
-  rngCommit: later('M1-P2'),
-  rngReveal: later('M1-P2'),
-  commitClose: later('M1-P2'),
+  rngCommit: secret.rngCommit,
+  rngReveal: secret.rngReveal,
+  commitClose: secret.commitClose,
   packOpen: later('M2'),
   pick: later('M2'),
   packPass: later('M2'),

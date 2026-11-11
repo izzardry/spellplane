@@ -3,7 +3,7 @@
  * `w`/`set`/`delete` methods, which copy a record before its first change; the input state is never touched, and
  * untouched records keep their identity in the result (cheap change detection for the scene and HUD).
  */
-import type { CardInstance, Commitment, Line, Seat, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
+import type { CardInstance, Commitment, Line, RngRound, Seat, ShuffleRound, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
 import { byId, own, reject } from './util';
 
 /** One keyed record of the state (cards, zones, lines, seats, teams, commitments). */
@@ -90,6 +90,10 @@ export class Draft {
   readonly seats: RecordDraft<Seat>;
   readonly teams: RecordDraft<Team>;
   readonly commitments: RecordDraft<Commitment>;
+  /** Public-randomness rounds (M1-P2). */
+  readonly rng: RecordDraft<RngRound>;
+  /** Secret-shuffle rounds (M1-P2). */
+  readonly shuffles: RecordDraft<ShuffleRound>;
   private stackCopy: StackItem[] | null = null;
   private turnCopy: TurnState | null = null;
   private settingsCopy: TableSettings | null = null;
@@ -102,6 +106,8 @@ export class Draft {
     this.seats = new RecordDraft(base.seats, 'seat');
     this.teams = new RecordDraft(base.teams, 'team');
     this.commitments = new RecordDraft(base.commitments, 'commitment');
+    this.rng = new RecordDraft(base.rng, 'randomness round');
+    this.shuffles = new RecordDraft(base.shuffles, 'shuffle');
   }
 
   /** The stack, bottom to top (read-only). */
@@ -149,6 +155,8 @@ export class Draft {
       this.seats.changed ||
       this.teams.changed ||
       this.commitments.changed ||
+      this.rng.changed ||
+      this.shuffles.changed ||
       this.stackCopy !== null ||
       this.turnCopy !== null ||
       this.settingsCopy !== null ||
@@ -168,6 +176,8 @@ export class Draft {
       seats: this.seats.result(),
       teams: this.teams.result(),
       commitments: this.commitments.result(),
+      rng: this.rng.result(),
+      shuffles: this.shuffles.result(),
       stack: this.stackCopy ?? this.base.stack,
       turn: this.turnCopy ?? this.base.turn,
       settings: this.settingsCopy ?? this.base.settings,

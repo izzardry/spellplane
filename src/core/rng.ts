@@ -5,7 +5,7 @@
  * (session/secrecy.ts). Contracts: M1-C (moved the shuffle derivation from session/secrecy.ts, M0-P7).
  * Implementer of the stubs: M1-P2.
  */
-import type { Deadline, InstanceId, RngId, SeatId, TableState } from './types';
+import type { Deadline, InstanceId, RngId, SeatId, ShuffleId, TableState } from './types';
 import { sha256Sync, sha256TextBytes } from './sha256';
 
 /** Peers commit (rngCommit) or send their shuffle nonce within 3 s; later ones are excluded (DESIGN "Specification: network protocol and secrecy", Public randomness 2, Secret shuffle 2). */
@@ -62,6 +62,27 @@ export function shuffledOrder(ids: readonly InstanceId[], seed: string): Instanc
   return order;
 }
 
+/**
+ * The seed that orders the fresh ids of a re-issuing shuffle: `SHA-256(seed + '|reissue')`. It is independent of the
+ * permutation of the old ids, so peers cannot pair old and new ids by rank, yet anyone holding the owner nonce can
+ * replay both (PLAN M1-P2: the order is reproducible from public messages plus the owner's nonce). Decision M1-P2.
+ */
+export function reissueSeed(seed: string): string {
+  return sha256Sync(`${seed}|reissue`);
+}
+
+/**
+ * The outcome of a secret shuffle (DESIGN "Secret shuffle" 4): `before` is the zone's current ids shuffled by the
+ * seed (index 0 = top), so `before[i]` is the card that lands at position i; with re-issued ids, `order` is the fresh
+ * ids shuffled by `reissueSeed(seed)` and labels those positions, else `order` equals `before`.
+ */
+export function shuffleOutcome(seed: string, ids: readonly InstanceId[], freshIds?: readonly InstanceId[]): { before: InstanceId[]; order: InstanceId[] } {
+  const before = shuffledOrder(ids, seed);
+  if (freshIds === undefined) return { before, order: before };
+  if (freshIds.length !== ids.length) throw new RangeError('a re-issue needs one fresh id per card');
+  return { before, order: shuffledOrder(freshIds, reissueSeed(seed)) };
+}
+
 /** `orderHash = SHA-256(order joined by ',' + '|' + nonce)` (DESIGN "Secret shuffle" 5; private reorder). */
 export function orderHash(order: readonly InstanceId[], nonce: string): string {
   return sha256Sync(`${order.join(',')}|${nonce}`);
@@ -80,19 +101,77 @@ export function rngOutcome(seed: string, n: number): number {
   return new ByteStream(seed).below(n);
 }
 
-/**
- * The seats a randomness round or shuffle waits for: every other connected (not away) seated seat at the round's
- * start (DESIGN "Public randomness" 2, "Secret shuffle" 2). Implementer: M1-P2 (the stub returns none).
- */
-export function expectedParticipants(_state: TableState, _id: RngId): SeatId[] {
-  return [];
+/** Seats in seat-index order (ties by id), the order nonces are concatenated in (DESIGN "Public randomness" 4, "Secret shuffle" 3). */
+export function participantOrder(state: TableState, seats: readonly SeatId[]): SeatId[] {
+  const index = (s: SeatId): number => (Object.hasOwn(state.seats, s) ? state.seats[s]!.index : Number.MAX_SAFE_INTEGER);
+  return [...new Set(seats)].sort((a, b) => index(a) - index(b) || (a < b ? -1 : a > b ? 1 : 0));
+}
+
+/** A seat that takes part in joint randomness: taken (named) and not away (DESIGN "Public randomness" 2: connected seated peers). */
+function seated(state: TableState, seat: SeatId): boolean {
+  if (!Object.hasOwn(state.seats, seat)) return false;
+  const s = state.seats[seat]!;
+  return s.name.trim() !== '' && s.away !== true;
 }
 
 /**
- * Commit windows the sequencer's clock closes (DESIGN "Public randomness" 2, "Secret shuffle" 2): for each open
- * rngCommit or shuffleCommit round, `COMMIT_WINDOW_MS` after its start the sequencer proposes `commitClose`.
- * Implementer: M1-P2 (the stub returns none, so no window ever closes by time).
+ * The seats a randomness round or shuffle waits for: every other connected (not away) seated seat (DESIGN "Public
+ * randomness" 2, "Secret shuffle" 2), in seat order. "Other" is relative to the round's initiator (rng) or the zone's
+ * owner (shuffle). Evaluated on the current state, so a seat that goes away is no longer waited for. Empty for an
+ * unknown id or a finished round; a closed window waits for nobody.
  */
-export function commitWindowDeadlines(_state: TableState): Deadline[] {
-  return [];
+export function expectedParticipants(state: TableState, id: RngId): SeatId[] {
+  const r = Object.hasOwn(state.rng, id) ? state.rng[id]! : null;
+  const sh = Object.hasOwn(state.shuffles, id) ? state.shuffles[id]! : null;
+  const by = r ? r.by : sh ? sh.owner : null;
+  if (by === null) return [];
+  return participantOrder(
+    state,
+    Object.keys(state.seats).filter((s) => s !== by && seated(state, s)),
+  );
+}
+
+/** Whether a secret shuffle may finish: every expected peer nonce arrived, or the window closed (DESIGN "Secret shuffle" 2-3). */
+export function shuffleReady(state: TableState, sid: ShuffleId): boolean {
+  if (!Object.hasOwn(state.shuffles, sid)) return false;
+  const r = state.shuffles[sid]!;
+  if (r.orderHash !== null) return false;
+  if (r.closedSeq !== undefined) return true;
+  return expectedParticipants(state, sid).every((s) => Object.hasOwn(r.nonces, s));
+}
+
+/** The peer nonces of a shuffle in seat order, as the seed concatenates them (DESIGN "Secret shuffle" 3). */
+export function shufflePeerNonces(state: TableState, sid: ShuffleId): string[] {
+  if (!Object.hasOwn(state.shuffles, sid)) return [];
+  const r = state.shuffles[sid]!;
+  return participantOrder(state, Object.keys(r.nonces)).map((s) => r.nonces[s]!);
+}
+
+/** Whether every commit of a randomness round is in: all expected seats committed, or the window closed (DESIGN "Public randomness" 3). */
+export function rngCommitPhaseComplete(state: TableState, rid: RngId): boolean {
+  if (!Object.hasOwn(state.rng, rid)) return false;
+  const r = state.rng[rid]!;
+  if (r.closedSeq !== undefined) return true;
+  return expectedParticipants(state, rid).every((s) => Object.hasOwn(r.commits, s));
+}
+
+/**
+ * Commit windows the sequencer's clock closes (DESIGN "Public randomness" 2, "Secret shuffle" 2): for each
+ * randomness round still waiting for commits and each shuffle still waiting for peer nonces, `COMMIT_WINDOW_MS`
+ * after the round's start the sequencer proposes `commitClose`. A round that has everything it waits for yields no
+ * deadline, so its timer is disarmed.
+ */
+export function commitWindowDeadlines(state: TableState): Deadline[] {
+  const out: Deadline[] = [];
+  for (const rid of Object.keys(state.rng).sort()) {
+    const r = state.rng[rid]!;
+    if (r.result !== null || r.closedSeq !== undefined || rngCommitPhaseComplete(state, rid)) continue;
+    out.push({ key: `rng:${rid}`, fromSeq: r.startSeq, afterMs: COMMIT_WINDOW_MS, emit: [{ type: 'commitClose', kind: 'rng', id: rid }] });
+  }
+  for (const sid of Object.keys(state.shuffles).sort()) {
+    const r = state.shuffles[sid]!;
+    if (r.orderHash !== null || r.closedSeq !== undefined || shuffleReady(state, sid)) continue;
+    out.push({ key: `shuffle:${sid}`, fromSeq: r.startSeq, afterMs: COMMIT_WINDOW_MS, emit: [{ type: 'commitClose', kind: 'shuffle', id: sid }] });
+  }
+  return out;
 }
