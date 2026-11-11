@@ -44,6 +44,29 @@ describe('identity', () => {
     expect(await s.db.get('identity', 'me')).toBeDefined();
   });
 
+  it('stores the key pair as JWK data, never as CryptoKey objects (WebKit would need the macOS keychain)', async () => {
+    const s = await stores();
+    const me = await s.identity.get();
+    const stored = (await s.db.get('identity', 'me'))!;
+    expect(stored.keyPair).toBeUndefined();
+    expect(stored.privateJwk).toMatchObject({ kty: 'EC', crv: 'P-256' });
+    expect(stored.publicJwk).toMatchObject({ kty: 'EC', crv: 'P-256' });
+    expect(JSON.parse(JSON.stringify(stored))).toEqual(stored);
+    expect(stored.peerId).toBe(me.peerId);
+  });
+
+  it('still reads a record written by an earlier build (CryptoKey key pair)', async () => {
+    const s = await stores();
+    const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign', 'verify']);
+    const peerId = await expectedPeerId(pair.publicKey);
+    await s.db.put('identity', { id: 'me', keyPair: pair, peerId, nickname: 'old', seatColour: 3 });
+    const me = await s.identity.get();
+    expect(me.peerId).toBe(peerId);
+    expect(me.nickname).toBe('old');
+    const sig = await crypto.subtle.sign(ECDSA_SHA256, me.keyPair.privateKey, data);
+    expect(await crypto.subtle.verify(ECDSA_SHA256, pair.publicKey, sig, data)).toBe(true);
+  });
+
   it('derives the peer id as the first 16 hex characters of SHA-256 of the public key', async () => {
     const s = await stores();
     const me = await s.identity.get();
