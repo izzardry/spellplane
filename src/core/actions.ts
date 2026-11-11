@@ -32,11 +32,7 @@ import type {
   StackItem,
   StackItemId,
   TableSettings,
-  Team,
   TeamId,
-  TurnState,
-  Seat,
-  Zone,
   ZoneId,
 } from './types';
 
@@ -51,26 +47,54 @@ export interface ActionBase {
   /** Shared by the actions of one gesture over a selection; undo reverts a group as one step. */
   group?: string;
   /**
-   * Added by M0-P1. Only on an inverse built by `inverse()` (core/undo.ts): the exact prior public records that the
-   * inverse action alone cannot bring back (a turn number, removed lines, a dropped identity, a re-laid pile).
-   * The reducer applies it after the action's own effect, and only on undoable action types.
+   * Added by M0-P1. Only on the inverse inside an `undo` action, built by `inverse()` (core/undo.ts): the prior
+   * public values that the inverse action alone cannot bring back (a turn number, removed lines, an identity, a
+   * re-laid pile). The reducer applies it after the inverse's own effect; anywhere else it is refused.
    */
   restore?: RestorePatch;
 }
 
 /**
- * Prior public records an inverse action restores (DESIGN "Turn flow and confirmation", Undo). Added by M0-P1.
- * `null` deletes a record. Built only from shared state, so it never carries a hidden identity.
+ * One compare-and-set step of a restore patch: the value the inverse action leaves (`expect`) and the prior value
+ * to put back (`put`); `null` stands for an absent field or record. Added by M0-P1.
+ */
+export interface RestoreStep<T> {
+  expect: T | null;
+  put: T | null;
+}
+
+/** Card fields a restore patch may set; never `id`, `owner`, `zone`, `isToken` or `suspect`. Added by M0-P1. */
+export type RestorableCardField =
+  | 'controller'
+  | 'identity'
+  | 'face'
+  | 'faceIndex'
+  | 'tapped'
+  | 'pose'
+  | 'home'
+  | 'combat'
+  | 'pile'
+  | 'attachedTo'
+  | 'counters'
+  | 'note'
+  | 'tokenLabel';
+
+/**
+ * Prior public values an inverse action restores (DESIGN "Turn flow and confirmation", Undo: the player's own
+ * actions, no table-wide rewind). Added by M0-P1. Every step is compare-and-set: the reducer refuses the undo when
+ * a value no longer matches `expect`, i.e. when someone else changed it since, and it only ever patches fields of
+ * existing cards in public zones, public zone order, lines, the stack, the turn number and auto-pass flags.
+ * Built only from shared state, so it never carries a hidden identity.
  */
 export interface RestorePatch {
-  cards?: Record<InstanceId, CardInstance | null>;
-  zones?: Record<ZoneId, Zone>;
-  lines?: Record<LineId, Line | null>;
+  cards?: Record<InstanceId, { [F in RestorableCardField]?: RestoreStep<NonNullable<CardInstance[F]>> }>;
+  /** Draw order of public zones. */
+  zones?: Record<ZoneId, RestoreStep<InstanceId[]>>;
+  lines?: Record<LineId, RestoreStep<Line>>;
   /** The whole stack, bottom to top. */
-  stack?: StackItem[];
-  turn?: TurnState;
-  seats?: Record<SeatId, Seat>;
-  teams?: Record<TeamId, Team>;
+  stack?: RestoreStep<StackItem[]>;
+  turn?: { number: RestoreStep<number> };
+  seats?: Record<SeatId, { autoPass: RestoreStep<boolean> }>;
 }
 
 type A<T extends string, P> = ActionBase & { type: T } & P;

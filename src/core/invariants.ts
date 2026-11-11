@@ -4,6 +4,7 @@
  */
 import { canonicalJson } from './hash';
 import { parseZoneId } from './ids';
+import { HIDDEN_POSE } from './reducer/place';
 import { normRot, pileMemberPose, q } from './reducer/util';
 import type { CardInstance, TableState } from './types';
 
@@ -47,10 +48,19 @@ export function checkInvariants(state: TableState): string[] {
     if (normRot(c.pose.rot) !== c.pose.rot) bad(`card ${c.id} rot ${c.pose.rot} is outside [0, 360)`);
     for (const [k, v] of Object.entries(c.counters)) if (!Number.isInteger(v) || v <= 0) bad(`card ${c.id} counter ${k} = ${v}`);
     const pub = isPublic(c.zone);
+    if (!Object.hasOwn(state.seats, c.owner)) bad(`card ${c.id} owner ${c.owner} is unknown`);
+    if (!Object.hasOwn(state.seats, c.controller)) bad(`card ${c.id} controller ${c.controller} is unknown`);
+    if (c.combat !== undefined && c.home === undefined) bad(`card ${c.id} has a combat role but no home slot`);
+    if (c.home !== undefined && c.pile) bad(`card ${c.id} is displaced and in pile ${c.pile.id}`);
     if (!pub) {
       if (c.tapped || c.pile || c.attachedTo !== undefined || c.note !== undefined || c.home || c.combat || Object.keys(c.counters).length) {
         bad(`card ${c.id} in hidden zone ${c.zone} carries public state`);
       }
+      if (c.face !== 'down' || c.faceIndex !== 0 || canonicalJson(c.pose) !== canonicalJson(HIDDEN_POSE) || c.controller !== c.owner || c.tokenLabel !== undefined) {
+        bad(`card ${c.id} in hidden zone ${c.zone} is not an opaque record`);
+      }
+      const zoneOwner = Object.hasOwn(zones, c.zone) ? zones[c.zone]!.owner : null;
+      if (zoneOwner !== null && zoneOwner !== c.owner) bad(`card ${c.id} of ${c.owner} is in ${c.zone}`);
       if (c.isToken) bad(`token ${c.id} is in hidden zone ${c.zone}`);
     } else if (c.face === 'up' && c.identity === undefined && c.tokenLabel === undefined) {
       bad(`card ${c.id} is face up in ${c.zone} without an identity`);
@@ -111,6 +121,10 @@ export function checkInvariants(state: TableState): string[] {
       if (!ok) bad(`line ${l.id} has a dangling ${an.kind} anchor ${an.id}`);
     }
   }
+
+  // Turn marker.
+  if (!Number.isInteger(state.turn.number) || state.turn.number < 1) bad(`turn number ${state.turn.number} is not a positive integer`);
+  if (!Object.hasOwn(state.seats, state.turn.active) && !Object.hasOwn(state.teams, state.turn.active)) bad(`active ${state.turn.active} is neither a seat nor a team`);
 
   // Seats and teams.
   for (const [key, s] of Object.entries(state.seats)) {

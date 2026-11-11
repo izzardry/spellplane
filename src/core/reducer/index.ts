@@ -3,10 +3,10 @@
  * `reduce` is pure and total: an action that does not apply returns the state unchanged (same object),
  * with the reason available from `explain`. It never reads the clock, randomness or the secret store.
  *
- * Later packages add their cases to HANDLERS: moveTemp and settle (M1-P4, temp.ts), ask, respond and autoPass
- * (M1-P3, confirm.ts), the secret shuffle and public randomness (M1-P2), draft actions (M2).
+ * Later packages add their cases to HANDLERS: ask, respond and autoPass (M1-P3, confirm.ts), the secret shuffle and
+ * public randomness (M1-P2), draft actions (M2). M1-P4 extends moveTemp and settle in temp.ts.
  */
-import { ACTION_FAMILIES, UNDOABLE_TYPES, type Action, type ActionOf, type ActionType, type RestorePatch } from '../actions';
+import { ACTION_FAMILIES, UNDOABLE_TYPES, type Action, type ActionOf, type ActionType } from '../actions';
 import { checkInvariants } from '../invariants';
 import type { CoreGameSpec, Format, SeatColourIndex, TableState, Team, Zone } from '../types';
 import { DEFAULT_TABLE_SETTINGS } from '../types';
@@ -16,6 +16,8 @@ import { Draft } from './draft';
 import { STACK_ZONE } from './place';
 import * as stack from './stack';
 import * as table from './table';
+import { applyRestore } from './restore';
+import * as temp from './temp';
 import { Rejection, checkId, isObj, reject } from './util';
 import * as zones from './zones';
 
@@ -50,8 +52,8 @@ const record = (): void => undefined;
 
 const HANDLERS: { [T in ActionType]: Handler<T> } = {
   move: cards.move,
-  moveTemp: later('M1-P4'),
-  settle: later('M1-P4'),
+  moveTemp: temp.moveTemp,
+  settle: temp.settle,
   tap: cards.tap,
   flip: cards.flip,
   transform: cards.transform,
@@ -116,63 +118,18 @@ function applyUndo(d: Draft, a: ActionOf<'undo'>): void {
   checkString(a.of);
   const inv: unknown = a.inverse;
   if (!isObj(inv) || typeof inv.type !== 'string' || !UNDOABLE.has(inv.type)) reject('undo carries an action that is not undoable');
-  apply(d, inv as unknown as Action);
+  const inverse = inv as unknown as Action;
+  handle(d, inverse);
+  if (inverse.restore !== undefined) applyRestore(d, inverse.restore);
 }
 
 function checkString(v: unknown): void {
   if (typeof v !== 'string') reject('undo needs the cid it reverts');
 }
 
-/** Run one action's handler, then its restore patch when it is an inverse. */
-function apply(d: Draft, a: Action): void {
+function handle(d: Draft, a: Action): void {
   const handler = HANDLERS[a.type] as Handler<ActionType>;
   handler(d, a as ActionOf<ActionType>);
-  if (a.restore !== undefined) {
-    if (!UNDOABLE.has(a.type)) reject('only undoable actions carry a restore patch');
-    applyRestore(d, a.restore);
-  }
-}
-
-function applyRestore(d: Draft, patch: RestorePatch): void {
-  if (!isObj(patch)) reject('invalid restore patch');
-  const rec = (v: unknown, what: string): Record<string, unknown> => {
-    if (v === undefined) return {};
-    if (!isObj(v)) reject(`invalid restore ${what}`);
-    return v;
-  };
-  for (const [id, v] of Object.entries(rec(patch.cards, 'cards'))) {
-    checkId(id, 'card');
-    if (v === null) d.cards.delete(id);
-    else if (isObj(v)) d.cards.set(id, structuredClone(v) as never);
-    else reject('invalid restore card');
-  }
-  for (const [id, v] of Object.entries(rec(patch.zones, 'zones'))) {
-    checkId(id, 'zone');
-    if (!d.zones.has(id) || !isObj(v)) reject('a restore patch only replaces existing zones');
-    d.zones.set(id, structuredClone(v) as never);
-  }
-  for (const [id, v] of Object.entries(rec(patch.lines, 'lines'))) {
-    checkId(id, 'line');
-    if (v === null) d.lines.delete(id);
-    else if (isObj(v)) d.lines.set(id, structuredClone(v) as never);
-    else reject('invalid restore line');
-  }
-  for (const [id, v] of Object.entries(rec(patch.seats, 'seats'))) {
-    if (!d.seats.has(checkId(id, 'seat')) || !isObj(v)) reject('a restore patch only replaces existing seats');
-    d.seats.set(id, structuredClone(v) as never);
-  }
-  for (const [id, v] of Object.entries(rec(patch.teams, 'teams'))) {
-    if (!d.teams.has(checkId(id, 'team')) || !isObj(v)) reject('a restore patch only replaces existing teams');
-    d.teams.set(id, structuredClone(v) as never);
-  }
-  if (patch.stack !== undefined) {
-    if (!Array.isArray(patch.stack)) reject('invalid restore stack');
-    d.setStack(structuredClone(patch.stack));
-  }
-  if (patch.turn !== undefined) {
-    if (!isObj(patch.turn)) reject('invalid restore turn');
-    Object.assign(d.turnW(), structuredClone(patch.turn));
-  }
 }
 
 interface Step {
@@ -187,8 +144,10 @@ function step(state: TableState, action: Action): Step {
     checkId(action.by, 'actor');
     if (typeof action.cid !== 'string') reject('an action needs a cid');
     if (action.seq !== undefined && (typeof action.seq !== 'number' || !Number.isInteger(action.seq) || action.seq < 0)) reject('invalid seq');
+    // A restore patch only travels on the inverse inside an `undo` (applyUndo).
+    if (action.restore !== undefined) reject('only the inverse inside an undo carries a restore patch');
     const d = new Draft(state);
-    apply(d, action);
+    handle(d, action);
     const next = d.finish(action.seq);
     if (hasRestore(action) && next !== state) {
       const broken = checkInvariants(next);
@@ -203,7 +162,7 @@ function step(state: TableState, action: Action): Step {
 }
 
 function hasRestore(a: Action): boolean {
-  return a.restore !== undefined || (a.type === 'undo' && isObj(a.inverse) && a.inverse.restore !== undefined);
+  return a.type === 'undo' && isObj(a.inverse) && a.inverse.restore !== undefined;
 }
 
 /** Apply one action; pure and total (DESIGN "Specification: code interfaces", Reducer contract). */

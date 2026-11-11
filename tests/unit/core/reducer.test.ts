@@ -7,10 +7,10 @@ import { describe, expect, it } from 'vitest';
 import { ACTION_FAMILIES, type Action } from '../../../src/core/actions';
 import { GEOMETRY } from '../../../src/core/geometry';
 import { canonicalJson } from '../../../src/core/hash';
-import { createTable, explain, pileMemberPose, reduce, tuckPose } from '../../../src/core/reducer';
+import { cardAxes, createTable, explain, pileMemberPose, reduce, tuckPose } from '../../../src/core/reducer';
 import { checkInvariants } from '../../../src/core/invariants';
 import type { TableState } from '../../../src/core/types';
-import { P, TEST_GAME, act, card, deepFreeze, fresh, hiddenZonesOpaque, libIds, no, ok, play, readyTable } from './helpers';
+import { P, TEST_GAME, act, appliedTypes, card, deepFreeze, fresh, hiddenZonesOpaque, libIds, no, ok, play, readyTable } from './helpers';
 
 const CASCADE = GEOMETRY.cascadeOffset; // 14 mm
 const TUCK = GEOMETRY.attachTuck; // 10 sideways, 10 up
@@ -122,8 +122,6 @@ describe('reducer contract', () => {
     let s = readyTable(2);
     s = play(s, 'a00', P(0, -200));
     const later: Action[] = [
-      act('moveTemp', { card: 'a00', pose: P(0, -90) }),
-      act('settle', {}),
       act('ask', { round: 'r1' }),
       act('respond', { round: 'r1', seat: 's1', response: 'ok' }),
       act('autoPass', { on: true }),
@@ -303,6 +301,101 @@ describe('card family', () => {
     expect(card(s, 'a03').pose).toEqual(P(-400 + TUCK.x, -100 + TUCK.y));
     expect(s.zones['battlefield:s0']!.ids).toEqual(['a00', 'a01', 'a02', 'a03']);
     no(s, act('tidy', { seat: 's0', poses: { b00: P(0, 0) } }), /not on/);
+    clean(s);
+  });
+
+  it('moveTemp: remembers the home slot once, takes the combat role, taps on request, never untaps', () => {
+    let s = play(base(), 'a02', P(200, -200));
+    s = ok(s, act('attach', { card: 'a02', to: 'a00' }));
+    const tucked = card(s, 'a02').pose;
+    s = ok(s, act('moveTemp', { card: 'a00', pose: P(0, -90), combat: 'attack', tap: true }));
+    expect(card(s, 'a00')).toMatchObject({ pose: P(0, -90), home: P(0, -200), combat: 'attack', tapped: true });
+    // Attachments follow the displaced host.
+    expect(card(s, 'a02').pose).toEqual(P(tucked.x, tucked.y + 110));
+    // A second temporary move keeps the first home; tap: false does not untap (vigilance is "no tap", not "untap").
+    s = ok(s, act('moveTemp', { card: 'a00', pose: P(30, -80), tap: false }));
+    expect(card(s, 'a00')).toMatchObject({ pose: P(30, -80), home: P(0, -200), combat: 'attack', tapped: true });
+    // Shift+A: attacks without tapping.
+    s = ok(s, act('moveTemp', { card: 'a01', pose: P(100, -90), combat: 'attack' }));
+    expect(card(s, 'a01')).toMatchObject({ home: P(100, -200), tapped: false });
+    no(s, act('moveTemp', { card: 'a03', pose: P(0, 0) }), /hidden/);
+    s = ok(s, act('move', { card: 'a01', to: 'graveyard:s0' }));
+    no(s, act('moveTemp', { card: 'a01', pose: P(0, 0) }), /battlefield/);
+    no(s, act('moveTemp', { card: 'a00', pose: P(0, 0), combat: 'charge' as never }), /combat/);
+    clean(s);
+  });
+
+  it('moveTemp: a pile member pulls out singly; a permanent move or joining a pile forgets the home slot', () => {
+    let s = play(base(), 'a02', P(200, -200));
+    for (const [i, id] of ['a00', 'a01'].entries()) s = ok(s, act('pile', { card: id, pile: { id: 'L', index: i, kind: 'squared' } }));
+    s = ok(s, act('moveTemp', { card: 'a01', pose: P(0, -90), combat: 'attack' }));
+    expect(card(s, 'a01').pile).toBeUndefined();
+    expect(card(s, 'a01').home).toEqual(P(0, -200));
+    s = ok(s, act('move', { card: 'a01', to: 'battlefield:s0', pose: P(50, -150) }));
+    expect(card(s, 'a01').home).toBeUndefined();
+    expect(card(s, 'a01').combat).toBeUndefined();
+    s = ok(s, act('moveTemp', { card: 'a02', pose: P(200, -90), combat: 'block' }));
+    s = ok(s, act('pile', { card: 'a02', pile: { id: 'L', index: 1, kind: 'squared' } }));
+    expect(card(s, 'a02').home).toBeUndefined();
+    clean(s);
+  });
+
+  it('settle: every displaced card goes home, attack and block lines go, marks stay, attackers stay tapped', () => {
+    let s = readyTable(4);
+    s = play(play(s, 'a00', P(0, -200)), 'a01', P(100, -200));
+    s = play(s, 'b00', P(0, 200, 180), 's1');
+    s = ok(s, act('moveTemp', { card: 'a00', pose: P(0, -90), combat: 'attack', tap: true }));
+    s = ok(s, act('moveTemp', { card: 'a01', pose: P(100, -90), combat: 'attack', tap: true }));
+    s = ok(s, act('moveTemp', { card: 'b00', pose: P(0, 6, 180), combat: 'block' }, 's1'));
+    s = ok(s, act('lineAdd', { line: 'atk', kind: 'attack', from: { kind: 'card', id: 'a00' }, to: { kind: 'seat', id: 's1' } }));
+    s = ok(s, act('lineAdd', { line: 'atk2', kind: 'attack', from: { kind: 'card', id: 'a01' }, to: { kind: 'seat', id: 's1' } }));
+    s = ok(s, act('lineAdd', { line: 'blk', kind: 'block', from: { kind: 'card', id: 'b00' }, to: { kind: 'card', id: 'a00' } }, 's1'));
+    s = ok(s, act('lineAdd', { line: 'mrk', kind: 'mark', from: { kind: 'card', id: 'a00' }, to: { kind: 'card', id: 'b00' } }));
+    // A selection only: a01 goes home with its own attack line.
+    const sel = ok(s, act('settle', { cards: ['a01'] }));
+    expect(card(sel, 'a01')).toMatchObject({ pose: P(100, -200), tapped: true });
+    expect(card(sel, 'a01').home).toBeUndefined();
+    expect(card(sel, 'a00').home).toEqual(P(0, -200));
+    expect(Object.keys(sel.lines).sort()).toEqual(['atk', 'blk', 'mrk']);
+    // Everything.
+    s = ok(sel, act('settle', {}, 's1'));
+    expect(card(s, 'a00')).toMatchObject({ pose: P(0, -200), tapped: true });
+    expect(card(s, 'b00').pose).toEqual(P(0, 200, 180));
+    for (const id of ['a00', 'a01', 'b00']) {
+      expect(card(s, id).home).toBeUndefined();
+      expect(card(s, id).combat).toBeUndefined();
+    }
+    expect(Object.keys(s.lines)).toEqual(['mrk']);
+    no(s, act('settle', { cards: ['ghost'] }), /unknown card/);
+    clean(s);
+  });
+
+  it('move: a card entering a graveyard, exile or command zone loses tap, counters, note and transformed face', () => {
+    let s = base();
+    s = ok(s, act('tap', { card: 'a00', tapped: true }));
+    s = ok(s, act('counter', { card: 'a00', kind: '+1/+1', delta: 2 }));
+    s = ok(s, act('note', { card: 'a00', text: 'n' }));
+    s = ok(s, act('transform', { card: 'a00', faceIndex: 1 }));
+    // Between battlefields (a control change) everything stays.
+    s = ok(s, act('move', { card: 'a00', to: 'battlefield:s1', pose: P(0, 200, 180) }));
+    expect(card(s, 'a00')).toMatchObject({ tapped: true, counters: { '+1/+1': 2 }, note: 'n', faceIndex: 1 });
+    s = ok(s, act('move', { card: 'a00', to: 'graveyard:s0' }));
+    expect(card(s, 'a00')).toMatchObject({ tapped: false, counters: {}, faceIndex: 0 });
+    expect(card(s, 'a00').note).toBeUndefined();
+    clean(s);
+  });
+
+  it('move: dragging a pile by its base onto another battlefield takes the whole pile; to a graveyard only the base goes', () => {
+    let s = play(play(base(), 'a02', P(200, -200)), 'a03', P(300, -200));
+    for (const [i, id] of ['a00', 'a01', 'a02'].entries()) s = ok(s, act('pile', { card: id, pile: { id: 'L', index: i, kind: 'cascade' } }));
+    s = ok(s, act('move', { card: 'a00', to: 'battlefield:s1', pose: P(100, 250, 180) }));
+    for (const [i, id] of ['a00', 'a01', 'a02'].entries()) {
+      expect(card(s, id)).toMatchObject({ zone: 'battlefield:s1', controller: 's1', pile: { id: 'L', index: i }, pose: P(100, 250 + i * CASCADE, 180) });
+    }
+    expect(s.zones['battlefield:s1']!.ids).toEqual(['a00', 'a01', 'a02']);
+    s = ok(s, act('move', { card: 'a00', to: 'graveyard:s0' }));
+    expect(card(s, 'a00').pile).toBeUndefined();
+    expect(card(s, 'a01')).toMatchObject({ zone: 'battlefield:s1', pile: { index: 0 }, pose: P(100, 250, 180) });
     clean(s);
   });
 
@@ -570,8 +663,8 @@ describe('meta family', () => {
     no(s, act('settings', { settings: { passTimerMs: 500 } }), /pass timer/);
     s = ok(s, act('stageSet', { stage: 'match' }));
     expect(s.stage).toBe('match');
-    expect(reduce(s, act('chat', { text: 'hi', channel: 'table' }))).toBe(s);
-    expect(reduce(s, act('caption', { text: 'hi' }))).toBe(s);
+    expect(ok(s, act('chat', { text: 'hi', channel: 'table' }))).toBe(s);
+    expect(ok(s, act('caption', { text: 'hi' }))).toBe(s);
   });
 
   it('undo applies its inverse', () => {
@@ -591,6 +684,24 @@ describe('geometry and edge cases', () => {
     expect(pileMemberPose(P(5, 5, 90), 3, 'squared')).toEqual(P(5, 5, 90));
     expect(tuckPose(P(0, 0, 90), 1)).toEqual(P(TUCK.y, -TUCK.x, 90));
     expect(tuckPose(P(0, 0, 180), 2)).toEqual(P(-2 * TUCK.x, -2 * TUCK.y, 180));
+  });
+
+  it('trigonometry is plain IEEE arithmetic, pinned bit for bit for angles that are not multiples of 90 degrees', () => {
+    // Math.sin/Math.cos are engine-approximated; these values must be identical in every browser.
+    expect(cardAxes(30)).toEqual({ right: { x: 0.8660254037844387, y: -0.49999999999999994 }, up: { x: 0.49999999999999994, y: 0.8660254037844387 } });
+    expect(cardAxes(123.45)).toEqual({ right: { x: -0.5512090725833704, y: -0.8343671603687317 }, up: { x: 0.8343671603687317, y: -0.5512090725833704 } });
+    expect(cardAxes(333.33)).toEqual({ right: { x: 0.8936065287331997, y: 0.4488511688805112 }, up: { x: -0.4488511688805112, y: 0.8936065287331997 } });
+    expect(cardAxes(0.01).up).toEqual({ x: 0.00017453292431333678, y: 0.9999999847691291 });
+    expect(pileMemberPose(P(100, -200, 30), 3, 'cascade')).toEqual(P(79, -236.37, 30));
+    expect(pileMemberPose(P(-412.37, 155.5, 123.45), 5, 'cascade')).toEqual(P(-470.78, 194.08, 123.45));
+    expect(tuckPose(P(10, 20, 333.33), 2)).toEqual(P(18.9, 46.85, 333.33));
+    // Accurate as well as deterministic.
+    for (let k = 0; k < 36000; k += 7) {
+      const { up } = cardAxes(k / 100);
+      const rad = ((k / 100) * Math.PI) / 180;
+      expect(Math.abs(up.x - Math.sin(rad))).toBeLessThan(1e-14);
+      expect(Math.abs(up.y - Math.cos(rad))).toBeLessThan(1e-14);
+    }
   });
 
   it('stores poses quantised to 0.01 mm and angles in [0, 360)', () => {
@@ -644,9 +755,35 @@ describe('geometry and edge cases', () => {
   });
 });
 
+describe('invariants', () => {
+  it('flag a hidden card that is not an opaque record', () => {
+    const s = readyTable(2);
+    const a = card(s, 'a00');
+    const bad = (c: Partial<typeof a>): string[] => checkInvariants({ ...s, cards: { ...s.cards, a00: { ...a, ...c } } });
+    expect(checkInvariants(s)).toEqual([]);
+    expect(bad({ face: 'up' })).toEqual([expect.stringMatching(/opaque/)]);
+    expect(bad({ pose: P(5, 0) })).toEqual([expect.stringMatching(/opaque/)]);
+    expect(bad({ controller: 's1' })).toEqual([expect.stringMatching(/opaque/)]);
+    expect(bad({ faceIndex: 1 })).toEqual([expect.stringMatching(/opaque/)]);
+    expect(bad({ owner: 's1', controller: 's1' })).toEqual([expect.stringMatching(/a00 of s1 is in library:s0/)]);
+  });
+
+  it('flag a turn marker on an unknown seat and a combat role without a home slot', () => {
+    const s = play(readyTable(1), 'a00', P(0, -200));
+    expect(checkInvariants({ ...s, turn: { ...s.turn, active: 'nobody' } })).toEqual([expect.stringMatching(/active nobody/)]);
+    expect(checkInvariants({ ...s, turn: { ...s.turn, number: 0 } })).toEqual([expect.stringMatching(/turn number/)]);
+    expect(checkInvariants({ ...s, cards: { ...s.cards, a00: { ...card(s, 'a00'), combat: 'attack' } } })).toEqual([expect.stringMatching(/combat/)]);
+  });
+});
+
 describe('coverage of the unit table', () => {
-  it('this file exercises every action family', () => {
-    const families = new Set(Object.values(ACTION_FAMILIES));
-    expect([...families].sort()).toEqual(['card', 'draft', 'lines', 'meta', 'players', 'randomness', 'social', 'stack', 'turn', 'zone']);
+  it('this file applies at least one action of every family the engine implements', () => {
+    // Families with no reducer case yet (their actions are refused with the owning package): M1-P2 and M2.
+    const pending = new Set(['randomness', 'draft']);
+    const families = new Set(Object.values(ACTION_FAMILIES).filter((f) => !pending.has(f)));
+    const covered = new Set([...appliedTypes].map((t) => ACTION_FAMILIES[t as keyof typeof ACTION_FAMILIES]));
+    for (const f of families) expect(covered, `family ${f}`).toContain(f);
+    expect(appliedTypes).toContain('moveTemp');
+    expect(appliedTypes).toContain('settle');
   });
 });

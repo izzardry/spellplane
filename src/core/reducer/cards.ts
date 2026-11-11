@@ -1,12 +1,13 @@
 /**
  * Card family handlers (DESIGN "Card manipulation", "Combat and annotation"; "Data model and protocol", Action
- * families). moveTemp and settle belong to M1-P4 (core/reducer/temp.ts).
+ * families). moveTemp and settle are in core/reducer/temp.ts.
  */
 import type { ActionOf } from '../actions';
-import type { CardInstance, Pose } from '../types';
+import type { CardInstance, PileRef, Pose } from '../types';
 import type { Draft } from './draft';
 import {
   STACK_ZONE,
+  ZONE_KIND,
   attachments,
   cardZone,
   isHidden,
@@ -44,12 +45,24 @@ export function move(d: Draft, a: ActionOf<'move'>): void {
   const pile = a.pile === undefined || a.pile === null ? a.pile : checkPileRef(a.pile);
 
   if (c.zone !== to.id) {
-    relocate(d, c.id, to.id, { pose, index, controller: controller ?? to.owner ?? c.controller });
+    const opts = { pose, index, controller: controller ?? to.owner ?? c.controller };
+    if (pile === undefined && c.pile?.index === 0 && to.kind === ZONE_KIND.battlefield && cardZone(d, c).kind === ZONE_KIND.battlefield) {
+      // Dragging a pile by its bottom card onto another battlefield takes the whole pile (DESIGN "Card manipulation").
+      movePile(d, c.pile, to.id, opts);
+      return;
+    }
+    relocate(d, c.id, to.id, opts);
     if (pile) joinPile(d, c.id, pile, pose);
     return;
   }
 
   reorderInZone(d, c.id, index);
+  if (pose && (c.home || c.combat)) {
+    // A normal drag is a permanent move: a displaced card's new place is its home (DESIGN "Combat and annotation").
+    const w = d.cards.w(c.id);
+    delete w.home;
+    delete w.combat;
+  }
   if (controller !== undefined && controller !== c.controller) d.cards.w(c.id).controller = controller;
   if (pile === undefined) {
     if (c.pile && c.pile.index === 0) {
@@ -71,6 +84,19 @@ export function move(d: Draft, a: ActionOf<'move'>): void {
     leavePile(d, c.id);
     joinPile(d, c.id, pile, pose);
   }
+}
+
+/** Move every member of pile `ref` to zone `to`, laid out from `opts.pose` (default: the base's pose), in pile order. */
+function movePile(d: Draft, ref: PileRef, to: string, opts: { pose?: Pose; index?: number; controller: string }): void {
+  const ms = members(d, ref.id);
+  const anchor = opts.pose ?? ms[0]!.pose;
+  for (const m of ms) delete d.cards.w(m.id).pile;
+  ms.forEach((m, i) => {
+    relocate(d, m.id, to, { pose: pileMemberPose(anchor, i, ref.kind), index: opts.index === undefined ? undefined : opts.index + i, controller: opts.controller });
+  });
+  ms.forEach((m, i) => {
+    d.cards.w(m.id).pile = { id: ref.id, index: i, kind: ref.kind };
+  });
 }
 
 export function tap(d: Draft, a: ActionOf<'tap'>): void {
@@ -206,7 +232,14 @@ export function tidy(d: Draft, a: ActionOf<'tidy'>): void {
     }
   }
   for (const [id, pose] of [...final.entries()].sort((x, y) => byId(x[0], y[0]))) {
-    if (!samePose(d.cards.need(id).pose, pose)) d.cards.w(id).pose = pose;
+    const c = d.cards.need(id);
+    if (!samePose(c.pose, pose)) d.cards.w(id).pose = pose;
+    if (c.home || c.combat) {
+      // Tidy is a permanent placement: displaced cards forget their home slot.
+      const w = d.cards.w(id);
+      delete w.home;
+      delete w.combat;
+    }
   }
 }
 

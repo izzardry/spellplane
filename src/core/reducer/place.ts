@@ -84,6 +84,12 @@ export function joinPile(d: Draft, id: InstanceId, ref: PileRef, pose?: Pose): v
   if (first && first.zone !== c.zone) reject(`pile ${ref.id} is in another zone (${first.zone})`);
   if (first && first.pile!.kind !== ref.kind) reject(`pile ${ref.id} has kind ${first.pile!.kind}, not ${ref.kind}`);
   if (c.attachedTo !== undefined) delete d.cards.w(id).attachedTo;
+  // Joining a pile is a permanent placement: a displaced card forgets its home slot.
+  if (c.home || c.combat) {
+    const w = d.cards.w(id);
+    delete w.home;
+    delete w.combat;
+  }
   const index = Math.min(ref.index, ms.length);
   const anchor = index === 0 ? (pose ?? first?.pose ?? c.pose) : first!.pose;
   for (const m of ms) if (m.pile!.index >= index) d.cards.w(m.id).pile = { id: ref.id, index: m.pile!.index + 1, kind: ref.kind };
@@ -210,7 +216,8 @@ export function checkDestination(d: Draft, c: CardInstance, to: Zone): void {
 /**
  * Move a card into another zone. Leaving: the pile, attachments both ways, a spell's stack item, any temporary home.
  * Entering a hidden zone: identity, public state and lines touching the card are dropped. Entering a public zone from
- * a hidden one: face up only with a public identity (or a labelled table object), else face down.
+ * a hidden one: face up only with a public identity (or a labelled table object), else face down. Entering a public
+ * zone that is not a battlefield (graveyard, exile, command, stack): untapped, no counters, no note, front face.
  */
 export function relocate(d: Draft, id: InstanceId, to: ZoneId, opts: PlaceOptions = {}): void {
   const c = d.cards.need(id);
@@ -235,6 +242,13 @@ export function relocate(d: Draft, id: InstanceId, to: ZoneId, opts: PlaceOption
   delete w.home;
   delete w.combat;
   if (isHidden(from)) w.face = w.identity !== undefined || w.tokenLabel !== undefined ? 'up' : 'down';
+  if (dest.kind !== ZONE_KIND.battlefield) {
+    // Outside a battlefield, as at a real table, tap state, counters, a note and a transformed face fall off.
+    w.tapped = false;
+    w.counters = {};
+    delete w.note;
+    w.faceIndex = 0;
+  }
   if (opts.pose) w.pose = { ...opts.pose };
   w.controller = opts.controller ?? dest.owner ?? w.controller;
   if (to !== STACK_ZONE) {

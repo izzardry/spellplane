@@ -99,15 +99,40 @@ export function samePose(a: Pose, b: Pose): boolean {
   return a.x === b.x && a.y === b.y && a.rot === b.rot;
 }
 
-/** Exact sine and cosine for multiples of 90 degrees, so seat-aligned piles need no rounding at all. */
+/** Radians per hundredth of a degree. */
+const RAD_PER_CENTIDEGREE = Math.PI / 18000;
+
+/**
+ * Sine and cosine of a quantised angle, computed with plain IEEE arithmetic only (DESIGN "Data model and protocol":
+ * shared state is identical in every browser). `Math.sin`/`Math.cos` are implementation-approximated and differ in
+ * the last bit between engines, so the reducer never calls them. The angle (a multiple of 0.01°) is reduced exactly
+ * in integer hundredths of a degree to [0°, 45°], where fixed Taylor polynomials are accurate to about 1e-16;
+ * multiples of 90° are exact.
+ */
 function sinCos(deg: number): [number, number] {
-  const r = normRot(deg);
-  if (r === 0) return [0, 1];
-  if (r === 90) return [1, 0];
-  if (r === 180) return [0, -1];
-  if (r === 270) return [-1, 0];
-  const rad = (r * Math.PI) / 180;
-  return [Math.sin(rad), Math.cos(rad)];
+  const k = Math.round(normRot(deg) * 100) % 36000; // integer hundredths of a degree, 0..35999
+  const quadrant = Math.floor(k / 9000);
+  let r = k - quadrant * 9000; // 0..8999
+  const swap = r > 4500;
+  if (swap) r = 9000 - r; // 0..4500, i.e. at most 45°
+  const x = r * RAD_PER_CENTIDEGREE;
+  const x2 = x * x;
+  const sx =
+    x * (1 + x2 * (-1 / 6 + x2 * (1 / 120 + x2 * (-1 / 5040 + x2 * (1 / 362880 + x2 * (-1 / 39916800 + x2 * (1 / 6227020800 + x2 * (-1 / 1307674368000))))))));
+  const cx =
+    1 + x2 * (-1 / 2 + x2 * (1 / 24 + x2 * (-1 / 720 + x2 * (1 / 40320 + x2 * (-1 / 3628800 + x2 * (1 / 479001600 + x2 * (-1 / 87178291200 + x2 * (1 / 20922789888000))))))));
+  const s = r === 0 ? 0 : swap ? cx : sx;
+  const c = r === 0 ? 1 : swap ? sx : cx;
+  switch (quadrant) {
+    case 0:
+      return [s, c];
+    case 1:
+      return [c, s === 0 ? 0 : -s];
+    case 2:
+      return [s === 0 ? 0 : -s, -c];
+    default:
+      return [-c, s];
+  }
 }
 
 /**

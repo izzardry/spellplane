@@ -7,9 +7,10 @@
  * The inverse is the natural opposite action (a draw is undone by putting the card back on top of the library, a
  * move by moving back), so the log can say what undo did. Effects the opposite action cannot bring back on its own
  * (a turn number, target lines removed with a resolved item, the identity a card lost in a hidden zone, a pile
- * re-laid around a new base) travel in its `restore` patch: the exact prior public records, computed by diffing.
+ * re-laid around a new base) travel in its `restore` patch: compare-and-set steps computed by diffing, so an undo
+ * after someone else changed the same values is refused instead of silently reverting their change.
  */
-import { isUndoable, type Action, type RestorePatch, type UndoableAction } from './actions';
+import { isUndoable, type Action, type RestorableCardField, type RestorePatch, type RestoreStep, type UndoableAction } from './actions';
 import { canonicalJson } from './hash';
 import { explain, reduce } from './reducer';
 import { STACK_ZONE } from './reducer/place';
@@ -27,11 +28,30 @@ export function inverse(before: TableState, action: Action): UndoableAction | nu
   if (explain(after, natural) !== null) return null;
   const replayed = reduce(after, natural);
   const patch = diff(before, replayed);
-  const inv = patch ? ({ ...natural, restore: patch } as UndoableAction) : natural;
+  if (!patch) return null;
+  const inv = Object.keys(patch).length ? ({ ...natural, restore: patch } as UndoableAction) : natural;
   // Guard: never hand out an inverse that does not restore the previous state.
-  const check = reduce(after, inv);
-  if (canonicalJson({ ...check, seq: 0 }) !== canonicalJson({ ...before, seq: 0 })) return null;
+  const undo: Action = { type: 'undo', by: action.by, cid: `check:${action.cid}`, of: action.cid, inverse: inv };
+  if (explain(after, undo) !== null || undoKey(reduce(after, undo)) !== undoKey(before)) return null;
   return inv;
+}
+
+/**
+ * Comparison key of a state for undo: `seq` set aside, and identities of cards in hidden zones dropped. A card that
+ * an undo returns to a hidden zone loses its identity there, as every public card returning to a hidden zone does
+ * (DESIGN "Table model", Hidden cards), even when it had been revealed in that zone before.
+ */
+export function undoKey(state: TableState): string {
+  const cards: Record<string, CardInstance> = {};
+  for (const [id, c] of Object.entries(state.cards)) {
+    if (c.identity !== undefined && state.zones[c.zone]?.visibility !== 'public') {
+      const { identity: _dropped, ...rest } = c;
+      cards[id] = rest;
+    } else {
+      cards[id] = c;
+    }
+  }
+  return canonicalJson({ ...state, seq: 0, cards });
 }
 
 /** The natural opposite action, with `by` of the undoing seat and a derived cid. */
@@ -60,6 +80,9 @@ function opposite(before: TableState, after: TableState, a: UndoableAction): Und
         ...(it.note !== undefined ? { note: it.note } : {}),
       };
     }
+    // A pile base that took its pile along (same zone, or battlefield to battlefield) takes it back the same way.
+    const n = now(id);
+    const wholePile = c.pile?.index === 0 && n?.pile?.id === c.pile.id && n.pile.index === 0;
     return {
       ...base,
       type: 'move',
@@ -67,7 +90,7 @@ function opposite(before: TableState, after: TableState, a: UndoableAction): Und
       to: c.zone,
       pose: c.pose,
       index: zone.ids.indexOf(id),
-      pile: c.pile ?? null,
+      ...(wholePile ? {} : { pile: c.pile ?? null }),
       controller: c.controller,
     };
   };
@@ -128,7 +151,8 @@ function opposite(before: TableState, after: TableState, a: UndoableAction): Und
         card: c.id,
         zone: c.zone,
         pose: c.pose,
-        controller: c.controller,
+        // createToken makes owner = controller; the restore patch puts back a different controller.
+        controller: c.owner,
         ...(c.identity ? { ref: c.identity } : {}),
         // A face-down token whose identity was hidden has neither; the restore patch brings back its exact record.
         ...(c.tokenLabel !== undefined || !c.identity ? { label: c.tokenLabel ?? 'token' } : {}),
@@ -177,10 +201,15 @@ function opposite(before: TableState, after: TableState, a: UndoableAction): Und
       const next = count(after.seats[a.seat]!.counters, a.kind);
       return { ...base, type: 'playerCounter', seat: a.seat, kind: a.kind, delta: prev - next };
     }
-    case 'moveTemp':
+    case 'moveTemp': {
+      // Back to the previous pose; the patch drops the home slot and combat role and restores tap and pile.
+      const c = was(a.card)!;
+      return { ...base, type: 'moveTemp', card: a.card, pose: c.pose, ...(c.combat !== undefined ? { combat: c.combat } : {}) };
+    }
     case 'settle':
-      // M1-P4: not applied by the reducer yet, so never reached.
-      return null;
+      // Settling nothing changes nothing; the patch puts every settled card back where it was displaced to,
+      // with its home slot and combat role, and brings back the attack and block lines.
+      return { ...base, type: 'settle', cards: [] };
   }
 }
 
@@ -188,32 +217,91 @@ function count(counters: Record<string, number>, kind: string): number {
   return Object.hasOwn(counters, kind) ? (counters[kind] ?? 0) : 0;
 }
 
-/** The prior records that differ between `before` and `got`, or null when they already match. */
+const RESTORABLE: ReadonlySet<string> = new Set<RestorableCardField>([
+  'controller',
+  'identity',
+  'face',
+  'faceIndex',
+  'tapped',
+  'pose',
+  'home',
+  'combat',
+  'pile',
+  'attachedTo',
+  'counters',
+  'note',
+  'tokenLabel',
+]);
+
+function same(x: unknown, y: unknown): boolean {
+  return x === y || (x !== undefined && y !== undefined && canonicalJson(x) === canonicalJson(y));
+}
+
+function stepOf<T>(expect: T | undefined, put: T | undefined): RestoreStep<T> {
+  return { expect: expect === undefined ? null : structuredClone(expect), put: put === undefined ? null : structuredClone(put) };
+}
+
+/**
+ * The compare-and-set steps that take `got` (the state the natural opposite leaves) back to `before`: an empty patch
+ * when nothing is left to do, or null when the difference is outside what a restore patch may touch.
+ */
 function diff(before: TableState, got: TableState): RestorePatch | null {
   const patch: RestorePatch = {};
-  const same = (x: unknown, y: unknown): boolean => x === y || (x !== undefined && y !== undefined && canonicalJson(x) === canonicalJson(y));
-  const records = <T>(b: Record<string, T>, g: Record<string, T>, nullable: boolean): Record<string, T | null> | null => {
-    const out: Record<string, T | null> = {};
-    for (const id of new Set([...Object.keys(b), ...Object.keys(g)])) {
-      const bv = Object.hasOwn(b, id) ? b[id] : undefined;
-      const gv = Object.hasOwn(g, id) ? g[id] : undefined;
-      if (same(bv, gv)) continue;
-      if (bv === undefined && !nullable) continue;
-      out[id] = bv === undefined ? null : structuredClone(bv);
+  const ids = (a: object, b: object): string[] => [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
+
+  const cards: NonNullable<RestorePatch['cards']> = {};
+  for (const id of ids(before.cards, got.cards)) {
+    const b = Object.hasOwn(before.cards, id) ? before.cards[id] : undefined;
+    const g = Object.hasOwn(got.cards, id) ? got.cards[id] : undefined;
+    if (same(b, g)) continue;
+    if (!b || !g) return null;
+    const hidden = got.zones[g.zone]?.visibility !== 'public';
+    const fields: Record<string, RestoreStep<unknown>> = {};
+    const br = b as unknown as Record<string, unknown>;
+    const gr = g as unknown as Record<string, unknown>;
+    for (const f of ids(b, g)) {
+      if (same(br[f], gr[f])) continue;
+      if (hidden && f === 'identity') continue; // dropped in a hidden zone (see undoKey)
+      if (hidden || !RESTORABLE.has(f)) return null;
+      fields[f] = stepOf(gr[f], br[f]);
     }
-    return Object.keys(out).length ? out : null;
-  };
-  const cards = records(before.cards, got.cards, true);
-  if (cards) patch.cards = cards;
-  const zones = records(before.zones, got.zones, false);
-  if (zones) patch.zones = zones as RestorePatch['zones'];
-  const lines = records(before.lines, got.lines, true);
-  if (lines) patch.lines = lines;
-  const seats = records(before.seats, got.seats, false);
-  if (seats) patch.seats = seats as RestorePatch['seats'];
-  const teams = records(before.teams, got.teams, false);
-  if (teams) patch.teams = teams as RestorePatch['teams'];
-  if (!same(before.stack, got.stack)) patch.stack = structuredClone(before.stack);
-  if (!same(before.turn, got.turn)) patch.turn = { ...before.turn };
-  return Object.keys(patch).length ? patch : null;
+    if (Object.keys(fields).length) cards[id] = fields as NonNullable<RestorePatch['cards']>[string];
+  }
+  if (Object.keys(cards).length) patch.cards = cards;
+
+  const zones: NonNullable<RestorePatch['zones']> = {};
+  for (const id of ids(before.zones, got.zones)) {
+    const b = before.zones[id];
+    const g = got.zones[id];
+    if (same(b, g)) continue;
+    if (!b || !g || b.visibility !== 'public' || !same({ ...b, ids: [] }, { ...g, ids: [] })) return null;
+    zones[id] = stepOf(g.ids, b.ids);
+  }
+  if (Object.keys(zones).length) patch.zones = zones;
+
+  const lines: NonNullable<RestorePatch['lines']> = {};
+  for (const id of ids(before.lines, got.lines)) {
+    const b = Object.hasOwn(before.lines, id) ? before.lines[id] : undefined;
+    const g = Object.hasOwn(got.lines, id) ? got.lines[id] : undefined;
+    if (!same(b, g)) lines[id] = stepOf(g, b);
+  }
+  if (Object.keys(lines).length) patch.lines = lines;
+
+  if (!same(before.stack, got.stack)) patch.stack = stepOf(got.stack, before.stack);
+
+  if (before.turn.active !== got.turn.active || before.turn.phase !== got.turn.phase) return null;
+  if (before.turn.number !== got.turn.number) patch.turn = { number: stepOf(got.turn.number, before.turn.number) };
+
+  const seats: NonNullable<RestorePatch['seats']> = {};
+  for (const id of ids(before.seats, got.seats)) {
+    const b = before.seats[id];
+    const g = got.seats[id];
+    if (same(b, g)) continue;
+    if (!b || !g || !same({ ...b, autoPass: false }, { ...g, autoPass: false })) return null;
+    seats[id] = { autoPass: stepOf(g.autoPass, b.autoPass) };
+  }
+  if (Object.keys(seats).length) patch.seats = seats;
+
+  if (!same(before.teams, got.teams)) return null;
+  return patch;
 }

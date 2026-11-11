@@ -44,6 +44,7 @@ export function act<T extends ActionType>(type: T, fields: Omit<ActionOf<T>, 'ty
 export function ok(state: TableState, action: Action): TableState {
   const why = explain(state, action);
   expect(why, `${action.type} should apply`).toBeNull();
+  appliedTypes.add(action.type);
   return reduce(state, action);
 }
 
@@ -114,6 +115,29 @@ export function deepFreeze<T>(value: T): T {
 export function withoutSeq(state: TableState): string {
   return canonicalJson({ ...state, seq: 0 });
 }
+
+/**
+ * Like `withoutSeq`, but with identities of cards in hidden zones dropped: an undo that returns a card to a hidden
+ * zone drops its identity there even if it had been revealed in that zone (DESIGN "Table model", Hidden cards).
+ */
+export function withoutSeqOrHiddenIdentity(state: TableState): string {
+  const cards = Object.fromEntries(
+    Object.entries(state.cards).map(([id, c]) => {
+      if (state.zones[c.zone]?.visibility === 'public') return [id, c];
+      const { identity: _drop, ...rest } = c;
+      return [id, rest];
+    }),
+  );
+  return canonicalJson({ ...state, seq: 0, cards });
+}
+
+/** Whether any card in a hidden zone carries an identity (a card revealed where it lies, e.g. in the hand). */
+export function hasHiddenIdentity(state: TableState): boolean {
+  return Object.values(state.cards).some((c) => c.identity !== undefined && state.zones[c.zone]?.visibility !== 'public');
+}
+
+/** Action types applied through `ok()` in this test file, for the coverage check of the unit table. */
+export const appliedTypes = new Set<string>();
 
 // ---------------------------------------------------------------------------------------------------------------
 // Independent checks of the design's structural rules (not using core/invariants.ts, which is itself under test).

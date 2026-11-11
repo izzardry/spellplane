@@ -16,13 +16,13 @@ import { checkInvariants } from '../../../src/core/invariants';
 import { explain, reduce } from '../../../src/core/reducer';
 import type { Anchor, Pose, TableState } from '../../../src/core/types';
 import { inverse } from '../../../src/core/undo';
-import { cardsInExactlyOneZone, deepFreeze, hiddenZonesOpaque, pileIndicesContiguous, readyTable, withoutSeq } from './helpers';
+import { cardsInExactlyOneZone, deepFreeze, hasHiddenIdentity, hiddenZonesOpaque, pileIndicesContiguous, readyTable, withoutSeq, withoutSeqOrHiddenIdentity } from './helpers';
 
 const KINDS = [
   'move', 'move', 'move', 'tap', 'flip', 'transform', 'rotate', 'counter', 'note', 'attach', 'attach', 'detach', 'pile', 'pile', 'pile',
   'tidy', 'createToken', 'copy', 'remove', 'toZone', 'draw', 'draw', 'reveal', 'reveal', 'hide', 'mulligan', 'lookAt',
   'stackPush', 'stackPush', 'stackNote', 'stackResolve', 'stackCounter', 'stackReorder', 'lineAdd', 'lineAdd', 'lineRemove', 'ping',
-  'phaseSet', 'turnPass', 'life', 'playerCounter', 'seatTake', 'seatLeave', 'undoLast', 'moveTemp', 'settle',
+  'phaseSet', 'turnPass', 'life', 'playerCounter', 'seatTake', 'seatLeave', 'undoLast', 'moveTemp', 'moveTemp', 'settle',
 ] as const;
 
 interface Recipe {
@@ -175,9 +175,16 @@ function build(s: TableState, r: Recipe, n: number, history: { before: TableStat
       return { ...base, type: 'tap', card: pubCard, tapped: r.flag };
     }
     case 'moveTemp':
-      return { ...base, type: 'moveTemp', card: pubCard, pose: r.pose };
+      return {
+        ...base,
+        type: 'moveTemp',
+        card: pubCard,
+        pose: r.pose,
+        ...(r.c % 3 === 0 ? {} : { combat: r.c % 3 === 1 ? ('attack' as const) : ('block' as const) }),
+        ...(r.c % 4 === 0 ? {} : { tap: r.flag }),
+      };
     case 'settle':
-      return { ...base, type: 'settle' };
+      return { ...base, type: 'settle', ...(r.flag ? {} : { cards: [pubCard, pubCard2] }) };
   }
 }
 
@@ -239,6 +246,8 @@ describe('core engine properties (PLAN M0-P1)', () => {
 
   it('undo after any undoable action restores the previous hash', async () => {
     let checked = 0;
+    let exact = 0;
+    const types = new Set<string>();
     await fc.assert(
       fc.asyncProperty(recipes, async (rs) => {
         const { actions, states } = run(rs, false);
@@ -251,19 +260,31 @@ describe('core engine properties (PLAN M0-P1)', () => {
             expect(inv, `${a.type} that did not apply or is not undoable`).toBeNull();
             continue;
           }
-          if (a.type === 'moveTemp' || a.type === 'settle') continue; // M1-P4: not applied yet
           expect(inv, `inverse of ${canonicalJson(a)}`).not.toBeNull();
           // The inverse travels as plain JSON inside an undo action.
           const wireInv = JSON.parse(JSON.stringify(inv)) as UndoableAction;
-          const undone = reduce(after, { type: 'undo', by: a.by, cid: `u${i}`, of: a.cid, inverse: wireInv, seq: after.seq + 1 });
-          expect(withoutSeq(undone), `undo of ${canonicalJson(a)}`).toBe(withoutSeq(before));
-          expect(await stateHash({ ...undone, seq: before.seq })).toBe(await stateHash(before));
+          const undo: Action = { type: 'undo', by: a.by, cid: `u${i}`, of: a.cid, inverse: wireInv, seq: after.seq + 1 };
+          expect(explain(after, undo), `undo of ${canonicalJson(a)}`).toBeNull();
+          const undone = reduce(after, undo);
+          expect(checkInvariants(undone)).toEqual([]);
+          // A card revealed where it lies in a hidden zone (and then moved out) comes back without its identity;
+          // nothing else may differ, and every other undo restores the exact hash.
+          expect(withoutSeqOrHiddenIdentity(undone), `undo of ${canonicalJson(a)}`).toBe(withoutSeqOrHiddenIdentity(before));
+          if (withoutSeq(undone) === withoutSeq(before)) {
+            expect(await stateHash({ ...undone, seq: before.seq })).toBe(await stateHash(before));
+            exact++;
+          } else {
+            expect(hasHiddenIdentity(before)).toBe(true);
+          }
+          types.add(a.type);
           checked++;
         }
       }),
       { numRuns: NUM_RUNS },
     );
     expect(checked).toBeGreaterThan(500);
+    expect(exact / checked).toBeGreaterThan(0.9);
+    for (const t of ['move', 'moveTemp', 'settle', 'toZone', 'draw', 'remove', 'stackResolve', 'turnPass', 'pile', 'attach']) expect(types, t).toContain(t);
   });
 
   it('never mutates its input, rejects with the same object, and never reads the clock or randomness', () => {
@@ -306,7 +327,7 @@ describe('core engine properties (PLAN M0-P1)', () => {
     const applied = actions.filter((_, i) => states[i + 1] !== states[i]);
     expect(applied.length / actions.length).toBeGreaterThan(0.45);
     const types = new Set(applied.map((a) => a.type));
-    for (const t of ['move', 'pile', 'attach', 'toZone', 'draw', 'stackPush', 'stackResolve', 'lineAdd', 'undo', 'tidy', 'remove', 'copy']) {
+    for (const t of ['move', 'pile', 'attach', 'toZone', 'draw', 'stackPush', 'stackResolve', 'lineAdd', 'undo', 'tidy', 'remove', 'copy', 'moveTemp', 'settle']) {
       expect(types, t).toContain(t);
     }
   });
