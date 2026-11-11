@@ -16,7 +16,9 @@
  *   a round's own initiator (or a shuffle's owner) cannot close it, or it could decide alone. For the same reason
  *   marking a seat away does not stop it being waited for, and the owner or initiator cannot make a seat its round
  *   waits for leave (`checkRoundParticipants`): in 1v1 the sequencer is that owner and could otherwise shut the peer
- *   out before or after committing and decide alone with a nonce ground offline.
+ *   out after committing and decide alone with a nonce ground offline. Nor can any seat empty another seat's chair
+ *   unless the sequencer marked that seat away (`checkSeatLeave`), so nobody can shut the peers out before committing
+ *   either; only the sequencer, through `away`, still can (it can also forge unsigned actions, DESIGN Handshake).
  * - A round is sealed (`closedSeq` set) in the step that completes it, whatever that step was (the last nonce or
  *   commit, or a seat leaving), so its participant set and nonces never change once the owner could
  *   compute the result: a seat that sits down or comes back later does not join it (`sealCompleteRounds`).
@@ -369,4 +371,20 @@ export function checkRoundParticipants(prior: TableState, next: TableState, acti
     const dropped = before.find((s) => !after.has(s));
     if (dropped !== undefined) reject(`${owner} cannot stop its ${kind === 'rng' ? 'round' : 'shuffle'} ${id} waiting for ${dropped}`);
   }
+}
+
+/**
+ * Refuse a `seatLeave` of another seat's chair unless the sequencer marked that seat away (DESIGN "Multiplayer
+ * architecture", Hidden information 3: "The owner cannot choose the order"; "Dice and coin flips use the same
+ * commit-then-reveal exchange, so no single browser picks the result"; "Secret shuffle" 3). Otherwise any seat could
+ * empty the other chairs before it commits a shuffle or opens a roll; the round would then wait for nobody and the
+ * result would follow from a nonce it ground offline, and the emptied seats could sit down again afterwards. A seat
+ * leaves its own chair freely (a chair move stamps the leave with the old chair, local-session `takeSeat`), and a
+ * player gone for good is cleared through the sequencer's away mark (M1-P7). `checkRoundParticipants` still stops a
+ * round's owner or initiator emptying an away chair its open round waits for.
+ */
+export function checkSeatLeave(prior: TableState, action: { type: string; by?: unknown; seat?: unknown }): void {
+  if (action.type !== 'seatLeave' || action.seat === action.by) return;
+  const seat = typeof action.seat === 'string' && Object.hasOwn(prior.seats, action.seat) ? prior.seats[action.seat]! : undefined;
+  if (seat && seat.away !== true) reject(`${String(action.by)} cannot empty ${seat.id}'s chair; only a seat marked away can be cleared by another seat`);
 }

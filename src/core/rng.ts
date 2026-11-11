@@ -126,8 +126,9 @@ export type RoundKind = 'rng' | 'shuffle';
  * The seats a randomness round or shuffle waits for: every other seated seat, away or not (DESIGN "Public
  * randomness" 2, "Secret shuffle" 2; see `named` for why away seats count), in seat order. "Other" is relative to the
  * round's initiator (rng) or the zone's owner (shuffle). Evaluated on the current state while the round is open, so a
- * seat that leaves its chair is no longer waited for (the reducer refuses a `seatLeave` of a waited-for seat sent by
- * the round's own owner or initiator); the reducer seals a round (sets `closedSeq`) the moment it has everything it
+ * seat that leaves its chair is no longer waited for (the reducer lets only the seat itself empty its chair, or any
+ * seat once it is marked away, and refuses a `seatLeave` of a waited-for seat sent by the round's own owner or
+ * initiator); the reducer seals a round (sets `closedSeq`) the moment it has everything it
  * waits for, so a seat that sits down afterwards never joins it. Empty for an unknown id. `kind` picks the record;
  * without it the id must name exactly one record (the reducer refuses an id used by the other kind, so this only
  * matters for hand-built states).

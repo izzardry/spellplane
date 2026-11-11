@@ -158,6 +158,8 @@ function step(state: TableState, action: Action): Step {
     if (action.seq !== undefined && (typeof action.seq !== 'number' || !Number.isInteger(action.seq) || action.seq < 0)) reject('invalid seq');
     // A restore patch only travels on the inverse inside an `undo` (applyUndo).
     if (action.restore !== undefined) reject('only the inverse inside an undo carries a restore patch');
+    // Only a seat itself, or anyone once the sequencer marked it away, empties its chair (M1-P2, secret.ts).
+    secret.checkSeatLeave(state, action);
     const d = new Draft(state);
     handle(d, action);
     const changed = d.finish(action.seq);

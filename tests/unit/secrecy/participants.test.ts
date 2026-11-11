@@ -5,6 +5,7 @@
  * so no single browser picks the result"; "Secret shuffle" 3: "the owner could not choose it, having committed
  * first"). In 1v1 the owner is the sequencer, which alone sends `away`; marking the peer away, before or after the
  * commit, therefore must not stop the round waiting for it, and the owner cannot make the peer's chair empty either.
+ * No seat can empty a present seat's chair at all, so nobody shuts the peers out before committing (review round 5).
  *
  * Also: an undo cannot carry an inverse in another seat's name (DESIGN "Specification: network protocol and secrecy",
  * Handshake: the sequencer rejects any propose whose `by` is not the sender's seat).
@@ -126,11 +127,14 @@ describe('the 1v1 sequencer owner cannot shut the peer out with away', () => {
   it('the owner cannot empty the peer’s chair while its round waits for it; the peer itself can leave', () => {
     const t = readySecretTable(['Anna', 'Ben'], 20);
     begin(t, 'o');
+    // A present peer's chair is not the owner's to empty at all; marked away, not while its round waits for it.
+    t.refuse('s0', { type: 'seatLeave', seat: 's1' }, /s0 cannot empty s1's chair/);
+    t.apply('s0', { type: 'away', seat: 's1', away: true });
     t.refuse('s0', { type: 'seatLeave', seat: 's1' }, /cannot stop its shuffle sh1 waiting for s1/);
     t.apply('s0', { type: 'rngCommit', rid: 'r1', purpose: 'die', n: 20, h: nonceHash('x') });
     t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'p' });
     t.refuse('s0', { type: 'seatLeave', seat: 's1' }, /cannot stop its round r1 waiting for s1/);
-    // An initiator whose round no longer waits for the seat is not stopped by this check.
+    // An initiator whose round no longer waits for the (away) seat is not stopped by this check.
     t.apply('s1', { type: 'rngCommit', rid: 'r1', purpose: 'die', n: 20, h: nonceHash('y') });
     expect(t.why('s0', { type: 'seatLeave', seat: 's1' })).toBeNull();
     // Another seat's round: s1's own shuffle waits for s0, and s1 may leave its own chair.
@@ -138,6 +142,63 @@ describe('the 1v1 sequencer owner cannot shut the peer out with away', () => {
     begin(t2, 'o');
     t2.apply('s1', { type: 'seatLeave', seat: 's1' });
     expect(t2.state.shuffles.sh1!.closedSeq).toBe(t2.state.seq);
+  });
+});
+
+describe('nobody empties a present seat’s chair before committing (review round 5)', () => {
+  it('1v1 shuffle: the owner cannot empty the peer’s chair, commit alone and let the peer sit down again', () => {
+    const t = readySecretTable(['Anna', 'Ben'], 20);
+    t.apply('s0', { type: 'stageSet', stage: 'match' });
+    const ids = [...t.state.zones[LIB0]!.ids];
+    const wanted = [...ids].sort().at(-1)!;
+    const ownerNonce = grindShuffle(ids, wanted);
+    t.refuse('s0', { type: 'seatLeave', seat: 's1' }, /s0 cannot empty s1's chair/);
+    expect(t.state.seats.s1!.name).toBe('Ben');
+    begin(t, ownerNonce);
+    // The round waits for the peer, so the ground nonce alone decides nothing.
+    expect(expectedParticipants(t.state, 'sh1', 'shuffle')).toEqual(['s1']);
+    expect(t.state.shuffles.sh1!.closedSeq).toBeUndefined();
+    expect(() => finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!)).toThrow(/not ready/);
+    t.refuse('s0', { type: 'shuffleDone', sid: 'sh1', orderHash: 'o' }, /waits for peer nonces/);
+    t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'peer' });
+    const f = finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!);
+    t.apply('s0', f.action);
+    expect(f.secrets.libraryOrder).toEqual(shuffleOutcome(shuffleSeed(ownerNonce, ['peer']), ids).before);
+  });
+
+  it('ffa3: a non-sequencer owner cannot empty the other two chairs and shuffle alone', () => {
+    const t = readySecretTable(['Anna', 'Ben', 'Cleo'], 20);
+    t.refuse('s2', { type: 'seatLeave', seat: 's0' }, /s2 cannot empty s0's chair/);
+    t.refuse('s2', { type: 'seatLeave', seat: 's1' }, /s2 cannot empty s1's chair/);
+    const b = beginShuffle(t.secrets.s2!, 'library:s2', 'sh2', 'ground');
+    t.secrets.s2 = b.secrets;
+    t.apply('s2', b.action);
+    expect(expectedParticipants(t.state, 'sh2', 'shuffle')).toEqual(['s0', 's1']);
+    expect(t.state.shuffles.sh2!.closedSeq).toBeUndefined();
+    expect(() => finishShuffle(t.secrets.s2!, t.state, 'sh2', t.entropy.s2!)).toThrow(/not ready/);
+  });
+
+  it('dice: the initiator cannot empty the peer’s chair and roll alone', () => {
+    const t = readySecretTable(['Anna', 'Ben'], 4);
+    const n = grindD20();
+    t.refuse('s0', { type: 'seatLeave', seat: 's1' }, /s0 cannot empty s1's chair/);
+    t.apply('s0', { type: 'rngCommit', rid: 'r1', purpose: 'die', n: 20, h: nonceHash(n) });
+    t.refuse('s0', { type: 'rngReveal', rid: 'r1', nonce: n }, /still waits for commits/);
+    expect(t.state.rng.r1!.result).toBeNull();
+  });
+
+  it('a seat leaves its own chair, and an away seat’s chair can be cleared by another seat', () => {
+    const t = readySecretTable(['Anna', 'Ben', 'Cleo'], 4);
+    t.apply('s2', { type: 'seatLeave', seat: 's2' });
+    expect(t.state.seats.s2!.name).toBe('');
+    t.apply('s0', { type: 'away', seat: 's1', away: true });
+    t.apply('s0', { type: 'seatLeave', seat: 's1' });
+    expect(t.state.seats.s1!.name).toBe('');
+    // Marked present again, the chair is the seat's own once more.
+    const t2 = readySecretTable(['Anna', 'Ben'], 4);
+    t2.apply('s0', { type: 'away', seat: 's1', away: true });
+    t2.apply('s0', { type: 'away', seat: 's1', away: false });
+    t2.refuse('s0', { type: 'seatLeave', seat: 's1' }, /cannot empty s1's chair/);
   });
 });
 
