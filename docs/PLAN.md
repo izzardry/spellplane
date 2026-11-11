@@ -33,13 +33,13 @@ Spellplane is built in a bootstrap step and six milestones, each split into work
 
 The main session does the bootstrap itself, without a workflow, because every later package depends on it. It ends with an empty app deployed to GitHub Pages and a green CI run.
 
-- [ ] **B0.1 Repository.** `git init`, remote `origin` = `git@github.com:izzardry/spellplane.git`, MIT `LICENSE`, `README.md` with the Fan Content notice, `.gitignore`, export of both docs into `docs/`.
-- [ ] **B0.2 Scaffold.** Vite 8 + Svelte 5 + TypeScript strict. `vite.config.ts` sets `base: '/spellplane/'`. Dependencies: `three`, `trystero`, `troika-three-text`, `idb`, `vite-plugin-pwa`; dev: `vitest`, `fast-check`, `@playwright/test`, `eslint` with `eslint-plugin-boundaries`, `svelte-check`, `fake-indexeddb`.
-- [ ] **B0.3 Layout.** Create the folders below with an `index.ts` each and the boundary lint rules.
-- [ ] **B0.4 Scripts.** `dev`, `build`, `preview`, `check` (tsc, svelte-check, eslint, vitest run), `test`, `e2e`, `e2e:gate` (runs the Playwright project tagged for the given milestone), `shots` (captures the gate screenshot matrix into `artifacts/shots/`).
-- [ ] **B0.5 Test harnesses.** See the table below.
-- [ ] **B0.6 CI and deploy.** `.github/workflows/ci.yml` runs `pnpm check` and `pnpm e2e` on every push; `deploy.yml` builds and publishes to GitHub Pages on every push to `main`. Pages is enabled through the `gh` CLI.
-- [ ] **B0.7 Smoke.** A page that renders one placeholder card on a white plane, a Playwright test that finds it through the debug hook, CI green, live URL reachable.
+- [x] **B0.1 Repository.** `git init`, remote `origin` = `git@github.com:izzardry/spellplane.git`, MIT `LICENSE`, `README.md` with the Fan Content notice, `.gitignore`, export of both docs into `docs/`.
+- [x] **B0.2 Scaffold.** Vite 8 + Svelte 5 + TypeScript strict. `vite.config.ts` sets `base: '/spellplane/'`. Dependencies: `three`, `trystero`, `troika-three-text`, `idb`, `vite-plugin-pwa`; dev: `vitest`, `fast-check`, `@playwright/test`, `eslint` with `eslint-plugin-boundaries`, `svelte-check`, `fake-indexeddb`.
+- [x] **B0.3 Layout.** Create the folders below with an `index.ts` each and the boundary lint rules.
+- [x] **B0.4 Scripts.** `dev`, `build`, `preview`, `check` (tsc, svelte-check, eslint, vitest run), `test`, `e2e`, `e2e:gate` (runs the Playwright project tagged for the given milestone), `shots` (captures the gate screenshot matrix into `artifacts/shots/`).
+- [x] **B0.5 Test harnesses.** See the table below.
+- [x] **B0.6 CI and deploy.** *(CI green; Pages deploy blocked while the repository is private — owner check, see docs/DECISIONS.md)* `.github/workflows/ci.yml` runs `pnpm check` and `pnpm e2e` on every push; `deploy.yml` builds and publishes to GitHub Pages on every push to `main`. Pages is enabled through the `gh` CLI.
+- [x] **B0.7 Smoke.** *(local and CI green; live URL pending the Pages blocker)* A page that renders one placeholder card on a white plane, a Playwright test that finds it through the debug hook, CI green, live URL reachable.
 
 ```text
 src/
@@ -379,7 +379,7 @@ Sixteen decisions from the second interview on 10 November 2026 shape this plan;
 
 Ticked by the main session as packages are merged and gates pass.
 
-- [ ] B0 Repository bootstrap (items B0.1 to B0.7 above)
+- [x] B0 Repository bootstrap (items B0.1 to B0.7 above; Pages blocked by private repo, owner check)
 - [ ] M0-C Contracts
 - [ ] M0-P1 Core engine
 - [ ] M0-P2 Card data
