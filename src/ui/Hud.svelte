@@ -10,6 +10,7 @@
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import type { ActivePing, TableScene, ViewState } from '../scene/types';
+  import { attachPresence } from '../scene/presence';
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
   import { tokensToCssVars } from '../themes/index';
@@ -56,6 +57,7 @@
   let forcedHover: InstanceId | null = null;
   let sceneHost = $state<HTMLElement | undefined>();
   let scene: TableScene | null = null;
+  let stopPresence: (() => void) | null = null;
   let sceneReady = $state(false);
   let sceneError = $state('');
   const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -510,6 +512,14 @@
         },
       });
       sceneReady = true;
+      // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
+      stopPresence = attachPresence(sceneHost!, scene, session.presence, {
+        selfSeat: me,
+        state: () => st,
+        selection: () => selection,
+        colourOf: (seat) => theme.tokens.colours.seats[(seat ? st.seats[seat]?.colour : undefined) ?? 0]?.colour ?? '#555',
+        labelOf: (p) => (p.seat && st.seats[p.seat]?.name) || 'Player',
+      });
     } catch (e) {
       sceneError = e instanceof Error ? e.message : String(e);
     }
@@ -518,6 +528,7 @@
       for (const t of timers) clearTimeout(t);
       timers = [];
       engine.blur();
+      stopPresence?.();
       scene?.dispose();
       scene = null;
     };
