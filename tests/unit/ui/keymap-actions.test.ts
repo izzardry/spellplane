@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { MTG_KEYMAP, chordToString } from '../../../src/games/mtg/keymap';
 import type { ActionId, KeyBinding } from '../../../src/games/types';
 import { fakeGame, tableWith } from '../../../src/ui/fakes';
-import { freeSlot } from '../../../src/ui/geometry';
+import { freeSlot, layoutOf } from '../../../src/ui/geometry';
 import { registerStackHover } from '../../../src/scene/stack';
 import { drafts, rig, type Rig } from './setup';
 
@@ -211,6 +211,33 @@ describe('hover plus key (DESIGN "Input and interaction design")', () => {
     const r = rig({ hovered: 'fd1' });
     r.press({ key: 'f' });
     expect(drafts(r)).toEqual([{ type: 'flip', card: 'fd1', face: 'up' }]);
+  });
+
+  it('F on an own hand card puts it onto the own battlefield face down at a free slot (gate M1 finding: face-down play)', () => {
+    const r = rig({ hovered: 'h2' });
+    const pose = freeSlot(r.session.getState(), 's0', layoutOf(fakeGame(), r.session.getState()), 'h2');
+    r.press({ key: 'f' });
+    // Only through playFaceDown (no reveal, no plain move or flip draft of its own).
+    expect(r.session.calls).toEqual([{ method: 'playFaceDown', args: ['h2', 'battlefield:s0', pose] }]);
+    expect(drafts(r)).toEqual([{ type: 'move', card: 'h2', to: 'battlefield:s0', pose }]);
+  });
+
+  it('F on another player\'s hidden hand card does nothing', () => {
+    const r = rig({ hovered: 'opph' });
+    r.press({ key: 'f' });
+    expect(r.session.dispatched).toEqual([]);
+    expect(r.session.calls).toEqual([]);
+  });
+
+  it('while this seat holds the floor, H is no longer Hold: it puts the hovered card into the hand (gate M1 finding)', () => {
+    const holding = { ...promptByBen, holder: 's0', responses: { s0: 'hold' as const } };
+    const r = rig({ hovered: 'lib1', confirm: holding });
+    r.press({ key: 'h' });
+    expect(drafts(r)).toEqual([{ type: 'toZone', card: 'lib1', to: 'hand:s0', position: 'any' }]);
+    // Before holding, H holds, whatever is hovered.
+    const before = rig({ hovered: 'lib1', confirm: promptByBen });
+    before.press({ key: 'h' });
+    expect(drafts(before)).toEqual([{ type: 'respond', round: 'r9', seat: 's0', response: 'hold' }]);
   });
 
   it('transform needs a double-faced card', () => {

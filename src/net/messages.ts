@@ -35,8 +35,9 @@ export type ChatChannel = 'table' | 'team' | 'spectator';
 /**
  * First message on a new connection (DESIGN "Specification: network protocol and secrecy", Handshake). `peerId` is
  * the first 16 hex characters of SHA-256 of the public key, `pubKey` the ECDSA P-256 public key as base64url SPKI,
- * `nonce` a fresh connection nonce (16 random bytes, base64url) the other side signs in its `welcome`, `seat` the
- * chair this key pair held (a returning key pair reclaims it), `lastSeq` the highest seq this peer holds.
+ * `nonce` a fresh connection nonce (16 random bytes, base64url) the other side signs in its `welcome`, bound to this
+ * connection (see `handshakeText`), `seat` the chair this key pair held (a returning key pair reclaims it), `lastSeq`
+ * the highest seq this peer holds.
  */
 export type HelloMessage = Envelope<
   'hello',
@@ -46,8 +47,11 @@ export type HelloMessage = Envelope<
 /**
  * Answer to a `hello`, carrying the handshake signature (DESIGN "Specification: network protocol and secrecy",
  * Handshake: `sig` signs the other side's connection nonce). `sig` is the base64url ECDSA P-256/SHA-256 signature
- * (IEEE P1363, as Web Crypto produces it) of `handshakeText(roomId, <the hello's nonce>, <this sender's peerId>)`.
- * Also tells the newcomer who sequences and how far the log is.
+ * (IEEE P1363, as Web Crypto produces it) of `handshakeText(roomId, <the hello's nonce, connection-bound>, <this
+ * sender's peerId>)`. The connection-bound nonce is `<hello nonce>|<signer's transport id>|<recipient's transport id>`
+ * (M1-P1 `boundNonce`), and the verifier checks it against the connection the welcome arrived on, so a peer cannot
+ * relay another player's hello and welcome to pass as that player. Also tells the newcomer who sequences and how far
+ * the log is.
  */
 export type WelcomeMessage = Envelope<'welcome', { peerId: string; sig: string; sequencer: string | null; seq: number }>;
 
@@ -85,8 +89,14 @@ export type ByeMessage = Envelope<'bye', { reason: 'leave' | 'version' | 'badSig
 
 // --- act: reliable, ordered -------------------------------------------------------------------------
 
-/** Peer to sequencer: an action already applied optimistically (DESIGN "Specification: network protocol and secrecy", Sequencing 2). `cid === action.cid`. */
-export type ProposeMessage = Envelope<'propose', { cid: string; action: Action }>;
+/**
+ * Peer to sequencer: an action already applied optimistically (DESIGN "Specification: network protocol and secrecy",
+ * Sequencing 2). `cid === action.cid`. `prev` (added by M1-C, amendment) keeps one proposer's actions in order under
+ * loss: the cid of the proposer's previous proposal that was still pending when this one was sent, null or absent
+ * when there was none. The sequencer holds a proposal until its `prev` is sequenced or refused; the proposer resends
+ * its pending proposals oldest first, and how long a held proposal waits for a `prev` that never arrives is M1-P1's.
+ */
+export type ProposeMessage = Envelope<'propose', { cid: string; action: Action; prev?: string | null }>;
 
 /** Sequencer to all: the stamped action (DESIGN "Specification: network protocol and secrecy", Sequencing 3). Also used to resend missing seqs after a handover. */
 export type SeqMessage = Envelope<'seq', { seq: number; cid: string; action: SequencedAction }>;
@@ -194,7 +204,12 @@ export const MESSAGE_CHANNEL: Readonly<{ [T in WireType]: Channel }> = {
   captionInterim: 'pres',
 };
 
-/** The text a `welcome` signature covers (DESIGN "Specification: network protocol and secrecy", Handshake): app id, room, the other side's nonce and the signer's peer id. */
+/**
+ * The text a `welcome` signature covers (DESIGN "Specification: network protocol and secrecy", Handshake): app id,
+ * room, the other side's nonce bound to the connection (`<hello nonce>|<signer's transport id>|<recipient's transport
+ * id>`, M1-P1 `boundNonce`) and the signer's peer id. A signature is therefore valid only on the connection it was
+ * made for.
+ */
 export function handshakeText(roomId: string, nonce: string, signerPeerId: string): string {
   return `${APP_ID}|${roomId}|${nonce}|${signerPeerId}`;
 }

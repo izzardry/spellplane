@@ -264,3 +264,23 @@ test.describe('connectivity failure (DESIGN "Multiplayer architecture": no relay
     await expect(page.getByTestId('route-room')).toContainText('not a valid table link');
   });
 });
+
+test('a page that closes leaves its seat marked away on the other page; reopening takes the chair back (DESIGN "Multiplayer architecture", Resume)', async ({ browser }, info) => {
+  test.setTimeout(60_000);
+  const { context, a, b } = await twoPages(browser);
+  const room = freshRoom();
+  const profileA = freshProfile(info, 'a');
+  await openTable(a, room, profileA);
+  await setNickname(a, 'Ann');
+  await openTable(b, room, freshProfile(info, 'b'));
+  await setNickname(b, 'Ben');
+  await expect(chair(b, 's0')).toContainText('Ann');
+  // A plain close: Playwright's WebKit never closes a page asked to run beforeunload first.
+  await a.close();
+  await expect.poll(async () => (await hook<TableState>(b, 'state')).seats.s0?.away, { timeout: 15_000 }).toBe(true);
+  const again = await context.newPage();
+  await openTable(again, room, profileA);
+  await expect(chair(again, 's0')).toHaveAttribute('data-mine', 'true');
+  await expect.poll(async () => (await hook<TableState>(b, 'state')).seats.s0?.away ?? false, { timeout: 15_000 }).toBe(false);
+  await context.close();
+});

@@ -211,6 +211,21 @@ test('right-drag draws a target line, Shift+right-drag a mark; settle (B) brings
   expect(xy((await lines(page)).find((l) => l.kind === 'mark')!.ends!.from)).toEqual({ x: 0, y: -200 });
 });
 
+test('a right-drag that ends on a player\'s avatar in the HUD draws a target line to that player (gate M1 finding)', async ({ page }) => {
+  await page.locator('[data-testid="context-menu"]').waitFor({ state: 'detached' }).catch(() => undefined);
+  const a = await centre(page, 'a2');
+  const av = (await page.locator('[data-testid="avatar"][data-seat="s0"]').boundingBox())!;
+  await page.mouse.move(a.x, a.y);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move((a.x + av.x) / 2, (a.y + av.y) / 2, { steps: 5 });
+  await page.mouse.move(av.x + av.width / 2, av.y + av.height / 2, { steps: 5 });
+  await page.mouse.up({ button: 'right' });
+  await expect.poll(async () => Object.values((await state(page)).lines).map((l) => ({ kind: l.kind, from: l.from, to: l.to }))).toEqual([
+    { kind: 'target', from: { kind: 'card', id: 'a2' }, to: { kind: 'seat', id: 's0' } },
+  ]);
+  await expect(page.getByTestId('context-menu')).toHaveCount(0);
+});
+
 test('drawing the same line again removes it; a plain right-click still opens the context menu', async ({ page }) => {
   await rightDrag(page, 'a2', 'b1');
   await expect.poll(async () => Object.keys((await state(page)).lines).length).toBe(1);

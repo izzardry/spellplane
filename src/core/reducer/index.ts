@@ -98,7 +98,7 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   seatTake: table.seatTake,
   seatLeave: table.seatLeave,
   ready: table.ready,
-  away: later('M1-P7'),
+  away: table.away,
   rngCommit: secret.rngCommit,
   rngReveal: secret.rngReveal,
   commitClose: secret.commitClose,
@@ -114,6 +114,8 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   sequencerClaim: record,
   settings: table.settings,
   stageSet: table.stageSet,
+  recover: later('M1-P7'),
+  recoverCommit: later('M1-P7'),
 };
 
 const UNDOABLE = new Set<string>(UNDOABLE_TYPES);

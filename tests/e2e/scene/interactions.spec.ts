@@ -116,10 +116,21 @@ test('dragging empty table pans and keeps gliding (inertia); 0 fits the table ag
   await settle(page);
   const cam0 = (await page.evaluate(() => window.__spellplane!.camera!())).position;
   const k = 900 / 2 / (cam0[2] * Math.tan((3 * Math.PI) / 180)); // px per mm
-  await page.mouse.move(900, 450);
-  await page.mouse.down();
-  for (let i = 1; i <= 8; i++) await page.mouse.move(900 - i * 25, 450);
-  await page.mouse.up();
+  // The fling needs the release within 80 ms of the last move. Driving the drag from inside the page keeps
+  // that timing independent of the test runner's round trips (on a loaded CI machine page.mouse.up arrived late).
+  await page.evaluate(async () => {
+    const canvas = document.querySelector('canvas')!;
+    const fire = (type: string, x: number, target: EventTarget) =>
+      target.dispatchEvent(
+        new PointerEvent(type, { pointerId: 1, pointerType: 'mouse', isPrimary: true, clientX: x, clientY: 450, button: 0, buttons: type === 'pointerup' ? 0 : 1, bubbles: true, cancelable: true, composed: true }),
+      );
+    fire('pointerdown', 900, canvas);
+    for (let i = 1; i <= 8; i++) {
+      await new Promise((r) => setTimeout(r, 16));
+      fire('pointermove', 900 - i * 25, canvas);
+    }
+    fire('pointerup', 700, canvas);
+  });
   await settle(page);
   const cam1 = (await page.evaluate(() => window.__spellplane!.camera!())).position;
   const movedPx = (cam1[0] - cam0[0]) * k;
@@ -127,9 +138,11 @@ test('dragging empty table pans and keeps gliding (inertia); 0 fits the table ag
   expect(movedPx).toBeGreaterThan(205);
   await page.keyboard.press('0');
   await settle(page);
-  const fit = (await page.evaluate(() => window.__spellplane!.camera!())).position;
-  expect(fit[0]).toBeCloseTo(0, 6);
-  expect(fit[1]).toBeCloseTo(0, 6);
+  // The fit frames the table plus Bo's hand row beyond the far edge (y 606 ± 44, scene/layout.ts fitFrame): its centre
+  // (0, 50) is at the viewport centre.
+  const centre = (await harness(page, 'toScreen', 0, 50)) as { x: number; y: number };
+  expect(centre.x).toBeCloseTo(720, 0);
+  expect(centre.y).toBeCloseTo(450, 0);
 });
 
 test('trackpad scroll pans without zooming; the zoom is clamped at both ends', async ({ page }) => {
@@ -146,8 +159,9 @@ test('trackpad scroll pans without zooming; the zoom is clamped at both ends', a
   // Closest zoom: one card is 80% of the viewport height.
   expect((await card(page, 'a'))!.screen.height).toBeCloseTo(0.8 * 900, 0);
   for (let i = 0; i < 40; i++) await page.mouse.wheel(0, 200);
-  // Farthest: the table plus 5% fits (the 1100 deep table is the tight axis at 1440 x 900).
-  const tl = (await harness(page, 'toScreen', -700, 550)) as { x: number; y: number };
+  // Farthest: the table and Bo's hand row of backs beyond its far edge (to y 650) plus 5% fit; the 1200 deep frame is the
+  // tight axis at 1440 x 900.
+  const tl = (await harness(page, 'toScreen', -700, 650)) as { x: number; y: number };
   const br = (await harness(page, 'toScreen', 700, -550)) as { x: number; y: number };
   expect((br.y - tl.y) / 900).toBeCloseTo(1 / 1.05, 3);
 });

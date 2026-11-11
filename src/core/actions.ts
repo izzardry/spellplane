@@ -179,6 +179,29 @@ export interface Reissue {
 export type LookAtAction = A<'lookAt', { zone: ZoneId; count: number; card?: InstanceId }>;
 /** London mulligan marker: the hand goes into the library; shuffle and draws follow as their own actions (DESIGN "Card manipulation"). `count` is the mulligan number. */
 export type MulliganAction = A<'mulligan', { count: number }>;
+/**
+ * Lost-save recovery, step 1 (DESIGN "Multiplayer architecture", Resume and failure handling: "If a player loses their
+ * local save ... the recovery path is public and logged"). Added by M1-C (amendment); reducer: M1-P7. Sent by the
+ * recovering player for its own seat (`by`). It discards the seat's hidden zones in shared state (every card in a
+ * hidden zone the seat owns: hand and library), drops any unfinished secret shuffle of those zones, sets
+ * `Seat.recovering` with the proposed fresh hand count `hand` and the deck size counted before the discard, and opens
+ * the confirmation round `round` (asked by the seat, as `ask` does) in which the table agrees to `hand`. Sent again
+ * while the recovery is open, it proposes another count in a new round. Not undoable.
+ */
+export type RecoverAction = A<'recover', { hand: number; round: RoundId }>;
+/**
+ * Lost-save recovery, step 2 (DESIGN "Multiplayer architecture", Resume: "the player re-imports the deck, the table
+ * subtracts every card of theirs that is currently public, and the remainder is committed and shuffled as a new
+ * library with a fresh hand count agreed by the table"). Added by M1-C (amendment); reducer: M1-P7. The recovering
+ * seat publishes commitments for the remainder exactly as `ready` does (core/commit.ts `commitFor`, M1-P2's deck
+ * commitment), with fresh ids never committed before; they are added to the seat's `Commitment` as a re-issue adds
+ * them. Accepted only while `Seat.recovering` is set, its round is the current confirmation round and that round has
+ * passed (every participant OK or timed out), and when `instanceIds.length` equals `recoveryLibrarySize` (core/recovery.ts).
+ * It creates the cards in `zone` (the seat's library) and clears `Seat.recovering`. The owner then shuffles the zone
+ * with M1-P2's secret shuffle (`shuffleCommit`/`shuffleNonce`/`shuffleDone`) and draws the agreed hand with ordinary
+ * `draw` actions. Not undoable.
+ */
+export type RecoverCommitAction = A<'recoverCommit', { commits: string[]; instanceIds: InstanceId[]; zone: ZoneId }>;
 
 // --- Stack (DESIGN "The effect stack") ---------------------------------------------------------------
 
@@ -342,7 +365,9 @@ export type Action =
   | SnapshotHashAction
   | SequencerClaimAction
   | SettingsAction
-  | StageSetAction;
+  | StageSetAction
+  | RecoverAction
+  | RecoverCommitAction;
 
 /** The `type` tag of an action (DESIGN "Data model and protocol"). */
 export type ActionType = Action['type'];
@@ -422,6 +447,8 @@ export const ACTION_FAMILIES: Readonly<Record<ActionType, ActionFamily>> = {
   sequencerClaim: 'meta',
   settings: 'meta',
   stageSet: 'meta',
+  recover: 'zone',
+  recoverCommit: 'zone',
 };
 
 /** Every action type, in declaration order (DESIGN "Data model and protocol"). */

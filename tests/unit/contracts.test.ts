@@ -96,6 +96,7 @@ describe('actions', () => {
     packOpen: true, pick: true, packPass: true, pileLook: true, gridTake: true,
     chat: true, caption: true,
     undo: true, snapshotHash: true, sequencerClaim: true, settings: true, stageSet: true,
+    recover: true, recoverCommit: true,
   };
 
   it('ACTION_FAMILIES covers every action type exactly', () => {

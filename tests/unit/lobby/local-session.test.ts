@@ -6,13 +6,14 @@
  * scenario of the shared leak test (CLAUDE.md).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CardRef, Format } from '../../../src/core/types';
+import type { CardRef, Format, SecretStore } from '../../../src/core/types';
+import type { LoadedTable, TableRecord, TableStore } from '../../../src/store/types';
 import { mtg } from '../../../src/games/index';
 import { LoopbackNetwork } from '../../../src/net/loopback';
 import { placeCards } from '../../../src/scene/layout';
 import { createPresenceTracker } from '../../../src/scene/presence';
 import { FakeCardData } from '../../../src/ui/fakes';
-import { createLocalSession, type LocalSession } from '../../../src/ui/lobby/local-session';
+import { AWAY_AFTER_MS, createLocalSession, type LocalSession } from '../../../src/ui/lobby/local-session';
 import { chairs, firstFreeChair } from '../../../src/ui/lobby/seats';
 import { scan } from '../../leak/scan';
 
@@ -26,15 +27,16 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function join(net: LoopbackNetwork, tid: string, peerId: string, nickname: string, seatColour = 0, format: Format = '1v1'): Promise<LocalSession> {
-  const p = createLocalSession({ game: mtg, cardData: new FakeCardData(), ...ROOM, transport: net.create(tid), identity: { peerId, nickname, seatColour }, settleMs: 300, format });
+async function join(net: LoopbackNetwork, tid: string, peerId: string, nickname: string, seatColour = 0, format: Format = '1v1', store?: TableStore): Promise<LocalSession> {
+  const p = createLocalSession({ game: mtg, cardData: new FakeCardData(), ...ROOM, transport: net.create(tid), identity: { peerId, nickname, seatColour }, settleMs: 300, format, ...(store ? { store } : {}) });
   await vi.advanceTimersByTimeAsync(400);
   const s = await p;
   sessions.push(s);
   return s;
 }
 
-const deck = (n: number, prefix: string): CardRef[] => Array.from({ length: n }, (_, i) => ({ sid: `${prefix}-sid-${i}` }));
+// Zero-padded, so no sid is a substring of another (the leak scan matches substrings).
+const deck = (n: number, prefix: string): CardRef[] => Array.from({ length: n }, (_, i) => ({ sid: `${prefix}-sid-${String(i).padStart(3, '0')}` }));
 
 describe('stand-in session: chairs', () => {
   it('the first browser sits in the lowest chair, the second in the next one; both see the same table', async () => {
@@ -304,5 +306,163 @@ describe('stand-in session: presence', () => {
     a.leave();
     await vi.advanceTimersByTimeAsync(50);
     expect(b.presence.peers()).toHaveLength(0);
+  });
+});
+
+/** An in-memory table store (one browser profile). */
+function memoryStore(): TableStore & { saved: Map<string, { table: TableRecord; secrets: SecretStore | null }> } {
+  const saved = new Map<string, { table: TableRecord; secrets: SecretStore | null }>();
+  return {
+    saved,
+    saveAction: () => Promise.resolve(),
+    saveSnapshot(table, secrets) {
+      saved.set(table.roomId, structuredClone({ table, secrets }));
+      return Promise.resolve();
+    },
+    loadTable(roomId): Promise<LoadedTable | null> {
+      const x = saved.get(roomId);
+      return Promise.resolve(x ? { ...structuredClone(x), log: [] } : null);
+    },
+    loadLog: () => Promise.resolve([]),
+    saveSecrets: () => Promise.resolve(),
+    listTables: () => Promise.resolve([...saved.values()].map((x) => x.table)),
+    deleteTable: (roomId) => Promise.resolve(void saved.delete(roomId)),
+  };
+}
+
+describe('stand-in session: the game (gate M1 findings)', () => {
+  async function playing(stores: { a?: TableStore; b?: TableStore } = {}) {
+    const net = new LoopbackNetwork({ delay: { min: 1, max: 10 }, ordered: true });
+    const a = await join(net, 'ta', PEER('a'), 'Ann', 0, '1v1', stores.a);
+    const b = await join(net, 'tb', PEER('b'), 'Ben', 1, '1v1', stores.b);
+    await vi.advanceTimersByTimeAsync(50);
+    const ra = a.importDeck({ main: deck(60, 'ann'), side: [] });
+    const rb = b.importDeck({ main: deck(40, 'ben'), side: [] });
+    await vi.advanceTimersByTimeAsync(100);
+    await Promise.all([ra, rb]);
+    a.dispatch({ type: 'stageSet', stage: 'match' });
+    await vi.advanceTimersByTimeAsync(20);
+    const da = a.draw(7);
+    const db = b.draw(7);
+    await vi.advanceTimersByTimeAsync(200);
+    await Promise.all([da, db]);
+    return { net, a, b };
+  }
+
+  it('a hand card played onto the battlefield or cast is revealed first; the other side sees its identity', async () => {
+    const { a, b } = await playing();
+    // Ben is not the sequencer: his proposals go through Ann's browser.
+    const [land, spell] = b.secrets().hand;
+    b.dispatch({ type: 'move', card: land!, to: 'battlefield:s1', pose: { x: 0, y: 200, rot: 180 } });
+    b.dispatch({ type: 'stackPush', item: 'si1', kind: 'spell', card: spell!, controller: 's1', round: 'r1' });
+    await vi.advanceTimersByTimeAsync(100);
+    for (const s of [a, b]) {
+      expect(s.getState().cards[land!]).toMatchObject({ zone: 'battlefield:s1', face: 'up', identity: b.secrets().identities[land!]!.card });
+      expect(s.getState().cards[spell!]).toMatchObject({ zone: 'stack', identity: b.secrets().identities[spell!]!.card });
+    }
+    expect(b.secrets().hand).toHaveLength(5);
+    expect(a.getState()).toEqual(b.getState());
+  });
+
+  it('a card searched out of the library into the hand joins the private hand', async () => {
+    const { a, b } = await playing();
+    const looked = await b.lookAt('library:s1', 40);
+    const pick = looked[10]!.id;
+    b.dispatch({ type: 'toZone', card: pick, to: 'hand:s1', position: 'any' });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(b.secrets().hand).toContain(pick);
+    expect(b.secrets().libraryOrder).not.toContain(pick);
+    expect(a.getState().cards[pick]?.identity).toBeUndefined();
+    // A later draw is confirmed: the private hand matches the zone.
+    const d = b.draw(1);
+    await vi.advanceTimersByTimeAsync(100);
+    await d;
+    expect(b.secrets().hand).toHaveLength(9);
+  });
+
+  it('a London mulligan puts the hand back, shuffles and draws seven; no identity is published', async () => {
+    const { a, b } = await playing();
+    const before = [...b.secrets().hand];
+    const m = b.mulligan();
+    await vi.advanceTimersByTimeAsync(300);
+    await m;
+    expect(b.secrets().hand).toHaveLength(7);
+    expect(b.secrets().libraryOrder).toHaveLength(33);
+    expect(a.getState().zones['hand:s1']).toMatchObject({ count: 7 });
+    expect(b.getState().zones['library:s1']).toMatchObject({ count: 33 });
+    expect(Object.values(a.getState().cards).filter((c) => c.owner === 's1' && c.identity)).toEqual([]);
+    expect(b.secrets().hand).not.toEqual(before);
+  });
+
+  it('a face-down card revealed to one player: only that player learns it, shared state never does', async () => {
+    const { net, a, b } = await playing();
+    const card = a.secrets().hand[0]!;
+    a.playFaceDown(card, 'battlefield:s0', { x: 0, y: -200, rot: 0 });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(b.getState().cards[card]).toMatchObject({ zone: 'battlefield:s0', face: 'down' });
+    expect(b.getState().cards[card]?.identity).toBeUndefined();
+    a.dispatch({ type: 'revealTo', instanceId: card, seats: ['s1'] });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(b.secrets().received[card]).toEqual({ ...a.secrets().identities[card]!, from: 's0' });
+    expect(a.getState().cards[card]?.identity).toBeUndefined();
+    // Leak scan: Ben received the revealed card only; every card still in Ann's hand or library stays unknown to him.
+    const kept = [...a.secrets().hand, ...a.secrets().libraryOrder].map((id) => a.secrets().identities[id]!);
+    const forbidden = kept.flatMap((i) => [i.card.sid, i.salt]);
+    const received = net.delivered.filter((d) => d.to === 'tb').map((d) => d.msg);
+    expect(scan([...received, b.getState(), b.secrets(), b.log()], forbidden)).toEqual([]);
+  });
+
+  it('playFaceDown refuses a card that is not in an own hidden zone', async () => {
+    const { a, b } = await playing();
+    const other = b.secrets().hand[0]!;
+    a.playFaceDown(other, 'battlefield:s0');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.getState().cards[other]?.zone).toBe('hand:s1');
+    expect(a.log().some((e) => e.kind === 'system' && /face down/.test(e.text))).toBe(true);
+  });
+
+  it('the sequencer\'s browser closes: the other marks its seat away after the liveness time, and back when it returns', async () => {
+    const stores = { a: memoryStore(), b: memoryStore() };
+    const { net, a, b } = await playing(stores);
+    await vi.advanceTimersByTimeAsync(50);
+    a.leave();
+    await vi.advanceTimersByTimeAsync(AWAY_AFTER_MS - 1000);
+    expect(b.getState().seats.s0?.away).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(b.getState().seats.s0?.away).toBe(true);
+    expect(b.netStatus().sequencer).toBe(PEER('b'));
+    // Ann comes back with the same key pair and her own save: the same chair and the same hand, no longer away.
+    const handBefore = [...(stores.a.saved.get(ROOM.roomId)?.secrets?.hand ?? [])];
+    expect(handBefore).toHaveLength(7);
+    const again = await join(net, 'ta2', PEER('a'), 'Ann', 0, '1v1', stores.a);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(again.seat).toBe('s0');
+    expect(again.secrets().hand).toEqual(handBefore);
+    expect(b.getState().seats.s0?.away).toBeUndefined();
+    expect(again.getState()).toEqual(b.getState());
+  });
+
+  it('a peer may not propose a seat away; only the sequencer marks it', async () => {
+    const { a, b } = await playing();
+    b.dispatch({ type: 'away', seat: 's0', away: true });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.getState().seats.s0?.away).toBeUndefined();
+    expect(b.log().some((e) => e.kind === 'system' && /sequencer/.test(e.text))).toBe(true);
+  });
+
+  it('reloading restores the own save: same chair, same hand and library order', async () => {
+    const stores = { a: memoryStore(), b: memoryStore() };
+    const { net, a, b } = await playing(stores);
+    const hand = [...b.secrets().hand];
+    const library = [...b.secrets().libraryOrder];
+    await b.whenSaved();
+    b.leave();
+    await vi.advanceTimersByTimeAsync(100);
+    const again = await join(net, 'tb2', PEER('b'), 'Ben', 1, '1v1', stores.b);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(again.seat).toBe('s1');
+    expect(again.secrets().hand).toEqual(hand);
+    expect(again.secrets().libraryOrder).toEqual(library);
+    expect(again.getState()).toEqual(a.getState());
   });
 });

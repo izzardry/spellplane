@@ -6,10 +6,18 @@
  *
  * It holds no secrets of other seats and sends none of its own: Ready publishes only the salted commitments and opaque
  * ids (DESIGN "Specification: network protocol and secrecy", Commitments); identities stay in this browser's secret
- * store. It is not the M1-P1 engine: no gap detection, catch-up log, heartbeat or hash exchange. Loaded lazily from
- * App.svelte only when `__SPELLPLANE_DEBUG__` is set and no networked session was handed in.
+ * store. An own card's identity leaves it only through the design's reveal paths: a `reveal` when the card becomes
+ * public (moved out of a hidden zone, cast, turned up) and a targeted reveal (`revealTo`) sent to the chosen seats'
+ * peers alone. The secret store follows shared state after every applied action, and with a table store the table and
+ * the secret store are saved after every change, so a reload rejoins the same chair with the same hand. The sequencing
+ * browser marks a seat away when its peer has been gone for AWAY_AFTER_MS and back when it returns.
+ *
+ * It is not the M1-P1 engine: no gap detection, catch-up log, heartbeat, hash exchange, secret shuffle protocol,
+ * commit-and-reveal randomness or logged private looks. Loaded lazily from App.svelte only when
+ * `__SPELLPLANE_DEBUG__` is set and no networked session was handed in.
  */
 import type { Action, ActionDraft } from '../../core/actions';
+import { zoneId } from '../../core/ids';
 import { makeCommitments, type RevealedCard } from '../../core/commit';
 import { createTable, explain, reduce } from '../../core/reducer/index';
 import { emptySecretStore } from '../../core/secrets';
@@ -20,6 +28,8 @@ import type { ChatChannel, CursorMessage, DragMessage } from '../../net/messages
 import type { Message, PeerId, Transport } from '../../net/transport';
 import { PRESENCE_INTERVAL_MS, type ConnectionStatus, type PeerInfo, type PeerPresence, type Presence } from '../../net/types';
 import { randomId, randomSalt, randomBytes } from '../../session/secrecy';
+import { reconcileSecrets } from '../../session/secrets';
+import type { TableStore } from '../../store/types';
 import type { DeckImport, LookedCard, NetStatusListener, SessionListener, SessionNetStatus, TableSession } from '../../session/types';
 import { firstFreeChair, pickColour, seatOf } from './seats';
 
@@ -45,6 +55,31 @@ interface LxNack extends Message {
   cid: string;
   reason: string;
 }
+/** A targeted reveal on the pair channel: sent to the chosen seat's peer only, never broadcast. */
+interface LxRevealTo extends Message {
+  t: 'lxRevealTo';
+  from: SeatId;
+  instanceId: InstanceId;
+  card: CardRef;
+  salt: string;
+}
+
+/** The sequencing browser marks a seat away once its peer has been gone this long (DESIGN "Specification: network protocol and secrecy", Liveness: 6 s). */
+export const AWAY_AFTER_MS = 6000;
+
+/** Cards drawn by a London mulligan (DESIGN "Card manipulation", Library actions). */
+const MULLIGAN_HAND = 7;
+
+/** Public zone kinds that may hold a face-down card (DESIGN "Table model"); other public zones show faces. */
+const FACE_DOWN_KINDS: ReadonlySet<string> = new Set(['battlefield', 'exile']);
+
+/** The one existing card an action is about, if any. */
+function referencedCard(a: Action): InstanceId | null {
+  if (a.type === 'draw' || a.type === 'reveal' || a.type === 'revealTo') return a.instanceId;
+  if (a.type === 'createToken' || a.type === 'copy') return null;
+  if ('card' in a && typeof a.card === 'string') return a.card;
+  return null;
+}
 
 /** Options of the stand-in session. */
 export interface LocalSessionOptions {
@@ -60,6 +95,8 @@ export interface LocalSessionOptions {
   settleMs?: number;
   /** Give up taking a chair after this long. */
   seatTimeoutMs?: number;
+  /** Saves the table and the secret store after every change, and restores them on the next visit. */
+  store?: TableStore;
 }
 
 /** The stand-in: a TableSession plus leave and a nickname setter for the lobby's identity changes. */
@@ -96,6 +133,30 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
   });
   let secrets: SecretStore = emptySecretStore('s0');
   let entries: LogEntry[] = [];
+  // The own save of this room (DESIGN "Multiplayer architecture", Resume: the first browser back restores from its own
+  // save; later arrivals reconcile to the highest sequence number, which `rank` below does).
+  const saved = opts.store ? await opts.store.loadTable(opts.roomId).catch(() => null) : null;
+  if (saved?.table.snapshot) {
+    state = saved.table.snapshot;
+    if (saved.secrets) secrets = saved.secrets;
+  }
+  let writes: Promise<void> = Promise.resolve();
+  let saveQueued = false;
+  const save = (): void => {
+    const store = opts.store;
+    if (!store || saveQueued || closed) return;
+    saveQueued = true;
+    writes = writes.then(async () => {
+      await Promise.resolve();
+      saveQueued = false;
+      const seat = seatOf(state, self);
+      try {
+        await store.saveSnapshot({ roomId: opts.roomId, roomKey: opts.roomKey, lastSeq: state.seq, snapshot: state, snapshotSeq: state.seq, seat, stage: state.stage, updatedAt: now() }, secrets);
+      } catch (e) {
+        console.warn('Spellplane: the table could not be saved', e);
+      }
+    });
+  };
   let joined = false;
   let closed = false;
   let cid = 0;
@@ -132,6 +193,7 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
   };
 
   const notify = (): void => {
+    save();
     for (const l of listeners) l(state);
     const s = status();
     for (const l of netListeners) l(s);
@@ -164,7 +226,10 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
     else if (next.seq !== before.seq) entries = [];
     const seat = mySeat();
     if (seat && secrets.seat !== seat) secrets = { ...secrets, seat };
+    // The private hand and library order follow the zones (a card drawn, searched for, returned or mulliganed).
+    if (seat) secrets = reconcileSecrets(secrets, state, action?.type === 'toZone' && action.position === 'bottom' ? 'bottom' : 'top');
     notify();
+    reviewAway();
     // Lost the chair to someone who sat down at the same time: take the next free one (lobby only).
     if (joined && !seat && state.stage === 'lobby' && firstFreeChair(state)) sit();
   };
@@ -204,7 +269,85 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
 
   const stamp = (draft: ActionDraft, by: SeatId): Action => ({ ...draft, by, cid: `${self}-${++cid}` }) as Action;
 
+  // --- Away seats (sequencing browser only) ------------------------------------------------------------------
+  const awayTimers = new Map<SeatId, ReturnType<typeof setTimeout>>();
+  const present = (peerId: string): boolean => peerId === self || [...hellos.entries()].some(([tid, h]) => h.peerId === peerId && t.peers().includes(tid));
+  function reviewAway(): void {
+    if (closed || !joined || !isSequencer()) return;
+    const by = mySeat();
+    if (!by) return;
+    for (const seat of Object.values(state.seats)) {
+      if (seat.peer === undefined) continue;
+      const here = present(seat.peer);
+      const timer = awayTimers.get(seat.id);
+      if (here) {
+        if (timer) clearTimeout(timer);
+        awayTimers.delete(seat.id);
+        if (seat.away) sequence(stamp({ type: 'away', seat: seat.id, away: false }, by));
+      } else if (!seat.away && !timer) {
+        awayTimers.set(
+          seat.id,
+          setTimeout(() => {
+            awayTimers.delete(seat.id);
+            const now = state.seats[seat.id];
+            const me = mySeat();
+            if (closed || !isSequencer() || !me || !now?.peer || now.away || present(now.peer)) return;
+            sequence(stamp({ type: 'away', seat: seat.id, away: true }, me));
+          }, AWAY_AFTER_MS),
+        );
+      }
+    }
+  }
+
+  // --- Reveals (DESIGN "Multiplayer architecture", Hidden information; "Table model", Face-down) -------------------
+  /** Whether `action` moves an own face-down card into a public zone that shows faces (graveyard, stack, command). */
+  const turnsUpOnMove = (action: Action): boolean => {
+    if (action.type !== 'move') return false;
+    const card = Object.hasOwn(state.cards, action.card) ? state.cards[action.card] : undefined;
+    const dest = Object.hasOwn(state.zones, action.to) ? state.zones[action.to] : undefined;
+    if (!card || !dest || card.face !== 'down' || card.zone === action.to) return false;
+    if (state.zones[card.zone]?.visibility !== 'public' || dest.visibility !== 'public' || FACE_DOWN_KINDS.has(dest.kind)) return false;
+    return card.identity !== undefined || card.tokenLabel !== undefined || (card.owner === secrets.seat && Object.hasOwn(secrets.identities, card.id));
+  };
+  /**
+   * The `reveal` an action needs first: it names an own card whose identity only this browser holds, and the card
+   * ends up public. Null when the action would not apply even with the reveal, so a refused action publishes nothing.
+   */
+  const revealFor = (action: Action, turnUp: boolean): Action | null => {
+    const id = referencedCard(action);
+    if (id === null || action.type === 'reveal' || action.type === 'revealTo' || (action.type === 'flip' && action.ref !== undefined)) return null;
+    const card = Object.hasOwn(state.cards, id) ? state.cards[id] : undefined;
+    const secret = Object.hasOwn(secrets.identities, id) ? secrets.identities[id] : undefined;
+    if (!card || !secret || card.owner !== action.by || card.identity !== undefined) return null;
+    const hidden = state.zones[card.zone]?.visibility !== 'public';
+    const turnsUp = turnUp || (!hidden && card.face === 'down' && action.type === 'flip' && action.face === 'up');
+    if (!hidden && !turnsUp) return null;
+    const reveal = stamp({ type: 'reveal', instanceId: id, ref: secret.card, salt: secret.salt, ...(action.group !== undefined ? { group: action.group } : {}) }, action.by);
+    const s1 = reduce(state, { ...reveal, seq: state.seq + 1 } as Action);
+    if (s1 === state) return null;
+    const s2 = reduce(s1, { ...action, seq: state.seq + 2 } as Action);
+    if (s2 === s1) return null;
+    const after = s2.cards[id];
+    return after && s2.zones[after.zone]?.visibility === 'public' ? reveal : null;
+  };
+  /** Send an own card's identity to the peers of `seats` only (targeted reveal on the pair channel). */
+  const revealToSeats = (id: InstanceId, seats: readonly SeatId[]): void => {
+    const secret = Object.hasOwn(secrets.identities, id) ? secrets.identities[id] : undefined;
+    const from = mySeat();
+    if (!secret || !from) return;
+    for (const seat of seats) {
+      const peer = state.seats[seat]?.peer;
+      if (!peer || seat === from) continue;
+      for (const [tid, h] of hellos) {
+        if (h.peerId !== peer || !t.peers().includes(tid)) continue;
+        const msg: LxRevealTo = { v: 1, t: 'lxRevealTo', from, instanceId: id, card: secret.card, salt: secret.salt };
+        t.send('act', msg, tid);
+      }
+    }
+  };
+
   let sitting: string | null = null;
+  let mulligans = 0;
   function sit(): void {
     const free = firstFreeChair(state);
     if (!free || (sitting && proposed.has(sitting))) return;
@@ -249,6 +392,7 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
       presenceOut();
     }
     notify();
+    reviewAway();
   });
   t.on('ctl', (msg, from) => {
     if (closed || msg.t !== 'lxHello') return;
@@ -258,6 +402,7 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
     if (!known) hello(from);
     if (isSequencer() && state.seq > 0) broadcastState(null, from);
     notify();
+    reviewAway();
   });
   t.on('act', (msg, from) => {
     if (closed) return;
@@ -279,11 +424,18 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
       // Structure only, as the sequencer does: the actor must be the sender's chair, or a free chair it sits down at.
       const holds = !!sender && state.seats[action.by]?.peer === sender.peerId;
       const sitting = action.type === 'seatTake' && action.peer === sender?.peerId && action.by === action.seat;
-      const reason = !holds && !sitting ? `${action.by} is not the sender's seat` : sequence(action);
+      const reason = action.type === 'away' ? 'only the sequencer marks a seat away' : !holds && !sitting ? `${action.by} is not the sender's seat` : sequence(action);
       if (reason) {
         const nack: LxNack = { v: 1, t: 'lxNack', cid: action.cid, reason };
         t.send('act', nack, from);
       }
+    } else if (msg.t === 'lxRevealTo') {
+      const m = msg as LxRevealTo;
+      const sender = hellos.get(from);
+      // Only the owner of the card's seat may tell this browser what it is.
+      if (!sender || state.seats[m.from]?.peer !== sender.peerId || state.cards[m.instanceId]?.owner !== m.from) return;
+      secrets = { ...secrets, received: { ...secrets.received, [m.instanceId]: { card: m.card, salt: m.salt, from: m.from } } };
+      notify();
     } else if (msg.t === 'lxNack') {
       const m = msg as LxNack;
       if (proposed.delete(m.cid)) {
@@ -372,12 +524,28 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
     secrets: () => secrets,
     cardData: (ref: CardRef) => opts.cardData.peek(ref.sid),
     dispatch(draft: ActionDraft): Action {
-      const action = stamp(draft, session.seat);
+      const raw = stamp(draft, session.seat);
+      // A face-down card moved into a zone that shows faces is turned up there, in one undo group with the move.
+      const turnUp = turnsUpOnMove(raw);
+      const action = turnUp && raw.group === undefined ? ({ ...raw, group: `g-${self}-${cid}` } as Action) : raw;
+      const reveal = revealFor(action, turnUp);
+      if (reveal) submit(reveal);
       submit(action);
+      if (turnUp) submit(stamp({ type: 'flip', card: referencedCard(action)!, face: 'up', ...(action.group !== undefined ? { group: action.group } : {}) }, action.by));
+      if (action.type === 'revealTo' && state.cards[action.instanceId]?.owner === action.by) revealToSeats(action.instanceId, action.seats);
       return action;
     },
     playFaceDown(card: InstanceId, to: ZoneId, pose?: Pose): Action {
-      return session.dispatch({ type: 'move', card, to, ...(pose ? { pose } : {}) });
+      const action = stamp({ type: 'move', card, to, ...(pose ? { pose } : {}) }, session.seat);
+      const c = Object.hasOwn(state.cards, card) ? state.cards[card] : undefined;
+      const dest = Object.hasOwn(state.zones, to) ? state.zones[to] : undefined;
+      if (!c || c.owner !== action.by || state.zones[c.zone]?.visibility === 'public' || dest?.visibility !== 'public' || !FACE_DOWN_KINDS.has(dest.kind)) {
+        warn(action, 'only a card from your own hand or library can be put onto a battlefield or into exile face down');
+        return action;
+      }
+      // No reveal: the reducer turns a card that leaves a hidden zone without a public identity face down.
+      submit(action);
+      return action;
     },
     chat(text: string, channel: ChatChannel = 'table'): Action {
       return session.dispatch({ type: 'chat', text, channel });
@@ -404,7 +572,7 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
       netListeners.add(listener);
       return () => netListeners.delete(listener);
     },
-    whenSaved: () => Promise.resolve(),
+    whenSaved: () => writes,
     async importDeck(deck: DeckImport): Promise<void> {
       const seat = mySeat();
       if (!seat) throw new Error('Take a chair first.');
@@ -433,7 +601,15 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
       await until(() => secrets.hand.every((id) => state.cards[id]?.zone === `hand:${seat}`), 8000, 'The draw was not confirmed.');
     },
     async mulligan(): Promise<void> {
-      throw new Error('Mulligans need the networked session (M1-P8).');
+      const seat = mySeat();
+      if (!seat) throw new Error('Take a chair first.');
+      const hand = zoneId('hand', seat);
+      // London mulligan: the hand goes into the library, the library is shuffled, seven are drawn.
+      submit(stamp({ type: 'mulligan', count: ++mulligans }, seat));
+      await until(() => (state.zones[hand]?.ids.length ?? 0) === 0, 8000, 'The mulligan was not confirmed.');
+      secrets = { ...secrets, libraryOrder: shuffleInPlace([...secrets.libraryOrder]) };
+      notify();
+      await session.draw(MULLIGAN_HAND);
     },
     async lookAt(zone: ZoneId, count: number): Promise<LookedCard[]> {
       const order = zone === `library:${mySeat()}` ? secrets.libraryOrder : [];
@@ -445,6 +621,8 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
     leave() {
       if (closed) return;
       if (flushTimer) clearTimeout(flushTimer);
+      for (const timer of awayTimers.values()) clearTimeout(timer);
+      awayTimers.clear();
       closed = true;
       t.leave();
       notify();

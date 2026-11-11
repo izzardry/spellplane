@@ -38,6 +38,14 @@ export interface Insets {
 }
 
 export const NO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
+
+/** An axis-aligned box in table space (mm): centre and size. */
+export interface FrameBox {
+  x: number;
+  y: number;
+  w: number;
+  d: number;
+}
 /** The framed area never shrinks below this fraction of the viewport in either direction, whatever the insets. */
 const MIN_SAFE_FRACTION = 0.4;
 
@@ -55,10 +63,16 @@ export class BirdseyeRig {
   velocity = { x: 0, y: 0 };
   inertiaMs: number;
   insets: Insets = NO_INSETS;
+  /**
+   * What the fitted view frames: the table, plus what the scene draws outside its edges for others to see (the other
+   * seats' hand rows of card backs), so the fitted view shows those too. Defaults to the table.
+   */
+  frame: FrameBox;
   private anim: { from: CameraView; to: CameraView; start: number; dur: number } | null = null;
 
   constructor(table: { w: number; d: number }, viewport: Viewport, angle = 0, inertiaMs = 325) {
     this.table = table;
+    this.frame = { x: 0, y: 0, w: table.w, d: table.d };
     this.viewport = viewport;
     this.inertiaMs = inertiaMs;
     this.view = { cx: 0, cy: 0, dist: 1, angle };
@@ -77,9 +91,9 @@ export class BirdseyeRig {
     return this.viewport.h / 2 / this.halfHeight(dist);
   }
 
-  /** The farthest zoom: the whole table plus a 5% margin fits the viewport, clear of the insets. */
+  /** The farthest zoom: the whole table (its frame) plus a 5% margin fits the viewport, clear of the insets. */
   maxDist(): number {
-    return Math.max(this.frameDist(this.table.w, this.table.d, 0), this.minDist());
+    return Math.max(this.frameDist(this.frame.w, this.frame.d, 0), this.minDist());
   }
 
   /** The part of the viewport not covered by the insets, CSS px. */
@@ -144,7 +158,7 @@ export class BirdseyeRig {
   }
 
   fitView(): CameraView {
-    return this.framedView(0, 0, this.maxDist());
+    return this.framedView(this.frame.x, this.frame.y, this.maxDist());
   }
 
   /** View that frames an oriented rect with a 5% margin in the safe area (go to a seat's territory). */
@@ -274,8 +288,18 @@ export class BirdseyeRig {
     this.view = wasFit ? this.fitView() : this.clampView(this.view);
   }
 
-  setTable(table: { w: number; d: number }, angle: number): void {
+  /** Change what the fitted view frames; a view that was fitted stays fitted. */
+  setFrame(frame: FrameBox): void {
+    const f = this.frame;
+    if (f.x === frame.x && f.y === frame.y && f.w === frame.w && f.d === frame.d) return;
+    const wasFit = !this.anim && this.atFit();
+    this.frame = frame;
+    this.view = wasFit ? this.fitView() : this.clampView(this.view);
+  }
+
+  setTable(table: { w: number; d: number }, angle: number, frame: FrameBox = { x: 0, y: 0, w: table.w, d: table.d }): void {
     this.table = table;
+    this.frame = frame;
     this.view = { ...this.view, angle };
     this.stop();
     this.view = this.fitView();

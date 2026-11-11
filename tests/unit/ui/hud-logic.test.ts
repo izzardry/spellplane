@@ -10,7 +10,7 @@ import { MTG_KEYMAP } from '../../../src/games/mtg/keymap';
 import { checkDeck, errorName, parsePlainList, replaceName } from '../../../src/ui/deck';
 import { logLines } from '../../../src/ui/describe';
 import { FakeCardData, fakeGame, tableWith } from '../../../src/ui/fakes';
-import { isEmptyChair } from '../../../src/ui/commands';
+import { isEmptyChair, untapOfferOnOpen } from '../../../src/ui/commands';
 import { CARD_ASPECT, fanLayout, fitInsets, handOrder } from '../../../src/ui/hand';
 import { cardMenu, tableMenu } from '../../../src/ui/menu';
 import { parseRoute, routeHash } from '../../../src/ui/routes';
@@ -400,5 +400,30 @@ describe('screen-anchored layer and seats (gate M0 findings)', () => {
     expect(isEmptyChair({ ...state, seats: { ...state.seats, s1: { ...state.seats.s1!, peer: 'p1' } } }, 's1')).toBe(false);
     const withCard = tableWith(['Anna', ''], [{ id: 'x', zone: 'graveyard:s1', sid: 'sid-bear' }]).state;
     expect(isEmptyChair(withCard, 's1')).toBe(false);
+  });
+});
+
+describe('untap-and-draw offer on a page that opens mid-turn (DESIGN "Turn flow and confirmation"; gate M1 finding)', () => {
+  const act = (seq: number, action: Record<string, unknown>): LogEntry => ({ kind: 'action', seq, at: 0, action: { cid: `c${seq}`, seq, ...action } as unknown as Action });
+  const table = (active: string) => {
+    const { state } = tableWith(['Anna', 'Ben'], []);
+    return { ...state, turn: { ...state.turn, number: 7, active } };
+  };
+
+  it('offers it when the last pass handed the turn to this seat and it has done nothing since', () => {
+    const log = [act(1, { type: 'turnPass', to: 's0', by: 's1' }), act(2, { type: 'life', seat: 's0', delta: -1, by: 's1' })];
+    expect(untapOfferOnOpen(table('s0'), 's0', log, null)).toBe(true);
+  });
+
+  it('does not offer it once the seat acted after the pass, or when it is not its turn', () => {
+    const acted = [act(1, { type: 'turnPass', to: 's0', by: 's1' }), act(2, { type: 'draw', instanceId: 'x', by: 's0' })];
+    expect(untapOfferOnOpen(table('s0'), 's0', acted, null)).toBe(false);
+    expect(untapOfferOnOpen(table('s1'), 's0', [act(1, { type: 'turnPass', to: 's1', by: 's0' })], 7)).toBe(false);
+  });
+
+  it('a log that does not reach back to the pass offers it only when this tab had it open at this turn', () => {
+    expect(untapOfferOnOpen(table('s0'), 's0', [], null)).toBe(false);
+    expect(untapOfferOnOpen(table('s0'), 's0', [], 6)).toBe(false);
+    expect(untapOfferOnOpen(table('s0'), 's0', [], 7)).toBe(true);
   });
 });

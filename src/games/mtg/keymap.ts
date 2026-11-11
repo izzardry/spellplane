@@ -55,8 +55,10 @@ export const MTG_KEYMAP: Keymap = [
   // Confirm
   b('Confirm', 'ask', 'Ask', k('k')),
   b('Confirm', 'confirmOk', 'OK', k('Enter'), { context: 'prompt' }),
-  b('Confirm', 'confirmHold', 'Hold', k('Escape'), { context: 'prompt' }),
+  // H first: the prompt and the cheat sheet label Hold with the first binding, and the design names H (DESIGN "Turn flow
+  // and confirmation", Confirmation rounds 2); Esc stays a second binding.
   b('Confirm', 'confirmHold', 'Hold', k('h'), { context: 'prompt' }),
+  b('Confirm', 'confirmHold', 'Hold', k('Escape'), { context: 'prompt' }),
   // Table
   b('Table', 'tidy', 'Tidy', k('y')),
   b('Table', 'token', 'Create token', k('t', { ctrl: true })),

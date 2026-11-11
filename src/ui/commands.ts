@@ -9,7 +9,7 @@ import type { ActionDraft } from '../core/actions';
 import { GEOMETRY } from '../core/geometry';
 import { sha256 } from '../core/hash';
 import { parseZoneId } from '../core/ids';
-import type { CardInstance, InstanceId, Pose, SeatId, StackItem, StackItemId, TableState, ZoneId } from '../core/types';
+import type { CardInstance, InstanceId, LogEntry, Pose, SeatId, StackItem, StackItemId, TableState, ZoneId } from '../core/types';
 import type { ActionId, GameDefinition } from '../games/types';
 import { hoveredStackItem } from '../scene/stack';
 import type { TableScene } from '../scene/types';
@@ -72,6 +72,17 @@ export function promptShowing(state: TableState, seat: SeatId): boolean {
   return mode === 'respond' || mode === 'holding';
 }
 
+/**
+ * The prompt's live keys for `seat` (ui/keymap.ts PromptKeys): none while no prompt shows; Hold only while this seat
+ * may hold (not while it already holds the floor or another seat does), so H then acts on the hovered card (to hand),
+ * as a player responding during a hold needs (gate M1 finding: a tutor with H during a hold was swallowed).
+ */
+export function promptKeys(state: TableState, seat: SeatId): false | ((action: ActionId) => boolean) {
+  if (!promptShowing(state, seat)) return false;
+  const holder = state.confirm?.holder === seat ? seat : blockingHolder(state);
+  return (action) => action !== 'confirmHold' || holder === null;
+}
+
 /** The stack item a card belongs to (a spell's card on the stack), or null. */
 export function stackItemOfCard(state: TableState, card: InstanceId): StackItem | null {
   return state.stack.find((i) => i.card === card) ?? null;
@@ -85,6 +96,34 @@ export function isEmptyChair(state: TableState, seat: SeatId): boolean {
   const s = state.seats[seat];
   if (!s || s.name !== '' || s.peer !== undefined) return false;
   return Object.values(state.zones).every((z) => z.owner !== seat || z.ids.length === 0);
+}
+
+/** Whether the turn belongs to `seat` (its own turn, or its team's in Two-Headed Giant). */
+export function isOwnTurn(state: TableState, seat: SeatId): boolean {
+  const team = state.seats[seat]?.team;
+  return state.turn.active === seat || (team !== undefined && state.turn.active === team);
+}
+
+/**
+ * Whether a page that opens on `state` (after a reload or a rejoin) should offer untap-and-draw (DESIGN "Turn flow and
+ * confirmation": the new active player is offered a single key, never done for them): it is the seat's turn, the
+ * log's last `turnPass` handed it to the seat, and the seat has done nothing since. `offeredTurn` is the turn number
+ * at which this tab last showed the offer without it being taken or dismissed (kept across reloads by the HUD); it
+ * also counts when the log no longer reaches back to the pass.
+ */
+export function untapOfferOnOpen(state: TableState, seat: SeatId, log: readonly LogEntry[], offeredTurn: number | null): boolean {
+  if (!isOwnTurn(state, seat)) return false;
+  if (offeredTurn === state.turn.number) return true;
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i]!;
+    if (e.kind !== 'action') continue;
+    if (e.action.type === 'turnPass') {
+      const team = state.seats[seat]?.team;
+      return e.action.to === seat || (team !== undefined && e.action.to === team);
+    }
+    if (e.action.by === seat) return false;
+  }
+  return false;
 }
 
 const isPublicZone = (state: TableState, c: CardInstance): boolean => state.zones[c.zone]?.visibility === 'public';
@@ -153,6 +192,9 @@ export class Commands {
       case 'ability':
         return bf;
       case 'flip':
+        // F on an own hand card puts it onto the own battlefield face down (DESIGN "Table model", Face-down on the
+        // battlefield; "Card manipulation": F flips face down): the identity stays in this browser.
+        return pub || (card.zone === `hand:${this.me}` && !!this.host.session.secrets().identities[card.id]);
       case 'counterAdd':
       case 'counterRemove':
       case 'note':
@@ -218,8 +260,17 @@ export class Commands {
         this.dispatchAll(cards.filter((c) => c.tapped !== tapped).map((c) => ({ type: 'tap', card: c.id, tapped })));
         return;
       }
-      case 'flip':
-        return forCards((c) => ({ type: 'flip', card: c.id, face: c.face === 'up' ? 'down' : 'up' }));
+      case 'flip': {
+        const cards = this.targets().filter((c) => this.applies('flip', c));
+        const hand = cards.filter((c) => !isPublicZone(st, c));
+        this.dispatchAll(cards.filter((c) => isPublicZone(st, c)).map((c) => ({ type: 'flip', card: c.id, face: c.face === 'up' ? 'down' : 'up' })));
+        const to: ZoneId = `battlefield:${me}`;
+        if (hand.length && st.zones[to]) {
+          const layout = layoutOf(this.host.game, st);
+          for (const c of hand) this.host.session.playFaceDown(c.id, to, freeSlot(this.state, me, layout, c.id));
+        }
+        return;
+      }
       case 'transform':
         return forCards((c) => ({ type: 'transform', card: c.id, faceIndex: c.faceIndex === 0 ? 1 : 0 }));
       case 'rotate180':

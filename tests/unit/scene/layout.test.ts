@@ -2,7 +2,10 @@
 // layout and motion" (stack lane cascade 22 toward each viewer, squared pile step 0.4 capped at 20).
 import { describe, expect, it } from 'vitest';
 import { buildHarnessState, harnessGame, harnessLayout, harnessPrivateFaces } from '../../../src/scene/harness-fixture';
-import { dropTargets, placeCards } from '../../../src/scene/layout';
+import { dropTargets, fitFrame, placeCards } from '../../../src/scene/layout';
+import { mtgLayout } from '../../../src/games/mtg/layout';
+import { createTable } from '../../../src/core/reducer/index';
+import { mtg } from '../../../src/games/index';
 import type { ViewState } from '../../../src/scene/types';
 
 const view = (over: Partial<ViewState> = {}): ViewState => ({ selection: [], hovered: null, privateFaces: {}, reducedMotion: false, pings: [], openPile: null, ...over });
@@ -59,5 +62,25 @@ describe('presentation', () => {
   it('drop targets: every seat\'s library, graveyard and exile, its avatar (hand) and the stack lane', () => {
     const zones = dropTargets(s, harnessLayout(), 0, harnessGame).map((t) => t.zone).sort();
     expect(zones).toEqual(['exile:s0', 'exile:s1', 'graveyard:s0', 'graveyard:s1', 'hand:s0', 'hand:s1', 'library:s0', 'library:s1', 'stack'].sort());
+  });
+});
+
+describe('fit frame (gate M1 finding: the opponent\'s hand row of backs must not sit under the turn strip)', () => {
+  it('1v1: the frame is the table plus the other seat\'s hand row; an empty chair adds nothing', () => {
+    const layout = mtgLayout('1v1');
+    const st = createTable({ game: mtg, format: '1v1', seats: [{ name: 'Ann', colour: 0 }, { name: 'Ben', colour: 1 }] });
+    const row0 = layout.seats[0]!.zones.handRow;
+    const row1 = layout.seats[1]!.zones.handRow;
+    const fromBen = fitFrame(st, layout, 's1');
+    // Ann's row lies beyond her near edge: the frame reaches it and still holds the whole table.
+    expect(fromBen.y - fromBen.d / 2).toBeCloseTo(row0.y - row0.d / 2, 6);
+    expect(fromBen.y + fromBen.d / 2).toBeCloseTo(layout.table.d / 2, 6);
+    expect(fromBen.w).toBeGreaterThanOrEqual(layout.table.w);
+    const fromAnn = fitFrame(st, layout, 's0');
+    expect(fromAnn.y + fromAnn.d / 2).toBeCloseTo(row1.y + row1.d / 2, 6);
+    expect(fromAnn.y - fromAnn.d / 2).toBeCloseTo(-layout.table.d / 2, 6);
+    const solo = createTable({ game: mtg, format: '1v1', seats: [{ name: 'Ann', colour: 0 }, { name: '', colour: 1 }] });
+    expect(fitFrame(solo, layout, 's0')).toEqual({ x: 0, y: 0, w: layout.table.w, d: layout.table.d });
+    expect(fitFrame(null, layout, null)).toEqual({ x: 0, y: 0, w: layout.table.w, d: layout.table.d });
   });
 });
