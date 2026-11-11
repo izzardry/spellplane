@@ -54,7 +54,8 @@ export function promptModel(state: TableState, me: SeatId | null): PromptModel |
     holder,
     allPassed: roundPassed(state),
     timerRunning: round.durationMs > 0 && holder === null && waiting.length > 0,
-    timerKey: `${round.id}:${timerStartSeq(round)}`,
+    // The start seq of an optimistic apply may differ from the sequenced one: key the start by the round alone.
+    timerKey: `${round.id}:${round.timerSeq === undefined ? 'start' : timerStartSeq(round)}`,
   };
 }
 

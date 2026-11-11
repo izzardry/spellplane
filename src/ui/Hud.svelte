@@ -387,6 +387,8 @@
   const activeName = $derived(st.seats[st.turn.active]?.name ?? st.teams[st.turn.active]?.seats.map((s) => st.seats[s]?.name).join(' & ') ?? st.turn.active);
   const activeColour = $derived(st.seats[st.turn.active]?.colour ?? st.seats[st.teams[st.turn.active]?.seats[0] ?? '']?.colour ?? null);
   const prompt = $derived(promptModel(st, me));
+  /** A manual round (not about a stack item) that still waits makes its asker's avatar pulse (DESIGN "Turn flow and confirmation", Prompt). */
+  const asking = (seat: string) => !!prompt && prompt.round.askedBy === seat && prompt.round.about === undefined && !prompt.allPassed;
   const top = $derived(st.stack[st.stack.length - 1] ?? null);
   const resolveLit = $derived(!!top && (!st.confirm || st.confirm.about !== top.id || roundPassed(st)));
   /**
@@ -561,6 +563,7 @@
           me={false}
           active={st.turn.active === seat.id || st.turn.active === seat.team}
           responding={st.confirm?.holder === seat.id}
+          asking={asking(seat.id)}
           glyph={glyphOf(seat.colour)}
           zones={zoneButtons(seat.id)}
           onlife={(delta) => session.dispatch({ type: 'life', seat: seat.id, delta })}
@@ -620,6 +623,7 @@
           me={true}
           active={st.turn.active === me || st.turn.active === st.seats[me].team}
           responding={st.confirm?.holder === me}
+          asking={asking(me)}
           glyph={glyphOf(st.seats[me].colour)}
           zones={zoneButtons(me)}
           onlife={(delta) => session.dispatch({ type: 'life', seat: me, delta })}
