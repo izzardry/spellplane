@@ -160,7 +160,7 @@ if (A.contracts) {
       A.contracts.brief,
       ``,
       `Rules: contracts are shared types, interfaces, constants and compiling stubs (stub functions may throw new Error('not implemented: <pkg>') or return trivial values, and must name the package that implements them). Document every exported type with a one-line comment that cites the design section. Keep the B0 smoke e2e test passing.`,
-      `Finish: pnpm check green and pnpm e2e green; commit on ${BR} with message "feat(${M.toLowerCase()}-c): contracts" (plus the Co-Authored-By trailer: "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"); git push origin ${BR}. Return the schema.`,
+      `Finish: pnpm check green and pnpm e2e green; commit on ${BR} with message "${A.contracts.message || `feat(${M.toLowerCase()}-c): contracts`}" (plus the Co-Authored-By trailer: "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"); git push origin ${BR}. Return the schema.`,
     ].join('\n'),
     { label: `contracts:${M}`, phase: 'Contracts', schema: CONTRACTS_SCHEMA },
   )
@@ -247,6 +247,7 @@ function reviewPrompt(pkg, round, focus) {
     focus === 'deep'
       ? `Focus ONLY on: (1) determinism — reducer/protocol code that depends on wall clock, Math.random, object key order, Set/Map iteration order where order matters, floating-point drift across peers, non-canonical JSON for hashes, async races; (2) hidden information — any path by which a card identity, library order, hand content, nonce or salt could reach another peer, the shared state, the log, the debug hook of another page, or a store that syncs. Each concrete defect is blocking.`
       : `Hunt for: behaviour that contradicts the design; acceptance tests from the plan that are missing, hollow, or test the implementation instead of the design; real bugs (edge cases, off-by-one, state that goes stale, leaks of listeners/GPU resources); hard-rule violations (CLAUDE.md); boundary-rule evasions; files edited outside the package's ownership (${pkg.owns.join(', ')}). Style nits are minor.`,
+    pkg.reviewFocus ? `RETRY FOCUS (overrides the hunting brief above where they conflict): ${pkg.reviewFocus}` : '',
     `Blocking = must be fixed before merge. Be concrete: file, line, what is wrong, which design sentence it violates, how to fix. Do not report things you have not verified. Return the schema; verdict=approve only if there are no blocking findings.`,
   ].join('\n')
 }
@@ -283,7 +284,8 @@ async function runPackage(pkg) {
     let round = 0
     let approved = false
     let lastFix = null
-    while (round < 3) {
+    const maxRounds = pkg.maxRounds || 3
+    while (round < maxRounds) {
       round++
       const reviewers = [() => agent(reviewPrompt(pkg, round, 'main'), { label: `review${round}:${pkg.id}`, phase: 'Packages', schema: REVIEW_SCHEMA })]
       if (pkg.deep) reviewers.push(() => agent(reviewPrompt(pkg, round, 'deep'), { label: `review${round}-deep:${pkg.id}`, phase: 'Packages', schema: REVIEW_SCHEMA }))
@@ -301,7 +303,7 @@ async function runPackage(pkg) {
         open = open.concat([{ severity: 'blocking', issue: `fixer round ${round} left pnpm check red or died` }])
       }
     }
-    if (!approved && round === 3 && lastFix && lastFix.check_green && (lastFix.not_fixed || []).length === 0) {
+    if (!approved && round === maxRounds && lastFix && lastFix.check_green && (lastFix.not_fixed || []).length === 0) {
       // Third fix claimed everything resolved; accept without a fourth review, but say so.
       log(`${pkg.id}: accepted after third fix round without a further review`)
       approved = true
