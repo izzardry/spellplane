@@ -9,13 +9,15 @@
  *   loses `home` and `combat`; attack and block lines go (all of them, or those touching the listed cards), marks and
  *   every other line stay. The tapped state is left alone: attackers stay tapped. Hosts go home before the cards
  *   attached to them, so a displaced attachment ends at its own home slot even when its host was displaced too (the
- *   host's move drags its attachments along by the same translation).
+ *   host's move drags its attachments along by the same translation). Conversely, a card first displaced while a
+ *   host above it is displaced (it was carried along) records as home the spot it returns to when that host settles,
+ *   not the host's temporary spot.
  */
 import type { ActionOf } from '../actions';
-import type { InstanceId } from '../types';
+import type { InstanceId, Pose } from '../types';
 import type { Draft } from './draft';
 import { ZONE_KIND, cardZone, leavePile, publicCard, removeLinesWhere, setPose } from './place';
-import { byId, checkId, checkPose, reject, samePose } from './util';
+import { byId, checkId, checkPose, q, reject, samePose } from './util';
 
 export function moveTemp(d: Draft, a: ActionOf<'moveTemp'>): void {
   const c = publicCard(d, checkId(a.card, 'card'));
@@ -24,7 +26,7 @@ export function moveTemp(d: Draft, a: ActionOf<'moveTemp'>): void {
   const pose = checkPose(a.pose);
   if (a.combat !== undefined && a.combat !== 'attack' && a.combat !== 'block') reject('combat must be attack or block');
   if (a.tap !== undefined && typeof a.tap !== 'boolean') reject('tap must be a boolean');
-  const home = c.home ?? c.pose;
+  const home = c.home ?? trueHome(d, c.id);
   leavePile(d, c.id);
   if (!c.home) d.cards.w(c.id).home = { ...home };
   if (a.combat !== undefined && c.combat !== a.combat) d.cards.w(c.id).combat = a.combat;
@@ -52,6 +54,24 @@ export function settle(d: Draft, a: ActionOf<'settle'>): void {
   }
   const touches = (an: { kind: string; id: string }): boolean => an.kind === 'card' && chosen.has(an.id);
   removeLinesWhere(d, (f, t, kind) => (kind === 'attack' || kind === 'block') && (a.cards === undefined || touches(f) || touches(t)));
+}
+
+/**
+ * Where an undisplaced card stands once its displaced hosts go home: its pose minus the translation of its nearest
+ * displaced ancestor in the attach chain (that ancestor's own home already excludes the ancestors above it, and
+ * settle moves it, and with it this card, by exactly pose - home).
+ */
+function trueHome(d: Draft, id: InstanceId): Pose {
+  const c = d.cards.need(id);
+  const seen = new Set<InstanceId>([id]);
+  for (let h = c.attachedTo; h !== undefined && !seen.has(h); ) {
+    seen.add(h);
+    const host = d.cards.get(h);
+    if (!host) break;
+    if (host.home) return { x: q(c.pose.x - (host.pose.x - host.home.x)), y: q(c.pose.y - (host.pose.y - host.home.y)), rot: c.pose.rot };
+    h = host.attachedTo;
+  }
+  return c.pose;
 }
 
 /** `ids` (sorted by id) reordered so every card comes after the card it is attached to (shallower hosts first). */

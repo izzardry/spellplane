@@ -154,6 +154,53 @@ describe('settle returns every displaced card home and removes attack and block 
     expect(card(s, 'a00').pose).toEqual(homes.a00);
   });
 
+  it('an attachment displaced after its host (it was carried along) records its real slot as home', () => {
+    let s = board();
+    s = ok(s, act('reveal', { instanceId: 'a03', ref: { sid: 'sid-aura' }, salt: 'salt-a03' }));
+    s = ok(s, act('move', { card: 'a03', to: 'battlefield:s0', pose: P(-140, -190) }));
+    s = ok(s, act('attach', { card: 'a03', to: 'a00' }));
+    const homes = posesOf(s);
+    s = ok(s, act('moveTemp', { card: 'a00', pose: P(-150, -90) }));
+    expect(card(s, 'a03').pose).toEqual(P(-140, -80));
+    s = ok(s, act('moveTemp', { card: 'a03', pose: P(-100, -50) }));
+    expect(card(s, 'a03').home).toEqual(homes.a03);
+    s = ok(s, act('settle', {}));
+    expect(card(s, 'a00').pose).toEqual(homes.a00);
+    expect(card(s, 'a03').pose).toEqual(homes.a03);
+    expect(card(s, 'a03').attachedTo).toBe('a00');
+  });
+
+  it('a carried attachment two levels down takes the nearest displaced host into account', () => {
+    let s = board();
+    for (const id of ['a03', 'a04']) s = ok(s, act('reveal', { instanceId: id, ref: { sid: 'sid-aura' }, salt: `salt-${id}` }));
+    s = ok(s, act('move', { card: 'a03', to: 'battlefield:s0', pose: P(-140, -190) }));
+    s = ok(s, act('move', { card: 'a04', to: 'battlefield:s0', pose: P(-130, -180) }));
+    s = ok(s, act('attach', { card: 'a03', to: 'a00' }));
+    s = ok(s, act('attach', { card: 'a04', to: 'a03' }));
+    const homes = posesOf(s);
+    s = ok(s, act('moveTemp', { card: 'a00', pose: P(-150, -90) }));
+    s = ok(s, act('moveTemp', { card: 'a03', pose: P(-100, -50) }));
+    s = ok(s, act('moveTemp', { card: 'a04', pose: P(-60, -20) }));
+    expect(card(s, 'a03').home).toEqual(homes.a03);
+    expect(card(s, 'a04').home).toEqual(homes.a04);
+    s = ok(s, act('settle', {}));
+    for (const id of ['a00', 'a03', 'a04']) expect(card(s, id).pose, id).toEqual(homes[id]);
+  });
+
+  it('A on a selection of a creature and its tucked Aura, then B: both back on their own slots', () => {
+    let s = board();
+    s = ok(s, act('reveal', { instanceId: 'a03', ref: { sid: 'sid-aura' }, salt: 'salt-a03' }));
+    s = ok(s, act('move', { card: 'a03', to: 'battlefield:s0', pose: P(-140, -190) }));
+    s = ok(s, act('attach', { card: 'a03', to: 'a00' }));
+    const homes = posesOf(s);
+    s = applyDrafts(s, press(s, 'attack', { hovered: 'a00', selection: ['a00', 'a03'] }));
+    expect(card(s, 'a00').pose).toEqual(P(-150, -90));
+    s = applyDrafts(s, press(s, 'settle'));
+    expect(card(s, 'a00').pose).toEqual(homes.a00);
+    expect(card(s, 'a03').pose).toEqual(homes.a03);
+    expect(card(s, 'a03').home).toBeUndefined();
+  });
+
   it('settle on a selection returns only those cards and only their attack and block lines', () => {
     const { s: before, homes } = combat();
     const drafts = press(before, 'settle', { selection: ['b01'] });

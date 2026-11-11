@@ -125,6 +125,14 @@ test('dragging creatures onto an attacker blocks it: they fan out 96 mm in front
   expect(block).toHaveLength(1);
   expect(block[0]).toMatchObject({ from: { kind: 'card', id: 'a0' }, to: { kind: 'card', id: 'b0' } });
 
+  // The lone blocker lifted and put back a little off its spot stays blocking, on its spot.
+  const a0 = await centre(page, 'a0');
+  await dragTo(page, 'a0', { x: a0.x + 8, y: a0.y + 6 });
+  await idle(page);
+  st = await state(page);
+  expect(st.cards.a0).toMatchObject({ pose: { x: 0, y: -6, rot: 0 }, combat: 'block' });
+  expect(Object.values(st.lines).filter((l) => l.kind === 'block')).toHaveLength(1);
+
   // a2 joins the fan, dropped onto the attacker's right half as seat 0 sees it: from seat 1's side (the attacking
   // player orders damage) that is its left, so a2 goes first.
   const b0 = await centre(page, 'b0');

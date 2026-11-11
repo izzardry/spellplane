@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { TableState } from '../../../src/core/types';
-import { blockPlan, blockersOf, canBlock, fanAttacker, fanAxes, fanPositions, settleSlots, unblockDrafts, withUnblock } from '../../../src/scene/combat';
+import { blockPlan, blockersOf, canBlock, fanAttacker, fanAxes, fanPositions, fanUnder, settleSlots, unblockDrafts, withUnblock } from '../../../src/scene/combat';
 import { P, act, applyDrafts, board, card, ctxFor, ok, play, press, readyTable } from './helpers';
 
 /** Board with a00 (seat 0) and b02 (seat 1) attacking. a00 ends at (-150, -90); b02 at (150, 90). */
@@ -158,6 +158,44 @@ describe('several blockers fan out; left to right is the damage order', () => {
     expect(blockLines(s)).toEqual(['b00>a00']);
     expect(card(s, 'b00').pose).toEqual(P(-150, 6, 180));
     expect(unblockDrafts(s, ['b02'], ctxFor(s))).toEqual([]);
+  });
+
+  it('a lone blocker lifted and put back near its spot stays blocking (the drop is in its own fan)', () => {
+    let s = attacking();
+    s = block(s, ['b00'], 'a00');
+    const ctx = ctxFor(s);
+    // Its spot is (-150, 6); a drop 20 mm off it, with nothing under the pointer, is inside the fan.
+    expect(fanUnder(s, ['b00'], P(-130, 20), ctx)).toBe('a00');
+    const plan = blockPlan(s, ['b00'], 'a00', P(-130, 20), ctx)!;
+    expect(plan.actions).toEqual([]);
+    // Far from the fan, or for a card that blocks nothing, it is an ordinary drop (which unblocks).
+    expect(fanUnder(s, ['b00'], P(-150, 200), ctx)).toBeNull();
+    expect(fanUnder(s, ['b00'], P(0, 6), ctx)).toBeNull();
+    expect(fanUnder(s, ['b01'], P(-150, 6), ctx)).toBeNull();
+  });
+
+  it("a drop inside a two-blocker fan's extent reorders it", () => {
+    let s = attacking();
+    s = block(s, ['b00'], 'a00');
+    s = block(s, ['b01'], 'a00', P(-100, 6));
+    // b00 sits left (-184.5); dropped right of b01 (-115.5) within the fan: the order swaps.
+    const ctx = ctxFor(s);
+    expect(fanUnder(s, ['b00'], P(-90, 10), ctx)).toBe('a00');
+    s = applyDrafts(s, blockPlan(s, ['b00'], 'a00', P(-90, 10), ctx)!.actions, 's1');
+    expect(blockersOf(s, 'a00', ctx)).toEqual(['b01', 'b00']);
+    expect(blockLines(s)).toEqual(['b00>a00', 'b01>a00']);
+  });
+
+  it('at a seat angle off the right angles, re-planning an unchanged fan dispatches nothing (poses quantised as stored)', () => {
+    let s = attacking();
+    let n = 0;
+    const ctx = { angleOf: (seat: string) => (seat === 's1' ? 150 : 0), newId: (p: string) => `${p}-q${++n}` };
+    s = applyDrafts(s, blockPlan(s, ['b00'], 'a00', card(s, 'a00').pose, ctx)!.actions, 's1');
+    s = applyDrafts(s, blockPlan(s, ['b01'], 'a00', card(s, 'a00').pose, ctx)!.actions, 's1');
+    const [first] = blockersOf(s, 'a00', ctx);
+    const plan = blockPlan(s, [first!], 'a00', card(s, first!).pose, ctx)!;
+    expect(plan.actions).toEqual([]);
+    for (const [id, pose] of plan.poses) expect(card(s, id).pose, id).toEqual(pose);
   });
 
   it('settle after blocks: blockers go home, block lines go', () => {

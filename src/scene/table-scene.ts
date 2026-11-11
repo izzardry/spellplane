@@ -25,7 +25,7 @@ import { CardLayer, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
 import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
 import { LAYER, compareSort, displayedRot, dropTargets, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
-import { blockPlan, fanAttacker, settleSlots, withUnblock, type CombatContext } from './combat';
+import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, pointInCard, pointInRect, rot2 } from './math';
@@ -251,7 +251,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     reduced,
   });
   scene.add(lineView.lines.object);
-  scene.add(lineView.pingRings.object);
+  scene.add(lineView.pingRings);
   const seatAngleOf = (seat: SeatId): number => (state ? (seatLayoutOf(state, layout, seat)?.angle ?? 0) : 0);
   const combatCtx: CombatContext = { angleOf: seatAngleOf, newId };
 
@@ -685,7 +685,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     let predicted: Map<InstanceId, Pose> | null = null;
     // Dropped onto another seat's attacker (or its blocker fan): a block (DESIGN "Combat and annotation", Block).
     const under = d.external ? null : pick(d.last.x, d.last.y, new Set(d.ids));
-    const attacker = under ? fanAttacker(state, under.id) : null;
+    // Dropped back inside its own fan with nothing under the pointer: a reorder (or nothing), not an unblock.
+    const attacker = (under ? fanAttacker(state, under.id) : null) ?? (d.external ? null : fanUnder(state, d.ids, p, combatCtx));
     const plan = attacker ? blockPlan(state, d.ids, attacker, p, combatCtx) : null;
     if (plan) {
       if (plan.actions.length === 0) return back();

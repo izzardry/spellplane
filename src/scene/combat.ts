@@ -32,9 +32,10 @@ export interface BlockPlan {
   poses: Map<InstanceId, Pose>;
 }
 
+/** Quantise to 0.01 mm as the reducer stores poses (core/reducer/util.ts q), so a planned fan pose equals the stored one. */
 const round = (v: number): number => {
-  const r = Math.round(v * 1000) / 1000;
-  return Object.is(r, -0) ? 0 : r;
+  const r = Math.round(v * 100) / 100;
+  return r === 0 ? 0 : r;
 };
 
 const onBattlefield = (state: TableState, c: CardInstance): boolean => state.zones[c.zone]?.kind === 'battlefield';
@@ -117,6 +118,31 @@ export function fanAttacker(state: TableState, target: InstanceId): InstanceId |
   if (t.combat === 'attack') return t.id;
   for (const id of blockedBy(state, t.id)) if (state.cards[id]?.combat === 'attack' && onBattlefield(state, state.cards[id])) return id;
   return null;
+}
+
+/**
+ * The attacker whose fan a drop of `moved` lands in when nothing is under the pointer: every moved card blocks that one
+ * attacker and the pointer `at` is within the fan's footprint (its spots, a card each, grown by the snap radius). Such
+ * a drop rearranges the fan (or changes nothing) instead of unblocking, so a lone blocker lifted and put back stays.
+ */
+export function fanUnder(state: TableState, moved: readonly InstanceId[], at: TablePoint, ctx: Pick<CombatContext, 'angleOf'>): InstanceId | null {
+  if (moved.length === 0) return null;
+  const targets = new Set(moved.flatMap((id) => blockedBy(state, id)));
+  if (targets.size !== 1) return null;
+  const attacker = [...targets][0]!;
+  const a = state.cards[attacker];
+  if (!a || a.combat !== 'attack' || !onBattlefield(state, a)) return null;
+  const fan = blockersOf(state, attacker, ctx);
+  if (!moved.every((id) => fan.includes(id))) return null;
+  const angle = ctx.angleOf(state.cards[fan[0]!]!.controller);
+  const { out, side } = fanAxes(angle);
+  const dx = at.x - a.pose.x;
+  const dy = at.y - a.pose.y;
+  const s = dx * side.x + dy * side.y;
+  const o = dx * out.x + dy * out.y;
+  const halfW = ((fan.length - 1) * GEOMETRY.blockerSpacing) / 2 + GEOMETRY.card.w / 2 + GEOMETRY.snapRadius;
+  const halfH = GEOMETRY.card.h / 2 + GEOMETRY.snapRadius;
+  return Math.abs(s) <= halfW && Math.abs(o - GEOMETRY.blockerDistance) <= halfH ? attacker : null;
 }
 
 /** Whether two seats oppose each other: different seats, not teammates (DESIGN "Players, seats and formats", Two-Headed Giant). */

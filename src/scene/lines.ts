@@ -423,8 +423,13 @@ export function lineDrafts(state: TableState, source: Anchor, to: Anchor | null,
  */
 export class LineView {
   readonly lines = new LineLayer();
-  /** Ping rings over everything (DESIGN "Combat and annotation", Ping). */
-  readonly pingRings = new LineLayer({ renderOrder: 5, name: 'pings' });
+  /**
+   * Ping rings over everything (DESIGN "Combat and annotation", Ping): one layer per ping, so each fades on its own
+   * schedule (a layer's opacity applies to all its lines).
+   */
+  readonly pingRings = new THREE.Group();
+  private readonly pingLayers = new Map<string, LineLayer>();
+  private resolution: { w: number; h: number } | null = null;
   /** The line being drawn, if any. */
   draft: LineDraft | null = null;
   readonly anchors: AnchorResolver;
@@ -564,21 +569,33 @@ export class LineView {
     const pings = this.host.pings();
     const live = new Set(pings.map((p) => p.id));
     for (const id of [...this.pingSeen.keys()]) if (!live.has(id)) this.pingSeen.delete(id);
-    const segs: LineDraw[] = [];
-    let alpha = 0;
+    const shown = new Set<string>();
     for (const p of pings) {
       const age = this.pingAge(p.id, now);
       const a = pingAlpha(age, fade);
       if (a <= 0) continue;
       // With reduced motion the ring does not pulse; it still fades.
       const pad = this.host.reduced() ? 3 : pingPad(age);
-      alpha = Math.max(alpha, a);
       const colour = this.seatColour(p.seat).colour;
-      for (const sgm of this.pingRing(p.target, pad)) segs.push({ ...sgm, colour, widthPx: PING_WIDTH_PX });
+      const segs = this.pingRing(p.target, pad).map((sgm): LineDraw => ({ ...sgm, colour, widthPx: PING_WIDTH_PX }));
+      let layer = this.pingLayers.get(p.id);
+      if (!layer) {
+        layer = new LineLayer({ renderOrder: 5, name: `ping:${p.id}` });
+        if (this.resolution) layer.setResolution(this.resolution.w, this.resolution.h);
+        this.pingLayers.set(p.id, layer);
+        this.pingRings.add(layer.object);
+      }
+      layer.setOpacity(a);
+      layer.sync(segs);
+      shown.add(p.id);
     }
-    this.pingRings.setOpacity(alpha);
-    this.pingRings.sync(segs);
-    return alpha > 0;
+    for (const [id, layer] of this.pingLayers) {
+      if (shown.has(id)) continue;
+      this.pingRings.remove(layer.object);
+      layer.dispose();
+      this.pingLayers.delete(id);
+    }
+    return shown.size > 0;
   }
 
   /** The line end under table point `p` that is not a card (a seat's avatar spot). */
@@ -598,7 +615,8 @@ export class LineView {
 
   setResolution(w: number, h: number): void {
     this.lines.setResolution(w, h);
-    this.pingRings.setResolution(w, h);
+    this.resolution = { w, h };
+    for (const layer of this.pingLayers.values()) layer.setResolution(w, h);
   }
 
   debugLines(): SceneDebugLine[] {
@@ -624,6 +642,8 @@ export class LineView {
 
   dispose(): void {
     this.lines.dispose();
-    this.pingRings.dispose();
+    for (const layer of this.pingLayers.values()) layer.dispose();
+    this.pingLayers.clear();
+    this.pingRings.clear();
   }
 }

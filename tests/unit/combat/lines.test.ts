@@ -8,8 +8,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Anchor, LineKind, Pose, TableState } from '../../../src/core/types';
 import { lineKindFor } from '../../../src/scene/combat';
-import { ATTACH_APART, STUB_LEN, arrowSegments, cardReach, cardRing, dashSegment, drawnLines, lineDrafts, lineSourceOf, pingAlpha, pingPad, strokeSegments, trimLine, type AnchorResolver } from '../../../src/scene/lines';
+import { ATTACH_APART, LineView, STUB_LEN, arrowSegments, cardReach, cardRing, dashSegment, drawnLines, lineDrafts, lineSourceOf, pingAlpha, pingPad, strokeSegments, trimLine, type AnchorResolver } from '../../../src/scene/lines';
 import { paper } from '../../../src/themes/paper';
+import type { ActivePing } from '../../../src/scene/types';
+import { mtg } from '../../../src/games/mtg';
 import { P, act, applyDrafts, board, line, ok } from './helpers';
 
 const resolver = (s: TableState): AnchorResolver => ({
@@ -162,6 +164,39 @@ describe('ping', () => {
     expect(ring).toHaveLength(4);
     const xs = ring.map((s) => s.from.x);
     expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(88 + 6);
+  });
+});
+
+describe('ping layers', () => {
+  it('each ping fades on its own schedule: an older ping keeps fading while a newer one shows', () => {
+    const s = board();
+    let live: ActivePing[] = [{ id: 'p1', target: { kind: 'card', id: 'a00' }, seat: 's0' }];
+    const view = new LineView({
+      state: () => s,
+      pings: () => live,
+      layout: () => mtg.layout(s.format),
+      viewerSeat: () => 's0',
+      theme: () => paper,
+      cardPose: (id) => s.cards[id]?.pose ?? null,
+      freePose: (id) => s.cards[id]?.pose ?? null,
+      pxPerMm: () => 1,
+      reduced: () => true,
+    });
+    const opacities = () => Object.fromEntries(view.pingRings.children.map((o) => [o.name, (o as unknown as { material: { opacity: number } }).material.opacity]));
+    expect(view.syncPings(0)).toBe(true);
+    live = [...live, { id: 'p2', target: { kind: 'card', id: 'b00' }, seat: 's1' }];
+    expect(view.syncPings(1000)).toBe(true);
+    // p1 is half way through its fade, p2 starts at full strength.
+    expect(view.syncPings(1500)).toBe(true);
+    const o = opacities();
+    expect(o['ping:p1']).toBeCloseTo(pingAlpha(1500, 2000));
+    expect(o['ping:p2']).toBeCloseTo(pingAlpha(500, 2000));
+    // p1 faded: its layer goes; p2 still shows.
+    expect(view.syncPings(2100)).toBe(true);
+    expect(Object.keys(opacities())).toEqual(['ping:p2']);
+    expect(view.syncPings(3100)).toBe(false);
+    expect(view.pingRings.children).toHaveLength(0);
+    view.dispose();
   });
 });
 
