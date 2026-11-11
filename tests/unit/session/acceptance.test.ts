@@ -309,6 +309,40 @@ describe('undo', () => {
     expect(s.canUndo()).toBe(false);
   });
 
+  it('undoing a draw keeps a later scry: the scried card stays at the bottom', async () => {
+    const s = await withDeck();
+    await s.shuffle();
+    const order = [...s.secrets().libraryOrder];
+    await s.draw();
+    const scried = s.secrets().libraryOrder[0]!;
+    expect(scried).toBe(order[1]);
+    s.dispatch({ type: 'toZone', card: scried, to: LIB, position: 'bottom' });
+    const afterScry = [...s.secrets().libraryOrder];
+    expect(afterScry.at(-1)).toBe(scried);
+    const n = s.log().length;
+    expect(s.undo()).toBe(true);
+    // The drawn card is back on top; everything else, including the scry, is as it was.
+    expect(s.secrets().libraryOrder).toEqual([order[0], ...afterScry]);
+    expect(s.secrets().libraryOrder.at(-1)).toBe(scried);
+    expect(s.secrets().hand).toEqual([]);
+    expect(s.log().slice(n).map((e) => (e.kind === 'action' ? e.action.type : e.kind))).toEqual(['undo']);
+  });
+
+  it('undoing a move out of the middle of the library after a scry puts only that card back and keeps the scry', async () => {
+    const s = await withDeck();
+    await s.shuffle();
+    const order = [...s.secrets().libraryOrder];
+    s.dispatch({ type: 'move', card: order[10]!, to: 'graveyard:s0' });
+    s.dispatch({ type: 'toZone', card: order[0]!, to: LIB, position: 'bottom' });
+    expect(s.undo()).toBe(true);
+    const lib = s.secrets().libraryOrder;
+    expect(lib.at(-1)).toBe(order[0]);
+    expect(lib.indexOf(order[10]!)).toBe(10);
+    expect(lib.filter((x) => x !== order[10] && x !== order[0])).toEqual(order.filter((x) => x !== order[10] && x !== order[0]));
+    const rec = s.secrets().audit.at(-1)!;
+    expect(rec).toMatchObject({ kind: 'reorder', zone: LIB, count: 1, order: lib });
+  });
+
   it('undoing a move of the top library card needs no reorder', async () => {
     const s = await withDeck();
     const order = [...s.secrets().libraryOrder];

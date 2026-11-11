@@ -34,13 +34,14 @@ import {
   type ZoneId,
 } from '../core/index';
 import type { CardData } from '../data/types';
+import { SOLO_ROOM_ID } from '../store/tables';
 import type { LogRecord, TableRecord } from '../store/types';
 import { commitFor, orderHash, randomId, randomSalt, shuffledOrder, shuffleSeed } from './secrecy';
 import { emptySecrets, reconcileSecrets, type LibraryPlacement } from './secrets';
 import type { DeckImport, LookedCard, SessionListener, SoloSessionOptions, TableSession } from './types';
 
-/** Room id of the solo table (store/tables.ts SOLO_ROOM_ID). */
-export const SOLO_ROOM = 'solo';
+/** Room id of the solo table: the store's own constant, re-exported so the two cannot drift apart. */
+export const SOLO_ROOM = SOLO_ROOM_ID;
 
 /** A snapshot of the table goes into the table record every this many actions (DESIGN "Specification: network protocol and secrecy", Sync). */
 export const SNAPSHOT_EVERY = 200;
@@ -54,14 +55,24 @@ export const MULLIGAN_HAND = 7;
  */
 const SESSION_ONLY: ReadonlySet<string> = new Set(['ready', 'shuffleCommit', 'shuffleNonce', 'shuffleDone', 'reorder', 'mulligan', 'undo']);
 
+/**
+ * Public zone kinds that may hold a face-down card (DESIGN "Table model": face-down on the battlefield, face-down
+ * exile). Every other public zone (graveyard, stack, command) shows faces to everyone.
+ */
+const FACE_DOWN_KINDS: ReadonlySet<string> = new Set(['battlefield', 'exile']);
+
+/** Placeholder `by`/`cid` for dry runs of drafts that are stamped only when they are committed. */
+const DRY_CID = 'dry-run';
+
 /** The solo session: TableSession plus what tests and the debug hook need. */
 export interface SoloSession extends TableSession {
   readonly roomId: string;
   /** Resolves once every action applied so far has been written to IndexedDB (immediately without a store). */
   whenSaved(): Promise<void>;
   /**
-   * Put an own hand or library card into a public zone face down, keeping its identity in this browser (DESIGN "Table
-   * model": face-down on the battlefield, face-down exile). No `reveal` is emitted; turning it face up later reveals it.
+   * Put an own hand or library card onto a battlefield or into exile face down, keeping its identity in this browser
+   * (DESIGN "Table model": face-down on the battlefield, face-down exile; other public zones show faces). No `reveal`
+   * is emitted; turning it face up, or moving it into a zone that shows faces, reveals it.
    * Not yet on TableSession: the contract has no face-down placement (reported to the integrator).
    */
   playFaceDown(card: InstanceId, to: ZoneId, pose?: Pose): Action;
@@ -71,9 +82,12 @@ interface UndoEntry {
   cid: string;
   group?: string;
   inverse: UndoableAction;
-  /** The private hand order before the action, put back when the undo restores the same set of hand cards. */
+  /** The private hand order before the action: a card the undo returns to the hand goes back to its old place in it. */
   hand: InstanceId[];
-  /** The private library order before the action, put back (with a private-reorder trace) when the undo restores the same set. */
+  /**
+   * The private library order before the action: a card the undo returns to the library goes back to its old place
+   * in it (with a private-reorder trace). Every other card keeps its current place, so later reorders survive.
+   */
   library: InstanceId[];
 }
 
@@ -110,10 +124,19 @@ function sameOrder(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((x, i) => x === b[i]);
 }
 
-function sameSet(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false;
-  const s = new Set(a);
-  return b.every((x) => s.has(x));
+/**
+ * `now` with every card that is not in `prior` but is in `old` (the cards an undo just returned to this list) moved
+ * back to its index in `old`; every other card keeps its current relative order.
+ */
+export function putBack(now: readonly InstanceId[], prior: readonly InstanceId[], old: readonly InstanceId[]): InstanceId[] {
+  const before = new Set(prior);
+  const oldIndex = new Map(old.map((id, i) => [id, i] as const));
+  const returned = now.filter((id) => !before.has(id) && oldIndex.has(id)).sort((a, b) => oldIndex.get(a)! - oldIndex.get(b)!);
+  if (!returned.length) return [...now];
+  const back = new Set(returned);
+  const out = now.filter((id) => !back.has(id));
+  for (const id of returned) out.splice(Math.min(oldIndex.get(id)!, out.length), 0, id);
+  return out;
 }
 
 function errorText(e: unknown): string {
@@ -190,26 +213,34 @@ class Solo implements SoloSession {
   // --- Public actions ------------------------------------------------------------------------------
 
   dispatch(draft: ActionDraft): Action {
-    const action = this.stamp(draft);
-    if (this.disposed) return action;
+    // Checked and dry-run unstamped; the cid is taken only when the action is committed or finally refused, so the
+    // reveal that goes first also gets the earlier cid.
+    const action = this.unstamped(draft);
+    if (this.disposed) return this.stamp(action);
     if (SESSION_ONLY.has(action.type)) {
       this.warn(`${action.type} needs the session's private effects and cannot be dispatched directly`);
-      return action;
+      return this.stamp(action);
     }
     if (action.type === 'draw' && this.state.cards[action.instanceId]?.zone === this.zone('library') && this.sec.libraryOrder[0] !== action.instanceId) {
       this.warn('A draw takes the top card of the library');
-      return action;
+      return this.stamp(action);
     }
     if (action.type === 'toZone' && this.state.cards[action.card]?.zone === action.to) {
       // A card put on top or at the bottom of the library it is in: a private reorder (scry, surveil).
-      if (action.to === this.zone('library')) return this.reorderOne(action.card, action.position === 'bottom' ? 'bottom' : 'top', action.group) ?? action;
-      return action;
+      if (action.to === this.zone('library')) return this.reorderOne(action.card, action.position === 'bottom' ? 'bottom' : 'top', action.group) ?? this.stamp(action);
+      return this.stamp(action);
     }
-    const reveal = this.revealFor(action);
-    if (reveal && !this.commit(reveal)) return action;
-    const done = this.commit(action);
+    // A face-down card moved into a public zone that shows faces (graveyard, stack, command) is turned up there,
+    // in one undo group with the move.
+    const turnUp = this.turnsUpOnMove(action);
+    const act = turnUp && action.group === undefined ? ({ ...action, group: randomId('g') } as Action) : action;
+    const reveal = this.revealFor(act, turnUp);
+    if (reveal && !this.commit(this.stamp(reveal))) return this.stamp(act);
+    const stamped = this.stamp(act);
+    const done = this.commit(stamped);
+    if (done && turnUp) this.commit(this.stamp({ type: 'flip', card: referencedCard(act)!, face: 'up', ...(act.group !== undefined ? { group: act.group } : {}) }));
     this.notify();
-    return done ?? action;
+    return done ?? stamped;
   }
 
   playFaceDown(card: InstanceId, to: ZoneId, pose?: Pose): Action {
@@ -217,8 +248,9 @@ class Solo implements SoloSession {
     if (this.disposed) return action;
     const s = this.state;
     const c = Object.hasOwn(s.cards, card) ? s.cards[card] : undefined;
-    if (!c || c.owner !== this.seat || s.zones[c.zone]?.visibility === 'public' || s.zones[to]?.visibility !== 'public') {
-      this.warn('Only a card from your own hand or library can be put into a public zone face down');
+    const dest = Object.hasOwn(s.zones, to) ? s.zones[to] : undefined;
+    if (!c || c.owner !== this.seat || s.zones[c.zone]?.visibility === 'public' || dest?.visibility !== 'public' || !FACE_DOWN_KINDS.has(dest.kind)) {
+      this.warn('Only a card from your own hand or library can be put onto a battlefield or into exile face down');
       this.notify();
       return action;
     }
@@ -309,13 +341,14 @@ class Solo implements SoloSession {
     const batch = this.undoStack.slice(this.undoStack.length - k).reverse();
     this.undoStack = this.undoStack.slice(0, this.undoStack.length - k);
     const group = batch.length > 1 ? randomId('g') : undefined;
-    const undos = batch.map((e) => this.stamp({ type: 'undo', of: e.cid, inverse: e.inverse, ...(group ? { group } : {}) }));
-    // Dry run first: a group is undone completely or not at all.
+    const undos = batch.map((e): ActionDraft => ({ type: 'undo', of: e.cid, inverse: e.inverse, ...(group ? { group } : {}) }));
+    // Dry run first (unstamped, so a refused undo uses up no cid): a group is undone completely or not at all.
     let s = this.state;
     for (const u of undos) {
-      const next = reduce(s, { ...u, seq: s.seq + 1 });
+      const dry = { ...u, by: this.seat, cid: DRY_CID, seq: s.seq + 1 } as Action;
+      const next = reduce(s, dry);
       if (next === s) {
-        this.warn(`Cannot undo: ${explain(s, { ...u, seq: s.seq + 1 }) ?? 'refused'}`);
+        this.warn(`Cannot undo: ${explain(s, dry) ?? 'refused'}`);
         this.notify();
         return false;
       }
@@ -323,11 +356,16 @@ class Solo implements SoloSession {
     }
     undos.forEach((u, i) => {
       const { hand, library } = batch[i]!;
-      if (!this.commit(u, { then: (sec) => (sameSet(sec.hand, hand) ? { ...sec, hand: [...hand] } : sec) }, false)) return;
+      const handPrior = this.sec.hand;
+      const libraryPrior = this.sec.libraryOrder;
+      // Only the cards this step returns go back to their old places; the rest keep the current private order, so a
+      // later scry or other private reorder is not undone with it (DESIGN "Turn flow and confirmation", Undo).
+      if (!this.commit(this.stamp(u), { then: (sec) => ({ ...sec, hand: putBack(sec.hand, handPrior, hand) }) }, false)) return;
       // The public inverse puts a library card on top; when it came from deeper in the library, putting it back there
       // is a private reorder with its public trace and audit record (DESIGN "Specification: network protocol and secrecy").
       const now = this.sec.libraryOrder;
-      if (sameSet(now, library) && !sameOrder(now, library)) this.commitReorder([...library], 1, group);
+      const target = putBack(now, libraryPrior, library);
+      if (!sameOrder(now, target)) this.commitReorder(target, 1, group);
     });
     this.notify();
     return true;
@@ -337,6 +375,12 @@ class Solo implements SoloSession {
 
   private zone(kind: string): ZoneId {
     return zoneId(kind, this.seat);
+  }
+
+  /** The draft as an action with `by` and a placeholder cid, for checks and dry runs before it is stamped. */
+  private unstamped(draft: ActionDraft): Action {
+    const { seq: _seq, ...rest } = draft as ActionDraft & { seq?: number };
+    return { ...rest, by: this.seat, cid: DRY_CID } as Action;
   }
 
   /** Stamp `by` and a fresh client-unique `cid`; `seq` is set when the action is applied. */
@@ -363,11 +407,28 @@ class Solo implements SoloSession {
   }
 
   /**
-   * The reveal an action needs first: the action names an own card whose identity only this browser holds, and the
-   * card ends up public (moved out of a hidden zone, cast, or turned face up). Null when the action would not apply
-   * even with the reveal, so a refused action never publishes an identity.
+   * Whether `action` moves a face-down card that may be turned up (it has a public identity, is a labelled table
+   * object, or is an own card whose identity this browser holds) from a public zone into a public zone that shows
+   * faces to everyone: graveyard, stack, command (DESIGN "Table model"; only a battlefield and exile hold face-down cards).
    */
-  private revealFor(action: Action): Action | null {
+  private turnsUpOnMove(action: Action): boolean {
+    if (action.type !== 'move') return false;
+    const s = this.state;
+    const card = Object.hasOwn(s.cards, action.card) ? s.cards[action.card] : undefined;
+    const dest = Object.hasOwn(s.zones, action.to) ? s.zones[action.to] : undefined;
+    if (!card || !dest || card.face !== 'down' || card.zone === action.to) return false;
+    if (s.zones[card.zone]?.visibility !== 'public' || dest.visibility !== 'public' || FACE_DOWN_KINDS.has(dest.kind)) return false;
+    const own = card.owner === this.seat && Object.hasOwn(this.sec.identities, card.id);
+    return card.identity !== undefined || card.tokenLabel !== undefined || own;
+  }
+
+  /**
+   * The reveal an action needs first: the action names an own card whose identity only this browser holds, and the
+   * card ends up public (moved out of a hidden zone, cast, turned face up, or moved face down into a zone that shows
+   * faces, `turnUp`). Null when the action would not apply even with the reveal, so a refused action never publishes
+   * an identity. Returned unstamped: it gets its cid only when it is committed.
+   */
+  private revealFor(action: Action, turnUp: boolean): ActionDraft | null {
     const id = referencedCard(action);
     if (id === null || action.type === 'reveal' || (action.type === 'flip' && action.ref !== undefined)) return null;
     const s = this.state;
@@ -375,10 +436,10 @@ class Solo implements SoloSession {
     const secret = Object.hasOwn(this.sec.identities, id) ? this.sec.identities[id] : undefined;
     if (!card || !secret || card.owner !== this.seat || card.identity !== undefined) return null;
     const hidden = s.zones[card.zone]?.visibility !== 'public';
-    const turnsUp = !hidden && card.face === 'down' && action.type === 'flip' && action.face === 'up';
+    const turnsUp = turnUp || (!hidden && card.face === 'down' && action.type === 'flip' && action.face === 'up');
     if (!hidden && !turnsUp) return null;
-    const reveal = this.stamp({ type: 'reveal', instanceId: id, ref: secret.card, salt: secret.salt, ...(action.group !== undefined ? { group: action.group } : {}) });
-    const s1 = reduce(s, { ...reveal, seq: s.seq + 1 });
+    const reveal: ActionDraft = { type: 'reveal', instanceId: id, ref: secret.card, salt: secret.salt, ...(action.group !== undefined ? { group: action.group } : {}) };
+    const s1 = reduce(s, { ...reveal, by: this.seat, cid: DRY_CID, seq: s.seq + 1 } as Action);
     if (s1 === s) return null;
     const s2 = reduce(s1, { ...action, seq: s.seq + 2 } as Action);
     if (s2 === s1) return null;

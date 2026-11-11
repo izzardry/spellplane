@@ -160,15 +160,73 @@ describe('face-down placement', () => {
     expect(s.secrets().libraryOrder).toEqual(order);
   });
 
-  it('refuses cards that are not in an own hidden zone and hidden destinations', async () => {
+  it('refuses cards that are not in an own hidden zone, hidden destinations and zones that show faces', async () => {
     const s = await withDeck();
     await s.draw();
     const id = s.secrets().hand[0]!;
     const before = json(s.getState());
     s.playFaceDown(id, LIB);
     s.playFaceDown('missing', BF);
+    s.playFaceDown(id, 'graveyard:s0');
+    s.playFaceDown(id, 'stack');
     expect(json(s.getState())).toBe(before);
     expect(s.log().at(-1)).toMatchObject({ kind: 'system', level: 'warn' });
+  });
+});
+
+describe('face-down cards moved into zones that show faces', () => {
+  it('an own face-down card moved from the battlefield to the graveyard is revealed and turned up there, undone as one step', async () => {
+    const s = await withDeck();
+    await s.draw();
+    const id = s.secrets().hand[0]!;
+    s.playFaceDown(id, BF, { x: 0, y: 120, rot: 0 });
+    const n = s.log().length;
+    const done = s.dispatch({ type: 'move', card: id, to: 'graveyard:s0' });
+    const added = actions(s.log().slice(n));
+    expect(added.map((a) => a.type)).toEqual(['reveal', 'move', 'flip']);
+    expect(added[0]).toMatchObject({ instanceId: id, ref: s.secrets().identities[id]!.card, salt: s.secrets().identities[id]!.salt });
+    expect(done).toMatchObject({ type: 'move', seq: added[1]!.seq });
+    expect(new Set(added.map((a) => a.group)).size).toBe(1);
+    expect(added[0]!.group).toBeDefined();
+    expect(s.getState().cards[id]).toMatchObject({ zone: 'graveyard:s0', face: 'up', identity: s.secrets().identities[id]!.card });
+    expect(checkInvariants(s.getState())).toEqual([]);
+    // One undo step takes the move and the turn-up back; the identity stays public (it was revealed).
+    expect(s.undo()).toBe(true);
+    expect(s.getState().cards[id]).toMatchObject({ zone: BF, face: 'down' });
+    expect(s.canUndo()).toBe(true);
+  });
+
+  it('a hidden card (after hide) moved to the graveyard is revealed again; one with a public identity is only turned up', async () => {
+    const s = await withDeck();
+    await s.draw(2);
+    const [a, b] = s.secrets().hand;
+    for (const id of [a!, b!]) s.dispatch({ type: 'move', card: id, to: BF, pose: { x: 0, y: 120, rot: 0 } });
+    s.dispatch({ type: 'hide', card: a! });
+    s.dispatch({ type: 'flip', card: b!, face: 'down' });
+    let n = s.log().length;
+    s.dispatch({ type: 'move', card: a!, to: 'graveyard:s0' });
+    expect(actions(s.log().slice(n)).map((x) => x.type)).toEqual(['reveal', 'move', 'flip']);
+    expect(s.getState().cards[a!]).toMatchObject({ face: 'up', identity: s.secrets().identities[a!]!.card });
+    n = s.log().length;
+    s.dispatch({ type: 'move', card: b!, to: 'graveyard:s0', group: 'g-sel' });
+    const added = actions(s.log().slice(n));
+    expect(added.map((x) => x.type)).toEqual(['move', 'flip']);
+    expect(added.map((x) => x.group)).toEqual(['g-sel', 'g-sel']);
+    expect(s.getState().cards[b!]!.face).toBe('up');
+  });
+
+  it('a face-down card moved into exile or to another battlefield spot stays face down and secret', async () => {
+    const s = await withDeck();
+    await s.draw();
+    const id = s.secrets().hand[0]!;
+    const { sid } = s.secrets().identities[id]!.card;
+    s.playFaceDown(id, BF, { x: 0, y: 120, rot: 0 });
+    const n = s.log().length;
+    s.dispatch({ type: 'move', card: id, to: 'exile:s0' });
+    expect(actions(s.log().slice(n)).map((a) => a.type)).toEqual(['move']);
+    expect(s.getState().cards[id]).toMatchObject({ zone: 'exile:s0', face: 'down' });
+    expect(json(s.getState())).not.toContain(sid);
+    expect(json(s.log())).not.toContain(sid);
   });
 });
 
@@ -298,6 +356,21 @@ describe('subscribe and dispose', () => {
     s.dispatch({ type: 'life', seat: 's0', delta: 1 });
     expect(seen).toHaveLength(count);
     await expect(s.draw()).rejects.toThrow();
+  });
+
+  it('uses up no cid on internal dry runs: committed actions carry consecutive cid numbers', async () => {
+    const s = await withDeck();
+    await s.draw(2);
+    const [a, b] = s.secrets().hand;
+    // A hand card put into the library (dry-run reveal, none emitted), a play (reveal emitted), and undos.
+    s.dispatch({ type: 'toZone', card: a!, to: LIB, position: 'bottom' });
+    s.dispatch({ type: 'move', card: b!, to: BF, pose: { x: 0, y: 120, rot: 0 } });
+    expect(s.undo()).toBe(true);
+    expect(s.undo()).toBe(true);
+    const nums = actions(s.log()).map((x) => Number(x.cid.split('.').at(-1)));
+    nums.forEach((k, i) => {
+      if (i > 0) expect(k).toBe(nums[i - 1]! + 1);
+    });
   });
 
   it('stamps by, a unique cid and consecutive seqs', async () => {

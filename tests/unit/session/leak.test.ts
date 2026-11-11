@@ -7,7 +7,9 @@
  *
  * Scenario: import, shuffle, draw seven, mulligan, scry one to the bottom, look at the top two, play a land, cast a
  * spell, return a card to the library, undo, mill one, put a hand card onto the battlefield face down and the top
- * library card into exile face down (DESIGN "Table model": face-down identities stay with their controller).
+ * library card into exile face down, move a third face-down card from the battlefield into exile (still secret) and a
+ * fourth into the graveyard (revealed and turned up there) (DESIGN "Table model": face-down identities stay with their
+ * controller; only a battlefield and exile hold face-down cards).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Action } from '../../../src/core/actions';
@@ -35,6 +37,14 @@ describe('hidden information stays in the secret store', () => {
     const faceDown = [s.secrets().hand[0]!, s.secrets().libraryOrder[0]!];
     s.playFaceDown(faceDown[0]!, 'battlefield:s0', { x: 40, y: 120, rot: 0 });
     s.playFaceDown(faceDown[1]!, 'exile:s0');
+    const [third, fourth] = s.secrets().hand;
+    faceDown.push(third!);
+    s.playFaceDown(third!, 'battlefield:s0', { x: 80, y: 120, rot: 0 });
+    s.dispatch({ type: 'tap', card: third!, tapped: true });
+    s.dispatch({ type: 'move', card: third!, to: 'exile:s0' });
+    s.playFaceDown(fourth!, 'battlefield:s0', { x: 120, y: 120, rot: 0 });
+    s.dispatch({ type: 'move', card: fourth!, to: 'graveyard:s0' });
+    expect(s.getState().cards[fourth!]).toMatchObject({ zone: 'graveyard:s0', face: 'up', identity: s.secrets().identities[fourth!]!.card });
     await s.whenSaved();
 
     const state = s.getState();
@@ -42,7 +52,7 @@ describe('hidden information stays in the secret store', () => {
     const actions: Action[] = s.log().flatMap((e) => (e.kind === 'action' ? [e.action] : []));
     // Cards whose identity was published (reveal actions); every other own card must stay unknown.
     const revealed = new Set(actions.flatMap((a) => (a.type === 'reveal' ? [a.instanceId] : [])));
-    expect(revealed.size).toBe(3);
+    expect(revealed.size).toBe(4);
     for (const id of faceDown) {
       expect(s.getState().cards[id]).toMatchObject({ face: 'down' });
       expect(s.getState().cards[id]!.identity).toBeUndefined();
