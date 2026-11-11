@@ -27,6 +27,7 @@ What to build: `docs/DESIGN.md`. Order, packages, acceptance tests, gates: `docs
 ## Test harnesses
 
 - URL flags (`src/util/flags.ts`): `?profile=a` (namespaced IndexedDB/caches), `?transport=local` (BroadcastChannel), `?faces=placeholder`, `?speech=fake`.
+- Module test pages (dev/test builds): `?harness=scene` or `?harness=ui` mounts `src/<name>/harness.ts` (`mount(target)`) instead of the app (`src/main.ts`).
 - `window.__spellplane` debug hook (dev/test builds): modules register their part with `registerDebug()` from `src/util/debug.ts`. Playwright helpers in `tests/e2e/helpers/app.ts` (`openApp`, `hook`, `shot`).
 - `LoopbackNetwork` (`src/net/loopback.ts`): N in-process transports with seeded delay, drop, reordering and `kill`/`revive`; use Vitest fake timers.
 - Fixtures: `tests/fixtures/README.md`.
@@ -35,3 +36,5 @@ What to build: `docs/DESIGN.md`. Order, packages, acceptance tests, gates: `docs
 
 - English everywhere. Conventional commit messages. Units in table space are millimetres (see DESIGN "Specification: geometry, layout and motion").
 - Engine behaviour is asserted on state hashes and the debug hook, never on pixels. Screenshots are evidence, not baselines.
+- `TableState`, `SecretStore` and every `Action` are plain JSON (rules at the top of `src/core/types.ts`); hash with `stateHash`/`canonicalJson` from `src/core/hash.ts`. Zone ids are `<kind>:<seatId>` or `<kind>` (`src/core/ids.ts`).
+- The HUD and scene dispatch `ActionDraft`s; the session stamps `by`, `cid` and `seq`. A gesture over a selection dispatches one action per card with a shared `group` (undone as one step).

@@ -85,6 +85,7 @@ One player can paste a decklist and goldfish it on the Paper theme with every ca
 | M0-P4 HUD | App shell and routing, hand fan, pile viewers (library, graveyard, exile), context menu, keymap with remapping and `?` cheat sheet, inspect overlay, avatar with life and counters, turn strip, log panel, deck import dialog, token search. | `ui/*` | M0-C |
 | M0-P5 Local store | IndexedDB schema v1 (identity, settings, decks, solo table snapshot), service worker image cache, storage persistence request. | `store/*`, `sw.ts` | M0-C |
 | M0-P6 Magic definition | Zones and visibility rules, phases, starting life, neutral card back, one- and two-seat layouts with territory and zone geometry. | `games/mtg/*` | M0-C |
+| M0-P7 Solo session | *(added 11 Nov 2026)* The local game client that glues the modules: holds the table state and applies actions through the reducer, owns the local player's secret store (library order, hand identities), runs private effects (shuffle, draw, mulligan) around the reducer, personal undo stack, persistence through the store, app wiring in `main.ts`, debug-hook assembly. Milestone 1 plugs the sequencer and sync into it. | `session/*`, `main.ts`, `debug/*` | M0-P1, M0-P5 |
 
 **Acceptance tests**
 
@@ -92,7 +93,8 @@ One player can paste a decklist and goldfish it on the Paper theme with every ca
 - **M0-P2.** Parser accepts plain, MTGA and MTGO lists, sideboard separators and set-and-number suffixes; rejects with line numbers. The limiter never exceeds 2 requests per second under a burst of 50 calls (fake timers). A double-faced fixture card yields two face images.
 - **M0-P3.** Through the debug hook: a drag ends at the snapped position within 0.5 mm; dropping on a lower edge creates a cascade with 14 mm offsets; dropping squarely creates a squared pile; tap sets rotation to 90°; zooming keeps the world point under the cursor fixed within 1 px; 300 cards render in at most 12 draw calls.
 - **M0-P4.** Every action in the canonical keymap dispatches the right action on the hovered card; no key fires while the chat or a note field has focus; the cheat sheet lists every bound key.
-- **M0-P5.** Reloading the page restores the solo table to the same state hash.
+- **M0-P5.** Snapshot and settings round-trip through IndexedDB (fake-indexeddb); schema v1 has every store of the design's persistence table.
+- **M0-P7.** Importing the fixture deck creates 60 hidden library cards whose identities exist only in the secret store; shuffle permutes the private order; draw moves the top card to the hand; undo restores the previous hash; reloading the page restores the solo table to the same state hash (moved here from M0-P5, which has no app).
 
 **Gate M0-G** (`tests/e2e/m0.gate.spec.ts`): paste the 60-card fixture decklist; shuffle; draw seven; mulligan once; play a land; tap it; cast a creature through the stack and resolve it to the battlefield; add two +1/+1 counters; create a related token; attack and settle; move a card to the graveyard and exile; undo the last move; reload and find the same state. Screenshot set: empty table, opening hand, mid-game board, pile fan, inspect, cheat sheet.
 
@@ -379,15 +381,16 @@ Sixteen decisions from the second interview on 10 November 2026 shape this plan;
 
 Ticked by the main session as packages are merged and gates pass.
 
-- [x] B0 Repository bootstrap (items B0.1 to B0.7 above; Pages blocked by private repo, owner check)
-- [ ] M0-C Contracts
-- [ ] M0-P1 Core engine
-- [ ] M0-P2 Card data
-- [ ] M0-P3 Scene
-- [ ] M0-P4 HUD
-- [ ] M0-P5 Local store
-- [ ] M0-P6 Magic definition
-- [ ] M0-G Gate and owner playtest
+- [x] B0 Repository bootstrap (items B0.1 to B0.7 above; Pages live since 11 Nov 2026 after the owner made the repo public)
+- [x] M0-C Contracts
+- [x] M0-P1 Core engine
+- [x] M0-P2 Card data
+- [x] M0-P3 Scene
+- [x] M0-P4 HUD
+- [x] M0-P5 Local store
+- [x] M0-P6 Magic definition
+- [x] M0-P7 Solo session
+- [x] M0-G Gate (owner playtest pending)
 - [ ] M1-C Contracts
 - [ ] M1-P1 Transport and sequencer
 - [ ] M1-P2 Secrecy
