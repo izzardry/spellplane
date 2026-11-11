@@ -14,7 +14,8 @@ test('imports the fixture deck as 60 hidden library cards whose identities exist
   page.on('pageerror', (e) => errors.push(e.message));
   // Card data comes from the injected fixtures: the page never asks Scryfall (or anything but the test server).
   page.on('request', (r) => {
-    if (!new URL(r.url()).hostname.match(/^(localhost|127\.0\.0\.1)$/) && !r.url().startsWith('data:')) outside.push(r.url());
+    // data: and blob: URLs never leave the browser (the table scene loads its face textures through blob: URLs).
+    if (!new URL(r.url()).hostname.match(/^(localhost|127\.0\.0\.1)$/) && !/^(data|blob):/.test(r.url())) outside.push(r.url());
   });
   await openSolo(page, freshProfile(info));
   const res = await call<{ main: number; side: number; errors: string[] }>(page, 'importDecklist', decklist('gw-m19-60.txt'));

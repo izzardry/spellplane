@@ -1,9 +1,9 @@
-import { mount, type Component } from 'svelte';
-import { createFaceSource, parseDecklist, ScryfallCardDataSource, type CardDataSource, type ParseResult } from './data/index';
+import { mount } from 'svelte';
+import { createFaceSource, parseDecklist, ScryfallCardDataSource, type CardDataSource } from './data/index';
 import { mtg } from './games/index';
 import { createTableScene } from './scene/index';
 import { createSoloSession } from './session/index';
-import { openStores, SOLO_ROOM_ID, type LocalStores, type SettingsStore } from './store/index';
+import { openStores, SOLO_ROOM_ID, type LocalStores } from './store/index';
 import App from './ui/App.svelte';
 import type { AppProps } from './ui/types';
 
@@ -17,12 +17,6 @@ const HARNESSES = {
 } as const;
 
 const harness = __SPELLPLANE_DEBUG__ ? new URLSearchParams(location.search).get('harness') : null;
-
-/**
- * Props for the app shell. `settings` and `parseDecklist` are optional AppProps the HUD (M0-P4) adds; they are
- * declared here too so this file compiles before and after that package is merged.
- */
-type ShellProps = AppProps & { settings?: SettingsStore; parseDecklist?: (text: string) => ParseResult };
 
 /** The solo table (PLAN M0-P7): stores, card data, faces, the session, the debug hook, then the app shell. */
 async function boot(el: HTMLElement): Promise<void> {
@@ -43,7 +37,7 @@ async function boot(el: HTMLElement): Promise<void> {
 
   if (__SPELLPLANE_DEBUG__) (await import('./debug/session')).registerSessionDebug(session, { cardData, parseDecklist });
 
-  const props: ShellProps = {
+  const props: AppProps = {
     session,
     createScene: createTableScene,
     faces,
@@ -52,9 +46,7 @@ async function boot(el: HTMLElement): Promise<void> {
     parseDecklist,
     ...(stores ? { settings: stores.settings } : {}),
   };
-  // TODO(integrator, M0-P4): until the HUD's App.svelte (which takes Partial<AppProps>) is merged, App is the B0 smoke
-  // stage and ignores these props; after the merge the cast is redundant and can go.
-  mount(App as unknown as Component<ShellProps>, { target: el, props });
+  mount(App, { target: el, props });
 }
 
 if (harness && Object.hasOwn(HARNESSES, harness)) {

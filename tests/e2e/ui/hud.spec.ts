@@ -551,12 +551,12 @@ test.describe('app shell routes (PLAN M0-P4: #/ solo table, room for #/t/<room>/
       await expect(page.getByTestId(id)).toBeVisible();
       await page.getByRole('link', { name: /solo table/i }).click();
       await expect(page.getByTestId(id)).toHaveCount(0);
-      await expect(page.getByTestId('table')).toBeVisible();
+      await expect(page.getByTestId('hud')).toBeVisible();
     });
   }
 
   test('#/ keeps the solo table', async ({ page }) => {
     await openApp(page, { hash: '/' });
-    await expect(page.getByTestId('table')).toBeVisible();
+    await expect(page.getByTestId('hud')).toBeVisible();
   });
 });
