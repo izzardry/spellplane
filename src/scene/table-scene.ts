@@ -24,6 +24,7 @@ import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, type LineDraw } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion } from './motion';
+import { entryAt, hoverHighlights, itemAnchor, labelPoint, notePoint, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
 import { TextLayer, type TextSpec } from './text';
 import { tierForScreenHeight } from './textures';
@@ -216,6 +217,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let raf = 0;
   let disposed = false;
   let hovered: InstanceId | null = null;
+  /** The stack item under the pointer (DESIGN "The effect stack": hovering an item highlights its source and targets). */
+  let hoverItem: string | null = null;
+  /** The stack lane as drawn (scene/stack.ts), refreshed with every state. */
+  let entries: StackEntry[] = [];
   let idCounter = 0;
   const idPrefix = Math.random().toString(36).slice(2, 8);
   const newId = (p: string) => `${p}-${idPrefix}-${(++idCounter).toString(36)}`;
@@ -242,6 +247,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   function relayout(now: number): void {
     if (!state) return;
     const places = placeCards(state, view, { game: opts.game, layout, viewerSeat });
+    entries = stackEntries(state, layout.stackLane, viewerAngle(state, layout, viewerSeat));
+    if (hoverItem && !state.stack.some((i) => i.id === hoverItem)) hoverItem = null;
     for (const id of [...rcards.keys()]) if (!places.has(id) && !drag?.ids.includes(id)) rcards.delete(id);
     for (const [id, place] of places) {
       const inst = state.cards[id]!;
@@ -372,6 +379,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         specs.set(`tl:${rc.id}`, { text: c.tokenLabel.slice(0, 24), x: pose.x, y: pose.y, z: 20, rot: pose.rot, size: 5, colour: t.fg, outline: t.surface });
       }
     }
+    // Stack lane: each item's number and kind beside its title strip, its note on the other side, in the controller's
+    // seat colour (DESIGN "The effect stack", Reading it; Note).
+    for (const e of entries) {
+      const pose = entryPose(e);
+      const colour = seatColour(e.item.controller);
+      const lp = labelPoint(pose);
+      specs.set(`stk:${e.item.id}`, { text: `${e.number} ${e.kindLabel.toUpperCase()}`, x: lp.x, y: lp.y, z: 20, rot: pose.rot, size: 4.5, colour, outline: t.surface, anchorX: 'right', anchorY: 'middle', letterSpacing: 0.06 });
+      if (e.item.note) {
+        const np = notePoint(pose);
+        specs.set(`stkn:${e.item.id}`, { text: e.item.note.slice(0, 40), x: np.x, y: np.y, z: 20, rot: pose.rot, size: 4.5, colour: t.fg, outline: t.surface, anchorX: 'left', anchorY: 'middle' });
+      }
+    }
     return specs;
   }
 
@@ -380,6 +399,26 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     for (const rc of rcards.values()) if (rc.inst.pile?.id === pile && (!best || rc.inst.pile.index > best.inst.pile!.index)) best = rc;
     return best?.id ?? null;
   }
+  /** The seat colour (CSS) of a seat, the first seat colour when unknown. */
+  function seatColour(seat: SeatId): string {
+    const c = state?.seats[seat]?.colour ?? 0;
+    return (theme.tokens.colours.seats[c] ?? theme.tokens.colours.seats[0]!).colour;
+  }
+
+  /** Where a stack entry is drawn now: a spell follows its card's motion, a marker rests at its slot. */
+  function entryPose(e: StackEntry): Pose {
+    const rc = !e.marker && e.item.card !== undefined ? rcards.get(e.item.card) : undefined;
+    return rc ? rc.motion.pose : e.pose;
+  }
+
+  /** Outline of a stack entry: its controller's seat colour, pulsing while its round waits (reduced motion: steady). */
+  function entryHighlight(e: StackEntry): { colour: string; width: number } {
+    const base = 0.8;
+    if (!e.pending) return { colour: seatColour(e.item.controller), width: base };
+    const pulse = reduced() ? 1 : 0.5 + 0.5 * Math.sin((lastTick / 900) * Math.PI * 2);
+    return { colour: seatColour(e.item.controller), width: base + 1.4 * pulse };
+  }
+
   function pileCount(pile: string): number {
     let n = 0;
     for (const rc of rcards.values()) if (rc.inst.pile?.id === pile) n++;
@@ -398,10 +437,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         const sl = seatLayoutOf(state!, layout, a.id);
         return sl ? { x: sl.zones.avatar.x, y: sl.zones.avatar.y } : null;
       }
-      const item = state!.stack.find((s) => s.id === a.id);
-      const card = item?.card ?? item?.source;
-      const rc = card ? rcards.get(card) : undefined;
-      return rc ? { x: rc.motion.pose.x, y: rc.motion.pose.y } : { x: layout.stackLane.x, y: layout.stackLane.y };
+      const e = entries.find((x) => x.item.id === a.id);
+      return e ? itemAnchor(entryPose(e)) : { x: layout.stackLane.x, y: layout.stackLane.y };
     };
     for (const l of Object.values(state.lines).sort((a, b) => (a.id < b.id ? -1 : 1))) {
       const from = anchorPoint(l.from);
@@ -411,6 +448,15 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const sc = theme.tokens.colours.seats[seat?.colour ?? 0] ?? theme.tokens.colours.seats[0]!;
       const st = theme.lineStyle(l.kind, sc);
       out.push({ from, to, colour: st.colour, widthPx: st.widthPx });
+    }
+    // An ability or trigger marker is joined to its source (DESIGN "The effect stack", Ability).
+    for (const e of entries) {
+      if (!e.marker || !e.source) continue;
+      const rc = rcards.get(e.source);
+      if (!rc) continue;
+      const seat = state.seats[e.item.controller];
+      const st = theme.lineStyle('attach', theme.tokens.colours.seats[seat?.colour ?? 0] ?? theme.tokens.colours.seats[0]!);
+      out.push({ from: itemAnchor(e.pose), to: { x: rc.motion.pose.x, y: rc.motion.pose.y }, colour: st.colour, widthPx: Math.max(1, st.widthPx * 0.75) });
     }
     return out;
   }
@@ -446,7 +492,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const selection = new Set(view.selection);
     const dressing = theme.cardDressing;
     const vp = rig.viewport;
-    const draws: CardDraw[] = [];
+    const sorted: { sort: readonly number[]; draw: CardDraw }[] = [];
+    const lit = new Set(hoverItem && state ? hoverHighlights(state, hoverItem) : []);
+    const slotOf = new Map(entries.map((e) => [e.item.card ?? '', e]));
     for (const rc of order) {
       const pose = rc.motion.pose;
       if (rc.motion.flipSwapped) {
@@ -459,16 +507,35 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       rc.tierDrawn = uv ? (['small', 'normal', 'large'] as const)[uv.tier]! : null;
       const dragging = drag?.ids.includes(rc.id) ?? false;
       const sel = selection.has(rc.id);
-      const hov = view.hovered === rc.id || hovered === rc.id;
-      draws.push({
-        pose,
-        z: rc.place.z + (dragging ? GEOMETRY.dragLift : 0),
-        scaleX: rc.motion.flipScale(lastTick),
-        uv,
-        dim: rc.shownDim ? 1 - dressing.faceDownOwnerOpacity : 0,
-        highlight: sel ? { colour: dressing.selected.colour, width: dressing.selected.width } : hov ? { colour: dressing.hover.colour, width: dressing.hover.width } : null,
+      const hov = view.hovered === rc.id || hovered === rc.id || lit.has(rc.id);
+      const entry = rc.place.kind === 'stack' && !dragging ? slotOf.get(rc.id) : undefined;
+      sorted.push({
+        sort: sortKey(rc),
+        draw: {
+          pose,
+          z: rc.place.z + (dragging ? GEOMETRY.dragLift : 0),
+          scaleX: rc.motion.flipScale(lastTick),
+          uv,
+          dim: rc.shownDim ? 1 - dressing.faceDownOwnerOpacity : 0,
+          highlight: sel ? { colour: dressing.selected.colour, width: dressing.selected.width } : hov ? { colour: dressing.hover.colour, width: dressing.hover.width } : entry ? entryHighlight(entry) : null,
+        },
       });
     }
+    // Ability, trigger and copy markers take their slots in the lane, between the spells (scene/stack.ts).
+    for (const e of entries) {
+      if (!e.marker) continue;
+      const src = e.face ? rcards.get(e.face) : undefined;
+      const s = rig.tableToScreen(e.pose);
+      const onScreen = s.x > -cardPx && s.y > -cardPx && s.x < vp.w + cardPx && s.y < vp.h + cardPx;
+      const uv = faces.use(src ? src.shownKey : BACK_KEY, onScreen ? want : 'small', frame);
+      const hov = hoverItem === e.item.id;
+      sorted.push({
+        sort: [LAYER.stack, 0, e.index],
+        draw: { pose: e.pose, z: 0, scaleX: 1, uv, dim: 0, highlight: hov ? { colour: dressing.hover.colour, width: dressing.hover.width } : entryHighlight(e) },
+      });
+    }
+    sorted.sort((a, b) => compareSort(a.sort, b.sort));
+    const draws = sorted.map((x) => x.draw);
     cards.setTextures(faces.textures());
     cards.write(draws);
     text.sync(textSpecs());
@@ -503,6 +570,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (rc.motion.moving) changed = true;
     }
     if (faces.pump(frame)) changed = true;
+    if (!reduced() && entries.some((e) => e.pending)) changed = true;
     if (changed || dirty) draw();
   }
 
@@ -524,15 +592,39 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
   }
 
-  /** Topmost drawn card under a viewport point. */
+  /** Topmost drawn card under a viewport point; null when a stack marker covers that point. */
   function pick(x: number, y: number, exclude?: ReadonlySet<InstanceId>): RCard | null {
     const p = screenToTable(x, y);
+    const marker = markerAt(p);
     for (let i = order.length - 1; i >= 0; i--) {
       const rc = order[i]!;
       if (exclude?.has(rc.id)) continue;
-      if (pointInCard(p, rc.motion.pose)) return rc;
+      if (!pointInCard(p, rc.motion.pose)) continue;
+      if (marker && rc.place.kind === 'stack' && (entries.find((e) => e.item.card === rc.id)?.index ?? -1) < marker.index) return null;
+      return rc;
     }
     return null;
+  }
+
+  /** The topmost stack entry at a table point when it is a marker (markers are not cards). */
+  function markerAt(p: TablePoint): StackEntry | null {
+    const e = entryAt(
+      entries.map((x) => ({ ...x, pose: entryPose(x) })),
+      p,
+    );
+    return e?.marker ? e : null;
+  }
+
+  /** The stack item under a viewport point: a marker, or a spell card in the lane. */
+  function itemAt(x: number, y: number, rc: RCard | null): string | null {
+    if (rc) return rc.place.kind === 'stack' ? (entries.find((e) => e.item.card === rc.id)?.item.id ?? null) : null;
+    return markerAt(screenToTable(x, y))?.item.id ?? null;
+  }
+
+  function setHoverItem(item: string | null): void {
+    if (item === hoverItem) return;
+    hoverItem = item;
+    dirty = true;
   }
 
   function targets() {
@@ -681,6 +773,21 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         { table: layout.table, cards: snapCards, targets: targets() },
       );
       lastDrop = result;
+      // An item's card dropped back into the lane moves to the slot under the pointer (DESIGN "The effect stack",
+      // Resolving 4: items can be reordered by hand).
+      const anchorInst = insts[0]!;
+      if (result.kind === 'zone' && result.zone === anchorInst.zone && presentationOf(opts.game, state, result.zone) === 'cascade-lane') {
+        const item = state.stack.find((i) => i.card === anchorInst.id);
+        const to = slotAt(layout.stackLane, viewerAngle(state, layout, viewerSeat), p, state.stack.length);
+        if (!item || state.stack.indexOf(item) === to) return back();
+        for (const id of d.ids) {
+          const r = rcards.get(id);
+          if (r) r.localUntil = now + EXPECT_MS;
+        }
+        back();
+        dispatch([{ type: 'stackReorder', item: item.id, index: to }]);
+        return;
+      }
       if (result.kind !== 'zone' && !dest) return back();
       actions = dropActions(state, insts, d.start, result, dest ?? { zone: insts[0]!.zone, controller: insts[0]!.controller }, {
         newId,
@@ -779,6 +886,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (!gesture) {
       const rc = pick(e.clientX, e.clientY);
       setHover(rc?.id ?? null);
+      setHoverItem(itemAt(e.clientX, e.clientY, rc));
       return;
     }
     if (e.pointerId !== ('pointerId' in gesture ? gesture.pointerId : -1)) return;
@@ -962,7 +1070,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   function onPointerLeave(): void {
-    if (!gesture) setHover(null);
+    if (!gesture) {
+      setHover(null);
+      setHoverItem(null);
+    }
   }
 
   // External drag (from the HUD's hand fan) listens on window.
@@ -1057,7 +1168,41 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     idle: () => !drag && !rig.moving && ![...rcards.values()].some((rc) => rc.motion.moving),
     pendingTextures: () => faces.pending,
   };
-  const debugParts = { cards: () => debug.cards(), camera: () => debug.camera(), lines: () => debug.lines(), frameStats: () => debug.frameStats() };
+  /** The stack lane as drawn (scene/stack.ts DebugStackEntry). */
+  function stackDebug(): DebugStackEntry[] {
+    syncCamera();
+    const r = canvasRect();
+    return entries.map((e) => {
+      const pose = entryPose(e);
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const c of cardCorners(pose)) {
+        const v = new THREE.Vector3(c.x, 0, -c.y).project(camera);
+        const px = r.left + ((v.x + 1) / 2) * r.width;
+        const py = r.top + ((1 - v.y) / 2) * r.height;
+        minX = Math.min(minX, px);
+        maxX = Math.max(maxX, px);
+        minY = Math.min(minY, py);
+        maxY = Math.max(maxY, py);
+      }
+      return {
+        item: e.item.id,
+        kind: e.item.kind,
+        index: e.index,
+        number: e.number,
+        controller: e.item.controller,
+        face: e.face,
+        marker: e.marker,
+        pending: e.pending,
+        pose,
+        note: e.item.note ?? null,
+        screen: new DOMRect(minX, minY, maxX - minX, maxY - minY),
+      };
+    });
+  }
+  const debugParts = { cards: () => debug.cards(), camera: () => debug.camera(), lines: () => debug.lines(), frameStats: () => debug.frameStats(), stack: () => stackDebug() };
   registerDebug(debugParts);
 
   // --- Camera controls ------------------------------------------------------------------------------------------------

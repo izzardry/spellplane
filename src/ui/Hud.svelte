@@ -14,6 +14,8 @@
   import type { KeymapOverride } from '../store/types';
   import { tokensToCssVars } from '../themes/index';
   import { Commands, isEmptyChair, promptShowing, roundPassed, type UiHooks } from './commands';
+  import ConfirmPrompt from './confirm/ConfirmPrompt.svelte';
+  import { promptModel, roundWhat } from './confirm/model';
   import { parsePlainList } from './deck';
   import { logLines } from './describe';
   import { inZoneKind, layoutOf } from './geometry';
@@ -384,7 +386,7 @@
   const glyphOf = (colour: number) => theme.tokens.colours.seats[colour]?.glyph ?? 'circle';
   const activeName = $derived(st.seats[st.turn.active]?.name ?? st.teams[st.turn.active]?.seats.map((s) => st.seats[s]?.name).join(' & ') ?? st.turn.active);
   const activeColour = $derived(st.seats[st.turn.active]?.colour ?? st.seats[st.teams[st.turn.active]?.seats[0] ?? '']?.colour ?? null);
-  const prompt = $derived(promptShowing(st, me) ? st.confirm : null);
+  const prompt = $derived(promptModel(st, me));
   const top = $derived(st.stack[st.stack.length - 1] ?? null);
   const resolveLit = $derived(!!top && (!st.confirm || st.confirm.about !== top.id || roundPassed(st)));
   /**
@@ -643,22 +645,18 @@
         </div>
       {/if}
       {#if prompt}
-        <div class="prompt" data-testid="confirm-prompt" role="alertdialog" aria-label="Confirmation">
-          {#key prompt.id + (prompt.holder ?? '')}
-            <span class="ring" class:paused={!!prompt.holder} style:animation-duration="{prompt.durationMs}ms" aria-hidden="true"></span>
-          {/key}
-          <span class="what">
-            <b>{st.seats[prompt.askedBy]?.name ?? prompt.askedBy}</b>
-            {#if prompt.label}asks “{prompt.label}”{:else if prompt.about}{@const item = st.stack.find((i) => i.id === prompt.about)}put {item?.card ? nameOf(item.card) : item?.source ? `an ability of ${nameOf(item.source)}` : 'something'} on the stack{:else}asks for responses{/if}
-          </span>
-          {#if prompt.holder === me}
-            <span>You hold the floor.</span>
-            <button type="button" data-testid="release" onclick={() => commands.run('confirmOk')}>Release <kbd>{keyOf('confirmOk', 'prompt')}</kbd></button>
-          {:else}
-            <button type="button" data-testid="prompt-ok" onclick={() => commands.run('confirmOk')}>OK <kbd>{keyOf('confirmOk', 'prompt')}</kbd></button>
-            <button type="button" data-testid="prompt-hold" onclick={() => commands.run('confirmHold')}>Hold <kbd>{keyOf('confirmHold', 'prompt')}</kbd></button>
-          {/if}
-        </div>
+        <ConfirmPrompt
+          model={prompt}
+          {me}
+          seatName={(seat) => st.seats[seat]?.name || seat}
+          seatColour={(seat) => st.seats[seat]?.colour ?? null}
+          what={roundWhat(st, prompt.round, nameOf)}
+          keys={{ ok: keyOf('confirmOk', 'prompt'), hold: keyOf('confirmHold', 'prompt') }}
+          reducedMotion={reducedMotion}
+          onok={() => commands.run('confirmOk')}
+          onhold={() => commands.run('confirmHold')}
+          onrelease={() => commands.run('confirmOk')}
+        />
       {/if}
     </div>
 
@@ -849,7 +847,6 @@
   .toolbar button,
   .stack-chip button,
   .offer button,
-  .prompt button,
   .inline button {
     background: var(--sp-surface, #fff);
     color: var(--sp-fg, #111);
@@ -937,8 +934,7 @@
     color: var(--sp-bg, #fff);
     border-radius: var(--sp-radius-md, 4px);
   }
-  .offer,
-  .prompt {
+  .offer {
     pointer-events: auto;
     display: flex;
     align-items: center;
@@ -950,37 +946,6 @@
   }
   .x {
     border: 0 !important;
-  }
-  .ring {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: conic-gradient(var(--sp-fg, #111) var(--p, 100%), transparent 0);
-    animation-name: drain;
-    animation-timing-function: linear;
-    animation-fill-mode: forwards;
-    border: 1px solid var(--sp-fg, #111);
-  }
-  .ring.paused {
-    animation-play-state: paused;
-  }
-  @property --p {
-    syntax: '<percentage>';
-    inherits: false;
-    initial-value: 100%;
-  }
-  @keyframes drain {
-    from {
-      --p: 100%;
-    }
-    to {
-      --p: 0%;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .ring {
-      animation: none;
-    }
   }
   .inline {
     position: fixed;

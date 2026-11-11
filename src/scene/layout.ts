@@ -151,7 +151,12 @@ export function placeCards(state: TableState, view: ViewState, ctx: Presentation
     }
 
     if (pres === 'cascade-lane') {
-      ids.forEach((id, i) => out.set(id, make(state, view, ctx, id, zone.id, 'stack', stackPose(ctx.layout.stackLane, i, angle), 0, [LAYER.stack, 0, i])));
+      // A spell takes its item's slot, so ability and trigger markers between spells keep theirs (scene/stack.ts).
+      ids.forEach((id, i) => {
+        const slot = state.stack.findIndex((it) => it.card === id);
+        const at = slot < 0 ? i : slot;
+        out.set(id, make(state, view, ctx, id, zone.id, 'stack', stackPose(ctx.layout.stackLane, at, angle), 0, [LAYER.stack, 0, at]));
+      });
       continue;
     }
 

@@ -56,7 +56,8 @@ export function dropActions(
     for (const c of cards) {
       if (c.zone === result.zone) continue;
       if (pres === 'cascade-lane') {
-        out.push({ type: 'stackPush', item: opts.newId('si'), kind: 'spell', card: c.id });
+        // Putting an item on the stack opens a confirmation round about it (DESIGN "The effect stack", Stack and confirmation).
+        out.push({ type: 'stackPush', item: opts.newId('si'), kind: 'spell', card: c.id, round: opts.newId('r') });
       } else if (zone && zone.visibility !== 'public') {
         const kind = zone.kind;
         out.push({ type: 'toZone', card: c.id, to: result.zone, position: kind === 'library' ? 'top' : 'any' });

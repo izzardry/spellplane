@@ -12,6 +12,7 @@ import type { CoreGameSpec, Format, SeatColourIndex, TableState, Team, Zone } fr
 import { DEFAULT_TABLE_SETTINGS } from '../types';
 import { seatIdOf, zoneId } from '../ids';
 import * as cards from './cards';
+import * as confirm from './confirm';
 import { Draft } from './draft';
 import { STACK_ZONE } from './place';
 import * as stack from './stack';
@@ -88,9 +89,9 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   ping: table.ping,
   phaseSet: table.phaseSet,
   turnPass: table.turnPass,
-  ask: later('M1-P3'),
-  respond: later('M1-P3'),
-  autoPass: later('M1-P3'),
+  ask: confirm.ask,
+  respond: confirm.respond,
+  autoPass: confirm.autoPass,
   life: table.life,
   playerCounter: table.playerCounter,
   seatTake: table.seatTake,

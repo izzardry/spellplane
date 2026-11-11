@@ -13,6 +13,8 @@ import type { CardInstance, InstanceId, Pose, SeatId, StackItem, StackItemId, Ta
 import type { ActionId, GameDefinition } from '../games/types';
 import type { TableScene } from '../scene/types';
 import type { TableSession } from '../session/types';
+import { pendingAbout, roundPassed as coreRoundPassed } from '../core/reducer/confirm';
+import { promptModel } from './confirm/model';
 import { freeSlot, inZoneKind, layoutOf, offsetLocal, seatAngle, seatLayout } from './geometry';
 import { tidyPoses } from './tidy';
 
@@ -53,20 +55,18 @@ export interface CommandHost {
 
 type Phase = 'start' | 'end';
 
-/** Whether every seat other than the asker has answered ok or timeout and nobody holds (DESIGN "Turn flow and confirmation", All passed). */
+/**
+ * Whether everyone who answers the open round has passed (OK or timeout), or there is none (DESIGN "Turn flow and
+ * confirmation", All passed). Empty chairs and the asker do not answer (core/reducer/confirm.ts).
+ */
 export function roundPassed(state: TableState): boolean {
-  const r = state.confirm;
-  if (!r) return true;
-  if (r.holder) return false;
-  return Object.keys(state.seats).every((s) => s === r.askedBy || r.responses[s] === 'ok' || r.responses[s] === 'timeout');
+  return coreRoundPassed(state);
 }
 
-/** Whether the confirmation prompt shows for `seat`: a round asked by someone else that this seat has not passed (DESIGN "Turn flow and confirmation", Prompt). */
+/** Whether the confirmation prompt shows for `seat`: it answers the open round and has not passed (holding included) (DESIGN "Turn flow and confirmation", Prompt). */
 export function promptShowing(state: TableState, seat: SeatId): boolean {
-  const r = state.confirm;
-  if (!r || r.askedBy === seat) return false;
-  const mine = r.responses[seat];
-  return mine !== 'ok' && mine !== 'timeout';
+  const mode = promptModel(state, seat)?.mode;
+  return mode === 'respond' || mode === 'holding';
 }
 
 /** The stack item a card belongs to (a spell's card on the stack), or null. */
@@ -428,7 +428,7 @@ export class Commands {
       this.host.ui.notify('The stack is empty');
       return;
     }
-    const pending = st.confirm && st.confirm.about === top.id && !roundPassed(st);
+    const pending = pendingAbout(st, top.id);
     if (!pending) {
       this.pendingForce = null;
       this.host.session.dispatch({ type: 'stackResolve', item: top.id, ...this.resolveDestination(top, to) });
