@@ -23,3 +23,20 @@ One line per decision the design did not fix. Format: `- [package] decision — 
 - [M0] New lint element `session` (may import core, net, store, data, draft, games, voice, util; imported by ui and debug).
 - [M0] Package agents may make additive-only changes to contract files (new optional fields or new exports) when unavoidable and must report them; they never change or remove existing contract members — keeps parallel packages unblocked.
 - [M0] Module test pages: `?harness=<name>` in dev/test builds loads `src/<module>/harness.ts` instead of the app, so scene and HUD can be tested before the session exists.
+- [M0-P4] A bare key acts on the hovered card, or on the whole selection when the hovered card is selected or nothing is hovered; a multi-card gesture shares one `group` — DESIGN "hover plus key … or the selection" leaves the precedence open.
+- [M0-P4] T on a mixed selection taps the untapped cards; a fully tapped selection untaps — per-card toggling would scramble a mixed selection.
+- [M0-P4] + / − change +1/+1 counters (− falls back to another kind on the card); named kinds (−1/−1, loyalty, charge) come from the context menu — the canonical keymap gives 1–4 to seats, so number keys cannot pick counter kinds.
+- [M0-P4] G, E, H, L, Shift+L send a card to its owner's graveyard, exile, hand or library; C casts from hand, graveyard, exile or the command area, never from the battlefield, the stack or the library.
+- [M0-P4] R resolves to the game's default destination (`to` omitted); before everyone passed, a second R within 3 s resolves with `force` — a "resolve to…" chooser is left for later.
+- [M0-P4] D, Shift+D, S and Ctrl+M act on the own library whatever is hovered.
+- [M0-P4] Tab at the last step does not wrap (Ctrl+Enter passes the turn clockwise); the new active player's untap-and-draw offer uses bare U while it shows; Enter while holding the floor releases the hold; K asks without a label.
+- [M0-P4] Ctrl+I rolls a d6 and Ctrl+Shift+I flips a coin, dispatching rngCommit then rngReveal back to back (solo); milestone 1 waits for the peers' commits.
+- [M0-P4] V, Shift+V and M call an `onVoice` hook and show a chip; the voice module connects in milestone 3.
+- [M0-P4] Tidy keeps the previous row bands (lands behind creatures stay behind), wraps at the territory width minus the pile column, and leaves displaced cards alone.
+- [M0-P4] Token copies (X) and created tokens enter untapped 69 mm to the controller's right of the source or hovered card, else in the territory centre.
+- [M0-P4] The log hides protocol-only steps (rngCommit, shuffleNonce, shuffleDone, snapshotHash, sequencerClaim); life changes merge when by the same actor on the same seat within 2 s.
+- [M0-P4] Scry: L / Shift+L on a looked-at library card dispatches `toZone` into the same library; the session performs the private reorder. Search = look at the whole library, shuffle on close (default on). Other seats' libraries show the count only.
+- [M0-P4] Leaving a note field cancels the note; Enter saves, empty text clears.
+- [M0-P4] AppProps gained optional `settings` (SettingsStore, persists remaps) and `parseDecklist` (data/'s parser); without the parser the HUD uses a minimal plain-list parser. main.ts (M0-P7) should pass both — additive contract change.
+- [M0-P4] App shows the B0 bootstrap stage (ui/Smoke.svelte) until main.ts passes a session, so the B0 smoke test stays green before M0-P7 lands.
+- [M0-P4] The HUD reads only the own SecretStore and never shows library faces except from an explicit lookAt result; it sends nothing but session actions, so it adds no leak-test scenario.
