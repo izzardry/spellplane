@@ -20,6 +20,8 @@ export interface CardDraw {
   z: number;
   /** Horizontal scale for the flip animation (1 at rest). */
   scaleX: number;
+  /** Uniform scale of the whole card, face and outline alike (stack markers, M1-P3); 1 when absent. */
+  scale?: number;
   uv: SlotUv | null;
   /** 0 = face as printed; > 0 blends toward the table colour (owner's own face-down card). */
   dim: number;
@@ -174,13 +176,14 @@ export class CardLayer {
       const s = Math.sin(r);
       // Columns: card x axis (scaled for the flip), card y axis, table normal, position. Table (x, y) -> world (x, z, -y).
       const o = i * 16;
-      m[o + 0] = c * d.scaleX;
+      const k = d.scale ?? 1;
+      m[o + 0] = c * d.scaleX * k;
       m[o + 1] = 0;
-      m[o + 2] = s * d.scaleX;
+      m[o + 2] = s * d.scaleX * k;
       m[o + 3] = 0;
-      m[o + 4] = s;
+      m[o + 4] = s * k;
       m[o + 5] = 0;
-      m[o + 6] = -c;
+      m[o + 6] = -c * k;
       m[o + 7] = 0;
       m[o + 8] = 0;
       m[o + 9] = 1;

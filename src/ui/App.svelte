@@ -1,7 +1,8 @@
 <!--
-  App shell with hash routing (PLAN M0-P4): `#/` is the solo table; `#/t/<room>/<key>`, `#/lobby` and `#/diag` are
-  reserved for later milestones. Props come from main.ts (ui/types.ts AppProps, wired by M0-P7); without a session the
-  shell shows the bootstrap stage.
+  App shell with hash routing (PLAN M0-P4): `#/` is the solo table, `#/t/<room>/<key>` a networked table
+  (ui/lobby/RoomRoute.svelte: lobby, then the HUD), `#/lobby` the start page (ui/lobby/StartRoute.svelte) and `#/diag`
+  or `#/diag/<room>/<key>` the connection check (ui/diag/DiagRoute.svelte) (PLAN M1-P5). Props come from main.ts
+  (ui/types.ts AppProps); without a session the shell shows the bootstrap stage.
 -->
 <script lang="ts">
   import { paper } from '../themes/paper/index';
@@ -9,6 +10,9 @@
   import type { AppProps } from './types';
   import Hud from './Hud.svelte';
   import Smoke from './Smoke.svelte';
+  import DiagRoute from './diag/DiagRoute.svelte';
+  import RoomRoute from './lobby/RoomRoute.svelte';
+  import StartRoute from './lobby/StartRoute.svelte';
   import { parseRoute, type Route } from './routes';
 
   let props: Partial<AppProps> = $props();
@@ -36,17 +40,16 @@
   {:else}
     <Smoke />
   {/if}
+{:else if route.name === 'room'}
+  {#key `${route.room}/${route.key}`}
+    <RoomRoute app={props} room={route.room} roomKey={route.key} {cssVars} />
+  {/key}
 {:else}
-  <main class="page" style={cssVars} data-testid="route-{route.name}">
-    {#if route.name === 'room'}
-      <h1>Table {route.room}</h1>
-      <p>Joining tables by link arrives with peer-to-peer play (milestone 1).</p>
-    {:else if route.name === 'lobby'}
-      <h1>Lobby</h1>
-      <p>The lobby arrives with milestone 1.</p>
-    {:else if route.name === 'diag'}
-      <h1>Diagnostics</h1>
-      <p>The connection check arrives with milestone 1.</p>
+  <main class="sp-page" style={cssVars} data-testid="route-{route.name === 'diagJoin' ? 'diag' : route.name}">
+    {#if route.name === 'lobby'}
+      <StartRoute start={props.start} />
+    {:else if route.name === 'diag' || route.name === 'diagJoin'}
+      <DiagRoute diag={props.diag} room={route.name === 'diagJoin' ? { roomId: route.room, roomKey: route.key } : null} />
     {:else}
       <h1>Not found</h1>
       <p>There is nothing at {route.hash}.</p>
@@ -67,15 +70,19 @@
   :global(#app) {
     height: 100%;
   }
-  .page {
+  /* The page frame of the non-table routes (also used by ui/lobby/RoomRoute.svelte). */
+  :global(.sp-page) {
+    box-sizing: border-box;
     max-width: 40em;
+    max-height: 100%;
+    overflow-y: auto;
     margin: 0 auto;
     padding: 48px 16px;
     font-family: var(--sp-font);
     color: var(--sp-fg);
     background: var(--sp-bg);
   }
-  .page a {
+  :global(.sp-page a) {
     color: var(--sp-fg);
   }
 </style>

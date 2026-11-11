@@ -34,7 +34,8 @@ export function springStep(a: SpringAxis, target: number, dtS: number, k: number
 }
 
 /** How the displayed pose approaches a new target. */
-export type MoveKind = 'spring' | 'remote' | 'tap' | 'cut';
+/** 'settle': a displaced card going home (DESIGN "Specification: geometry, layout and motion", Motion: settle 260 ms with a 20 ms stagger per card). */
+export type MoveKind = 'spring' | 'remote' | 'tap' | 'cut' | 'settle';
 
 /** Settle threshold: closer than this (mm, degrees) and slower than this per second counts as at rest. */
 const REST_POS = 0.01;
@@ -83,8 +84,8 @@ export class CardMotion {
     this.springing = false;
   }
 
-  /** Retarget. `kind` picks the motion; reduced motion turns everything into a cut. */
-  moveTo(pose: Pose, kind: MoveKind, now: number, m: MotionConstants, reduced: boolean): void {
+  /** Retarget. `kind` picks the motion; reduced motion turns everything into a cut. A timed move may start `delayMs` later (settle stagger). */
+  moveTo(pose: Pose, kind: MoveKind, now: number, m: MotionConstants, reduced: boolean, delayMs = 0): void {
     if (reduced || kind === 'cut') {
       this.cut(pose);
       return;
@@ -96,11 +97,11 @@ export class CardMotion {
       this.springing = true;
       return;
     }
-    const dur = kind === 'tap' ? m.tapMs : m.remoteMoveMs;
+    const dur = kind === 'tap' ? m.tapMs : kind === 'settle' ? m.settleMs : m.remoteMoveMs;
     const from: Pose = { x: this.x.x, y: this.y.x, rot: this.r.x };
     this.springing = false;
     this.x.v = this.y.v = this.r.v = 0;
-    this.tween = { from, to, start: now, dur, ease: kind === 'tap' ? (t) => t * t * (3 - 2 * t) : easeOutCubic };
+    this.tween = { from, to, start: now + Math.max(0, delayMs), dur, ease: kind === 'tap' ? (t) => t * t * (3 - 2 * t) : easeOutCubic };
   }
 
   /** Start a flip; the caller swaps the texture when `flipSwapped` turns true. */

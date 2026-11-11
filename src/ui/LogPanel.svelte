@@ -1,10 +1,17 @@
 <!--
   Action log with chat (DESIGN "Turn flow and confirmation", Action log: one line per state change with seat colour,
   actor and card names; hovering a card name previews it and highlights the card on the table; chat interleaves in the
-  same timeline. "Input and interaction design", Accessibility: the log is a live region).
+  same timeline. "Input and interaction design", Accessibility: the log is a live region). M1-P6: the timeline, its
+  filters and chat tabs and the `[[card name]]` previews live in ui/chat/.
 -->
 <script lang="ts">
+  import type { ChatTab, TimelineFilter } from '../core/log';
   import type { InstanceId } from '../core/types';
+  import type { CardDataSource, FaceSource } from '../data/types';
+  import type { TextureSource } from '../util/texture';
+  import ChatLines from './chat/ChatLines.svelte';
+  import FilterBar from './chat/FilterBar.svelte';
+  import { CardNameResolver } from './chat/names';
   import type { LogLine } from './describe';
 
   let {
@@ -13,31 +20,43 @@
     ontoggle,
     onchat,
     onhovercard,
+    cardData = null,
+    faces = null,
+    back = null,
+    tabs = ['table'],
   }: {
     lines: LogLine[];
     open: boolean;
     ontoggle: () => void;
-    onchat: (text: string) => void;
+    /** Send a chat line on the current tab. */
+    onchat: (text: string, channel: ChatTab) => void;
     onhovercard: (card: InstanceId | null, x: number, y: number) => void;
+    /** Resolves `[[card name]]` previews (M1-P6). */
+    cardData?: CardDataSource | null;
+    faces?: FaceSource | null;
+    back?: TextureSource | null;
+    /** Chat tabs to offer (M1-P6); 'table' only by default. */
+    tabs?: ChatTab[];
   } = $props();
 
   let text = $state('');
   let input = $state<HTMLInputElement | undefined>();
-  let list = $state<HTMLElement | undefined>();
+  let filter = $state<TimelineFilter>('all');
+  let tab = $state<ChatTab>('table');
+  const resolver = $derived(cardData ? new CardNameResolver(cardData) : null);
+  // A tab that disappears (a team dissolved) falls back to the table tab.
+  $effect(() => {
+    if (!tabs.includes(tab)) tab = 'table';
+  });
 
   /** Focus the chat field (Enter with no prompt showing, DESIGN "Input and interaction design"). */
   export function focusChat() {
     input?.focus();
   }
 
-  $effect(() => {
-    void lines.length;
-    if (list) list.scrollTop = list.scrollHeight;
-  });
-
   function send() {
     const t = text.trim();
-    if (t) onchat(t);
+    if (t) onchat(t, tab);
     text = '';
   }
 </script>
@@ -45,30 +64,19 @@
 <aside class="log" class:closed={!open} data-testid="log" aria-label="Log and chat">
   <header>
     <h2>Log</h2>
+    {#if open}<FilterBar bind:filter bind:tab {tabs} />{/if}
     <button type="button" onclick={ontoggle} aria-expanded={open}>{open ? 'Hide' : 'Log'}</button>
   </header>
   {#if open}
-    <ol bind:this={list} aria-live="polite" aria-relevant="additions">
-      {#each lines as line (line.key)}
-        <li class={line.kind} class:warn={line.level === 'warn'} data-testid="log-line" style:--seat={line.colour === null ? 'transparent' : `var(--sp-seat-${line.colour})`}>
-          {#if line.kind !== 'system'}<b class="actor">{line.actor}</b>{line.kind === 'chat' ? ': ' : ' '}{/if}{#each line.segs as s, i (i)}{#if 'card' in s}<span
-                class="card"
-                data-testid="log-card"
-                data-card={s.card}
-                role="note"
-                onpointerenter={(e) => onhovercard(s.card, e.clientX, e.clientY)}
-                onpointerleave={(e) => onhovercard(null, e.clientX, e.clientY)}>{s.name}</span
-              >{:else}{s.text}{/if}{/each}
-        </li>
-      {/each}
-    </ol>
+    <ChatLines {lines} {filter} {tab} {onhovercard} {resolver} {faces} {back} />
   {/if}
   <input
     bind:this={input}
     bind:value={text}
     class="chat"
     data-testid="chat-input"
-    placeholder="Chat (Enter)"
+    maxlength="500"
+    placeholder={tab === 'table' ? 'Chat (Enter), [[card name]] previews' : `${tab === 'team' ? 'Team' : 'Spectator'} chat (Enter)`}
     aria-label="Chat message"
     onkeydown={(e) => {
       if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
@@ -114,33 +122,6 @@
     border: 0;
     color: var(--sp-muted, #5f5f5f);
     cursor: pointer;
-  }
-  ol {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    list-style: none;
-    margin: 0;
-    padding: 4px 8px;
-  }
-  li {
-    padding-left: 6px;
-    border-left: 3px solid var(--seat);
-    margin: 1px 0;
-  }
-  li.system {
-    color: var(--sp-muted, #5f5f5f);
-    border-left-style: dotted;
-  }
-  li.warn {
-    color: var(--sp-warning, #8a5a00);
-  }
-  li.chat {
-    font-style: italic;
-  }
-  .card {
-    text-decoration: underline dotted;
-    cursor: help;
   }
   .chat {
     margin: 4px;

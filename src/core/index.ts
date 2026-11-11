@@ -13,4 +13,4 @@ export * from './commit';
 export * from './rng';
 export * from './secrets';
 export * from './deadlines';
-export { confirmDeadlines, silentSeats, timerStartSeq } from './reducer/confirm';
+export { ASK_LABEL_MAX, blockingHolder, confirmDeadlines, hasPassed, participants, pendingAbout, roundPassed, silentSeats, timerStartSeq, waitingOn, type RoundState } from './reducer/confirm';

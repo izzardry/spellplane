@@ -122,9 +122,6 @@ describe('reducer contract', () => {
     let s = readyTable(2);
     s = play(s, 'a00', P(0, -200));
     const later: Action[] = [
-      act('ask', { round: 'r1' }),
-      act('respond', { round: 'r1', seat: 's1', response: 'ok' }),
-      act('autoPass', { on: true }),
       // The secret shuffle and public randomness (M1-P2) are covered by tests/unit/secrecy.
       act('packOpen', { packId: 'p', commits: [], count: 0 }),
       act('pick', { packId: 'p', count: 1 }),
