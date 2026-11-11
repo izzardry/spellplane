@@ -11,8 +11,10 @@ import {
   auditSeat,
   beginShuffle,
   commitDeck,
+  disclosedBy,
   emptySecretStore,
   finishShuffle,
+  lookAnswer,
   privateReorder,
   pruneReceived,
   receiveIdentity,
@@ -23,19 +25,20 @@ import {
   shuffleRecord,
 } from '../../../src/core/secrets';
 import { reduce } from '../../../src/core/reducer';
-import type { ShuffleRecord } from '../../../src/core/types';
+import type { ShuffleRecord, TableState } from '../../../src/core/types';
+import type { Action } from '../../../src/core/actions';
 import { SecretTable, deckRefs, readySecretTable, seededEntropy } from './helpers';
 
 const LIB0 = 'library:s0';
 
-/** A table where s0 shuffled its library with s1's (and s2's) nonces. */
-function shuffledTable(names = ['Anna', 'Ben'], n = 12): { t: SecretTable; doneSeq: number } {
+/** A table where s0 shuffled its library with s1's (and s2's) nonces; `reissue` marks the whole library disclosed first. */
+function shuffledTable(names = ['Anna', 'Ben'], n = 12, reissue = false): { t: SecretTable; doneSeq: number } {
   const t = readySecretTable(names, n);
   const b = beginShuffle(t.secrets.s0!, LIB0, 'sh1', 'owner-nonce');
   t.secrets.s0 = b.secrets;
   t.apply('s0', b.action);
   for (let i = names.length - 1; i >= 1; i--) t.apply(`s${i}`, { type: 'shuffleNonce', sid: 'sh1', nonce: `peer-${i}` });
-  const f = finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!);
+  const f = finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!, reissue ? t.state.zones[LIB0]!.ids : []);
   t.apply('s0', f.action);
   t.secrets.s0 = f.secrets;
   return { t, doneSeq: t.state.seq };
@@ -59,8 +62,54 @@ describe('deck commitments', () => {
 });
 
 describe('the secret shuffle', () => {
+  it('keeps the ids of a zone nobody saw into, so later reveals are still checked against the Ready commitment', () => {
+    const t = readySecretTable(['Anna', 'Ben', 'Cleo'], 12);
+    const readyIds = [...t.state.zones[LIB0]!.ids];
+    const readyCommits = [...t.state.commitments.s0!.commits];
+    const b = beginShuffle(t.secrets.s0!, LIB0, 'sh1', 'owner-nonce');
+    t.secrets.s0 = b.secrets;
+    t.apply('s0', b.action);
+    t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'peer-1' });
+    t.apply('s2', { type: 'shuffleNonce', sid: 'sh1', nonce: 'peer-2' });
+    // A disclosed id outside the zone does not force a re-issue.
+    const f = finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!, ['someone-elses-card']);
+    expect(f.action.reissue).toBeUndefined();
+    t.apply('s0', f.action);
+    t.secrets.s0 = f.secrets;
+    expect(t.state.zones[LIB0]!.ids).toEqual(readyIds);
+    expect(t.state.commitments.s0!.commits).toEqual(readyCommits);
+    // Secret shuffle 4: Fisher–Yates over the sorted ids from the seed.
+    expect(f.secrets.libraryOrder).toEqual(shuffledOrder(readyIds, shuffleSeed('owner-nonce', ['peer-1', 'peer-2'])));
+    expect(f.action.orderHash).toBe(orderHash(f.secrets.libraryOrder, 'owner-nonce'));
+    const rec = shuffleRecord(f.secrets, 'sh1')!;
+    expect(rec.reissue).toBeUndefined();
+    // The owner draws and reveals with a forged identity: only the Ready commitment can vouch, so it is flagged.
+    const top = f.secrets.libraryOrder[0]!;
+    t.apply('s0', { type: 'draw', instanceId: top });
+    t.apply('s0', { type: 'reveal', instanceId: top, ref: { sid: 'BOMB' }, salt: f.secrets.identities[top]!.salt });
+    expect(t.state.cards[top]).toMatchObject({ identity: { sid: 'BOMB' }, suspect: true });
+    expect(auditSeat(t.start, t.log, 's0', f.secrets.audit, f.secrets.identities)).toEqual([]);
+  });
+
+  it('re-issues only a zone holding a disclosed card, and never one holding a suspect card', () => {
+    const t = readySecretTable(['Anna', 'Ben'], 6);
+    const [first, second] = t.secrets.s0!.libraryOrder;
+    const b = beginShuffle(t.secrets.s0!, LIB0, 'sh1', 'owner-nonce');
+    t.secrets.s0 = b.secrets;
+    t.apply('s0', b.action);
+    t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'peer-1' });
+    expect(finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!, [second!]).action.reissue?.ids).toHaveLength(6);
+    // A forged reveal (reveal top of library) marks `first` suspect while it stays in the library.
+    t.apply('s0', { type: 'reveal', instanceId: first!, ref: { sid: 'forged' }, salt: 'x' });
+    expect(t.state.cards[first!]).toMatchObject({ zone: LIB0, suspect: true });
+    const f = finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!, [first!, second!]);
+    expect(f.action.reissue).toBeUndefined();
+    t.apply('s0', f.action);
+    expect(reissueZone(f.secrets, t.state, LIB0, t.entropy.s0!)).toBeNull();
+  });
+
   it('reproduces from the public round plus the owner nonce, and not from the public round alone', () => {
-    const { t } = shuffledTable(['Anna', 'Ben', 'Cleo']);
+    const { t } = shuffledTable(['Anna', 'Ben', 'Cleo'], 12, true);
     const done = t.log.find((a) => a.type === 'shuffleDone')!;
     if (done.type !== 'shuffleDone') throw new Error('unreachable');
     const round = t.state.shuffles.sh1!;
@@ -95,7 +144,7 @@ describe('the secret shuffle', () => {
   });
 
   it('keeps every identity across the re-issue and commits the new ids', () => {
-    const { t } = shuffledTable();
+    const { t } = shuffledTable(['Anna', 'Ben'], 12, true);
     const s = t.secrets.s0!;
     expect(Object.keys(s.identities).sort()).toEqual(t.state.zones[LIB0]!.ids);
     expect(Object.values(s.identities).map((i) => i.card.sid).sort()).toEqual(deckRefs('s0', 12).map((r) => r.sid));
@@ -124,7 +173,7 @@ describe('re-issue of a hidden zone', () => {
     for (const id of t.secrets.s0!.libraryOrder.slice(0, 3)) t.apply('s0', { type: 'draw', instanceId: id });
     const hand = t.secrets.s0!.libraryOrder.slice(0, 3);
     t.secrets.s0 = { ...t.secrets.s0!, libraryOrder: t.secrets.s0!.libraryOrder.slice(3), hand: [...hand].reverse() };
-    const r = reissueZone(t.secrets.s0!, t.state, 'hand:s0', t.entropy.s0!);
+    const r = reissueZone(t.secrets.s0!, t.state, 'hand:s0', t.entropy.s0!)!;
     t.apply('s0', r.action);
     const s = r.secrets;
     expect(s.hand).toHaveLength(3);
@@ -168,7 +217,7 @@ describe('identities revealed to this browser only', () => {
     mine = pruneReceived(mine, t.state);
     expect(Object.keys(mine.received)).toEqual([c!]);
     t.secrets.s0 = { ...t.secrets.s0!, hand: [c!], libraryOrder: t.secrets.s0!.libraryOrder.filter((id) => id !== c && id !== b) };
-    const r = reissueZone(t.secrets.s0!, t.state, 'hand:s0', t.entropy.s0!);
+    const r = reissueZone(t.secrets.s0!, t.state, 'hand:s0', t.entropy.s0!)!;
     t.apply('s0', r.action);
     expect(pruneReceived(mine, t.state).received).toEqual({});
   });
@@ -206,8 +255,8 @@ describe('leak tokens', () => {
 
 describe('the post-game audit', () => {
   /** Shuffle, draw two, scry one to the bottom, put a card from the hand on top, draw it again. */
-  function game(): SecretTable {
-    const { t } = shuffledTable(['Anna', 'Ben'], 10);
+  function game(reissue = false): SecretTable {
+    const { t } = shuffledTable(['Anna', 'Ben'], 10, reissue);
     const draw = (): void => {
       const top = t.secrets.s0!.libraryOrder[0]!;
       t.apply('s0', { type: 'draw', instanceId: top });
@@ -226,9 +275,23 @@ describe('the post-game audit', () => {
     return t;
   }
 
-  it('confirms an honest game', () => {
+  it('confirms an honest game, with or without a re-issue', () => {
+    for (const reissue of [false, true]) {
+      const t = game(reissue);
+      expect(t.log.some((a) => a.type === 'shuffleDone' && a.reissue !== undefined)).toBe(reissue);
+      expect(auditSeat(t.start, t.log, 's0', t.secrets.s0!.audit, t.secrets.s0!.identities)).toEqual([]);
+    }
+  });
+
+  it('finds a reorder record by zone and order hash, so a record of a refused proposal causes no finding', () => {
     const t = game();
-    expect(auditSeat(t.start, t.log, 's0', t.secrets.s0!.audit, t.secrets.s0!.identities)).toEqual([]);
+    const lib = t.secrets.s0!.libraryOrder;
+    // A reorder the sequencer refused (never in the log) left its record in the store, before the real one.
+    const stale = privateReorder(t.secrets.s0!, t.state, LIB0, [...lib].reverse(), lib.length, t.entropy.s0!);
+    const real = privateReorder(t.secrets.s0!, t.state, LIB0, [...lib.slice(1), lib[0]!], 1, t.entropy.s0!);
+    t.apply('s0', real.action);
+    const audit = [...t.secrets.s0!.audit, stale.secrets.audit.at(-1)!, real.secrets.audit.at(-1)!];
+    expect(auditSeat(t.start, t.log, 's0', audit, t.secrets.s0!.identities)).toEqual([]);
   });
 
   it('catches a nonce other than the committed one, other peer nonces, and a forged order', () => {
@@ -256,7 +319,7 @@ describe('the post-game audit', () => {
   });
 
   it('catches a re-issue that swapped a card for another', () => {
-    const t = game();
+    const t = game(true);
     const audit = t.secrets.s0!.audit.map((r) => {
       if (r.kind !== 'shuffle' || !r.reissue) return r;
       const [first] = r.reissue.before;
@@ -271,5 +334,46 @@ describe('the post-game audit', () => {
     const t = game();
     const audit = t.secrets.s0!.audit.map((r) => (r.kind === 'reorder' ? { ...r, nonce: 'x' } : r));
     expect(auditSeat(t.start, t.log, 's0', audit, t.secrets.s0!.identities).map((f) => f.text)).toEqual([expect.stringMatching(/reorder of library:s0 published another order hash/)]);
+  });
+});
+
+describe('disclosures that make a shuffle re-issue ids', () => {
+  function step(t: SecretTable, by: string, draft: Parameters<SecretTable['apply']>[1]): { prior: TableState; a: Action } {
+    const prior = t.state;
+    t.apply(by, draft);
+    return { prior, a: t.log.at(-1)! };
+  }
+
+  it('are public reveals, own targeted reveals and other seats\u2019 looks; the owner\u2019s own look is not one', () => {
+    const t = readySecretTable(['Anna', 'Ben'], 6);
+    const s0 = t.secrets.s0!;
+    const [top, second, third] = s0.libraryOrder;
+    const seen = (x: { prior: TableState; a: Action }): string[] => disclosedBy(s0, x.prior, x.a, t.state);
+    expect(seen(step(t, 's0', { type: 'lookAt', zone: LIB0, count: 2 }))).toEqual([]);
+    expect(seen(step(t, 's1', { type: 'lookAt', zone: LIB0, count: 2 }))).toEqual([top!, second!].sort());
+    expect(seen(step(t, 's0', { type: 'revealTo', instanceId: third!, seats: ['s1'] }))).toEqual([third!]);
+    const id = s0.identities[top!]!;
+    expect(seen(step(t, 's0', { type: 'reveal', instanceId: top!, ref: id.card, salt: id.salt }))).toEqual([top!]);
+    expect(seen(step(t, 's0', { type: 'move', card: top!, to: 'battlefield:s0', pose: { x: 0, y: -200, rot: 0 } }))).toEqual([top!]);
+    // Seat s1's own cards are not s0's business.
+    const other = t.state.zones['library:s1']!.ids[0]!;
+    expect(seen(step(t, 's1', { type: 'revealTo', instanceId: other, seats: ['s0'] }))).toEqual([]);
+  });
+});
+
+describe('the owner\u2019s look answer', () => {
+  it('shows the top cards of the requested own hidden zone, or exactly a peeked own face-down card; never a hand or library card for a peek', () => {
+    const t = readySecretTable(['Anna', 'Ben'], 6);
+    const s0 = t.secrets.s0!;
+    const [a, b, c] = s0.libraryOrder;
+    t.apply('s0', { type: 'draw', instanceId: a! });
+    t.apply('s0', { type: 'move', card: b!, to: 'battlefield:s0', pose: { x: 0, y: -200, rot: 0 } });
+    const s = { ...s0, hand: [a!], libraryOrder: s0.libraryOrder.slice(2) };
+    expect(lookAnswer(s, t.state, { zone: LIB0, count: 2 })!.map((r) => r.instanceId)).toEqual([c!, s0.libraryOrder[3]!]);
+    expect(lookAnswer(s, t.state, { zone: 'battlefield:s0', count: 1, card: b! })).toEqual([revealedCard(s, b!)]);
+    expect(lookAnswer(s, t.state, { zone: 'hand:s0', count: 1, card: a! })).toBeNull();
+    expect(lookAnswer(s, t.state, { zone: LIB0, count: 1, card: c! })).toBeNull();
+    expect(lookAnswer(s, t.state, { zone: 'battlefield:s0', count: 1 })).toBeNull();
+    expect(lookAnswer(s, t.state, { zone: 'library:s1', count: 1 })).toBeNull();
   });
 });

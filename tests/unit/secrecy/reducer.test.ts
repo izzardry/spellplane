@@ -9,7 +9,7 @@ import { commitFor, nonceHash } from '../../../src/core/commit';
 import { deadlines } from '../../../src/core/deadlines';
 import { checkInvariants } from '../../../src/core/invariants';
 import { COMMIT_WINDOW_MS, commitWindowDeadlines, expectedParticipants, rngOutcome, rngSeed } from '../../../src/core/rng';
-import { beginShuffle, finishShuffle, reissueZone } from '../../../src/core/secrets';
+import { auditSeat, beginShuffle, finishShuffle, reissueZone } from '../../../src/core/secrets';
 import type { TableState } from '../../../src/core/types';
 import { SecretTable, deckRefs, readySecretTable } from './helpers';
 
@@ -124,7 +124,54 @@ describe('secret shuffle rounds', () => {
     expect(expectedParticipants(t.state, 'sh1')).toEqual(['s1']);
     t.apply('s1', { type: 'seatLeave', seat: 's1' });
     expect(expectedParticipants(t.state, 'sh1')).toEqual([]);
-    t.refuse('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n1' }, /not a connected seated player/);
+    // The seat leaving completed the round, so it was sealed in that step.
+    expect(t.state.shuffles.sh1!.closedSeq).toBe(t.state.seq);
+    t.refuse('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n1' }, /closed/);
+  });
+
+  it('a seat that comes back or sits down after the round was complete does not join it, so the owner\u2019s order stands', () => {
+    const t = readySecretTable(['Anna', 'Ben', 'Cleo']);
+    const b = beginShuffle(t.secrets.s0!, LIB0, 'sh1', 'owner-nonce');
+    t.secrets.s0 = b.secrets;
+    t.apply('s2', { type: 'seatLeave', seat: 's2' });
+    t.apply('s0', b.action);
+    t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n1' });
+    expect(t.state.shuffles.sh1!.closedSeq).toBe(t.state.seq);
+    // The owner computes its order now; then s2 sits down again and tries to add a nonce.
+    const f = finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!);
+    t.apply('s2', { type: 'seatTake', seat: 's2', name: 'Cleo', colour: 2 });
+    t.refuse('s2', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n2' }, /closed/);
+    t.apply('s0', f.action);
+    t.secrets.s0 = f.secrets;
+    expect(auditSeat(t.start, t.log, 's0', t.secrets.s0!.audit, t.secrets.s0!.identities)).toEqual([]);
+  });
+
+  it('a seat that joins while the round still waits is waited for too', () => {
+    const t = readySecretTable(['Anna', 'Ben', 'Cleo']);
+    t.apply('s2', { type: 'seatLeave', seat: 's2' });
+    t.apply('s0', commit());
+    t.apply('s2', { type: 'seatTake', seat: 's2', name: 'Cleo', colour: 2 });
+    t.apply('s2', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n2' });
+    expect(t.state.shuffles.sh1!.closedSeq).toBeUndefined();
+    t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n1' });
+    expect(t.state.shuffles.sh1!.closedSeq).toBe(t.state.seq);
+  });
+
+  it('shuffle ids and randomness ids are separate: an id of the other kind is refused', () => {
+    const t = readySecretTable();
+    t.apply('s1', { type: 'rngCommit', rid: 'x', purpose: 'die', n: 6, h: nonceHash('b') });
+    t.refuse('s0', commit('x'), /already names a randomness round/);
+    t.apply('s0', commit('sh1'));
+    t.refuse('s1', { type: 'rngCommit', rid: 'sh1', purpose: 'die', n: 6, h: nonceHash('b') }, /already names a shuffle/);
+    expect(expectedParticipants(t.state, 'sh1', 'shuffle')).toEqual(['s1']);
+    expect(expectedParticipants(t.state, 'sh1', 'rng')).toEqual([]);
+    expect(expectedParticipants(t.state, 'x', 'rng')).toEqual(['s0']);
+    // A hand-built state with both kinds under one id waits for nobody unless the kind is named.
+    const both: TableState = { ...t.state, rng: { ...t.state.rng, sh1: { ...t.state.rng.x!, id: 'sh1' } } };
+    expect(expectedParticipants(both, 'sh1')).toEqual([]);
+    expect(expectedParticipants(both, 'sh1', 'shuffle')).toEqual(['s1']);
+    t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n1' });
+    expect(t.state.shuffles.sh1!.nonces).toEqual({ s1: 'n1' });
   });
 
   it('the owner finishes only when every expected nonce is in, or the window closed', () => {
@@ -189,7 +236,7 @@ describe('re-issued opaque ids', () => {
     const t = shuffled();
     const oldIds = [...t.state.zones[LIB0]!.ids];
     const oldCommits = [...t.state.commitments.s0!.commits];
-    const f = finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!);
+    const f = finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!, oldIds);
     t.apply('s0', f.action);
     t.secrets.s0 = f.secrets;
     const ids = t.state.zones[LIB0]!.ids;
@@ -228,7 +275,7 @@ describe('re-issued opaque ids', () => {
   it('an id the seat ever committed to is never issued again, so an old commit cannot vouch for a second card', () => {
     const t = readySecretTable(['Anna', 'Ben'], 3);
     const retired = [...t.state.zones[LIB0]!.ids];
-    const r = reissueZone(t.secrets.s0!, t.state, LIB0, t.entropy.s0!);
+    const r = reissueZone(t.secrets.s0!, t.state, LIB0, t.entropy.s0!)!;
     t.apply('s0', r.action);
     t.secrets.s0 = r.secrets;
     for (const id of retired) expect(t.state.cards[id]).toBeUndefined();
@@ -236,12 +283,27 @@ describe('re-issued opaque ids', () => {
     t.refuse('s0', { type: 'reorder', zone: LIB0, count: 3, orderHash: 'o', reissue: { ids: reused, commits: ['c1', 'c2', 'c3'] } }, /used before/);
   });
 
+  it('a zone holding a suspect card is not re-issued, so the flag cannot be washed off', () => {
+    const t = readySecretTable(['Anna', 'Ben'], 3);
+    const [x, y] = t.secrets.s0!.libraryOrder;
+    t.apply('s0', { type: 'draw', instanceId: x! });
+    t.apply('s0', { type: 'draw', instanceId: y! });
+    t.apply('s0', { type: 'reveal', instanceId: x!, ref: { sid: 'forged' }, salt: 'x' });
+    t.apply('s0', { type: 'move', card: x!, to: 'battlefield:s0', pose: { x: 0, y: -200, rot: 0 } });
+    t.apply('s0', { type: 'toZone', card: x!, to: 'hand:s0', position: 'any' });
+    expect(t.state.cards[x!]!.suspect).toBe(true);
+    const fresh = ['zz1', 'zz2'];
+    t.refuse('s0', { type: 'reorder', zone: 'hand:s0', count: 2, orderHash: 'o', reissue: { ids: fresh, commits: ['c1', 'c2'] } }, /suspect/);
+    t.secrets.s0 = { ...t.secrets.s0!, hand: [x!, y!], libraryOrder: t.secrets.s0!.libraryOrder.slice(2) };
+    expect(reissueZone(t.secrets.s0!, t.state, 'hand:s0', t.entropy.s0!)).toBeNull();
+  });
+
   it('a reorder that re-issues covers the whole own zone', () => {
     const t = readySecretTable(['Anna', 'Ben'], 6);
     const top = t.secrets.s0!.libraryOrder[0]!;
     t.apply('s0', { type: 'draw', instanceId: top });
     t.secrets.s0 = { ...t.secrets.s0!, libraryOrder: t.secrets.s0!.libraryOrder.slice(1), hand: [top] };
-    const r = reissueZone(t.secrets.s0!, t.state, 'hand:s0', t.entropy.s0!);
+    const r = reissueZone(t.secrets.s0!, t.state, 'hand:s0', t.entropy.s0!)!;
     t.refuse('s1', r.action, /only s0/);
     t.refuse('s1', { type: 'reorder', zone: LIB0, count: 1, orderHash: 'o' }, /only s0/);
     t.refuse('s0', { ...r.action, count: 0 }, /whole zone/);
@@ -284,6 +346,20 @@ describe('public randomness rounds', () => {
     t.refuse('s2', { type: 'rngReveal', rid: 'c1', nonce: 'c' }, /did not commit/);
     t.apply('s1', { type: 'rngReveal', rid: 'c1', nonce: 'b' });
     expect(t.state.rng.c1!.result).toBe(rngOutcome(rngSeed({ s0: 'a', s1: 'b' }, ['s0', 's1']), 2));
+  });
+
+  it('a seat that sits down after every commit is in neither commits nor blocks the reveals', () => {
+    const t = readySecretTable(['Anna', 'Ben', 'Cleo']);
+    t.apply('s2', { type: 'seatLeave', seat: 's2' });
+    t.apply('s0', { type: 'rngCommit', rid: 'd1', purpose: 'die', n: 6, h: h('a') });
+    t.apply('s1', { type: 'rngCommit', rid: 'd1', purpose: 'die', n: 6, h: h('b') });
+    expect(t.state.rng.d1!.closedSeq).toBe(t.state.seq);
+    t.apply('s0', { type: 'rngReveal', rid: 'd1', nonce: 'a' });
+    t.apply('s2', { type: 'seatTake', seat: 's2', name: 'Cleo', colour: 2 });
+    t.refuse('s2', { type: 'rngCommit', rid: 'd1', purpose: 'die', n: 6, h: h('c') }, /closed/);
+    t.apply('s1', { type: 'rngReveal', rid: 'd1', nonce: 'b' });
+    expect(t.state.rng.d1!.result).toBe(rngOutcome(rngSeed({ s0: 'a', s1: 'b' }, ['s0', 's1']), 6));
+    expect(commitWindowDeadlines(t.state)).toEqual([]);
   });
 
   it('refuses a commit from an unseated seat and odd outcome counts; a lone seated player decides alone', () => {

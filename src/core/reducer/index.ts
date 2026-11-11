@@ -151,7 +151,9 @@ function step(state: TableState, action: Action): Step {
     if (action.restore !== undefined) reject('only the inverse inside an undo carries a restore patch');
     const d = new Draft(state);
     handle(d, action);
-    const next = d.finish(action.seq);
+    const changed = d.finish(action.seq);
+    // A round completed by this step (whatever the action) is sealed in it (M1-P2, secret.ts).
+    const next = changed === state ? changed : secret.sealCompleteRounds(changed, action.seq ?? state.seq + 1);
     if (hasRestore(action) && next !== state) {
       const broken = checkInvariants(next);
       if (broken.length) reject(`the restore patch would break the table: ${broken[0]}`);

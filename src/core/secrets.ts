@@ -125,6 +125,64 @@ export function revealedCard(secrets: SecretStore, id: InstanceId): RevealedCard
 }
 
 /**
+ * Own ids whose identity sequenced action `a` showed to anyone but the owner (DESIGN "Table model", Hidden cards: the
+ * owner re-shuffles opaque ids where needed; "Multiplayer architecture", Hidden information 2, 4, 5): a card that
+ * became public (its identity is set in `next`), the card of an own `revealTo`, and the cards another seat's `lookAt`
+ * covers (the peeked card, or the top `count` of the zone in the owner's order before the action). Every disclosure
+ * path has a public action, so the owner's client runs this on each sequenced action, keeps the ids, and passes them
+ * to `finishShuffle`; an id that is gone (re-issued, removed) needs no tracking. `secrets` is the store as it was
+ * before the action. Decision M1-P2.
+ */
+export function disclosedBy(secrets: SecretStore, prior: TableState, a: Action, next: TableState): InstanceId[] {
+  const me = secrets.seat;
+  const out = new Set<InstanceId>();
+  const mine = (id: InstanceId): boolean => Object.hasOwn(next.cards, id) && next.cards[id]!.owner === me;
+  for (const [id, c] of Object.entries(next.cards)) {
+    if (c.owner === me && c.identity !== undefined && prior.cards[id] !== c) out.add(id);
+  }
+  if (a.type === 'revealTo' && a.by === me && mine(a.instanceId)) out.add(a.instanceId);
+  if (a.type === 'lookAt' && a.by !== me) {
+    if (a.card !== undefined) {
+      if (mine(a.card)) out.add(a.card);
+    } else if (Object.hasOwn(prior.zones, a.zone) && prior.zones[a.zone]!.owner === me) {
+      for (const id of privateOrder(secrets, prior, a.zone).slice(0, Math.max(0, a.count))) out.add(id);
+    }
+  }
+  return [...out].sort(byId);
+}
+
+/** What a look request asks for (net/messages.ts LookReqMessage without the envelope). */
+export interface LookRequest {
+  zone: ZoneId;
+  count: number;
+  card?: InstanceId;
+}
+
+/**
+ * The owner's answer to another seat's look request (DESIGN "Multiplayer architecture", Private looks): the top
+ * `count` cards of an own hidden zone in the owner's order, or exactly the peeked card when it is an own face-down
+ * card in a public zone; null (refuse) for anything else. A peek never shows a hand or library card. The pair channel
+ * (net/private.ts) answers only requests that match a sequenced `lookAt` of the asker and filters the answer again.
+ */
+export function lookAnswer(secrets: SecretStore, state: TableState, req: LookRequest): RevealedCard[] | null {
+  const zone = Object.hasOwn(state.zones, req.zone) ? state.zones[req.zone]! : null;
+  if (!zone) return null;
+  if (req.card !== undefined) {
+    const c = Object.hasOwn(state.cards, req.card) ? state.cards[req.card]! : null;
+    if (!c || c.owner !== secrets.seat || c.zone !== zone.id || zone.visibility !== 'public' || c.face !== 'down' || c.identity !== undefined) return null;
+    const r = revealedCard(secrets, c.id);
+    return r ? [r] : null;
+  }
+  if (zone.visibility === 'public' || zone.owner !== secrets.seat || !Number.isInteger(req.count) || req.count < 1) return null;
+  return privateOrder(secrets, state, zone.id)
+    .slice(0, req.count)
+    .flatMap((id) => {
+      const r = revealedCard(secrets, id);
+      return r ? [r] : [];
+    });
+}
+
+/**
  * Commit to a deck (DESIGN "Specification: network protocol and secrecy", Commitments): every card gets a fresh
  * opaque id and salt; the `ready` draft carries the commits and the ids, both sorted, so their order says nothing
  * about the deck order. The library order is the given card order (the first shuffle randomises it).
@@ -206,15 +264,23 @@ function privateOrder(secrets: SecretStore, state: TableState, zone: ZoneId): In
   return [...kept, ...ids.filter((id) => !keptSet.has(id))];
 }
 
+/** Whether a hidden zone holds a suspect card: its ids are never re-issued (the reducer refuses), so the flag stays visible. */
+function holdsSuspect(state: TableState, zone: ZoneId): boolean {
+  const ids = Object.hasOwn(state.zones, zone) ? state.zones[zone]!.ids : [];
+  return ids.some((id) => Object.hasOwn(state.cards, id) && state.cards[id]!.suspect === true);
+}
+
 /**
  * Re-issue every opaque id of an own hidden zone (DESIGN "Table model", Hidden cards): fresh random ids and salts in
  * the owner's current order, published as a `reorder` of the whole zone with `reissue` and an order hash over the new
  * ids, and an audit record keeping the old ids and identities. Use it after a public card returned to the hand or
- * library, so peers cannot link the card's later reveal to its earlier one. Decision M1-P2.
+ * library, so peers cannot link the card's later reveal to its earlier one. Null when the zone holds a suspect card
+ * (its ids stay, so the table keeps seeing the flag). Decision M1-P2.
  */
-export function reissueZone(secrets: SecretStore, state: TableState, zone: ZoneId, entropy: Entropy): { secrets: SecretStore; action: DraftOf<'reorder'> } {
+export function reissueZone(secrets: SecretStore, state: TableState, zone: ZoneId, entropy: Entropy): { secrets: SecretStore; action: DraftOf<'reorder'> } | null {
   const z = Object.hasOwn(state.zones, zone) ? state.zones[zone]! : null;
   if (!z || z.visibility === 'public' || z.owner !== secrets.seat) throw new Error(`${zone} is not a hidden zone of ${secrets.seat}`);
+  if (holdsSuspect(state, zone)) return null;
   const before = privateOrder(secrets, state, zone);
   const f = freshIdentities(secrets, state, before, entropy);
   const order = before.map((id) => f.map.get(id)!);
@@ -261,11 +327,20 @@ export function beginShuffle(secrets: SecretStore, zone: ZoneId, sid: ShuffleId,
 
 /**
  * Finish shuffle `sid` once it is ready (DESIGN "Secret shuffle" 3-5): seed from the own nonce and the sequenced
- * peer nonces in seat order, Fisher–Yates over the zone's sorted ids, fresh opaque ids for every card (ordered by
- * `reissueSeed`), `shuffleDone {sid, orderHash, reissue}` and the completed audit record. Throws when the round is
- * not this store's, not open, or still waits for nonces.
+ * peer nonces in seat order, Fisher–Yates over the zone's sorted ids, `shuffleDone {sid, orderHash}` and the
+ * completed audit record. The ids are kept, so every later reveal is still checked live against the deck commitment
+ * made at Ready. Only when the zone holds a card in `disclosed` (an id whose identity someone other than the owner
+ * saw since it was issued, see `disclosedBy`) does every card get a fresh opaque id (ordered by `reissueSeed`) and
+ * the action a `reissue`; a zone holding a suspect card is never re-issued. Throws when the round is not this
+ * store's, not open, or still waits for nonces.
  */
-export function finishShuffle(secrets: SecretStore, state: TableState, sid: ShuffleId, entropy: Entropy): { secrets: SecretStore; action: DraftOf<'shuffleDone'> } {
+export function finishShuffle(
+  secrets: SecretStore,
+  state: TableState,
+  sid: ShuffleId,
+  entropy: Entropy,
+  disclosed: Iterable<InstanceId> = [],
+): { secrets: SecretStore; action: DraftOf<'shuffleDone'> } {
   const rec = shuffleRecord(secrets, sid);
   const round = Object.hasOwn(state.shuffles, sid) ? state.shuffles[sid]! : null;
   if (!rec || !round || round.owner !== secrets.seat) throw new Error(`shuffle ${sid} is not this seat's`);
@@ -274,6 +349,15 @@ export function finishShuffle(secrets: SecretStore, state: TableState, sid: Shuf
   const peerNonces = shufflePeerNonces(state, sid);
   const seed = shuffleSeed(rec.ownerNonce, peerNonces);
   const ids = Object.hasOwn(state.zones, round.zone) ? state.zones[round.zone]!.ids : [];
+  const shown = new Set(disclosed);
+  if (!ids.some((id) => shown.has(id)) || holdsSuspect(state, round.zone)) {
+    const order = shuffleOutcome(seed, ids).order;
+    const done: ShuffleRecord = { kind: 'shuffle', sid, zone: round.zone, ownerNonce: rec.ownerNonce, peerNonces, order };
+    return {
+      secrets: { ...secrets, ...withZoneOrder(secrets, round.zone, order), audit: secrets.audit.map((r) => (r === rec ? done : r)) },
+      action: { type: 'shuffleDone', sid, orderHash: orderHash(order, rec.ownerNonce) },
+    };
+  }
   const f = freshIdentities(secrets, state, ids, entropy);
   const { before, order } = shuffleOutcome(seed, ids, f.reissue.ids);
   const reissue: ReissueRecord = { before, retired: f.retired };
@@ -327,7 +411,10 @@ export function auditSeat(
   const known = new Map<InstanceId, SecretIdentity>(Object.entries(identities));
   for (const r of audit) if (r.reissue) for (const [id, s] of Object.entries(r.reissue.retired)) known.set(id, s);
   const reorders = audit.filter((r): r is ReorderRecord => r.kind === 'reorder');
-  let nextReorder = 0;
+  const usedReorders = new Set<ReorderRecord>();
+  // A record is found by its zone and order hash, not by position: a record of a refused proposal is skipped.
+  const reorderRecord = (zone: ZoneId, hash: string): ReorderRecord | undefined =>
+    reorders.find((r) => !usedReorders.has(r) && r.zone === zone && orderHash(r.order, r.nonce) === hash) ?? reorders.find((r) => !usedReorders.has(r) && r.zone === zone);
   let order: InstanceId[] | null = null;
   let s = start;
 
@@ -372,8 +459,9 @@ export function auditSeat(
       continue;
     }
     if (mine && a.type === 'reorder') {
-      const rec = reorders[nextReorder++];
-      if (!rec || rec.zone !== a.zone) {
+      const rec = reorderRecord(a.zone, a.orderHash);
+      if (rec) usedReorders.add(rec);
+      if (!rec) {
         findings.push({ seq, text: `no record for the reorder of ${a.zone}` });
         if (a.zone === lib) order = null;
         continue;

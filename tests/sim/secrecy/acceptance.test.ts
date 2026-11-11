@@ -102,7 +102,7 @@ describe('the secret shuffle over the network', () => {
     let tried = 0;
     for (const guess of publicStrings) {
       expect(verifyNonce(commit.h, guess)).toBe(false);
-      const out = shuffleOutcome(shuffleSeed(guess, peers), oldIds, done.reissue!.ids);
+      const out = shuffleOutcome(shuffleSeed(guess, peers), oldIds, done.reissue?.ids);
       expect(orderHash(out.order, guess)).not.toBe(done.orderHash);
       tried++;
     }
@@ -111,7 +111,7 @@ describe('the secret shuffle over the network', () => {
     const ownerNonce = shuffleRecord(a!.secrets, sid)!.ownerNonce;
     expect(publicStrings.has(ownerNonce)).toBe(false);
     expect(nonceHash(ownerNonce)).toBe(commit.h);
-    const out = shuffleOutcome(shuffleSeed(ownerNonce, peers), oldIds, done.reissue!.ids);
+    const out = shuffleOutcome(shuffleSeed(ownerNonce, peers), oldIds, done.reissue?.ids);
     expect(orderHash(out.order, ownerNonce)).toBe(done.orderHash);
     expect(out.order).toEqual(a!.secrets.libraryOrder);
     // And A's next draws name exactly that order's top cards.

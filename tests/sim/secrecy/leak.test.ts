@@ -150,7 +150,10 @@ describe('leak test: a scripted two-seat game', () => {
       expect(types, ty).toContain(ty);
     }
     expect(log.some((x) => x.type === 'reorder' && x.reissue !== undefined && x.zone === 'hand:s0')).toBe(true);
-    expect(log.filter((x) => x.type === 'shuffleDone').every((x) => x.type === 'shuffleDone' && x.reissue !== undefined)).toBe(true);
+    // Only A's last shuffle re-issues: its library held the card B had looked at. The others keep the Ready ids, so
+    // the deck commitment still vouches for every later reveal.
+    const reissued = log.flatMap((x) => (x.type === 'shuffleDone' ? [`${x.by}:${x.reissue !== undefined}`] : []));
+    expect(reissued).toEqual(['s0:false', 's1:false', 's0:false', 's0:true']);
     // B saw what it was meant to see, and only that.
     expect(b.state.cards[p.faceDown]).toMatchObject({ face: 'down', zone: 'battlefield:s0' });
     expect(b.state.cards[p.faceDown]!.identity).toBeUndefined();
@@ -165,6 +168,27 @@ describe('leak test: a scripted two-seat game', () => {
     expect(forbidden.tokens.length).toBeGreaterThan(40);
     expect(forbidden.pairs.filter((x) => x.why === 'relink').length).toBeGreaterThan(40);
     const report = leakScan(input);
+    expect(report.tokens).toEqual([]);
+    expect(report.pairs).toEqual([]);
+    p.db.close();
+  });
+
+  it('a look request without its public lookAt, or a peek at a hand card, gets nothing out of A', async () => {
+    const p = await script(true);
+    const { a, b } = p;
+    const handCard = a.secrets.hand[0]!;
+    const before = a.disclosed.s1?.length ?? 0;
+    // B asks for A's top cards without the logged lookAt, and peeks at a hand card under a lookAt that names it.
+    void b.channel.requestLook('s0', 'library:s0', 3);
+    await b.peer.act({ type: 'lookAt', zone: 'hand:s0', count: 1, card: handCard });
+    let peeked: RevealedCard[] | null = null;
+    void b.channel.requestLook('s0', 'hand:s0', 1, handCard).then((r) => (peeked = r));
+    b.peer.sendPrivate('s0', { v: 1, t: 'lookReq', lookId: 'raw', zone: 'library:s0', count: 1, card: handCard });
+    await until(() => peeked !== null, 5_000, 'the refused peek');
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(peeked).toEqual([]);
+    expect(a.disclosed.s1?.length ?? 0).toBe(before);
+    const report = leakScan({ observed: await observedByB(p), owner: { state: a.state, secrets: a.secrets }, disclosed: a.disclosed.s1 ?? [] });
     expect(report.tokens).toEqual([]);
     expect(report.pairs).toEqual([]);
     p.db.close();

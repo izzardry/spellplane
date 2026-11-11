@@ -6,20 +6,27 @@
  * - `reveal` and a `flip` carrying an identity are checked against the owner's deck commitment. A mismatch is not
  *   refused: the identity becomes public and the card is marked `suspect` in shared state, so every peer flags it.
  * - The secret shuffle: `shuffleCommit` (owner, `h = SHA-256(ownerNonce)`), `shuffleNonce` (every other connected
- *   seated seat, in the clear), `shuffleDone` (owner, order hash, fresh opaque ids). A round's owner nonce is fixed by
- *   its commit, and a zone with an open round that already holds peer nonces takes no new round, so the owner cannot
- *   change its nonce after seeing the others'.
+ *   seated seat, in the clear), `shuffleDone` (owner, order hash, fresh opaque ids only where needed). A round's
+ *   owner nonce is fixed by its commit, and a zone with an open round that already holds peer nonces takes no new
+ *   round, so the owner cannot change its nonce after seeing the others'.
  * - Public randomness: `rngCommit` per seat, `rngReveal` once the commit phase is complete, the result drawn from the
  *   seed of all reveals. `commitClose` (proposed by the sequencer's clock) excludes the seats that missed the window.
+ * - A round is sealed (`closedSeq` set) in the step that completes it, whatever that step was (the last nonce or
+ *   commit, or a seat leaving or going away), so its participant set and nonces never change once the owner could
+ *   compute the result: a seat that sits down or comes back later does not join it (`sealCompleteRounds`).
+ * - Rng ids and shuffle ids are separate namespaces; an id already used by the other kind is refused.
  * - Re-issue of opaque ids (`shuffleDone.reissue`, `reorder.reissue`): every id of the zone is replaced by a fresh one
- *   with a fresh commitment, in sorted order, so peers cannot link a card's hidden history to a later reveal.
+ *   with a fresh commitment, in sorted order, so peers cannot link a card's hidden history to a later reveal. The
+ *   reducer cannot tell whether a re-issue was needed (no public record of disclosures), so commitments made by a
+ *   re-issue are checked live for consistency only and against the deck commitment by the audit. A zone holding a
+ *   suspect card is never re-issued, so the flag cannot be washed off.
  *
  * Pure and total like the rest of the reducer: no clock, randomness or secret store.
  */
 import type { ActionOf, Reissue } from '../actions';
 import { commitFor, verifyNonce } from '../commit';
 import { expectedParticipants, participantOrder, rngCommitPhaseComplete, rngOutcome, rngSeed, shuffleReady } from '../rng';
-import type { CardRef, Commitment, HiddenZone, InstanceId, RngPurpose, SeatId } from '../types';
+import type { CardRef, Commitment, HiddenZone, InstanceId, RngPurpose, RngRound, SeatId, ShuffleRound, TableState } from '../types';
 import { flip as plainFlip } from './cards';
 import type { Draft } from './draft';
 import { HIDDEN_POSE, isHidden } from './place';
@@ -91,6 +98,8 @@ function reissue(d: Draft, seat: SeatId, zoneId: string, r: unknown, seq: number
   const zone = d.zones.need(zoneId);
   if (!isHidden(zone)) reject(`only a hidden zone's ids are re-issued; ${zone.id} is public`);
   if (zone.owner !== seat) reject(`zone ${zone.id} does not belong to ${seat}`);
+  // Fresh ids cannot carry the mark over without linking old and new ids, so a suspect card keeps its id.
+  for (const old of zone.ids) if (d.cards.need(old).suspect === true) reject(`${zone.id} holds suspect card ${old}; its id is not re-issued`);
   const ids = (r.ids as unknown[]).map((id) => checkId(id, 'card'));
   const commits = (r.commits as unknown[]).map((c) => checkString(c, 'commit', MAX_SECRET));
   if (ids.length !== zone.ids.length) reject(`reissue names ${ids.length} ids for the ${zone.ids.length} cards in ${zone.id}`);
@@ -137,6 +146,7 @@ export function shuffleCommit(d: Draft, a: ActionOf<'shuffleCommit'>): void {
   const sid = checkId(a.sid, 'shuffle');
   const by = d.seats.need(checkId(a.by, 'seat')).id;
   if (own(d.base.shuffles, sid)) reject(`shuffle ${sid} already exists: a round's nonce commitment cannot change`);
+  if (own(d.base.rng, sid)) reject(`${sid} already names a randomness round`);
   const zone = d.zones.need(checkId(a.zone, 'zone'));
   if (!isHidden(zone)) reject(`only a hidden zone is shuffled in secret; ${zone.id} is public`);
   if (zone.owner !== by) reject(`zone ${zone.id} belongs to ${zone.owner ?? 'the table'}, not ${by}`);
@@ -164,7 +174,7 @@ export function shuffleNonce(d: Draft, a: ActionOf<'shuffleNonce'>): void {
   if (r.orderHash !== null) reject(`shuffle ${sid} is finished`);
   if (r.closedSeq !== undefined) reject(`the nonce window of shuffle ${sid} is closed`);
   if (Object.hasOwn(r.nonces, by)) reject(`${by} already sent its nonce for shuffle ${sid}`);
-  if (!expectedParticipants(d.base, sid).includes(by)) reject(`${by} is not a connected seated player of this shuffle`);
+  if (!expectedParticipants(d.base, sid, 'shuffle').includes(by)) reject(`${by} is not a connected seated player of this shuffle`);
   const nonce = checkString(a.nonce, 'nonce', MAX_SECRET);
   if (nonce === '') reject('a nonce cannot be empty');
   d.shuffles.w(sid).nonces[by] = nonce;
@@ -197,6 +207,7 @@ export function rngCommit(d: Draft, a: ActionOf<'rngCommit'>): void {
   if (h === '') reject('a commit needs the hash of a nonce');
   const r = own(d.base.rng, rid);
   if (!r) {
+    if (own(d.base.shuffles, rid)) reject(`${rid} already names a shuffle`);
     if (!isSeated(d, by)) reject(`${by} is not a connected seated player`);
     d.rng.set(rid, { id: rid, purpose: a.purpose, n, by, startSeq: seqOf(d, a), commits: { [by]: h }, reveals: {}, result: null });
     return;
@@ -206,7 +217,7 @@ export function rngCommit(d: Draft, a: ActionOf<'rngCommit'>): void {
   if (r.closedSeq !== undefined) reject(`the commit window of round ${rid} is closed`);
   if (Object.keys(r.reveals).length > 0) reject(`round ${rid} is already revealing`);
   if (Object.hasOwn(r.commits, by)) reject(`${by} already committed to round ${rid}`);
-  if (!expectedParticipants(d.base, rid).includes(by)) reject(`${by} is not a connected seated player of round ${rid}`);
+  if (!expectedParticipants(d.base, rid, 'rng').includes(by)) reject(`${by} is not a connected seated player of round ${rid}`);
   d.rng.w(rid).commits[by] = h;
 }
 
@@ -254,4 +265,31 @@ export function commitClose(d: Draft, a: ActionOf<'commitClose'>): void {
 function isSeated(d: Draft, seat: SeatId): boolean {
   const s = d.seats.get(seat);
   return s !== undefined && s.name.trim() !== '' && s.away !== true;
+}
+
+/**
+ * Seal every open round that has everything it waits for: a randomness round whose expected commits are all in, a
+ * shuffle whose expected peer nonces are all in (DESIGN "Public randomness" 2-3, "Secret shuffle" 2-3). Run after
+ * every applied action, so a round is sealed in the very step that completes it, also when that step is a seat
+ * leaving or going away. From then on no commit or nonce is taken, so the owner's order (or the dice result) is
+ * computed from a set that cannot grow behind its back. `closedSeq` is the seq of that step. Pure; returns `state`
+ * itself when nothing is sealed.
+ */
+export function sealCompleteRounds(state: TableState, seq: number): TableState {
+  let rng: Record<string, RngRound> | null = null;
+  let shuffles: Record<string, ShuffleRound> | null = null;
+  for (const id of Object.keys(state.rng)) {
+    const r = state.rng[id]!;
+    if (r.result !== null || r.closedSeq !== undefined || !rngCommitPhaseComplete(state, id)) continue;
+    rng ??= { ...state.rng };
+    rng[id] = { ...r, closedSeq: seq };
+  }
+  for (const id of Object.keys(state.shuffles)) {
+    const r = state.shuffles[id]!;
+    if (r.orderHash !== null || r.closedSeq !== undefined || !shuffleReady(state, id)) continue;
+    shuffles ??= { ...state.shuffles };
+    shuffles[id] = { ...r, closedSeq: seq };
+  }
+  if (!rng && !shuffles) return state;
+  return { ...state, ...(rng ? { rng } : {}), ...(shuffles ? { shuffles } : {}) };
 }

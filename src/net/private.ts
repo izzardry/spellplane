@@ -8,9 +8,15 @@
  * broadcasts. Only the own seat's cards are sent: an identity another seat showed this browser is never forwarded.
  * Every received identity is checked against its owner's deck commitment in the shared state; one that does not
  * match is reported as unverified, never as genuine.
+ *
+ * The disclosure policy is enforced here, not left to each answerer: a look request is answered only when it matches
+ * a sequenced, not yet answered `lookAt` of the asking seat (same zone, count and card), and the answer is cut down to
+ * what that look may see (at most `count` own cards of that hidden zone, or exactly the peeked card when it is an own
+ * face-down card in a public zone). A targeted reveal is taken only once its public `revealTo` by the sender, naming
+ * this seat and this card, is applied; a look answer only for a look this browser asked for.
  */
 import { verifyReveal, type RevealedCard } from '../core/commit';
-import type { CardRef, InstanceId, PackId, SeatId, ZoneId } from '../core/types';
+import type { CardRef, InstanceId, PackId, SeatId, TableState, ZoneId } from '../core/types';
 import type { LookMessage, LookReqMessage, PackMessage, PrivateMessage, RevealMessage } from './messages';
 import { PROTOCOL_VERSION } from './messages';
 import type { CreatePrivateChannel, NetEngine, PrivateChannel, Unsubscribe } from './types';
@@ -23,8 +29,10 @@ const MAX_CARDS = 500;
 const MAX_TEXT = 256;
 /** Most identities held back until the shared state knows their cards; the oldest is dropped as unverified beyond it. */
 const MAX_WAITING = 1000;
-/** How many recently sequenced action ids are remembered for targeted reveals that arrive late. */
+/** How many recently sequenced `revealTo` actions are remembered for targeted reveals that arrive late. */
 const MAX_REMEMBERED_CIDS = 5000;
+/** Most sequenced `lookAt`s of one asker waiting for their request, and most requests waiting for their `lookAt`. */
+const MAX_OPEN_LOOKS = 32;
 
 function isText(v: unknown, max = MAX_TEXT): v is string {
   return typeof v === 'string' && v.length > 0 && v.length <= max;
@@ -128,47 +136,136 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
   };
 
   // A targeted reveal is taken once its public `revealTo` (cid `about`) is applied here, so the card is where that
-  // action saw it (the pair channel can overtake the sequenced log).
-  const sequencedCids = new Set<string>();
-  const cidOrder: string[] = [];
-  const afterAction = new Map<string, (() => void)[]>();
-  host.onSequenced((action) => {
-    sequencedCids.add(action.cid);
-    cidOrder.push(action.cid);
-    if (cidOrder.length > MAX_REMEMBERED_CIDS) sequencedCids.delete(cidOrder.shift()!);
-    const run = afterAction.get(action.cid);
-    if (!run) return;
-    afterAction.delete(action.cid);
-    for (const f of run) f();
-  });
+  // action saw it (the pair channel can overtake the sequenced log), and only if that action is the sender's
+  // `revealTo` of this card naming this seat.
+  interface RevealToSeen {
+    by: SeatId;
+    card: InstanceId;
+    seats: readonly SeatId[];
+  }
+  /** Sequenced action ids, with the revealTo they carried (null for any other action). */
+  const sequencedCids = new Map<string, RevealToSeen | null>();
+  const afterAction = new Map<string, ((seen: RevealToSeen | null) => void)[]>();
+  /** Sequenced `lookAt`s of other seats that no request has used yet, per asker, oldest first. */
+  const openLooks = new Map<SeatId, { zone: ZoneId; count: number; card?: InstanceId }[]>();
+  /** Look requests that arrived before their `lookAt` was applied here (the pair channel can overtake the log). */
+  let waitingReqs: { msg: LookReqMessage; from: SeatId }[] = [];
 
-  const onReveal = (msg: RevealMessage, from: SeatId): void => {
-    const card = asRevealedCard(msg);
-    if (!card || (msg.purpose !== 'revealTo' && msg.purpose !== 'look') || !isText(msg.about, 128)) return;
-    if (msg.purpose === 'look' || sequencedCids.has(msg.about)) return decide(card, from);
-    if (afterAction.size >= MAX_WAITING && !afterAction.has(msg.about)) return;
-    afterAction.set(msg.about, [...(afterAction.get(msg.about) ?? []), () => decide(card, from)]);
+  const sameLook = (l: { zone: ZoneId; count: number; card?: InstanceId }, msg: LookReqMessage): boolean => l.zone === msg.zone && l.count === msg.count && l.card === msg.card;
+
+  /** Use up the asker's sequenced `lookAt` that matches the request; false when there is none. */
+  const takeLook = (msg: LookReqMessage, from: SeatId): boolean => {
+    const list = openLooks.get(from);
+    const i = list ? list.findIndex((l) => sameLook(l, msg)) : -1;
+    if (!list || i < 0) return false;
+    list.splice(i, 1);
+    return true;
   };
 
-  const onLookReq = (msg: LookReqMessage, from: SeatId): void => {
-    if (!isText(msg.lookId, 128)) return;
+  /**
+   * The cards a look may show, from what the answerer offered: at most `count` own cards of the requested hidden zone
+   * (the answerer keeps the owner's order, top first), or exactly the peeked card when it is an own face-down card in
+   * a public zone. Null when the request names nothing this seat may show.
+   */
+  const allowed = (msg: LookReqMessage, st: TableState, me: SeatId, offered: readonly RevealedCard[]): RevealedCard[] | null => {
+    const zone = Object.hasOwn(st.zones, msg.zone) ? st.zones[msg.zone]! : null;
+    if (zone === null) return null;
+    if (msg.card !== undefined) {
+      const c = Object.hasOwn(st.cards, msg.card) ? st.cards[msg.card]! : null;
+      if (!c || c.owner !== me || c.zone !== zone.id || zone.visibility !== 'public' || c.face !== 'down' || c.identity !== undefined) return null;
+      return offered.filter((x) => x.instanceId === c.id).slice(0, 1);
+    }
+    if (zone.visibility === 'public' || zone.owner !== me) return null;
+    const members = new Set(zone.ids);
+    const out: RevealedCard[] = [];
+    for (const x of offered) {
+      if (out.length >= msg.count) break;
+      if (members.has(x.instanceId) && !out.some((y) => y.instanceId === x.instanceId)) out.push(x);
+    }
+    return out;
+  };
+
+  const answerLook = (msg: LookReqMessage, from: SeatId): void => {
     const me = host.seat();
     const st = host.state();
-    const zone = Object.hasOwn(st.zones, msg.zone) ? st.zones[msg.zone]! : null;
-    const card = msg.card !== undefined && Object.hasOwn(st.cards, msg.card) ? st.cards[msg.card]! : null;
-    // Only the owner of the zone (or of the peeked card) answers, and only with its own cards.
-    const mine = me !== null && (msg.card !== undefined ? card !== null && card.owner === me : zone !== null && zone.owner === me);
-    let cards: RevealedCard[] | null = null;
-    if (mine && answerer) {
+    let safe: RevealedCard[] | null = null;
+    if (me !== null && answerer) {
+      let cards: RevealedCard[] | null;
       try {
         cards = answerer(msg, from);
       } catch {
         cards = null;
       }
+      safe = cards === null ? null : allowed(msg, st, me, cards);
     }
-    const safe = cards === null ? null : cards.filter((c) => Object.hasOwn(st.cards, c.instanceId) && st.cards[c.instanceId]!.owner === me).map(plainCard);
-    const answer: LookMessage = safe === null ? { v: PROTOCOL_VERSION, t: 'look', lookId: msg.lookId, cards: [], refused: true } : { v: PROTOCOL_VERSION, t: 'look', lookId: msg.lookId, cards: safe };
+    const answer: LookMessage = safe === null ? { v: PROTOCOL_VERSION, t: 'look', lookId: msg.lookId, cards: [], refused: true } : { v: PROTOCOL_VERSION, t: 'look', lookId: msg.lookId, cards: safe.map(plainCard) };
     host.sendPrivate(from, answer);
+  };
+
+  const refuseLook = (msg: LookReqMessage, from: SeatId): void => {
+    host.sendPrivate(from, { v: PROTOCOL_VERSION, t: 'look', lookId: msg.lookId, cards: [], refused: true });
+  };
+
+  host.onSequenced((action) => {
+    const me = host.seat();
+    const seen: RevealToSeen | null = action.type === 'revealTo' ? { by: action.by, card: action.instanceId, seats: Array.isArray(action.seats) ? action.seats : [] } : null;
+    sequencedCids.set(action.cid, seen);
+    if (sequencedCids.size > MAX_REMEMBERED_CIDS) sequencedCids.delete(sequencedCids.keys().next().value!);
+    const run = afterAction.get(action.cid);
+    if (run) {
+      afterAction.delete(action.cid);
+      for (const f of run) f(seen);
+    }
+    if (action.type === 'lookAt' && action.by !== me) {
+      const waiting = waitingReqs.find((w) => w.from === action.by && sameLook(action, w.msg));
+      if (waiting) {
+        waitingReqs = waitingReqs.filter((w) => w !== waiting);
+        answerLook(waiting.msg, waiting.from);
+      } else {
+        const list = openLooks.get(action.by) ?? [];
+        list.push({ zone: action.zone, count: action.count, ...(action.card !== undefined ? { card: action.card } : {}) });
+        if (list.length > MAX_OPEN_LOOKS) list.shift();
+        openLooks.set(action.by, list);
+      }
+    }
+  });
+
+  const onReveal = (msg: RevealMessage, from: SeatId): void => {
+    const card = asRevealedCard(msg);
+    if (!card || (msg.purpose !== 'revealTo' && msg.purpose !== 'look') || !isText(msg.about, 128)) return;
+    if (msg.purpose === 'look') {
+      // Only for a look this browser asked that seat for.
+      const p = pending.get(msg.about);
+      if (p && p.owner === from) decide(card, from);
+      return;
+    }
+    const take = (seen: RevealToSeen | null): void => {
+      const me = host.seat();
+      if (seen === null || me === null || seen.by !== from || seen.card !== card.instanceId || !seen.seats.includes(me)) return;
+      decide(card, from);
+    };
+    if (sequencedCids.has(msg.about)) return take(sequencedCids.get(msg.about)!);
+    if (afterAction.size >= MAX_WAITING && !afterAction.has(msg.about)) return;
+    afterAction.set(msg.about, [...(afterAction.get(msg.about) ?? []), take]);
+  };
+
+  const onLookReq = (msg: LookReqMessage, from: SeatId): void => {
+    if (!isText(msg.lookId, 128) || !isText(msg.zone, 128) || !Number.isInteger(msg.count) || msg.count < 1 || msg.count > MAX_CARDS) return;
+    if (msg.card !== undefined && !isText(msg.card, 128)) return;
+    const me = host.seat();
+    const st = host.state();
+    const zone = Object.hasOwn(st.zones, msg.zone) ? st.zones[msg.zone]! : null;
+    const card = msg.card !== undefined && Object.hasOwn(st.cards, msg.card) ? st.cards[msg.card]! : null;
+    // Only the owner of the zone (or of the peeked card) answers; anyone else refuses at once.
+    const mine = me !== null && (msg.card !== undefined ? card !== null && card.owner === me : zone !== null && zone.owner === me);
+    if (!mine) return refuseLook(msg, from);
+    // Each sequenced lookAt of the asker opens exactly one answer; a request without one waits for it.
+    if (takeLook(msg, from)) return answerLook(msg, from);
+    if (waitingReqs.length >= MAX_OPEN_LOOKS) {
+      const oldest = waitingReqs.shift()!;
+      refuseLook(oldest.msg, oldest.from);
+    }
+    waitingReqs.push({ msg, from });
   };
 
   const onLook = (msg: LookMessage, from: SeatId): void => {

@@ -15,8 +15,10 @@ import { rngCommitPhaseComplete, shuffleReady } from '../../src/core/rng';
 import {
   beginShuffle,
   commitDeck,
+  disclosedBy,
   emptySecretStore,
   finishShuffle,
+  lookAnswer,
   privateReorder,
   pruneReceived,
   receiveIdentity,
@@ -288,6 +290,8 @@ export class Player {
   reissueOnReturn = true;
   /** Send a nonce for other seats' shuffles and dice automatically. */
   autoRespond = true;
+  /** Own ids whose identity another seat saw since they were issued (core/secrets.ts disclosedBy): a shuffle of a zone holding one re-issues its ids. */
+  readonly exposed = new Set<InstanceId>();
 
   constructor(
     readonly peer: MiniPeer,
@@ -299,14 +303,11 @@ export class Player {
       if (verified) this.secrets = receiveIdentity(this.secrets, card, from);
     });
     this.channel.answerLooks((req, from) => {
-      const cards = req.card !== undefined ? [req.card] : this.secrets.libraryOrder.slice(0, req.count);
-      const out = cards.flatMap((id) => {
-        const c = revealedCard(this.secrets, id);
-        return c ? [c] : [];
-      });
-      for (const c of out) this.disclose(from, c);
+      const out = lookAnswer(this.secrets, this.state, req);
+      for (const c of out ?? []) this.disclose(from, c);
       return out;
     });
+    this.prior = peer.state;
     peer.onSequenced((a) => this.afterSequenced(a));
   }
 
@@ -337,6 +338,8 @@ export class Player {
     // A disclosed card that went from a public zone back into a hidden one: the disclosure lapses (leak scanner).
     const before = this.prior ?? this.state;
     this.prior = this.state;
+    for (const id of disclosedBy(this.secrets, before, a, this.state)) this.exposed.add(id);
+    for (const id of [...this.exposed]) if (!Object.hasOwn(this.state.cards, id)) this.exposed.delete(id);
     for (const c of Object.values(before.cards)) {
       if (c.owner !== this.seat || before.zones[c.zone]?.visibility !== 'public') continue;
       const now = this.state.cards[c.id];
@@ -387,7 +390,7 @@ export class Player {
     this.secrets = b.secrets;
     await this.peer.act(b.action);
     await until(() => shuffleReady(this.state, sid), 30_000, `shuffle ${sid} to be ready`);
-    const f = finishShuffle(this.secrets, this.state, sid, this.entropy);
+    const f = finishShuffle(this.secrets, this.state, sid, this.entropy, this.exposed);
     this.secrets = f.secrets;
     await this.peer.act(f.action);
     return sid;
@@ -471,6 +474,7 @@ export class Player {
     await this.peer.act({ type: 'toZone', card: id, to: this.zone('hand'), position: 'any' });
     if (!this.reissueOnReturn) return;
     const r = reissueZone(this.secrets, this.state, this.zone('hand'), this.entropy);
+    if (!r) return;
     await this.peer.act(r.action);
     this.secrets = r.secrets;
   }

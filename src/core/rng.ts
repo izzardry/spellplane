@@ -114,15 +114,22 @@ function seated(state: TableState, seat: SeatId): boolean {
   return s.name.trim() !== '' && s.away !== true;
 }
 
+/** Which kind of joint-randomness record an id names: rng ids and shuffle ids are separate namespaces. */
+export type RoundKind = 'rng' | 'shuffle';
+
 /**
  * The seats a randomness round or shuffle waits for: every other connected (not away) seated seat (DESIGN "Public
  * randomness" 2, "Secret shuffle" 2), in seat order. "Other" is relative to the round's initiator (rng) or the zone's
- * owner (shuffle). Evaluated on the current state, so a seat that goes away is no longer waited for. Empty for an
- * unknown id or a finished round; a closed window waits for nobody.
+ * owner (shuffle). Evaluated on the current state while the round is open, so a seat that goes away is no longer
+ * waited for; the reducer seals a round (sets `closedSeq`) the moment it has everything it waits for, so a seat that
+ * sits down or comes back afterwards never joins it. Empty for an unknown id. `kind` picks the record; without it the
+ * id must name exactly one record (the reducer refuses an id used by the other kind, so this only matters for
+ * hand-built states).
  */
-export function expectedParticipants(state: TableState, id: RngId): SeatId[] {
-  const r = Object.hasOwn(state.rng, id) ? state.rng[id]! : null;
-  const sh = Object.hasOwn(state.shuffles, id) ? state.shuffles[id]! : null;
+export function expectedParticipants(state: TableState, id: RngId | ShuffleId, kind?: RoundKind): SeatId[] {
+  const r = kind !== 'shuffle' && Object.hasOwn(state.rng, id) ? state.rng[id]! : null;
+  const sh = kind !== 'rng' && Object.hasOwn(state.shuffles, id) ? state.shuffles[id]! : null;
+  if (r && sh) return [];
   const by = r ? r.by : sh ? sh.owner : null;
   if (by === null) return [];
   return participantOrder(
@@ -131,13 +138,16 @@ export function expectedParticipants(state: TableState, id: RngId): SeatId[] {
   );
 }
 
-/** Whether a secret shuffle may finish: every expected peer nonce arrived, or the window closed (DESIGN "Secret shuffle" 2-3). */
+/**
+ * Whether a secret shuffle may finish: every expected peer nonce arrived, or the window closed (DESIGN "Secret
+ * shuffle" 2-3). Once true it stays true: the reducer seals the round in the same step, so its nonces never change.
+ */
 export function shuffleReady(state: TableState, sid: ShuffleId): boolean {
   if (!Object.hasOwn(state.shuffles, sid)) return false;
   const r = state.shuffles[sid]!;
   if (r.orderHash !== null) return false;
   if (r.closedSeq !== undefined) return true;
-  return expectedParticipants(state, sid).every((s) => Object.hasOwn(r.nonces, s));
+  return expectedParticipants(state, sid, 'shuffle').every((s) => Object.hasOwn(r.nonces, s));
 }
 
 /** The peer nonces of a shuffle in seat order, as the seed concatenates them (DESIGN "Secret shuffle" 3). */
@@ -152,7 +162,7 @@ export function rngCommitPhaseComplete(state: TableState, rid: RngId): boolean {
   if (!Object.hasOwn(state.rng, rid)) return false;
   const r = state.rng[rid]!;
   if (r.closedSeq !== undefined) return true;
-  return expectedParticipants(state, rid).every((s) => Object.hasOwn(r.commits, s));
+  return expectedParticipants(state, rid, 'rng').every((s) => Object.hasOwn(r.commits, s));
 }
 
 /**

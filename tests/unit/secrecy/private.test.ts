@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { RevealedCard } from '../../../src/core/commit';
-import { commitDeck, emptySecretStore, revealedCard } from '../../../src/core/secrets';
+import { commitDeck, emptySecretStore, lookAnswer, revealedCard } from '../../../src/core/secrets';
 import type { SeatId, TableState } from '../../../src/core/types';
 import type { PrivateMessage, SequencedAction } from '../../../src/net/messages';
 import { privateChannelOver, type PrivateChannelHost } from '../../../src/net/private';
@@ -72,11 +72,22 @@ class Bus {
     for (const l of this.listeners[to]!) l(msg as PrivateMessage, { seat: from, peerId: `peer-${from}` });
   }
 
-  /** Tell every channel that the action with `cid` was sequenced. */
-  sequenced(cid: string): void {
-    const a = { type: 'chat', text: '', channel: 'table', by: 's0', cid, seq: 1 } as SequencedAction;
+  /** Tell every channel that the action with `cid` was sequenced (a chat line unless `action` says otherwise). */
+  sequenced(cid: string, action: Record<string, unknown> = { type: 'chat', text: '', channel: 'table', by: 's0' }): void {
+    const a = { ...action, cid, seq: 1 } as unknown as SequencedAction;
     for (const l of this.seqListeners) l(a, false);
   }
+
+  /** A sequenced `revealTo` of `card` by `by` naming `seats`. */
+  revealTo(cid: string, by: SeatId, card: string, seats: SeatId[]): void {
+    this.sequenced(cid, { type: 'revealTo', by, instanceId: card, seats });
+  }
+
+  /** A sequenced `lookAt` by `by`. */
+  lookAt(by: SeatId, zone: string, count: number, card?: string): void {
+    this.sequenced(`look-${++this.lookCid}`, { type: 'lookAt', by, zone, count, ...(card !== undefined ? { card } : {}) });
+  }
+  private lookCid = 0;
 
   /** Tell every channel the shared state changed. */
   notify(): void {
@@ -113,7 +124,7 @@ describe('targeted reveal', () => {
     expect(bus.inbox.s1).toHaveLength(1);
     // Taken once the public revealTo is applied here (the pair channel can overtake the log).
     expect(got.s1).toEqual([]);
-    bus.sequenced('cid-1');
+    bus.revealTo('cid-1', 's0', card.instanceId, ['s1']);
     expect(bus.inbox.s1![0]!.msg).toEqual({ v: 1, t: 'reveal', ...card, purpose: 'revealTo', about: 'cid-1' });
     expect(bus.inbox.s2).toEqual([]);
     expect(bus.inbox.s0).toEqual([]);
@@ -125,9 +136,32 @@ describe('targeted reveal', () => {
     const { t, bus, got } = setup();
     const card = revealedCard(t.secrets.s0!, t.secrets.s0!.hand[0]!)!;
     bus.inject('s1', 's0', { v: 1, t: 'reveal', ...card, ref: { sid: 'forged' }, purpose: 'revealTo', about: 'x' });
-    bus.inject('s1', 's2', { v: 1, t: 'reveal', ...card, purpose: 'revealTo', about: 'x' });
-    bus.sequenced('x');
+    bus.inject('s1', 's2', { v: 1, t: 'reveal', ...card, purpose: 'revealTo', about: 'y' });
+    bus.revealTo('x', 's0', card.instanceId, ['s1']);
+    // s2 publicly "reveals" s0's card to s1 (no rules enforcement), but cannot open s0's commitment.
+    bus.revealTo('y', 's2', card.instanceId, ['s1']);
     expect(got.s1!.map((g) => g.verified)).toEqual([false, false]);
+  });
+
+  it('is taken only with the sender\u2019s public revealTo of that card naming this seat', () => {
+    const { t, bus, got } = setup();
+    const [h0, h1] = t.secrets.s0!.hand;
+    const card = revealedCard(t.secrets.s0!, h0!)!;
+    const send = (about: string): void => bus.inject('s1', 's0', { v: 1, t: 'reveal', ...card, purpose: 'revealTo', about });
+    send('chat');
+    bus.sequenced('chat');
+    send('other-card');
+    bus.revealTo('other-card', 's0', h1!, ['s1']);
+    send('other-seat');
+    bus.revealTo('other-seat', 's0', h0!, ['s2']);
+    send('other-sender');
+    bus.revealTo('other-sender', 's2', h0!, ['s1']);
+    // A look answer for a look this browser never asked for.
+    bus.inject('s1', 's0', { v: 1, t: 'reveal', ...card, purpose: 'look', about: 'look-s1-1' });
+    expect(got.s1).toEqual([]);
+    bus.revealTo('right', 's0', h0!, ['s2', 's1']);
+    send('right');
+    expect(got.s1).toEqual([{ card, from: 's0', verified: true }]);
   });
 
   it('holds an identity that arrives before the shared state knows its card, and verifies it once it does', () => {
@@ -140,7 +174,7 @@ describe('targeted reveal', () => {
     const deck = commitDeck(emptySecretStore('s0'), deckRefs('s0', 2), seededEntropy(5));
     const early = revealedCard(deck.secrets, deck.secrets.libraryOrder[0]!)!;
     bus.inject('s1', 's0', { v: 1, t: 'reveal', ...early, purpose: 'revealTo', about: 'x' });
-    bus.sequenced('x');
+    bus.revealTo('x', 's0', early.instanceId, ['s1']);
     expect(got).toEqual([]);
     t.apply('s0', { type: 'reorder', zone: 'library:s0', count: 0, orderHash: 'o' });
     bus.notify();
@@ -175,7 +209,8 @@ describe('targeted reveal', () => {
 describe('looks at another seat’s hidden cards', () => {
   it('go through the owner, who answers the asker only; the asker gets verified cards', async () => {
     const { t, bus, ch, got } = setup();
-    ch.s0!.answerLooks((req) => (req.zone === 'library:s0' ? t.secrets.s0!.libraryOrder.slice(0, req.count).map((id) => revealedCard(t.secrets.s0!, id)!) : null));
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req));
+    bus.lookAt('s1', 'library:s0', 2);
     const cards = await ch.s1!.requestLook('s0', 'library:s0', 2);
     expect(cards.map((c) => c.instanceId)).toEqual(t.secrets.s0!.libraryOrder.slice(0, 2));
     expect(got.s1!.every((g) => g.verified)).toBe(true);
@@ -185,11 +220,14 @@ describe('looks at another seat’s hidden cards', () => {
 
   it('resolve empty when the owner refuses, has no answerer, is asked about a zone it does not own, or is away', async () => {
     const { bus, ch } = setup();
+    bus.lookAt('s1', 'library:s0', 1);
     expect(await ch.s1!.requestLook('s0', 'library:s0', 1)).toEqual([]);
     const off = ch.s0!.answerLooks(() => null);
+    bus.lookAt('s1', 'library:s0', 1);
     expect(await ch.s1!.requestLook('s0', 'library:s0', 1)).toEqual([]);
     off();
     ch.s2!.answerLooks(() => []);
+    bus.lookAt('s1', 'library:s0', 1);
     expect(await ch.s1!.requestLook('s2', 'library:s0', 1)).toEqual([]);
     expect(bus.inbox.s1!.at(-1)!.msg).toMatchObject({ t: 'look', refused: true });
     expect(await ch.s1!.requestLook('s1', 'library:s1', 1)).toEqual([]);
@@ -213,11 +251,59 @@ describe('looks at another seat’s hidden cards', () => {
   });
 
   it('strips cards that are not the answerer’s own from an answer', async () => {
-    const { t, ch } = setup();
+    const { t, bus, ch } = setup();
     const foreign = { instanceId: t.state.zones['library:s1']!.ids[0]!, ref: { sid: 'x' }, salt: 'y' };
     const mine = revealedCard(t.secrets.s0!, t.secrets.s0!.libraryOrder[0]!)!;
-    ch.s0!.answerLooks(() => [foreign, mine]);
-    expect(await ch.s2!.requestLook('s0', 'library:s0', 2)).toEqual([mine]);
+    const second = revealedCard(t.secrets.s0!, t.secrets.s0!.libraryOrder[1]!)!;
+    const hand = revealedCard(t.secrets.s0!, t.secrets.s0!.hand[0]!)!;
+    ch.s0!.answerLooks(() => [foreign, hand, mine, mine, second]);
+    bus.lookAt('s2', 'library:s0', 2);
+    expect(await ch.s2!.requestLook('s0', 'library:s0', 2)).toEqual([mine, second]);
+    // Never more than the count the public lookAt named.
+    bus.lookAt('s2', 'library:s0', 1);
+    expect(await ch.s2!.requestLook('s0', 'library:s0', 1)).toEqual([mine]);
+  });
+
+  it('are answered only for a sequenced lookAt of the asker, once each, and a request may arrive before it', async () => {
+    const { t, bus, ch } = setup();
+    const asked: string[] = [];
+    ch.s0!.answerLooks((req, from) => {
+      asked.push(`${from}:${req.zone}:${req.count}`);
+      return lookAnswer(t.secrets.s0!, t.state, req);
+    });
+    const top = revealedCard(t.secrets.s0!, t.secrets.s0!.libraryOrder[0]!)!;
+    // No lookAt at all: the answerer is never asked and nothing leaves s0.
+    bus.inject('s0', 's1', { v: 1, t: 'lookReq', lookId: 'bogus', zone: 'library:s0', count: 1 });
+    expect(asked).toEqual([]);
+    expect(bus.inbox.s1).toEqual([]);
+    // A lookAt by another seat, or with another count, does not open it either.
+    bus.lookAt('s2', 'library:s0', 1);
+    bus.lookAt('s1', 'library:s0', 2);
+    expect(asked).toEqual([]);
+    // The matching lookAt arrives after the request (the pair channel overtook the log): answered now.
+    bus.lookAt('s1', 'library:s0', 1);
+    expect(asked).toEqual(['s1:library:s0:1']);
+    expect(bus.inbox.s1!.map((m) => m.msg)).toEqual([{ v: 1, t: 'look', lookId: 'bogus', cards: [top] }]);
+    // The lookAt is used up: a second request waits again.
+    bus.inject('s0', 's1', { v: 1, t: 'lookReq', lookId: 'again', zone: 'library:s0', count: 1 });
+    expect(asked).toHaveLength(1);
+  });
+
+  it('a peek shows only an own face-down card in a public zone, never a hand or library card', async () => {
+    const { t, bus, ch } = setup();
+    const [h0, h1] = t.secrets.s0!.hand;
+    t.apply('s0', { type: 'move', card: h1!, to: 'battlefield:s0', pose: { x: 0, y: -200, rot: 0 } });
+    // A careless answerer that shows whatever is asked for.
+    ch.s0!.answerLooks((req) => [revealedCard(t.secrets.s0!, req.card ?? h0!)!]);
+    bus.lookAt('s1', 'library:s0', 1, h0);
+    expect(await ch.s1!.requestLook('s0', 'library:s0', 1, h0)).toEqual([]);
+    expect(bus.inbox.s1!.at(-1)!.msg).toMatchObject({ t: 'look', cards: [], refused: true });
+    bus.lookAt('s1', 'hand:s0', 1, h0);
+    expect(await ch.s1!.requestLook('s0', 'hand:s0', 1, h0)).toEqual([]);
+    bus.lookAt('s1', 'battlefield:s0', 1, h1);
+    expect((await ch.s1!.requestLook('s0', 'battlefield:s0', 1, h1)).map((c) => c.instanceId)).toEqual([h1]);
+    const salts = bus.inbox.s1!.flatMap((m) => (m.msg.t === 'look' ? m.msg.cards.map((c) => c.salt) : []));
+    expect(salts).toEqual([t.secrets.s0!.identities[h1!]!.salt]);
   });
 });
 
