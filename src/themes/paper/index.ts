@@ -1,8 +1,11 @@
 /**
- * Paper: the default black-on-white theme (DESIGN "Themes and rendering"). Contract stub from M0-C with starting
- * tokens so the HUD can map CSS variables; implementer: M0-P3 (build, dressing, line styles, tuning).
+ * Paper: the default black-on-white theme (DESIGN "Themes and rendering"). Flat white table plane, no lighting, no
+ * shadows; zones are hairline outlines with small caps labels (drawn by the scene from the layout, in the theme's
+ * border and muted colours); lines are crisp 1.5 px strokes in seat colours that "glow" only by a brief thickness
+ * pulse; bird's-eye camera; no sound.
  */
-import { DEFAULT_MOTION, type SeatColour, type Theme } from '../types';
+import * as THREE from 'three';
+import { DEFAULT_MOTION, type LineKind, type LineStyle, type SceneContext, type SeatColour, type SeatPattern, type Theme, type ThemeInstance } from '../types';
 
 const SEATS: SeatColour[] = [
   { index: 0, colour: '#1f6fd1', pattern: 'solid', glyph: 'circle' },
@@ -15,9 +18,56 @@ const SEATS: SeatColour[] = [
   { index: 7, colour: '#6b6b1f', pattern: 'zigzag', glyph: 'ring' },
 ];
 
-const todo = (): never => {
-  throw new Error('not implemented: M0-P3');
+/** Dash pattern in px for a seat pattern (null = solid), so lines never depend on hue alone. */
+export const PATTERN_DASH: Record<SeatPattern, number[] | null> = {
+  solid: null,
+  dash: [8, 5],
+  dot: [2, 4],
+  'dash-dot': [8, 4, 2, 4],
+  'long-dash': [14, 5],
+  'dash-dot-dot': [8, 3, 2, 3, 2, 3],
+  double: [12, 2, 2, 2],
+  zigzag: [5, 2, 5, 6],
 };
+
+/** The page around the table: a faint warm grey so the white table reads as a sheet of paper. */
+export const PAPER_SURROUND = '#f1f1ee';
+
+function buildPaper(ctx: SceneContext): ThemeInstance {
+  const previousBackground = ctx.scene.background;
+  ctx.scene.background = new THREE.Color(PAPER_SURROUND);
+  const geometry = new THREE.PlaneGeometry(ctx.table.w, ctx.table.d);
+  const material = new THREE.MeshBasicMaterial({ color: paper.tokens.colours.surface, toneMapped: false });
+  const plane = new THREE.Mesh(geometry, material);
+  plane.name = 'paper-table';
+  plane.rotation.x = -Math.PI / 2;
+  plane.renderOrder = 0;
+  ctx.scene.add(plane);
+  return {
+    update() {
+      // Paper is static: no lights, no particles, no post-processing.
+    },
+    dispose() {
+      ctx.scene.remove(plane);
+      geometry.dispose();
+      material.dispose();
+      ctx.scene.background = previousBackground;
+    },
+  };
+}
+
+function lineStyle(kind: LineKind, seat: SeatColour): LineStyle {
+  return {
+    colour: seat.colour,
+    widthPx: 1.5,
+    // Persistent marks are always dashed so they read apart from targeting lines; otherwise the seat's pattern.
+    dash: kind === 'mark' ? (PATTERN_DASH[seat.pattern] ?? [6, 4]) : PATTERN_DASH[seat.pattern],
+    geometry: 'stroke',
+    glow: 0,
+    arrowhead: kind === 'attach' ? 'dot' : kind === 'mark' ? 'none' : 'triangle',
+    pulseMs: 300,
+  };
+}
 
 /** The Paper theme (DESIGN "Themes and rendering"). */
 export const paper: Theme = {
@@ -28,7 +78,8 @@ export const paper: Theme = {
       fg: '#111111',
       muted: '#5f5f5f',
       surface: '#ffffff',
-      border: '#d8d8d8',
+      // Zone hairlines must find their drop targets: at least 3:1 against the table (WCAG 1.4.11 non-text contrast).
+      border: '#8c8c8c',
       accent: '#111111',
       danger: '#b3261e',
       warning: '#8a5a00',
@@ -40,7 +91,7 @@ export const paper: Theme = {
     spacing: { xs: 2, sm: 4, md: 8, lg: 16, xl: 24 },
   },
   camera: { defaultRig: 'birdseye' },
-  build: () => todo(),
+  build: buildPaper,
   cardDressing: {
     sleeve: null,
     thickness: 0,
@@ -53,7 +104,7 @@ export const paper: Theme = {
     faceDownOwnerOpacity: 0.5,
     foilSheen: true,
   },
-  lineStyle: () => todo(),
+  lineStyle,
   motion: DEFAULT_MOTION,
   quality: [{ id: 'high', shadows: false, post: false, particles: false, pixelRatio: 2 }],
 };

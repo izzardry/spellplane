@@ -385,7 +385,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M0-C Contracts
 - [ ] M0-P1 Core engine
 - [x] M0-P2 Card data
-- [ ] M0-P3 Scene
+- [x] M0-P3 Scene
 - [ ] M0-P4 HUD
 - [x] M0-P5 Local store
 - [x] M0-P6 Magic definition
