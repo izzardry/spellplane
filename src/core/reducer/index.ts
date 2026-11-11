@@ -3,10 +3,10 @@
  * `reduce` is pure and total: an action that does not apply returns the state unchanged (same object),
  * with the reason available from `explain`. It never reads the clock, randomness or the secret store.
  *
- * Later packages add their cases to HANDLERS: ask, respond and autoPass (M1-P3, confirm.ts), the secret shuffle and
- * public randomness (M1-P2), draft actions (M2). M1-P4 extends moveTemp and settle in temp.ts.
+ * Later packages add their cases to HANDLERS: ask, respond and autoPass (M1-P3, confirm.ts), draft actions (M2). The
+ * secret shuffle, public randomness and verified reveals are M1-P2's (secret.ts). M1-P4 extends moveTemp and settle in temp.ts.
  */
-import { ACTION_FAMILIES, UNDOABLE_TYPES, type Action, type ActionOf, type ActionType } from '../actions';
+import { ACTION_FAMILIES, isUndoable, type Action, type ActionOf, type ActionType } from '../actions';
 import { checkInvariants } from '../invariants';
 import type { CoreGameSpec, Format, SeatColourIndex, TableState, Team, Zone } from '../types';
 import { DEFAULT_TABLE_SETTINGS } from '../types';
@@ -18,6 +18,7 @@ import { STACK_ZONE } from './place';
 import * as stack from './stack';
 import * as table from './table';
 import { applyRestore } from './restore';
+import * as secret from './secret';
 import * as temp from './temp';
 import { Rejection, checkId, isObj, reject } from './util';
 import * as zones from './zones';
@@ -56,7 +57,7 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   moveTemp: temp.moveTemp,
   settle: temp.settle,
   tap: cards.tap,
-  flip: cards.flip,
+  flip: secret.flip,
   transform: cards.transform,
   rotate: cards.rotate,
   counter: cards.counter,
@@ -70,13 +71,13 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   remove: cards.remove,
   toZone: zones.toZone,
   draw: zones.draw,
-  reveal: zones.reveal,
+  reveal: secret.reveal,
   revealTo: zones.revealTo,
   hide: zones.hide,
-  shuffleCommit: later('M1-P2'),
-  shuffleNonce: later('M1-P2'),
-  shuffleDone: later('M1-P2'),
-  reorder: zones.reorder,
+  shuffleCommit: secret.shuffleCommit,
+  shuffleNonce: secret.shuffleNonce,
+  shuffleDone: secret.shuffleDone,
+  reorder: secret.reorder,
   lookAt: zones.lookAt,
   mulligan: zones.mulligan,
   stackPush: stack.stackPush,
@@ -98,9 +99,9 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   seatLeave: table.seatLeave,
   ready: table.ready,
   away: table.away,
-  rngCommit: later('M1-P2'),
-  rngReveal: later('M1-P2'),
-  commitClose: later('M1-P2'),
+  rngCommit: secret.rngCommit,
+  rngReveal: secret.rngReveal,
+  commitClose: secret.commitClose,
   packOpen: later('M2'),
   pick: later('M2'),
   packPass: later('M2'),
@@ -117,12 +118,18 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   recoverCommit: later('M1-P7'),
 };
 
-const UNDOABLE = new Set<string>(UNDOABLE_TYPES);
-
+/**
+ * `undo {of, inverse}`: apply the inverse. The handlers authorise on the inverse's own `by`, so it must be the undo's
+ * sender (DESIGN "Specification: network protocol and secrecy", Handshake: the sequencer rejects any propose whose
+ * `by` is not the sender's seat; checking only the outer `by` would let a seat act, and reveal, in another's name),
+ * except a `lineAdd` that restores a removed line with its creator. An inverse never carries an identity (`isUndoable`: a flip with `ref` is a reveal, not an inverse).
+ */
 function applyUndo(d: Draft, a: ActionOf<'undo'>): void {
   checkString(a.of);
   const inv: unknown = a.inverse;
-  if (!isObj(inv) || typeof inv.type !== 'string' || !UNDOABLE.has(inv.type)) reject('undo carries an action that is not undoable');
+  if (!isObj(inv) || typeof inv.type !== 'string' || !isUndoable(inv as unknown as Action)) reject('undo carries an action that is not undoable');
+  // The one exception is a removed line coming back: its `by` names the line's creator and authorises nothing.
+  if (inv.by !== a.by && inv.type !== 'lineAdd') reject('an undo carries an inverse in its own sender\'s name only');
   const inverse = inv as unknown as Action;
   handle(d, inverse);
   if (inverse.restore !== undefined) applyRestore(d, inverse.restore);
@@ -151,9 +158,17 @@ function step(state: TableState, action: Action): Step {
     if (action.seq !== undefined && (typeof action.seq !== 'number' || !Number.isInteger(action.seq) || action.seq < 0)) reject('invalid seq');
     // A restore patch only travels on the inverse inside an `undo` (applyUndo).
     if (action.restore !== undefined) reject('only the inverse inside an undo carries a restore patch');
+    // Only a seat itself, or anyone once the sequencer marked it away, empties its chair (M1-P2, secret.ts).
+    secret.checkSeatLeave(state, action);
     const d = new Draft(state);
     handle(d, action);
-    const next = d.finish(action.seq);
+    const changed = d.finish(action.seq);
+    // A round completed by this step (whatever the action) is sealed in it (M1-P2, secret.ts).
+    const next = changed === state ? changed : secret.sealCompleteRounds(changed, action.seq ?? state.seq + 1);
+    // A zone being shuffled with a fixed seed keeps its cards until the shuffle is done (M1-P2, secret.ts).
+    if (next !== state) secret.checkFrozenZones(state, next, action);
+    // A round's own owner or initiator cannot stop it waiting for a peer (M1-P2, secret.ts).
+    if (next !== state) secret.checkRoundParticipants(state, next, action);
     if (hasRestore(action) && next !== state) {
       const broken = checkInvariants(next);
       if (broken.length) reject(`the restore patch would break the table: ${broken[0]}`);

@@ -277,6 +277,27 @@ describe('undo', () => {
     expect(s.secrets().hand).toEqual(hand);
   });
 
+  it('undoing a return to the hand brings the card back face up through a verified re-reveal, not a restore patch', async () => {
+    const s = await withDeck();
+    await s.draw(2);
+    const id = s.secrets().hand[0]!;
+    s.dispatch({ type: 'move', card: id, to: 'battlefield:s0', pose: { x: 10, y: 80, rot: 0 } });
+    s.dispatch({ type: 'tap', card: id, tapped: true });
+    const h0 = await hashNoSeq(s.getState());
+    const before = s.getState().cards[id]!;
+    expect(before).toMatchObject({ face: 'up', tapped: true });
+    s.dispatch({ type: 'toZone', card: id, to: HAND, position: 'any' });
+    expect(s.getState().cards[id]!.identity).toBeUndefined();
+    const n = s.log().length;
+    expect(s.undo()).toBe(true);
+    const undo = s.log().slice(n).flatMap((e) => (e.kind === 'action' ? [e.action] : []));
+    expect(undo.map((a) => a.type)).toEqual(['undo', 'flip']);
+    expect(JSON.stringify(undo[0])).not.toContain('identity');
+    expect(undo[1]).toMatchObject({ type: 'flip', card: id, face: 'up', ref: before.identity, salt: expect.any(String) });
+    expect(s.getState().cards[id]!.suspect).toBeUndefined();
+    expect(await hashNoSeq(s.getState())).toBe(h0);
+  });
+
   it('undoing a move out of the middle of the library puts the card back where it was, with a private-reorder trace', async () => {
     const s = await withDeck();
     await s.shuffle();

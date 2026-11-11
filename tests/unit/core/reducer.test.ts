@@ -122,11 +122,7 @@ describe('reducer contract', () => {
     let s = readyTable(2);
     s = play(s, 'a00', P(0, -200));
     const later: Action[] = [
-      act('shuffleCommit', { sid: 'sh', zone: 'library:s0', h: 'h' }),
-      act('shuffleNonce', { sid: 'sh', nonce: 'n' }),
-      act('shuffleDone', { sid: 'sh', orderHash: 'o' }),
-      act('rngCommit', { rid: 'r', purpose: 'die', n: 6, h: 'h' }),
-      act('rngReveal', { rid: 'r', nonce: 'n' }),
+      // The secret shuffle and public randomness (M1-P2) are covered by tests/unit/secrecy.
       act('packOpen', { packId: 'p', commits: [], count: 0 }),
       act('pick', { packId: 'p', count: 1 }),
       act('packPass', { packId: 'p', to: 's1', count: 1 }),

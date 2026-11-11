@@ -397,7 +397,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M0-G Gate (owner playtest pending)
 - [x] M1-C Contracts
 - [ ] M1-P1 Transport and sequencer
-- [ ] M1-P2 Secrecy
+- [x] M1-P2 Secrecy
 - [x] M1-P3 Stack and confirmation
 - [x] M1-P4 Combat and lines
 - [x] M1-P5 Lobby and seats
