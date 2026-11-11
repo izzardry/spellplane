@@ -381,8 +381,8 @@ Sixteen decisions from the second interview on 10 November 2026 shape this plan;
 
 Ticked by the main session as packages are merged and gates pass.
 
-- [x] B0 Repository bootstrap (items B0.1 to B0.7 above; Pages blocked by private repo, owner check)
-- [ ] M0-C Contracts
+- [x] B0 Repository bootstrap (items B0.1 to B0.7 above; Pages live since 11 Nov 2026 after the owner made the repo public)
+- [x] M0-C Contracts
 - [x] M0-P1 Core engine
 - [x] M0-P2 Card data
 - [x] M0-P3 Scene
@@ -390,7 +390,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M0-P5 Local store
 - [x] M0-P6 Magic definition
 - [x] M0-P7 Solo session
-- [ ] M0-G Gate and owner playtest
+- [x] M0-G Gate (owner playtest pending)
 - [ ] M1-C Contracts
 - [ ] M1-P1 Transport and sequencer
 - [ ] M1-P2 Secrecy
