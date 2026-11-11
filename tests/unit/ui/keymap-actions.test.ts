@@ -4,7 +4,7 @@
  * "Combat and annotation", "The effect stack", "Turn flow and confirmation" and "Camera and navigation").
  * Each binding of MTG_KEYMAP is pressed as a browser would send it, through the same key engine the HUD uses.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { MTG_KEYMAP, chordToString } from '../../../src/games/mtg/keymap';
 import type { ActionId, KeyBinding } from '../../../src/games/types';
 import { drafts, rig, type Rig } from './setup';
@@ -20,7 +20,8 @@ interface Scenario {
   after?(r: Rig): void;
 }
 
-const flush = () => new Promise((res) => setTimeout(res, 0));
+/** publicRandom awaits crypto.subtle (a real async digest), so wait until both rng drafts are out rather than one macrotask. */
+const flush = (r: Rig) => vi.waitFor(() => expect(drafts(r).map((a) => a.type)).toEqual(['rngCommit', 'rngReveal']));
 
 const S: Record<ActionId, Scenario> = {
   // Card
@@ -92,7 +93,7 @@ const S: Record<ActionId, Scenario> = {
   token: { setup: { hovered: 'bf2' }, expect: (r) => expect(r.ui).toEqual([{ hook: 'openTokenSearch', args: ['bf2'] }]) },
   rollDie: {
     expect: async (r) => {
-      await flush();
+      await flush(r);
       const d = drafts(r);
       expect(d.map((a) => a.type)).toEqual(['rngCommit', 'rngReveal']);
       expect(d[0]).toMatchObject({ purpose: 'die', n: 6 });
@@ -101,7 +102,7 @@ const S: Record<ActionId, Scenario> = {
   },
   flipCoin: {
     expect: async (r) => {
-      await flush();
+      await flush(r);
       expect(drafts(r)[0]).toMatchObject({ type: 'rngCommit', purpose: 'coin', n: 2 });
     },
   },
