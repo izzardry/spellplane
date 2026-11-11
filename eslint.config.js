@@ -54,7 +54,7 @@ const PURE_IMPORTS = {
 };
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'dist-test/**', 'node_modules/**', 'artifacts/**', 'test-results/**', 'playwright-report/**', 'dev-dist/**', 'coverage/**'] },
+  { ignores: ['dist/**', 'dist-test/**', 'node_modules/**', 'artifacts/**', 'test-results/**', 'playwright-report/**', 'dev-dist/**', 'coverage/**', 'scripts/workflow/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...svelte.configs.recommended,
