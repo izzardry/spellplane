@@ -113,6 +113,8 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   sequencerClaim: record,
   settings: table.settings,
   stageSet: table.stageSet,
+  recover: later('M1-P7'),
+  recoverCommit: later('M1-P7'),
 };
 
 const UNDOABLE = new Set<string>(UNDOABLE_TYPES);
