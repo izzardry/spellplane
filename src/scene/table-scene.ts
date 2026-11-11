@@ -334,7 +334,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const zoneKind = l.key.split(':').pop()!;
       const seatIdx = Number(l.key.split(':')[1]);
       const seat = state ? Object.values(state.seats).find((s) => s.index === seatIdx) : undefined;
-      const n = seat ? counts.get(`${zoneKind}:${seat.id}`) : l.key === 'zl:stack' ? counts.get('stack') : undefined;
+      const n = seat ? counts.get(`${zoneKind}:${seat.id}`) : l.key === 'zl:stack' ? state?.stack.length : undefined;
       specs.set(l.key, { text: n ? `${l.text}  ${n}` : l.text, x: l.x, y: l.y, z: 0.1, rot: l.rot, size: 5.5, colour: t.muted, letterSpacing: 0.12, anchorY: l.anchorY });
     }
     return specs;
@@ -600,7 +600,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const rc = order[i]!;
       if (exclude?.has(rc.id)) continue;
       if (!pointInCard(p, rc.motion.pose)) continue;
-      if (marker && rc.place.kind === 'stack' && (entries.find((e) => e.item.card === rc.id)?.index ?? -1) < marker.index) return null;
+      // A marker covers what lies under it: older items of the lane and anything on the table below the lane.
+      if (marker && (rc.place.kind === 'stack' ? (entries.find((e) => e.item.card === rc.id)?.index ?? -1) < marker.index : rc.place.sort[0] < LAYER.stack)) return null;
       return rc;
     }
     return null;
