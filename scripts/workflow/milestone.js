@@ -11,7 +11,8 @@ export const meta = {
 
 // ---------------------------------------------------------------------------
 // args: { milestone:'M0', branch:'m0', repo, wtRoot, contracts?:{brief, sections}, packages:[...], gate:{brief, sections} }
-// package: { id:'M0-P1', slug:'m0-p1', name, owns:[...], tests:[...], sections:[...], brief, deep:boolean, deps:[ids], e2e:boolean }
+// package: { id:'M0-P1', slug:'m0-p1', name, owns:[...], tests:[...], sections:[...], brief, deep:boolean, deps:[ids], e2e:boolean,
+//            maxRounds?, reviewFocus?, resume? (skip the implementer; review the existing branch) }
 // ---------------------------------------------------------------------------
 const A = args
 const M = A.milestone
@@ -24,6 +25,7 @@ const COMMON = [
   `Milestone ${M}. Sources of truth: docs/DESIGN.md (what to build) and docs/PLAN.md (packages, acceptance tests, gates). Read the sections named below yourself with the Read tool (use grep -n '^## ' to find them); they are not pasted here.`,
   `This is an unattended overnight run: never ask questions or wait for input. When the design is silent, choose the simplest behaviour consistent with it and report the decision in your return value.`,
   `Never force-push, never rewrite pushed history, never touch another repository, never use the network in tests.`,
+  `Playwright runs are serialised across the machine (scripts/pw-guard.mjs, see CLAUDE.md): give pnpm e2e / e2e:gate / shots a 10-minute Bash timeout, never start two at once, and if one exits with code 3 (macOS security prompt) report it instead of retrying.`,
 ].join('\n')
 
 const secList = (s) => s.map((x) => `"${x}"`).join(', ')
@@ -276,7 +278,10 @@ async function runPackage(pkg) {
       }
       log(`${pkg.id}: dependencies merged, starting`)
     }
-    const impl = await agent(implPrompt(pkg), { label: `impl:${pkg.id}`, phase: 'Packages', schema: IMPL_SCHEMA })
+    // resume: the implementation already exists on branch pkg.slug (e.g. after a crash); go straight to review.
+    const impl = pkg.resume
+      ? { status: 'green', check_green: true, decisions: [], summary: `resumed from existing branch ${pkg.slug}` }
+      : await agent(implPrompt(pkg), { label: `impl:${pkg.id}`, phase: 'Packages', schema: IMPL_SCHEMA })
     if (!impl || impl.status !== 'green' || !impl.check_green) {
       settled = true
       return { pkg: pkg.id, impl, rounds: 0, integration: await integrate(pkg, { park: true, reason: impl ? impl.blocked_reason || impl.summary : 'implementer died', decisions: impl ? impl.decisions : [] }) }
