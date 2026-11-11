@@ -122,6 +122,34 @@ describe('runDiag', () => {
     expect(net.livePeers()).toEqual(['ta']);
   });
 
+  it('a browser that closes the check is no longer listed as connected', async () => {
+    const net = new LoopbackNetwork({ delay: { min: 10, max: 10 } });
+    const a = start(() => net.create('ta'));
+    const b = start(() => net.create('tb'), { roomId: a.roomId, roomKey: a.roomKey });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(a.report().peers.map((p) => p.peer)).toEqual(['tb']);
+    const seen: number[] = [];
+    a.subscribe((r) => seen.push(r.peers.length));
+    b.stop();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.report().peers).toEqual([]);
+    expect(seen.at(-1)).toBe(0);
+  });
+
+  it('a peer that drops off the network without leaving is dropped from the report too', async () => {
+    const net = new LoopbackNetwork({ delay: { min: 10, max: 10 } });
+    const a = start(() => net.create('ta'));
+    start(() => net.create('tb'), { roomId: a.roomId, roomKey: a.roomKey });
+    await vi.advanceTimersByTimeAsync(100);
+    net.kill('tb');
+    await vi.advanceTimersByTimeAsync(50);
+    expect(a.report().peers).toEqual([]);
+    // Coming back is a fresh connection.
+    net.revive('tb');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(a.report().peers.map((p) => p.peer)).toEqual(['tb']);
+  });
+
   it('ignores a pong it never asked for and a malformed ping', async () => {
     const net = new LoopbackNetwork();
     const a = start(() => net.create('ta'));

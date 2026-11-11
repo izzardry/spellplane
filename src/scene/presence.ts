@@ -357,11 +357,29 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
   let press: { x: number; y: number; at: TablePoint; card: InstanceId | null; external: boolean; dragging: boolean; grabs: Grab[] | null } | null = null;
   let last: { at: { x: number; y: number } | null; over: InstanceId | null } = { at: null, over: null };
   let resend: ReturnType<typeof setInterval> | null = null;
+  // Presence travels on the unreliable channel; a lost drag end would leave the ghost on the others' tables until it
+  // goes stale. So the end of a drag is said once more with the next cursor (a move or the resting-cursor resend).
+  let echoEnd = false;
+  const endDrag = (): void => {
+    channel.drag([]);
+    echoEnd = true;
+  };
+  const echo = (): void => {
+    if (!echoEnd) return;
+    echoEnd = false;
+    channel.drag([]);
+  };
 
   const cursor = (at: { x: number; y: number } | null, over: InstanceId | null): void => {
     last = { at, over };
     channel.cursor(at, over);
-    if (at && !resend) resend = setInterval(() => last.at && channel.cursor(last.at, last.over), PRESENCE_RESEND_MS);
+    echo();
+    if (at && !resend)
+      resend = setInterval(() => {
+        if (!last.at) return;
+        channel.cursor(last.at, last.over);
+        echo();
+      }, PRESENCE_RESEND_MS);
     if (!at && resend) {
       clearInterval(resend);
       resend = null;
@@ -370,7 +388,9 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
   const sendDrag = (at: TablePoint): void => {
     if (!press) return;
     press.grabs ??= grabsOf(opts.state(), scene.debug.cards(), press.card ? dragSet(press.card, opts.selection()) : [], press.at, opts.seat, press.external);
-    if (press.grabs.length) channel.drag(dragPoses(press.grabs, at));
+    if (!press.grabs.length) return;
+    echoEnd = false;
+    channel.drag(dragPoses(press.grabs, at));
   };
 
   return {
@@ -391,7 +411,7 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
       sendDrag(at);
     },
     up() {
-      if (press?.dragging && press.grabs?.length) channel.drag([]);
+      if (press?.dragging && press.grabs?.length) endDrag();
       press = null;
     },
     leave() {
@@ -400,7 +420,7 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
     beginExternalDrag(card, x, y) {
       const at = scene.screenToTable(x, y);
       if (!at) return;
-      if (press?.dragging && press.grabs?.length) channel.drag([]);
+      if (press?.dragging && press.grabs?.length) endDrag();
       press = { x, y, at, card: null, external: true, dragging: true, grabs: null };
       // The scene placed the card under the pointer (startDrag); its own drag set names it.
       press.grabs = grabsOf(opts.state(), scene.debug.cards(), [card], at, opts.seat, true).filter((g) => g.id === card);
@@ -408,7 +428,7 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
       sendDrag(at);
     },
     stop() {
-      if (press?.dragging && press.grabs?.length) channel.drag([]);
+      if (press?.dragging && press.grabs?.length) endDrag();
       press = null;
       cursor(null, null);
     },

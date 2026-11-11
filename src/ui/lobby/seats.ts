@@ -84,26 +84,30 @@ export function chairChoice(state: TableState, seat: SeatId, selfPeer: string): 
 
 /**
  * Seat colours are unique at a table, so cursors, lines, pings and log names stay apart (M1-P5 decision). The
- * colour `colour` is taken when another occupied seat uses it.
+ * colour `colour` is taken when another occupied seat uses it. `leaving` is a chair the picker is about to give up
+ * (moving chairs), so its colour does not count against the picker.
  */
-export function colourTakenBy(state: TableState, colour: SeatColourIndex, forSeat: SeatId | null): SeatId | null {
+export function colourTakenBy(state: TableState, colour: SeatColourIndex, forSeat: SeatId | null, leaving: SeatId | null = null): SeatId | null {
   for (const s of Object.values(state.seats)) {
-    if (s.id !== forSeat && isOccupied(state, s.id) && s.colour === colour) return s.id;
+    if (s.id !== forSeat && s.id !== leaving && isOccupied(state, s.id) && s.colour === colour) return s.id;
   }
   return null;
 }
 
-/** Colours `forSeat` may pick, ascending. */
-export function freeColours(state: TableState, forSeat: SeatId | null): SeatColourIndex[] {
+/** Colours `forSeat` may pick, ascending (`leaving`: the chair the picker gives up, see `colourTakenBy`). */
+export function freeColours(state: TableState, forSeat: SeatId | null, leaving: SeatId | null = null): SeatColourIndex[] {
   const out: SeatColourIndex[] = [];
-  for (let c = 0; c < SEAT_COLOURS; c++) if (colourTakenBy(state, c, forSeat) === null) out.push(c);
+  for (let c = 0; c < SEAT_COLOURS; c++) if (colourTakenBy(state, c, forSeat, leaving) === null) out.push(c);
   return out;
 }
 
-/** The preferred colour when it is free for `forSeat`, else the lowest free one (the preferred one if none is free). */
-export function pickColour(state: TableState, forSeat: SeatId | null, preferred: SeatColourIndex): SeatColourIndex {
+/**
+ * The preferred colour when it is free for `forSeat`, else the lowest free one (the preferred one if none is free).
+ * A player moving from chair `leaving` keeps their colour: their old chair does not count as using it.
+ */
+export function pickColour(state: TableState, forSeat: SeatId | null, preferred: SeatColourIndex, leaving: SeatId | null = null): SeatColourIndex {
   const valid = Number.isInteger(preferred) && preferred >= 0 && preferred < SEAT_COLOURS ? preferred : 0;
-  const free = freeColours(state, forSeat);
+  const free = freeColours(state, forSeat, leaving);
   return free.includes(valid) ? valid : (free[0] ?? valid);
 }
 

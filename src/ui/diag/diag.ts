@@ -52,7 +52,7 @@ export function runDiag(props: DiagProps, opts: { timeoutMs?: number; pingMs?: n
   const start = props.now();
   const listeners = new Set<(r: DiagReport) => void>();
   const peers = new Map<PeerId, { peer: string; connectedAfterMs: number; rttMs: number | null }>();
-  const sent = new Map<number, PeerId>();
+  const sent = new Map<number, { to: PeerId; at: number }>();
   let joinedAfterMs: number | null = null;
   let error: string | null = null;
   let stopped = false;
@@ -69,8 +69,9 @@ export function runDiag(props: DiagProps, opts: { timeoutMs?: number; pingMs?: n
   const ping = (to: PeerId): void => {
     if (!transport || stopped) return;
     const id = nextId++;
-    sent.set(id, to);
-    const msg: DiagPing = { v: 1, t: 'diagPing', id, at: props.now() };
+    const at = props.now();
+    sent.set(id, { to, at });
+    const msg: DiagPing = { v: 1, t: 'diagPing', id, at };
     transport.send('ctl', msg, to);
   };
 
@@ -84,6 +85,9 @@ export function runDiag(props: DiagProps, opts: { timeoutMs?: number; pingMs?: n
     }, timeoutMs),
   );
   const pinger = setInterval(() => {
+    // A ping that got no answer within a few rounds never will: forget it.
+    const cutoff = props.now() - 3 * pingMs;
+    for (const [id, s] of sent) if (s.at < cutoff) sent.delete(id);
     for (const p of peers.keys()) if (transport?.peers().includes(p)) ping(p);
   }, pingMs);
 
@@ -102,6 +106,11 @@ export function runDiag(props: DiagProps, opts: { timeoutMs?: number; pingMs?: n
         if (error === NO_PEER) error = null;
         emit();
         ping(peer);
+      } else if (event === 'leave' && peers.has(peer)) {
+        // The other machine closed the check: it is no longer connected, and its open pings will never be answered.
+        peers.delete(peer);
+        for (const [id, s] of sent) if (s.to === peer) sent.delete(id);
+        emit();
       }
     });
     t.on('ctl', (msg, from) => {
@@ -110,7 +119,7 @@ export function runDiag(props: DiagProps, opts: { timeoutMs?: number; pingMs?: n
         const pong: DiagPong = { v: 1, t: 'diagPong', id: msg.id, at: msg.at };
         t.send('ctl', pong, from);
       } else if (msg.t === 'diagPong' && typeof msg.id === 'number' && typeof msg.at === 'number') {
-        const to = sent.get(msg.id);
+        const to = sent.get(msg.id)?.to;
         const p = peers.get(from);
         if (to !== from || !p) return;
         sent.delete(msg.id);

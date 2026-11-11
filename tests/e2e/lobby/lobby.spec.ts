@@ -175,6 +175,12 @@ test('Ready commits the deck, the host starts, the opponent hand shows as backs 
     .toBe(7);
   const benStateAfter = await hook<TableState>(b, 'state');
   for (const id of hand) expect(benStateAfter.cards[id]?.identity).toBeUndefined();
+  // Drawn as backs, at the far (opponent's) hand row: Ben's own seat is at the bottom of his view.
+  type Shown = { id: string; visible: boolean; shows: 'face' | 'back'; screen: { x: number; y: number; width: number; height: number } };
+  await expect.poll(async () => (await hook<Shown[]>(b, 'cards')).filter((c) => hand.includes(c.id) && c.shows === 'back').length).toBe(7);
+  const benHost = (await b.getByTestId('scene-host').boundingBox())!;
+  const midY = benHost.y + benHost.height / 2;
+  for (const c of (await hook<Shown[]>(b, 'cards')).filter((x) => hand.includes(x.id))) expect(c.screen.y + c.screen.height / 2).toBeLessThan(midY);
 
   // Live cursor: Ann moves over the table; Ben sees her pointer in her seat colour.
   const host = a.getByTestId('scene-host');
@@ -217,7 +223,7 @@ test('Ready commits the deck, the host starts, the opponent hand shows as backs 
 });
 
 test.describe('connectivity failure (DESIGN "Multiplayer architecture": no relay fallback, said plainly)', () => {
-  test('a network that never connects: the lobby shows the plain message with remedies', async ({ page }, info) => {
+  test('a network that never connects: a neutral hint while nobody else could have joined, then the plain message with remedies', async ({ page }, info) => {
     await page.clock.install();
     await page.addInitScript(() => {
       window.__spellplaneTransport = 'silent';
@@ -227,8 +233,15 @@ test.describe('connectivity failure (DESIGN "Multiplayer architecture": no relay
     await expect(page.getByTestId('lobby')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('connectivity-problem')).toHaveCount(0);
     await page.clock.fastForward(16_000);
+    // Nobody else is in the seats: the friend may not have opened the link yet, so this is not a failure yet.
+    const waiting = page.getByTestId('connectivity-waiting');
+    await expect(waiting).toContainText('Waiting for another player to open the link');
+    await expect(waiting).toHaveAttribute('role', 'status');
+    await expect(page.getByTestId('connectivity-problem')).toHaveCount(0);
+    await page.clock.fastForward(110_000);
     const problem = page.getByTestId('connectivity-problem');
     await expect(problem).toBeVisible();
+    await expect(waiting).toHaveCount(0);
     await expect(problem).toContainText('No other player has connected yet');
     await expect(problem).toContainText('another network, a phone hotspot or a VPN');
     await expect(problem).toHaveAttribute('role', 'alert');

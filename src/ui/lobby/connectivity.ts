@@ -9,9 +9,18 @@ import { isOccupied } from './seats';
 
 /** How long a pair may stay unconnected before the lobby calls it a failure (M1-P5 decision). */
 export const CONNECT_CHECK_MS = 15_000;
+/**
+ * How long a browser may sit alone, with no other player in the shared seats, before the lobby calls it a failure.
+ * Until then nobody may have opened the link yet, so there is no pair that could have failed; after CONNECT_CHECK_MS
+ * the lobby shows a neutral hint instead (M1-P5 decision).
+ */
+export const ALONE_ALERT_MS = 120_000;
 
 /** The usual remedies, in plain words (DESIGN "Multiplayer architecture", No relay fallback). */
 export const REMEDIES = 'Try another network, a phone hotspot or a VPN on one side. Spellplane has no relay server, so it cannot route around a blocked connection.';
+
+/** Alone at the table for a while with nobody else in the seats: a neutral hint, not a failure. */
+export const WAITING_TEXT = `Waiting for another player to open the link. If someone has opened it and still does not appear here, your two networks may not allow a direct connection. ${REMEDIES}`;
 
 /** The relays that introduce browsers cannot be reached (joining never completes). */
 export const RELAYS_TEXT = `Spellplane cannot reach the public signalling relays that introduce browsers to each other. Check your internet connection. ${REMEDIES}`;
@@ -42,6 +51,8 @@ export interface ConnectivityReport {
   overall: 'ok' | 'checking' | 'failed' | 'solo';
   pairs: PairStatus[];
   problems: ConnectivityProblem[];
+  /** A neutral hint that is not (yet) a failure: alone at the table with nobody else in the seats. */
+  notice?: string;
 }
 
 /**
@@ -51,18 +62,21 @@ export interface ConnectivityReport {
 export class ConnectivityCheck {
   private since = new Map<string, number>();
 
-  constructor(private readonly timeoutMs: number = CONNECT_CHECK_MS) {}
+  constructor(
+    private readonly timeoutMs: number = CONNECT_CHECK_MS,
+    private readonly aloneMs: number = ALONE_ALERT_MS,
+  ) {}
 
   observe(status: SessionNetStatus, state: TableState, selfPeer: string, now: number): ConnectivityReport {
     const live = new Set<string>();
-    const held = (key: string): boolean => {
+    const held = (key: string, ms: number = this.timeoutMs): boolean => {
       live.add(key);
       const t = this.since.get(key);
       if (t === undefined) {
         this.since.set(key, now);
-        return this.timeoutMs <= 0;
+        return ms <= 0;
       }
-      return now - t >= this.timeoutMs;
+      return now - t >= ms;
     };
     const done = (r: ConnectivityReport): ConnectivityReport => {
       for (const k of [...this.since.keys()]) if (!live.has(k)) this.since.delete(k);
@@ -122,15 +136,26 @@ export class ConnectivityCheck {
       pairs.push({ peer: s.peer, name, seat: s.id, state: failed ? 'failed' : 'connecting' });
     }
 
+    let notice: string | undefined;
     if (connected.length === 0) {
-      if (held('alone')) {
+      // Another player in the shared seats means a pair exists that should connect: a failure after the usual check
+      // time. With nobody else seated the other side may simply not have opened the link yet: a neutral hint first,
+      // a failure only after a much longer wait.
+      const othersSeated = Object.values(state.seats).some((s) => isOccupied(state, s.id) && s.peer !== undefined && s.peer !== selfPeer && !s.away);
+      const key = othersSeated ? 'alone:seated' : 'alone';
+      if (held(key, othersSeated ? this.timeoutMs : this.aloneMs)) {
         problems.push({
           kind: 'alone',
           text: `No other player has connected yet. If someone has opened this link and still does not appear here, your two networks do not allow a direct connection. ${REMEDIES}`,
         });
-      } else pending = true;
+      } else {
+        pending = true;
+        if (!othersSeated && held('alone:hint')) notice = WAITING_TEXT;
+      }
     }
 
-    return done({ overall: problems.length ? 'failed' : pending ? 'checking' : 'ok', pairs, problems });
+    const report: ConnectivityReport = { overall: problems.length ? 'failed' : pending ? 'checking' : 'ok', pairs, problems };
+    if (notice) report.notice = notice;
+    return done(report);
   }
 }

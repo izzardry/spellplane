@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PeerInfo } from '../../../src/net/types';
 import type { SessionNetStatus } from '../../../src/session/types';
-import { CONNECT_CHECK_MS, ConnectivityCheck } from '../../../src/ui/lobby/connectivity';
+import { ALONE_ALERT_MS, CONNECT_CHECK_MS, ConnectivityCheck } from '../../../src/ui/lobby/connectivity';
 import { freshTable, sit } from './helpers';
 
 const A = 'aaaaaaaaaaaaaaaa';
@@ -22,9 +22,25 @@ describe('ConnectivityCheck', () => {
     expect(c.observe({ mode: 'solo', connection: 'solo', peers: [], sequencer: null, seq: 0 }, freshTable(), A, 0)).toEqual({ overall: 'solo', pairs: [], problems: [] });
   });
 
-  it('alone at a table: checking at first, then the plain failure message with remedies after the timeout', () => {
+  it('alone with nobody else seated: no failure while the others may not have opened the link yet, only a neutral hint', () => {
     const c = new ConnectivityCheck();
     const st = sit(freshTable(), 's0', 'Ann', 0, A);
+    expect(c.observe(net('alone'), st, A, 1000)).toEqual({ overall: 'checking', pairs: [], problems: [] });
+    expect(c.observe(net('alone'), st, A, 1000 + CONNECT_CHECK_MS - 1).notice).toBeUndefined();
+    const waiting = c.observe(net('alone'), st, A, 1000 + CONNECT_CHECK_MS);
+    expect(waiting).toMatchObject({ overall: 'checking', problems: [] });
+    expect(waiting.notice).toMatch(/Waiting for another player to open the link/);
+    expect(waiting.notice).toMatch(REMEDY);
+    expect(c.observe(net('alone'), st, A, 1000 + ALONE_ALERT_MS - 1).problems).toEqual([]);
+    const r = c.observe(net('alone'), st, A, 1000 + ALONE_ALERT_MS);
+    expect(r.overall).toBe('failed');
+    expect(r.notice).toBeUndefined();
+    expect(r.problems.map((p) => p.kind)).toEqual(['alone']);
+  });
+
+  it('alone while the shared seats list another player: the plain failure message with remedies after the check time', () => {
+    const c = new ConnectivityCheck();
+    const st = sit(sit(freshTable(), 's0', 'Ann', 0, A), 's1', 'Ben', 1, B);
     expect(c.observe(net('alone'), st, A, 1000)).toMatchObject({ overall: 'checking', problems: [] });
     expect(c.observe(net('alone'), st, A, 1000 + CONNECT_CHECK_MS - 1).problems).toEqual([]);
     const r = c.observe(net('alone'), st, A, 1000 + CONNECT_CHECK_MS);
@@ -38,10 +54,10 @@ describe('ConnectivityCheck', () => {
 
   it('the failure clears when a peer connects, and the wait starts over if it drops again', () => {
     const c = new ConnectivityCheck();
-    const st = sit(freshTable(), 's0', 'Ann', 0, A);
+    const st = sit(sit(freshTable(), 's0', 'Ann', 0, A), 's1', 'Ben', 1, B);
     c.observe(net('alone'), st, A, 0);
     expect(c.observe(net('alone'), st, A, CONNECT_CHECK_MS).problems).toHaveLength(1);
-    const both = sit(st, 's1', 'Ben', 1, B);
+    const both = st;
     expect(c.observe(net('connected', [peer({ peerId: B, nickname: 'Ben', seat: 's1' })]), both, A, CONNECT_CHECK_MS + 1)).toEqual({
       overall: 'ok',
       pairs: [{ peer: B, name: 'Ben', seat: 's1', state: 'connected' }],

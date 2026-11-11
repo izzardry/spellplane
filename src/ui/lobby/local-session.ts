@@ -320,6 +320,9 @@ export async function createLocalSession(opts: LocalSessionOptions): Promise<Loc
   };
   const queue = (kind: 'cursor' | 'drag', msg: Message): void => {
     if (closed || !joined) return;
+    // Re-insert so the burst goes out in `n` order: the receiver drops anything older than the last `n` it saw, so a
+    // drag end queued before a later cursor must not be sent after it.
+    pending.delete(kind);
     pending.set(kind, msg);
     if (flushTimer) return;
     const wait = Math.max(0, PRESENCE_INTERVAL_MS - (now() - lastFlush));

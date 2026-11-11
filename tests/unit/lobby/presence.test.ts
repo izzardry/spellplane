@@ -234,6 +234,26 @@ describe('the presence tracker (pointer input to cursor and drag messages)', () 
     ]);
   });
 
+  it('the end of a drag is said once more with the next cursor, so a lost drag end does not leave a ghost behind', () => {
+    const { tracker, sent } = setup();
+    tracker.down(15, 185, 0);
+    tracker.move(25, 175, true);
+    tracker.up();
+    tracker.move(30, 170, true);
+    tracker.move(31, 170, true);
+    expect(sent.map((m) => (m.t === 'drag' ? `drag:${(m.v as unknown[]).length}` : 'cursor'))).toEqual(['cursor', 'drag:1', 'drag:0', 'cursor', 'drag:0', 'cursor']);
+  });
+
+  it('a drag end with the pointer at rest is repeated with the resting-cursor resend', () => {
+    const { tracker, sent } = setup();
+    tracker.down(15, 185, 0);
+    tracker.move(25, 175, true);
+    tracker.up();
+    vi.advanceTimersByTime(PRESENCE_RESEND_MS * 2);
+    const tail = sent.slice(-4).map((m) => (m.t === 'drag' ? `drag:${(m.v as unknown[]).length}` : 'cursor'));
+    expect(tail).toEqual(['drag:0', 'cursor', 'drag:0', 'cursor']);
+  });
+
   it('a drag out of the hand fan shows the hand card at the pointer, with its public opaque id only', () => {
     const { tracker, drags, setShown } = setup();
     // TableScene.startDrag placed the hand card under the pointer and drags it.

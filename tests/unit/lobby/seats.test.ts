@@ -104,6 +104,15 @@ describe('seat colours (unique at a table, so cursors and lines stay apart)', ()
     expect(pickColour(st, 's0', 0)).toBe(0);
   });
 
+  it('a player moving to another chair keeps their colour (their old chair does not count as using it)', () => {
+    const st = sit(sit(freshTable('ffa3'), 's0', 'Ann', 3, A), 's2', 'Cat', 5, C);
+    expect(pickColour(st, 's1', 3)).toBe(0);
+    expect(pickColour(st, 's1', 3, 's0')).toBe(3);
+    // Another player's colour is still taken while moving.
+    expect(pickColour(st, 's1', 5, 's0')).toBe(0);
+    expect(freeColours(st, 's1', 's0')).toEqual([0, 1, 2, 3, 4, 6, 7]);
+  });
+
   it('treats an out-of-range preference as colour 0', () => {
     const st = freshTable();
     expect(pickColour(st, 's0', 9)).toBe(0);

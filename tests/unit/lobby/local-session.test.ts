@@ -262,6 +262,24 @@ describe('stand-in session: presence', () => {
     expect(seen.length).toBeGreaterThan(0);
   });
 
+  it('a drag end followed by a pointer move in the same throttle window still reaches the other side', async () => {
+    const net = new LoopbackNetwork();
+    const a = await join(net, 'ta', PEER('a'), 'Ann');
+    const b = await join(net, 'tb', PEER('b'), 'Ben');
+    await vi.advanceTimersByTimeAsync(50);
+    a.presence.cursor({ x: 1, y: 1 }, null);
+    a.presence.drag([{ id: 'c1', pose: { x: 1, y: 1, rot: 0 } }]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(b.presence.peers()[0]?.drag).toHaveLength(1);
+    // Release, then move on before the next burst: the burst must carry the drag end before the newer cursor.
+    a.presence.cursor({ x: 2, y: 2 }, null);
+    a.presence.drag([{ id: 'c1', pose: { x: 2, y: 2, rot: 0 } }]);
+    a.presence.drag([]);
+    a.presence.cursor({ x: 3, y: 3 }, null);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(b.presence.peers()[0]).toMatchObject({ cursor: { x: 3, y: 3 }, drag: [] });
+  });
+
   it('throttles to one burst per 50 ms and always sends the last value', async () => {
     const net = new LoopbackNetwork();
     const a = await join(net, 'ta', PEER('a'), 'Ann');

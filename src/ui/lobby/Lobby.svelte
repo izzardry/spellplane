@@ -140,7 +140,7 @@
       return;
     }
     if (seat === mySeat) return;
-    session.takeSeat(seat, pickColour(st, seat, me?.colour ?? preferredColour));
+    session.takeSeat(seat, pickColour(st, seat, me?.colour ?? preferredColour, mySeat));
   }
 
   async function pickSeatColour(c: number) {
@@ -247,6 +247,8 @@
         <p>{p.text}</p>
       {/each}
     </section>
+  {:else if report.notice}
+    <p class="notice" role="status" data-testid="connectivity-waiting">{report.notice}</p>
   {/if}
 
   <div class="cols">
@@ -622,6 +624,15 @@
   }
   .problems p + p {
     margin-top: 8px;
+  }
+  .notice {
+    margin: 0;
+    padding: 12px 16px;
+    border: 1px solid var(--sp-border, #ccc);
+    border-radius: var(--sp-radius-lg, 8px);
+    background: var(--sp-surface, #fff);
+    color: var(--sp-muted, #555);
+    line-height: 1.5;
   }
   .startbar {
     display: flex;
