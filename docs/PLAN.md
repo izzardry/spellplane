@@ -383,7 +383,7 @@ Ticked by the main session as packages are merged and gates pass.
 
 - [x] B0 Repository bootstrap (items B0.1 to B0.7 above; Pages blocked by private repo, owner check)
 - [ ] M0-C Contracts
-- [ ] M0-P1 Core engine
+- [x] M0-P1 Core engine
 - [x] M0-P2 Card data
 - [x] M0-P3 Scene
 - [ ] M0-P4 HUD
