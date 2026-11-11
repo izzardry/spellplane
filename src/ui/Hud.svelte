@@ -6,7 +6,8 @@
 -->
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
-  import type { CardInstance, CardRef, InstanceId, StackItemId, ZoneId } from '../core/types';
+  import { mergeTimeline, type ChatTab } from '../core/log';
+  import type { CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import type { ActivePing, TableScene, ViewState } from '../scene/types';
@@ -16,6 +17,8 @@
   import { Commands, isEmptyChair, promptShowing, roundPassed, type UiHooks } from './commands';
   import { parsePlainList } from './deck';
   import { logLines } from './describe';
+  import Flashes from './chat/Flashes.svelte';
+  import { addPending, LogWatch, prunePending } from './chat/watch';
   import { inZoneKind, layoutOf } from './geometry';
   import { fitInsets as fitInsetsFor, handOrder } from './hand';
   import { applyOverrides, chordToString, findConflict, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS, reservedConflict, validOverrides } from './keymap';
@@ -40,6 +43,9 @@
   let st = $state.raw(untrack(() => session.getState()));
   let secrets = $state.raw(untrack(() => session.secrets()));
   let entries = $state.raw(untrack(() => session.log()));
+  /** Own chat lines not in the session log yet, and what the HUD notices as the log grows (ui/chat/watch.ts, M1-P6). */
+  let pendingChat = $state.raw<readonly LogEntry[]>([]);
+  const watch = new LogWatch();
 
   // --- Local view state (never shared) -------------------------------------------------------------------------
   let sceneHover = $state<InstanceId | null>(null);
@@ -412,16 +418,29 @@
       .map((z) => ({ ...z, isDefault: z.zone === def }))
       .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
   });
-  /** Card names as each log line was first written (DESIGN "Table model", Hidden cards: a later reveal never names an earlier hidden move). */
-  const logNames = new Map<string, string | null>();
+  /** A card's name for the log as this browser may know it now; null for a hidden card (the line says "a card"). */
+  function logName(id: InstanceId): string | null {
+    if (!st.cards[id]) return null;
+    return refOf(id) || st.cards[id].tokenLabel ? nameOf(id) : null;
+  }
+  /**
+   * Card names as each log line was first written (DESIGN "Table model", Hidden cards: a later reveal never names an
+   * earlier hidden move); the watch fills in the names this browser could see just before each action (M1-P6).
+   */
   const lines = $derived(
-    logLines(entries, {
+    logLines(mergeTimeline(entries, pendingChat), {
       state: st,
-      cardName: (id) => (st.cards[id] ? nameOf(id) : null),
+      cardName: logName,
       phaseLabel: (id) => game.phases.find((p) => p.id === id)?.label ?? id,
-      names: logNames,
+      names: watch.names,
     }),
   );
+  /** Chat tabs (DESIGN "Chat and voice", Text chat): the team tab when the own seat has a team. */
+  const chatTabs = $derived<ChatTab[]>(st.seats[me]?.team ? ['table', 'team'] : ['table']);
+  function sendChat(text: string, channel: ChatTab) {
+    const a = session.chat(text, channel);
+    pendingChat = addPending(pendingChat, a, session.log(), Date.now());
+  }
   const inspectCard = $derived<CardInstance | null>(inspectId ? (st.cards[inspectId] ?? null) : null);
   const keyOf = (a: ActionId, ctx: KeyContext = 'table') => keyLabel(keymap, a, ctx);
 
@@ -472,12 +491,16 @@
 
   onMount(() => {
     seenLog = entries.length;
+    watch.start(entries);
     const unsub = session.subscribe((s) => {
+      const log = session.log();
+      // Before the HUD moves on: names this browser could see and other players' cards touched (M1-P6).
+      watch.observe(log, st, s, logName);
       st = s;
       secrets = session.secrets();
-      const log = session.log();
       onLog(log);
       entries = log;
+      pendingChat = prunePending(pendingChat, log);
     });
     void settings
       ?.get('keymap')
@@ -541,6 +564,15 @@
 <div class="root" style={cssVars} data-testid="hud">
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
+  <Flashes
+    {watch}
+    table={st}
+    scene={() => scene}
+    fadeMs={theme.motion.pingFadeMs}
+    {reducedMotion}
+    seatName={(s) => st.seats[s]?.name ?? s}
+    seatColour={(s) => st.seats[s]?.colour ?? null}
+  />
 
   <div class="layer">
     <div class="top-left">
@@ -602,7 +634,11 @@
         {lines}
         open={logOpen}
         ontoggle={() => (logOpen = !logOpen)}
-        onchat={(text) => session.dispatch({ type: 'chat', text, channel: 'table' })}
+        onchat={sendChat}
+        {cardData}
+        {faces}
+        {back}
+        tabs={chatTabs}
         onhovercard={(card, x, y) => {
           preview = card ? { card, x, y } : null;
           hudHover = card;

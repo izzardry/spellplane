@@ -9,14 +9,23 @@
  * the M0 public trace of a shuffle (a `reorder` of more than one card) reads as a shuffle.
  *
  * Names are frozen when a line is first described (LogContext.names): a card that was hidden when it moved stays
- * "Hidden card" in that line after it becomes public, so the log never ties earlier hidden moves to an identity.
+ * "a card" in that line after it becomes public, so the log never ties earlier hidden moves to an identity. The HUD
+ * fills the memo from the state just before the action too (ui/chat/watch.ts), so a card this browser could see
+ * before the action (a card put from the own hand on the bottom of the library) keeps its name (M1-P6).
+ *
+ * Chat lines (M1-P6): `[[card name]]` in a chat line becomes a named segment that previews the card on hover
+ * (DESIGN "Chat and voice", Text chat; core/log.ts parseChatText).
  */
 import type { Action, UndoableAction } from '../core/actions';
-import type { InstanceId, LogEntry, SeatId, TableState, ZoneId } from '../core/types';
+import type { ActionLogEntry, InstanceId, LogEntry, SeatId, TableState, ZoneId } from '../core/types';
 import { parseZoneId } from '../core/ids';
+import { parseChatText, type ChatTab } from '../core/log';
 
-/** A piece of a log line: text, or a card name that previews on hover. */
-export type Seg = { text: string } | { card: InstanceId; name: string };
+/**
+ * A piece of a log line: text, a table card that previews on hover, or (chat, M1-P6) a card named in double brackets
+ * that previews through the card data (`text` is the name as shown, so text-only readers still read the line).
+ */
+export type Seg = { text: string } | { card: InstanceId; name: string } | { text: string; named: string; set?: string };
 
 /** One rendered log line (DESIGN "Turn flow and confirmation", Action log). */
 export interface LogLine {
@@ -29,6 +38,8 @@ export interface LogLine {
   segs: Seg[];
   at: number;
   level?: 'info' | 'warn';
+  /** The chat tab of a chat line (M1-P6); absent for action and system lines. */
+  channel?: ChatTab;
 }
 
 /** What the describer needs besides the entries. */
@@ -42,6 +53,11 @@ export interface LogContext {
    * names it was written with. The HUD keeps one memo for the page's life.
    */
   names?: Map<string, string | null>;
+}
+
+/** The memo key prefix of an action entry's line (LogContext.names keys are `<entryKey>|<card id>`). */
+export function entryKeyOf(e: ActionLogEntry): string {
+  return `a-${e.seq}-${e.action.cid}`;
 }
 
 /** Window in which life changes merge into one line (DESIGN "Turn flow and confirmation"). */
@@ -90,6 +106,16 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     }
     return name ? { card: id, name } : { card: id, name: 'a card' };
   };
+  /** A word of a line frozen like a name, under `<entryKey>|#<tag>` (M1-P6: a look at the whole library is a search). */
+  const frozen = (tag: string, compute: () => string): string => {
+    const memo = ctx.names;
+    const k = `${entryKey}|#${tag}`;
+    const kept = memo?.get(k);
+    if (kept !== undefined && kept !== null) return kept;
+    const v = compute();
+    memo?.set(k, v);
+    return v;
+  };
   const zone = (z: ZoneId, actor: SeatId): string => {
     const { kind, seat } = parseZoneId(z);
     if (!seat) return `the ${kind}`;
@@ -133,7 +159,7 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     }
     const a = e.action;
     byCid.set(a.cid, a);
-    entryKey = `a-${e.seq}-${a.cid}`;
+    entryKey = entryKeyOf(e);
     const life = lifeDelta(a);
     if (life) {
       const before = running.get(life.key) ?? currentLife(life.key);
@@ -145,7 +171,7 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
         continue;
       }
       if (a.type === 'life') {
-        const line: LogLine = { key: `a-${e.seq}-${a.cid}`, kind: 'action', seat: a.by, colour: st.seats[a.by]?.colour ?? null, actor: seatName(a.by), segs: [t(`${seatName(life.key)}: ${before} → ${after}`)], at: e.at };
+        const line: LogLine = { key: entryKey, kind: 'action', seat: a.by, colour: st.seats[a.by]?.colour ?? null, actor: seatName(a.by), segs: [t(`${seatName(life.key)}: ${before} → ${after}`)], at: e.at };
         lines.push(line);
         lastLife = { line, key: life.key, by: a.by, at: e.at, from: before };
         continue;
@@ -158,7 +184,7 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
       const next = entries.slice(i + 1).find((x) => x.kind === 'action' && !SILENT.has(x.action.type));
       if (next?.kind === 'action' && next.action.by === a.by && cardOf(next.action) === a.instanceId) continue;
     }
-    const d: Describers = { card, zone, seatName, stackItem, phaseLabel: ctx.phaseLabel, state: st, original: (cid) => byCid.get(cid) ?? null };
+    const d: Describers = { card, zone, seatName, stackItem, phaseLabel: ctx.phaseLabel, state: st, original: (cid) => byCid.get(cid) ?? null, frozen };
     const sig = mergeSig(a);
     if (sig !== null && merge && merge.sig === sig) {
       // A draw stays unnamed: it adds a count, not a card.
@@ -170,6 +196,7 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     const segs = describe(a, d);
     if (!segs) continue;
     const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: a.by, colour: st.seats[a.by]?.colour ?? null, actor: seatName(a.by), segs, at: e.at };
+    if (a.type === 'chat') line.channel = a.channel;
     lines.push(line);
     merge = sig === null ? null : { line, sig, a, cards: [a.type === 'draw' ? t('a card') : card(cardOf(a)!)] };
   }
@@ -204,6 +231,8 @@ interface Describers {
   phaseLabel(id: string): string;
   state: TableState;
   original(cid: string): Action | null;
+  /** A word computed once per line and kept (see `frozen` in logLines); without a memo it is computed each time. */
+  frozen?(tag: string, compute: () => string): string;
 }
 
 /** The text of one action, without the actor (who is shown separately). Null for nothing to show. */
@@ -258,8 +287,16 @@ export function describe(a: Action, d: Describers): Seg[] | null {
       // In M0 a reorder of more than one card is the public trace of a shuffle (M1-P2 publishes shuffleCommit
       // instead); a private reorder moves one card within the library (scry or surveil to top or bottom).
       return [t(a.count > 1 ? `shuffles ${zone(a.zone, a.by)}` : `moves a card within ${zone(a.zone, a.by)}`)];
-    case 'lookAt':
-      return a.card ? [t('peeks at '), card(a.card)] : [t(`looks at the top ${plural(a.count, 'card')} of ${zone(a.zone, a.by)}`)];
+    case 'lookAt': {
+      if (a.card) return [t('peeks at '), card(a.card)];
+      // A look at every card of the zone is a search (DESIGN "Card manipulation", Library actions; M0-G finding).
+      const look = () => {
+        const size = d.state.zones[a.zone]?.ids.length;
+        return size !== undefined && size > 0 && a.count >= size ? 'search' : 'top';
+      };
+      const what = d.frozen ? d.frozen('look', look) : look();
+      return [t(what === 'search' ? `searches ${zone(a.zone, a.by)}` : `looks at the top ${plural(a.count, 'card')} of ${zone(a.zone, a.by)}`)];
+    }
     case 'mulligan':
       return [t(`mulligans (${a.count})`)];
     case 'stackPush':
@@ -318,7 +355,7 @@ export function describe(a: Action, d: Describers): Seg[] | null {
       return [t(`takes ${a.line} ${a.index + 1}`)];
     case 'chat':
     case 'caption':
-      return [t(a.text)];
+      return parseChatText(a.text).map((p): Seg => ('card' in p ? (p.set ? { text: p.card, named: p.card, set: p.set } : { text: p.card, named: p.card }) : t(p.text)));
     case 'undo': {
       const orig = d.original(a.of);
       if (orig?.type === 'draw') return [t('undoes the draw; the card goes back on top of the library')];
