@@ -144,7 +144,7 @@ export function drawCardBack(ctx: Canvas2D, width: number, height: number): void
 
 /** The neutral card back as a procedural texture at the 488 x 680 tier. */
 export const MTG_CARD_BACK: TextureSource = {
-  id: 'spellplane-back',
+  id: 'mtg-back',
   width: 488,
   height: 680,
   draw: drawCardBack,
