@@ -29,14 +29,16 @@ import { PROTOCOL_VERSION } from './messages';
 import type { CreatePrivateChannel, NetEngine, PrivateChannel, Unsubscribe } from './types';
 
 /**
- * The part of a NetEngine the pair channel uses (so tests can drive it with a minimal engine), plus `pending`: the own
- * actions applied optimistically and not sequenced yet (SyncEngine `pending()`). NetEngine does not list it (a
- * contract amendment for the integrator); without it no zone look is answered, since a pending private reorder
- * (scry) changes the owner's order without changing anything the view and confirmed state could show.
+ * The part of a NetEngine the pair channel uses (so tests can drive it with a minimal engine). `pending` is the own
+ * actions applied optimistically and not sequenced yet (NetEngine `pending()`, M1-C amendment): a pending private
+ * reorder (scry) changes the owner's order without changing anything the view and confirmed state could show, so a
+ * zone look is answered only while no pending own action may change that zone. A host that cannot list them at run
+ * time (no `pending` function) gets no zone look answered: the channel fails closed.
  */
-export type PrivateChannelHost = Pick<NetEngine, 'state' | 'confirmedState' | 'onState' | 'onSequenced' | 'seat' | 'sendPrivate' | 'onPrivate' | 'peers' | 'onPeers'> & {
-  pending?: () => readonly Action[];
-};
+export type PrivateChannelHost = Pick<
+  NetEngine,
+  'state' | 'confirmedState' | 'onState' | 'onSequenced' | 'seat' | 'sendPrivate' | 'onPrivate' | 'peers' | 'onPeers' | 'pending'
+>;
 
 /** Most cards one look answer or pack may carry. */
 const MAX_CARDS = 500;

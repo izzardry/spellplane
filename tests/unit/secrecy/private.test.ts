@@ -8,11 +8,11 @@ import type { RevealedCard } from '../../../src/core/commit';
 import { commitDeck, emptySecretStore, lookAnswer, revealedCard } from '../../../src/core/secrets';
 import type { SeatId, TableState } from '../../../src/core/types';
 import type { PrivateMessage, SequencedAction } from '../../../src/net/messages';
-import { EXPIRE_AFTER_ACTIONS, privateChannelOver, type PrivateChannelHost } from '../../../src/net/private';
+import { EXPIRE_AFTER_ACTIONS, createPrivateChannel, privateChannelOver, type PrivateChannelHost } from '../../../src/net/private';
 import { reduce } from '../../../src/core/reducer';
 import type { Action } from '../../../src/core/actions';
 import { privateReorder } from '../../../src/core/secrets';
-import type { PeerInfo, PrivateChannel } from '../../../src/net/types';
+import type { NetEngine, PeerInfo, PrivateChannel } from '../../../src/net/types';
 import { deckRefs, readySecretTable, seededEntropy, type SecretTable } from './helpers';
 
 type Listener = (msg: PrivateMessage, from: { seat: SeatId | null; peerId: string }) => void;
@@ -27,8 +27,8 @@ class Bus {
   readonly seqListeners: ((a: SequencedAction, own: boolean) => void)[] = [];
   /** The owner's view when it has own pending actions (null: the view is the confirmed state). */
   view: TableState | null = null;
-  /** Own actions applied optimistically and not sequenced yet (the engine's pending queue); null: the host lacks `pending`. */
-  pendingActions: Action[] | null = [];
+  /** Own actions applied optimistically and not sequenced yet (the engine's pending queue). */
+  pendingActions: Action[] = [];
 
   constructor(private readonly table: SecretTable) {}
 
@@ -40,7 +40,7 @@ class Bus {
     const host: PrivateChannelHost = {
       state: (): TableState => this.view ?? this.table.state,
       confirmedState: (): TableState => this.table.state,
-      ...(this.pendingActions !== null ? { pending: (): readonly Action[] => this.pendingActions ?? [] } : {}),
+      pending: (): readonly Action[] => this.pendingActions,
       onState: (l: (s: TableState) => void) => {
         this.stateListeners.push(l);
         return () => undefined;
@@ -372,14 +372,36 @@ describe('looks at another seat’s hidden cards', () => {
     expect((await ch.s1!.requestLook('s0', 'library:s0', 1)).map((c) => c.instanceId)).toEqual([x2]);
   });
 
-  it('answers no zone look when the host cannot list its pending actions (fails closed)', async () => {
+  it('answers no zone look when the host cannot list its pending actions at run time (fails closed)', async () => {
     const t = readySecretTable(['Anna', 'Ben'], 8);
     const bus = new Bus(t);
-    bus.pendingActions = null;
-    const ch = { s0: privateChannelOver(bus.host('s0')), s1: privateChannelOver(bus.host('s1')) };
+    // An engine object without `pending` (an old or hand-rolled host) cannot prove the owner's order is the logged one.
+    const { pending: _dropped, ...withoutPending } = bus.host('s0');
+    const ch = { s0: privateChannelOver(withoutPending as PrivateChannelHost), s1: privateChannelOver(bus.host('s1')) };
     ch.s0.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req, { allowZoneLook: true }));
     bus.lookAt('s1', 'library:s0', 1);
     expect(await ch.s1.requestLook('s0', 'library:s0', 1)).toEqual([]);
+  });
+
+  it('createPrivateChannel takes pending() from the NetEngine: zone looks are answered, and refused while a scry is pending', async () => {
+    const t = readySecretTable(['Anna', 'Ben'], 8);
+    const bus = new Bus(t);
+    // The engine is the only source of the pending queue; the channel is built from the engine itself.
+    const engine = bus.host('s0') as unknown as NetEngine;
+    const ch = { s0: createPrivateChannel(engine), s1: privateChannelOver(bus.host('s1')) };
+    ch.s0.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req, { allowZoneLook: true }));
+    const [x1, x2] = t.secrets.s0!.libraryOrder;
+    bus.lookAt('s1', 'library:s0', 1);
+    expect((await ch.s1.requestLook('s0', 'library:s0', 1)).map((c) => c.instanceId)).toEqual([x1]);
+    const r = privateReorder(t.secrets.s0!, t.state, 'library:s0', [...t.secrets.s0!.libraryOrder.slice(1), x1!], 1, seededEntropy(7));
+    t.secrets.s0 = r.secrets;
+    bus.pendingActions = [{ ...r.action, by: 's0', cid: 'scry' } as Action];
+    bus.lookAt('s1', 'library:s0', 1);
+    expect(await ch.s1.requestLook('s0', 'library:s0', 1)).toEqual([]);
+    // Once the scry is sequenced (nothing pending), the next logged look sees the new top card.
+    bus.pendingActions = [];
+    bus.lookAt('s1', 'library:s0', 1);
+    expect((await ch.s1.requestLook('s0', 'library:s0', 1)).map((c) => c.instanceId)).toEqual([x2]);
   });
 
   it('a request whose lookAt never comes is refused after a while, so the asker is not left waiting', async () => {
