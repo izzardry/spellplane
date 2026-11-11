@@ -142,6 +142,10 @@ export interface ParseResult {
 export interface ResolvedDeck {
   main: CardRef[];
   side: CardRef[];
+  /** Cards from the `Commander` section, if any (added by M0-P2: the decklist grammar has this header). */
+  commander?: CardRef[];
+  /** Cards from the `Companion` section, if any (added by M0-P2: the decklist grammar has this header). */
+  companion?: CardRef[];
   cards: Record<ScryfallId, CardData>;
   errors: ParseError[];
 }
