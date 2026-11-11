@@ -7,9 +7,12 @@
  *   taps when `tap` is true. It never untaps.
  * - settle: every displaced card (or those listed in `cards`) goes back to its home pose (attachments follow) and
  *   loses `home` and `combat`; attack and block lines go (all of them, or those touching the listed cards), marks and
- *   every other line stay. The tapped state is left alone: attackers stay tapped.
+ *   every other line stay. The tapped state is left alone: attackers stay tapped. Hosts go home before the cards
+ *   attached to them, so a displaced attachment ends at its own home slot even when its host was displaced too (the
+ *   host's move drags its attachments along by the same translation).
  */
 import type { ActionOf } from '../actions';
+import type { InstanceId } from '../types';
 import type { Draft } from './draft';
 import { ZONE_KIND, cardZone, leavePile, publicCard, removeLinesWhere, setPose } from './place';
 import { byId, checkId, checkPose, reject, samePose } from './util';
@@ -38,7 +41,7 @@ export function settle(d: Draft, a: ActionOf<'settle'>): void {
     ids = [...new Set(a.cards.map((id) => d.cards.need(checkId(id, 'card')).id))].sort(byId);
   }
   const chosen = new Set(ids);
-  for (const id of ids) {
+  for (const id of hostsFirst(d, ids)) {
     const c = d.cards.need(id);
     const home = c.home;
     if (!home) continue;
@@ -49,4 +52,19 @@ export function settle(d: Draft, a: ActionOf<'settle'>): void {
   }
   const touches = (an: { kind: string; id: string }): boolean => an.kind === 'card' && chosen.has(an.id);
   removeLinesWhere(d, (f, t, kind) => (kind === 'attack' || kind === 'block') && (a.cards === undefined || touches(f) || touches(t)));
+}
+
+/** `ids` (sorted by id) reordered so every card comes after the card it is attached to (shallower hosts first). */
+function hostsFirst(d: Draft, ids: readonly InstanceId[]): InstanceId[] {
+  const depth = (id: InstanceId): number => {
+    let n = 0;
+    const seen = new Set<InstanceId>([id]);
+    for (let h = d.cards.need(id).attachedTo; h !== undefined && !seen.has(h); h = d.cards.get(h)?.attachedTo) {
+      seen.add(h);
+      n++;
+    }
+    return n;
+  };
+  const depths = new Map(ids.map((id) => [id, depth(id)]));
+  return [...ids].sort((a, b) => depths.get(a)! - depths.get(b)! || byId(a, b));
 }
