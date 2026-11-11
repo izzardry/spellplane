@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { MTG_KEYMAP, chordToString } from '../../../src/games/mtg/keymap';
-import { applyOverrides, cheatSheet, chordFromEvent, findConflict, isTextEntry, matchesChord, normalizeKey, reservedConflict, validOverrides } from '../../../src/ui/keymap';
+import { applyOverrides, cheatSheet, keyLabel, chordFromEvent, findConflict, isTextEntry, matchesChord, normalizeKey, reservedConflict, validOverrides } from '../../../src/ui/keymap';
 import { drafts, eventFor, rig } from './setup';
 
 describe('no key fires while a text field has focus (PLAN M0-P4)', () => {
@@ -159,6 +159,11 @@ describe('remapping (DESIGN "Input and interaction design": all keys are remappa
   it('only the overridden context changes: remapping table H leaves the prompt H (hold) alone', () => {
     const km = applyOverrides(MTG_KEYMAP, [{ action: 'toHand', context: 'table', chord: { key: 'j' } }]);
     expect(km.filter((b) => b.chord.key === 'h').map((b) => `${b.context}:${b.action}`)).toEqual(['prompt:confirmHold']);
+  });
+
+  it('the prompt labels Hold with H, the key the design names (Esc still holds)', () => {
+    expect(keyLabel(MTG_KEYMAP, 'confirmHold', 'prompt')).toBe('H');
+    expect(MTG_KEYMAP.filter((b) => b.action === 'confirmHold').map((b) => chordToString(b.chord))).toEqual(['H', 'Escape']);
   });
 
   it('ignores overrides of unknown actions; the last override of an action wins', () => {

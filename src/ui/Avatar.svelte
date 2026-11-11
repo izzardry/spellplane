@@ -59,10 +59,20 @@
   }
 </script>
 
-<section class="avatar" class:active class:me data-testid="avatar" data-seat={seat.id} aria-label="{seat.name}{me ? ' (you)' : ''}" style:--seat="var(--sp-seat-{seat.colour}, #111)">
+<section
+  class="avatar"
+  class:active
+  class:me
+  class:away={seat.away === true}
+  data-testid="avatar"
+  data-seat={seat.id}
+  data-line-seat={seat.id}
+  data-away={seat.away === true ? 'true' : 'false'}
+  aria-label="{seat.name}{me ? ' (you)' : ''}{seat.away ? ' (away)' : ''}" style:--seat="var(--sp-seat-{seat.colour}, #111)">
   <header>
     <span class="glyph {glyph}" aria-hidden="true"></span>
     <span class="name">{seat.name}</span>
+    {#if seat.away}<span class="tag away-tag" data-testid="away" title="Disconnected: public cards stay; hand and library are unavailable until this player returns">away</span>{/if}
     {#if active}<span class="tag" title="Active player">turn</span>{/if}
     {#if responding}<span class="tag" data-testid="responding">responding</span>{/if}
     {#if asking}<span class="tag asking" data-testid="asking">asks</span>{/if}
@@ -137,6 +147,20 @@
     padding: 6px 8px;
     font: var(--sp-font-size-small, 12px) / 1.4 var(--sp-font, system-ui);
     pointer-events: auto;
+  }
+  .avatar.away {
+    border-style: dashed;
+    border-left-style: solid;
+    color: var(--sp-muted, #5f5f5f);
+  }
+  .avatar.away .life,
+  .avatar.away .counters {
+    opacity: 0.6;
+  }
+  .away-tag {
+    background: var(--sp-fg, #111);
+    color: var(--sp-surface, #fff);
+    border-color: var(--sp-fg, #111);
   }
   .avatar.active {
     border-color: var(--sp-fg, #111);

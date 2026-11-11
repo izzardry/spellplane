@@ -7,7 +7,7 @@
  */
 import { stateHash } from '../core/hash';
 import type { Action } from '../core/actions';
-import type { LogEntry, ZoneId } from '../core/types';
+import type { InstanceId, LogEntry, ZoneId } from '../core/types';
 import type { CardDataSource, ParseResult } from '../data/types';
 import type { DeckImport, LookedCard, SoloSession } from '../session/index';
 import { registerDebug } from '../util/debug';
@@ -23,6 +23,8 @@ export interface SessionDebug {
   draw(n?: number): Promise<void>;
   mulligan(): Promise<void>;
   lookAt(zone: ZoneId, n: number): Promise<LookedCard[]>;
+  /** Put an own hand or library card onto a battlefield or into exile face down (TableSession.playFaceDown). */
+  playFaceDown(card: InstanceId, to: ZoneId): void;
   undo(): boolean;
   canUndo(): boolean;
   log(): LogEntry[];
@@ -66,6 +68,9 @@ export function registerSessionDebug(session: SoloSession, deps: SessionDebugDep
       draw: (n) => session.draw(n),
       mulligan: () => session.mulligan(),
       lookAt: (zone, n) => session.lookAt(zone, n),
+      playFaceDown: (card, to) => {
+        session.playFaceDown(card, to);
+      },
       undo: () => session.undo(),
       canUndo: () => session.canUndo(),
       log: () => session.log(),

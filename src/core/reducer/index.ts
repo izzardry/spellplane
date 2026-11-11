@@ -97,7 +97,7 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   seatTake: table.seatTake,
   seatLeave: table.seatLeave,
   ready: table.ready,
-  away: later('M1-P7'),
+  away: table.away,
   rngCommit: later('M1-P2'),
   rngReveal: later('M1-P2'),
   commitClose: later('M1-P2'),

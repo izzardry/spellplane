@@ -72,6 +72,7 @@ export async function openDevRoom(
     roomKey: link.roomKey,
     transport: devTransport(kind),
     identity: { peerId: me.peerId, nickname: me.nickname || 'Player', seatColour: me.seatColour },
+    store: s.tables,
   });
   registerRoomDebug(session, deps.cardData, deps.parseDecklist ?? parsePlainList);
   return { session, identity, stores: s };
@@ -98,6 +99,9 @@ function registerRoomDebug(session: LocalSession, cardData: CardDataSource, pars
       draw: (n) => session.draw(n),
       mulligan: () => session.mulligan(),
       lookAt: (zone, n) => session.lookAt(zone, n),
+      playFaceDown: (card, to) => {
+        session.playFaceDown(card, to);
+      },
       undo: () => session.undo(),
       canUndo: () => session.canUndo(),
       log: () => session.log(),

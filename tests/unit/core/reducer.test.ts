@@ -637,6 +637,24 @@ describe('players family', () => {
     no(s, act('seatTake', { seat: 's1', name: 'Dan', colour: 9 }), /colour/);
   });
 
+  it('away: marks a taken seat away and back; taking the chair again clears it', () => {
+    let s = fresh();
+    s = ok(s, act('seatTake', { seat: 's1', name: 'Cleo', colour: 4, peer: 'p1' }, 's1'));
+    s = ok(s, act('away', { seat: 's1', away: true }));
+    expect(s.seats.s1!.away).toBe(true);
+    no(s, act('away', { seat: 's1', away: true }), /already away/);
+    s = ok(s, act('away', { seat: 's1', away: false }));
+    expect(s.seats.s1!.away).toBeUndefined();
+    no(s, act('away', { seat: 's1', away: false }), /already present/);
+    no(s, act('away', { seat: 's7', away: true }), /unknown seat/);
+    s = ok(s, act('away', { seat: 's1', away: true }));
+    s = ok(s, act('seatTake', { seat: 's1', name: 'Cleo', colour: 4, peer: 'p1' }, 's1'));
+    expect(s.seats.s1!.away).toBeUndefined();
+    const empty = ok(fresh(), act('seatLeave', { seat: 's1' }, 's1'));
+    no(empty, act('away', { seat: 's1', away: true }), /empty/);
+    clean(s);
+  });
+
   it('ready: publishes the commitment and creates the hidden library of opaque ids', () => {
     let s = fresh();
     s = ok(s, { ...act('ready', { commits: ['c2', 'c1'], instanceIds: ['z', 'y'], zone: 'library:s0' }), seq: 7 });

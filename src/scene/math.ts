@@ -84,3 +84,12 @@ export function cardCorners(pose: Pose, w: number = CARD_W, h: number = CARD_H):
 }
 
 export const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
+
+/**
+ * Uniform scale for table text of `sizeMm` that keeps at least `minPx` of type on screen at `pxPerMm`, in quarter steps,
+ * never below 1 and never above `maxScale` (counter badges, line labels, zone labels at far zoom).
+ */
+export function legibleScale(sizeMm: number, minPx: number, maxScale: number, pxPerMm: number): number {
+  if (!(pxPerMm > 0)) return maxScale;
+  return Math.min(maxScale, Math.max(1, Math.ceil((minPx / (sizeMm * pxPerMm)) * 4) / 4));
+}

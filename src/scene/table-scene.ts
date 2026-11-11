@@ -24,11 +24,11 @@ import { BirdseyeRig, NO_INSETS, type Insets } from './camera';
 import { CardLayer, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
 import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
-import { LAYER, compareSort, displayedRot, dropTargets, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
+import { LAYER, compareSort, displayedRot, dropTargets, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
-import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, pointInCard, pointInRect, rot2 } from './math';
+import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, legibleScale, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion } from './motion';
 import { drawnPose, entryAt, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
@@ -144,6 +144,14 @@ const COUNTER_SIZE = 6.5;
 const COUNTER_ART_Y = 14;
 const COUNTER_MIN_PX = 11;
 const COUNTER_MAX_SCALE = 3;
+/**
+ * Zone label type size on the table (mm) and its far-zoom floor: at the fitted view (about half a pixel per mm) the
+ * labels keep ZONE_LABEL_MIN_PX of type on screen, up to ZONE_LABEL_MAX_SCALE, which still fits an upper-case label in
+ * the gap between two piles (DESIGN "Themes and rendering": Paper zones carry small caps labels; gate M1 finding).
+ */
+const ZONE_LABEL_SIZE = 5.5;
+const ZONE_LABEL_MIN_PX = 9;
+const ZONE_LABEL_MAX_SCALE = 3;
 /** Stroke widths of ghost outlines and displacement markers, CSS px. */
 const GHOST_WIDTH_PX = 1;
 const MARKER_WIDTH_PX = 2;
@@ -389,12 +397,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const specs = new Map<string, TextSpec>();
     const counts = new Map<ZoneId, number>();
     if (state) for (const z of Object.values(state.zones)) counts.set(z.id, z.ids.length);
+    const scale = legibleScale(ZONE_LABEL_SIZE, ZONE_LABEL_MIN_PX, ZONE_LABEL_MAX_SCALE, rig.pxPerMm());
     for (const l of markLabels) {
       const zoneKind = l.key.split(':').pop()!;
       const seatIdx = Number(l.key.split(':')[1]);
       const seat = state ? Object.values(state.seats).find((s) => s.index === seatIdx) : undefined;
       const n = seat ? counts.get(`${zoneKind}:${seat.id}`) : l.key === 'zl:stack' ? state?.stack.length : undefined;
-      specs.set(l.key, { text: n ? `${l.text}  ${n}` : l.text, x: l.x, y: l.y, z: 0.1, rot: l.rot, size: 5.5, colour: t.muted, letterSpacing: 0.12, anchorY: l.anchorY });
+      specs.set(l.key, { text: n ? `${l.text}  ${n}` : l.text, x: l.x, y: l.y, z: 0.1, rot: l.rot, size: ZONE_LABEL_SIZE, scale, colour: t.muted, letterSpacing: 0.12, anchorY: l.anchorY });
     }
     return specs;
   }
@@ -405,7 +414,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const specs = new Map<string, TextSpec>();
     // Counter badges keep at least COUNTER_MIN_PX of type on screen at far zoom (DESIGN "Camera and navigation",
     // Level of detail: counters stay legible as simplified badges).
-    const counterScale = Math.min(COUNTER_MAX_SCALE, Math.max(1, Math.ceil((COUNTER_MIN_PX / (COUNTER_SIZE * rig.pxPerMm())) * 4) / 4));
+    const counterScale = legibleScale(COUNTER_SIZE, COUNTER_MIN_PX, COUNTER_MAX_SCALE, rig.pxPerMm());
     const seen = new Set<string>();
     for (const rc of order) {
       const c = rc.inst;
@@ -981,10 +990,25 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   /** The anchor a right-drag from this card draws from (scene/lines.ts lineSourceOf). */
   const lineSource = (rc: RCard) => (state ? lineSourceOf(state, rc.id) : null);
 
-  /** The thing under a screen point a line can end at: a public card (its stack item on the stack) or a seat's avatar spot. */
+  /**
+   * The thing under a screen point a line can end at: a public card (its stack item on the stack), a player's avatar
+   * in the screen-anchored layer (any element marked `data-line-seat`, DESIGN "Combat and annotation": card to
+   * player), or a seat's avatar spot on the table.
+   */
   function lineTargetAt(x: number, y: number, exclude: InstanceId) {
+    const seat = seatElementAt(x, y);
+    if (seat) return seat;
     const rc = pick(x, y, new Set([exclude]));
     return rc ? lineSource(rc) : lineView.avatarAt(screenToTable(x, y));
+  }
+
+  /** A seat anchor for a screen-layer element at a client point that names a seat of this table, or null. */
+  function seatElementAt(x: number, y: number): { kind: 'seat'; id: SeatId } | null {
+    if (!state || typeof document === 'undefined' || typeof document.elementFromPoint !== 'function') return null;
+    const el = document.elementFromPoint(x, y);
+    const host = el instanceof Element ? el.closest('[data-line-seat]') : null;
+    const id = host?.getAttribute('data-line-seat') ?? '';
+    return id && Object.hasOwn(state.seats, id) ? { kind: 'seat', id } : null;
   }
 
   function onPileBadge(rc: RCard, x: number, y: number): boolean {
@@ -1485,8 +1509,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const openChanged = nextView.openPile !== view.openPile || nextView.privateFaces !== view.privateFaces;
       view = nextView;
       if (prevState === null || Object.keys(prevState.seats).length !== Object.keys(next.seats).length) {
-        rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat));
+        rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat));
         rebuildMarkings();
+      } else if (prevState.seats !== next.seats) {
+        // A chair taken or left changes which hand rows the fitted view must show.
+        rig.setFrame(fitFrame(state, layout, viewerSeat));
       }
       if (prevState !== next || openChanged) relayout(performance.now());
       if (viewChanged) dirty = true;
@@ -1506,7 +1533,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       viewerSeat = seat;
       themeInstance.dispose();
       themeInstance = theme.build({ renderer, scene, camera, table: layout.table, quality: theme.quality[0]!, reducedMotion: reduced() });
-      rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat));
+      rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat));
       rebuildMarkings();
       relayout(performance.now());
     },

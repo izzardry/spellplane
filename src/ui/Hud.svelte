@@ -15,7 +15,7 @@
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
   import { tokensToCssVars } from '../themes/index';
-  import { Commands, isEmptyChair, promptShowing, roundPassed, type UiHooks } from './commands';
+  import { Commands, isEmptyChair, isOwnTurn, promptKeys, promptShowing, roundPassed, untapOfferOnOpen, type UiHooks } from './commands';
   import ConfirmPrompt from './confirm/ConfirmPrompt.svelte';
   import { promptModel, roundWhat } from './confirm/model';
   import { parsePlainList } from './deck';
@@ -213,7 +213,7 @@
   const engine = new KeyEngine(
     untrack(() => game.keymap),
     { start: (b) => commands.run(b.action, 'start'), end: (b) => commands.run(b.action, 'end') },
-    () => promptShowing(session.getState(), me),
+    () => promptKeys(session.getState(), me),
   );
   $effect(() => {
     engine.setKeymap(keymap);
@@ -465,13 +465,38 @@
 
   // On Next turn, offer the new active player (or team) untap-and-draw; close the offer once the turn moves on
   // (DESIGN "Turn flow and confirmation": offered a single key, never done for them).
+  // A page that opens (reload, rejoin) after the turn passed to this seat offers it too: from the log, or from the
+  // open offer this tab remembers across reloads (per-tab convenience; storage may be unavailable).
+  const offerKey = `spellplane:untap-offer:${untrack(() => session.roomId)}:${me}`;
+  const readOffered = (): number | null => {
+    try {
+      const v = sessionStorage.getItem(offerKey);
+      return v === null ? null : Number(v);
+    } catch {
+      return null;
+    }
+  };
+  const writeOffered = (turn: number | null): void => {
+    try {
+      if (turn === null) sessionStorage.removeItem(offerKey);
+      else sessionStorage.setItem(offerKey, String(turn));
+    } catch {
+      // Not remembered: the offer still follows the log.
+    }
+  };
+  untapOffer = untrack(() => untapOfferOnOpen(st, me, session.log(), readOffered()));
   let seenTurn = untrack(() => st.turn.number);
   $effect(() => {
-    const mine = st.turn.active === me || (!!st.seats[me]?.team && st.seats[me]?.team === st.turn.active);
+    const mine = isOwnTurn(st, me);
     const turn = st.turn.number;
     if (!mine) untapOffer = false;
     else if (turn !== seenTurn) untapOffer = true;
     seenTurn = turn;
+  });
+  $effect(() => {
+    const open = untapOffer;
+    const turn = untrack(() => st.turn.number);
+    writeOffered(open ? turn : null);
   });
   // A HUD hover lasts only while its card is shown in a HUD surface: a card that leaves the hand (cast, G, E, …) or
   // a pile viewer that closes fires no pointerleave, and a stale hover would steal keys meant for the table.

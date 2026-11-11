@@ -8,9 +8,8 @@
  * player's hand or library in anything a page received (debug hook `net.messages()`), holds in state or keeps in its
  * stores (SecretStore, IndexedDB).
  *
- * Every step uses the design's UI path where one exists (lobby controls, keys on hovered cards, drags, right-drags,
- * the prompt, the reveal menu, the avatar's life control). The one step without a UI path, putting a hand card onto
- * the battlefield face down, uses the debug hook and is listed as a gap. Engine behaviour is asserted on state hashes
+ * Every step uses the design's UI path (lobby controls, keys on hovered cards, drags, right-drags, the prompt, the
+ * reveal menu, the avatar's life control); a face-down play from the hand is F on the hovered hand card. Engine behaviour is asserted on state hashes
  * and the debug hook, never on pixels; the screenshots (lobby, connectivity failure, opponent view, stack with three
  * items and targets, confirmation prompt, combat with blocks, away seat) are review evidence in artifacts/shots/M1/.
  *
@@ -216,6 +215,7 @@ test.describe('M1 gate @gate', () => {
     test.setTimeout(600_000);
     const project = info.project.name;
     const failures: string[] = [];
+    /** Steps without a UI path that the gate drives through the debug hook (none since F plays a hand card face down). */
     const gaps: string[] = [];
     const errors: string[] = [];
     const outside: string[] = [];
@@ -229,9 +229,6 @@ test.describe('M1 gate @gate', () => {
         failures.push(`${title}: ${firstLine(e)}`);
         return false;
       }
-    };
-    const gap = (what: string) => {
-      if (!gaps.includes(what)) gaps.push(what);
     };
     /** A check whose failure is recorded without stopping the step (so the step's evidence is still taken). */
     const soft = async (title: string, fn: () => Promise<void>): Promise<void> => {
@@ -677,15 +674,14 @@ test.describe('M1 gate @gate', () => {
     });
     await reload(A);
 
-    // Turn 7 (Ann): a card face down on the battlefield, revealed to Ben only (W, Ben).
+    // Turn 7 (Ann): a card face down on the battlefield (F on a hand card), revealed to Ben only (W, Ben).
     await turn(7, A, async () => {
       let hidden = '';
-      await step('turn 7: Ann puts a hand card onto the battlefield face down (no UI path: debug hook)', async () => {
-        gap('Putting an own hand card onto the battlefield face down has no UI path (TableSession.playFaceDown is not reachable from the HUD); the gate calls it through the debug hook.');
+      await step('turn 7: Ann puts a hand card onto the battlefield face down (F on the hovered hand card)', async () => {
         hidden = (await handWhere(A.page, (c) => !isLand(c))) ?? (await secrets(A.page)).hand[0]!;
-        const can = await A.page.evaluate(() => typeof (window.__spellplane as { session?: { playFaceDown?: unknown } } | undefined)?.session?.playFaceDown === 'function');
-        expect(can, '__spellplane.session.playFaceDown').toBe(true);
-        await A.page.evaluate((id) => (window.__spellplane as unknown as { session: { playFaceDown(c: string, z: string): void } }).session.playFaceDown(id, 'battlefield:s0'), hidden);
+        await focus(A);
+        await hoverHand(A.page, hidden);
+        await A.page.keyboard.press('KeyF');
         for (const q of both) await expect.poll(async () => (await state(q.page)).cards[hidden]).toMatchObject({ zone: 'battlefield:s0', face: 'down' });
         expect((await state(B.page)).cards[hidden]?.identity).toBeUndefined();
       });
@@ -726,7 +722,8 @@ test.describe('M1 gate @gate', () => {
         await collect(sequencer);
         closedHand = (await secrets(sequencer.page)).hand;
         const stay = other(sequencer);
-        await sequencer.page.close({ runBeforeUnload: true });
+        // A plain close: Playwright's WebKit never closes a page asked to run beforeunload first.
+        await sequencer.page.close();
         await expect.poll(async () => (await state(stay.page)).seats[sequencer.seat]?.away, { timeout: 15_000 }).toBe(true);
         await expect(stay.page.locator(`[data-testid="avatar"][data-seat="${sequencer.seat}"]`)).toHaveAttribute('data-away', 'true');
         await focus(stay);
