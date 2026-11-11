@@ -7,12 +7,16 @@
  * - Every item takes a slot of the cascade in stack order, numbered from the bottom: a spell shows its own card; an
  *   ability, trigger or copy marker shows the face of the card it comes from (the source permanent, or what a copy
  *   copies), so its name, art and artist credit are the printed card's own, unaltered (CLAUDE.md: faces are never
- *   recoloured, cropped or distorted). A marker is joined to its source by a line.
+ *   recoloured, cropped or distorted). A marker is drawn smaller (MARKER_SCALE, uniform, so the face is whole and
+ *   undistorted), its top edge level with its slot's, so it reads as a marker and not as a cast card ("a small ability
+ *   marker"). A marker is joined to its source by a line.
  * - Items overlap downward so every title strip (the top `cascadeOffset` of a card) stays visible; the item's number,
  *   kind and note sit beside its strip, outside the card, in its controller's seat colour.
  * - An item whose confirmation round still waits pulses (DESIGN "The effect stack", Stack and confirmation).
  * - Hovering an item highlights its source and its targets (DESIGN "The effect stack", Reading it).
- * - Dropping an item's card back into the lane reorders it to the slot under the pointer (Resolving 4).
+ * - Dropping an item's card back into the lane reorders it to the slot under the pointer (Resolving 4). A marker is not
+ *   a card: it is hit-tested on its own (`entryAt`), the HUD's keys reach it through `hoveredStackItem`, and dragging it
+ *   reorders it in the lane or, dropped outside, removes it (table-scene.ts).
  */
 import { GEOMETRY } from '../core/geometry';
 import { pendingAbout } from '../core/reducer/confirm';
@@ -24,6 +28,8 @@ import type { TablePoint } from './types';
 
 /** Distance between consecutive items of the cascade, mm. */
 export const STACK_STEP = GEOMETRY.stackLane.cascadeOffset;
+/** Uniform scale of an ability, trigger or copy marker against a card (DESIGN "The effect stack", Ability: "a small ability marker"). */
+export const MARKER_SCALE = 0.6;
 
 /** One item of the stack as the lane draws it. */
 export interface StackEntry {
@@ -71,6 +77,21 @@ function faceOf(state: TableState, item: StackItem, depth = 0): InstanceId | nul
   return null;
 }
 
+/** The scale an entry is drawn at: 1 for a spell's card, MARKER_SCALE for a marker. */
+export function entryScale(e: Pick<StackEntry, 'marker'>): number {
+  return e.marker ? MARKER_SCALE : 1;
+}
+
+/**
+ * Where an entry is drawn, given the pose of its slot (or of the drag that holds it): a spell at the slot itself, a
+ * marker shrunk toward its slot's top edge, so its name and art stay in the visible title strip.
+ */
+export function drawnPose(slot: Pose, scale: number): Pose {
+  if (scale === 1) return slot;
+  const p = entryPoint(slot, 0, ((1 - scale) * CARD_H) / 2);
+  return { x: p.x, y: p.y, rot: slot.rot };
+}
+
 /** Every item of the stack, bottom first, as the lane draws it for a viewer at `angle`. */
 export function stackEntries(state: TableState, lane: Rect, angle: number): StackEntry[] {
   return state.stack.map((item, index) => {
@@ -103,14 +124,14 @@ export function itemAnchor(pose: Pose): TablePoint {
   return entryPoint(pose, 0, CARD_H / 2 - STACK_STEP / 2);
 }
 
-/** Where the number and kind label sit: left of the card, level with the title strip. */
-export function labelPoint(pose: Pose): TablePoint {
-  return entryPoint(pose, -CARD_W / 2 - 4, CARD_H / 2 - STACK_STEP / 2);
+/** Where the number and kind label sit: left of the card (or marker, at `scale`), level with the title strip. */
+export function labelPoint(pose: Pose, scale = 1): TablePoint {
+  return entryPoint(pose, (-CARD_W * scale) / 2 - 4, CARD_H / 2 - STACK_STEP / 2);
 }
 
-/** Where the note sits: right of the card, level with the title strip. */
-export function notePoint(pose: Pose): TablePoint {
-  return entryPoint(pose, CARD_W / 2 + 4, CARD_H / 2 - STACK_STEP / 2);
+/** Where the note sits: right of the card (or marker, at `scale`), level with the title strip. */
+export function notePoint(pose: Pose, scale = 1): TablePoint {
+  return entryPoint(pose, (CARD_W * scale) / 2 + 4, CARD_H / 2 - STACK_STEP / 2);
 }
 
 /**
@@ -120,7 +141,8 @@ export function notePoint(pose: Pose): TablePoint {
 export function entryAt(entries: readonly StackEntry[], p: TablePoint): StackEntry | null {
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i]!;
-    if (pointInCard(p, e.pose)) return e;
+    const k = entryScale(e);
+    if (pointInCard(p, drawnPose(e.pose, k), CARD_W * k, CARD_H * k)) return e;
   }
   return null;
 }
@@ -164,8 +186,26 @@ export interface DebugStackEntry {
   pending: boolean;
   pose: Pose;
   note: string | null;
-  /** Screen rectangle of the entry's card or marker. */
+  /** 1 for a spell's card, MARKER_SCALE for a marker. */
+  scale: number;
+  /** Screen rectangle of the entry's card or marker as drawn. */
   screen: DOMRect;
+}
+
+/** What the scenes report as hovered in the lane (WeakMap: the TableScene contract stays as it is). */
+const hovers = new WeakMap<object, () => StackItemId | null>();
+
+/** Called by a scene: how to read the stack item under its pointer. */
+export function registerStackHover(scene: object, read: () => StackItemId | null): void {
+  hovers.set(scene, read);
+}
+
+/**
+ * The stack item under the pointer of `scene` (a marker, or a spell's card in the lane), or null (DESIGN "The effect
+ * stack": N notes, X copies and I pings a hovered item, marker or spell alike).
+ */
+export function hoveredStackItem(scene: object | null): StackItemId | null {
+  return scene ? (hovers.get(scene)?.() ?? null) : null;
 }
 
 declare module '../util/debug' {

@@ -134,7 +134,7 @@ describe('answers (DESIGN "Turn flow and confirmation", Confirmation rounds 2-5)
     expect(s.confirm).toMatchObject({ responses: { s2: 'ok' }, timerSeq: s.seq });
     expect(s.confirm).not.toHaveProperty('holder');
     expect(timerStartSeq(s.confirm!)).toBe(s.seq);
-    expect(confirmDeadlines(s)).toEqual([{ key: `confirm:r1:${s.seq}`, fromSeq: s.seq, afterMs: 5000, emit: [{ type: 'respond', round: 'r1', seat: 's0', response: 'timeout' }] }]);
+    expect(confirmDeadlines(s)).toEqual([{ key: `confirm:r1:${s.seq}:s0`, fromSeq: s.seq, afterMs: 5000, emit: [{ type: 'respond', round: 'r1', seat: 's0', response: 'timeout' }] }]);
     const viaOk = seqd(held, respond('r1', 's2', 'ok'));
     expect(viaOk.confirm).toEqual(s.confirm);
     no(held, respond('r1', 's0', 'release'), /does not hold/);
@@ -169,7 +169,7 @@ describe('implicit pass: the sequencer deadline (DESIGN "Specification: network 
     let s = seqd(three(), push('i1', 'r1', 's1'));
     const [d] = confirmDeadlines(s);
     expect(d).toEqual({
-      key: `confirm:r1:${s.seq}`,
+      key: `confirm:r1:${s.seq}:s0,s2`,
       fromSeq: s.seq,
       afterMs: 5000,
       emit: [
@@ -241,6 +241,32 @@ describe('connection loss (DESIGN "Turn flow and confirmation": an away player i
     expect(s.confirm).not.toHaveProperty('holder');
     s = seqd(s, respond('r1', 's0', 'timeout', 's0'));
     expect(roundPassed(s)).toBe(true);
+  });
+
+  it('the deadline key changes with the waiting seats, so a sequencer re-arms with a fresh emit (same start)', () => {
+    let s = seqd(three(), push('i1', 'r1', 's1'));
+    s = seqd(s, respond('r1', 's2', 'hold'));
+    expect(confirmDeadlines(s)).toEqual([]);
+    const lapsed = away(s, 's2');
+    const [d1] = confirmDeadlines(lapsed);
+    expect(d1?.key).toBe(`confirm:r1:${s.confirm!.startSeq}:s0,s2`);
+    // Ben answers: the key changes, the start does not.
+    const after = seqd(lapsed, respond('r1', 's0', 'ok'));
+    const [d2] = confirmDeadlines(after);
+    expect(d2?.key).toBe(`confirm:r1:${s.confirm!.startSeq}:s2`);
+    expect(d2?.fromSeq).toBe(d1?.fromSeq);
+    expect(d2?.emit).toEqual([{ type: 'respond', round: 'r1', seat: 's2', response: 'timeout' }]);
+  });
+
+  it('a seat that sits down mid-round is in the emit list and the key', () => {
+    let s = createTable({ game: TEST_GAME, format: '1v1', seats: [{ name: 'Anna', colour: 0 }, { name: '', colour: 1 }] });
+    s = ok(s, act('createToken', { card: 't1', zone: 'battlefield:s0', pose: P(0, -200), label: 'Clue' }));
+    s = seqd(s, act('stackPush', { item: 'i1', kind: 'ability', source: 't1', round: 'r1' }));
+    expect(confirmDeadlines(s)).toEqual([]);
+    s = { ...s, seats: { ...s.seats, s1: { ...s.seats.s1!, name: 'Ben' } } };
+    const [d] = confirmDeadlines(s);
+    expect(d?.key).toBe(`confirm:r1:${s.confirm!.startSeq}:s1`);
+    expect(d?.emit).toEqual([{ type: 'respond', round: 'r1', seat: 's1', response: 'timeout' }]);
   });
 
   it('another seat may take the floor from a holder that is away; the old holder is silent again', () => {
@@ -348,6 +374,68 @@ describe('determinism and undo (DESIGN "Specification: code interfaces", Reducer
     expect(inv).not.toBeNull();
     const undone = ok(after, act('undo', { of: a.cid, inverse: inv! }));
     expect(canonicalJson({ ...undone, seq: 0 })).toBe(canonicalJson({ ...before, seq: 0 }));
+  });
+
+  /** Undo `a` (applied to `before`) and return the state after the undo; fails when `a` is not undoable. */
+  const undoOf = (before: TableState, a: Action): { after: TableState; undone: TableState } => {
+    const after = seqd(before, a);
+    const inv = inverse(before, a);
+    expect(inv, `${a.type} must be undoable`).not.toBeNull();
+    return { after, undone: seqd(after, act('undo', { of: a.cid, inverse: inv! }, a.by)) };
+  };
+  const sameTable = (x: TableState, y: TableState) => expect(canonicalJson({ ...x, seq: 0, confirm: null })).toBe(canonicalJson({ ...y, seq: 0, confirm: null }));
+  /** Anna casts a01 with round r1; Ben and Cleo pass. */
+  const castAllPassed = () => {
+    let s = seqd(three(), act('stackPush', { item: 'i1', kind: 'spell', card: 'a01', round: 'r1' }));
+    s = seqd(s, respond('r1', 's1', 'ok'));
+    return seqd(s, respond('r1', 's2', 'timeout', 's0'));
+  };
+
+  it('a resolve after everyone passed is undoable: the item comes back, without the round that ended with it', () => {
+    const before = castAllPassed();
+    const a = act('stackResolve', { item: 'i1', to: 'battlefield:s0', pose: P(0, -200) });
+    const { after, undone } = undoOf(before, a);
+    expect(after.confirm).toBeNull();
+    expect(undone.stack.map((i) => i.id)).toEqual(['i1']);
+    expect(undone.cards.a01!.zone).toBe('stack');
+    sameTable(undone, before);
+    expect(undone.confirm).toBeNull();
+  });
+
+  it('a forced resolve and a counter are undoable too', () => {
+    const pending = seqd(three(), act('stackPush', { item: 'i1', kind: 'spell', card: 'a01', round: 'r1' }));
+    sameTable(undoOf(pending, act('stackResolve', { item: 'i1', force: true })).undone, pending);
+    const passed = castAllPassed();
+    sameTable(undoOf(passed, act('stackCounter', { item: 'i1' })).undone, passed);
+  });
+
+  it('a second push with a round onto a non-empty stack is undoable; the round it replaced stays replaced', () => {
+    const before = castAllPassed();
+    const a = push('i2', 'r2', 's1');
+    const { after, undone } = undoOf(before, a);
+    expect(after.confirm?.id).toBe('r2');
+    expect(undone.stack.map((i) => i.id)).toEqual(['i1']);
+    sameTable(undone, before);
+    // The round about the item the undo took away has ended.
+    expect(undone.confirm).toBeNull();
+  });
+
+  it('a group of pushes (casting a selection) undoes newest first, each one', () => {
+    let s = three();
+    s = ok(s, act('reveal', { instanceId: 'a02', ref: { sid: 'sid-bear' }, salt: 'salt-a02' }));
+    const start = s;
+    const p1 = act('stackPush', { item: 'i1', kind: 'spell', card: 'a01', round: 'r1', group: 'g1' });
+    const p2 = act('stackPush', { item: 'i2', kind: 'spell', card: 'a02', round: 'r2', group: 'g1' });
+    const inv1 = inverse(s, p1);
+    s = seqd(s, p1);
+    const inv2 = inverse(s, p2);
+    s = seqd(s, p2);
+    expect(inv1).not.toBeNull();
+    expect(inv2).not.toBeNull();
+    s = seqd(s, act('undo', { of: p2.cid, inverse: inv2! }));
+    s = seqd(s, act('undo', { of: p1.cid, inverse: inv1! }));
+    expect(s.stack).toEqual([]);
+    expect(canonicalJson({ ...s, seq: 0, confirm: null, cards: {} })).toBe(canonicalJson({ ...start, seq: 0, confirm: null, cards: {} }));
   });
 
   it('answers are not undoable', () => {

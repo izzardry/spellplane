@@ -9,6 +9,7 @@ import { MTG_KEYMAP, chordToString } from '../../../src/games/mtg/keymap';
 import type { ActionId, KeyBinding } from '../../../src/games/types';
 import { fakeGame, tableWith } from '../../../src/ui/fakes';
 import { freeSlot } from '../../../src/ui/geometry';
+import { registerStackHover } from '../../../src/scene/stack';
 import { drafts, rig, type Rig } from './setup';
 
 const promptByBen = { id: 'r9', askedBy: 's1', durationMs: 5000, startSeq: 0, responses: {} };
@@ -81,7 +82,8 @@ const S: Record<ActionId, Scenario> = {
   untapAll: { expect: (r) => expect(drafts(r)).toEqual([{ type: 'tap', card: 'bf2', tapped: false }]) },
   autoPass: { expect: (r) => expect(drafts(r)).toEqual([{ type: 'autoPass', on: true }]) },
   // Confirm
-  ask: { expect: (r) => expect(drafts(r)).toEqual([{ type: 'ask', round: 'r1' }]) },
+  // K opens the inline Ask field for an optional label; Enter there asks (Commands.ask).
+  ask: { expect: (r) => (expect(r.ui).toEqual([{ hook: 'openAsk', args: [] }]), expect(r.session.dispatched).toEqual([])) },
   confirmOk: { setup: { confirm: promptByBen, hovered: 'bf1' }, expect: (r) => expect(drafts(r)).toEqual([{ type: 'respond', round: 'r9', seat: 's0', response: 'ok' }]) },
   confirmHold: { setup: { confirm: promptByBen, hovered: 'bf1' }, expect: (r) => expect(drafts(r)).toEqual([{ type: 'respond', round: 'r9', seat: 's0', response: 'hold' }]) },
   // Table
@@ -296,6 +298,78 @@ describe('hover plus key (DESIGN "Input and interaction design")', () => {
     r.clock.t += 100;
     r.press({ key: 'i' });
     expect(drafts(r)).toEqual([{ type: 'ping', target: { kind: 'card', id: 'bf1' } }]);
+  });
+});
+
+describe('keys on a hovered stack marker (DESIGN "The effect stack": Note, Copy; "Input and interaction design": hover plus key)', () => {
+  const markers = [spellOnStack, { id: 'si10', kind: 'trigger' as const, controller: 's1', source: 'opp1' }, { id: 'si11', kind: 'ability' as const, controller: 's0', source: 'bf1' }];
+  /** The scene reports the buried trigger marker si10 under the pointer; no card is hovered; bf2 is selected. */
+  const onMarker = () => {
+    const r = rig({ stack: markers, selection: ['bf2'] });
+    registerStackHover(r.scene, () => 'si10');
+    return r;
+  };
+
+  it('N opens the note field for the marker, not for the selection', () => {
+    const r = onMarker();
+    r.press({ key: 'n' });
+    expect(r.ui).toEqual([{ hook: 'openNote', args: [{ item: 'si10' }] }]);
+  });
+
+  it('X puts a copy marker of it on the stack, with a round', () => {
+    const r = onMarker();
+    r.press({ key: 'x' });
+    expect(drafts(r)).toEqual([{ type: 'stackPush', item: 'si1', kind: 'copy', copyOf: 'si10', controller: 's0', round: 'r2' }]);
+  });
+
+  it('a double I pings the marker', () => {
+    const r = onMarker();
+    r.press({ key: 'i' });
+    r.clock.t += 100;
+    r.press({ key: 'i' });
+    expect(drafts(r)).toEqual([{ type: 'ping', target: { kind: 'stackItem', id: 'si10' } }]);
+  });
+
+  it('card keys never fall through to the selection while a marker is hovered', () => {
+    const r = onMarker();
+    for (const key of ['g', 'e', 't', 'f', 'l', 'q', 'c']) r.press({ key });
+    expect(r.session.dispatched).toEqual([]);
+  });
+
+  it('a hovered card wins over a stale marker hover', () => {
+    const r = onMarker();
+    r.view.hovered = 'dfc';
+    r.press({ key: 'n' });
+    expect(r.ui).toEqual([{ hook: 'openNote', args: [{ card: 'dfc' }] }]);
+  });
+
+  it('a spell in the lane is reached as its card, as before', () => {
+    const r = rig({ stack: markers });
+    registerStackHover(r.scene, () => 'si9');
+    r.view.hovered = 'bf1';
+    r.press({ key: 'n' });
+    expect(r.ui).toEqual([{ hook: 'openNote', args: [{ item: 'si9' }] }]);
+  });
+});
+
+describe('Ask and Hold (DESIGN "Turn flow and confirmation", Start; Hold)', () => {
+  it('Commands.ask sends the trimmed label, or none when empty', () => {
+    const r = rig();
+    r.commands.ask('  attacks? ');
+    r.commands.ask('');
+    expect(drafts(r)).toEqual([
+      { type: 'ask', round: 'r1', label: 'attacks?' },
+      { type: 'ask', round: 'r2' },
+    ]);
+  });
+
+  it('H is not sent while another seat holds the floor', () => {
+    const r = rig({ names: ['Anna', 'Ben', 'Cleo'], confirm: { id: 'r9', askedBy: 's1', durationMs: 5000, startSeq: 0, responses: { s2: 'hold' }, holder: 's2' } });
+    r.press({ key: 'h' });
+    expect(r.session.dispatched).toEqual([]);
+    // Enter (OK) still answers.
+    r.press({ key: 'Enter' });
+    expect(drafts(r)).toEqual([{ type: 'respond', round: 'r9', seat: 's0', response: 'ok' }]);
   });
 });
 

@@ -6,8 +6,11 @@
     (H or Esc while the prompt is up).
   - The seat holding the floor sees that it does, and Release.
   - Everyone else (the asker, seats that passed) sees a compact line naming who the round is waiting for, or who is
-    responding; the asker also sees "All passed" once everyone has.
-  The countdown is this browser's own (ui/confirm/model.ts Countdown); the sequencer's clock decides.
+    responding; the asker also sees "All passed" once everyone has, for PASSED_MS (a round stays open after that, so
+    the pill would otherwise never leave).
+  - While another seat holds the floor, Hold is not offered (one seat holds at a time).
+  The countdown is this browser's own (ui/confirm/model.ts Countdown); the sequencer's clock decides. It ticks only
+  while the timer runs.
 -->
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
@@ -50,8 +53,28 @@
       countdown.observe(m, now);
     });
   });
-  const timer = setInterval(() => (now = performance.now()), 100);
-  onDestroy(() => clearInterval(timer));
+  // Tick only while a countdown runs: a round stays open after everyone passed, often for a long time.
+  const running = $derived(model.timerRunning);
+  const roundId = $derived(model.round.id);
+  const allPassed = $derived(model.allPassed);
+  $effect(() => {
+    if (!running) return;
+    const timer = setInterval(() => (now = performance.now()), 100);
+    return () => clearInterval(timer);
+  });
+
+  /** How long the asker sees "All passed". */
+  const PASSED_MS = 4000;
+  /** The round whose "All passed" pill has had its time. */
+  let passedShown = $state<string | null>(null);
+  let passedTimer: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    const id = roundId;
+    if (!allPassed) return;
+    passedTimer = setTimeout(() => (passedShown = id), PASSED_MS);
+    return () => clearTimeout(passedTimer);
+  });
+  onDestroy(() => clearTimeout(passedTimer));
 
   const fraction = $derived.by(() => {
     void model;
@@ -91,7 +114,7 @@
     <span class="what"><b>{asker}</b> {what}</span>
     {#if holderName}<span class="holding" data-testid="confirm-holder">{holderName} is responding</span>{/if}
     <button type="button" data-testid="prompt-ok" onclick={onok}>OK {#if keys.ok}<kbd>{keys.ok}</kbd>{/if}</button>
-    <button type="button" data-testid="prompt-hold" onclick={onhold}>Hold {#if keys.hold}<kbd>{keys.hold}</kbd>{/if}</button>
+    {#if !model.holder || model.holder === me}<button type="button" data-testid="prompt-hold" onclick={onhold}>Hold {#if keys.hold}<kbd>{keys.hold}</kbd>{/if}</button>{/if}
   </div>
 {:else if model.mode === 'holding'}
   <div class="prompt holding-me" data-testid="confirm-prompt" data-round={model.round.id} role="alertdialog" aria-label="Confirmation" style:--seat={colour(model.round.askedBy)}>
@@ -111,7 +134,7 @@
       </span>
     {/if}
   </div>
-{:else if model.round.askedBy === me && model.participants.length > 0}
+{:else if model.round.askedBy === me && model.participants.length > 0 && passedShown !== model.round.id}
   <div class="status passed" data-testid="confirm-status" data-round={model.round.id} data-passed="true" role="status" aria-live="polite">All passed</div>
 {/if}
 

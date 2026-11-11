@@ -8,7 +8,7 @@ import type { Action } from '../../../src/core/actions';
 import type { TableState } from '../../../src/core/types';
 import type { Rect } from '../../../src/games/types';
 import { placeCards } from '../../../src/scene/layout';
-import { entryAt, hoverHighlights, itemAnchor, slotAt, stackEntries, stackSlotPose, STACK_STEP } from '../../../src/scene/stack';
+import { drawnPose, entryAt, entryScale, hoverHighlights, itemAnchor, labelPoint, MARKER_SCALE, slotAt, stackEntries, stackSlotPose, STACK_STEP } from '../../../src/scene/stack';
 import { fakeGame } from '../../../src/ui/fakes';
 import { P, act, ok, play, readyTable } from '../core/helpers';
 
@@ -91,6 +91,25 @@ describe('reading and handling the lane (DESIGN "The effect stack")', () => {
     expect(entryAt(e, { x: 0, y: 116 + 40 })?.item.id).toBe('i1'); // only the bottom item reaches that far
     expect(entryAt(e, { x: 0, y: 72 })?.item.id).toBe('i3');
     expect(entryAt(e, { x: 0, y: -300 })).toBeNull();
+  });
+
+  it('a marker is drawn smaller, whole and undistorted, its top edge level with its slot\'s; it is hit only where drawn', () => {
+    const e = stackEntries(stacked(), LANE, 0);
+    expect(MARKER_SCALE).toBeLessThan(1);
+    expect(e.map((x) => entryScale(x))).toEqual([1, MARKER_SCALE, MARKER_SCALE]);
+    const slot = e[1]!.pose;
+    const drawn = drawnPose(slot, MARKER_SCALE);
+    // Same top edge: slot centre + 44 = drawn centre + 44 × scale.
+    expect(drawn.y + (88 * MARKER_SCALE) / 2).toBeCloseTo(slot.y + 44);
+    expect(drawn.x).toBe(slot.x);
+    expect(drawn.rot).toBe(slot.rot);
+    expect(drawnPose(e[0]!.pose, 1)).toBe(e[0]!.pose);
+    // Beside the narrower marker (but inside a full card's width) the spell under it shows through.
+    const beside = { x: (63 * MARKER_SCALE) / 2 + 3, y: e[2]!.pose.y + 30 };
+    expect(entryAt(e, beside)?.item.id).toBe('i1');
+    // The label sits beside the marker, not a full card's width away.
+    expect(labelPoint(slot, MARKER_SCALE).x).toBeCloseTo(-(63 * MARKER_SCALE) / 2 - 4);
+    expect(labelPoint(slot).x).toBeCloseTo(-63 / 2 - 4);
   });
 
   it('lines meet an item at its visible title strip', () => {

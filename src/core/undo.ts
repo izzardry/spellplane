@@ -40,6 +40,10 @@ export function inverse(before: TableState, action: Action): UndoableAction | nu
  * Comparison key of a state for undo: `seq` set aside, and identities of cards in hidden zones dropped. A card that
  * an undo returns to a hidden zone loses its identity there, as every public card returning to a hidden zone does
  * (DESIGN "Table model", Hidden cards), even when it had been revealed in that zone before.
+ * The confirmation round is set aside too (M1-P3): answers are not undoable, and a round is not part of what an
+ * action did to the table. Undoing a resolve or a counter brings the item back without the round that ended with it;
+ * undoing a push ends the round about the item it took away (reducer/draft.ts `finish`), and a round it replaced
+ * stays replaced.
  */
 export function undoKey(state: TableState): string {
   const cards: Record<string, CardInstance> = {};
@@ -51,7 +55,7 @@ export function undoKey(state: TableState): string {
       cards[id] = c;
     }
   }
-  return canonicalJson({ ...state, seq: 0, cards });
+  return canonicalJson({ ...state, seq: 0, confirm: null, cards });
 }
 
 /** The natural opposite action, with `by` of the undoing seat and a derived cid. */

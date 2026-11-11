@@ -175,7 +175,7 @@ describe('silence passes after the configured duration on all peers at the same 
     expect(t.sequencer.fired).toEqual([]);
     await vi.advanceTimersByTimeAsync(3000);
     converged(t);
-    expect(t.sequencer.fired.map((f) => f.key)).toEqual([`confirm:r2:${appliedSeqOf(t.sequencer, cid).seq}`]);
+    expect(t.sequencer.fired.map((f) => f.key)).toEqual([`confirm:r2:${appliedSeqOf(t.sequencer, cid).seq}:s0,s1`]);
     for (const p of t.peers) expect(p.state.confirm).toMatchObject({ id: 'r2', about: 'i2', askedBy: 's2', responses: { s0: 'timeout', s1: 'timeout' } });
     t.stop();
   });
@@ -203,7 +203,7 @@ describe('hold stops the timer (DESIGN "Turn flow and confirmation", Hold)', () 
     await vi.advanceTimersByTimeAsync(1);
     await t.settle();
     converged(t);
-    expect(t.sequencer.fired.map((f) => f.key)).toEqual([`confirm:r1:${releasedAt.seq}`]);
+    expect(t.sequencer.fired.map((f) => f.key)).toEqual([`confirm:r1:${releasedAt.seq}:s0`]);
     const seqs = timeoutSeqs(t.peers, 'r1', 's0');
     expect(new Set(seqs).size).toBe(1);
     for (const x of t.peers) expect(x.state.confirm?.responses).toEqual({ s0: 'timeout', s2: 'ok' });
@@ -223,7 +223,7 @@ describe('hold stops the timer (DESIGN "Turn flow and confirmation", Hold)', () 
     expect(t.peers[2]!.state.confirm?.holder).toBeUndefined();
     await vi.advanceTimersByTimeAsync(5000);
     converged(t);
-    expect(t.sequencer.fired.map((f) => f.key)).toEqual([`confirm:r2:${appliedSeqOf(t.sequencer, cid).seq}`]);
+    expect(t.sequencer.fired.map((f) => f.key)).toEqual([`confirm:r2:${appliedSeqOf(t.sequencer, cid).seq}:s1,s2`]);
     t.stop();
   });
 

@@ -44,6 +44,28 @@ async function hoverTableCard(page: Page, id: string): Promise<void> {
   await page.mouse.move(r.x + r.width / 2, r.y + r.height / 2);
 }
 
+/** A lane entry's full card height on screen (a marker is drawn at `scale`). */
+const fullHeight = (e: DebugStackEntry) => e.screen.height / e.scale;
+/** A point inside an entry's visible title strip (the top 22 of 88 mm of its slot). */
+const stripPoint = (e: DebugStackEntry) => ({ x: e.screen.x + e.screen.width / 2, y: e.screen.y + (fullHeight(e) * 9) / 88 });
+/** Wait until the lane's entries rest in their slots (a cast card flies in). */
+async function laneSettled(page: Page): Promise<DebugStackEntry[]> {
+  const settled = async () => {
+    const e = await lane(page);
+    return e.every((x, i) => i === 0 || Math.abs(x.screen.y - e[i - 1]!.screen.y - (fullHeight(e[i - 1]!) * 22) / 88) < 0.5);
+  };
+  await expect.poll(settled).toBe(true);
+  return lane(page);
+}
+/** Press at `from`, drag to `to`, release. */
+async function dragBetween(page: Page, from: { x: number; y: number }, to: { x: number; y: number }): Promise<void> {
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x, from.y + 10, { steps: 3 });
+  await page.mouse.move(to.x, to.y, { steps: 8 });
+  await page.mouse.up();
+}
+
 /** Move the pointer to an empty spot on the table. */
 async function hoverNothing(page: Page): Promise<void> {
   await page.mouse.move(720, 160);
@@ -72,7 +94,7 @@ test.describe('a stack item starts a round; silence passes after the configured 
     // The sequencer (Anna's browser, seat 0) sent the timeout for Ben.
     const last = (await log(page)).at(-1)!;
     expect(last).toMatchObject({ type: 'respond', round: 'r1', seat: 's1', response: 'timeout', by: 's0' });
-    expect(await fired(page)).toEqual([{ key: `confirm:r1:${(await log(page)).find((a) => a.type === 'stackPush')!.seq}`, seq: last.seq! - 1 }]);
+    expect(await fired(page)).toEqual([{ key: `confirm:r1:${(await log(page)).find((a) => a.type === 'stackPush')!.seq}:s1`, seq: last.seq! - 1 }]);
     await expect(prompt).toHaveCount(0);
     expect((await lane(page))[0]!.pending).toBe(false);
     // The log names Ben, who passed, not the sequencer.
@@ -121,7 +143,7 @@ test.describe('hold stops the timer', () => {
     await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: 5000 }).toEqual({ s1: 'ok', s2: 'timeout' });
     expect(Date.now() - releasedAt).toBeGreaterThanOrEqual(TIMER - 100);
     const release = (await log(page)).find((a) => a.type === 'respond' && a.response === 'release')!;
-    expect((await fired(page)).map((f) => f.key)).toEqual([`confirm:r1:${release.seq}`]);
+    expect((await fired(page)).map((f) => f.key)).toEqual([`confirm:r1:${release.seq}:s2`]);
   });
 
   test('the holder adds to the stack, which starts a new round on the new top item', async ({ page }) => {
@@ -146,6 +168,26 @@ test.describe('hold stops the timer', () => {
     ]);
     expect((await remote(page, 's0', { type: 'respond', round: s.confirm!.id, seat: 's0', response: 'ok' })).refused).toBeNull();
     await expect(page.getByTestId('confirm-status')).toContainText('All passed');
+    // The round stays open (it ends with its item), but the pill does not stay forever.
+    await expect(page.getByTestId('confirm-status')).toHaveCount(0, { timeout: 6000 });
+    expect((await state(page)).confirm?.id).toBe(s.confirm!.id);
+  });
+
+  test('while another player holds the floor, Hold is not offered; OK still is', async ({ page }) => {
+    await open(page, { seat: 's1', seats: ['Anna', 'Ben', 'Cleo'] });
+    await annaCasts(page);
+    const prompt = page.getByTestId('confirm-prompt');
+    await expect(prompt.getByTestId('prompt-hold')).toBeVisible();
+    expect((await remote(page, 's2', { type: 'respond', round: 'r1', seat: 's2', response: 'hold' })).refused).toBeNull();
+    await expect(prompt.getByTestId('confirm-holder')).toContainText('Cleo is responding');
+    await expect(prompt.getByTestId('prompt-hold')).toHaveCount(0);
+    await hoverNothing(page);
+    await page.keyboard.press('KeyH');
+    await page.waitForTimeout(200);
+    expect(await page.evaluate(() => window.__confirmHarness!.refused().length)).toBe(0);
+    expect((await state(page)).confirm?.holder).toBe('s2');
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await state(page)).confirm?.responses).toEqual({ s1: 'ok', s2: 'hold' });
   });
 });
 
@@ -212,13 +254,7 @@ test.describe('the stack lane (DESIGN "The effect stack", Reading it; Resolving 
     expect((await remote(page, 's0', { type: 'stackPush', item: 'i3', kind: 'copy', copyOf: 'i1', round: 'r3' })).refused).toBeNull();
     expect((await remote(page, 's0', { type: 'lineAdd', line: 'l1', kind: 'target', from: { kind: 'stackItem', id: 'i3' }, to: { kind: 'card', id: 'bbear' } })).refused).toBeNull();
     await expect.poll(async () => (await lane(page)).length).toBe(3);
-    // Wait until the cast card has flown into its slot.
-    const settled = async () => {
-      const e = await lane(page);
-      return e.every((x, i) => i === 0 || Math.abs(x.screen.y - e[i - 1]!.screen.y - (e[i - 1]!.screen.height * 22) / 88) < 0.5);
-    };
-    await expect.poll(settled).toBe(true);
-    const entries = await lane(page);
+    const entries = await laneSettled(page);
     expect(entries.map((e) => [e.item, e.number, e.kind, e.marker, e.face, e.controller, e.note])).toEqual([
       ['i1', 1, 'spell', false, 'abolt', 's0', 'X = 3'],
       ['i2', 2, 'trigger', true, 'abear', 's1', null],
@@ -229,24 +265,19 @@ test.describe('the stack lane (DESIGN "The effect stack", Reading it; Resolving 
       const prev = entries[i - 1]!.screen;
       const cur = entries[i]!.screen;
       expect(cur.y).toBeGreaterThan(prev.y);
-      expect(cur.y - prev.y).toBeCloseTo((prev.height * 22) / 88, 0);
+      expect(cur.y - prev.y).toBeCloseTo((fullHeight(entries[i - 1]!) * 22) / 88, 0);
     }
+    // Markers are drawn smaller than a cast card, so they read as markers ("a small ability marker").
+    expect(entries.map((e) => e.scale)).toEqual([1, entries[1]!.scale, entries[1]!.scale]);
+    expect(entries[1]!.scale).toBeLessThan(1);
+    expect(entries[1]!.screen.width).toBeLessThan(entries[0]!.screen.width);
     // The target line starts at the copy marker.
     const lines = await page.evaluate(() => window.__spellplane!.lines!());
     expect(lines.map((l) => l.id)).toEqual(['l1']);
     if (process.env.M1P3_SHOTS) await page.screenshot({ path: `test-results/m1-p3-stack-${test.info().project.name}.png` });
 
     // Drag the bottom spell by its title strip onto the top slot.
-    const bottom = entries[0]!.screen;
-    const top = entries[2]!.screen;
-    const strip = (r: DOMRect) => ({ x: r.x + r.width / 2, y: r.y + (r.height * 11) / 88 });
-    const from = strip(bottom);
-    const to = strip(top);
-    await page.mouse.move(from.x, from.y);
-    await page.mouse.down();
-    await page.mouse.move(from.x, from.y + 10, { steps: 3 });
-    await page.mouse.move(to.x, to.y, { steps: 8 });
-    await page.mouse.up();
+    await dragBetween(page, stripPoint(entries[0]!), stripPoint(entries[2]!));
     await expect.poll(async () => (await state(page)).stack.map((i) => i.id)).toEqual(['i2', 'i3', 'i1']);
     expect((await log(page)).at(-1)).toMatchObject({ type: 'stackReorder', item: 'i1', index: 2, by: 's1' });
     // The round about the copy keeps going.
@@ -254,17 +285,102 @@ test.describe('the stack lane (DESIGN "The effect stack", Reading it; Resolving 
   });
 });
 
+test.describe('markers can be acted on (DESIGN "The effect stack": Note, Copy, Resolving 4)', () => {
+  test('a buried marker takes a note (N) and a copy (X), is reordered and dragged out; keys over it never reach the selection', async ({ page }) => {
+    await open(page, { seat: 's1' });
+    await annaCasts(page);
+    expect((await remote(page, 's1', { type: 'respond', round: 'r1', seat: 's1', response: 'ok' })).refused).toBeNull();
+    expect((await remote(page, 's1', { type: 'stackPush', item: 'i2', kind: 'trigger', source: 'abear', round: 'r2' })).refused).toBeNull();
+    expect((await remote(page, 's0', { type: 'stackPush', item: 'i3', kind: 'ability', source: 'abear', round: 'r3' })).refused).toBeNull();
+    await expect.poll(async () => (await lane(page)).length).toBe(3);
+    await laneSettled(page);
+
+    // Ben selects his creature, then points at the buried trigger marker i2.
+    await hoverTableCard(page, 'bbear');
+    await page.mouse.down();
+    await page.mouse.up();
+    const marker = () => lane(page).then((e) => e.find((x) => x.item === 'i2')!);
+    let at = stripPoint(await marker());
+    await page.mouse.move(at.x, at.y);
+    const before = (await log(page)).length;
+    // Card keys over a marker do nothing (they never fall through to the selection).
+    await page.keyboard.press('KeyG');
+    await page.keyboard.press('KeyT');
+    await page.waitForTimeout(200);
+    expect((await log(page)).length).toBe(before);
+    expect((await state(page)).cards.bbear!.zone).toBe('battlefield:s1');
+
+    // N: the note field opens for the marker.
+    await page.keyboard.press('KeyN');
+    await expect(page.getByTestId('note-input')).toBeFocused();
+    await page.getByTestId('note-input').fill('once per turn');
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await state(page)).stack.find((i) => i.id === 'i2')?.note).toBe('once per turn');
+    expect((await log(page)).at(-1)).toMatchObject({ type: 'stackNote', item: 'i2', by: 's1' });
+
+    // X: a copy marker of it goes on the stack, with a round.
+    await page.mouse.move(at.x, at.y + 1);
+    await page.keyboard.press('KeyX');
+    await expect.poll(async () => (await state(page)).stack.length).toBe(4);
+    const copy = (await state(page)).stack[3]!;
+    expect(copy).toMatchObject({ kind: 'copy', copyOf: 'i2', controller: 's1' });
+    expect((await state(page)).confirm?.about).toBe(copy.id);
+
+    // Drag the marker onto the top slot: it is reordered.
+    let entries = await laneSettled(page);
+    at = stripPoint(entries.find((x) => x.item === 'i2')!);
+    await dragBetween(page, at, stripPoint(entries[3]!));
+    await expect.poll(async () => (await state(page)).stack.map((i) => i.id)).toEqual(['i1', 'i3', copy.id, 'i2']);
+    expect((await log(page)).at(-1)).toMatchObject({ type: 'stackReorder', item: 'i2', index: 3, by: 's1' });
+
+    // Drag the buried ability marker i3 out of the lane: it leaves the stack, as one grouped step.
+    entries = await laneSettled(page);
+    at = stripPoint(entries.find((x) => x.item === 'i3')!);
+    await dragBetween(page, at, { x: 720, y: 160 });
+    await expect.poll(async () => (await state(page)).stack.map((i) => i.id)).toEqual(['i1', copy.id, 'i2']);
+    const [reorder, counter] = (await log(page)).slice(-2);
+    expect(reorder).toMatchObject({ type: 'stackReorder', item: 'i3', index: 3 });
+    expect(counter).toMatchObject({ type: 'stackCounter', item: 'i3' });
+    expect(reorder!.group).toBeDefined();
+    expect(counter!.group).toBe(reorder!.group);
+    // The card under them was never touched; the selection is still Ben's creature (G away from the lane moves it).
+    expect((await state(page)).cards.abolt!.zone).toBe('stack');
+    await hoverNothing(page);
+    await page.keyboard.press('KeyG');
+    await expect.poll(async () => (await state(page)).cards.bbear!.zone).toBe('graveyard:s1');
+  });
+});
+
 test.describe('manual ask (DESIGN "Turn flow and confirmation", Confirmation rounds 1-2)', () => {
   test('K asks; the asker\'s avatar pulses until everyone passed', async ({ page }) => {
     await open(page, { seat: 's0' });
     await hoverNothing(page);
+    // K opens the inline Ask field; Enter with no label asks.
     await page.keyboard.press('KeyK');
+    await expect(page.getByTestId('ask-input')).toBeFocused();
+    expect((await state(page)).confirm).toBeNull();
+    await page.keyboard.press('Enter');
     await expect.poll(async () => (await state(page)).confirm?.askedBy ?? null).toBe('s0');
+    expect((await state(page)).confirm).not.toHaveProperty('label');
     const mine = page.locator('[data-testid="avatar"][data-seat="s0"]');
     await expect(mine.getByTestId('asking')).toBeVisible();
     await expect(page.getByTestId('confirm-status')).toContainText('Waiting for Ben');
     await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: 5000 }).toEqual({ s1: 'timeout' });
     await expect(mine.getByTestId('asking')).toHaveCount(0);
+  });
+
+  test('K with a typed label asks with it; Esc in the field asks nothing', async ({ page }) => {
+    await open(page, { seat: 's0' });
+    await hoverNothing(page);
+    await page.keyboard.press('KeyK');
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('ask-field')).toHaveCount(0);
+    expect((await state(page)).confirm).toBeNull();
+    await page.keyboard.press('KeyK');
+    await page.getByTestId('ask-input').fill('attacks?');
+    await page.keyboard.press('Enter');
+    await expect.poll(async () => (await state(page)).confirm?.label ?? null).toBe('attacks?');
+    expect((await log(page)).at(-1)).toMatchObject({ type: 'ask', label: 'attacks?', by: 's0' });
   });
 
   test('another player\'s labelled ask shows its label in the prompt', async ({ page }) => {

@@ -11,9 +11,10 @@ import { sha256 } from '../core/hash';
 import { parseZoneId } from '../core/ids';
 import type { CardInstance, InstanceId, Pose, SeatId, StackItem, StackItemId, TableState, ZoneId } from '../core/types';
 import type { ActionId, GameDefinition } from '../games/types';
+import { hoveredStackItem } from '../scene/stack';
 import type { TableScene } from '../scene/types';
 import type { TableSession } from '../session/types';
-import { pendingAbout, roundPassed as coreRoundPassed } from '../core/reducer/confirm';
+import { ASK_LABEL_MAX, blockingHolder, pendingAbout, roundPassed as coreRoundPassed } from '../core/reducer/confirm';
 import { promptModel } from './confirm/model';
 import { freeSlot, inZoneKind, layoutOf, offsetLocal, seatAngle, seatLayout } from './geometry';
 import { tidyPoses } from './tidy';
@@ -34,6 +35,8 @@ export interface UiHooks {
   /** Open the inspect view for a card; null closes it. */
   inspect(card: InstanceId | null): void;
   openDrawN(): void;
+  /** Open the inline Ask field: Enter asks with the typed label (none when empty), Esc cancels (DESIGN "Turn flow and confirmation", Start). */
+  openAsk(): void;
   openTokenSearch(near: InstanceId | null): void;
   toggleCheatSheet(): void;
   focusChat(): void;
@@ -99,13 +102,28 @@ export class Commands {
     return this.host.session.seat;
   }
 
-  /** Cards a bare key acts on (DESIGN "Input and interaction design", Hover plus key). */
+  /**
+   * Cards a bare key acts on (DESIGN "Input and interaction design", Hover plus key). None while the pointer is over a
+   * stack marker: the key is meant for that marker, never for the selection elsewhere.
+   */
   targets(): CardInstance[] {
     const st = this.state;
     const { hovered, selection } = this.host.view();
+    if (!hovered && this.hoveredMarker()) return [];
     const sel = selection.map((id) => st.cards[id]).filter((c): c is CardInstance => !!c);
     if (hovered && st.cards[hovered]) return sel.some((c) => c.id === hovered) ? sel : [st.cards[hovered]];
     return sel;
+  }
+
+  /**
+   * The stack marker (ability, trigger or copy) under the pointer when no card is: markers are not cards, so the
+   * scene reports them on their own (scene/stack.ts hoveredStackItem). A spell in the lane is its hovered card.
+   */
+  private hoveredMarker(): StackItem | null {
+    if (this.host.view().hovered) return null;
+    const id = hoveredStackItem(this.host.scene());
+    const it = id ? this.state.stack.find((i) => i.id === id) : undefined;
+    return it && it.card === undefined ? it : null;
   }
 
   private hoveredCard(): CardInstance | null {
@@ -214,6 +232,11 @@ export class Commands {
           return kind ? { type: 'counter', card: c.id, kind, delta: -1 } : null;
         });
       case 'note': {
+        const marker = this.hoveredMarker();
+        if (marker) {
+          this.host.ui.openNote({ item: marker.id });
+          return;
+        }
         const c = this.hoveredCard() ?? this.targets()[0];
         if (!c || !this.applies('note', c)) return;
         const item = stackItemOfCard(st, c.id);
@@ -221,6 +244,12 @@ export class Commands {
         return;
       }
       case 'copy': {
+        const marker = this.hoveredMarker();
+        if (marker) {
+          // X on a stack item puts a copy marker above it (DESIGN "The effect stack", Copy).
+          this.host.session.dispatch({ type: 'stackPush', item: this.host.newId('si'), kind: 'copy', copyOf: marker.id, controller: me, round: this.host.newId('r') });
+          return;
+        }
         const cards = this.targets().filter((c) => this.applies('copy', c));
         const layout = layoutOf(this.host.game, st);
         this.dispatchAll(
@@ -252,6 +281,11 @@ export class Commands {
         return;
       }
       case 'ping': {
+        const marker = this.hoveredMarker();
+        if (marker) {
+          this.host.session.dispatch({ type: 'ping', target: { kind: 'stackItem', id: marker.id } });
+          return;
+        }
         const c = this.hoveredCard();
         if (!c || !this.applies('ping', c)) return;
         const item = stackItemOfCard(st, c.id);
@@ -346,7 +380,7 @@ export class Commands {
         return;
       // --- Confirm
       case 'ask':
-        this.host.session.dispatch({ type: 'ask', round: this.host.newId('r') });
+        this.host.ui.openAsk();
         return;
       case 'confirmOk': {
         const r = st.confirm;
@@ -358,6 +392,9 @@ export class Commands {
       case 'confirmHold': {
         const r = st.confirm;
         if (!r || !promptShowing(st, me) || r.holder === me) return;
+        // One seat holds at a time: while another seat holds the floor, Hold is not offered.
+        const holder = blockingHolder(st);
+        if (holder !== null && holder !== me) return;
         this.host.session.dispatch({ type: 'respond', round: r.id, seat: me, response: 'hold' });
         return;
       }
@@ -412,6 +449,12 @@ export class Commands {
         this.host.ui.toggleCheatSheet();
         return;
     }
+  }
+
+  /** Start a confirmation round with an optional short label (DESIGN "Turn flow and confirmation", Start: Ask, "attacks?"). */
+  ask(label = ''): void {
+    const text = label.trim().slice(0, ASK_LABEL_MAX);
+    this.host.session.dispatch({ type: 'ask', round: this.host.newId('r'), ...(text ? { label: text } : {}) });
   }
 
   /**

@@ -109,7 +109,10 @@ export function confirmDeadlines(state: TableState): Deadline[] {
   const from = timerStartSeq(r);
   return [
     {
-      key: `confirm:${r.id}:${from}`,
+      // The waiting seats are part of the key, so a sequencer re-arms (with a fresh `emit`) whenever the set changes:
+      // a seat that sits down mid-round, or a hold that lapses, is timed out with the others. The deadline itself
+      // still runs from `fromSeq`, so re-arming never extends it.
+      key: `confirm:${r.id}:${from}:${seats.join(',')}`,
       fromSeq: from,
       afterMs: r.durationMs,
       emit: seats.map((seat) => ({ type: 'respond', round: r.id, seat, response: 'timeout' })),

@@ -71,6 +71,9 @@
   let note = $state<{ target: { card: InstanceId } | { item: StackItemId }; x: number; y: number; text: string } | null>(null);
   /** The inline count prompt for draw N (Shift+D) and mill N (table menu). */
   let drawN = $state<{ text: string; what: 'draw' | 'mill' } | null>(null);
+  /** The inline Ask field (K): an optional short label, Enter asks (M1-P3). */
+  let askField = $state<{ text: string } | null>(null);
+  let askInput = $state<HTMLInputElement | undefined>();
   let revealTo = $state<{ cards: InstanceId[]; x: number; y: number } | null>(null);
   let tokenNear = $state<{ near: InstanceId | null } | null>(null);
   let deckOpen = $state(false);
@@ -156,6 +159,10 @@
       inspectId = card;
       // A library card is known here only from an open look (scry, search); never otherwise.
       inspectRef = card ? (refOf(card) ?? viewer?.looked?.find((l) => l.id === card)?.ref ?? null) : null;
+    },
+    openAsk() {
+      askField = { text: '' };
+      void tick().then(() => askInput?.focus());
     },
     openDrawN() {
       drawN = { text: '2', what: 'draw' };
@@ -732,6 +739,30 @@
     </div>
   {/if}
 
+  {#if askField}
+    <div class="inline draw-n" data-testid="ask-field">
+      <label
+        >Ask <input
+          bind:this={askInput}
+          bind:value={askField.text}
+          data-testid="ask-input"
+          class="ask"
+          maxlength="80"
+          placeholder="optional label, e.g. attacks? (Enter)"
+          aria-label="Ask label"
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+              const text = askField?.text ?? '';
+              askField = null;
+              commands.ask(text);
+            } else if (e.key === 'Escape') askField = null;
+          }}
+          onblur={() => (askField = null)}
+        /></label
+      >
+    </div>
+  {/if}
+
   {#if drawN}
     <div class="inline draw-n" data-testid="draw-n">
       <label>{drawN.what === 'mill' ? 'Mill how many?' : 'Draw how many?'} <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => (drawN = null)} /></label>
@@ -980,6 +1011,9 @@
   }
   .draw-n input {
     width: 4em;
+  }
+  .draw-n input.ask {
+    width: min(18em, 60vw);
   }
   .muted {
     color: var(--sp-muted, #5f5f5f);

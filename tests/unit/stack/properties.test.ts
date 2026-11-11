@@ -26,6 +26,7 @@ interface Recipe {
 const recipe: fc.Arbitrary<Recipe> = fc.record({ kind: fc.constantFrom(...KINDS), a: fc.nat(100), b: fc.nat(100), by: fc.nat(2), flag: fc.boolean() });
 const pick = <T>(xs: readonly T[], i: number): T | undefined => (xs.length ? xs[i % xs.length] : undefined);
 const RESPONSES = ['ok', 'hold', 'release', 'timeout'] as const;
+const STACK_ACTIONS: ReadonlySet<string> = new Set(['stackPush', 'stackResolve', 'stackCounter', 'stackReorder', 'stackNote']);
 
 function start(): TableState {
   let s = readyTable(6, 'ffa3', 3);
@@ -197,13 +198,15 @@ describe('stack and confirmation properties (PLAN M1-P3)', () => {
     );
   });
 
-  it('when an undoable stack action has an inverse, undoing it restores the table, round included', () => {
+  it('every stack action that changed the table is undoable, whatever the round; undoing it restores the table', () => {
     fc.assert(
       fc.property(recipes, (rs) => {
         const { actions, states } = run(rs);
         actions.forEach((a, i) => {
           if (!isUndoable(a) || states[i + 1] === states[i]) return;
           const inv = inverse(states[i]!, a);
+          // Personal undo of the stack never depends on the confirmation round (DESIGN "Turn flow and confirmation", Undo).
+          if (STACK_ACTIONS.has(a.type)) expect(inv, `${a.type} ${a.cid} must be undoable`).not.toBeNull();
           if (!inv) return;
           const undone = reduce(states[i + 1]!, { type: 'undo', by: a.by, cid: `u${i}`, of: a.cid, inverse: inv });
           expect(undoKey(undone)).toBe(undoKey(states[i]!));
