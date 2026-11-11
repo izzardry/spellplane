@@ -6,7 +6,8 @@
  * this browser).
  *
  * Scenario: import, shuffle, draw seven, mulligan, scry one to the bottom, look at the top two, play a land, cast a
- * spell, return a card to the library, undo, mill one.
+ * spell, return a card to the library, undo, mill one, put a hand card onto the battlefield face down and the top
+ * library card into exile face down (DESIGN "Table model": face-down identities stay with their controller).
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { Action } from '../../../src/core/actions';
@@ -31,6 +32,9 @@ describe('hidden information stays in the secret store', () => {
     s.dispatch({ type: 'toZone', card: back!, to: 'library:s0', position: 'top' });
     s.undo();
     s.dispatch({ type: 'move', card: s.secrets().libraryOrder[0]!, to: 'graveyard:s0' });
+    const faceDown = [s.secrets().hand[0]!, s.secrets().libraryOrder[0]!];
+    s.playFaceDown(faceDown[0]!, 'battlefield:s0', { x: 40, y: 120, rot: 0 });
+    s.playFaceDown(faceDown[1]!, 'exile:s0');
     await s.whenSaved();
 
     const state = s.getState();
@@ -39,6 +43,11 @@ describe('hidden information stays in the secret store', () => {
     // Cards whose identity was published (reveal actions); every other own card must stay unknown.
     const revealed = new Set(actions.flatMap((a) => (a.type === 'reveal' ? [a.instanceId] : [])));
     expect(revealed.size).toBe(3);
+    for (const id of faceDown) {
+      expect(s.getState().cards[id]).toMatchObject({ face: 'down' });
+      expect(s.getState().cards[id]!.identity).toBeUndefined();
+      expect(revealed.has(id)).toBe(false);
+    }
     const publicSids = new Set([...revealed].map((id) => sec.identities[id]!.card.sid));
     const secretSids = new Set(Object.entries(sec.identities).flatMap(([id, v]) => (revealed.has(id) || publicSids.has(v.card.sid) ? [] : [v.card.sid])));
     const secretSalts = Object.entries(sec.identities).flatMap(([id, v]) => (revealed.has(id) ? [] : [v.salt]));

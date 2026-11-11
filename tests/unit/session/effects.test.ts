@@ -127,6 +127,51 @@ describe('reveal when a card becomes public', () => {
   });
 });
 
+describe('face-down placement', () => {
+  it('puts a hand card onto the battlefield face down without publishing its identity; the owner still sees it', async () => {
+    const s = await withDeck();
+    await s.draw();
+    const id = s.secrets().hand[0]!;
+    const { sid } = s.secrets().identities[id]!.card;
+    const { salt } = s.secrets().identities[id]!;
+    const n = s.log().length;
+    const done = s.playFaceDown(id, BF, { x: 20, y: 100, rot: 0 });
+    expect(done.seq).toBe(s.getState().seq);
+    expect(actions(s.log().slice(n)).map((a) => a.type)).toEqual(['move']);
+    expect(s.getState().cards[id]).toMatchObject({ zone: BF, face: 'down' });
+    expect(s.getState().cards[id]!.identity).toBeUndefined();
+    expect(json(s.getState())).not.toContain(sid);
+    expect(json(s.log())).not.toContain(salt);
+    expect(privateFaces(s.getState(), s.secrets())[id]).toEqual(s.secrets().identities[id]!.card);
+    // Turning it face up reveals it then.
+    s.dispatch({ type: 'flip', card: id, face: 'up' });
+    expect(actions(s.log().slice(n + 1)).map((a) => a.type)).toEqual(['reveal', 'flip']);
+    expect(s.getState().cards[id]!.identity).toEqual(s.secrets().identities[id]!.card);
+  });
+
+  it('exiles the top library card face down and can be undone back to the top', async () => {
+    const s = await withDeck();
+    const order = [...s.secrets().libraryOrder];
+    s.playFaceDown(order[0]!, 'exile:s0');
+    expect(s.getState().cards[order[0]!]).toMatchObject({ zone: 'exile:s0', face: 'down' });
+    expect(s.getState().cards[order[0]!]!.identity).toBeUndefined();
+    expect(s.secrets().libraryOrder).toEqual(order.slice(1));
+    expect(s.undo()).toBe(true);
+    expect(s.secrets().libraryOrder).toEqual(order);
+  });
+
+  it('refuses cards that are not in an own hidden zone and hidden destinations', async () => {
+    const s = await withDeck();
+    await s.draw();
+    const id = s.secrets().hand[0]!;
+    const before = json(s.getState());
+    s.playFaceDown(id, LIB);
+    s.playFaceDown('missing', BF);
+    expect(json(s.getState())).toBe(before);
+    expect(s.log().at(-1)).toMatchObject({ kind: 'system', level: 'warn' });
+  });
+});
+
 describe('cards returning to hidden zones', () => {
   it('a public card put on top of the library loses its public identity and is drawn next', async () => {
     const s = await withDeck();

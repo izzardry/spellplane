@@ -25,6 +25,7 @@ import {
   type CardRef,
   type InstanceId,
   type LogEntry,
+  type Pose,
   type SecretIdentity,
   type SecretStore,
   type SeatId,
@@ -58,6 +59,12 @@ export interface SoloSession extends TableSession {
   readonly roomId: string;
   /** Resolves once every action applied so far has been written to IndexedDB (immediately without a store). */
   whenSaved(): Promise<void>;
+  /**
+   * Put an own hand or library card into a public zone face down, keeping its identity in this browser (DESIGN "Table
+   * model": face-down on the battlefield, face-down exile). No `reveal` is emitted; turning it face up later reveals it.
+   * Not yet on TableSession: the contract has no face-down placement (reported to the integrator).
+   */
+  playFaceDown(card: InstanceId, to: ZoneId, pose?: Pose): Action;
 }
 
 interface UndoEntry {
@@ -66,6 +73,8 @@ interface UndoEntry {
   inverse: UndoableAction;
   /** The private hand order before the action, put back when the undo restores the same set of hand cards. */
   hand: InstanceId[];
+  /** The private library order before the action, put back (with a private-reorder trace) when the undo restores the same set. */
+  library: InstanceId[];
 }
 
 interface CommitOptions {
@@ -97,6 +106,10 @@ function referencedCard(a: Action): InstanceId | null {
   return null;
 }
 
+function sameOrder(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
 function sameSet(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
   const s = new Set(a);
@@ -112,8 +125,11 @@ class Solo implements SoloSession {
   private state: TableState;
   private sec: SecretStore;
   private entries: LogEntry[];
+  /** The base of the stored table record: the snapshot the stored log continues from (updated as writes succeed). */
   private snapshot: TableState;
   private snapshotSeq: number;
+  /** A write failed, so the stored log has a hole: the next write stores a fresh snapshot (DESIGN "Multiplayer architecture", Resume). */
+  private saveBroken = false;
   private undoStack: UndoEntry[] = [];
   private readonly listeners = new Set<SessionListener>();
   private writes: Promise<void> = Promise.resolve();
@@ -191,6 +207,22 @@ class Solo implements SoloSession {
     }
     const reveal = this.revealFor(action);
     if (reveal && !this.commit(reveal)) return action;
+    const done = this.commit(action);
+    this.notify();
+    return done ?? action;
+  }
+
+  playFaceDown(card: InstanceId, to: ZoneId, pose?: Pose): Action {
+    const action = this.stamp({ type: 'move', card, to, ...(pose ? { pose } : {}) });
+    if (this.disposed) return action;
+    const s = this.state;
+    const c = Object.hasOwn(s.cards, card) ? s.cards[card] : undefined;
+    if (!c || c.owner !== this.seat || s.zones[c.zone]?.visibility === 'public' || s.zones[to]?.visibility !== 'public') {
+      this.warn('Only a card from your own hand or library can be put into a public zone face down');
+      this.notify();
+      return action;
+    }
+    // The reducer turns a card that leaves a hidden zone without a public identity face down (core relocate).
     const done = this.commit(action);
     this.notify();
     return done ?? action;
@@ -290,8 +322,12 @@ class Solo implements SoloSession {
       s = next;
     }
     undos.forEach((u, i) => {
-      const hand = batch[i]!.hand;
-      this.commit(u, { then: (sec) => (sameSet(sec.hand, hand) ? { ...sec, hand: [...hand] } : sec) }, false);
+      const { hand, library } = batch[i]!;
+      if (!this.commit(u, { then: (sec) => (sameSet(sec.hand, hand) ? { ...sec, hand: [...hand] } : sec) }, false)) return;
+      // The public inverse puts a library card on top; when it came from deeper in the library, putting it back there
+      // is a private reorder with its public trace and audit record (DESIGN "Specification: network protocol and secrecy").
+      const now = this.sec.libraryOrder;
+      if (sameSet(now, library) && !sameOrder(now, library)) this.commitReorder([...library], 1, group);
     });
     this.notify();
     return true;
@@ -365,52 +401,89 @@ class Solo implements SoloSession {
     }
     const inv = undoable && isUndoable(action) ? inverse(before, action) : null;
     const handBefore = this.sec.hand;
+    const libraryBefore = this.sec.libraryOrder;
     let sec = o.secrets ? o.secrets(this.sec) : this.sec;
     sec = reconcileSecrets(sec, after, placementOf(action));
     if (o.then) sec = o.then(sec);
     this.state = after;
     this.sec = sec;
-    if (inv) this.undoStack.push({ cid: action.cid, ...(action.group !== undefined ? { group: action.group } : {}), inverse: inv, hand: [...handBefore] });
+    if (inv) {
+      this.undoStack.push({
+        cid: action.cid,
+        ...(action.group !== undefined ? { group: action.group } : {}),
+        inverse: inv,
+        hand: [...handBefore],
+        library: [...libraryBefore],
+      });
+    }
     const at = Date.now();
     this.entries.push({ kind: 'action', seq: action.seq!, at, action });
-    if (action.seq! % SNAPSHOT_EVERY === 0) {
-      this.snapshot = after;
-      this.snapshotSeq = action.seq!;
-    }
     this.persist(action, at);
     return action;
   }
 
+  /**
+   * Queue the write of an applied action with the table record and the secret store (one transaction). The record's
+   * snapshot moves to this action every SNAPSHOT_EVERY actions, and also after a failed write: the stored log then has
+   * a hole, and a snapshot taken after it makes the hole irrelevant to a restore. Writes run in order, so the stored
+   * log between the record's snapshotSeq and lastSeq is always the current timeline.
+   */
   private persist(action: Action, at: number): void {
     const store = this.opts.store;
     if (!store) return;
-    const entry: LogRecord = { roomId: this.roomId, seq: action.seq!, action, at };
-    const table = this.tableRecord(at);
+    const seq = action.seq!;
+    const entry: LogRecord = { roomId: this.roomId, seq, action, at };
     // State and secrets are never mutated in place, so these references stay valid until the write runs.
+    const state = this.state;
     const secrets = this.sec;
-    this.writes = this.writes.then(() => store.saveAction(this.roomId, entry, table, secrets)).catch((e: unknown) => this.warn(`Could not save the table: ${errorText(e)}`));
+    this.writes = this.writes
+      .then(async () => {
+        const rebase = this.saveBroken || seq % SNAPSHOT_EVERY === 0;
+        const snapshot = rebase ? state : this.snapshot;
+        const snapshotSeq = rebase ? seq : this.snapshotSeq;
+        await store.saveAction(this.roomId, entry, this.tableRecord(state, snapshot, snapshotSeq, at), secrets);
+        this.snapshot = snapshot;
+        this.snapshotSeq = snapshotSeq;
+        this.saveBroken = false;
+      })
+      .catch((e: unknown) => this.saveFailed(e));
   }
 
-  tableRecord(at: number): TableRecord {
+  private saveFailed(e: unknown): void {
+    this.saveBroken = true;
+    this.warn(`Could not save the table: ${errorText(e)}`);
+  }
+
+  private tableRecord(state: TableState, snapshot: TableState, snapshotSeq: number, at: number): TableRecord {
     return {
       roomId: this.roomId,
       roomKey: '',
-      lastSeq: this.state.seq,
-      snapshot: this.snapshot,
-      snapshotSeq: this.snapshotSeq,
+      lastSeq: state.seq,
+      snapshot,
+      snapshotSeq,
       seat: this.seat,
-      stage: this.state.stage,
+      stage: state.stage,
       updatedAt: at,
     };
   }
 
-  /** Persist the current snapshot without a log entry (a fresh table). */
+  /**
+   * Store the current state as the table record's snapshot without a log entry: a fresh table, or a table restored
+   * only up to a gap, whose stored log past the restored seq belongs to an abandoned timeline.
+   */
   saveBase(): void {
     const store = this.opts.store;
     if (!store) return;
-    const table = this.tableRecord(Date.now());
+    const state = this.state;
     const secrets = this.sec;
-    this.writes = this.writes.then(() => store.saveSnapshot(table, secrets)).catch((e: unknown) => this.warn(`Could not save the table: ${errorText(e)}`));
+    this.writes = this.writes
+      .then(async () => {
+        await store.saveSnapshot(this.tableRecord(state, state, state.seq, Date.now()), secrets);
+        this.snapshot = state;
+        this.snapshotSeq = state.seq;
+        this.saveBroken = false;
+      })
+      .catch((e: unknown) => this.saveFailed(e));
   }
 
   /** Secret shuffle of an own hidden zone (DESIGN "Specification: network protocol and secrecy", Secret shuffle). */
@@ -454,15 +527,20 @@ class Solo implements SoloSession {
 
   /** Put an own library card on top or at the bottom: a private reorder with a public trace (DESIGN "Secret shuffle", private reorder). */
   private reorderOne(id: InstanceId, where: LibraryPlacement, group: string | undefined): Action | null {
-    const zone = this.zone('library');
     const rest = this.sec.libraryOrder.filter((x) => x !== id);
     const order = where === 'bottom' ? [...rest, id] : [id, ...rest];
     if (order.every((x, i) => x === this.sec.libraryOrder[i])) return null;
-    const nonce = randomSalt();
-    const action = this.stamp({ type: 'reorder', zone, count: 1, orderHash: orderHash(order, nonce), ...(group !== undefined ? { group } : {}) });
-    const done = this.commit(action, { secrets: (s) => ({ ...s, libraryOrder: order, audit: [...s.audit, { kind: 'reorder', zone, count: 1, nonce, order }] }) });
+    const done = this.commitReorder(order, 1, group);
     this.notify();
     return done;
+  }
+
+  /** Commit a private reorder of the own library to `order`: public `reorder {zone, count, orderHash}` plus a ReorderRecord. */
+  private commitReorder(order: InstanceId[], count: number, group: string | undefined): Action | null {
+    const zone = this.zone('library');
+    const nonce = randomSalt();
+    const action = this.stamp({ type: 'reorder', zone, count, orderHash: orderHash(order, nonce), ...(group !== undefined ? { group } : {}) });
+    return this.commit(action, { secrets: (s) => ({ ...s, libraryOrder: order, audit: [...s.audit, { kind: 'reorder', zone, count, nonce, order }] }) });
   }
 
   private warn(text: string): void {
@@ -500,12 +578,16 @@ class Solo implements SoloSession {
     return sids;
   }
 
-  /** Seq-ordered replay of the stored log on top of the stored snapshot (DESIGN "Multiplayer architecture", Resume). */
-  static replay(base: TableState, log: LogRecord[]): { state: TableState; entries: LogEntry[]; problem: string | null } {
+  /**
+   * Seq-ordered replay of the stored log on top of the stored snapshot, up to the table record's `lastSeq` (DESIGN
+   * "Multiplayer architecture", Resume). Entries past `lastSeq` are left over from an abandoned timeline.
+   */
+  static replay(base: TableState, log: LogRecord[], lastSeq: number): { state: TableState; entries: LogEntry[]; problem: string | null } {
     let state = base;
     const entries: LogEntry[] = [];
-    for (const rec of log) {
+    for (const rec of [...log].sort((a, b) => a.seq - b.seq)) {
       if (rec.seq <= state.seq) continue;
+      if (rec.seq > lastSeq) break;
       if (rec.seq !== state.seq + 1) return { state, entries, problem: `the saved log has a gap after action ${state.seq}` };
       const next = reduce(state, rec.action);
       if (next === state) return { state, entries, problem: `saved action ${rec.seq} no longer applies: ${explain(state, rec.action) ?? 'refused'}` };
@@ -538,7 +620,7 @@ export async function createSoloSession(opts: SoloSessionOptions): Promise<SoloS
 
   if (loaded) {
     const base = loaded.table.snapshot ?? freshTable(opts);
-    const { state, entries, problem } = Solo.replay(base, loaded.log);
+    const { state, entries, problem } = Solo.replay(base, loaded.log, loaded.table.lastSeq);
     const secrets = reconcileSecrets(loaded.secrets ?? emptySecrets(seat), state);
     const session = new Solo(opts, roomId, {
       state,
@@ -547,10 +629,12 @@ export async function createSoloSession(opts: SoloSessionOptions): Promise<SoloS
       snapshot: loaded.table.snapshot ?? base,
       snapshotSeq: loaded.table.snapshot ? loaded.table.snapshotSeq : 0,
     });
+    const short = problem !== null || state.seq !== loaded.table.lastSeq;
     if (problem) entries.push({ kind: 'system', seq: state.seq, at: Date.now(), level: 'warn', text: `Restored up to action ${state.seq}: ${problem}` });
-    else if (state.seq !== loaded.table.lastSeq) {
-      entries.push({ kind: 'system', seq: state.seq, at: Date.now(), level: 'warn', text: `Restored up to action ${state.seq} of ${loaded.table.lastSeq}` });
-    }
+    else if (short) entries.push({ kind: 'system', seq: state.seq, at: Date.now(), level: 'warn', text: `Restored up to action ${state.seq} of ${loaded.table.lastSeq}` });
+    // A short restore starts a new timeline at the restored seq: store it as the base, so the stored log past it is
+    // never replayed again (new writes overwrite it, and replay stops at the new lastSeq).
+    if (short) session.saveBase();
     session.prefetch(session.knownSids());
     return session;
   }

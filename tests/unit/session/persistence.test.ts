@@ -7,7 +7,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { stateHash } from '../../../src/core/hash';
 import { SNAPSHOT_EVERY } from '../../../src/session/index';
 import type { LoadedTable, LogRecord, SecretsRecord, TableRecord, TableStore } from '../../../src/store/types';
-import { closeStores, json, session, stores, withDeck } from './helpers';
+import { createSoloSession } from '../../../src/session/index';
+import { mtg } from '../../../src/games/index';
+import { cardSource, closeStores, deckA, json, session, stores, withDeck } from './helpers';
 
 afterEach(closeStores);
 
@@ -135,5 +137,89 @@ describe('reload', () => {
     expect([...again.secrets().libraryOrder].sort()).toEqual([...lib].sort());
     const hand = again.getState().zones['hand:s0']!.ids;
     expect([...again.secrets().hand].sort()).toEqual([...hand].sort());
+  });
+
+  it('a restore that stopped at a gap starts a new timeline: the abandoned log past it is never replayed', async () => {
+    const db = await stores();
+    const s = await withDeck(db);
+    await s.draw(5);
+    await s.whenSaved();
+    const gapSeq = s.getState().seq - 3;
+    await db.db.delete('log', ['solo', gapSeq]);
+    const a = await session(await reload(db.db.name));
+    expect(a.getState().seq).toBe(gapSeq - 1);
+    a.dispatch({ type: 'life', seat: 's0', delta: -1 });
+    await a.whenSaved();
+    const hash = await stateHash(a.getState());
+    const secrets = json(a.secrets());
+    expect(a.getState().seq).toBe(gapSeq);
+
+    const b = await session(await reload(db.db.name));
+    expect(b.getState().seq).toBe(gapSeq);
+    expect(await stateHash(b.getState())).toBe(hash);
+    expect(json(b.secrets())).toBe(secrets);
+    expect(b.secrets().hand).toHaveLength(a.secrets().hand.length);
+    expect(b.log().some((e) => e.kind === 'system')).toBe(false);
+    // Reloading again without any action gives the same table too.
+    const c = await session(await reload(db.db.name));
+    expect(await stateHash(c.getState())).toBe(hash);
+  });
+
+  it('a short restore with no action after it reloads to the same table', async () => {
+    const db = await stores();
+    const s = await withDeck(db);
+    await s.draw(4);
+    await s.whenSaved();
+    await db.db.delete('log', ['solo', s.getState().seq - 1]);
+    const a = await session(await reload(db.db.name));
+    await a.whenSaved();
+    const hash = await stateHash(a.getState());
+    const b = await session(await reload(db.db.name));
+    expect(await stateHash(b.getState())).toBe(hash);
+    expect(json(b.secrets())).toBe(json(a.secrets()));
+  });
+
+  it('after a failed write the table goes on, and a reload restores everything applied since', async () => {
+    const db = await stores();
+    let failNext = false;
+    const store: TableStore = {
+      ...db.tables,
+      saveAction(room, entry, table, secrets) {
+        if (failNext) {
+          failNext = false;
+          return Promise.reject(new Error('quota exceeded'));
+        }
+        return db.tables.saveAction(room, entry, table, secrets);
+      },
+    };
+    const s = await createSoloSession({ game: mtg, cardData: cardSource, store });
+    await s.importDeck(await deckA());
+    await s.shuffle();
+    await s.draw(2);
+    failNext = true;
+    await s.draw();
+    await s.draw(2);
+    s.dispatch({ type: 'life', seat: 's0', delta: -4 });
+    await s.whenSaved();
+    expect(s.log().some((e) => e.kind === 'system' && e.text.includes('quota exceeded'))).toBe(true);
+    const again = await session(await reload(db.db.name));
+    expect(again.getState().seq).toBe(s.getState().seq);
+    expect(await stateHash(again.getState())).toBe(await stateHash(s.getState()));
+    expect(json(again.secrets())).toBe(json(s.secrets()));
+    expect(again.log().some((e) => e.kind === 'system')).toBe(false);
+  });
+
+  it('ignores stored log entries past the table record\'s lastSeq', async () => {
+    const db = await stores();
+    const s = await withDeck(db);
+    await s.draw(2);
+    await s.whenSaved();
+    const loaded = (await db.tables.loadTable('solo'))!;
+    const last = loaded.log.at(-1)!;
+    // A leftover entry from an abandoned timeline, one past lastSeq.
+    await db.db.put('log', { ...last, seq: last.seq + 1, action: { ...last.action, seq: last.seq + 1 } });
+    const again = await session(await reload(db.db.name));
+    expect(again.getState().seq).toBe(s.getState().seq);
+    expect(await stateHash(again.getState())).toBe(await stateHash(s.getState()));
   });
 });

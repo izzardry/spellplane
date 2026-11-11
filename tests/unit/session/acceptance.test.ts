@@ -276,4 +276,46 @@ describe('undo', () => {
     expect(await hashNoSeq(s.getState())).toBe(h0);
     expect(s.secrets().hand).toEqual(hand);
   });
+
+  it('undoing a move out of the middle of the library puts the card back where it was, with a private-reorder trace', async () => {
+    const s = await withDeck();
+    await s.shuffle();
+    const order = [...s.secrets().libraryOrder];
+    const h0 = await hashNoSeq(s.getState());
+    const audits = s.secrets().audit.length;
+    s.dispatch({ type: 'move', card: order[10]!, to: 'graveyard:s0' });
+    expect(s.getState().cards[order[10]!]!.zone).toBe('graveyard:s0');
+    expect(s.undo()).toBe(true);
+    expect(s.secrets().libraryOrder).toEqual(order);
+    expect(await hashNoSeq(s.getState())).toBe(h0);
+    const tail = s.log().slice(-2).flatMap((e) => (e.kind === 'action' ? [e.action] : []));
+    expect(tail.map((a) => a.type)).toEqual(['undo', 'reorder']);
+    expect(tail[1]).toMatchObject({ zone: LIB, count: 1 });
+    const rec = s.secrets().audit.at(-1)!;
+    expect(s.secrets().audit).toHaveLength(audits + 1);
+    expect(rec).toMatchObject({ kind: 'reorder', zone: LIB, count: 1, order });
+    // The next draw takes the card that was on top before the move, not the moved card.
+    await s.draw();
+    expect(s.secrets().hand).toEqual([order[0]]);
+  });
+
+  it('undoing a grouped move of several library cards restores the exact order', async () => {
+    const s = await withDeck();
+    await s.shuffle();
+    const order = [...s.secrets().libraryOrder];
+    for (const i of [3, 20, 41]) s.dispatch({ type: 'move', card: order[i]!, to: 'exile:s0', group: 'g-search' });
+    expect(s.undo()).toBe(true);
+    expect(s.secrets().libraryOrder).toEqual(order);
+    expect(s.canUndo()).toBe(false);
+  });
+
+  it('undoing a move of the top library card needs no reorder', async () => {
+    const s = await withDeck();
+    const order = [...s.secrets().libraryOrder];
+    s.dispatch({ type: 'move', card: order[0]!, to: 'graveyard:s0' });
+    const n = s.log().length;
+    expect(s.undo()).toBe(true);
+    expect(s.secrets().libraryOrder).toEqual(order);
+    expect(s.log().slice(n).map((e) => (e.kind === 'action' ? e.action.type : e.kind))).toEqual(['undo']);
+  });
 });
