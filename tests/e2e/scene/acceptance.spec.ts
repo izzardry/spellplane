@@ -96,18 +96,38 @@ test.describe('M0-P3 acceptance', () => {
     const p = await screenOf(page, 0, -300);
     await page.mouse.dblclick(p.x, p.y);
     await settle(page);
-    expect((await state(page)).cards.a).toMatchObject({ tapped: true, pose: { rot: 90 } });
+    // The state carries the flag (the stored pose keeps the seat rotation); the scene draws the 90° turn.
+    expect((await state(page)).cards.a).toMatchObject({ tapped: true, pose: { rot: 0 } });
     expect((await card(page, 'a'))!.pose.rot).toBe(90);
     expect(await actions(page)).toContainEqual({ type: 'tap', card: 'a', tapped: true });
     // Double-click again untaps.
     await page.mouse.dblclick(p.x, p.y);
     await settle(page);
     expect((await card(page, 'a'))!.pose.rot).toBe(0);
+    expect((await state(page)).cards.a!.tapped).toBe(false);
     // A card of the far seat (resting at 180) taps to 270.
     const q = await screenOf(page, 0, 300);
     await page.mouse.dblclick(q.x, q.y);
     await settle(page);
     expect((await card(page, 'f'))!.pose.rot).toBe(270);
+    expect((await state(page)).cards.f).toMatchObject({ tapped: true, pose: { rot: 180 } });
+  });
+
+  test('a tapped card stays turned when dragged and its move carries the stored rotation', async ({ page }) => {
+    await openScene(page);
+    await addCard(page, 'a', { x: 0, y: -300, rot: 0 });
+    const p = await screenOf(page, 0, -300);
+    await page.mouse.dblclick(p.x, p.y);
+    await settle(page);
+    await drag(page, { x: 0, y: -300 }, { x: 200, y: -280 });
+    await settle(page);
+    const s = await state(page);
+    expect(s.cards.a).toMatchObject({ tapped: true, pose: { rot: 0 } });
+    expect(dist(s.cards.a!.pose, { x: 200, y: -280 })).toBeLessThan(1);
+    const shown = (await card(page, 'a'))!;
+    expect(shown.pose.rot).toBe(90);
+    expect(dist(shown.pose, { x: 200, y: -280 })).toBeLessThan(1);
+    expect((await actions(page)).at(-1)).toMatchObject({ type: 'move', card: 'a', pose: { rot: 0 } });
   });
 
   test('zooming keeps the world point under the cursor fixed within 1 px', async ({ page }) => {

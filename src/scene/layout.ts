@@ -2,7 +2,9 @@
  * Presentation: where and how each card is drawn (DESIGN "Table model", Presentation column; "Specification:
  * geometry, layout and motion", Tables and seats). Pure, so it is unit-testable without WebGL.
  *
- * - Battlefield ('free'): the card's own pose. A pile opened in place fans out beside its bottom card.
+ * - Battlefield ('free'): the card's own pose, turned a further 90° while `tapped` (the stored `pose.rot` is the
+ *   untapped rotation; DESIGN "Specification: geometry, layout and motion": a card of a seat at θ rests at θ and is
+ *   tapped at θ + 90). A pile opened in place fans out beside its bottom card.
  * - Library, graveyard, exile ('squared'): a squared pile at the seat's zone anchor; graveyard and exile show the
  *   top card; an opened public pile fans out as an ordered row ending at the anchor.
  * - Stack ('cascade-lane'): a cascade in the lane, rotated for this viewer so it cascades toward them.
@@ -52,6 +54,19 @@ export const LAYER = { zonePile: 0, area: 1, battlefield: 2, handRow: 3, stack: 
 
 /** Spacing of an opened zone pile fan, mm. */
 export const ZONE_FAN_STEP = 30;
+
+/** Extra rotation drawn for a tapped card on the battlefield, degrees clockwise. */
+export const TAP_DEG = 90;
+
+/** The rotation a 'free' (battlefield) card is drawn at: its stored rot plus the tap turn. */
+export function displayedRot(c: Pick<CardInstance, 'pose' | 'tapped'>): number {
+  return normDeg(c.pose.rot + (c.tapped ? TAP_DEG : 0));
+}
+
+/** The stored pose for a pose drawn on the battlefield (strips the tap turn back out). */
+export function storedPose(c: Pick<CardInstance, 'tapped'>, displayed: Pose): Pose {
+  return { x: displayed.x, y: displayed.y, rot: normDeg(displayed.rot - (c.tapped ? TAP_DEG : 0)) };
+}
 
 export function presentationOf(game: GameDefinition, state: TableState, zone: ZoneId): ZonePresentation | null {
   const kind = state.zones[zone]?.kind ?? zone.split(':')[0]!;
@@ -163,13 +178,13 @@ export function placeCards(state: TableState, view: ViewState, ctx: Presentation
     }
     for (const id of ids) {
       const c = state.cards[id]!;
-      let pose = c.pose;
+      let pose: Pose = { ...c.pose, rot: displayedRot(c) };
       let fanned = false;
       if (c.pile && view.openPile === c.pile.id) {
         const b = fanBottom.get(c.pile.id) ?? c.pose;
         const sa = seatLayoutOf(state, ctx.layout, c.controller)?.angle ?? 0;
         const [ox, oy] = rot2(c.pile.index * (CARD_W + GEOMETRY.gap), 0, sa);
-        pose = { x: b.x + ox, y: b.y + oy, rot: c.pose.rot };
+        pose = { x: b.x + ox, y: b.y + oy, rot: displayedRot(c) };
         fanned = true;
       }
       const base = c.pile ? pileBase.get(c.pile.id)! : pos.get(id)!;

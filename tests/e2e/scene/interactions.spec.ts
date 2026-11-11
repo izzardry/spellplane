@@ -205,3 +205,68 @@ test('the owner sees their own face-down card dimmed; the opponent sees the back
   const near = (await harness(page, 'toScreen', 0, 330)) as { y: number };
   expect(near.y).toBeGreaterThan(450);
 });
+
+test('each texture tier asks the face source for its own image (thumbnail at overview, large up close)', async ({ page }) => {
+  await openScene(page);
+  await addCard(page, 'a', { x: 0, y: -300, rot: 0 }, 'battlefield:s0', 'fx-777');
+  const tiers = async () => ((await harness(page, 'faceRequests')) as { key: string; tier: string }[]).filter((r) => r.key === 'fx-777#0').map((r) => r.tier);
+  // The card's thumbnail is requested on the next frame and drawn once uploaded.
+  await expect.poll(async () => (await card(page, 'a'))?.tier ?? null).toBe('small');
+  await expect.poll(() => page.evaluate(() => window.__sceneHarness!.ready())).toBe(true);
+  expect(await tiers()).toEqual(['small']);
+  await page.evaluate(() => window.__sceneHarness!.camera.zoomTo('a'));
+  await settle(page);
+  await expect.poll(async () => (await card(page, 'a'))!.tier, { timeout: 20_000 }).toBe('large');
+  expect(await tiers()).toContain('large');
+});
+
+test('a dropped card awaiting confirmation does not bounce back on an unrelated update', async ({ page }) => {
+  await openScene(page);
+  await addCard(page, 'a', { x: -250, y: -300, rot: 0 });
+  // Reduced motion: every retarget is a cut, so a bounce would show at once (no timing involved).
+  await page.evaluate(() => window.__sceneHarness!.setView({ reducedMotion: true }));
+  await page.evaluate(() => window.__sceneHarness!.hold(true));
+  await drag(page, { x: -250, y: -300 }, { x: 200, y: -280 });
+  expect(dist((await card(page, 'a'))!.pose, { x: 200, y: -280 })).toBeLessThan(1);
+  // Before the move is confirmed, another update arrives (a card created elsewhere).
+  await addCard(page, 'z', { x: 500, y: 300, rot: 180 }, 'battlefield:s1');
+  const shown = (await card(page, 'a'))!;
+  expect(dist(shown.pose, { x: 200, y: -280 })).toBeLessThan(1);
+  expect((await state(page)).cards.a!.pose).toEqual({ x: -250, y: -300, rot: 0 });
+  await page.evaluate(() => window.__sceneHarness!.hold(false));
+  await settle(page);
+  expect(dist((await state(page)).cards.a!.pose, { x: 200, y: -280 })).toBeLessThan(1);
+  expect(dist((await card(page, 'a'))!.pose, { x: 200, y: -280 })).toBeLessThan(1);
+});
+
+test('double-click taps a member of a cascade; its bottom card opens the pile', async ({ page }) => {
+  await openScene(page);
+  await addCard(page, 'a', { x: -100, y: -300, rot: 0 });
+  await addCard(page, 'b', { x: -100, y: -314, rot: 0 });
+  for (const [id, i, y] of [['a', 0, -300], ['b', 1, -314]] as const) await dispatch(page, { type: 'pile', by: 's0', cid: `c${id}`, card: id, pile: { id: 'L', index: i, kind: 'cascade' }, pose: { x: -100, y, rot: 0 } });
+  await zoomTo(page, -100, -300, 2);
+  const pb = await screenOf(page, -100, -330);
+  await page.mouse.dblclick(pb.x, pb.y);
+  await settle(page);
+  expect((await state(page)).cards.b!.tapped).toBe(true);
+  expect(await actions(page)).toContainEqual({ type: 'tap', card: 'b', tapped: true });
+  // The bottom card's exposed strip (above b's top edge).
+  const pa = await screenOf(page, -100, -262);
+  expect(await harness(page, 'cardAt', pa.x, pa.y)).toBe('a');
+  await page.mouse.dblclick(pa.x, pa.y);
+  await settle(page);
+  expect((await harness(page, 'events')) as { type: string; args: unknown[] }[]).toContainEqual({ type: 'pileOpen', args: ['L'] });
+  expect((await state(page)).cards.a!.tapped).toBe(false);
+});
+
+test('dispose releases the WebGL context and the scene\'s debug parts', async ({ page }) => {
+  await openScene(page);
+  const result = await page.evaluate(() => {
+    const canvas = document.querySelector('canvas[data-scene="table"]') as HTMLCanvasElement;
+    const gl = canvas.getContext('webgl2')!;
+    window.__sceneHarness!.dispose();
+    const hook = window.__spellplane as Record<string, unknown>;
+    return { lost: gl.isContextLost(), attached: canvas.isConnected, cards: 'cards' in hook, camera: 'camera' in hook, state: 'state' in hook };
+  });
+  expect(result).toEqual({ lost: true, attached: false, cards: false, camera: false, state: true });
+});

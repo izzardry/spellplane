@@ -17,7 +17,7 @@ import { registerDebug } from '../util/debug';
 import { BirdseyeRig } from './camera';
 import { CardLayer, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
-import { dropActions, tapActions, tempMoveActions } from './gestures';
+import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
 import { LAYER, compareSort, dropTargets, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { LineLayer, type LineDraw } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, pointInCard, pointInRect, rot2 } from './math';
@@ -228,6 +228,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const changed = !samePose(t, place.rest, 1e-6);
       if (rc.expect && samePose(rc.expect.pose, place.rest)) rc.expect = null;
       if (!changed) continue;
+      // A drop still waiting for its confirmation keeps its predicted pose through unrelated updates; tick() returns it
+      // to the state's pose if the confirmation never comes.
+      if (rc.expect && now < rc.expect.until) continue;
       const onlyRot = Math.abs(t.x - place.rest.x) < 1e-6 && Math.abs(t.y - place.rest.y) < 1e-6;
       const kind = prev.tapped !== inst.tapped && onlyRot ? 'tap' : now < rc.localUntil ? 'spring' : 'remote';
       rc.motion.moveTo(place.rest, kind, now, theme.motion, reduced());
@@ -595,7 +598,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       for (const rc of rcards.values()) {
         if (dragged.has(rc.id) || rc.place.kind !== 'free' || rc.place.fanned) continue;
         const sl = seatLayoutOf(state, layout, rc.inst.controller);
-        snapCards.push({ id: rc.id, pose: rc.inst.pose, frameDeg: sl?.angle ?? 0, ...(rc.inst.pile ? { pile: rc.inst.pile } : {}) });
+        // Drawn pose: a tapped card's extents are those of the turned card.
+        snapCards.push({ id: rc.id, pose: rc.place.rest, frameDeg: sl?.angle ?? 0, ...(rc.inst.pile ? { pile: rc.inst.pile } : {}) });
       }
       const result: DropResult = resolveDrop(
         { pose: anchorPose, cursor: p, single: d.ids.length === 1, ctrl, frameDeg: dest?.frameDeg ?? 0, extent: groupExtent(d) },
@@ -611,6 +615,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (result.kind !== 'zone') predicted = offsetPoses(d, result.pose);
     }
     if (actions.length === 0) return back();
+    // Drag poses are drawn poses; the state stores tapped cards without their tap turn.
+    actions = toStoredPoses(state, actions);
     for (const id of d.ids) {
       const rc = rcards.get(id);
       if (!rc) continue;
@@ -833,11 +839,15 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return;
     }
     const c = rc.inst;
+    // A zone pile (library, graveyard, exile) reports its zone: for a library the HUD draws, otherwise it opens.
     if (rc.place.kind === 'pile') {
       opts.events.pileOpen?.(c.zone);
       return;
     }
-    if (rc.place.kind === 'free' && c.pile) {
+    // A squared pile shows only its top card: double-click opens it. A cascade shows every member: double-click taps
+    // the member, except its bottom card, which opens the pile (DESIGN "Card manipulation": piles are handled by
+    // their bottom card).
+    if (rc.place.kind === 'free' && c.pile && (c.pile.kind === 'squared' || c.pile.index === 0 || rc.place.fanned)) {
       opts.events.pileOpen?.(c.pile.id);
       return;
     }
@@ -970,7 +980,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     idle: () => !drag && !rig.moving && ![...rcards.values()].some((rc) => rc.motion.moving),
     pendingTextures: () => faces.pending,
   };
-  registerDebug({ cards: () => debug.cards(), camera: () => debug.camera(), lines: () => debug.lines(), frameStats: () => debug.frameStats() });
+  const debugParts = { cards: () => debug.cards(), camera: () => debug.camera(), lines: () => debug.lines(), frameStats: () => debug.frameStats() };
+  registerDebug(debugParts);
 
   // --- Camera controls ------------------------------------------------------------------------------------------------
   const blend = (animate = true) => (animate && !reduced() ? theme.motion.cameraBlendMs : 0);
@@ -1124,7 +1135,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       markGeometry.dispose();
       markMaterial.dispose();
       renderer.dispose();
+      // Free the WebGL context now, not at GC: browsers cap live contexts (about 16).
+      renderer.forceContextLoss();
       canvas.remove();
+      // Debug parts must not point at a disposed scene (a newer scene's parts stay).
+      const hook = typeof window === 'undefined' ? undefined : (window.__spellplane as Record<string, unknown> | undefined);
+      if (hook) for (const [k, fn] of Object.entries(debugParts)) if (hook[k] === fn) delete hook[k];
       marqueeEl.remove();
     },
   };

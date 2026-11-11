@@ -36,18 +36,18 @@ export class FaceTextures {
   /** Textures that did not fit (everything evictable was in use): retry after this frame. */
   private blocked = new Map<string, number>();
   private frame = 0;
-  private bases = new Map<string, HTMLCanvasElement>();
-  private refs = new Map<string, { ref: CardRef; faceIndex: 0 | 1 }>();
+  private loader: FaceLoader;
   private disposed = false;
   /** Called when a texture becomes available (the scene re-renders). */
   onChange: () => void = () => {};
 
   constructor(
     renderer: THREE.WebGLRenderer,
-    private faces: FaceSource,
-    private back: TextureSource,
+    faces: FaceSource,
+    back: TextureSource,
     capBytes = TEXTURE_CAP_BYTES,
   ) {
+    this.loader = new FaceLoader(faces, back);
     this.lru = new TextureLru(capBytes);
     const maxLayers = (tier: ImageTier) => Math.ceil(capBytes / (slotsPerLayer(tier) * tierBytes(tier))) + 1;
     this.arrays = {
@@ -61,9 +61,7 @@ export class FaceTextures {
 
   /** Remember how to load a face key. */
   register(ref: CardRef, faceIndex: 0 | 1): string {
-    const key = faceKey(ref, faceIndex);
-    if (!this.refs.has(key)) this.refs.set(key, { ref, faceIndex });
-    return key;
+    return this.loader.register(ref, faceIndex);
   }
 
   /** Pending work (queued, loading or decoded but not uploaded). */
@@ -102,7 +100,7 @@ export class FaceTextures {
     if (this.queued.has(id) || this.failed.has(id) || this.lru.get(key, tier)) return;
     if ((this.blocked.get(id) ?? -1) > this.frame) return;
     this.queued.add(id);
-    this.queue.push({ key, tier, load: () => this.load(key) });
+    this.queue.push({ key, tier, load: () => this.loader.load(key, tier) });
     this.drain();
   }
 
@@ -129,26 +127,6 @@ export class FaceTextures {
           this.drain();
         });
     }
-  }
-
-  private async load(key: string): Promise<CanvasImageSource> {
-    if (key === BLANK_KEY) return blankCanvas();
-    if (key === BACK_KEY) return sourceCanvas(this.back);
-    const cached = this.bases.get(key);
-    if (cached) return cached;
-    const r = this.refs.get(key);
-    if (!r) throw new Error(`unknown face ${key}`);
-    const img: FaceImage = await this.faces.faceFor(r.ref, r.faceIndex, 'normal');
-    if (img.kind === 'placeholder') {
-      const canvas = drawPlaceholderFace(img.face) as HTMLCanvasElement;
-      // Keep a few drawn placeholders so the thumbnail and the bigger tier share one drawing.
-      this.bases.set(key, canvas);
-      if (this.bases.size > 48) this.bases.delete(this.bases.keys().next().value!);
-      return canvas;
-    }
-    const res = await fetch(img.url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return createImageBitmap(await res.blob());
   }
 
   /** Upload decoded images into the arrays (bounded per frame). Returns whether anything changed. */
@@ -193,6 +171,54 @@ export class FaceTextures {
     for (const t of TIERS) this.arrays[t].dispose();
     this.queue = [];
     this.ready = [];
+  }
+}
+
+/** Fetch and decode a face image off the main thread where the browser can. */
+async function decodeUrl(url: string): Promise<CanvasImageSource> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return createImageBitmap(await res.blob());
+}
+
+/**
+ * Resolves a face key at a tier to a decodable image: asks the FaceSource for that tier (a real source returns a
+ * different image per tier: 146x204, 488x680, 672x936), so a thumbnail never downloads the bigger image and the
+ * close-zoom tier is never an upscale. Placeholder drawings do not depend on the tier and are shared between tiers.
+ */
+export class FaceLoader {
+  private bases = new Map<string, HTMLCanvasElement>();
+  private refs = new Map<string, { ref: CardRef; faceIndex: 0 | 1 }>();
+
+  constructor(
+    private faces: FaceSource,
+    private back: TextureSource,
+    private decode: (url: string) => Promise<CanvasImageSource> = decodeUrl,
+  ) {}
+
+  /** Remember how to load a face key. */
+  register(ref: CardRef, faceIndex: 0 | 1): string {
+    const key = faceKey(ref, faceIndex);
+    if (!this.refs.has(key)) this.refs.set(key, { ref, faceIndex });
+    return key;
+  }
+
+  async load(key: string, tier: ImageTier): Promise<CanvasImageSource> {
+    if (key === BLANK_KEY) return blankCanvas();
+    if (key === BACK_KEY) return sourceCanvas(this.back);
+    const r = this.refs.get(key);
+    if (!r) throw new Error(`unknown face ${key}`);
+    const img: FaceImage = await this.faces.faceFor(r.ref, r.faceIndex, tier);
+    if (img.kind === 'placeholder') {
+      const cached = this.bases.get(key);
+      if (cached) return cached;
+      const canvas = drawPlaceholderFace(img.face) as HTMLCanvasElement;
+      // Keep a few drawn placeholders so the thumbnail and the bigger tiers share one drawing.
+      this.bases.set(key, canvas);
+      if (this.bases.size > 48) this.bases.delete(this.bases.keys().next().value!);
+      return canvas;
+    }
+    return this.decode(img.url);
   }
 }
 

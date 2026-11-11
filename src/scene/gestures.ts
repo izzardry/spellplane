@@ -5,6 +5,7 @@
  */
 import type { ActionDraft } from '../core/actions';
 import type { CardInstance, InstanceId, PileRef, Pose, SeatId, TableState, ZoneId, ZonePresentation } from '../core/types';
+import { storedPose } from './layout';
 import type { DropResult } from './snap';
 
 export interface DropDestination {
@@ -94,6 +95,18 @@ export function dropActions(
     out.push({ type: 'move', card: c.id, to: dest.zone, pose, pile, ...controllerOf(c) });
   }
   return withGroup(out, opts);
+}
+
+/**
+ * The scene works in drawn poses (a tapped card is drawn turned by 90°); actions carry stored poses. Strips the tap
+ * turn from every `move` and `moveTemp` pose of a tapped card.
+ */
+export function toStoredPoses(state: TableState, actions: readonly ActionDraft[]): ActionDraft[] {
+  return actions.map((a) => {
+    if ((a.type !== 'move' && a.type !== 'moveTemp') || !a.pose) return a;
+    const c = state.cards[a.card];
+    return c?.tapped ? { ...a, pose: storedPose(c, a.pose) } : a;
+  });
 }
 
 /** Temporary move (Alt+drag; DESIGN "Combat and annotation", Temporary move). */

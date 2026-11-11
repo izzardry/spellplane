@@ -46,6 +46,16 @@ describe('presentation', () => {
     expect(p1.get('s0-b02')!.rest.rot).toBe(180);
   });
 
+  it('a tapped battlefield card is drawn turned 90° from its stored rotation (the state stores the flag only)', () => {
+    const t = structuredClone(s);
+    expect(t.cards['s0-b01']).toMatchObject({ tapped: true, pose: { rot: 0 } });
+    expect(placeCards(t, view(), ctx('s0')).get('s0-b01')!.rest.rot).toBe(90);
+    expect(t.cards['s1-b01']).toMatchObject({ tapped: true, pose: { rot: 180 } });
+    expect(placeCards(t, view(), ctx('s0')).get('s1-b01')!.rest.rot).toBe(270);
+    t.cards['s0-b01']!.tapped = false;
+    expect(placeCards(t, view(), ctx('s0')).get('s0-b01')!.rest.rot).toBe(0);
+  });
+
   it('drop targets: every seat\'s library, graveyard and exile, its avatar (hand) and the stack lane', () => {
     const zones = dropTargets(s, harnessLayout(), 0, harnessGame).map((t) => t.zone).sort();
     expect(zones).toEqual(['exile:s0', 'exile:s1', 'graveyard:s0', 'graveyard:s1', 'hand:s0', 'hand:s1', 'library:s0', 'library:s1', 'stack'].sort());

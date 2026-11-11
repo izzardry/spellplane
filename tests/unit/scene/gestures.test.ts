@@ -1,7 +1,7 @@
 // Gestures to actions, DESIGN "Card manipulation" and CLAUDE.md (one action per card, shared group; scene never mutates).
 import { describe, expect, it } from 'vitest';
 import type { CardInstance, TableState, ZonePresentation } from '../../../src/core/types';
-import { dropActions, tapActions, type DropActionOptions } from '../../../src/scene/gestures';
+import { dropActions, tapActions, toStoredPoses, type DropActionOptions } from '../../../src/scene/gestures';
 import { buildHarnessState } from '../../../src/scene/harness-fixture';
 
 let n = 0;
@@ -93,5 +93,22 @@ describe('tap actions', () => {
     const acts = tapActions([s.cards.a!, s.cards.b!, s.cards.c!], opts());
     expect(acts.map((a) => (a as { card: string }).card)).toEqual(['a', 'c']);
     expect((acts[0] as { group?: string }).group).toBeDefined();
+  });
+});
+
+describe('stored poses', () => {
+  it('moves and temporary moves of a tapped card drop the drawn tap turn; untapped cards are unchanged', () => {
+    const s = table();
+    s.cards.a!.tapped = true;
+    const out = toStoredPoses(s, [
+      { type: 'move', card: 'a', to: 'battlefield:s0', pose: { x: 10, y: -300, rot: 90 }, pile: null },
+      { type: 'moveTemp', card: 'a', pose: { x: 10, y: -200, rot: 90 } },
+      { type: 'move', card: 'b', to: 'battlefield:s0', pose: { x: 50, y: -300, rot: 0 }, pile: null },
+      { type: 'tap', card: 'a', tapped: false },
+    ]);
+    expect(out[0]).toMatchObject({ pose: { x: 10, y: -300, rot: 0 } });
+    expect(out[1]).toMatchObject({ pose: { x: 10, y: -200, rot: 0 } });
+    expect(out[2]).toMatchObject({ pose: { x: 50, y: -300, rot: 0 } });
+    expect(out[3]).toEqual({ type: 'tap', card: 'a', tapped: false });
   });
 });

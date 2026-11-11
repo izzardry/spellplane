@@ -116,13 +116,22 @@ export class BirdseyeRig {
     return { x: this.viewport.w / 2 + right * k, y: this.viewport.h / 2 - up * k };
   }
 
-  /** Zoom by `factor` (> 1 zooms in) keeping the table point under (x, y) fixed, within the zoom clamps. */
+  /**
+   * Zoom by `factor` (> 1 zooms in) keeping the table point under (x, y) fixed, within the zoom clamps. When that
+   * would put the view centre off the table (cursor over the surround near an edge), the pivot is the nearest table
+   * point instead, so the clamp never makes the table jump under the cursor.
+   */
   zoomAt(x: number, y: number, factor: number): void {
     this.stop();
-    const p = this.screenToTable(x, y);
     const dist = clamp(this.view.dist / factor, this.minDist(), this.maxDist());
     const k = dist / this.view.dist;
-    this.view = this.clampView({ cx: p.x + (this.view.cx - p.x) * k, cy: p.y + (this.view.cy - p.y) * k, dist, angle: this.view.angle });
+    const around = (p: TablePoint): CameraView => ({ cx: p.x + (this.view.cx - p.x) * k, cy: p.y + (this.view.cy - p.y) * k, dist, angle: this.view.angle });
+    const q = this.screenToTable(x, y);
+    let v = around(q);
+    const hw = this.table.w / 2;
+    const hd = this.table.d / 2;
+    if (Math.abs(v.cx) > hw || Math.abs(v.cy) > hd) v = around({ x: clamp(q.x, -hw, hw), y: clamp(q.y, -hd, hd) });
+    this.view = this.clampView(v);
   }
 
   /** Move the table by (dx, dy) CSS px on screen, as if dragging it. */

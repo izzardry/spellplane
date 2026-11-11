@@ -56,6 +56,23 @@ describe('bird\'s-eye rig', () => {
     );
   });
 
+  it('zooming with the cursor over the surround keeps the nearest table edge fixed (no clamp drift)', () => {
+    const rig = new BirdseyeRig(TABLE, VP, 0);
+    rig.view = { cx: -685, cy: 0, dist: 250 / tanHalf, angle: 0 };
+    const k = rig.pxPerMm();
+    const x = 720 + (-900 - -685) * k; // the cursor is over table x = -900, 200 mm past the left edge
+    expect(rig.screenToTable(x, 450).x).toBeCloseTo(-900, 6);
+    const edge = { x: -700, y: 0 };
+    const before = rig.tableToScreen(edge);
+    for (let i = 0; i < 5; i++) {
+      rig.zoomAt(x, 450, 1.1);
+      const s = rig.tableToScreen(edge);
+      expect(Math.abs(s.x - before.x)).toBeLessThan(1e-6);
+      expect(Math.abs(s.y - before.y)).toBeLessThan(1e-6);
+    }
+    expect(rig.view.cx).toBeGreaterThan(-700);
+  });
+
   it('screen and table mappings are inverse and the viewer\'s seat is at the bottom', () => {
     const rig0 = new BirdseyeRig(TABLE, VP, 0);
     expect(rig0.screenToTable(720, 900).y).toBeLessThan(0); // seat 0's near edge is -y

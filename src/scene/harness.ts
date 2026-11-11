@@ -9,6 +9,7 @@
  */
 import type { Action, ActionDraft } from '../core/actions';
 import type { InstanceId, TableState } from '../core/types';
+import type { FaceSource, ImageTier } from '../data/types';
 import type { TableLayout } from '../games/types';
 import { paper } from '../themes/paper';
 import { registerDebug } from '../util/debug';
@@ -36,6 +37,12 @@ export interface SceneHarnessApi {
   cardAt(x: number, y: number): InstanceId | null;
   zoneAt(x: number, y: number): string | null;
   camera: TableScene['camera'];
+  /** Every FaceSource request the scene made, in order: face key and tier. */
+  faceRequests(): { key: string; tier: ImageTier }[];
+  /** While on, the scene's drafts are recorded but not applied (an asynchronous confirmation); off applies them. */
+  hold(on: boolean): void;
+  /** Dispose the scene (leak checks). */
+  dispose(): void;
 }
 
 declare global {
@@ -67,6 +74,14 @@ export function mount(target: HTMLElement): void {
   const actions: ActionDraft[] = [];
   const events: { type: string; args: unknown[] }[] = [];
   let cid = 0;
+  let held: Action[] | null = null;
+  const faceRequests: { key: string; tier: ImageTier }[] = [];
+  const faces: FaceSource = {
+    faceFor(ref, faceIndex, tier) {
+      faceRequests.push({ key: `${ref.sid}#${faceIndex}`, tier });
+      return harnessFaces.faceFor(ref, faceIndex, tier);
+    },
+  };
 
   const apply = (a: Action) => {
     state = harnessReduce(state, a);
@@ -83,10 +98,12 @@ export function mount(target: HTMLElement): void {
     layout,
     viewerSeat,
     theme: paper,
-    faces: harnessFaces,
+    faces,
     dispatch(draft) {
       actions.push(draft);
-      apply({ ...draft, by: viewerSeat ?? 's0', cid: `h${++cid}` } as Action);
+      const a = { ...draft, by: viewerSeat ?? 's0', cid: `h${++cid}` } as Action;
+      if (held) held.push(a);
+      else apply(a);
     },
     events: {
       hover(card) {
@@ -135,5 +152,15 @@ export function mount(target: HTMLElement): void {
     cardAt: (x, y) => scene.cardAt(x, y),
     zoneAt: (x, y) => scene.zoneAt(x, y),
     camera: scene.camera,
+    faceRequests: () => faceRequests,
+    hold(on) {
+      if (on) held ??= [];
+      else if (held) {
+        const queued = held;
+        held = null;
+        for (const a of queued) apply(a);
+      }
+    },
+    dispose: () => scene.dispose(),
   };
 }

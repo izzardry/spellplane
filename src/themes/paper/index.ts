@@ -78,7 +78,8 @@ export const paper: Theme = {
       fg: '#111111',
       muted: '#5f5f5f',
       surface: '#ffffff',
-      border: '#d8d8d8',
+      // Zone hairlines must find their drop targets: at least 3:1 against the table (WCAG 1.4.11 non-text contrast).
+      border: '#8c8c8c',
       accent: '#111111',
       danger: '#b3261e',
       warning: '#8a5a00',

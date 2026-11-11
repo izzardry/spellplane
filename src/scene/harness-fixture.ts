@@ -226,7 +226,6 @@ export function buildHarnessState(opts: { scenario: HarnessScenario }): TableSta
       const row = Math.floor(i / 15);
       const p = local(-240 + col * 58, 150 - row * 64);
       addCard(s, { id: `${seat}-b${String(i).padStart(2, '0')}`, owner: seat, controller: seat, zone: bf, identity: ref(), pose: p, tapped: !bench && i === 1 ? true : false });
-      if (!bench && i === 1) s.cards[`${seat}-b01`]!.pose.rot = angle + 90;
     }
     if (!bench) s.cards[`${seat}-b00`]!.counters = { '+1/+1': 2 };
   }
@@ -312,9 +311,8 @@ export function harnessReduce(state: TableState, a: Action): TableState {
       break;
     case 'tap':
       if (!card || card.tapped === a.tapped) return state;
+      // Flag only, as the reducer (M0-P1) does: the scene draws the tap turn from the flag.
       card.tapped = a.tapped;
-      // A tapped card rests at its seat angle + 90 (DESIGN "Specification: geometry, layout and motion", Table space).
-      card.pose = { ...card.pose, rot: (((card.pose.rot + (a.tapped ? 90 : -90)) % 360) + 360) % 360 };
       break;
     case 'flip':
       if (!card) return state;
