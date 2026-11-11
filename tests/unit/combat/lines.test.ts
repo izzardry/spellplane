@@ -256,3 +256,38 @@ describe('what a right-drag draws', () => {
     expect(lineSourceOf(s, 'nope')).toBeNull();
   });
 });
+
+describe('stack lane line ends (M1-P3 integration)', () => {
+  it('a stack item end is drawn where the scene draws the item, and the lane’s extra strokes share the line layer', () => {
+    let s = board();
+    s = ok(s, act('stackPush', { item: 'i1', kind: 'ability', source: 'a00', round: 'r1' }));
+    s = ok(s, act('lineAdd', { line: 'l1', kind: 'target', from: { kind: 'stackItem', id: 'i1' }, to: { kind: 'card', id: 'b00' } }));
+    const host = {
+      state: () => s,
+      pings: () => [],
+      layout: () => mtg.layout(s.format),
+      viewerSeat: () => 's0',
+      theme: () => paper,
+      cardPose: (id: string) => s.cards[id]?.pose ?? null,
+      freePose: (id: string) => s.cards[id]?.pose ?? null,
+      pxPerMm: () => 1,
+      reduced: () => true,
+    };
+    // Without the hook an ability item ends at its source card.
+    const plain = new LineView(host);
+    expect(plain.point({ kind: 'stackItem', id: 'i1' })).toEqual({ x: -150, y: -200 });
+    plain.dispose();
+    let extra = [{ from: { x: 0, y: 0 }, to: { x: 10, y: 0 }, colour: '#000', widthPx: 1 }];
+    const view = new LineView({ ...host, stackEnd: (item) => (item === 'i1' ? { point: { x: 400, y: 0 }, shape: { kind: 'point' } } : null), extraLines: () => extra });
+    expect(view.point({ kind: 'stackItem', id: 'i1' })).toEqual({ x: 400, y: 0 });
+    expect(view.shape({ kind: 'stackItem', id: 'i1' })).toEqual({ kind: 'point' });
+    expect(view.compute().find((l) => l.id === 'l1')?.from).toEqual({ x: 400, y: 0 });
+    s = ok(s, act('lineRemove', { line: 'l1' }));
+    view.sync();
+    expect(view.lines.object.visible).toBe(true);
+    extra = [];
+    view.sync();
+    expect(view.lines.object.visible).toBe(false);
+    view.dispose();
+  });
+});
