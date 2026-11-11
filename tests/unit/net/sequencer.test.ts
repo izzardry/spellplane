@@ -115,6 +115,19 @@ describe('Sequencer.sequence', () => {
     expect(s.sequence(free, { type: 'seatTake', by: 's2', cid: 'tk2', seat: 's3', name: 'Eve', colour: 5, peer: 'peer9' }, unseated).ok).toBe(false);
   });
 
+  it('lets a seated player leave only its own chair, and move to a free one', () => {
+    const s = createSequencer(state.seq);
+    // No host kick: unseating another player would take away that player's authority mid-game.
+    const kick = s.sequence(state, { type: 'seatLeave', by: 's1', cid: 'kick', seat: 's0' }, player('s1'));
+    expect(kick).toEqual({ ok: false, reason: expect.stringMatching(/its own seat/) });
+    expect(s.sequence(state, { type: 'seatLeave', by: 's0', cid: 'kick-self', seat: 's0' }, { seat: 's0', role: 'player', self: true }).ok).toBe(true);
+    // Moving chairs (M1-P5): take the free chair while still seated, then leave the old one.
+    const free = reduce(state, { type: 'seatLeave', by: 's3', cid: 'lv', seat: 's3', seq: state.seq + 1 });
+    const t = createSequencer(free.seq);
+    expect(t.sequence(free, { type: 'seatTake', by: 's1', cid: 'move', seat: 's3', name: 'P1', colour: 1, peer: 'peer1' }, player('s1')).ok).toBe(true);
+    expect(t.sequence(free, { type: 'seatLeave', by: 's1', cid: 'leave-old', seat: 's1' }, player('s1')).ok).toBe(true);
+  });
+
   it('refuses what the reducer refuses on the confirmed state, with its reason', () => {
     const r = createSequencer(state.seq).sequence(state, { type: 'tap', by: 's1', cid: 't', card: 'ghost', tapped: true }, player('s1'));
     expect(r).toEqual({ ok: false, reason: expect.stringMatching(/ghost/) });

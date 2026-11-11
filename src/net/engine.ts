@@ -72,7 +72,10 @@ type SyncKind = 'tail' | 'overlap' | 'snapshot';
 /** Reason of a `nack` for a proposal that was already sequenced (the proposer drops it silently). */
 export const NACK_DUPLICATE = 'duplicate';
 
+/** Wire messages the debug log keeps (a ring: the oldest are overwritten). */
 const MESSAGE_LOG_LIMIT = 200_000;
+/** The wire-message log feeds the debug hook and the leak tests: dev and test builds only, nothing in production. */
+const RECORD_MESSAGES = __SPELLPLANE_DEBUG__;
 const KEEP_HASHES = 64;
 const KEEP_NACKS = 5_000;
 const QUEUE_LIMIT = 2_000;
@@ -97,6 +100,10 @@ interface PeerEntry {
   helloAt: number;
   /** Last seq this peer acknowledged for our current claim, or null. */
   claimAck: number | null;
+  /** The sequencer this peer last named (its welcome, heartbeat, or itself when it claims); undefined until heard. */
+  named: string | null | undefined;
+  /** When we last answered this peer's claim with a counter-claim (at most one per CLAIM_RETRY_MS). */
+  counterAt: number;
 }
 
 type Listener<A extends unknown[]> = (...args: A) => void;
@@ -167,6 +174,14 @@ class Engine implements NetEngine {
   private verifyNext = false;
   /** While claiming: the peer furthest ahead whose history this replica checked for a fork. */
   private claimChecked: PeerId | null = null;
+  /**
+   * This replica's history has been reconciled with the room: it caught up from its sequencer, completed a claim
+   * that connected peers acknowledged, or verified peers name it as their sequencer. Until then its own state may
+   * be a fresh seq-0 table or a stale save, so it does not elect itself against the room (see `recompute`).
+   */
+  private reconciled = false;
+  /** An unreconciled replica yielded the role to this claimant (ahead of it, or ranking first at the same seq). */
+  private yieldTo: string | null = null;
 
   private readonly myHashes = new Map<number, string>();
   private readonly seqrHashes = new Map<number, string>();
@@ -184,7 +199,9 @@ class Engine implements NetEngine {
 
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private hbTimer: ReturnType<typeof setInterval> | null = null;
+  /** The message log, a ring of MESSAGE_LOG_LIMIT records whose oldest is at `logStart`. */
   private readonly log: NetMessageRecord[] = [];
+  private logStart = 0;
 
   private readonly stateEv = new Emitter<[TableState]>();
   private readonly sequencedEv = new Emitter<[SequencedAction, boolean]>();
@@ -351,8 +368,9 @@ class Engine implements NetEngine {
     return this.privateEv.add(l);
   }
 
+  /** Every message sent and received since join, oldest first (the latest MESSAGE_LOG_LIMIT; empty in production builds). */
   messages(): NetMessageRecord[] {
-    return [...this.log];
+    return this.logStart === 0 ? [...this.log] : [...this.log.slice(this.logStart), ...this.log.slice(0, this.logStart)];
   }
 
   // --- sending ----------------------------------------------------------------------------------------------
@@ -364,8 +382,14 @@ class Engine implements NetEngine {
   }
 
   private record(dir: 'in' | 'out', channel: Channel, msg: WireMessage, peer: PeerId): void {
-    this.log.push({ dir, channel, msg, peer, at: this.now() });
-    if (this.log.length > MESSAGE_LOG_LIMIT) this.log.splice(0, this.log.length - MESSAGE_LOG_LIMIT);
+    if (!RECORD_MESSAGES) return;
+    const rec: NetMessageRecord = { dir, channel, msg, peer, at: this.now() };
+    if (this.log.length < MESSAGE_LOG_LIMIT) {
+      this.log.push(rec);
+      return;
+    }
+    this.log[this.logStart] = rec;
+    this.logStart = (this.logStart + 1) % MESSAGE_LOG_LIMIT;
   }
 
   private system(level: 'info' | 'warn', text: string): void {
@@ -406,6 +430,8 @@ class Engine implements NetEngine {
       lastHeard: this.now(),
       helloAt: 0,
       claimAck: null,
+      named: undefined,
+      counterAt: -Infinity,
     };
     this.peerMap.set(peer, e);
     this.peersChanged();
@@ -429,6 +455,7 @@ class Engine implements NetEngine {
       this.lostOwn = [];
     }
     if (this.claimChecked === peer) this.claimChecked = null;
+    if (e.info.peerId && this.yieldTo === e.info.peerId) this.yieldTo = null;
     this.queued = this.queued.filter((q) => q.from !== peer);
     this.peersChanged();
     if (this.verified(e)) this.livenessChanged();
@@ -485,7 +512,7 @@ class Engine implements NetEngine {
   }
 
   private async answerHello(from: PeerId, e: PeerEntry, hello: HelloMessage): Promise<void> {
-    const welcome = await makeWelcome(this.identity, this.opts.roomId, hello, this.sequencer, this.replica.seq());
+    const welcome = await makeWelcome(this.identity, this.opts.roomId, hello, this.sequencer, this.replica.seq(), { self: this.selfId, peer: from });
     if (this.closed || this.peerMap.get(from) !== e) return;
     this.send('ctl', welcome, from);
   }
@@ -497,6 +524,8 @@ class Engine implements NetEngine {
     }
     if (this.verified(e)) {
       e.info.lastSeq = Math.max(e.info.lastSeq, w.seq);
+      this.noteNamed(e, w.sequencer);
+      this.recompute();
       this.maybeCatchUp();
       return;
     }
@@ -504,7 +533,7 @@ class Engine implements NetEngine {
     e.verifying = true;
     const gen = e.gen;
     const hello = e.hello;
-    void welcomeIsValid(this.opts.roomId, hello, e.nonce, w).then((ok) => {
+    void welcomeIsValid(this.opts.roomId, hello, e.nonce, w, { self: this.selfId, peer: from }).then((ok) => {
       e.verifying = false;
       if (this.closed || this.peerMap.get(from) !== e || e.gen !== gen || this.verified(e)) return;
       if (!ok) {
@@ -512,18 +541,35 @@ class Engine implements NetEngine {
         this.system('warn', `A peer (${hello.nickname || hello.peerId}) failed the handshake signature check; ignored.`);
         return;
       }
+      // The same identity is still live on another connection: keep that one. This connection stays in the handshake
+      // and is checked again with its next welcome (our hellos are resent every HELLO_RETRY_MS), so a reload whose old
+      // connection was not reported gone verifies once that one is away.
+      if (this.liveTwin(from, hello.peerId)) return;
       this.onVerified(from, e, hello, w);
     });
   }
 
+  /** Another connection verified as `peerId` that the transport still lists and that was heard within AWAY_AFTER_MS. */
+  private liveTwin(from: PeerId, peerId: string): boolean {
+    const now = this.now();
+    const listed = this.opts.transport.peers();
+    for (const [t, other] of this.peerMap) {
+      if (t === from || other.info.peerId !== peerId || other.info.status !== 'connected') continue;
+      if (listed.includes(t) && now - other.lastHeard <= AWAY_AFTER_MS) return true;
+    }
+    return false;
+  }
+
   private onVerified(from: PeerId, e: PeerEntry, hello: HelloMessage, w: WelcomeMessage): void {
-    // The same identity on another connection is a reload or reconnect: the newer connection replaces it.
+    // The same identity on another connection that is gone or away (liveTwin) is a reload or reconnect: the newer
+    // connection replaces it.
     for (const [t, other] of [...this.peerMap]) if (t !== from && other.info.peerId === hello.peerId) this.removePeer(t);
     e.info.peerId = hello.peerId;
     e.info.status = 'connected';
     e.info.lastSeq = Math.max(hello.lastSeq, w.seq);
     e.info.seat = seatOfPeer(this.replica.confirmed(), hello.peerId) ?? hello.seat;
     e.lastHeard = this.now();
+    this.noteNamed(e, w.sequencer);
     this.seen.add(hello.peerId);
     this.peersChanged();
     this.livenessChanged();
@@ -627,6 +673,8 @@ class Engine implements NetEngine {
         return this.onSyncRes(from, e, msg);
       case 'hb':
         e.info.lastSeq = msg.seq;
+        this.noteNamed(e, msg.sequencer);
+        if (!this.reconciled) this.recompute();
         this.aheadCheck(e);
         this.maybeCatchUp();
         return;
@@ -674,7 +722,8 @@ class Engine implements NetEngine {
     if (this.closed) return;
     const me = this.identity.peerId;
     const state = this.replica.confirmed();
-    const next = electSequencer(state, { peerId: me, seat: seatOfPeer(state, me), role: this.role }, this.peerInfos());
+    let next = electSequencer(state, { peerId: me, seat: seatOfPeer(state, me), role: this.role }, this.peerInfos());
+    if (next === me && !this.reconciled) next = this.deferTo() ?? me;
     if (next === this.sequencer) {
       if (next === me && this.mode === 'idle') this.startClaim(null);
       return;
@@ -704,6 +753,65 @@ class Engine implements NetEngine {
     this.heardSequencer = false;
     if (handedOver && next !== null) this.system('info', next === me ? 'This browser now sequences the table.' : 'Another browser now sequences the table.');
     this.updateStatus();
+  }
+
+  /**
+   * Whom an unreconciled replica follows instead of electing itself (DESIGN "Multiplayer architecture", Resume: later
+   * arrivals reconcile to the copy with the highest sequence number; decision M1-C: a fresh joiner's seq-0 table may
+   * differ from the room's). Its own state may seat nobody or another chair holder, so its rule 1 is not the room's:
+   * it follows a claimant it yielded to, else the sequencer that the verified peer furthest ahead of it names (or that
+   * peer itself when it names nobody it can reach), and catches up from there before it elects. Null: elect freely.
+   */
+  private deferTo(): string | null {
+    const me = this.identity.peerId;
+    const usable = (peerId: string | null | undefined): boolean => {
+      const pair = peerId ? this.entryOf(peerId) : null;
+      return !!pair && pair[1].info.status === 'connected';
+    };
+    if (this.yieldTo !== null && usable(this.yieldTo)) return this.yieldTo;
+    const seq = this.replica.seq();
+    let lead: PeerEntry | null = null;
+    for (const [, e] of this.connectedPeers()) {
+      if (e.info.lastSeq <= seq) continue;
+      if (!lead || e.info.lastSeq > lead.info.lastSeq || (e.info.lastSeq === lead.info.lastSeq && e.info.peerId < lead.info.peerId)) lead = e;
+    }
+    if (!lead || lead.named === me) return null;
+    return usable(lead.named) ? lead.named! : lead.info.peerId;
+  }
+
+  /** Record the sequencer a verified peer names; a peer that names this browser while it sequences reconciles it. */
+  private noteNamed(e: PeerEntry, named: string | null): void {
+    e.named = named;
+    if (named === this.identity.peerId && this.mode === 'active') this.markReconciled();
+  }
+
+  private markReconciled(): void {
+    if (this.reconciled) return;
+    this.reconciled = true;
+    this.yieldTo = null;
+    // Elect again from the reconciled state (deferred: this can run inside the replica's apply loop or a claim).
+    queueMicrotask(() => {
+      if (this.closed) return;
+      this.recompute();
+      this.maybeCatchUp();
+      this.updateStatus();
+    });
+  }
+
+  /**
+   * Whether a claim (`fromSeq`, `seat`) from `claimant` outranks this browser's own claim, for an unreconciled replica:
+   * the one further ahead wins; at the same seq, the lowest seat index (DESIGN Liveness: two claimants resolve by
+   * lowest seat index), a seated claimant before an unseated one, then the lower peer id.
+   */
+  private outranks(claimant: string, fromSeq: number, seat: SeatId | ''): boolean {
+    const seq = this.replica.seq();
+    if (fromSeq !== seq) return fromSeq > seq;
+    const state = this.replica.confirmed();
+    const index = (s: SeatId | '' | null): number => (s ? (state.seats[s]?.index ?? Number(/^s(\d+)$/.exec(s)?.[1] ?? Infinity)) : Infinity);
+    const theirs = index(seat);
+    const mine = index(seatOfPeer(state, this.identity.peerId));
+    if (theirs !== mine) return theirs < mine;
+    return claimant < this.identity.peerId;
   }
 
   private stepDown(): void {
@@ -766,6 +874,8 @@ class Engine implements NetEngine {
 
   private activate(): void {
     this.mode = 'active';
+    // Connected peers acknowledged the claim and this replica took over the history of the one furthest ahead.
+    if (this.connectedPeers().length > 0) this.markReconciled();
     this.seqr = createSequencer(this.replica.seq());
     const prev = this.handoverFrom;
     this.handoverFrom = null;
@@ -797,13 +907,25 @@ class Engine implements NetEngine {
   }
 
   private onClaim(from: PeerId, e: PeerEntry, m: WireOf<'claim'>): void {
+    // A claimant names itself, and holds at least the history it claims from.
+    e.info.lastSeq = Math.max(e.info.lastSeq, m.fromSeq);
+    e.named = e.info.peerId;
     this.recompute();
+    if (this.sequencer === this.identity.peerId && !this.reconciled && this.outranks(e.info.peerId, m.fromSeq, m.seat)) {
+      // Our claim rests on a state the room has not confirmed, and theirs ranks first: follow them and catch up.
+      this.yieldTo = e.info.peerId;
+      this.recompute();
+    }
     if (this.sequencer === e.info.peerId) {
       this.send('ctl', { v: PROTOCOL_VERSION, t: 'claimAck', lastSeq: this.replica.seq() }, from);
       this.resendPending();
       if (m.fromSeq > this.replica.seq()) this.maybeCatchUp();
     } else if (this.sequencer === this.identity.peerId) {
-      // Two claimants: the lower seat index wins; tell the other one.
+      // Two claimants: the lower seat index wins; tell the other one, at most once per CLAIM_RETRY_MS, so two engines
+      // whose states disagree cannot bounce claims back and forth.
+      const now = this.now();
+      if (now - e.counterAt < CLAIM_RETRY_MS) return;
+      e.counterAt = now;
       this.send('ctl', { v: PROTOCOL_VERSION, t: 'claim', fromSeq: this.replica.seq(), seat: this.seat() ?? '' }, from);
     }
   }
@@ -965,7 +1087,10 @@ class Engine implements NetEngine {
     const fromSequencer = e.info.peerId === this.sequencer && this.mode !== 'active' && this.mode !== 'claiming';
     // A claimant takes over the history of the peer it asked; a follower that of its sequencer.
     const authoritative = fromSequencer || (this.mode === 'claiming' && asked !== null);
-    if (fromSequencer) this.initialSynced = true;
+    if (fromSequencer) {
+      this.initialSynced = true;
+      this.markReconciled();
+    }
     const adopting = this.adoptFrom === from;
     const seq = this.replica.seq();
     if (m.snapshot) {
@@ -1021,6 +1146,9 @@ class Engine implements NetEngine {
     const abandoned = this.replica.tail(forkSeq - 1) ?? [];
     this.lostOwn = abandoned.filter((a) => this.ownCids.has(a.cid)).map(({ seq, ...rest }) => ({ action: rest as Action, oldSeq: seq }));
     this.adoptFrom = to;
+    // Own hashes from the fork point on describe the abandoned history: the sequencer's hash of such a seq may arrive
+    // before this replica re-applies it from the adopted history, and must not be compared with them.
+    for (const seq of [...this.myHashes.keys()]) if (seq >= forkSeq) this.myHashes.delete(seq);
     if (this.replica.rewind(forkSeq - 1) !== null) {
       this.requestSync(to, 'tail');
     } else {

@@ -7,8 +7,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createTable } from '../../../src/core/reducer';
 import type { TableState } from '../../../src/core/types';
 import { createNetEngine } from '../../../src/net/engine';
+import { boundNonce } from '../../../src/net/hello';
 import { createNetIdentity } from '../../../src/net/identity';
 import { LoopbackNetwork, type LoopbackTransport } from '../../../src/net/loopback';
+import { scan } from '../../leak/scan';
 import { handshakeText, type WireMessage } from '../../../src/net/messages';
 import type { Message } from '../../../src/net/transport';
 import type { NetEngine, NetIdentity } from '../../../src/net/types';
@@ -49,13 +51,18 @@ async function waitFor(cond: () => boolean, ms = 8000): Promise<void> {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** A scripted peer on the network that speaks raw messages. */
-function rawPeer(net: LoopbackNetwork, tid: string): { t: LoopbackTransport; got: WireMessage[] } {
+function rawPeer(net: LoopbackNetwork, tid: string): { t: LoopbackTransport; got: WireMessage[]; from: { m: WireMessage; from: string }[] } {
   const t = net.create(tid);
   const got: WireMessage[] = [];
-  t.on('ctl', (m) => got.push(m as unknown as WireMessage));
-  t.on('act', (m) => got.push(m as unknown as WireMessage));
+  const from: { m: WireMessage; from: string }[] = [];
+  for (const ch of ['ctl', 'act', 'prv'] as const) {
+    t.on(ch, (m, f) => {
+      got.push(m as unknown as WireMessage);
+      from.push({ m: m as unknown as WireMessage, from: f });
+    });
+  }
   void t.join(ROOM, 'k');
-  return { t, got };
+  return { t, got, from };
 }
 
 describe('hello handshake (real ECDSA P-256)', () => {
@@ -76,12 +83,14 @@ describe('hello handshake (real ECDSA P-256)', () => {
     expect(statuses[0]).toBe('joining');
     expect(statuses).toContain('alone');
     expect(statuses[statuses.length - 1]).toBe('connected');
-    // The welcome each side sent carries a signature of the other side's hello nonce.
+    // The welcome each side sent carries a signature of the other side's hello nonce, bound to this connection
+    // (signer's transport id, then the recipient's).
     const helloFromB = a.messages().find((r) => r.dir === 'in' && r.msg.t === 'hello')!.msg as Extract<WireMessage, { t: 'hello' }>;
     const welcomeToB = a.messages().find((r) => r.dir === 'out' && r.msg.t === 'welcome')!.msg as Extract<WireMessage, { t: 'welcome' }>;
     expect(welcomeToB.peerId).toBe(ia.peerId);
     const { verifySignature } = await import('../../../src/net/identity');
-    expect(await verifySignature(ia.pubKey, handshakeText(ROOM, helloFromB.nonce, ia.peerId), welcomeToB.sig)).toBe(true);
+    expect(await verifySignature(ia.pubKey, handshakeText(ROOM, boundNonce(helloFromB.nonce, 'ta', 'tb'), ia.peerId), welcomeToB.sig)).toBe(true);
+    expect(await verifySignature(ia.pubKey, handshakeText(ROOM, helloFromB.nonce, ia.peerId), welcomeToB.sig)).toBe(false);
     // An action now flows through the sequencer.
     expect(b.propose({ type: 'life', by: 's1', cid: 'b-1', seat: 's1', delta: -2 })).toBe(true);
     await waitFor(() => a.state().seats.s1!.life === 18 && b.confirmedState().seq === 1);
@@ -176,5 +185,64 @@ describe('hello handshake (real ECDSA P-256)', () => {
     await waitFor(() => warnings.length > 0);
     expect(warnings[0]).toMatch(/already at the table/);
     expect(twin.peers().every((p) => p.status === 'handshake')).toBe(true);
+  });
+
+  it('leak scenario: a relaying peer cannot take another player’s identity on its own connection (channel binding)', async () => {
+    // DESIGN "Multiplayer architecture", Hidden information 5 (a targeted reveal travels on that pair's channel only);
+    // "Specification: network protocol and secrecy", Handshake. Mallory has her own valid key and is in the room.
+    const net = new LoopbackNetwork({ seed: 8 });
+    const [ia, ib, im] = [await realIdentity('Anna'), await realIdentity('Ben'), await realIdentity('Mallory')];
+    const start = table([ia.peerId, ib.peerId]);
+    const a = engine(net, 'ta', ia, start);
+    const b = engine(net, 'tb', ib, start);
+    await Promise.all([a.join(), b.join()]);
+    await waitFor(() => a.status() === 'connected' && b.status() === 'connected');
+    const warnings: string[] = [];
+    a.onSystem((_l, t) => warnings.push(t));
+    const m = rawPeer(net, 'tm');
+    await waitFor(() => m.from.some((g) => g.from === 'ta' && g.m.t === 'hello') && m.from.some((g) => g.from === 'tb' && g.m.t === 'hello'));
+    const annaHello = m.from.find((g) => g.from === 'ta' && g.m.t === 'hello')!.m as Extract<WireMessage, { t: 'hello' }>;
+    const benHello = m.from.find((g) => g.from === 'tb' && g.m.t === 'hello')!.m as Extract<WireMessage, { t: 'hello' }>;
+    // Mallory says hello to Ben with her own key but the nonce Anna sent her, so Ben signs Anna's challenge ...
+    m.t.send('ctl', { v: 1, t: 'hello', peerId: im.peerId, pubKey: im.pubKey, nickname: 'M', seat: null, role: 'player', lastSeq: 0, nonce: annaHello.nonce } as Message, 'tb');
+    await waitFor(() => m.from.some((g) => g.from === 'tb' && g.m.t === 'welcome'));
+    const benWelcome = m.from.find((g) => g.from === 'tb' && g.m.t === 'welcome')!.m;
+    // ... and replays Ben's hello and that welcome to Anna.
+    m.t.send('ctl', benHello as unknown as Message, 'ta');
+    await sleep(50);
+    m.t.send('ctl', benWelcome as unknown as Message, 'ta');
+    await waitFor(() => m.got.some((x) => x.t === 'bye'));
+    expect(m.got.find((x) => x.t === 'bye')).toMatchObject({ reason: 'badSignature' });
+    expect(warnings.some((w) => /signature/.test(w))).toBe(true);
+    // Anna still knows Ben on his own connection only; Mallory's connection never verified.
+    expect(a.peers().filter((p) => p.peerId === ib.peerId)).toEqual([expect.objectContaining({ transportId: 'tb', status: 'connected' })]);
+    expect(a.peers().find((p) => p.transportId === 'tm')).toMatchObject({ status: 'handshake', peerId: '' });
+    // A targeted reveal to Ben's seat reaches Ben and nothing of it reaches Mallory.
+    const got: string[] = [];
+    b.onPrivate((msg) => got.push(msg.t));
+    expect(a.sendPrivate('s1', { v: 1, t: 'reveal', instanceId: 'x1', ref: { sid: 'secret-sid-relay' }, salt: 'secret-salt-relay', purpose: 'revealTo', about: 'c1' })).toBe(true);
+    await waitFor(() => got.length > 0);
+    await sleep(50);
+    expect(scan([m.got], ['secret-sid-relay', 'secret-salt-relay'])).toEqual([]);
+    // Mallory's proposals are not sequenced as Ben's seat.
+    m.t.send('act', { v: 1, t: 'propose', cid: 'm-1', action: { type: 'life', by: 's1', cid: 'm-1', seat: 's1', delta: -10 } } as unknown as Message, 'ta');
+    await sleep(100);
+    expect(a.state().seats.s1!.life).toBe(20);
+  });
+
+  it('a second live connection with the same identity does not replace the first', async () => {
+    const net = new LoopbackNetwork({ seed: 9 });
+    const [ia, ib] = [await realIdentity('Anna'), await realIdentity('Ben')];
+    const start = table([ia.peerId, ib.peerId]);
+    const a = engine(net, 'ta', ia, start);
+    const b = engine(net, 'tb', ib, start);
+    await Promise.all([a.join(), b.join()]);
+    await waitFor(() => a.status() === 'connected' && b.status() === 'connected');
+    // Ben's identity opens a second page while the first is still connected and heard.
+    const twin = engine(net, 'tb2', ib, start);
+    await twin.join();
+    await sleep(1500);
+    expect(a.peers().filter((p) => p.peerId === ib.peerId && p.status === 'connected').map((p) => p.transportId)).toEqual(['tb']);
+    expect(a.peers().find((p) => p.transportId === 'tb2')).toMatchObject({ status: 'handshake' });
   });
 });

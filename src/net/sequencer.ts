@@ -155,6 +155,9 @@ class SequencerImpl implements Sequencer {
       return `only the sequencer sends ${action.type === 'respond' ? 'timeouts' : action.type}`;
     }
     if (action.type === 'respond' && action.response !== 'timeout' && action.seat !== action.by) return 'a seat answers only for itself';
+    // A player leaves only its own chair: there is no host kick in the design (decision M1-P1). Taking a second chair
+    // while seated stays allowed (with the sender's own peer id, engine.ts): moving chairs takes the new one first.
+    if (action.type === 'seatLeave' && action.seat !== action.by) return 'a player leaves only its own seat';
     const hidden = hiddenOwnerCheck(state, action);
     if (hidden !== null) return hidden;
     return explain(state, action);

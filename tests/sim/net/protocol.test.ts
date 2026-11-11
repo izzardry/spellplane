@@ -12,7 +12,15 @@ import { AWAY_AFTER_MS, HASH_EVERY, HEARTBEAT_MS } from '../../../src/net/types'
 import { mulberry32 } from '../../../src/util/prng';
 import { scan } from '../../leak/scan';
 import { stream } from './scenarios';
-import { agreed, baseTable, expectConverged, hashOf, libraryIds, makeSim, until, type Sim, type SimPeer } from './sim';
+import { createNetEngine } from '../../../src/net/engine';
+import { boundNonce } from '../../../src/net/hello';
+import { LoopbackNetwork } from '../../../src/net/loopback';
+import { handshakeText, type SequencedAction } from '../../../src/net/messages';
+import { applySequenced } from '../../../src/net/sequencer';
+import type { Message } from '../../../src/net/transport';
+import { TEST_GAME } from '../../unit/core/helpers';
+import { fakeNetIdentity } from './fake-identity';
+import { agreed, baseTable, expectConverged, hashOf, KEY, libraryIds, makeSim, ROOM, until, type Sim, type SimPeer } from './sim';
 
 vi.mock('../../../src/net/identity', async () => (await import('./fake-identity')).fakeIdentityModule);
 
@@ -191,6 +199,65 @@ describe('gaps, catch-up and consistency', () => {
     expect(c.engine.state().seats.s2!.life).toBe(sim.peers[0]!.engine.state().seats.s2!.life);
     const log = new Set([...sim.peers[0]!.log.values()].map((a) => a.cid));
     for (const cid of c.proposed) expect(log.has(cid) !== c.rolledBack.has(cid), cid).toBe(true);
+  });
+});
+
+describe('fork repair and state hashes', () => {
+  it('after rewinding to a fork, the sequencer’s hash of a replaced seq is not compared with the abandoned history', async () => {
+    // DESIGN "Data model and protocol", Consistency check. A scripted sequencer (peer0, seat s0) and one engine
+    // (peer1) whose seq 100 (a multiple of HASH_EVERY) is another history's action. The sequencer's `seq 100` reveals
+    // the fork; its `hash 100` (ctl) arrives before the engine re-applied seq 100 from the sequencer's tail.
+    const base = baseTable(2);
+    const lifeAt = (seq: number, seat: 's0' | 's1', cid: string, delta: number): SequencedAction => ({ type: 'life', by: seat, cid, seat, delta, seq });
+    const common: SequencedAction[] = [];
+    for (let q = base.seq + 1; q < 2 * HASH_EVERY; q++) common.push(lifeAt(q, q % 2 ? 's0' : 's1', `common-${q}`, q % 3 ? 1 : -1));
+    const abandoned = lifeAt(2 * HASH_EVERY, 's1', 'abandoned', -4);
+    const theirs = lifeAt(2 * HASH_EVERY, 's0', 'theirs', -5);
+    let state = base.state;
+    for (const a of common) state = applySequenced(state, a);
+    const expected = hashOf(applySequenced(state, theirs));
+    const net = new LoopbackNetwork({ seed: 21, delay: { min: 1, max: 2 }, ordered: true });
+    const engine = createNetEngine({
+      transport: net.create('tc'),
+      roomId: ROOM,
+      roomKey: KEY,
+      identity: fakeNetIdentity('peer1'),
+      game: TEST_GAME,
+      start: { snapshot: base, tail: [...common, abandoned] },
+      now: () => Date.now(),
+    });
+    const warnings: string[] = [];
+    engine.onSystem((_l, t) => warnings.push(t));
+    expect(engine.seq()).toBe(2 * HASH_EVERY);
+    // The scripted sequencer.
+    const r = net.create('tr');
+    const got: WireMessage[] = [];
+    for (const ch of ['ctl', 'act'] as const) r.on(ch, (m) => got.push(m as unknown as WireMessage));
+    await r.join(ROOM, KEY);
+    await engine.join();
+    await until(() => got.some((m) => m.t === 'hello'), 2000, 'its hello');
+    const nonce = (got.find((m) => m.t === 'hello') as Extract<WireMessage, { t: 'hello' }>).nonce;
+    const me = fakeNetIdentity('peer0');
+    const send = (ch: 'ctl' | 'act', m: object): void => r.send(ch, { v: 1, ...m } as unknown as Message, 'tc');
+    send('ctl', { t: 'hello', peerId: 'peer0', pubKey: me.pubKey, nickname: 'S', seat: 's0', role: 'player', lastSeq: 2 * HASH_EVERY - 1, nonce: 'n-r' });
+    send('ctl', { t: 'welcome', peerId: 'peer0', sig: await me.sign(handshakeText(ROOM, boundNonce(nonce, 'tr', 'tc'), 'peer0')), sequencer: 'peer0', seq: 2 * HASH_EVERY - 1 });
+    await until(() => got.some((m) => m.t === 'syncReq'), 3000, 'the first catch-up request');
+    send('ctl', { t: 'syncRes', snapshot: null, tail: [] });
+    await until(() => engine.status() === 'connected' && engine.sequencerId() === 'peer0', 3000, 'connected to the scripted sequencer');
+    const requests = got.filter((m) => m.t === 'syncReq').length;
+    send('act', { t: 'seq', seq: theirs.seq, cid: theirs.cid, action: theirs });
+    send('ctl', { t: 'hash', seq: theirs.seq, h: expected });
+    await until(() => got.filter((m) => m.t === 'syncReq').length > requests, 3000, 'the request for the adopted tail');
+    expect(got.filter((m) => m.t === 'syncReq').at(-1)).toMatchObject({ haveSeq: 2 * HASH_EVERY - 1 });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(warnings.filter((w) => /hash mismatch/.test(w))).toEqual([]);
+    send('ctl', { t: 'syncRes', snapshot: null, tail: [theirs] });
+    await until(() => engine.seq() === theirs.seq && engine.confirmedState().seats.s0!.life === state.seats.s0!.life - 5, 3000, 'the adopted history');
+    expect(hashOf(engine.confirmedState())).toBe(expected);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(warnings.filter((w) => /hash mismatch/.test(w))).toEqual([]);
+    expect(got.some((m) => m.t === 'syncReq' && m.haveSeq === 0)).toBe(false); // no forced snapshot resync
+    engine.leave();
   });
 });
 
