@@ -132,13 +132,13 @@ describe('the secret shuffle over the network', () => {
     const h0 = await converged(t);
     // The owner now prefers another nonce: re-commit the round, or start a new round on the same zone.
     await expect(a!.peer.act({ type: 'shuffleCommit', sid: 'sh-x', zone: lib, h: nonceHash('second-nonce') })).rejects.toThrow(/already exists/);
-    await expect(a!.peer.act({ type: 'shuffleCommit', sid: 'sh-y', zone: lib, h: nonceHash('second-nonce') })).rejects.toThrow(/already has peer nonces/);
+    await expect(a!.peer.act({ type: 'shuffleCommit', sid: 'sh-y', zone: lib, h: nonceHash('second-nonce') })).rejects.toThrow(/is not finished/);
     // A non-sequencer owner is refused by the sequencer's nack the same way.
     const bLib = 'library:s1';
     await b!.peer.act({ type: 'shuffleCommit', sid: 'sh-b', zone: bLib, h: nonceHash('b-first') });
     await until(() => Object.keys(a!.state.shuffles['sh-b']?.nonces ?? {}).length === 1, 10_000, "A's nonce for B");
     await expect(b!.peer.act({ type: 'shuffleCommit', sid: 'sh-b', zone: bLib, h: nonceHash('b-second') })).rejects.toThrow(/already exists/);
-    await expect(b!.peer.act({ type: 'shuffleCommit', sid: 'sh-b2', zone: bLib, h: nonceHash('b-second') })).rejects.toThrow(/already has peer nonces/);
+    await expect(b!.peer.act({ type: 'shuffleCommit', sid: 'sh-b2', zone: bLib, h: nonceHash('b-second') })).rejects.toThrow(/is not finished/);
     const h1 = await converged(t);
     expect(h1).not.toBe(h0);
     for (const p of t.peers) {

@@ -11,6 +11,7 @@ import { checkInvariants } from '../../../src/core/invariants';
 import { COMMIT_WINDOW_MS, commitWindowDeadlines, expectedParticipants, rngOutcome, rngSeed } from '../../../src/core/rng';
 import { auditSeat, beginShuffle, finishShuffle, reissueZone } from '../../../src/core/secrets';
 import type { TableState } from '../../../src/core/types';
+import { undoPlan } from '../../../src/core/undo';
 import { SecretTable, deckRefs, readySecretTable } from './helpers';
 
 const LIB0 = 'library:s0';
@@ -89,6 +90,40 @@ describe('reveal against the deck commitment', () => {
     expect(t.state.cards[good!]!.suspect).toBeUndefined();
     expect(t.state.cards[bad!]).toMatchObject({ face: 'up', identity: g.card, suspect: true });
     t.refuse('s1', { type: 'flip', card: good!, face: 'up', ref: g.card, salt: g.salt }, /only s0/);
+  });
+});
+
+describe('identities an undo would put back', () => {
+  it('a restore patch cannot make a face-down card public: no identity without a verified reveal (any seat)', () => {
+    const t = readySecretTable();
+    const id = t.secrets.s0!.libraryOrder[0]!;
+    t.apply('s0', { type: 'move', card: id, to: 'battlefield:s0', pose: { x: 0, y: -200, rot: 0 } });
+    expect(t.state.cards[id]!.identity).toBeUndefined();
+    for (const by of ['s1', 's0']) {
+      const forged = { type: 'tap' as const, by, cid: 'inv', card: id, tapped: false, restore: { cards: { [id]: { identity: { expect: null, put: { sid: 'black-lotus' } } } } } };
+      t.refuse(by, { type: 'undo', of: 'zzz', inverse: forged }, /cannot reveal card/);
+    }
+    // So the plain flip that would follow has nothing to show.
+    t.refuse('s0', { type: 'flip', card: id, face: 'up' }, /no public identity/);
+    expect(t.state.cards[id]!.identity).toBeUndefined();
+  });
+
+  it('an honest undo of a return to the hand leaves the card face down; the owner re-reveals it, verified', () => {
+    const t = readySecretTable();
+    const id = t.secrets.s0!.libraryOrder[0]!;
+    const { card, salt } = t.secrets.s0!.identities[id]!;
+    t.apply('s0', { type: 'reveal', instanceId: id, ref: card, salt });
+    t.apply('s0', { type: 'move', card: id, to: 'battlefield:s0', pose: { x: 0, y: -200, rot: 0 } });
+    const before = t.state;
+    const plan = undoPlan(before, { type: 'toZone', by: 's0', cid: 'c-back', card: id, to: 'hand:s0', position: 'any' })!;
+    expect(plan.reveals).toEqual([{ card: id, ref: card, face: 'up' }]);
+    t.apply('s0', { type: 'toZone', card: id, to: 'hand:s0', position: 'any' });
+    t.apply('s0', { type: 'undo', of: 'c-back', inverse: plan.inverse });
+    expect(t.state.cards[id]).toMatchObject({ zone: 'battlefield:s0', face: 'down' });
+    expect(t.state.cards[id]!.identity).toBeUndefined();
+    t.apply('s0', { type: 'flip', card: id, face: 'up', ref: card, salt });
+    expect(t.state.cards[id]).toMatchObject({ face: 'up', identity: card });
+    expect(t.state.cards[id]!.suspect).toBeUndefined();
   });
 });
 
@@ -206,7 +241,7 @@ describe('secret shuffle rounds', () => {
     t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n1' });
     const before = t.state;
     t.refuse('s0', commit('sh1', nonceHash('second')), /already exists/);
-    t.refuse('s0', commit('sh2', nonceHash('second')), /already has peer nonces/);
+    t.refuse('s0', commit('sh2', nonceHash('second')), /is not finished/);
     expect(t.state).toBe(before);
     // Once finished, a new round on the zone is fine; the finished sid is never reused.
     t.apply('s0', { type: 'shuffleDone', sid: 'sh1', orderHash: 'o' });
@@ -214,19 +249,22 @@ describe('secret shuffle rounds', () => {
     t.apply('s0', commit('sh2', nonceHash('third')));
   });
 
-  it('freezes the zone once the seed is fixed: no card enters, leaves or is re-issued until shuffleDone, whoever acts', () => {
+  it('freezes the zone from the commit on: no card enters, leaves or is re-issued until shuffleDone, whoever acts', () => {
     const t = readySecretTable(['Anna', 'Ben'], 20);
     const hand = t.secrets.s0!.libraryOrder.slice(0, 3);
     for (const id of hand) t.apply('s0', { type: 'draw', instanceId: id });
     const b = beginShuffle(t.secrets.s0!, LIB0, 'sh1', 'owner-nonce');
     t.secrets.s0 = b.secrets;
     t.apply('s0', b.action);
-    // Before any peer nonce the owner learned nothing, so the zone may still change.
-    t.apply('s0', { type: 'toZone', card: hand[0]!, to: LIB0, position: 'top' });
-    t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n1' });
-    // Now the owner can compute the outcome for any id set: every change to the zone is refused.
-    const lib = t.state.zones[LIB0]!.ids;
     const frozen = /being shuffled \(sh1\)/;
+    // Before any peer nonce is sequenced the zone is frozen already: a sequencer owner sees the peer's nonce proposal
+    // first and could otherwise pick the id set (or a new round) that gives the order it wants.
+    t.refuse('s0', { type: 'toZone', card: hand[0]!, to: LIB0, position: 'top' }, frozen);
+    t.refuse('s0', { type: 'draw', instanceId: t.state.zones[LIB0]!.ids[0]! }, frozen);
+    t.refuse('s0', commit('sh2', nonceHash('other')), /sh1 of library:s0 is not finished/);
+    t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n1' });
+    // And after it: every change to the zone is refused.
+    const lib = t.state.zones[LIB0]!.ids;
     t.refuse('s0', { type: 'toZone', card: hand[1]!, to: LIB0, position: 'top' }, frozen);
     t.refuse('s0', { type: 'draw', instanceId: lib[0]! }, frozen);
     t.refuse('s0', { type: 'move', card: lib[1]!, to: 'graveyard:s0', index: 0 }, frozen);
@@ -246,7 +284,7 @@ describe('secret shuffle rounds', () => {
     const t = readySecretTable(['Anna', 'Ben', 'Cleo']);
     t.apply('s0', commit());
     t.apply('s2', { type: 'commitClose', kind: 'shuffle', id: 'sh1' });
-    t.refuse('s0', commit('sh2', nonceHash('other')), /closed window/);
+    t.refuse('s0', commit('sh2', nonceHash('other')), /is not finished/);
     t.refuse('s0', { type: 'draw', instanceId: t.state.zones[LIB0]!.ids[0]! }, /being shuffled/);
   });
 
@@ -269,11 +307,21 @@ describe('secret shuffle rounds', () => {
     t.apply('s0', { type: 'shuffleDone', sid: 'sh1', orderHash: 'o' });
   });
 
-  it('a round abandoned before any peer nonce is replaced by a new one', () => {
-    const t = readySecretTable();
+  it('a round waiting for its first nonce cannot be replaced either, and its zone is frozen at once (1v1 sequencer owner)', () => {
+    const t = readySecretTable(['Anna', 'Ben'], 20);
+    const handCard = t.secrets.s0!.libraryOrder[0]!;
+    t.apply('s0', { type: 'draw', instanceId: handCard });
     t.apply('s0', commit('sh1'));
+    // s0 (the 1v1 sequencer) holds s1's nonce proposal but has not sequenced it: no new round, no change of the id set.
+    t.refuse('s0', commit('sh2', nonceHash('other')), /not finished/);
+    t.refuse('s0', { type: 'toZone', card: handCard, to: LIB0, position: 'top' }, /being shuffled/);
+    t.refuse('s0', { type: 'draw', instanceId: t.state.zones[LIB0]!.ids[0]! }, /being shuffled/);
+    t.refuse('s0', { type: 'mulligan', count: 1 }, /being shuffled/);
+    expect(Object.keys(t.state.shuffles)).toEqual(['sh1']);
+    // The peer's nonce then still applies, and the round finishes normally.
+    t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'peerN' });
+    t.apply('s0', { type: 'shuffleDone', sid: 'sh1', orderHash: 'o' });
     t.apply('s0', commit('sh2', nonceHash('other')));
-    expect(Object.keys(t.state.shuffles)).toEqual(['sh2']);
   });
 });
 

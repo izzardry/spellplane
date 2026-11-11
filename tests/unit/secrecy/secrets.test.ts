@@ -410,7 +410,9 @@ describe('the owner\u2019s look answer', () => {
     t.apply('s0', { type: 'draw', instanceId: a! });
     t.apply('s0', { type: 'move', card: b!, to: 'battlefield:s0', pose: { x: 0, y: -200, rot: 0 } });
     const s = { ...s0, hand: [a!], libraryOrder: s0.libraryOrder.slice(2) };
-    expect(lookAnswer(s, t.state, { zone: LIB0, count: 2 })!.map((r) => r.instanceId)).toEqual([c!, s0.libraryOrder[3]!]);
+    // A zone look needs the owner's consent; a peek of an own face-down card does not.
+    expect(lookAnswer(s, t.state, { zone: LIB0, count: 2 })).toBeNull();
+    expect(lookAnswer(s, t.state, { zone: LIB0, count: 2 }, { allowZoneLook: true })!.map((r) => r.instanceId)).toEqual([c!, s0.libraryOrder[3]!]);
     expect(lookAnswer(s, t.state, { zone: 'battlefield:s0', count: 1, card: b! })).toEqual([revealedCard(s, b!)]);
     expect(lookAnswer(s, t.state, { zone: 'hand:s0', count: 1, card: a! })).toBeNull();
     expect(lookAnswer(s, t.state, { zone: LIB0, count: 1, card: c! })).toBeNull();

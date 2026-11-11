@@ -8,7 +8,7 @@ import type { Action } from '../../../src/core/actions';
 import { canonicalJson } from '../../../src/core/hash';
 import { reduce } from '../../../src/core/reducer';
 import type { TableState } from '../../../src/core/types';
-import { inverse } from '../../../src/core/undo';
+import { inverse, undoPlan, withoutReveals } from '../../../src/core/undo';
 import { P, act, card, no, ok, play, readyTable, withoutSeq } from './helpers';
 
 /** Apply `a`, undo it through an `undo` action, and expect the exact previous state (seq aside). */
@@ -61,15 +61,44 @@ describe('inverse', () => {
     roundTrip(s, act('move', { card: 'a02', to: 'battlefield:s1', pose: P(0, 200, 180) }));
   });
 
-  it('a card sent to a hidden zone comes back with identity, counters, note, tap, attachments and lines', () => {
+  it('a card sent to a hidden zone comes back face down with counters, note, tap, attachments and lines; its owner re-reveals it', () => {
     let s = play(play(readyTable(4), 'a00', P(0, -200)), 'a01', P(100, -200));
     s = ok(s, act('tap', { card: 'a00', tapped: true }));
     s = ok(s, act('counter', { card: 'a00', kind: '+1/+1', delta: 2 }));
     s = ok(s, act('note', { card: 'a00', text: 'copy of X' }));
     s = ok(s, act('attach', { card: 'a01', to: 'a00' }));
     s = ok(s, act('lineAdd', { line: 'l', kind: 'mark', from: { kind: 'card', id: 'a00' }, to: { kind: 'seat', id: 's1' } }, 's1'));
-    const { after } = roundTrip(s, act('toZone', { card: 'a00', to: 'hand:s0', position: 'any' }));
+    const a = act('toZone', { card: 'a00', to: 'hand:s0', position: 'any' });
+    const plan = undoPlan(s, a)!;
+    // M1-P2: a restore patch never puts a committed identity back (the reducer could not check it).
+    expect(plan.reveals).toEqual([{ card: 'a00', ref: { sid: 'sid-a00' }, face: 'up' }]);
+    expect(plan.inverse.restore?.cards?.a00).not.toHaveProperty('identity');
+    const after = ok(s, a);
     expect(card(after, 'a00').identity).toBeUndefined();
+    const undone = ok(after, act('undo', { of: a.cid, inverse: JSON.parse(JSON.stringify(plan.inverse)) }));
+    expect(withoutSeq(undone)).toBe(withoutSeq(withoutReveals(s, plan.reveals)));
+    expect(card(undone, 'a00')).toMatchObject({ zone: 'battlefield:s0', face: 'down', tapped: true, counters: { '+1/+1': 2 }, note: 'copy of X' });
+    expect(card(undone, 'a00').identity).toBeUndefined();
+    // The owner's verified re-reveal completes the previous state.
+    const again = ok(undone, act('flip', { card: 'a00', face: 'up', ref: { sid: 'sid-a00' }, salt: 'salt-a00' }));
+    expect(withoutSeq(again)).toBe(withoutSeq(s));
+  });
+
+  it('a restore patch cannot put an identity on a committed card (M1-P2), only on a token', () => {
+    let s = readyTable(4);
+    s = ok(s, act('move', { card: 'a00', to: 'battlefield:s0', pose: P(0, -200) }));
+    expect(card(s, 'a00')).toMatchObject({ face: 'down' });
+    expect(card(s, 'a00').identity).toBeUndefined();
+    const forged = act('undo', {
+      of: 'zzz',
+      inverse: { type: 'tap', by: 's1', cid: 'x', card: 'a00', tapped: false, restore: { cards: { a00: { identity: { expect: null, put: { sid: 'black-lotus' } } } } } },
+    }, 's1');
+    no(s, forged, /cannot reveal card a00/);
+    no(s, { ...forged, by: 's0', inverse: { ...(forged as { inverse: object }).inverse, by: 's0' } } as Action, /cannot reveal card a00/);
+    // A token's identity is public from its creation; an undo may put it back.
+    s = ok(s, act('createToken', { card: 't', zone: 'battlefield:s0', pose: P(100, -100), ref: { sid: 'goblin' } }));
+    s = ok(s, act('hide', { card: 't' }));
+    ok(s, act('undo', { of: 'h', inverse: { type: 'tap', by: 's0', cid: 'y', card: 't', tapped: false, restore: { cards: { t: { identity: { expect: null, put: { sid: 'goblin' } }, face: { expect: 'down', put: 'up' } } } } } }));
   });
 
   it('a resolved or countered item comes back with its target lines', () => {

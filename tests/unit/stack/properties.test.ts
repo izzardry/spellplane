@@ -10,7 +10,7 @@ import { checkInvariants } from '../../../src/core/invariants';
 import { explain, reduce } from '../../../src/core/reducer';
 import { confirmDeadlines, pendingAbout, roundPassed } from '../../../src/core/reducer/confirm';
 import type { TableState } from '../../../src/core/types';
-import { inverse, undoKey } from '../../../src/core/undo';
+import { inverse, undoKey, undoPlan, withoutReveals } from '../../../src/core/undo';
 import { P, act, ok, play, readyTable } from '../core/helpers';
 
 const KINDS = ['push', 'push', 'push', 'resolve', 'resolve', 'counter', 'reorder', 'dragOut', 'note', 'ask', 'respond', 'respond', 'respond', 'respond', 'autoPass', 'turnPass', 'leave', 'take', 'timer', 'undo', 'clock'] as const;
@@ -204,12 +204,14 @@ describe('stack and confirmation properties (PLAN M1-P3)', () => {
         const { actions, states } = run(rs);
         actions.forEach((a, i) => {
           if (!isUndoable(a) || states[i + 1] === states[i]) return;
-          const inv = inverse(states[i]!, a);
+          const plan = undoPlan(states[i]!, a);
+          const inv = plan?.inverse ?? null;
           // Personal undo of the stack never depends on the confirmation round (DESIGN "Turn flow and confirmation", Undo).
           if (STACK_ACTIONS.has(a.type)) expect(inv, `${a.type} ${a.cid} must be undoable`).not.toBeNull();
           if (!inv) return;
           const undone = reduce(states[i + 1]!, { type: 'undo', by: a.by, cid: `u${i}`, of: a.cid, inverse: inv });
-          expect(undoKey(undone)).toBe(undoKey(states[i]!));
+          // A committed card brought back to a public zone waits face down for its owner's verified re-reveal (M1-P2).
+          expect(undoKey(undone)).toBe(undoKey(withoutReveals(states[i]!, plan!.reveals)));
         });
       }),
       { numRuns: RUNS },

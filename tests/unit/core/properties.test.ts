@@ -15,7 +15,7 @@ import { canonicalJson, stateHash } from '../../../src/core/hash';
 import { checkInvariants } from '../../../src/core/invariants';
 import { explain, reduce } from '../../../src/core/reducer';
 import type { Anchor, Pose, TableState } from '../../../src/core/types';
-import { inverse } from '../../../src/core/undo';
+import { inverse, undoPlan, withoutReveals } from '../../../src/core/undo';
 import { cardsInExactlyOneZone, deepFreeze, hasHiddenIdentity, hiddenZonesOpaque, pileIndicesContiguous, readyTable, withoutSeq, withoutSeqOrHiddenIdentity } from './helpers';
 
 const KINDS = [
@@ -255,7 +255,8 @@ describe('core engine properties (PLAN M0-P1)', () => {
           const a = actions[i]!;
           const before = states[i]!;
           const after = states[i + 1]!;
-          const inv = inverse(before, a);
+          const plan = undoPlan(before, a);
+          const inv = plan?.inverse ?? null;
           if (!isUndoable(a) || after === before) {
             expect(inv, `${a.type} that did not apply or is not undoable`).toBeNull();
             continue;
@@ -267,10 +268,15 @@ describe('core engine properties (PLAN M0-P1)', () => {
           expect(explain(after, undo), `undo of ${canonicalJson(a)}`).toBeNull();
           const undone = reduce(after, undo);
           expect(checkInvariants(undone)).toEqual([]);
-          // A card revealed where it lies in a hidden zone (and then moved out) comes back without its identity;
-          // nothing else may differ, and every other undo restores the exact hash.
-          expect(withoutSeqOrHiddenIdentity(undone), `undo of ${canonicalJson(a)}`).toBe(withoutSeqOrHiddenIdentity(before));
-          if (withoutSeq(undone) === withoutSeq(before)) {
+          // A card revealed where it lies in a hidden zone (and then moved out) comes back without its identity, and a
+          // committed card brought back to a public zone lies face down until its owner re-reveals it (M1-P2,
+          // `UndoReveal`); nothing else may differ, and every other undo restores the exact hash.
+          const expected = withoutReveals(before, plan!.reveals);
+          expect(withoutSeqOrHiddenIdentity(undone), `undo of ${canonicalJson(a)}`).toBe(withoutSeqOrHiddenIdentity(expected));
+          if (plan!.reveals.length > 0) {
+            for (const r of plan!.reveals) expect(undone.cards[r.card]).toMatchObject({ face: 'down' });
+            expect(undone.cards[plan!.reveals[0]!.card]!.identity).toBeUndefined();
+          } else if (withoutSeq(undone) === withoutSeq(before)) {
             expect(await stateHash({ ...undone, seq: before.seq })).toBe(await stateHash(before));
             exact++;
           } else {

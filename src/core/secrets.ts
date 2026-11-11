@@ -12,7 +12,7 @@ import type { Action, ActionOf, ActionType, Reissue } from './actions';
 import { commitFor, nonceHash, verifyNonce, type RevealedCard } from './commit';
 import { zoneId } from './ids';
 import { explain, reduce } from './reducer/index';
-import { seedFixed } from './reducer/secret';
+import { isOpen } from './reducer/secret';
 import { orderHash, shuffleOutcome, shufflePeerNonces, shuffleReady, shuffleSeed } from './rng';
 import type {
   AuditRecord,
@@ -159,13 +159,24 @@ export interface LookRequest {
   card?: InstanceId;
 }
 
+/** Options of `lookAnswer`. */
+export interface LookAnswerOptions {
+  /**
+   * The owner agreed to show `count` cards of an own hidden zone to the asking seat. Without it a zone look is refused:
+   * the design shows another seat a hidden card only through the owner's own reveal ("Reveal to…", DESIGN "Multiplayer
+   * architecture", Hidden information 5), so the answerer (M1-P8) asks the owner first.
+   */
+  allowZoneLook?: boolean;
+}
+
 /**
  * The owner's answer to another seat's look request (DESIGN "Multiplayer architecture", Private looks): the top
- * `count` cards of an own hidden zone in the owner's order, or exactly the peeked card when it is an own face-down
- * card in a public zone; null (refuse) for anything else. A peek never shows a hand or library card. The pair channel
- * (net/private.ts) answers only requests that match a sequenced `lookAt` of the asker and filters the answer again.
+ * `count` cards of an own hidden zone in the owner's order when the owner agreed (`allowZoneLook`), or exactly the
+ * peeked card when it is an own face-down card in a public zone; null (refuse) for anything else. A peek never shows
+ * a hand or library card. The pair channel (net/private.ts) answers only requests that match a sequenced `lookAt` of
+ * the asker and filters the answer again.
  */
-export function lookAnswer(secrets: SecretStore, state: TableState, req: LookRequest): RevealedCard[] | null {
+export function lookAnswer(secrets: SecretStore, state: TableState, req: LookRequest, opts: LookAnswerOptions = {}): RevealedCard[] | null {
   const zone = Object.hasOwn(state.zones, req.zone) ? state.zones[req.zone]! : null;
   if (!zone) return null;
   if (req.card !== undefined) {
@@ -175,6 +186,7 @@ export function lookAnswer(secrets: SecretStore, state: TableState, req: LookReq
     return r ? [r] : null;
   }
   if (zone.visibility === 'public' || zone.owner !== secrets.seat || !Number.isInteger(req.count) || req.count < 1) return null;
+  if (opts.allowZoneLook !== true) return null;
   return privateOrder(secrets, state, zone.id)
     .slice(0, req.count)
     .flatMap((id) => {
@@ -418,7 +430,7 @@ export function auditSeat(
     reorders.find((r) => !usedReorders.has(r) && r.zone === zone && orderHash(r.order, r.nonce) === hash) ?? reorders.find((r) => !usedReorders.has(r) && r.zone === zone);
   let order: InstanceId[] | null = null;
   let s = start;
-  /** The sorted ids of each own shuffle's zone from the step its seed became fixed (`seedFixed`) on. */
+  /** The sorted ids of each own shuffle's zone from its commit on (`isOpen`). */
   const frozen = new Map<ShuffleId, string>();
   const sortedIds = (st: TableState, zone: ZoneId): string => [...(st.zones[zone]?.ids ?? [])].sort(byId).join(',');
 
@@ -439,7 +451,7 @@ export function auditSeat(
   for (const a of log) {
     const seq = a.seq ?? s.seq + 1;
     const prior = s;
-    for (const r of Object.values(prior.shuffles)) if (r.owner === seat && seedFixed(r) && !frozen.has(r.id)) frozen.set(r.id, sortedIds(prior, r.zone));
+    for (const r of Object.values(prior.shuffles)) if (r.owner === seat && isOpen(r) && !frozen.has(r.id)) frozen.set(r.id, sortedIds(prior, r.zone));
     // A refused entry changes nothing in the replay either.
     if (explain(prior, a) !== null) continue;
     s = reduce(prior, a);
@@ -456,7 +468,7 @@ export function auditSeat(
       const peers = shufflePeerNonces(prior, a.sid);
       if (!sameList(peers, rec.peerNonces)) findings.push({ seq, text: `shuffle ${a.sid} used other peer nonces than the sequenced ones` });
       const ids = prior.zones[round.zone]?.ids ?? [];
-      // The owner knows the seed once it is fixed; the cards shuffled must be the ones in the zone then.
+      // The cards shuffled must be the ones in the zone at the commit (the reducer freezes the zone from then on).
       const fixedIds = frozen.get(a.sid);
       if (fixedIds !== undefined && fixedIds !== sortedIds(prior, round.zone)) findings.push({ seq, text: `the cards of ${round.zone} changed while shuffle ${a.sid} was open` });
       const out = shuffleOutcome(shuffleSeed(rec.ownerNonce, peers), ids, a.reissue?.ids);

@@ -10,6 +10,8 @@ import type { SeatId, TableState } from '../../../src/core/types';
 import type { PrivateMessage, SequencedAction } from '../../../src/net/messages';
 import { EXPIRE_AFTER_ACTIONS, privateChannelOver, type PrivateChannelHost } from '../../../src/net/private';
 import { reduce } from '../../../src/core/reducer';
+import type { Action } from '../../../src/core/actions';
+import { privateReorder } from '../../../src/core/secrets';
 import type { PeerInfo, PrivateChannel } from '../../../src/net/types';
 import { deckRefs, readySecretTable, seededEntropy, type SecretTable } from './helpers';
 
@@ -25,6 +27,8 @@ class Bus {
   readonly seqListeners: ((a: SequencedAction, own: boolean) => void)[] = [];
   /** The owner's view when it has own pending actions (null: the view is the confirmed state). */
   view: TableState | null = null;
+  /** Own actions applied optimistically and not sequenced yet (the engine's pending queue); null: the host lacks `pending`. */
+  pendingActions: Action[] | null = [];
 
   constructor(private readonly table: SecretTable) {}
 
@@ -36,6 +40,7 @@ class Bus {
     const host: PrivateChannelHost = {
       state: (): TableState => this.view ?? this.table.state,
       confirmedState: (): TableState => this.table.state,
+      ...(this.pendingActions !== null ? { pending: (): readonly Action[] => this.pendingActions ?? [] } : {}),
       onState: (l: (s: TableState) => void) => {
         this.stateListeners.push(l);
         return () => undefined;
@@ -213,7 +218,7 @@ describe('targeted reveal', () => {
 describe('looks at another seat’s hidden cards', () => {
   it('go through the owner, who answers the asker only; the asker gets verified cards', async () => {
     const { t, bus, ch, got } = setup();
-    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req));
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req, { allowZoneLook: true }));
     bus.lookAt('s1', 'library:s0', 2);
     const cards = await ch.s1!.requestLook('s0', 'library:s0', 2);
     expect(cards.map((c) => c.instanceId)).toEqual(t.secrets.s0!.libraryOrder.slice(0, 2));
@@ -273,7 +278,7 @@ describe('looks at another seat’s hidden cards', () => {
     const asked: string[] = [];
     ch.s0!.answerLooks((req, from) => {
       asked.push(`${from}:${req.zone}:${req.count}`);
-      return lookAnswer(t.secrets.s0!, t.state, req);
+      return lookAnswer(t.secrets.s0!, t.state, req, { allowZoneLook: true });
     });
     const top = revealedCard(t.secrets.s0!, t.secrets.s0!.libraryOrder[0]!)!;
     // No lookAt at all: the answerer is never asked and nothing leaves s0.
@@ -297,7 +302,7 @@ describe('looks at another seat’s hidden cards', () => {
 
   it('show the cards at the point of the log where the lookAt was sequenced, not where the request arrives', async () => {
     const { t, bus, ch } = setup();
-    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req));
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req, { allowZoneLook: true }));
     const [x1, x2] = t.secrets.s0!.libraryOrder;
     // s1 looks at the top card; s0 draws it before s1's request arrives. The look saw x1, which is now in s0's hand,
     // and showing x2 instead would be a look the log does not hold: refused.
@@ -316,7 +321,7 @@ describe('looks at another seat’s hidden cards', () => {
 
   it('a lookAt is not good for the order after a later shuffle or reorder of that zone', async () => {
     const { t, bus, ch } = setup();
-    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req));
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req, { allowZoneLook: true }));
     bus.lookAt('s1', 'library:s0', 1);
     bus.lookAt('s2', 'library:s0', 1);
     // s0 shuffles (the round is in the confirmed state) and privately reorders: the looks are stale.
@@ -332,7 +337,7 @@ describe('looks at another seat’s hidden cards', () => {
 
   it('is refused while the owner has pending actions on that zone, since its order is not the one at the look', async () => {
     const { t, bus, ch } = setup();
-    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req));
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req, { allowZoneLook: true }));
     const x1 = t.secrets.s0!.libraryOrder[0]!;
     // s0's draw of x1 is applied optimistically but not sequenced yet; s1's lookAt is sequenced before it.
     bus.view = reduce(t.state, { type: 'draw', instanceId: x1, by: 's0', cid: 'pending' });
@@ -341,9 +346,45 @@ describe('looks at another seat’s hidden cards', () => {
     expect(await ch.s1!.requestLook('s0', 'library:s0', 1)).toEqual([]);
   });
 
+  it('is refused while the owner has a pending plain reorder (scry) of that zone: the store is ahead of the look', async () => {
+    const { t, bus, ch } = setup();
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req, { allowZoneLook: true }));
+    const [x1, x2] = t.secrets.s0!.libraryOrder;
+    // s0 scries x1 to the bottom: the store holds the new order at once, the public `reorder` is still pending (it
+    // changes no zone ids and no shuffle, so view and confirmed state agree). s1's lookAt is sequenced first.
+    const order = [...t.secrets.s0!.libraryOrder.slice(1), x1!];
+    const r = privateReorder(t.secrets.s0!, t.state, 'library:s0', order, 1, seededEntropy(4242));
+    t.secrets.s0 = r.secrets;
+    bus.pendingActions = [{ ...r.action, by: 's0', cid: 'scry' } as Action];
+    bus.lookAt('s1', 'library:s0', 1);
+    bus.pendingActions = [];
+    expect(await ch.s1!.requestLook('s0', 'library:s0', 1)).toEqual([]);
+    expect(bus.inbox.s1!.at(-1)!.msg).toMatchObject({ t: 'look', cards: [], refused: true });
+    const salts = bus.inbox.s1!.flatMap((m) => (m.msg.t === 'look' ? m.msg.cards.map((c) => c.salt) : []));
+    expect(salts).not.toContain(t.secrets.s0!.identities[x2!]!.salt);
+    // Pending actions elsewhere do not block it: a tap on the battlefield, a reorder of the hand.
+    bus.pendingActions = [
+      { type: 'tap', by: 's0', cid: 'p1', card: 'nope', tapped: true } as Action,
+      { type: 'reorder', by: 's0', cid: 'p2', zone: 'hand:s0', count: 1, orderHash: 'o' } as Action,
+    ];
+    bus.lookAt('s1', 'library:s0', 1);
+    bus.pendingActions = [];
+    expect((await ch.s1!.requestLook('s0', 'library:s0', 1)).map((c) => c.instanceId)).toEqual([x2]);
+  });
+
+  it('answers no zone look when the host cannot list its pending actions (fails closed)', async () => {
+    const t = readySecretTable(['Anna', 'Ben'], 8);
+    const bus = new Bus(t);
+    bus.pendingActions = null;
+    const ch = { s0: privateChannelOver(bus.host('s0')), s1: privateChannelOver(bus.host('s1')) };
+    ch.s0.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req, { allowZoneLook: true }));
+    bus.lookAt('s1', 'library:s0', 1);
+    expect(await ch.s1.requestLook('s0', 'library:s0', 1)).toEqual([]);
+  });
+
   it('a request whose lookAt never comes is refused after a while, so the asker is not left waiting', async () => {
     const { t, bus, ch } = setup();
-    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req));
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req, { allowZoneLook: true }));
     let got: RevealedCard[] | null = null;
     void ch.s1!.requestLook('s0', 'library:s0', 1).then((r) => (got = r));
     for (let i = 0; i <= EXPIRE_AFTER_ACTIONS; i++) bus.sequenced(`chat-${i}`);

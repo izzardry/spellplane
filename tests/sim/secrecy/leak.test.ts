@@ -15,7 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InstanceId, TableState } from '../../../src/core/types';
 import { STORE_NAMES } from '../../../src/store/db';
 import { openStores, type LocalStores } from '../../../src/store/stores';
-import { fixtureDeck, netTable, type NetTable } from '../../leak/fixtures';
+import { fixtureDeck, netTable, testEntropy, type NetTable } from '../../leak/fixtures';
+import { privateReorder } from '../../../src/core/secrets';
 import { forbiddenFor, leakScan } from '../../leak/leak';
 import { until, type Player } from '../../leak/minitable';
 import type { RevealedCard } from '../../../src/core/commit';
@@ -215,6 +216,33 @@ describe('leak test: a scripted two-seat game', () => {
     const report = leakScan({ observed: await observedByB(p), owner: { state: a.state, secrets: a.secrets }, disclosed: a.disclosed.s1 ?? [] });
     expect(report.tokens).toEqual([]);
     expect(report.pairs).toEqual([]);
+    p.db.close();
+  });
+
+  it('a look is not answered from a scry the owner has not had sequenced yet (B owns, A is the sequencer)', async () => {
+    const p = await script(true);
+    const { a, b } = p;
+    const lib = 'library:s1';
+    const [y1, y2] = b.secrets.libraryOrder;
+    // B scries its top card to the bottom: its store holds the new order at once, its `reorder` is in flight.
+    const r = privateReorder(b.secrets, b.state, lib, [...b.secrets.libraryOrder.slice(1), y1!], 1, testEntropy(77));
+    b.secrets = r.secrets;
+    // A's request may overtake its lookAt (it then waits at B for it), so B binds the look while its scry is pending.
+    let got: RevealedCard[] | null = null;
+    void a.channel.requestLook('s1', lib, 1).then((x) => (got = x));
+    let scried: string | null | undefined;
+    void b.peer.propose(b.peer.stamp(r.action)).then((x) => (scried = x));
+    // A (the sequencer) logs its look at B's top card first: the look is at y1, never at y2.
+    await a.peer.act({ type: 'lookAt', zone: lib, count: 1 });
+    await until(() => got !== null, 5_000, 'the look answer');
+    expect(got).toEqual([]);
+    await until(() => scried !== undefined, 5_000, "B's reorder");
+    expect(scried).toBeNull();
+    await vi.advanceTimersByTimeAsync(500);
+    const toA = [...p.t.net.delivered.filter((d) => d.to === a.peer.peerId).map((d) => d.msg), ...a.peer.received.map((x) => x.msg)];
+    const report = leakScan({ observed: toA, owner: { state: b.state, secrets: b.secrets }, disclosed: b.disclosed.s0 ?? [] });
+    expect(report.tokens.filter((h) => JSON.stringify(h).includes(b.secrets.identities[y2!]!.salt))).toEqual([]);
+    expect(JSON.stringify(toA)).not.toContain(b.secrets.identities[y2!]!.salt);
     p.db.close();
   });
 

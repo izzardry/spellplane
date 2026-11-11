@@ -240,6 +240,7 @@ export class MiniPeer {
     return {
       state: () => this.state,
       confirmedState: () => this.state,
+      pending: () => [...this.pending.values()].map((p) => p.action),
       onState: (l) => this.onState(l),
       onSequenced: (l) => this.onSequenced((a) => l(a, a.by === this.seatId)),
       seat: () => this.seat(),
@@ -304,7 +305,8 @@ export class Player {
       if (verified) this.secrets = receiveIdentity(this.secrets, card, from);
     });
     this.channel.answerLooks((req, from) => {
-      const out = lookAnswer(this.secrets, this.state, req);
+      // The scripted owner agrees to every zone look (the consent prompt is M1-P8's).
+      const out = lookAnswer(this.secrets, this.state, req, { allowZoneLook: true });
       for (const c of out ?? []) this.disclose(from, c);
       return out;
     });

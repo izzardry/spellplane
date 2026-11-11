@@ -7,10 +7,10 @@
  *   refused: the identity becomes public and the card is marked `suspect` in shared state, so every peer flags it.
  * - The secret shuffle: `shuffleCommit` (owner, `h = SHA-256(ownerNonce)`), `shuffleNonce` (every other connected
  *   seated seat, in the clear), `shuffleDone` (owner, order hash, fresh opaque ids only where needed). A round's
- *   owner nonce is fixed by its commit, and a zone with an open round that already holds peer nonces (or a closed
- *   window) takes no new round, so the owner cannot change its nonce after seeing the others'. From then until
- *   `shuffleDone` the zone's cards are frozen (`checkFrozenZones`), so the owner cannot pick the order by choosing
- *   which ids get shuffled.
+ *   owner nonce is fixed by its commit, and a zone with an unfinished round takes no new round, so the owner cannot
+ *   change its nonce after seeing the others' (a sequencer owner sees a peer's nonce proposal before it sequences
+ *   it). From the commit until `shuffleDone` the zone's cards are frozen (`checkFrozenZones`), so the owner cannot
+ *   pick the order by choosing which ids get shuffled.
  * - Public randomness: `rngCommit` per seat, `rngReveal` once the commit phase is complete, the result drawn from the
  *   seed of all reveals. `commitClose` (proposed by the sequencer's clock) excludes the seats that missed the window;
  *   a round's own initiator (or a shuffle's owner) cannot close it, or it could decide alone.
@@ -158,22 +158,21 @@ export function shuffleCommit(d: Draft, a: ActionOf<'shuffleCommit'>): void {
   const purpose = a.purpose ?? 'shuffle';
   if (purpose !== 'shuffle' && purpose !== 'pack') reject('purpose must be shuffle or pack');
   for (const r of Object.values(d.base.shuffles)) {
-    if (r.zone !== zone.id) continue;
-    // Restarting once the owner may know the seed would let it pick among orders it can already compute.
-    if (seedFixed(r)) reject(`shuffle ${r.id} of ${zone.id} already has peer nonces or a closed window; finish it first`);
+    // Restarting would let the owner pick among orders it can compute as soon as it sees a peer nonce, which a
+    // sequencer owner does before it sequences that nonce.
+    if (r.zone === zone.id && isOpen(r)) reject(`shuffle ${r.id} of ${zone.id} is not finished; finish it first`);
   }
-  // A round abandoned before any peer nonce taught the owner anything is dropped.
-  for (const r of d.shuffles.values()) if (r.zone === zone.id && r.orderHash === null) d.shuffles.delete(r.id);
   d.shuffles.set(sid, { id: sid, zone: zone.id, owner: by, purpose, h, startSeq: seqOf(d, a), nonces: {}, orderHash: null });
 }
 
 /**
- * Whether an open shuffle round's seed inputs may already be known to its owner: a peer nonce is sequenced, or the
- * nonce window is closed (also at once when nobody else is seated). From then on the round cannot be replaced and its
- * zone's cards are frozen until `shuffleDone` (`checkFrozenZones`), so the owner cannot pick among outcomes.
+ * Whether a shuffle round is unfinished (committed, no `shuffleDone` yet). An open round cannot be replaced and its
+ * zone's cards are frozen (`checkFrozenZones`) from the commit on, not only from the first sequenced peer nonce: the
+ * owner may see a nonce before it is sequenced (the 1v1 sequencer receives the peer's proposal), so the set of ids and
+ * the round must be fixed before any nonce exists, or the owner could pick among outcomes it can already compute.
  */
-export function seedFixed(r: ShuffleRound): boolean {
-  return r.orderHash === null && (Object.keys(r.nonces).length > 0 || r.closedSeq !== undefined);
+export function isOpen(r: ShuffleRound): boolean {
+  return r.orderHash === null;
 }
 
 /** `shuffleNonce {sid, nonce}`: another connected seated seat's nonce, once, before the window closes (Secret shuffle 2). */
@@ -318,17 +317,16 @@ function zoneIds(state: TableState, zone: string): string {
 }
 
 /**
- * Refuse a step that changes the cards of a zone whose shuffle round has a fixed seed (`seedFixed`) and is not
- * finished by this very step (DESIGN "Specification: network protocol and secrecy", Secret shuffle 3: "the owner
- * could not choose it, having committed first"). Once the peers' nonces are sequenced the owner can compute the
- * outcome for any set of ids, so adding, removing or re-issuing a card before `shuffleDone` would let it pick the
- * order. Checked for every action (draws, moves, mills, re-issues, undo), whoever sends it. A round still waiting
- * for its first nonce does not freeze the zone: the owner learned nothing yet, and replaces it by committing anew.
+ * Refuse a step that changes the cards of a zone with an open shuffle round (`isOpen`) that is not finished by this
+ * very step (DESIGN "Specification: network protocol and secrecy", Secret shuffle 3: "the owner could not choose it,
+ * having committed first"). Once it sees the peers' nonces (as the sequencer, even before they are sequenced) the
+ * owner can compute the outcome for any set of ids, so adding, removing or re-issuing a card before `shuffleDone`
+ * would let it pick the order. Checked for every action (draws, moves, mills, re-issues, undo), whoever sends it.
+ * A lost peer still unblocks the round: the window closes (`commitClose`) or the peer is marked away (M1-P7).
  */
 export function checkFrozenZones(prior: TableState, next: TableState, action: { type: string; sid?: unknown }): void {
   for (const r of Object.values(prior.shuffles)) {
-    const after = own(next.shuffles, r.id);
-    if (r.orderHash !== null || !(seedFixed(r) || (after !== undefined && seedFixed(after)))) continue;
+    if (!isOpen(r)) continue;
     if (action.type === 'shuffleDone' && action.sid === r.id) continue;
     if (own(prior.zones, r.zone) === own(next.zones, r.zone)) continue;
     if (zoneIds(prior, r.zone) !== zoneIds(next, r.zone)) reject(`${r.zone} is being shuffled (${r.id}); its cards cannot change until the shuffle is done`);

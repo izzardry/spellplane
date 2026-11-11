@@ -16,10 +16,11 @@
  * state, not when the request arrives, so they are the cards at that point of the log (DESIGN "Multiplayer
  * architecture", Hidden information 4: the logged look is the look that happens): the answerer is asked right then,
  * and the answer is refused later if one of those cards has left the zone, or the zone was shuffled or reordered
- * since. A targeted reveal is taken only once its public `revealTo` by the sender, naming this seat and this card, is
+ * since; it is refused at once while the owner has own pending actions that may change that zone (`settled`). A targeted reveal is taken only once its public `revealTo` by the sender, naming this seat and this card, is
  * applied; a look answer only for a look this browser asked for. Requests and reveals waiting for their public
  * action, and looks never asked for, expire after `EXPIRE_AFTER_ACTIONS` sequenced actions.
  */
+import type { Action } from '../core/actions';
 import { verifyReveal, type RevealedCard } from '../core/commit';
 import type { CardRef, InstanceId, PackId, SeatId, TableState, ZoneId } from '../core/types';
 import type { SequencedAction } from './messages';
@@ -27,8 +28,15 @@ import type { LookMessage, LookReqMessage, PackMessage, PrivateMessage, RevealMe
 import { PROTOCOL_VERSION } from './messages';
 import type { CreatePrivateChannel, NetEngine, PrivateChannel, Unsubscribe } from './types';
 
-/** The part of a NetEngine the pair channel uses (so tests can drive it with a minimal engine). */
-export type PrivateChannelHost = Pick<NetEngine, 'state' | 'confirmedState' | 'onState' | 'onSequenced' | 'seat' | 'sendPrivate' | 'onPrivate' | 'peers' | 'onPeers'>;
+/**
+ * The part of a NetEngine the pair channel uses (so tests can drive it with a minimal engine), plus `pending`: the own
+ * actions applied optimistically and not sequenced yet (SyncEngine `pending()`). NetEngine does not list it (a
+ * contract amendment for the integrator); without it no zone look is answered, since a pending private reorder
+ * (scry) changes the owner's order without changing anything the view and confirmed state could show.
+ */
+export type PrivateChannelHost = Pick<NetEngine, 'state' | 'confirmedState' | 'onState' | 'onSequenced' | 'seat' | 'sendPrivate' | 'onPrivate' | 'peers' | 'onPeers'> & {
+  pending?: () => readonly Action[];
+};
 
 /** Most cards one look answer or pack may carry. */
 const MAX_CARDS = 500;
@@ -212,10 +220,49 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
     return out;
   };
 
-  /** Whether zone `zone` (and the shuffles of it) are the same in the view as in the confirmed state. */
+  /** Whether the own pending action `a` may change the private order or the cards of the own hidden zone `zone`. */
+  const touches = (a: Action, zone: ZoneId, view: TableState, conf: TableState): boolean => {
+    const cardIn = (id: unknown): boolean =>
+      typeof id === 'string' && ((Object.hasOwn(conf.cards, id) && conf.cards[id]!.zone === zone) || (Object.hasOwn(view.cards, id) && view.cards[id]!.zone === zone));
+    const shuffleOf = (sid: unknown): ZoneId | null => {
+      if (typeof sid !== 'string') return null;
+      const r = Object.hasOwn(view.shuffles, sid) ? view.shuffles[sid]! : Object.hasOwn(conf.shuffles, sid) ? conf.shuffles[sid]! : null;
+      return r ? r.zone : null;
+    };
+    const owner = Object.hasOwn(conf.zones, zone) ? conf.zones[zone]!.owner : null;
+    switch (a.type) {
+      case 'reorder':
+      case 'shuffleCommit':
+        return a.zone === zone;
+      case 'shuffleDone':
+        return shuffleOf(a.sid) === zone;
+      case 'draw':
+        return cardIn(a.instanceId);
+      case 'move':
+      case 'toZone':
+        return a.to === zone || cardIn(a.card);
+      case 'mulligan':
+      case 'ready':
+        return a.by === owner;
+      // An undo may return a card to the zone or reorder it; a private reorder may follow it.
+      case 'undo':
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  /**
+   * Whether the owner's private order of `zone` is the one at the confirmed state: no own pending action may change it
+   * (a scry's `reorder` changes the owner's store at once but nothing public, so view and confirmed state agree), and
+   * the zone and its shuffles are the same in the view as in the confirmed state. False when the host cannot list its
+   * pending actions.
+   */
   const settled = (zone: ZoneId): boolean => {
     const view = host.state();
     const conf = host.confirmedState();
+    if (typeof host.pending !== 'function') return false;
+    if (host.pending().some((a) => touches(a, zone, view, conf))) return false;
     const a = Object.hasOwn(view.zones, zone) ? view.zones[zone]!.ids : [];
     const b = Object.hasOwn(conf.zones, zone) ? conf.zones[zone]!.ids : [];
     if (a.length !== b.length || a.some((id, i) => id !== b[i])) return false;
@@ -230,8 +277,10 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
   /**
    * The cards another seat's sequenced `lookAt` may show, fixed now, while the confirmed state is the state at that
    * look (a `lookAt` changes no zone). The answerer is asked now; it must answer from the confirmed state (core/secrets.ts
-   * `lookAnswer(secrets, engine.confirmedState(), req)`), as `disclosedBy` records the look. While own pending actions
-   * change that zone (a draw or a shuffle not sequenced yet) the owner's order is not the one at the look: refused.
+   * `lookAnswer(secrets, engine.confirmedState(), req, {allowZoneLook})`, the flag set only once the owner agreed to
+   * show its zone), as `disclosedBy` records the look. While own pending actions
+   * may change that zone (a draw, a scry's reorder or a shuffle not sequenced yet) the owner's order is not the one at
+   * the look: refused (`settled`).
    */
   const bindLook = (action: { zone: ZoneId; count: number; card?: InstanceId; seq: number }, from: SeatId): RevealedCard[] | null => {
     const me = host.seat();

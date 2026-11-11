@@ -15,7 +15,6 @@
 import {
   createTable,
   explain,
-  inverse,
   isUndoable,
   reduce,
   seatIdOf,
@@ -33,7 +32,9 @@ import {
   type SeatId,
   type TableState,
   type UndoableAction,
+  type UndoReveal,
   type ZoneId,
+  undoPlan,
 } from '../core/index';
 import type { CardData } from '../data/types';
 import { SOLO_ROOM_ID } from '../store/tables';
@@ -87,6 +88,8 @@ interface UndoEntry {
   cid: string;
   group?: string;
   inverse: UndoableAction;
+  /** Cards the undo brings back face down without their identity; own ones are re-revealed with the salt (M1-P2). */
+  reveals: UndoReveal[];
   /** The private hand order before the action: a card the undo returns to the hand goes back to its old place in it. */
   hand: InstanceId[];
   /**
@@ -398,12 +401,27 @@ class Solo implements SoloSession {
       const now = this.sec.libraryOrder;
       const target = putBack(now, libraryPrior, library);
       if (!sameOrder(now, target)) this.commitReorder(target, 1, group);
+      // A restore patch never puts a committed identity back: the card came back face down, and only its owner can
+      // reveal it again, verified against the commitment (core/undo.ts UndoReveal).
+      for (const r of batch[i]!.reveals) this.reReveal(r, group);
     });
     this.notify();
     return true;
   }
 
   // --- Internals ---------------------------------------------------------------------------------------
+
+  /** Re-reveal an own card an undo brought back face down (turned up again when it was face up). */
+  private reReveal(r: UndoReveal, group: string | undefined): void {
+    const card = Object.hasOwn(this.state.cards, r.card) ? this.state.cards[r.card] : undefined;
+    const secret = Object.hasOwn(this.sec.identities, r.card) ? this.sec.identities[r.card] : undefined;
+    if (!card || card.owner !== this.seat || card.identity !== undefined || !secret) return;
+    if (secret.card.sid !== r.ref.sid || secret.card.foil !== r.ref.foil) return;
+    const g = group !== undefined ? { group } : {};
+    const draft: ActionDraft =
+      r.face === 'up' ? { type: 'flip', card: r.card, face: 'up', ref: secret.card, salt: secret.salt, ...g } : { type: 'reveal', instanceId: r.card, ref: secret.card, salt: secret.salt, ...g };
+    this.commit(this.stamp(draft), {}, false);
+  }
 
   private zone(kind: string): ZoneId {
     return zoneId(kind, this.seat);
@@ -492,7 +510,7 @@ class Solo implements SoloSession {
       this.warn(`${action.type} refused: ${explain(before, action) ?? 'no effect'}`);
       return null;
     }
-    const inv = undoable && isUndoable(action) ? inverse(before, action) : null;
+    const inv = undoable && isUndoable(action) ? undoPlan(before, action) : null;
     const handBefore = this.sec.hand;
     const libraryBefore = this.sec.libraryOrder;
     let sec = o.secrets ? o.secrets(this.sec) : this.sec;
@@ -504,7 +522,8 @@ class Solo implements SoloSession {
       this.undoStack.push({
         cid: action.cid,
         ...(action.group !== undefined ? { group: action.group } : {}),
-        inverse: inv,
+        inverse: inv.inverse,
+        reveals: inv.reveals,
         hand: [...handBefore],
         library: [...libraryBefore],
       });
