@@ -15,6 +15,7 @@
   import { checkDeck, parsePlainList, type CheckedDeck } from '../deck';
   import type { LobbyProps } from '../types';
   import { ConnectivityCheck, type ConnectivityReport } from './connectivity';
+  import { pastedDeckId, readyVerdict } from './ready';
   import { chairChoice, chairs, colourClash, colourTakenBy, hostSeat, nicknameProblem, normaliseNickname, pickColour, readiness, seatOf, startProblem, SEAT_COLOURS } from './seats';
 
   let { session, game, link, identity, decks, cardData, parseDecklist }: LobbyProps = $props();
@@ -163,21 +164,37 @@
     }
   }
 
+  /** The pasted text whose unresolved lines the player already agreed to leave out (second press on Ready). */
+  let confirmedText = $state<string | null>(null);
   async function pressReady() {
     failure = '';
     if (deckChoice === 'paste' && (!checked || checkedText !== deckText)) await checkPasted();
+    if (!mySeat) return;
+    if (deckChoice === 'paste') {
+      if (failure) return;
+      const verdict = readyVerdict(checked && checkedText === deckText ? checked : null, deckText, confirmedText);
+      if (verdict.kind !== 'go') {
+        failure = verdict.message;
+        if (verdict.kind === 'confirm') confirmedText = deckText;
+        return;
+      }
+    }
     const deck = deckRefs;
-    if (!deck || !mySeat) return;
+    if (!deck) {
+      failure = 'This deck has no cards. Choose another deck or paste a list.';
+      return;
+    }
     busy = true;
     try {
+      await session.importDeck({ main: [...deck.main], side: [...deck.side] });
+      // Saved once Ready went through, under an id derived from the text, so a retried Ready never saves it twice.
       if (deckChoice === 'paste') {
         const at = Date.now();
         const first = deckText.split(/\r?\n/).find((l) => l.trim() && !/^(deck|sideboard|main)/i.test(l.trim()));
         await decks
-          .put({ id: crypto.randomUUID(), name: first ? `Deck with ${first.replace(/^\s*\d+x?\s+/, '').trim()}` : 'Pasted deck', main: deck.main, side: deck.side, source: 'pasted', text: deckText, createdAt: at, updatedAt: at })
+          .put({ id: pastedDeckId(deckText), name: first ? `Deck with ${first.replace(/^\s*\d+x?\s+/, '').trim()}` : 'Pasted deck', main: deck.main, side: deck.side, source: 'pasted', text: deckText, createdAt: at, updatedAt: at })
           .catch(() => undefined);
       }
-      await session.importDeck({ main: [...deck.main], side: [...deck.side] });
     } catch (e) {
       failure = e instanceof Error ? e.message : String(e);
     } finally {

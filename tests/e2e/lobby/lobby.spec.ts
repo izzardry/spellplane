@@ -119,6 +119,15 @@ test('Ready commits the deck, the host starts, the opponent hand shows as backs 
 
   // Only the host (lowest chair) may start, and only when everyone is ready.
   await expect(a.getByTestId('start-blocked')).toContainText('Waiting for everyone to press Ready');
+  // Ready never fails silently: a list without a single known card is refused, and a list with unknown lines needs a
+  // second press.
+  await a.getByTestId('lobby-deck-text').fill('4 Nonexistent Card Name\n2 Another Missing Card');
+  await a.getByTestId('ready').click();
+  await expect(a.getByTestId('lobby-failure')).toContainText('No cards in this list were found');
+  await a.getByTestId('lobby-deck-text').fill(`${decklist('gw-m19-60.txt')}\n1 Nonexistent Card Name`);
+  await a.getByTestId('ready').click();
+  await expect(a.getByTestId('lobby-failure')).toContainText('1 line was not found and will be left out');
+  await expect(chair(a, 's0')).toHaveAttribute('data-ready', 'false');
   for (const [page, file] of [
     [a, 'gw-m19-60.txt'],
     [b, 'ur-m19-60.mtga.txt'],
@@ -142,6 +151,14 @@ test('Ready commits the deck, the host starts, the opponent hand shows as backs 
     expect(benState).not.toContain(salt);
   }
 
+  // Ann's seat colour as the lobby draws it (the theme's seat colour token), for her cursor below.
+  const annColour = Number(await chair(b, 's0').getAttribute('data-colour'));
+  const annCss = await b
+    .locator(`[data-testid="colour"][data-colour="${annColour}"]`)
+    .locator('xpath=..')
+    .evaluate((el) => (el as HTMLElement).style.getPropertyValue('--seat').trim());
+  expect(annCss).toMatch(/^#|^rgb|^hsl/);
+
   await a.getByTestId('start-game').click();
   await expect(a.getByTestId('hud')).toBeVisible();
   await expect(b.getByTestId('hud')).toBeVisible();
@@ -164,8 +181,11 @@ test('Ready commits the deck, the host starts, the opponent hand shows as backs 
   const box = (await host.boundingBox())!;
   await a.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await a.mouse.move(box.x + box.width / 2 + 20, box.y + box.height / 2 + 10);
-  type Drawn = { peer: string; seat: string | null; colour: string; cursor: { x: number; y: number } | null; ghosts: { id: string }[] }[];
+  type Drawn = { peer: string; seat: string | null; colour: string; label: string; cursor: { x: number; y: number } | null; ghosts: { id: string }[] }[];
   await expect.poll(async () => (await hook<Drawn>(b, 'presence.drawn')).filter((s) => s.seat === 's0' && s.cursor).length).toBe(1);
+  const annCursor = (await hook<Drawn>(b, 'presence.drawn')).find((s) => s.seat === 's0')!;
+  expect(annCursor.colour).toBe(annCss);
+  expect(annCursor.label).toBe('Ann');
 
   // Live drag: Ann drags a token on her battlefield; Ben sees its outline while it moves, and it ends on release.
   await a.evaluate(() => window.__spellplane!.dispatch!({ type: 'createToken', card: 'tok-1', zone: 'battlefield:s0', pose: { x: 0, y: -250, rot: 0 }, label: 'Soldier' } as never));
@@ -178,6 +198,19 @@ test('Ready commits the deck, the host starts, the opponent hand shows as backs 
   await a.mouse.move(cx + 30, cy - 10, { steps: 4 });
   await a.mouse.move(cx + 60, cy - 20, { steps: 4 });
   await expect.poll(async () => (await hook<Drawn>(b, 'presence.drawn')).flatMap((s) => s.ghosts.map((g) => g.id))).toEqual(['tok-1']);
+  await a.mouse.up();
+  await expect.poll(async () => (await hook<Drawn>(b, 'presence.drawn')).flatMap((s) => s.ghosts)).toEqual([]);
+
+  // Live drag out of the hand: Ann pulls a card up out of her fan; Ben sees its outline (by its opaque id, no
+  // identity) until she lets go.
+  const handCard = a.locator(`[data-testid="hand-card"][data-card="${hand[0]}"]`);
+  const hb = (await handCard.boundingBox())!;
+  await a.mouse.move(hb.x + hb.width / 2, hb.y + hb.height - 20);
+  await a.mouse.down();
+  await a.mouse.move(hb.x + hb.width / 2, hb.y - 120, { steps: 6 });
+  await a.mouse.move(hb.x + hb.width / 2 + 40, hb.y - 200, { steps: 6 });
+  await expect.poll(async () => (await hook<Drawn>(b, 'presence.drawn')).flatMap((s) => s.ghosts.map((g) => g.id))).toEqual([hand[0]]);
+  expect((await hook<TableState>(b, 'state')).cards[hand[0]!]?.identity).toBeUndefined();
   await a.mouse.up();
   await expect.poll(async () => (await hook<Drawn>(b, 'presence.drawn')).flatMap((s) => s.ghosts)).toEqual([]);
   await context.close();

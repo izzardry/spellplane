@@ -10,7 +10,7 @@
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import type { ActivePing, TableScene, ViewState } from '../scene/types';
-  import { attachPresence } from '../scene/presence';
+  import { attachPresence, type PresenceHandle } from '../scene/presence';
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
   import { tokensToCssVars } from '../themes/index';
@@ -57,7 +57,13 @@
   let forcedHover: InstanceId | null = null;
   let sceneHost = $state<HTMLElement | undefined>();
   let scene: TableScene | null = null;
-  let stopPresence: (() => void) | null = null;
+  let presence: PresenceHandle | null = null;
+  /** Hand a drag out of the hand fan or a pile viewer to the scene, and show it to the others (M1-P5 presence). */
+  function dragOut(id: InstanceId, x: number, y: number): void {
+    if (!scene) return;
+    scene.startDrag(id, x, y);
+    presence?.beginExternalDrag(id, x, y);
+  }
   let sceneReady = $state(false);
   let sceneError = $state('');
   const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -513,7 +519,7 @@
       });
       sceneReady = true;
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
-      stopPresence = attachPresence(sceneHost!, scene, session.presence, {
+      presence = attachPresence(sceneHost!, scene, session.presence, {
         selfSeat: me,
         state: () => st,
         selection: () => selection,
@@ -528,7 +534,8 @@
       for (const t of timers) clearTimeout(t);
       timers = [];
       engine.blur();
-      stopPresence?.();
+      presence?.stop();
+      presence = null;
       scene?.dispose();
       scene = null;
     };
@@ -686,7 +693,7 @@
       onhover={(id) => (hudHover = id)}
       oncontext={(id, x, y) => openMenu(id, x, y)}
       oninspect={(id) => hooks.inspect(id)}
-      ondragout={(id, x, y) => scene?.startDrag(id, x, y)}
+      ondragout={(id, x, y) => dragOut(id, x, y)}
       onselect={(id) => (selection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id])}
     />
   </div>
@@ -712,7 +719,7 @@
         onhover={(id) => (hudHover = id)}
         oncontext={(id, x, y) => openMenu(id, x, y)}
         oninspect={(id) => hooks.inspect(id)}
-        ondragout={(id, x, y) => scene?.startDrag(id, x, y)}
+        ondragout={(id, x, y) => dragOut(id, x, y)}
         onlibrary={libraryAction}
         onclose={closeViewer}
       />

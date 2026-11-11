@@ -6,8 +6,9 @@
  * Two halves over a TableScene, both outside the scene's own render loop so they work with every theme and rig:
  *  - the presence layer, a pointer-transparent 2D canvas over the scene host that projects each remote cursor and the
  *    outline of every card a remote player drags through `worldToScreen` on every frame (pan, zoom, rig blends);
- *  - the sender, which reports this browser's pointer in table millimetres and the cards it drags, derived from the
- *    pointer on the scene host (the scene's drag API is internal; the shown poses are a hint, the sequenced move wins).
+ *  - the sender, which reports this browser's pointer in table millimetres and the cards it drags: a press on a card
+ *    on the scene host, or a drag the HUD hands to the scene (hand fan, pile viewer). Ghost poses hang off the pointer
+ *    as the cards are drawn (scene debug cards), not as TableState stores them; the sequenced move stays authoritative.
  *
  * The net/ Presence types are mirrored structurally here (scene may not import net/); net/types.ts PeerPresence and
  * Presence satisfy them.
@@ -99,6 +100,8 @@ export function presenceShapes(
 /** What the debug hook reports about drawn presence (screen px, CSS). */
 export interface PresenceDebug {
   drawn(): PresenceShape[];
+  /** The layer's frame loop is running (only while some remote presence is drawable). */
+  running(): boolean;
 }
 
 declare module '../util/debug' {
@@ -122,10 +125,23 @@ export interface PresenceLayerOptions {
 export interface PresenceLayer {
   /** Shapes drawn in the last frame. */
   drawn(): PresenceShape[];
+  /** The frame loop is running. */
+  running(): boolean;
   dispose(): void;
 }
 
-/** Draw remote cursors and drag outlines over `host` (the scene's host element) until disposed. */
+/** A remote presence the layer would draw: not the own seat, not stale, with a cursor or a drag. */
+function drawable(p: RemotePresence, now: number, selfSeat: SeatId | null, staleMs: number): boolean {
+  if (selfSeat !== null && p.seat === selfSeat) return false;
+  if (now - p.at > staleMs) return false;
+  return p.cursor !== null || p.drag.length > 0;
+}
+
+/**
+ * Draw remote cursors and drag outlines over `host` (the scene's host element) until disposed. The layer only runs
+ * a frame loop while some remote presence is drawable (render only when needed: nothing runs on the solo table); it
+ * restarts when presence arrives and clears the canvas once when the last shape goes.
+ */
 export function createPresenceLayer(host: HTMLElement, scene: Pick<TableScene, 'worldToScreen'>, channel: Pick<PresenceChannel, 'peers' | 'subscribe'>, opts: PresenceLayerOptions): PresenceLayer {
   const now = opts.now ?? (() => Date.now());
   const canvas = document.createElement('canvas');
@@ -139,12 +155,30 @@ export function createPresenceLayer(host: HTMLElement, scene: Pick<TableScene, '
   let peers: RemotePresence[] = channel.peers();
   let shapes: PresenceShape[] = [];
   let raf = 0;
+  let painted = false;
   let disposed = false;
-  const unsub = channel.subscribe((p) => (peers = p));
+  const active = (): boolean => peers.some((p) => drawable(p, now(), opts.selfSeat, PRESENCE_STALE_MS));
+  const wake = (): void => {
+    if (!disposed && raf === 0 && active()) raf = requestAnimationFrame(draw);
+  };
+  const unsub = channel.subscribe((p) => {
+    peers = p;
+    wake();
+  });
 
   // worldToScreen gives viewport coordinates; the canvas sits at the host's offset.
-  const draw = (): void => {
+  function draw(): void {
+    raf = 0;
     if (disposed) return;
+    if (!active()) {
+      shapes = [];
+      if (painted && ctx) {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      painted = false;
+      return;
+    }
     raf = requestAnimationFrame(draw);
     const rect = host.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
@@ -159,19 +193,22 @@ export function createPresenceLayer(host: HTMLElement, scene: Pick<TableScene, '
     ctx.setTransform(dpr, 0, 0, dpr, -rect.left * dpr, -rect.top * dpr);
     ctx.clearRect(rect.left, rect.top, rect.width, rect.height);
     for (const s of shapes) paint(ctx, s);
-  };
-  raf = requestAnimationFrame(draw);
+    painted = true;
+  }
+  wake();
 
   const layer: PresenceLayer = {
     drawn: () => shapes.map((s) => ({ ...s, ghosts: s.ghosts.map((g) => ({ ...g, corners: [...g.corners] })) })),
+    running: () => raf !== 0,
     dispose() {
       disposed = true;
-      cancelAnimationFrame(raf);
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
       unsub();
       canvas.remove();
     },
   };
-  registerDebug({ presence: { drawn: () => layer.drawn() } });
+  registerDebug({ presence: { drawn: () => layer.drawn(), running: () => layer.running() } });
   return layer;
 }
 
@@ -222,6 +259,18 @@ function paint(ctx: CanvasRenderingContext2D, s: PresenceShape): void {
   ctx.restore();
 }
 
+/** A card as the scene draws it (scene debug `cards()`; TableScene's DebugCard satisfies it, the scene adds `dragging`). */
+export interface ShownCard {
+  id: InstanceId;
+  /** The displayed pose: a pile member at its pile anchor, a stack card in the lane, a tapped card turned. */
+  pose: Pose;
+  /** The scene is dragging this card (present on the scene's own debug cards). */
+  dragging?: boolean;
+}
+
+/** What the sender reads from the scene: the table point under the pointer, the card there and the cards as drawn. */
+export type PresenceScene = Pick<TableScene, 'screenToTable' | 'cardAt'> & { readonly debug: { cards(): readonly ShownCard[] } };
+
 /** Inputs the sender needs from the HUD. */
 export interface PresenceSenderOptions {
   state(): TableState;
@@ -230,84 +279,187 @@ export interface PresenceSenderOptions {
   seat: SeatId | null;
 }
 
+/** While the pointer rests on the table the last cursor is sent again this often, so a still cursor never goes stale. */
+export const PRESENCE_RESEND_MS = 10_000;
+
 /** Cards a press on `card` would drag: the selection when the card is in it, else the card alone (DESIGN "Card manipulation"). */
 export function dragSet(card: InstanceId, selection: readonly InstanceId[]): InstanceId[] {
   return selection.includes(card) ? [...selection] : [card];
 }
 
 /**
- * The poses the dragged cards show: each card's pose moved by the pointer's travel in table space, its rot including
- * the tap turn as drawn (DESIGN "Specification: geometry, layout and motion"). Cards that are not on the table, or that
- * sit in a hidden zone of another seat, are left out.
+ * Whether a dragged card may be shown to the others. Cards in public zones may. A drag the HUD handed to the scene
+ * (`external`: out of the own hand fan or a pile viewer) may also show a card of a zone only its owner sees ('owner'
+ * visibility: hand, sideboard), because those zones are unordered and their opaque ids are already in shared state;
+ * only the position travels, never an identity. Cards of 'nobody' zones (the library) never do: which opaque id is on
+ * top would leak the library's order (DESIGN "Table model", Hidden cards).
  */
-export function dragPoses(state: TableState, ids: readonly InstanceId[], from: TablePoint, to: TablePoint): { id: InstanceId; pose: Pose }[] {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const out: { id: InstanceId; pose: Pose }[] = [];
-  for (const id of ids) {
-    const c = state.cards[id];
-    if (!c) continue;
-    const zone = state.zones[c.zone];
-    if (!zone || zone.visibility !== 'public') continue;
-    out.push({ id, pose: { x: c.pose.x + dx, y: c.pose.y + dy, rot: normDeg(c.pose.rot + (c.tapped ? 90 : 0)) } });
+export function mayShowDrag(state: TableState, id: InstanceId, seat: SeatId | null, external: boolean): boolean {
+  const c = state.cards[id];
+  if (!c) return false;
+  const zone = state.zones[c.zone];
+  if (!zone) return false;
+  if (zone.visibility === 'public') return true;
+  return external && seat !== null && zone.visibility === 'owner' && zone.owner === seat;
+}
+
+/** A dragged card's offset from the pointer's table point at press time and its displayed rot. */
+export interface Grab {
+  id: InstanceId;
+  dx: number;
+  dy: number;
+  rot: number;
+}
+
+/**
+ * How the dragged cards hang off the pointer, from what the scene draws (not from TableState: a card in a squared
+ * pile or the stack lane is drawn at the pile anchor or lane slot, not at its stored pose; DESIGN "Specification:
+ * geometry, layout and motion"). The scene's own drag set wins when it reports one; otherwise the press drags `ids`.
+ * Cards that may not be shown (`mayShowDrag`) or are not drawn are left out.
+ */
+export function grabsOf(state: TableState, shown: readonly ShownCard[], ids: readonly InstanceId[], at: TablePoint, seat: SeatId | null, external: boolean): Grab[] {
+  const byId = new Map(shown.map((c) => [c.id, c]));
+  const sceneDrag = shown.filter((c) => c.dragging).map((c) => c.id);
+  const set = sceneDrag.length > 0 ? sceneDrag : ids;
+  const out: Grab[] = [];
+  for (const id of set) {
+    const c = byId.get(id);
+    if (!c || !mayShowDrag(state, id, seat, external)) continue;
+    out.push({ id, dx: c.pose.x - at.x, dy: c.pose.y - at.y, rot: normDeg(c.pose.rot) });
   }
   return out;
 }
 
-/** Report this browser's pointer and drags on `host` (the scene host) to `channel`; returns a stop function. */
-export function sendPresence(host: HTMLElement, scene: Pick<TableScene, 'screenToTable' | 'cardAt'>, channel: Pick<PresenceChannel, 'cursor' | 'drag'>, opts: PresenceSenderOptions): () => void {
-  let press: { x: number; y: number; table: TablePoint; ids: InstanceId[]; dragging: boolean } | null = null;
+/** The poses the grabbed cards show with the pointer at `at`. */
+export function dragPoses(grabs: readonly Grab[], at: TablePoint): { id: InstanceId; pose: Pose }[] {
+  return grabs.map((g) => ({ id: g.id, pose: { x: at.x + g.dx, y: at.y + g.dy, rot: g.rot } }));
+}
 
-  const move = (e: PointerEvent): void => {
-    const at = scene.screenToTable(e.clientX, e.clientY);
-    channel.cursor(at ? { x: at.x, y: at.y } : null, at ? scene.cardAt(e.clientX, e.clientY) : null);
-    if (!press || !at) return;
-    if (!press.dragging && Math.hypot(e.clientX - press.x, e.clientY - press.y) < DRAG_THRESHOLD_PX) return;
-    press.dragging = true;
-    const poses = dragPoses(opts.state(), press.ids, press.table, at);
-    if (poses.length) channel.drag(poses);
+/**
+ * This browser's presence as a state machine over pointer input in CSS px (the DOM wiring is `sendPresence`): the
+ * cursor while over the table, the dragged cards while a drag runs (a press on a card past the drag threshold, or a
+ * drag the HUD handed to the scene).
+ */
+export interface PresenceTracker {
+  /** A press on the scene host. */
+  down(x: number, y: number, button: number): void;
+  /** A pointer move anywhere; `overTable` when it is over the scene host. */
+  move(x: number, y: number, overTable: boolean): void;
+  up(): void;
+  /** The pointer left the scene host. */
+  leave(): void;
+  /** The HUD handed a drag of `card` to the scene at (x, y) (hand fan, pile viewer: `TableScene.startDrag`). */
+  beginExternalDrag(card: InstanceId, x: number, y: number): void;
+  stop(): void;
+}
+
+export function createPresenceTracker(scene: PresenceScene, channel: Pick<PresenceChannel, 'cursor' | 'drag'>, opts: PresenceSenderOptions): PresenceTracker {
+  let press: { x: number; y: number; at: TablePoint; card: InstanceId | null; external: boolean; dragging: boolean; grabs: Grab[] | null } | null = null;
+  let last: { at: { x: number; y: number } | null; over: InstanceId | null } = { at: null, over: null };
+  let resend: ReturnType<typeof setInterval> | null = null;
+
+  const cursor = (at: { x: number; y: number } | null, over: InstanceId | null): void => {
+    last = { at, over };
+    channel.cursor(at, over);
+    if (at && !resend) resend = setInterval(() => last.at && channel.cursor(last.at, last.over), PRESENCE_RESEND_MS);
+    if (!at && resend) {
+      clearInterval(resend);
+      resend = null;
+    }
   };
-  const down = (e: PointerEvent): void => {
-    if (e.button !== 0) return;
-    const card = scene.cardAt(e.clientX, e.clientY);
-    const table = scene.screenToTable(e.clientX, e.clientY);
-    press = card && table ? { x: e.clientX, y: e.clientY, table, ids: dragSet(card, opts.selection()), dragging: false } : null;
-  };
-  const up = (): void => {
-    if (press?.dragging) channel.drag([]);
-    press = null;
-  };
-  const leave = (): void => {
-    if (!press) channel.cursor(null);
+  const sendDrag = (at: TablePoint): void => {
+    if (!press) return;
+    press.grabs ??= grabsOf(opts.state(), scene.debug.cards(), press.card ? dragSet(press.card, opts.selection()) : [], press.at, opts.seat, press.external);
+    if (press.grabs.length) channel.drag(dragPoses(press.grabs, at));
   };
 
-  host.addEventListener('pointermove', move, { capture: true });
+  return {
+    down(x, y, button) {
+      if (button !== 0) return;
+      const card = scene.cardAt(x, y);
+      const at = scene.screenToTable(x, y);
+      press = card && at ? { x, y, at, card, external: false, dragging: false, grabs: null } : null;
+    },
+    move(x, y, overTable) {
+      if (!overTable && !press?.dragging) return;
+      const at = scene.screenToTable(x, y);
+      const p = at ? { x: at.x, y: at.y } : null;
+      cursor(p, p ? scene.cardAt(x, y) : null);
+      if (!press || !at) return;
+      if (!press.dragging && Math.hypot(x - press.x, y - press.y) < DRAG_THRESHOLD_PX) return;
+      press.dragging = true;
+      sendDrag(at);
+    },
+    up() {
+      if (press?.dragging && press.grabs?.length) channel.drag([]);
+      press = null;
+    },
+    leave() {
+      if (!press) cursor(null, null);
+    },
+    beginExternalDrag(card, x, y) {
+      const at = scene.screenToTable(x, y);
+      if (!at) return;
+      if (press?.dragging && press.grabs?.length) channel.drag([]);
+      press = { x, y, at, card: null, external: true, dragging: true, grabs: null };
+      // The scene placed the card under the pointer (startDrag); its own drag set names it.
+      press.grabs = grabsOf(opts.state(), scene.debug.cards(), [card], at, opts.seat, true).filter((g) => g.id === card);
+      cursor({ x: at.x, y: at.y }, null);
+      sendDrag(at);
+    },
+    stop() {
+      if (press?.dragging && press.grabs?.length) channel.drag([]);
+      press = null;
+      cursor(null, null);
+    },
+  };
+}
+
+/** What `sendPresence` and `attachPresence` return. */
+export interface PresenceHandle {
+  /** Report a drag the HUD handed to the scene (call right after `TableScene.startDrag`). */
+  beginExternalDrag(card: InstanceId, x: number, y: number): void;
+  stop(): void;
+}
+
+/**
+ * Report this browser's pointer and drags on `host` (the scene host) to `channel`. Moves are read on the window after
+ * the scene handled them (bubble phase), so a scene drag that starts on that move is already reported by the scene.
+ */
+export function sendPresence(host: HTMLElement, scene: PresenceScene, channel: Pick<PresenceChannel, 'cursor' | 'drag'>, opts: PresenceSenderOptions): PresenceHandle {
+  const tracker = createPresenceTracker(scene, channel, opts);
+  const move = (e: PointerEvent): void => tracker.move(e.clientX, e.clientY, e.target instanceof Node && host.contains(e.target));
+  const down = (e: PointerEvent): void => tracker.down(e.clientX, e.clientY, e.button);
+  const up = (): void => tracker.up();
+  const leave = (): void => tracker.leave();
+
+  window.addEventListener('pointermove', move);
   host.addEventListener('pointerdown', down, { capture: true });
   window.addEventListener('pointerup', up, { capture: true });
   window.addEventListener('pointercancel', up, { capture: true });
   host.addEventListener('pointerleave', leave);
-  return () => {
-    host.removeEventListener('pointermove', move, { capture: true });
-    host.removeEventListener('pointerdown', down, { capture: true });
-    window.removeEventListener('pointerup', up, { capture: true });
-    window.removeEventListener('pointercancel', up, { capture: true });
-    host.removeEventListener('pointerleave', leave);
-    if (press?.dragging) channel.drag([]);
-    channel.cursor(null);
+  return {
+    beginExternalDrag: (card, x, y) => tracker.beginExternalDrag(card, x, y),
+    stop() {
+      window.removeEventListener('pointermove', move);
+      host.removeEventListener('pointerdown', down, { capture: true });
+      window.removeEventListener('pointerup', up, { capture: true });
+      window.removeEventListener('pointercancel', up, { capture: true });
+      host.removeEventListener('pointerleave', leave);
+      tracker.stop();
+    },
   };
 }
 
-/** Both halves at once: draw the others' presence over `host` and report this browser's. Returns a stop function. */
-export function attachPresence(
-  host: HTMLElement,
-  scene: Pick<TableScene, 'worldToScreen' | 'screenToTable' | 'cardAt'>,
-  channel: PresenceChannel,
-  opts: PresenceLayerOptions & Omit<PresenceSenderOptions, 'seat'>,
-): () => void {
+/** Both halves at once: draw the others' presence over `host` and report this browser's. */
+export function attachPresence(host: HTMLElement, scene: Pick<TableScene, 'worldToScreen'> & PresenceScene, channel: PresenceChannel, opts: PresenceLayerOptions & Omit<PresenceSenderOptions, 'seat'>): PresenceHandle {
   const layer = createPresenceLayer(host, scene, channel, opts);
-  const stop = sendPresence(host, scene, channel, { state: opts.state, selection: opts.selection, seat: opts.selfSeat });
-  return () => {
-    stop();
-    layer.dispose();
+  const sender = sendPresence(host, scene, channel, { state: opts.state, selection: opts.selection, seat: opts.selfSeat });
+  return {
+    beginExternalDrag: sender.beginExternalDrag,
+    stop() {
+      sender.stop();
+      layer.dispose();
+    },
   };
 }

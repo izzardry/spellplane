@@ -10,6 +10,7 @@ import type { CardRef, Format } from '../../../src/core/types';
 import { mtg } from '../../../src/games/index';
 import { LoopbackNetwork } from '../../../src/net/loopback';
 import { placeCards } from '../../../src/scene/layout';
+import { createPresenceTracker } from '../../../src/scene/presence';
 import { FakeCardData } from '../../../src/ui/fakes';
 import { createLocalSession, type LocalSession } from '../../../src/ui/lobby/local-session';
 import { chairs, firstFreeChair } from '../../../src/ui/lobby/seats';
@@ -218,11 +219,26 @@ describe('stand-in session: Ready, the two-seat layout and secrecy', () => {
     a.presence.cursor({ x: 10, y: -200 }, null);
     await vi.advanceTimersByTimeAsync(100);
     expect(b.presence.peers()[0]?.cursor).toEqual({ x: 10, y: -200 });
+    // ... and drags a card out of her hand fan (scene/presence.ts external drag): Ben sees where, never what.
+    const handCard = a.secrets().hand[0]!;
+    const tracker = createPresenceTracker(
+      { screenToTable: (x, y) => ({ x, y: -y }), cardAt: () => null, debug: { cards: () => [{ id: handCard, pose: { x: 40, y: -300, rot: 0 }, dragging: true }] } },
+      a.presence,
+      { state: () => a.getState(), selection: () => [], seat: a.seat },
+    );
+    tracker.beginExternalDrag(handCard, 40, 300);
+    await vi.advanceTimersByTimeAsync(100);
+    tracker.move(60, 250, false);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(b.presence.peers()[0]?.drag).toEqual([{ id: handCard, pose: { x: 60, y: -250, rot: 0 } }]);
+    tracker.up();
+    tracker.stop();
     const secrets = a.secrets();
     const forbidden = Object.values(secrets.identities).flatMap((i) => [i.card.sid, i.salt]);
     expect(forbidden.length).toBe(120);
     const received = net.delivered.filter((d) => d.to === 'tb').map((d) => d.msg);
     expect(received.length).toBeGreaterThan(0);
+    expect(received.some((m) => (m as { t?: string }).t === 'drag')).toBe(true);
     expect(scan([...received, b.getState(), b.secrets(), b.log()], forbidden)).toEqual([]);
   });
 });
