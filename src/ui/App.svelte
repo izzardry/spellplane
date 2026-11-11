@@ -19,7 +19,7 @@
     const s = stage;
     registerDebug({
       cards: () =>
-        s.cards().map((c) => ({ id: c.id, pose: { x: c.x, y: c.y, rot: c.rot }, screen: s.cardRect(c.id), visible: true })),
+        s.cards().map((c) => ({ id: c.id, pose: { x: c.x, y: c.y, rot: c.rot }, screen: s.cardRect(c.id) ?? new DOMRect(), visible: true })),
       camera: () => ({ rig: 'birdseye', fov: s.camera.fov, position: s.camera.position.toArray(), pitch: 90 }),
       frameStats: () => ({ drawCalls: s.renderer.info.render.calls, textureBytes: 0, frameMs: 0 }),
     });

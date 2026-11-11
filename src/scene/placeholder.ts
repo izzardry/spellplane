@@ -3,14 +3,9 @@
  * name, mana cost and type line, so tests and screenshots never need Scryfall images.
  * Same input always gives the same picture.
  */
-export interface PlaceholderFace {
-  name: string;
-  cost?: string;
-  type?: string;
-  /** Free text in the body, e.g. oracle text or power/toughness. */
-  text?: string;
-  pt?: string;
-}
+import type { PlaceholderFace } from '../data/types';
+
+export type { PlaceholderFace };
 
 /** Card aspect 63 x 88; 488 x 680 matches Scryfall's "normal" tier. */
 export const PLACEHOLDER_SIZE = { width: 488, height: 680 } as const;
