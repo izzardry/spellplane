@@ -207,6 +207,8 @@
     const inText = isTextEntry(e.target) || isTextEntry(document.activeElement);
     if (inText) return;
     const plain = !e.ctrlKey && !e.altKey && !e.metaKey;
+    // Enter and Space on a keyboard-focused control (button, link, checkbox) activate that control.
+    if (plain && (e.key === 'Enter' || e.key === ' ') && isControl(e.target)) return;
     if (e.key === 'Escape' && plain && !promptShowing(st, me) && closeTop()) {
       e.preventDefault();
       return;
@@ -218,6 +220,15 @@
       return;
     }
     if (engine.keydown(e, false)) e.preventDefault();
+  }
+  function isControl(t: EventTarget | null): boolean {
+    const el = t as HTMLElement | null;
+    return !!el?.tagName && (['BUTTON', 'A', 'SUMMARY', 'INPUT', 'SELECT'].includes(el.tagName) || el.getAttribute?.('role') === 'menuitem');
+  }
+  /** A mouse click leaves no focus on HUD buttons, so Enter and Space keep their table meaning afterwards. */
+  function onclick(e: MouseEvent) {
+    if (e.detail > 0 && isControl(e.target) && !isTextEntry(e.target)) (e.target as HTMLElement).blur();
+    else if (e.detail > 0 && (e.target as HTMLElement | null)?.closest?.('button')) (e.target as HTMLElement).closest('button')?.blur();
   }
   function onkeyup(e: KeyboardEvent) {
     if (engine.keyup(e)) e.preventDefault();
@@ -430,6 +441,7 @@
   {onkeydown}
   {onkeyup}
   {onfocusin}
+  {onclick}
   onblur={() => engine.blur()}
   onpointermove={(e) => {
     pointer.x = e.clientX;

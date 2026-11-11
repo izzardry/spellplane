@@ -307,6 +307,23 @@ test.describe('log (DESIGN "Turn flow and confirmation", Action log)', () => {
   });
 });
 
+test.describe('focus and keys (DESIGN "Input and interaction design")', () => {
+  test('after a mouse click on a HUD button, Enter still focuses the chat; a keyboard-focused button takes its own Enter', async ({ page }) => {
+    await openHud(page);
+    await page.getByTestId('open-deck-import').click();
+    await page.getByTestId('deck-import').getByRole('button', { name: 'Close' }).click();
+    await expect(page.getByTestId('deck-import')).toHaveCount(0);
+    await hoverNothing(page);
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('chat-input')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await page.getByTestId('open-cheat-sheet').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByTestId('cheat-sheet')).toBeVisible();
+    await expect(page.getByTestId('chat-input')).not.toBeFocused();
+  });
+});
+
 test.describe('deck import (DESIGN "Pre-game", Constructed decks)', () => {
   test('paste a list, see unresolved lines with near matches, fix one and import into the session', async ({ page }) => {
     await openHud(page);
