@@ -79,6 +79,39 @@ export function seatLayoutOf(state: TableState, layout: TableLayout, seat: SeatI
   return s ? (layout.seats[s.index] ?? null) : null;
 }
 
+/**
+ * The box the fitted view frames (DESIGN "Camera and navigation": the screen-anchored layer never covers the table's
+ * content): the table plus the hand rows of card backs the scene draws outside its edges for every seat but the
+ * viewer's and empty chairs (PLAN M1-P5: the opponent's hand as card backs), so the fitted view shows how many cards
+ * each hand holds.
+ * Axis-aligned in table space; centre and size in mm.
+ */
+export function fitFrame(state: TableState | null, layout: TableLayout, viewerSeat: SeatId | null): { x: number; y: number; w: number; d: number } {
+  let x0 = -layout.table.w / 2;
+  let x1 = layout.table.w / 2;
+  let y0 = -layout.table.d / 2;
+  let y1 = layout.table.d / 2;
+  if (state) {
+    const own = seatLayoutOf(state, layout, viewerSeat);
+    for (const seat of Object.values(state.seats)) {
+      const sl = layout.seats[seat.index];
+      // Empty chairs (the solo table's second seat) hold no hand to show.
+      if (!sl || sl === own || (seat.name === '' && seat.peer === undefined)) continue;
+      const r = sl.zones.handRow;
+      const a = (r.rot * Math.PI) / 180;
+      const c = Math.abs(Math.cos(a));
+      const sn = Math.abs(Math.sin(a));
+      const hw = (c * r.w + sn * r.d) / 2;
+      const hd = (sn * r.w + c * r.d) / 2;
+      x0 = Math.min(x0, r.x - hw);
+      x1 = Math.max(x1, r.x + hw);
+      y0 = Math.min(y0, r.y - hd);
+      y1 = Math.max(y1, r.y + hd);
+    }
+  }
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, d: y1 - y0 };
+}
+
 /** The viewer's seat angle (spectators see seat 0's view). */
 export function viewerAngle(state: TableState | null, layout: TableLayout, viewerSeat: SeatId | null): number {
   if (state && viewerSeat) {
@@ -151,7 +184,12 @@ export function placeCards(state: TableState, view: ViewState, ctx: Presentation
     }
 
     if (pres === 'cascade-lane') {
-      ids.forEach((id, i) => out.set(id, make(state, view, ctx, id, zone.id, 'stack', stackPose(ctx.layout.stackLane, i, angle), 0, [LAYER.stack, 0, i])));
+      // A spell takes its item's slot, so ability and trigger markers between spells keep theirs (scene/stack.ts).
+      ids.forEach((id, i) => {
+        const slot = state.stack.findIndex((it) => it.card === id);
+        const at = slot < 0 ? i : slot;
+        out.set(id, make(state, view, ctx, id, zone.id, 'stack', stackPose(ctx.layout.stackLane, at, angle), 0, [LAYER.stack, 0, at]));
+      });
       continue;
     }
 

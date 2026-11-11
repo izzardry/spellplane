@@ -9,10 +9,13 @@ import type { ActionDraft } from '../core/actions';
 import { GEOMETRY } from '../core/geometry';
 import { sha256 } from '../core/hash';
 import { parseZoneId } from '../core/ids';
-import type { CardInstance, InstanceId, Pose, SeatId, StackItem, StackItemId, TableState, ZoneId } from '../core/types';
+import type { CardInstance, InstanceId, LogEntry, Pose, SeatId, StackItem, StackItemId, TableState, ZoneId } from '../core/types';
 import type { ActionId, GameDefinition } from '../games/types';
+import { hoveredStackItem } from '../scene/stack';
 import type { TableScene } from '../scene/types';
 import type { TableSession } from '../session/types';
+import { ASK_LABEL_MAX, blockingHolder, pendingAbout, roundPassed as coreRoundPassed } from '../core/reducer/confirm';
+import { promptModel } from './confirm/model';
 import { freeSlot, inZoneKind, layoutOf, offsetLocal, seatAngle, seatLayout } from './geometry';
 import { tidyPoses } from './tidy';
 
@@ -32,6 +35,8 @@ export interface UiHooks {
   /** Open the inspect view for a card; null closes it. */
   inspect(card: InstanceId | null): void;
   openDrawN(): void;
+  /** Open the inline Ask field: Enter asks with the typed label (none when empty), Esc cancels (DESIGN "Turn flow and confirmation", Start). */
+  openAsk(): void;
   openTokenSearch(near: InstanceId | null): void;
   toggleCheatSheet(): void;
   focusChat(): void;
@@ -53,20 +58,29 @@ export interface CommandHost {
 
 type Phase = 'start' | 'end';
 
-/** Whether every seat other than the asker has answered ok or timeout and nobody holds (DESIGN "Turn flow and confirmation", All passed). */
+/**
+ * Whether everyone who answers the open round has passed (OK or timeout), or there is none (DESIGN "Turn flow and
+ * confirmation", All passed). Empty chairs and the asker do not answer (core/reducer/confirm.ts).
+ */
 export function roundPassed(state: TableState): boolean {
-  const r = state.confirm;
-  if (!r) return true;
-  if (r.holder) return false;
-  return Object.keys(state.seats).every((s) => s === r.askedBy || r.responses[s] === 'ok' || r.responses[s] === 'timeout');
+  return coreRoundPassed(state);
 }
 
-/** Whether the confirmation prompt shows for `seat`: a round asked by someone else that this seat has not passed (DESIGN "Turn flow and confirmation", Prompt). */
+/** Whether the confirmation prompt shows for `seat`: it answers the open round and has not passed (holding included) (DESIGN "Turn flow and confirmation", Prompt). */
 export function promptShowing(state: TableState, seat: SeatId): boolean {
-  const r = state.confirm;
-  if (!r || r.askedBy === seat) return false;
-  const mine = r.responses[seat];
-  return mine !== 'ok' && mine !== 'timeout';
+  const mode = promptModel(state, seat)?.mode;
+  return mode === 'respond' || mode === 'holding';
+}
+
+/**
+ * The prompt's live keys for `seat` (ui/keymap.ts PromptKeys): none while no prompt shows; Hold only while this seat
+ * may hold (not while it already holds the floor or another seat does), so H then acts on the hovered card (to hand),
+ * as a player responding during a hold needs (gate M1 finding: a tutor with H during a hold was swallowed).
+ */
+export function promptKeys(state: TableState, seat: SeatId): false | ((action: ActionId) => boolean) {
+  if (!promptShowing(state, seat)) return false;
+  const holder = state.confirm?.holder === seat ? seat : blockingHolder(state);
+  return (action) => action !== 'confirmHold' || holder === null;
 }
 
 /** The stack item a card belongs to (a spell's card on the stack), or null. */
@@ -84,6 +98,34 @@ export function isEmptyChair(state: TableState, seat: SeatId): boolean {
   return Object.values(state.zones).every((z) => z.owner !== seat || z.ids.length === 0);
 }
 
+/** Whether the turn belongs to `seat` (its own turn, or its team's in Two-Headed Giant). */
+export function isOwnTurn(state: TableState, seat: SeatId): boolean {
+  const team = state.seats[seat]?.team;
+  return state.turn.active === seat || (team !== undefined && state.turn.active === team);
+}
+
+/**
+ * Whether a page that opens on `state` (after a reload or a rejoin) should offer untap-and-draw (DESIGN "Turn flow and
+ * confirmation": the new active player is offered a single key, never done for them): it is the seat's turn, the
+ * log's last `turnPass` handed it to the seat, and the seat has done nothing since. `offeredTurn` is the turn number
+ * at which this tab last showed the offer without it being taken or dismissed (kept across reloads by the HUD); it
+ * also counts when the log no longer reaches back to the pass.
+ */
+export function untapOfferOnOpen(state: TableState, seat: SeatId, log: readonly LogEntry[], offeredTurn: number | null): boolean {
+  if (!isOwnTurn(state, seat)) return false;
+  if (offeredTurn === state.turn.number) return true;
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i]!;
+    if (e.kind !== 'action') continue;
+    if (e.action.type === 'turnPass') {
+      const team = state.seats[seat]?.team;
+      return e.action.to === seat || (team !== undefined && e.action.to === team);
+    }
+    if (e.action.by === seat) return false;
+  }
+  return false;
+}
+
 const isPublicZone = (state: TableState, c: CardInstance): boolean => state.zones[c.zone]?.visibility === 'public';
 
 /** Executes keymap actions against the session and scene (DESIGN "Input and interaction design"). */
@@ -99,13 +141,28 @@ export class Commands {
     return this.host.session.seat;
   }
 
-  /** Cards a bare key acts on (DESIGN "Input and interaction design", Hover plus key). */
+  /**
+   * Cards a bare key acts on (DESIGN "Input and interaction design", Hover plus key). None while the pointer is over a
+   * stack marker: the key is meant for that marker, never for the selection elsewhere.
+   */
   targets(): CardInstance[] {
     const st = this.state;
     const { hovered, selection } = this.host.view();
+    if (!hovered && this.hoveredMarker()) return [];
     const sel = selection.map((id) => st.cards[id]).filter((c): c is CardInstance => !!c);
     if (hovered && st.cards[hovered]) return sel.some((c) => c.id === hovered) ? sel : [st.cards[hovered]];
     return sel;
+  }
+
+  /**
+   * The stack marker (ability, trigger or copy) under the pointer when no card is: markers are not cards, so the
+   * scene reports them on their own (scene/stack.ts hoveredStackItem). A spell in the lane is its hovered card.
+   */
+  private hoveredMarker(): StackItem | null {
+    if (this.host.view().hovered) return null;
+    const id = hoveredStackItem(this.host.scene());
+    const it = id ? this.state.stack.find((i) => i.id === id) : undefined;
+    return it && it.card === undefined ? it : null;
   }
 
   private hoveredCard(): CardInstance | null {
@@ -135,6 +192,9 @@ export class Commands {
       case 'ability':
         return bf;
       case 'flip':
+        // F on an own hand card puts it onto the own battlefield face down (DESIGN "Table model", Face-down on the
+        // battlefield; "Card manipulation": F flips face down): the identity stays in this browser.
+        return pub || (card.zone === `hand:${this.me}` && !!this.host.session.secrets().identities[card.id]);
       case 'counterAdd':
       case 'counterRemove':
       case 'note':
@@ -200,8 +260,17 @@ export class Commands {
         this.dispatchAll(cards.filter((c) => c.tapped !== tapped).map((c) => ({ type: 'tap', card: c.id, tapped })));
         return;
       }
-      case 'flip':
-        return forCards((c) => ({ type: 'flip', card: c.id, face: c.face === 'up' ? 'down' : 'up' }));
+      case 'flip': {
+        const cards = this.targets().filter((c) => this.applies('flip', c));
+        const hand = cards.filter((c) => !isPublicZone(st, c));
+        this.dispatchAll(cards.filter((c) => isPublicZone(st, c)).map((c) => ({ type: 'flip', card: c.id, face: c.face === 'up' ? 'down' : 'up' })));
+        const to: ZoneId = `battlefield:${me}`;
+        if (hand.length && st.zones[to]) {
+          const layout = layoutOf(this.host.game, st);
+          for (const c of hand) this.host.session.playFaceDown(c.id, to, freeSlot(this.state, me, layout, c.id));
+        }
+        return;
+      }
       case 'transform':
         return forCards((c) => ({ type: 'transform', card: c.id, faceIndex: c.faceIndex === 0 ? 1 : 0 }));
       case 'rotate180':
@@ -214,6 +283,11 @@ export class Commands {
           return kind ? { type: 'counter', card: c.id, kind, delta: -1 } : null;
         });
       case 'note': {
+        const marker = this.hoveredMarker();
+        if (marker) {
+          this.host.ui.openNote({ item: marker.id });
+          return;
+        }
         const c = this.hoveredCard() ?? this.targets()[0];
         if (!c || !this.applies('note', c)) return;
         const item = stackItemOfCard(st, c.id);
@@ -221,6 +295,12 @@ export class Commands {
         return;
       }
       case 'copy': {
+        const marker = this.hoveredMarker();
+        if (marker) {
+          // X on a stack item puts a copy marker above it (DESIGN "The effect stack", Copy).
+          this.host.session.dispatch({ type: 'stackPush', item: this.host.newId('si'), kind: 'copy', copyOf: marker.id, controller: me, round: this.host.newId('r') });
+          return;
+        }
         const cards = this.targets().filter((c) => this.applies('copy', c));
         const layout = layoutOf(this.host.game, st);
         this.dispatchAll(
@@ -252,6 +332,11 @@ export class Commands {
         return;
       }
       case 'ping': {
+        const marker = this.hoveredMarker();
+        if (marker) {
+          this.host.session.dispatch({ type: 'ping', target: { kind: 'stackItem', id: marker.id } });
+          return;
+        }
         const c = this.hoveredCard();
         if (!c || !this.applies('ping', c)) return;
         const item = stackItemOfCard(st, c.id);
@@ -346,7 +431,7 @@ export class Commands {
         return;
       // --- Confirm
       case 'ask':
-        this.host.session.dispatch({ type: 'ask', round: this.host.newId('r') });
+        this.host.ui.openAsk();
         return;
       case 'confirmOk': {
         const r = st.confirm;
@@ -358,6 +443,9 @@ export class Commands {
       case 'confirmHold': {
         const r = st.confirm;
         if (!r || !promptShowing(st, me) || r.holder === me) return;
+        // One seat holds at a time: while another seat holds the floor, Hold is not offered.
+        const holder = blockingHolder(st);
+        if (holder !== null && holder !== me) return;
         this.host.session.dispatch({ type: 'respond', round: r.id, seat: me, response: 'hold' });
         return;
       }
@@ -414,6 +502,12 @@ export class Commands {
     }
   }
 
+  /** Start a confirmation round with an optional short label (DESIGN "Turn flow and confirmation", Start: Ask, "attacks?"). */
+  ask(label = ''): void {
+    const text = label.trim().slice(0, ASK_LABEL_MAX);
+    this.host.session.dispatch({ type: 'ask', round: this.host.newId('r'), ...(text ? { label: text } : {}) });
+  }
+
   /**
    * Resolve the top item (DESIGN "The effect stack", Resolving): to `to`, or to the game's default destination for
    * the card (permanents to the controller's battlefield, instants and sorceries to the owner's graveyard; markers
@@ -428,7 +522,7 @@ export class Commands {
       this.host.ui.notify('The stack is empty');
       return;
     }
-    const pending = st.confirm && st.confirm.about === top.id && !roundPassed(st);
+    const pending = pendingAbout(st, top.id);
     if (!pending) {
       this.pendingForce = null;
       this.host.session.dispatch({ type: 'stackResolve', item: top.id, ...this.resolveDestination(top, to) });

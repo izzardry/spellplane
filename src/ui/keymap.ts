@@ -136,10 +136,16 @@ export function validOverrides(value: unknown): KeymapOverride[] {
   return out;
 }
 
-/** The binding for a key event: prompt bindings take precedence while a prompt shows and are dead otherwise. */
-export function findBinding(keymap: Keymap, e: KeyInput, promptShowing: boolean): KeyBinding | null {
-  if (promptShowing) {
-    const p = keymap.find((b) => b.context === 'prompt' && matchesChord(b.chord, e));
+/**
+ * Which prompt bindings are live: false while no prompt shows, true for all of them, or a test per action (a prompt
+ * binding whose action can do nothing right now, such as Hold while this seat already holds, lets the key fall through).
+ */
+export type PromptKeys = boolean | ((action: ActionId) => boolean);
+
+/** The binding for a key event: live prompt bindings take precedence while a prompt shows and are dead otherwise. */
+export function findBinding(keymap: Keymap, e: KeyInput, prompt: PromptKeys): KeyBinding | null {
+  if (prompt) {
+    const p = keymap.find((b) => b.context === 'prompt' && matchesChord(b.chord, e) && (prompt === true || prompt(b.action)));
     if (p) return p;
   }
   return keymap.find((b) => b.context === 'table' && matchesChord(b.chord, e)) ?? null;
@@ -213,7 +219,7 @@ export class KeyEngine {
   constructor(
     keymap: Keymap,
     private readonly handlers: KeyEngineHandlers,
-    private readonly promptShowing: () => boolean,
+    private readonly promptShowing: () => PromptKeys,
     private readonly now: () => number = () => Date.now(),
   ) {
     this.keymap = keymap;

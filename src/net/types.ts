@@ -222,6 +222,12 @@ export interface NetEngine {
   /** The seat this identity holds in the view, or null. */
   seat(): SeatId | null;
   /**
+   * Own actions applied optimistically and not yet sequenced, oldest first (SyncEngine.pending; DESIGN "Specification:
+   * network protocol and secrecy", Sequencing 4). Added by M1-C (amendment): the pair channel (M1-P2) refuses a look
+   * at a zone a pending own action may change.
+   */
+  pending(): readonly Action[];
+  /**
    * Apply a stamped own action (`by`, `cid`, no `seq`) optimistically and send `propose` to the sequencer (or
    * sequence it directly when this browser is the sequencer, or when alone). False when the reducer refuses it
    * locally; nothing is sent then.

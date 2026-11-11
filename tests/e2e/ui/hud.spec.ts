@@ -334,6 +334,27 @@ test.describe('avatar (DESIGN "Turn flow and confirmation", Life and player coun
     expect((await drafts(page)).at(-1)).toEqual({ type: 'playerCounter', seat: 's0', kind: 'energy', delta: 1 });
   });
 
+  test('a seat whose player disconnected is marked away on its avatar, and the mark goes when it is back (DESIGN "Multiplayer architecture", Resume)', async ({ page }) => {
+    await openHud(page);
+    const ben = page.locator('[data-testid="avatar"][data-seat="s1"]');
+    await expect(ben).toHaveAttribute('data-away', 'false');
+    await expect(ben.getByTestId('away')).toHaveCount(0);
+    await page.evaluate(() =>
+      window.__uiHarness!.update((s) => {
+        s.seats.s1!.away = true;
+      }),
+    );
+    await expect(ben).toHaveAttribute('data-away', 'true');
+    await expect(ben.getByTestId('away')).toHaveText('away');
+    await expect(ben).toHaveAttribute('aria-label', /away/);
+    await page.evaluate(() =>
+      window.__uiHarness!.update((s) => {
+        delete s.seats.s1!.away;
+      }),
+    );
+    await expect(ben).toHaveAttribute('data-away', 'false');
+  });
+
   test('changes to an opponent\'s life go to their seat; life changes within two seconds merge into one log line', async ({ page }) => {
     await openHud(page);
     const ben = page.locator('[data-testid="avatar"][data-seat="s1"]');
@@ -525,7 +546,7 @@ test.describe('confirmation prompt (DESIGN "Turn flow and confirmation", Confirm
     await expect(prompt).toContainText('Ben');
     await expect(prompt).toContainText('attacks?');
     await expect(prompt.getByTestId('prompt-ok')).toContainText('Enter');
-    await expect(prompt.getByTestId('prompt-hold')).toContainText('Esc');
+    await expect(prompt.getByTestId('prompt-hold').locator('kbd')).toHaveText('H');
     await hoverNothing(page);
     await page.keyboard.press('KeyH');
     await expect(prompt.getByTestId('release')).toBeVisible();
@@ -546,7 +567,9 @@ test.describe('app shell routes (PLAN M0-P4: #/ solo table, room for #/t/<room>/
     ['/t/abc/key123', 'route-room'],
     ['/nowhere', 'route-notFound'],
   ] as const) {
-    test(`#${hash} shows its page`, async ({ page }) => {
+    test(`#${hash} shows its page`, async ({ page, browserName }) => {
+      // M1-P5: the start page reads the key-pair identity, which Playwright WebKit on macOS cannot store (tests/e2e/lobby/helpers.ts).
+      test.skip(hash === '/lobby' && browserName === 'webkit' && process.platform === 'darwin', 'Playwright WebKit on macOS hangs storing a CryptoKey in IndexedDB');
       await page.goto(`./?faces=placeholder#${hash}`);
       await expect(page.getByTestId(id)).toBeVisible();
       await page.getByRole('link', { name: /solo table/i }).click();

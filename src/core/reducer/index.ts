@@ -12,6 +12,7 @@ import type { CoreGameSpec, Format, SeatColourIndex, TableState, Team, Zone } fr
 import { DEFAULT_TABLE_SETTINGS } from '../types';
 import { seatIdOf, zoneId } from '../ids';
 import * as cards from './cards';
+import * as confirm from './confirm';
 import { Draft } from './draft';
 import { STACK_ZONE } from './place';
 import * as stack from './stack';
@@ -88,15 +89,15 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   ping: table.ping,
   phaseSet: table.phaseSet,
   turnPass: table.turnPass,
-  ask: later('M1-P3'),
-  respond: later('M1-P3'),
-  autoPass: later('M1-P3'),
+  ask: confirm.ask,
+  respond: confirm.respond,
+  autoPass: confirm.autoPass,
   life: table.life,
   playerCounter: table.playerCounter,
   seatTake: table.seatTake,
   seatLeave: table.seatLeave,
   ready: table.ready,
-  away: later('M1-P7'),
+  away: table.away,
   rngCommit: later('M1-P2'),
   rngReveal: later('M1-P2'),
   commitClose: later('M1-P2'),
@@ -112,6 +113,8 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   sequencerClaim: record,
   settings: table.settings,
   stageSet: table.stageSet,
+  recover: later('M1-P7'),
+  recoverCommit: later('M1-P7'),
 };
 
 const UNDOABLE = new Set<string>(UNDOABLE_TYPES);

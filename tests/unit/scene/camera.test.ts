@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { BirdseyeRig } from '../../../src/scene/camera';
+import { legibleScale } from '../../../src/scene/math';
 
 const TABLE = { w: 1400, d: 1100 };
 const VP = { w: 1440, h: 900 };
@@ -192,5 +193,47 @@ describe('fit clear of the screen-anchored layer (DESIGN "Camera and navigation"
     const safe = rig.safeArea();
     expect(safe.w).toBeCloseTo(VP.w * 0.4, 6);
     expect(safe.h).toBeCloseTo(VP.h * 0.4, 6);
+  });
+});
+
+describe('fitted frame beyond the table (gate M1 finding: the opponent\'s hand row)', () => {
+  it('the fitted view shows the whole frame clear of the insets, and a fitted view stays fitted when the frame changes', () => {
+    const rig = new BirdseyeRig(TABLE, VP, 180);
+    rig.setInsets({ top: 40, right: 316, bottom: 206, left: 190 });
+    // The 1v1 hand row of seat 0 lies beyond seat 0's near edge (y < -d/2); seen from seat 1 that is the top.
+    const frame = { x: 0, y: -50, w: 1400, d: 1200 };
+    rig.setFrame(frame);
+    const safe = rig.safeArea();
+    for (const p of [
+      { x: -700, y: -650 },
+      { x: 700, y: -650 },
+      { x: -700, y: 550 },
+      { x: 700, y: 550 },
+    ]) {
+      const s = rig.tableToScreen(p);
+      expect(s.x).toBeGreaterThanOrEqual(safe.x - 1e-6);
+      expect(s.x).toBeLessThanOrEqual(safe.x + safe.w + 1e-6);
+      expect(s.y).toBeGreaterThanOrEqual(safe.y - 1e-6);
+      expect(s.y).toBeLessThanOrEqual(safe.y + safe.h + 1e-6);
+    }
+    // The far edge of the frame (seat 0's hand row) is drawn at the top of the safe area, below the top inset.
+    expect(rig.tableToScreen({ x: 0, y: -650 }).y).toBeLessThan(rig.tableToScreen({ x: 0, y: 550 }).y);
+    expect(rig.atFit()).toBe(true);
+    rig.setFrame({ x: 0, y: 0, w: 1400, d: 1100 });
+    expect(rig.atFit()).toBe(true);
+    expect(rig.view.dist).toBeCloseTo(rig.maxDist(), 9);
+  });
+});
+
+describe('legible table text (gate M1 finding: zone labels at the fitted view)', () => {
+  it('scales small type up to the pixel floor in quarter steps, within [1, max]', () => {
+    // 5.5 mm at 0.6 px per mm (the fitted 1v1 table) is 3.3 px: scaled to at least 9 px.
+    const k = legibleScale(5.5, 9, 3, 0.6);
+    expect(k).toBe(2.75);
+    expect(5.5 * 0.6 * k).toBeGreaterThanOrEqual(9);
+    expect(k * 4).toBe(Math.round(k * 4));
+    expect(legibleScale(5.5, 9, 3, 5)).toBe(1);
+    expect(legibleScale(5.5, 9, 3, 0.1)).toBe(3);
+    expect(legibleScale(5.5, 9, 3, 0)).toBe(3);
   });
 });

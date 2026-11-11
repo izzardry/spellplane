@@ -6,16 +6,22 @@
 -->
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
-  import type { CardInstance, CardRef, InstanceId, StackItemId, ZoneId } from '../core/types';
+  import { mergeTimeline, type ChatTab } from '../core/log';
+  import type { CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import type { ActivePing, TableScene, ViewState } from '../scene/types';
+  import { attachPresence, type PresenceHandle } from '../scene/presence';
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
   import { tokensToCssVars } from '../themes/index';
-  import { Commands, isEmptyChair, promptShowing, roundPassed, type UiHooks } from './commands';
+  import { Commands, isEmptyChair, isOwnTurn, promptKeys, promptShowing, roundPassed, untapOfferOnOpen, type UiHooks } from './commands';
+  import ConfirmPrompt from './confirm/ConfirmPrompt.svelte';
+  import { promptModel, roundWhat } from './confirm/model';
   import { parsePlainList } from './deck';
   import { logLines } from './describe';
+  import Flashes from './chat/Flashes.svelte';
+  import { addPending, LogWatch, prunePending } from './chat/watch';
   import { inZoneKind, layoutOf } from './geometry';
   import { fitInsets as fitInsetsFor, handOrder } from './hand';
   import { applyOverrides, chordToString, findConflict, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS, reservedConflict, validOverrides } from './keymap';
@@ -40,6 +46,9 @@
   let st = $state.raw(untrack(() => session.getState()));
   let secrets = $state.raw(untrack(() => session.secrets()));
   let entries = $state.raw(untrack(() => session.log()));
+  /** Own chat lines not in the session log yet, and what the HUD notices as the log grows (ui/chat/watch.ts, M1-P6). */
+  let pendingChat = $state.raw<readonly LogEntry[]>([]);
+  const watch = new LogWatch();
 
   // --- Local view state (never shared) -------------------------------------------------------------------------
   let sceneHover = $state<InstanceId | null>(null);
@@ -56,6 +65,13 @@
   let forcedHover: InstanceId | null = null;
   let sceneHost = $state<HTMLElement | undefined>();
   let scene: TableScene | null = null;
+  let presence: PresenceHandle | null = null;
+  /** Hand a drag out of the hand fan or a pile viewer to the scene, and show it to the others (M1-P5 presence). */
+  function dragOut(id: InstanceId, x: number, y: number): void {
+    if (!scene) return;
+    scene.startDrag(id, x, y);
+    presence?.beginExternalDrag(id, x, y);
+  }
   let sceneReady = $state(false);
   let sceneError = $state('');
   const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -69,6 +85,9 @@
   let note = $state<{ target: { card: InstanceId } | { item: StackItemId }; x: number; y: number; text: string } | null>(null);
   /** The inline count prompt for draw N (Shift+D) and mill N (table menu). */
   let drawN = $state<{ text: string; what: 'draw' | 'mill' } | null>(null);
+  /** The inline Ask field (K): an optional short label, Enter asks (M1-P3). */
+  let askField = $state<{ text: string } | null>(null);
+  let askInput = $state<HTMLInputElement | undefined>();
   let revealTo = $state<{ cards: InstanceId[]; x: number; y: number } | null>(null);
   let tokenNear = $state<{ near: InstanceId | null } | null>(null);
   let deckOpen = $state(false);
@@ -155,6 +174,10 @@
       // A library card is known here only from an open look (scry, search); never otherwise.
       inspectRef = card ? (refOf(card) ?? viewer?.looked?.find((l) => l.id === card)?.ref ?? null) : null;
     },
+    openAsk() {
+      askField = { text: '' };
+      void tick().then(() => askInput?.focus());
+    },
     openDrawN() {
       drawN = { text: '2', what: 'draw' };
       void tick().then(() => drawInput?.select());
@@ -190,7 +213,7 @@
   const engine = new KeyEngine(
     untrack(() => game.keymap),
     { start: (b) => commands.run(b.action, 'start'), end: (b) => commands.run(b.action, 'end') },
-    () => promptShowing(session.getState(), me),
+    () => promptKeys(session.getState(), me),
   );
   $effect(() => {
     engine.setKeymap(keymap);
@@ -384,7 +407,9 @@
   const glyphOf = (colour: number) => theme.tokens.colours.seats[colour]?.glyph ?? 'circle';
   const activeName = $derived(st.seats[st.turn.active]?.name ?? st.teams[st.turn.active]?.seats.map((s) => st.seats[s]?.name).join(' & ') ?? st.turn.active);
   const activeColour = $derived(st.seats[st.turn.active]?.colour ?? st.seats[st.teams[st.turn.active]?.seats[0] ?? '']?.colour ?? null);
-  const prompt = $derived(promptShowing(st, me) ? st.confirm : null);
+  const prompt = $derived(promptModel(st, me));
+  /** A manual round (not about a stack item) that still waits makes its asker's avatar pulse (DESIGN "Turn flow and confirmation", Prompt). */
+  const asking = (seat: string) => !!prompt && prompt.round.askedBy === seat && prompt.round.about === undefined && !prompt.allPassed;
   const top = $derived(st.stack[st.stack.length - 1] ?? null);
   const resolveLit = $derived(!!top && (!st.confirm || st.confirm.about !== top.id || roundPassed(st)));
   /**
@@ -412,28 +437,66 @@
       .map((z) => ({ ...z, isDefault: z.zone === def }))
       .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
   });
-  /** Card names as each log line was first written (DESIGN "Table model", Hidden cards: a later reveal never names an earlier hidden move). */
-  const logNames = new Map<string, string | null>();
+  /** A card's name for the log as this browser may know it now; null for a hidden card (the line says "a card"). */
+  function logName(id: InstanceId): string | null {
+    if (!st.cards[id]) return null;
+    return refOf(id) || st.cards[id].tokenLabel ? nameOf(id) : null;
+  }
+  /**
+   * Card names as each log line was first written (DESIGN "Table model", Hidden cards: a later reveal never names an
+   * earlier hidden move); the watch fills in the names this browser could see just before each action (M1-P6).
+   */
   const lines = $derived(
-    logLines(entries, {
+    logLines(mergeTimeline(entries, pendingChat), {
       state: st,
-      cardName: (id) => (st.cards[id] ? nameOf(id) : null),
+      cardName: logName,
       phaseLabel: (id) => game.phases.find((p) => p.id === id)?.label ?? id,
-      names: logNames,
+      names: watch.names,
     }),
   );
+  /** Chat tabs (DESIGN "Chat and voice", Text chat): the team tab when the own seat has a team. */
+  const chatTabs = $derived<ChatTab[]>(st.seats[me]?.team ? ['table', 'team'] : ['table']);
+  function sendChat(text: string, channel: ChatTab) {
+    const a = session.chat(text, channel);
+    pendingChat = addPending(pendingChat, a, session.log(), Date.now());
+  }
   const inspectCard = $derived<CardInstance | null>(inspectId ? (st.cards[inspectId] ?? null) : null);
   const keyOf = (a: ActionId, ctx: KeyContext = 'table') => keyLabel(keymap, a, ctx);
 
   // On Next turn, offer the new active player (or team) untap-and-draw; close the offer once the turn moves on
   // (DESIGN "Turn flow and confirmation": offered a single key, never done for them).
+  // A page that opens (reload, rejoin) after the turn passed to this seat offers it too: from the log, or from the
+  // open offer this tab remembers across reloads (per-tab convenience; storage may be unavailable).
+  const offerKey = `spellplane:untap-offer:${untrack(() => session.roomId)}:${me}`;
+  const readOffered = (): number | null => {
+    try {
+      const v = sessionStorage.getItem(offerKey);
+      return v === null ? null : Number(v);
+    } catch {
+      return null;
+    }
+  };
+  const writeOffered = (turn: number | null): void => {
+    try {
+      if (turn === null) sessionStorage.removeItem(offerKey);
+      else sessionStorage.setItem(offerKey, String(turn));
+    } catch {
+      // Not remembered: the offer still follows the log.
+    }
+  };
+  untapOffer = untrack(() => untapOfferOnOpen(st, me, session.log(), readOffered()));
   let seenTurn = untrack(() => st.turn.number);
   $effect(() => {
-    const mine = st.turn.active === me || (!!st.seats[me]?.team && st.seats[me]?.team === st.turn.active);
+    const mine = isOwnTurn(st, me);
     const turn = st.turn.number;
     if (!mine) untapOffer = false;
     else if (turn !== seenTurn) untapOffer = true;
     seenTurn = turn;
+  });
+  $effect(() => {
+    const open = untapOffer;
+    const turn = untrack(() => st.turn.number);
+    writeOffered(open ? turn : null);
   });
   // A HUD hover lasts only while its card is shown in a HUD surface: a card that leaves the hand (cast, G, E, …) or
   // a pile viewer that closes fires no pointerleave, and a stale hover would steal keys meant for the table.
@@ -472,12 +535,16 @@
 
   onMount(() => {
     seenLog = entries.length;
+    watch.start(entries);
     const unsub = session.subscribe((s) => {
+      const log = session.log();
+      // Before the HUD moves on: names this browser could see and other players' cards touched (M1-P6).
+      watch.observe(log, st, s, logName);
       st = s;
       secrets = session.secrets();
-      const log = session.log();
       onLog(log);
       entries = log;
+      pendingChat = prunePending(pendingChat, log);
     });
     void settings
       ?.get('keymap')
@@ -510,6 +577,14 @@
         },
       });
       sceneReady = true;
+      // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
+      presence = attachPresence(sceneHost!, scene, session.presence, {
+        selfSeat: me,
+        state: () => st,
+        selection: () => selection,
+        colourOf: (seat) => theme.tokens.colours.seats[(seat ? st.seats[seat]?.colour : undefined) ?? 0]?.colour ?? '#555',
+        labelOf: (p) => (p.seat && st.seats[p.seat]?.name) || 'Player',
+      });
     } catch (e) {
       sceneError = e instanceof Error ? e.message : String(e);
     }
@@ -518,6 +593,8 @@
       for (const t of timers) clearTimeout(t);
       timers = [];
       engine.blur();
+      presence?.stop();
+      presence = null;
       scene?.dispose();
       scene = null;
     };
@@ -541,6 +618,15 @@
 <div class="root" style={cssVars} data-testid="hud">
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
+  <Flashes
+    {watch}
+    table={st}
+    scene={() => scene}
+    fadeMs={theme.motion.pingFadeMs}
+    {reducedMotion}
+    seatName={(s) => st.seats[s]?.name ?? s}
+    seatColour={(s) => st.seats[s]?.colour ?? null}
+  />
 
   <div class="layer">
     <div class="top-left">
@@ -559,6 +645,7 @@
           me={false}
           active={st.turn.active === seat.id || st.turn.active === seat.team}
           responding={st.confirm?.holder === seat.id}
+          asking={asking(seat.id)}
           glyph={glyphOf(seat.colour)}
           zones={zoneButtons(seat.id)}
           onlife={(delta) => session.dispatch({ type: 'life', seat: seat.id, delta })}
@@ -602,7 +689,11 @@
         {lines}
         open={logOpen}
         ontoggle={() => (logOpen = !logOpen)}
-        onchat={(text) => session.dispatch({ type: 'chat', text, channel: 'table' })}
+        onchat={sendChat}
+        {cardData}
+        {faces}
+        {back}
+        tabs={chatTabs}
         onhovercard={(card, x, y) => {
           preview = card ? { card, x, y } : null;
           hudHover = card;
@@ -618,6 +709,7 @@
           me={true}
           active={st.turn.active === me || st.turn.active === st.seats[me].team}
           responding={st.confirm?.holder === me}
+          asking={asking(me)}
           glyph={glyphOf(st.seats[me].colour)}
           zones={zoneButtons(me)}
           onlife={(delta) => session.dispatch({ type: 'life', seat: me, delta })}
@@ -643,22 +735,18 @@
         </div>
       {/if}
       {#if prompt}
-        <div class="prompt" data-testid="confirm-prompt" role="alertdialog" aria-label="Confirmation">
-          {#key prompt.id + (prompt.holder ?? '')}
-            <span class="ring" class:paused={!!prompt.holder} style:animation-duration="{prompt.durationMs}ms" aria-hidden="true"></span>
-          {/key}
-          <span class="what">
-            <b>{st.seats[prompt.askedBy]?.name ?? prompt.askedBy}</b>
-            {#if prompt.label}asks “{prompt.label}”{:else if prompt.about}{@const item = st.stack.find((i) => i.id === prompt.about)}put {item?.card ? nameOf(item.card) : item?.source ? `an ability of ${nameOf(item.source)}` : 'something'} on the stack{:else}asks for responses{/if}
-          </span>
-          {#if prompt.holder === me}
-            <span>You hold the floor.</span>
-            <button type="button" data-testid="release" onclick={() => commands.run('confirmOk')}>Release <kbd>{keyOf('confirmOk', 'prompt')}</kbd></button>
-          {:else}
-            <button type="button" data-testid="prompt-ok" onclick={() => commands.run('confirmOk')}>OK <kbd>{keyOf('confirmOk', 'prompt')}</kbd></button>
-            <button type="button" data-testid="prompt-hold" onclick={() => commands.run('confirmHold')}>Hold <kbd>{keyOf('confirmHold', 'prompt')}</kbd></button>
-          {/if}
-        </div>
+        <ConfirmPrompt
+          model={prompt}
+          {me}
+          seatName={(seat) => st.seats[seat]?.name || seat}
+          seatColour={(seat) => st.seats[seat]?.colour ?? null}
+          what={roundWhat(st, prompt.round, nameOf)}
+          keys={{ ok: keyOf('confirmOk', 'prompt'), hold: keyOf('confirmHold', 'prompt') }}
+          reducedMotion={reducedMotion}
+          onok={() => commands.run('confirmOk')}
+          onhold={() => commands.run('confirmHold')}
+          onrelease={() => commands.run('confirmOk')}
+        />
       {/if}
     </div>
 
@@ -675,7 +763,7 @@
       onhover={(id) => (hudHover = id)}
       oncontext={(id, x, y) => openMenu(id, x, y)}
       oninspect={(id) => hooks.inspect(id)}
-      ondragout={(id, x, y) => scene?.startDrag(id, x, y)}
+      ondragout={(id, x, y) => dragOut(id, x, y)}
       onselect={(id) => (selection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id])}
     />
   </div>
@@ -701,7 +789,7 @@
         onhover={(id) => (hudHover = id)}
         oncontext={(id, x, y) => openMenu(id, x, y)}
         oninspect={(id) => hooks.inspect(id)}
-        ondragout={(id, x, y) => scene?.startDrag(id, x, y)}
+        ondragout={(id, x, y) => dragOut(id, x, y)}
         onlibrary={libraryAction}
         onclose={closeViewer}
       />
@@ -727,6 +815,30 @@
         }}
         onblur={() => (note = null)}
       />
+    </div>
+  {/if}
+
+  {#if askField}
+    <div class="inline draw-n" data-testid="ask-field">
+      <label
+        >Ask <input
+          bind:this={askInput}
+          bind:value={askField.text}
+          data-testid="ask-input"
+          class="ask"
+          maxlength="80"
+          placeholder="optional label, e.g. attacks? (Enter)"
+          aria-label="Ask label"
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+              const text = askField?.text ?? '';
+              askField = null;
+              commands.ask(text);
+            } else if (e.key === 'Escape') askField = null;
+          }}
+          onblur={() => (askField = null)}
+        /></label
+      >
     </div>
   {/if}
 
@@ -849,7 +961,6 @@
   .toolbar button,
   .stack-chip button,
   .offer button,
-  .prompt button,
   .inline button {
     background: var(--sp-surface, #fff);
     color: var(--sp-fg, #111);
@@ -937,8 +1048,7 @@
     color: var(--sp-bg, #fff);
     border-radius: var(--sp-radius-md, 4px);
   }
-  .offer,
-  .prompt {
+  .offer {
     pointer-events: auto;
     display: flex;
     align-items: center;
@@ -950,37 +1060,6 @@
   }
   .x {
     border: 0 !important;
-  }
-  .ring {
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: conic-gradient(var(--sp-fg, #111) var(--p, 100%), transparent 0);
-    animation-name: drain;
-    animation-timing-function: linear;
-    animation-fill-mode: forwards;
-    border: 1px solid var(--sp-fg, #111);
-  }
-  .ring.paused {
-    animation-play-state: paused;
-  }
-  @property --p {
-    syntax: '<percentage>';
-    inherits: false;
-    initial-value: 100%;
-  }
-  @keyframes drain {
-    from {
-      --p: 100%;
-    }
-    to {
-      --p: 0%;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .ring {
-      animation: none;
-    }
   }
   .inline {
     position: fixed;
@@ -1011,6 +1090,9 @@
   }
   .draw-n input {
     width: 4em;
+  }
+  .draw-n input.ask {
+    width: min(18em, 60vw);
   }
   .muted {
     color: var(--sp-muted, #5f5f5f);

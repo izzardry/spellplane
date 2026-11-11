@@ -130,6 +130,24 @@ export interface Seat {
   autoPass: boolean;
   /** Peer id that holds the seat (first 16 hex of SHA-256 of the public key); absent in solo play. */
   peer?: string;
+  /** Added by M1-C (amendment). Set from `recover` until `recoverCommit` (DESIGN "Multiplayer architecture", Resume: lost-save recovery). */
+  recovering?: SeatRecovery;
+}
+
+/**
+ * An open lost-save recovery of one seat (DESIGN "Multiplayer architecture", Resume and failure handling: "the
+ * remainder is committed and shuffled as a new library with a fresh hand count agreed by the table"). Added by M1-C
+ * (amendment); set and cleared by M1-P7's reducer.
+ */
+export interface SeatRecovery {
+  /** The fresh hand count the recovering player proposed; the table agrees to it in `round`. */
+  hand: number;
+  /** The confirmation round that agrees on `hand`. */
+  round: RoundId;
+  /** The seat's non-token cards (public and hidden) counted just before the first `recover` of this recovery discarded the hidden ones: the deck size; a later proposal keeps it. */
+  deckSize: number;
+  /** Seq of the `recover` action that set this (the latest proposal). */
+  startSeq: number;
 }
 
 /** A Two-Headed Giant team with shared life (DESIGN "Players, seats and formats", Two-Headed Giant). */
@@ -384,6 +402,18 @@ export interface ShuffleRecord {
   peerNonces: string[];
   /** Resulting order, index 0 = top. */
   order: InstanceId[];
+  /** Added by M1-P2: set when the shuffle re-issued the zone's opaque ids (`shuffleDone.reissue`). */
+  reissue?: ReissueRecord;
+}
+
+/**
+ * The private side of a re-issue of opaque ids (DESIGN "Table model", Hidden cards). Added by M1-P2. `before[i]` is
+ * the old id of the card now at `order[i]`; `retired` keeps the old ids' identities so the post-game audit can check
+ * that every card kept its identity across the re-issue.
+ */
+export interface ReissueRecord {
+  before: InstanceId[];
+  retired: Record<InstanceId, SecretIdentity>;
 }
 
 /** Private audit record of a private reorder (scry to bottom, put on top) (DESIGN "Specification: network protocol and secrecy"). */
@@ -395,6 +425,8 @@ export interface ReorderRecord {
   nonce: string;
   /** Full order after the reorder, index 0 = top. */
   order: InstanceId[];
+  /** Added by M1-P2: set when the reorder re-issued the zone's opaque ids (`reorder.reissue`). */
+  reissue?: ReissueRecord;
 }
 
 /** One private audit record (DESIGN "Multiplayer architecture", Audit). */

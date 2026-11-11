@@ -111,7 +111,15 @@ const S: Record<ActionId, Scenario> = {
   nextTurn: { check: expectDraft({ type: 'turnPass', to: 's1' }) },
   untapAll: { check: expectDraft({ type: 'tap', card: 'bf2', tapped: false }) },
   autoPass: { check: expectDraft({ type: 'autoPass', on: true }) },
-  ask: { check: expectDraft({ type: 'ask' }) },
+  ask: {
+    check: async (page) => {
+      // K opens the inline Ask field for an optional label; Enter asks.
+      await expect(page.getByTestId('ask-input')).toBeFocused();
+      await page.getByTestId('ask-input').fill('attacks?');
+      await page.keyboard.press('Enter');
+      await expect.poll(() => first(page)).toMatchObject({ type: 'ask', label: 'attacks?' });
+    },
+  },
   confirmOk: { hover: 'bf1', setup: promptByBen, check: expectDraft({ type: 'respond', round: 'r9', seat: 's0', response: 'ok' }) },
   confirmHold: { hover: 'bf1', setup: promptByBen, check: expectDraft({ type: 'respond', round: 'r9', seat: 's0', response: 'hold' }) },
   tidy: { check: expectDraft({ type: 'tidy', seat: 's0' }) },
@@ -222,14 +230,18 @@ test.describe('no key fires while a text field has focus (PLAN M0-P4)', () => {
     await expect(input).toBeFocused();
     await page.keyboard.type('tgea dsx');
     // (Tab is left out: leaving the field cancels the note.)
-    for (const k of ['Shift+KeyL', 'Control+KeyU', 'Digit0', 'Shift+Slash', 'Control+Enter', 'Control+KeyZ']) {
+    for (const k of ['Shift+KeyL', 'Control+KeyU', 'Digit0', 'Shift+Slash', 'Control+Enter']) {
       await page.keyboard.press(k);
       await input.focus();
     }
+    await expect(input).toHaveValue(/tgea dsx/);
+    // Ctrl+Z belongs to the field: on Linux and Windows it is the browser's own text undo (and may empty the
+    // field), on macOS it does nothing. Either way it must not undo a table action.
+    await page.keyboard.press('Control+KeyZ');
+    await input.focus();
     expect(await ui(page, 'actions')).toEqual([]);
     expect(await ui(page, 'calls')).toEqual([]);
     expect(await ui(page, 'scene')).toEqual([]);
-    await expect(input).toHaveValue(/tgea dsx/);
     await input.fill('kicked');
     await page.keyboard.press('Enter');
     expect(await drafts(page)).toEqual([{ type: 'note', card: 'bf1', text: 'kicked' }]);

@@ -150,14 +150,58 @@ export type HideAction = A<'hide', { card: InstanceId }>;
 export type ShuffleCommitAction = A<'shuffleCommit', { sid: ShuffleId; zone: ZoneId; h: string; purpose?: 'shuffle' | 'pack' }>;
 /** A peer's nonce for a secret shuffle, in the clear (Secret shuffle 2). */
 export type ShuffleNonceAction = A<'shuffleNonce', { sid: ShuffleId; nonce: string }>;
-/** Finish a secret shuffle with `orderHash = SHA-256(order joined by ',' + '|' + ownerNonce)` (Secret shuffle 5). */
-export type ShuffleDoneAction = A<'shuffleDone', { sid: ShuffleId; orderHash: string }>;
-/** Public trace of a private reorder of the top `count` cards (DESIGN "Specification: network protocol and secrecy"). */
-export type ReorderAction = A<'reorder', { zone: ZoneId; count: number; orderHash: string }>;
+/**
+ * Finish a secret shuffle with `orderHash = SHA-256(order joined by ',' + '|' + ownerNonce)` (Secret shuffle 5).
+ * `reissue` (added by M1-P2) replaces every opaque id of the shuffled zone, so no earlier id can be linked to a card
+ * after the shuffle (DESIGN "Table model", Hidden cards: the owner re-shuffles opaque ids); the order hash is over
+ * the new ids.
+ */
+export type ShuffleDoneAction = A<'shuffleDone', { sid: ShuffleId; orderHash: string; reissue?: Reissue }>;
+/**
+ * Public trace of a private reorder of the top `count` cards (DESIGN "Specification: network protocol and secrecy").
+ * With `reissue` (added by M1-P2) it also replaces every opaque id of the zone (a hand mixed after a public card
+ * returned to it); `count` is then the zone size and the order hash is over the new ids.
+ */
+export type ReorderAction = A<'reorder', { zone: ZoneId; count: number; orderHash: string; reissue?: Reissue }>;
+
+/**
+ * Fresh opaque ids for every card of one hidden zone with their commitments, both sorted, so the mapping from the
+ * old ids stays with the owner (DESIGN "Table model", Hidden cards; "Specification: network protocol and secrecy",
+ * Commitments: `commit = base64url(SHA-256(instanceId|sid|f-or-n|salt))`). Added by M1-P2.
+ */
+export interface Reissue {
+  /** The zone's new ids, sorted; exactly as many as the zone holds, none used before. */
+  ids: InstanceId[];
+  /** One commitment per new id, sorted. */
+  commits: string[];
+}
 /** Logged private look: top `count` cards of `zone`, or one face-down `card` (peek) (DESIGN "Multiplayer architecture", Private looks). */
 export type LookAtAction = A<'lookAt', { zone: ZoneId; count: number; card?: InstanceId }>;
 /** London mulligan marker: the hand goes into the library; shuffle and draws follow as their own actions (DESIGN "Card manipulation"). `count` is the mulligan number. */
 export type MulliganAction = A<'mulligan', { count: number }>;
+/**
+ * Lost-save recovery, step 1 (DESIGN "Multiplayer architecture", Resume and failure handling: "If a player loses their
+ * local save ... the recovery path is public and logged"). Added by M1-C (amendment); reducer: M1-P7. Sent by the
+ * recovering player for its own seat (`by`). It discards the seat's hidden zones in shared state (every card in a
+ * hidden zone the seat owns: hand and library), drops any unfinished secret shuffle of those zones, sets
+ * `Seat.recovering` with the proposed fresh hand count `hand` and the deck size counted before the discard, and opens
+ * the confirmation round `round` (asked by the seat, as `ask` does) in which the table agrees to `hand`. Sent again
+ * while the recovery is open, it proposes another count in a new round. Not undoable.
+ */
+export type RecoverAction = A<'recover', { hand: number; round: RoundId }>;
+/**
+ * Lost-save recovery, step 2 (DESIGN "Multiplayer architecture", Resume: "the player re-imports the deck, the table
+ * subtracts every card of theirs that is currently public, and the remainder is committed and shuffled as a new
+ * library with a fresh hand count agreed by the table"). Added by M1-C (amendment); reducer: M1-P7. The recovering
+ * seat publishes commitments for the remainder exactly as `ready` does (core/commit.ts `commitFor`, M1-P2's deck
+ * commitment), with fresh ids never committed before; they are added to the seat's `Commitment` as a re-issue adds
+ * them. Accepted only while `Seat.recovering` is set, its round is the current confirmation round and that round has
+ * passed (every participant OK or timed out), and when `instanceIds.length` equals `recoveryLibrarySize` (core/recovery.ts).
+ * It creates the cards in `zone` (the seat's library) and clears `Seat.recovering`. The owner then shuffles the zone
+ * with M1-P2's secret shuffle (`shuffleCommit`/`shuffleNonce`/`shuffleDone`) and draws the agreed hand with ordinary
+ * `draw` actions. Not undoable.
+ */
+export type RecoverCommitAction = A<'recoverCommit', { commits: string[]; instanceIds: InstanceId[]; zone: ZoneId }>;
 
 // --- Stack (DESIGN "The effect stack") ---------------------------------------------------------------
 
@@ -321,7 +365,9 @@ export type Action =
   | SnapshotHashAction
   | SequencerClaimAction
   | SettingsAction
-  | StageSetAction;
+  | StageSetAction
+  | RecoverAction
+  | RecoverCommitAction;
 
 /** The `type` tag of an action (DESIGN "Data model and protocol"). */
 export type ActionType = Action['type'];
@@ -401,6 +447,8 @@ export const ACTION_FAMILIES: Readonly<Record<ActionType, ActionFamily>> = {
   sequencerClaim: 'meta',
   settings: 'meta',
   stageSet: 'meta',
+  recover: 'zone',
+  recoverCommit: 'zone',
 };
 
 /** Every action type, in declaration order (DESIGN "Data model and protocol"). */

@@ -122,9 +122,6 @@ describe('reducer contract', () => {
     let s = readyTable(2);
     s = play(s, 'a00', P(0, -200));
     const later: Action[] = [
-      act('ask', { round: 'r1' }),
-      act('respond', { round: 'r1', seat: 's1', response: 'ok' }),
-      act('autoPass', { on: true }),
       act('shuffleCommit', { sid: 'sh', zone: 'library:s0', h: 'h' }),
       act('shuffleNonce', { sid: 'sh', nonce: 'n' }),
       act('shuffleDone', { sid: 'sh', orderHash: 'o' }),
@@ -638,6 +635,24 @@ describe('players family', () => {
     expect(s.seats.s1).toMatchObject({ name: 'Cleo', colour: 4, peer: 'p1' });
     no(s, act('seatTake', { seat: 's1', name: 'Dan', colour: 2, peer: 'p2' }), /taken/);
     no(s, act('seatTake', { seat: 's1', name: 'Dan', colour: 9 }), /colour/);
+  });
+
+  it('away: marks a taken seat away and back; taking the chair again clears it', () => {
+    let s = fresh();
+    s = ok(s, act('seatTake', { seat: 's1', name: 'Cleo', colour: 4, peer: 'p1' }, 's1'));
+    s = ok(s, act('away', { seat: 's1', away: true }));
+    expect(s.seats.s1!.away).toBe(true);
+    no(s, act('away', { seat: 's1', away: true }), /already away/);
+    s = ok(s, act('away', { seat: 's1', away: false }));
+    expect(s.seats.s1!.away).toBeUndefined();
+    no(s, act('away', { seat: 's1', away: false }), /already present/);
+    no(s, act('away', { seat: 's7', away: true }), /unknown seat/);
+    s = ok(s, act('away', { seat: 's1', away: true }));
+    s = ok(s, act('seatTake', { seat: 's1', name: 'Cleo', colour: 4, peer: 'p1' }, 's1'));
+    expect(s.seats.s1!.away).toBeUndefined();
+    const empty = ok(fresh(), act('seatLeave', { seat: 's1' }, 's1'));
+    no(empty, act('away', { seat: 's1', away: true }), /empty/);
+    clean(s);
   });
 
   it('ready: publishes the commitment and creates the hidden library of opaque ids', () => {
