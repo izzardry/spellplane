@@ -214,6 +214,61 @@ describe('secret shuffle rounds', () => {
     t.apply('s0', commit('sh2', nonceHash('third')));
   });
 
+  it('freezes the zone once the seed is fixed: no card enters, leaves or is re-issued until shuffleDone, whoever acts', () => {
+    const t = readySecretTable(['Anna', 'Ben'], 20);
+    const hand = t.secrets.s0!.libraryOrder.slice(0, 3);
+    for (const id of hand) t.apply('s0', { type: 'draw', instanceId: id });
+    const b = beginShuffle(t.secrets.s0!, LIB0, 'sh1', 'owner-nonce');
+    t.secrets.s0 = b.secrets;
+    t.apply('s0', b.action);
+    // Before any peer nonce the owner learned nothing, so the zone may still change.
+    t.apply('s0', { type: 'toZone', card: hand[0]!, to: LIB0, position: 'top' });
+    t.apply('s1', { type: 'shuffleNonce', sid: 'sh1', nonce: 'n1' });
+    // Now the owner can compute the outcome for any id set: every change to the zone is refused.
+    const lib = t.state.zones[LIB0]!.ids;
+    const frozen = /being shuffled \(sh1\)/;
+    t.refuse('s0', { type: 'toZone', card: hand[1]!, to: LIB0, position: 'top' }, frozen);
+    t.refuse('s0', { type: 'draw', instanceId: lib[0]! }, frozen);
+    t.refuse('s0', { type: 'move', card: lib[1]!, to: 'graveyard:s0', index: 0 }, frozen);
+    t.refuse('s0', { type: 'mulligan', count: 1 }, frozen);
+    t.refuse('s1', { type: 'move', card: lib[2]!, to: 'battlefield:s1', pose: { x: 0, y: 200, rot: 0 } }, frozen);
+    t.refuse('s0', reissueZone(t.secrets.s0!, t.state, LIB0, t.entropy.s0!)!.action, frozen);
+    // Other zones and a plain reorder (the shuffle sorts the ids anyway) are unaffected.
+    t.apply('s0', { type: 'move', card: hand[1]!, to: 'battlefield:s0', pose: { x: 0, y: -200, rot: 0 } });
+    t.apply('s0', { type: 'reorder', zone: LIB0, count: 1, orderHash: 'o' });
+    const f = finishShuffle(t.secrets.s0!, t.state, 'sh1', t.entropy.s0!, lib);
+    t.apply('s0', f.action);
+    t.secrets.s0 = f.secrets;
+    t.apply('s0', { type: 'draw', instanceId: t.secrets.s0!.libraryOrder[0]! });
+  });
+
+  it('a closed window fixes the seed too: the zone is frozen and the round cannot be replaced', () => {
+    const t = readySecretTable(['Anna', 'Ben', 'Cleo']);
+    t.apply('s0', commit());
+    t.apply('s2', { type: 'commitClose', kind: 'shuffle', id: 'sh1' });
+    t.refuse('s0', commit('sh2', nonceHash('other')), /closed window/);
+    t.refuse('s0', { type: 'draw', instanceId: t.state.zones[LIB0]!.ids[0]! }, /being shuffled/);
+  });
+
+  it('solo: the round is sealed at once, so the library is frozen until the owner finishes', () => {
+    const t = new SecretTable(['Anna', '']);
+    t.ready('s0');
+    t.apply('s0', commit());
+    t.refuse('s0', { type: 'draw', instanceId: t.state.zones[LIB0]!.ids[0]! }, /being shuffled/);
+    t.apply('s0', { type: 'shuffleDone', sid: 'sh1', orderHash: 'o' });
+    t.apply('s0', { type: 'draw', instanceId: t.state.zones[LIB0]!.ids[0]! });
+  });
+
+  it('the owner cannot close its own nonce window; another seat can', () => {
+    const t = readySecretTable(['Anna', 'Ben']);
+    t.apply('s0', commit());
+    t.refuse('s0', { type: 'commitClose', kind: 'shuffle', id: 'sh1' }, /owns shuffle sh1/);
+    expect(t.state.shuffles.sh1!.closedSeq).toBeUndefined();
+    t.refuse('s0', { type: 'shuffleDone', sid: 'sh1', orderHash: 'o' }, /waits for peer nonces/);
+    t.apply('s1', { type: 'commitClose', kind: 'shuffle', id: 'sh1' });
+    t.apply('s0', { type: 'shuffleDone', sid: 'sh1', orderHash: 'o' });
+  });
+
   it('a round abandoned before any peer nonce is replaced by a new one', () => {
     const t = readySecretTable();
     t.apply('s0', commit('sh1'));
@@ -340,12 +395,22 @@ describe('public randomness rounds', () => {
     const t = readySecretTable(['Anna', 'Ben', 'Cleo']);
     t.apply('s0', { type: 'rngCommit', rid: 'c1', purpose: 'coin', n: 2, h: h('a') });
     t.apply('s1', { type: 'rngCommit', rid: 'c1', purpose: 'coin', n: 2, h: h('b') });
-    t.apply('s0', { type: 'commitClose', kind: 'rng', id: 'c1' });
+    t.apply('s1', { type: 'commitClose', kind: 'rng', id: 'c1' });
     t.refuse('s2', { type: 'rngCommit', rid: 'c1', purpose: 'coin', n: 2, h: h('c') }, /closed/);
     t.apply('s0', { type: 'rngReveal', rid: 'c1', nonce: 'a' });
     t.refuse('s2', { type: 'rngReveal', rid: 'c1', nonce: 'c' }, /did not commit/);
     t.apply('s1', { type: 'rngReveal', rid: 'c1', nonce: 'b' });
     expect(t.state.rng.c1!.result).toBe(rngOutcome(rngSeed({ s0: 'a', s1: 'b' }, ['s0', 's1']), 2));
+  });
+
+  it('the initiator cannot close its own commit window, so it never decides alone; another seat can', () => {
+    const t = readySecretTable(['Anna', 'Ben']);
+    t.apply('s0', { type: 'rngCommit', rid: 'd1', purpose: 'die', n: 20, h: h('a') });
+    t.refuse('s0', { type: 'commitClose', kind: 'rng', id: 'd1' }, /opened round d1/);
+    t.refuse('s0', { type: 'rngReveal', rid: 'd1', nonce: 'a' }, /waits for commits/);
+    t.apply('s1', { type: 'commitClose', kind: 'rng', id: 'd1' });
+    t.apply('s0', { type: 'rngReveal', rid: 'd1', nonce: 'a' });
+    expect(t.state.rng.d1!.result).toBe(rngOutcome(rngSeed({ s0: 'a' }, ['s0']), 20));
   });
 
   it('a seat that sits down after every commit is in neither commits nor blocks the reveals', () => {

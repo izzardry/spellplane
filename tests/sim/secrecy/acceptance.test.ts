@@ -174,16 +174,32 @@ describe('the secret shuffle over the network', () => {
     t.net.kill(c!.peer.peerId);
     const live = [a!.peer, b!.peer];
     const at = Date.now();
-    const sid = await a!.shuffle();
+    // B shuffles; A (seat 0) is the sequencer and closes the window.
+    const sid = await b!.shuffle();
     expect(Date.now() - at).toBeGreaterThanOrEqual(COMMIT_WINDOW_MS);
     await converged(t, live);
     for (const p of live) {
       const r = p.state.shuffles[sid]!;
       expect(r.closedSeq).toBeDefined();
-      expect(Object.keys(r.nonces)).toEqual(['s1']);
+      expect(Object.keys(r.nonces)).toEqual(['s0']);
       expect(r.orderHash).not.toBeNull();
     }
-    expect(shuffleRecord(a!.secrets, sid)!.peerNonces).toEqual([a!.state.shuffles[sid]!.nonces.s1]);
+    expect(shuffleRecord(b!.secrets, sid)!.peerNonces).toEqual([b!.state.shuffles[sid]!.nonces.s0]);
+  });
+
+  it("the sequencer's clock never closes the sequencer's own shuffle: the owner cannot shut the peers out", async () => {
+    const t = await table(['Anna', 'Ben']);
+    const [a, b] = t.players;
+    t.net.kill(b!.peer.peerId);
+    const sid = 's0-own';
+    const begun = beginShuffle(a!.secrets, 'library:s0', sid, 'owner-nonce');
+    a!.secrets = begun.secrets;
+    await a!.peer.act(begun.action);
+    await vi.advanceTimersByTimeAsync(3 * COMMIT_WINDOW_MS);
+    const r = a!.state.shuffles[sid]!;
+    expect(r.closedSeq).toBeUndefined();
+    expect(r.orderHash).toBeNull();
+    expect(a!.peer.log().some((x) => x.type === 'commitClose')).toBe(false);
   });
 });
 
@@ -204,11 +220,23 @@ describe('dice and coins by commit-and-reveal', () => {
   it('a lost peer is excluded when the commit window closes', async () => {
     const t = await table(['Anna', 'Ben', 'Cleo']);
     t.net.kill(t.peers[2]!.peerId);
-    await t.players[0]!.roll(6);
+    // Ben rolls; Anna (seat 0) is the sequencer and closes the window.
+    await t.players[1]!.roll(6);
     await converged(t, t.peers.slice(0, 2));
     const r = Object.values(t.peers[1]!.state.rng)[0]!;
     expect(Object.keys(r.reveals).sort()).toEqual(['s0', 's1']);
     expect(r.closedSeq).toBeDefined();
+  });
+
+  it("the sequencer's own roll is not closed by its own clock, so it never decides alone", async () => {
+    const t = await table(['Anna', 'Ben']);
+    t.net.kill(t.peers[1]!.peerId);
+    const [a] = t.players;
+    await a!.peer.act({ type: 'rngCommit', rid: 'mine', purpose: 'die', n: 20, h: nonceHash('a') });
+    await vi.advanceTimersByTimeAsync(3 * COMMIT_WINDOW_MS);
+    const r = a!.state.rng.mine!;
+    expect(r.closedSeq).toBeUndefined();
+    expect(r.result).toBeNull();
   });
 });
 

@@ -12,6 +12,7 @@ import type { Action, ActionOf, ActionType, Reissue } from './actions';
 import { commitFor, nonceHash, verifyNonce, type RevealedCard } from './commit';
 import { zoneId } from './ids';
 import { explain, reduce } from './reducer/index';
+import { seedFixed } from './reducer/secret';
 import { orderHash, shuffleOutcome, shufflePeerNonces, shuffleReady, shuffleSeed } from './rng';
 import type {
   AuditRecord,
@@ -417,6 +418,9 @@ export function auditSeat(
     reorders.find((r) => !usedReorders.has(r) && r.zone === zone && orderHash(r.order, r.nonce) === hash) ?? reorders.find((r) => !usedReorders.has(r) && r.zone === zone);
   let order: InstanceId[] | null = null;
   let s = start;
+  /** The sorted ids of each own shuffle's zone from the step its seed became fixed (`seedFixed`) on. */
+  const frozen = new Map<ShuffleId, string>();
+  const sortedIds = (st: TableState, zone: ZoneId): string => [...(st.zones[zone]?.ids ?? [])].sort(byId).join(',');
 
   const sameList = (a: readonly string[], b: readonly string[]): boolean => a.length === b.length && a.every((v, i) => v === b[i]);
   const checkReissue = (seq: number, before: readonly InstanceId[], after: readonly InstanceId[], prior: TableState, next: TableState): void => {
@@ -435,6 +439,7 @@ export function auditSeat(
   for (const a of log) {
     const seq = a.seq ?? s.seq + 1;
     const prior = s;
+    for (const r of Object.values(prior.shuffles)) if (r.owner === seat && seedFixed(r) && !frozen.has(r.id)) frozen.set(r.id, sortedIds(prior, r.zone));
     // A refused entry changes nothing in the replay either.
     if (explain(prior, a) !== null) continue;
     s = reduce(prior, a);
@@ -451,6 +456,9 @@ export function auditSeat(
       const peers = shufflePeerNonces(prior, a.sid);
       if (!sameList(peers, rec.peerNonces)) findings.push({ seq, text: `shuffle ${a.sid} used other peer nonces than the sequenced ones` });
       const ids = prior.zones[round.zone]?.ids ?? [];
+      // The owner knows the seed once it is fixed; the cards shuffled must be the ones in the zone then.
+      const fixedIds = frozen.get(a.sid);
+      if (fixedIds !== undefined && fixedIds !== sortedIds(prior, round.zone)) findings.push({ seq, text: `the cards of ${round.zone} changed while shuffle ${a.sid} was open` });
       const out = shuffleOutcome(shuffleSeed(rec.ownerNonce, peers), ids, a.reissue?.ids);
       if (!sameList(out.order, rec.order)) findings.push({ seq, text: `shuffle ${a.sid} does not follow from its seed` });
       if (orderHash(out.order, rec.ownerNonce) !== a.orderHash) findings.push({ seq, text: `shuffle ${a.sid} published another order hash` });
@@ -470,7 +478,16 @@ export function auditSeat(
       if (!sameList([...rec.order].sort(byId), s.zones[a.zone]?.ids ?? [])) findings.push({ seq, text: `the reorder of ${a.zone} does not list its cards` });
       if (a.reissue) {
         if (!rec.reissue) findings.push({ seq, text: `the re-issue of ${a.zone} has no record` });
-        else checkReissue(seq, rec.reissue.before, rec.order, prior, s);
+        else {
+          checkReissue(seq, rec.reissue.before, rec.order, prior, s);
+          // A re-issue renames the cards in place: card i of the replayed order gets new id i.
+          if (a.zone === lib && order !== null && !sameList(rec.reissue.before, order)) findings.push({ seq, text: `the re-issue of ${a.zone} moved cards` });
+        }
+      } else if (a.zone === lib && order !== null) {
+        // Only the top `count` cards were looked at; every other card keeps its place relative to the others.
+        const looked = new Set(order.slice(0, Math.max(0, a.count)));
+        const rest = (ids: readonly InstanceId[]): InstanceId[] => ids.filter((id) => !looked.has(id));
+        if (!sameList(rest(order), rest(rec.order))) findings.push({ seq, text: `the reorder of ${a.count} cards of ${a.zone} moved cards it did not look at` });
       }
       if (a.zone === lib) order = [...rec.order];
       continue;

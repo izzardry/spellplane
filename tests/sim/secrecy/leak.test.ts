@@ -194,6 +194,30 @@ describe('leak test: a scripted two-seat game', () => {
     p.db.close();
   });
 
+  it('a look answers with the cards at its lookAt: not after A drew them, not after A shuffled', async () => {
+    const p = await script(true);
+    const { a, b } = p;
+    const ask = async (): Promise<RevealedCard[]> => {
+      let got: RevealedCard[] | null = null;
+      void b.channel.requestLook('s0', 'library:s0', 1).then((r) => (got = r));
+      await until(() => got !== null, 5_000, 'the look answer');
+      return got!;
+    };
+    // B's lookAt of A's top card is sequenced; A draws that card before B's request reaches A.
+    await b.peer.act({ type: 'lookAt', zone: 'library:s0', count: 1 });
+    await a.draw(1);
+    expect(await ask()).toEqual([]);
+    // B's lookAt is sequenced, A shuffles, and only then B asks: the look does not cover the new order.
+    await b.peer.act({ type: 'lookAt', zone: 'library:s0', count: 1 });
+    await a.shuffle();
+    expect(await ask()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(500);
+    const report = leakScan({ observed: await observedByB(p), owner: { state: a.state, secrets: a.secrets }, disclosed: a.disclosed.s1 ?? [] });
+    expect(report.tokens).toEqual([]);
+    expect(report.pairs).toEqual([]);
+    p.db.close();
+  });
+
   it('negative control: without fresh ids for the hand, the returned land is still linkable and the scanner says so', async () => {
     const p = await script(false);
     const { a } = p;

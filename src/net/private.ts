@@ -12,17 +12,23 @@
  * The disclosure policy is enforced here, not left to each answerer: a look request is answered only when it matches
  * a sequenced, not yet answered `lookAt` of the asking seat (same zone, count and card), and the answer is cut down to
  * what that look may see (at most `count` own cards of that hidden zone, or exactly the peeked card when it is an own
- * face-down card in a public zone). A targeted reveal is taken only once its public `revealTo` by the sender, naming
- * this seat and this card, is applied; a look answer only for a look this browser asked for.
+ * face-down card in a public zone). The cards a look shows are fixed when its `lookAt` is applied to the confirmed
+ * state, not when the request arrives, so they are the cards at that point of the log (DESIGN "Multiplayer
+ * architecture", Hidden information 4: the logged look is the look that happens): the answerer is asked right then,
+ * and the answer is refused later if one of those cards has left the zone, or the zone was shuffled or reordered
+ * since. A targeted reveal is taken only once its public `revealTo` by the sender, naming this seat and this card, is
+ * applied; a look answer only for a look this browser asked for. Requests and reveals waiting for their public
+ * action, and looks never asked for, expire after `EXPIRE_AFTER_ACTIONS` sequenced actions.
  */
 import { verifyReveal, type RevealedCard } from '../core/commit';
 import type { CardRef, InstanceId, PackId, SeatId, TableState, ZoneId } from '../core/types';
+import type { SequencedAction } from './messages';
 import type { LookMessage, LookReqMessage, PackMessage, PrivateMessage, RevealMessage } from './messages';
 import { PROTOCOL_VERSION } from './messages';
 import type { CreatePrivateChannel, NetEngine, PrivateChannel, Unsubscribe } from './types';
 
 /** The part of a NetEngine the pair channel uses (so tests can drive it with a minimal engine). */
-export type PrivateChannelHost = Pick<NetEngine, 'state' | 'onState' | 'onSequenced' | 'seat' | 'sendPrivate' | 'onPrivate' | 'peers' | 'onPeers'>;
+export type PrivateChannelHost = Pick<NetEngine, 'state' | 'confirmedState' | 'onState' | 'onSequenced' | 'seat' | 'sendPrivate' | 'onPrivate' | 'peers' | 'onPeers'>;
 
 /** Most cards one look answer or pack may carry. */
 const MAX_CARDS = 500;
@@ -33,6 +39,12 @@ const MAX_WAITING = 1000;
 const MAX_REMEMBERED_CIDS = 5000;
 /** Most sequenced `lookAt`s of one asker waiting for their request, and most requests waiting for their `lookAt`. */
 const MAX_OPEN_LOOKS = 32;
+/**
+ * How many sequenced actions a look request or targeted reveal waits for its public action, and a sequenced `lookAt`
+ * for its request, before it is dropped (an expired request is refused). Bounds what a nacked or never-sent action
+ * leaves behind.
+ */
+export const EXPIRE_AFTER_ACTIONS = 200;
 
 function isText(v: unknown, max = MAX_TEXT): v is string {
   return typeof v === 'string' && v.length > 0 && v.length <= max;
@@ -145,21 +157,36 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
   }
   /** Sequenced action ids, with the revealTo they carried (null for any other action). */
   const sequencedCids = new Map<string, RevealToSeen | null>();
-  const afterAction = new Map<string, ((seen: RevealToSeen | null) => void)[]>();
+  /** Targeted reveals waiting for their `revealTo`, with the action count they arrived at. */
+  const afterAction = new Map<string, { at: number; run: ((seen: RevealToSeen | null) => void)[] }>();
+  /** Sequenced actions seen so far (the clock of every expiry here). */
+  let tick = 0;
+
+  /**
+   * A sequenced `lookAt` of another seat at an own zone or card, with the cards it may show fixed at that point of
+   * the log (null: refuse), and whether a later action made them stale.
+   */
+  interface OpenLook {
+    zone: ZoneId;
+    count: number;
+    card?: InstanceId;
+    cards: RevealedCard[] | null;
+    stale: boolean;
+    at: number;
+  }
   /** Sequenced `lookAt`s of other seats that no request has used yet, per asker, oldest first. */
-  const openLooks = new Map<SeatId, { zone: ZoneId; count: number; card?: InstanceId }[]>();
+  const openLooks = new Map<SeatId, OpenLook[]>();
   /** Look requests that arrived before their `lookAt` was applied here (the pair channel can overtake the log). */
-  let waitingReqs: { msg: LookReqMessage; from: SeatId }[] = [];
+  let waitingReqs: { msg: LookReqMessage; from: SeatId; at: number }[] = [];
 
   const sameLook = (l: { zone: ZoneId; count: number; card?: InstanceId }, msg: LookReqMessage): boolean => l.zone === msg.zone && l.count === msg.count && l.card === msg.card;
 
-  /** Use up the asker's sequenced `lookAt` that matches the request; false when there is none. */
-  const takeLook = (msg: LookReqMessage, from: SeatId): boolean => {
+  /** Use up the asker's sequenced `lookAt` that matches the request; null when there is none. */
+  const takeLook = (msg: LookReqMessage, from: SeatId): OpenLook | null => {
     const list = openLooks.get(from);
     const i = list ? list.findIndex((l) => sameLook(l, msg)) : -1;
-    if (!list || i < 0) return false;
-    list.splice(i, 1);
-    return true;
+    if (!list || i < 0) return null;
+    return list.splice(i, 1)[0]!;
   };
 
   /**
@@ -185,49 +212,120 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
     return out;
   };
 
-  const answerLook = (msg: LookReqMessage, from: SeatId): void => {
-    const me = host.seat();
-    const st = host.state();
-    let safe: RevealedCard[] | null = null;
-    if (me !== null && answerer) {
-      let cards: RevealedCard[] | null;
-      try {
-        cards = answerer(msg, from);
-      } catch {
-        cards = null;
-      }
-      safe = cards === null ? null : allowed(msg, st, me, cards);
+  /** Whether zone `zone` (and the shuffles of it) are the same in the view as in the confirmed state. */
+  const settled = (zone: ZoneId): boolean => {
+    const view = host.state();
+    const conf = host.confirmedState();
+    const a = Object.hasOwn(view.zones, zone) ? view.zones[zone]!.ids : [];
+    const b = Object.hasOwn(conf.zones, zone) ? conf.zones[zone]!.ids : [];
+    if (a.length !== b.length || a.some((id, i) => id !== b[i])) return false;
+    for (const sid of new Set([...Object.keys(view.shuffles), ...Object.keys(conf.shuffles)])) {
+      const x = Object.hasOwn(view.shuffles, sid) ? view.shuffles[sid]! : null;
+      const y = Object.hasOwn(conf.shuffles, sid) ? conf.shuffles[sid]! : null;
+      if ((x?.zone === zone || y?.zone === zone) && x?.orderHash !== y?.orderHash) return false;
     }
+    return true;
+  };
+
+  /**
+   * The cards another seat's sequenced `lookAt` may show, fixed now, while the confirmed state is the state at that
+   * look (a `lookAt` changes no zone). The answerer is asked now; it must answer from the confirmed state (core/secrets.ts
+   * `lookAnswer(secrets, engine.confirmedState(), req)`), as `disclosedBy` records the look. While own pending actions
+   * change that zone (a draw or a shuffle not sequenced yet) the owner's order is not the one at the look: refused.
+   */
+  const bindLook = (action: { zone: ZoneId; count: number; card?: InstanceId; seq: number }, from: SeatId): RevealedCard[] | null => {
+    const me = host.seat();
+    if (me === null || !answerer) return null;
+    const msg: LookReqMessage = { v: PROTOCOL_VERSION, t: 'lookReq', lookId: `seq-${action.seq}`, zone: action.zone, count: action.count, ...(action.card !== undefined ? { card: action.card } : {}) };
+    if (action.card === undefined && !settled(action.zone)) return null;
+    let cards: RevealedCard[] | null;
+    try {
+      cards = answerer(msg, from);
+    } catch {
+      cards = null;
+    }
+    return cards === null ? null : allowed(msg, host.confirmedState(), me, cards);
+  };
+
+  /** The bound cards of `look` if it may still be answered: every card still where the look saw it, no reorder since. */
+  const stillValid = (look: OpenLook, msg: LookReqMessage): RevealedCard[] | null => {
+    const me = host.seat();
+    if (look.stale || look.cards === null || me === null) return null;
+    const st = host.confirmedState();
+    const now = allowed(msg, st, me, look.cards);
+    return now !== null && now.length === look.cards.length ? look.cards : null;
+  };
+
+  const answerLook = (msg: LookReqMessage, from: SeatId, look: OpenLook): void => {
+    const safe = stillValid(look, msg);
     const answer: LookMessage = safe === null ? { v: PROTOCOL_VERSION, t: 'look', lookId: msg.lookId, cards: [], refused: true } : { v: PROTOCOL_VERSION, t: 'look', lookId: msg.lookId, cards: safe.map(plainCard) };
     host.sendPrivate(from, answer);
+  };
+
+  /** Mark open looks at `zone` stale: its order changed after them (shuffle, reorder, re-issue). */
+  const staleLooks = (zone: ZoneId): void => {
+    for (const list of openLooks.values()) for (const l of list) if (l.zone === zone && l.card === undefined) l.stale = true;
+  };
+
+  /** Drop whatever waited too long for its public action or request. */
+  const expire = (): void => {
+    const old = (at: number): boolean => tick - at > EXPIRE_AFTER_ACTIONS;
+    for (const w of waitingReqs.filter((x) => old(x.at))) refuseLook(w.msg, w.from);
+    waitingReqs = waitingReqs.filter((x) => !old(x.at));
+    for (const [cid, e] of [...afterAction]) if (old(e.at)) afterAction.delete(cid);
+    for (const [seat, list] of [...openLooks]) {
+      const kept = list.filter((l) => !old(l.at));
+      if (kept.length) openLooks.set(seat, kept);
+      else openLooks.delete(seat);
+    }
   };
 
   const refuseLook = (msg: LookReqMessage, from: SeatId): void => {
     host.sendPrivate(from, { v: PROTOCOL_VERSION, t: 'look', lookId: msg.lookId, cards: [], refused: true });
   };
 
+  /** The zone whose private order a sequenced action changes, if any (a shuffle, a reorder, a re-issue). */
+  const reorderedZone = (action: SequencedAction): ZoneId | null => {
+    if (action.type === 'reorder') return action.zone;
+    if (action.type !== 'shuffleDone') return null;
+    const st = host.confirmedState();
+    return Object.hasOwn(st.shuffles, action.sid) ? st.shuffles[action.sid]!.zone : null;
+  };
+
   host.onSequenced((action) => {
     const me = host.seat();
+    tick++;
     const seen: RevealToSeen | null = action.type === 'revealTo' ? { by: action.by, card: action.instanceId, seats: Array.isArray(action.seats) ? action.seats : [] } : null;
     sequencedCids.set(action.cid, seen);
     if (sequencedCids.size > MAX_REMEMBERED_CIDS) sequencedCids.delete(sequencedCids.keys().next().value!);
     const run = afterAction.get(action.cid);
     if (run) {
       afterAction.delete(action.cid);
-      for (const f of run) f(seen);
+      for (const f of run.run) f(seen);
     }
-    if (action.type === 'lookAt' && action.by !== me) {
-      const waiting = waitingReqs.find((w) => w.from === action.by && sameLook(action, w.msg));
-      if (waiting) {
-        waitingReqs = waitingReqs.filter((w) => w !== waiting);
-        answerLook(waiting.msg, waiting.from);
-      } else {
-        const list = openLooks.get(action.by) ?? [];
-        list.push({ zone: action.zone, count: action.count, ...(action.card !== undefined ? { card: action.card } : {}) });
-        if (list.length > MAX_OPEN_LOOKS) list.shift();
-        openLooks.set(action.by, list);
+    const moved = reorderedZone(action);
+    if (moved !== null) staleLooks(moved);
+    if (action.type === 'lookAt' && action.by !== me && me !== null) {
+      const st = host.confirmedState();
+      const zone = Object.hasOwn(st.zones, action.zone) ? st.zones[action.zone]! : null;
+      const card = action.card !== undefined && Object.hasOwn(st.cards, action.card) ? st.cards[action.card]! : null;
+      // Only a look at an own zone (or own card) is this browser's to answer.
+      const mine = action.card !== undefined ? card !== null && card.owner === me : zone !== null && zone.owner === me;
+      if (mine) {
+        const look: OpenLook = { zone: action.zone, count: action.count, ...(action.card !== undefined ? { card: action.card } : {}), cards: bindLook(action, action.by), stale: false, at: tick };
+        const waiting = waitingReqs.find((w) => w.from === action.by && sameLook(action, w.msg));
+        if (waiting) {
+          waitingReqs = waitingReqs.filter((w) => w !== waiting);
+          answerLook(waiting.msg, waiting.from, look);
+        } else {
+          const list = openLooks.get(action.by) ?? [];
+          list.push(look);
+          if (list.length > MAX_OPEN_LOOKS) list.shift();
+          openLooks.set(action.by, list);
+        }
       }
     }
+    expire();
   });
 
   const onReveal = (msg: RevealMessage, from: SeatId): void => {
@@ -245,8 +343,11 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
       decide(card, from);
     };
     if (sequencedCids.has(msg.about)) return take(sequencedCids.get(msg.about)!);
-    if (afterAction.size >= MAX_WAITING && !afterAction.has(msg.about)) return;
-    afterAction.set(msg.about, [...(afterAction.get(msg.about) ?? []), take]);
+    const entry = afterAction.get(msg.about);
+    if (entry) return void entry.run.push(take);
+    // Full: the oldest waiting reveal goes (its revealTo is the least likely to still come).
+    if (afterAction.size >= MAX_WAITING) afterAction.delete(afterAction.keys().next().value!);
+    afterAction.set(msg.about, { at: tick, run: [take] });
   };
 
   const onLookReq = (msg: LookReqMessage, from: SeatId): void => {
@@ -260,12 +361,13 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
     const mine = me !== null && (msg.card !== undefined ? card !== null && card.owner === me : zone !== null && zone.owner === me);
     if (!mine) return refuseLook(msg, from);
     // Each sequenced lookAt of the asker opens exactly one answer; a request without one waits for it.
-    if (takeLook(msg, from)) return answerLook(msg, from);
+    const look = takeLook(msg, from);
+    if (look) return answerLook(msg, from, look);
     if (waitingReqs.length >= MAX_OPEN_LOOKS) {
       const oldest = waitingReqs.shift()!;
       refuseLook(oldest.msg, oldest.from);
     }
-    waitingReqs.push({ msg, from });
+    waitingReqs.push({ msg, from, at: tick });
   };
 
   const onLook = (msg: LookMessage, from: SeatId): void => {

@@ -8,7 +8,8 @@ import type { RevealedCard } from '../../../src/core/commit';
 import { commitDeck, emptySecretStore, lookAnswer, revealedCard } from '../../../src/core/secrets';
 import type { SeatId, TableState } from '../../../src/core/types';
 import type { PrivateMessage, SequencedAction } from '../../../src/net/messages';
-import { privateChannelOver, type PrivateChannelHost } from '../../../src/net/private';
+import { EXPIRE_AFTER_ACTIONS, privateChannelOver, type PrivateChannelHost } from '../../../src/net/private';
+import { reduce } from '../../../src/core/reducer';
 import type { PeerInfo, PrivateChannel } from '../../../src/net/types';
 import { deckRefs, readySecretTable, seededEntropy, type SecretTable } from './helpers';
 
@@ -22,6 +23,8 @@ class Bus {
   readonly connected = new Set<SeatId>();
   readonly stateListeners: ((s: TableState) => void)[] = [];
   readonly seqListeners: ((a: SequencedAction, own: boolean) => void)[] = [];
+  /** The owner's view when it has own pending actions (null: the view is the confirmed state). */
+  view: TableState | null = null;
 
   constructor(private readonly table: SecretTable) {}
 
@@ -31,7 +34,8 @@ class Bus {
     this.listeners[seat] = [];
     this.peerListeners[seat] = [];
     const host: PrivateChannelHost = {
-      state: (): TableState => this.table.state,
+      state: (): TableState => this.view ?? this.table.state,
+      confirmedState: (): TableState => this.table.state,
       onState: (l: (s: TableState) => void) => {
         this.stateListeners.push(l);
         return () => undefined;
@@ -276,17 +280,80 @@ describe('looks at another seat’s hidden cards', () => {
     bus.inject('s0', 's1', { v: 1, t: 'lookReq', lookId: 'bogus', zone: 'library:s0', count: 1 });
     expect(asked).toEqual([]);
     expect(bus.inbox.s1).toEqual([]);
-    // A lookAt by another seat, or with another count, does not open it either.
+    // A lookAt by another seat, or with another count, does not open it either (the answerer is asked for those looks
+    // when they are sequenced, but nothing is sent until their own request comes).
     bus.lookAt('s2', 'library:s0', 1);
     bus.lookAt('s1', 'library:s0', 2);
-    expect(asked).toEqual([]);
+    expect(asked).toEqual(['s2:library:s0:1', 's1:library:s0:2']);
+    expect(bus.inbox.s1).toEqual([]);
+    expect(bus.inbox.s2).toEqual([]);
     // The matching lookAt arrives after the request (the pair channel overtook the log): answered now.
     bus.lookAt('s1', 'library:s0', 1);
-    expect(asked).toEqual(['s1:library:s0:1']);
     expect(bus.inbox.s1!.map((m) => m.msg)).toEqual([{ v: 1, t: 'look', lookId: 'bogus', cards: [top] }]);
     // The lookAt is used up: a second request waits again.
     bus.inject('s0', 's1', { v: 1, t: 'lookReq', lookId: 'again', zone: 'library:s0', count: 1 });
-    expect(asked).toHaveLength(1);
+    expect(bus.inbox.s1).toHaveLength(1);
+  });
+
+  it('show the cards at the point of the log where the lookAt was sequenced, not where the request arrives', async () => {
+    const { t, bus, ch } = setup();
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req));
+    const [x1, x2] = t.secrets.s0!.libraryOrder;
+    // s1 looks at the top card; s0 draws it before s1's request arrives. The look saw x1, which is now in s0's hand,
+    // and showing x2 instead would be a look the log does not hold: refused.
+    bus.lookAt('s1', 'library:s0', 1);
+    t.apply('s0', { type: 'draw', instanceId: x1! });
+    t.secrets.s0 = { ...t.secrets.s0!, libraryOrder: t.secrets.s0!.libraryOrder.slice(1), hand: [...t.secrets.s0!.hand, x1!] };
+    bus.sequenced('draw-x1', t.log.at(-1)! as unknown as Record<string, unknown>);
+    expect(await ch.s1!.requestLook('s0', 'library:s0', 1)).toEqual([]);
+    expect(bus.inbox.s1!.at(-1)!.msg).toMatchObject({ t: 'look', cards: [], refused: true });
+    // Untouched in between, the look shows exactly the cards bound at its lookAt.
+    bus.lookAt('s1', 'library:s0', 1);
+    expect((await ch.s1!.requestLook('s0', 'library:s0', 1)).map((c) => c.instanceId)).toEqual([x2]);
+    const salts = bus.inbox.s1!.flatMap((m) => (m.msg.t === 'look' ? m.msg.cards.map((c) => c.salt) : []));
+    expect(salts).not.toContain(t.secrets.s0!.identities[x1!]!.salt);
+  });
+
+  it('a lookAt is not good for the order after a later shuffle or reorder of that zone', async () => {
+    const { t, bus, ch } = setup();
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req));
+    bus.lookAt('s1', 'library:s0', 1);
+    bus.lookAt('s2', 'library:s0', 1);
+    // s0 shuffles (the round is in the confirmed state) and privately reorders: the looks are stale.
+    t.apply('s0', { type: 'shuffleCommit', sid: 'shx', zone: 'library:s0', h: 'h' });
+    bus.sequenced('commit', t.log.at(-1)! as unknown as Record<string, unknown>);
+    bus.sequenced('done', { type: 'shuffleDone', by: 's0', sid: 'shx', orderHash: 'o' });
+    expect(await ch.s1!.requestLook('s0', 'library:s0', 1)).toEqual([]);
+    bus.lookAt('s1', 'library:s0', 1);
+    bus.sequenced('reorder', { type: 'reorder', by: 's0', zone: 'library:s0', count: 1, orderHash: 'o' });
+    expect(await ch.s1!.requestLook('s0', 'library:s0', 1)).toEqual([]);
+    expect(bus.inbox.s1!.every((m) => m.msg.t === 'look' && m.msg.cards.length === 0)).toBe(true);
+  });
+
+  it('is refused while the owner has pending actions on that zone, since its order is not the one at the look', async () => {
+    const { t, bus, ch } = setup();
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req));
+    const x1 = t.secrets.s0!.libraryOrder[0]!;
+    // s0's draw of x1 is applied optimistically but not sequenced yet; s1's lookAt is sequenced before it.
+    bus.view = reduce(t.state, { type: 'draw', instanceId: x1, by: 's0', cid: 'pending' });
+    bus.lookAt('s1', 'library:s0', 1);
+    bus.view = null;
+    expect(await ch.s1!.requestLook('s0', 'library:s0', 1)).toEqual([]);
+  });
+
+  it('a request whose lookAt never comes is refused after a while, so the asker is not left waiting', async () => {
+    const { t, bus, ch } = setup();
+    ch.s0!.answerLooks((req) => lookAnswer(t.secrets.s0!, t.state, req));
+    let got: RevealedCard[] | null = null;
+    void ch.s1!.requestLook('s0', 'library:s0', 1).then((r) => (got = r));
+    for (let i = 0; i <= EXPIRE_AFTER_ACTIONS; i++) bus.sequenced(`chat-${i}`);
+    await Promise.resolve();
+    expect(got).toEqual([]);
+    // A lookAt never asked about expires too: a late request for it waits again instead of being answered.
+    bus.lookAt('s1', 'library:s0', 1);
+    for (let i = 0; i <= EXPIRE_AFTER_ACTIONS; i++) bus.sequenced(`more-${i}`);
+    bus.inject('s0', 's1', { v: 1, t: 'lookReq', lookId: 'late', zone: 'library:s0', count: 1 });
+    expect(bus.inbox.s1!.filter((m) => m.msg.t === 'look' && m.msg.cards.length > 0)).toEqual([]);
   });
 
   it('a peek shows only an own face-down card in a public zone, never a hand or library card', async () => {

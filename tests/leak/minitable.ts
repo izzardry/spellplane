@@ -239,6 +239,7 @@ export class MiniPeer {
   host(): PrivateChannelHost {
     return {
       state: () => this.state,
+      confirmedState: () => this.state,
       onState: (l) => this.onState(l),
       onSequenced: (l) => this.onSequenced((a) => l(a, a.by === this.seatId)),
       seat: () => this.seat(),

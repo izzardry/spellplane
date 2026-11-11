@@ -330,6 +330,47 @@ describe('the post-game audit', () => {
     expect(texts).toEqual(expect.arrayContaining([expect.stringMatching(/re-issue changed the identity/), expect.stringMatching(/does not match its commitment/)]));
   });
 
+  it('catches a reorder of `count` cards that restacked cards it did not look at', () => {
+    const { t } = shuffledTable(['Anna', 'Ben'], 10);
+    const lib = t.secrets.s0!.libraryOrder;
+    // One `reorder {count: 1}` that actually reverses the whole library after a fair shuffle, then draws the old bottom.
+    const r = privateReorder(t.secrets.s0!, t.state, LIB0, [...lib].reverse(), 1, t.entropy.s0!);
+    t.apply('s0', r.action);
+    t.secrets.s0 = r.secrets;
+    t.apply('s0', { type: 'draw', instanceId: lib.at(-1)! });
+    expect(auditSeat(t.start, t.log, 's0', t.secrets.s0!.audit, t.secrets.s0!.identities).map((f) => f.text)).toEqual([
+      `the reorder of 1 cards of ${LIB0} moved cards it did not look at`,
+    ]);
+    // The same order is fine when the reorder covers every card (a search looks at all of them).
+    const all = shuffledTable(['Anna', 'Ben'], 10).t;
+    const lib2 = all.secrets.s0!.libraryOrder;
+    const r2 = privateReorder(all.secrets.s0!, all.state, LIB0, [...lib2].reverse(), lib2.length, all.entropy.s0!);
+    all.apply('s0', r2.action);
+    all.secrets.s0 = r2.secrets;
+    all.apply('s0', { type: 'draw', instanceId: lib2.at(-1)! });
+    expect(auditSeat(all.start, all.log, 's0', all.secrets.s0!.audit, all.secrets.s0!.identities)).toEqual([]);
+  });
+
+  it('catches a re-issuing reorder whose recorded old order is not the replayed one', () => {
+    const { t } = shuffledTable(['Anna', 'Ben'], 8);
+    const honest = t.secrets.s0!.libraryOrder;
+    // The owner pretends its library was in another order, so the fresh ids land on other cards.
+    const forged = { ...t.secrets.s0!, libraryOrder: [...honest].reverse() };
+    const r = reissueZone(forged, t.state, LIB0, t.entropy.s0!)!;
+    t.apply('s0', r.action);
+    t.secrets.s0 = r.secrets;
+    t.apply('s0', { type: 'draw', instanceId: r.secrets.libraryOrder[0]! });
+    const texts = auditSeat(t.start, t.log, 's0', t.secrets.s0!.audit, t.secrets.s0!.identities).map((f) => f.text);
+    expect(texts).toEqual([`the re-issue of ${LIB0} moved cards`]);
+    // The honest re-issue renames the cards in place and passes.
+    const ok = shuffledTable(['Anna', 'Ben'], 8).t;
+    const r2 = reissueZone(ok.secrets.s0!, ok.state, LIB0, ok.entropy.s0!)!;
+    ok.apply('s0', r2.action);
+    ok.secrets.s0 = r2.secrets;
+    ok.apply('s0', { type: 'draw', instanceId: r2.secrets.libraryOrder[0]! });
+    expect(auditSeat(ok.start, ok.log, 's0', ok.secrets.s0!.audit, ok.secrets.s0!.identities)).toEqual([]);
+  });
+
   it('catches a reorder whose record does not match its hash', () => {
     const t = game();
     const audit = t.secrets.s0!.audit.map((r) => (r.kind === 'reorder' ? { ...r, nonce: 'x' } : r));
