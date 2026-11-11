@@ -1,33 +1,59 @@
+<!--
+  App shell with hash routing (PLAN M0-P4): `#/` is the solo table; `#/t/<room>/<key>`, `#/lobby` and `#/diag` are
+  reserved for later milestones. Props come from main.ts (ui/types.ts AppProps, wired by M0-P7); without a session the
+  shell shows the bootstrap stage.
+-->
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { createStage, type Stage } from '../scene/stage';
-  import { registerDebug } from '../util/debug';
+  import { paper } from '../themes/paper/index';
+  import { tokensToCssVars } from '../themes/index';
+  import type { AppProps } from './types';
+  import Hud from './Hud.svelte';
+  import Smoke from './Smoke.svelte';
+  import { parseRoute, type Route } from './routes';
 
-  let host: HTMLElement;
-  let stage: Stage | null = null;
+  let props: Partial<AppProps> = $props();
 
-  onMount(() => {
-    stage = createStage(host);
-    stage.addCard({
-      id: 'smoke-1',
-      face: { name: 'Placeholder Bear', cost: '{1}{G}', type: 'Creature — Bear', pt: '2/2', text: 'A card drawn by the test harness.' },
-      x: 0,
-      y: 0,
-      rot: 0,
-    });
-    stage.render();
-    const s = stage;
-    registerDebug({
-      cards: () =>
-        s.cards().map((c) => ({ id: c.id, pose: { x: c.x, y: c.y, rot: c.rot }, screen: s.cardRect(c.id) ?? new DOMRect(), visible: true })),
-      camera: () => ({ rig: 'birdseye', fov: s.camera.fov, position: s.camera.position.toArray(), pitch: 90 }),
-      frameStats: () => ({ drawCalls: s.renderer.info.render.calls, textureBytes: 0, frameMs: 0 }),
-    });
-    return () => s.dispose();
-  });
+  let route = $state<Route>(parseRoute(typeof location === 'undefined' ? '' : location.hash));
+  const cssVars = Object.entries(tokensToCssVars(paper.tokens))
+    .map(([k, v]) => `${k}: ${v}`)
+    .join('; ');
 </script>
 
-<main class="table" bind:this={host} data-testid="table"></main>
+<svelte:window onhashchange={() => (route = parseRoute(location.hash))} />
+
+{#if route.name === 'solo'}
+  {#if props.session && props.createScene && props.faces && props.cardData && props.game}
+    <Hud
+      session={props.session}
+      createScene={props.createScene}
+      faces={props.faces}
+      cardData={props.cardData}
+      game={props.game}
+      theme={paper}
+      settings={props.settings}
+      parseDecklist={props.parseDecklist}
+    />
+  {:else}
+    <Smoke />
+  {/if}
+{:else}
+  <main class="page" style={cssVars} data-testid="route-{route.name}">
+    {#if route.name === 'room'}
+      <h1>Table {route.room}</h1>
+      <p>Joining tables by link arrives with peer-to-peer play (milestone 1).</p>
+    {:else if route.name === 'lobby'}
+      <h1>Lobby</h1>
+      <p>The lobby arrives with milestone 1.</p>
+    {:else if route.name === 'diag'}
+      <h1>Diagnostics</h1>
+      <p>The connection check arrives with milestone 1.</p>
+    {:else}
+      <h1>Not found</h1>
+      <p>There is nothing at {route.hash}.</p>
+    {/if}
+    <p><a href="#/">Back to the solo table</a></p>
+  </main>
+{/if}
 
 <style>
   :global(html, body) {
@@ -41,8 +67,15 @@
   :global(#app) {
     height: 100%;
   }
-  .table {
-    position: fixed;
-    inset: 0;
+  .page {
+    max-width: 40em;
+    margin: 0 auto;
+    padding: 48px 16px;
+    font-family: var(--sp-font);
+    color: var(--sp-fg);
+    background: var(--sp-bg);
+  }
+  .page a {
+    color: var(--sp-fg);
   }
 </style>
