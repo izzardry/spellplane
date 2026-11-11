@@ -170,6 +170,8 @@ One line per decision the design did not fix. Format: `- [package] decision — 
 - [M0-G] Open for M1-P2: instance ids stay stable across hand → library → graveyard, so a peer could link hidden history to a later reveal; the owner should re-issue opaque ids when a card returns to a hidden zone (DESIGN "Table model", Hidden cards).
 - [M0] The M0 workflow was interrupted by a machine crash after integrating all seven packages; the main session verified check and e2e, committed the workflow script, and re-ran the milestone workflow with no contracts and no packages (gate phase only).
 
+- [M0] After the merge, CI on main failed three e2e tests that passed locally (runner timing: the pan fling needs the release within 80 ms of the last move; on Linux Ctrl+Z in the note field is the browser's text undo). Fixed the tests on main (9a45964); CI green.
+
 ## M1 1v1 peer-to-peer
 
 - [M1-C] Added package M1-P8 Networked session (`session/*`, `main.ts`, `debug/*`; after M1-P1, M1-P2, M1-P5) — the plan had no owner for the glue of TableSession, NetEngine, pair channel, sequencer timers and the `#/t/<room>/<key>` route; M1-P1 owns `net/*` except `net/private.ts` (M1-P2) and `net/sync.ts` (M1-P7); M1-P5 also owns `#/diag`.
