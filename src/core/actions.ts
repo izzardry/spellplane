@@ -11,9 +11,11 @@
  */
 import type {
   Anchor,
+  CardInstance,
   CardRef,
   ConfirmResponse,
   InstanceId,
+  Line,
   LineId,
   LineKind,
   PackId,
@@ -30,7 +32,11 @@ import type {
   StackItem,
   StackItemId,
   TableSettings,
+  Team,
   TeamId,
+  TurnState,
+  Seat,
+  Zone,
   ZoneId,
 } from './types';
 
@@ -44,6 +50,27 @@ export interface ActionBase {
   seq?: number;
   /** Shared by the actions of one gesture over a selection; undo reverts a group as one step. */
   group?: string;
+  /**
+   * Added by M0-P1. Only on an inverse built by `inverse()` (core/undo.ts): the exact prior public records that the
+   * inverse action alone cannot bring back (a turn number, removed lines, a dropped identity, a re-laid pile).
+   * The reducer applies it after the action's own effect, and only on undoable action types.
+   */
+  restore?: RestorePatch;
+}
+
+/**
+ * Prior public records an inverse action restores (DESIGN "Turn flow and confirmation", Undo). Added by M0-P1.
+ * `null` deletes a record. Built only from shared state, so it never carries a hidden identity.
+ */
+export interface RestorePatch {
+  cards?: Record<InstanceId, CardInstance | null>;
+  zones?: Record<ZoneId, Zone>;
+  lines?: Record<LineId, Line | null>;
+  /** The whole stack, bottom to top. */
+  stack?: StackItem[];
+  turn?: TurnState;
+  seats?: Record<SeatId, Seat>;
+  teams?: Record<TeamId, Team>;
 }
 
 type A<T extends string, P> = ActionBase & { type: T } & P;
