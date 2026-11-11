@@ -1,11 +1,25 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { VitePWA } from 'vite-plugin-pwa';
 
 // GitHub Pages serves the app from https://izzardry.github.io/spellplane/
 export default defineConfig(({ mode }) => ({
   base: '/spellplane/',
-  plugins: [svelte()],
+  plugins: [
+    svelte(),
+    // Service worker (src/sw.ts): cache-first Scryfall card images (DESIGN "Card data and images", Caching).
+    // Production builds only, so dev and test builds never run a worker; no precache and no web app manifest.
+    VitePWA({
+      disable: mode !== 'production',
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
+      injectRegister: 'script',
+      manifest: false,
+      injectManifest: { injectionPoint: undefined },
+    }),
+  ],
   define: {
     // The debug hook (window.__spellplane) ships in dev and test builds only.
     __SPELLPLANE_DEBUG__: JSON.stringify(mode !== 'production'),

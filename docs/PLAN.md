@@ -387,7 +387,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M0-P2 Card data
 - [ ] M0-P3 Scene
 - [ ] M0-P4 HUD
-- [ ] M0-P5 Local store
+- [x] M0-P5 Local store
 - [ ] M0-P6 Magic definition
 - [ ] M0-P7 Solo session
 - [ ] M0-G Gate and owner playtest
