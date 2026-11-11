@@ -21,6 +21,7 @@ const ELEMENTS = [
   { type: 'games', pattern: 'src/games' },
   { type: 'debug', pattern: 'src/debug' },
   { type: 'util', pattern: 'src/util' },
+  { type: 'session', pattern: 'src/session' },
 ];
 
 const allow = (from, to) => ({ from: { element: { type: from } }, allow: { to: { element: { types: to } } } });
@@ -36,8 +37,9 @@ const POLICIES = [
   allow('themes', ['themes', 'core', 'scene', 'util']),
   allow('scene', ['scene', 'core', 'games', 'themes', 'data', 'store', 'util']),
   allow('voice', ['voice', 'core', 'net', 'store', 'util']),
-  allow('ui', ['ui', 'scene', 'core', 'net', 'store', 'data', 'draft', 'games', 'themes', 'voice', 'util']),
-  allow('debug', ['debug', 'core', 'net', 'store', 'data', 'draft', 'scene', 'themes', 'ui', 'voice', 'games', 'util']),
+  allow('session', ['session', 'core', 'net', 'store', 'data', 'draft', 'games', 'voice', 'util']),
+  allow('ui', ['ui', 'session', 'scene', 'core', 'net', 'store', 'data', 'draft', 'games', 'themes', 'voice', 'util']),
+  allow('debug', ['debug', 'session', 'core', 'net', 'store', 'data', 'draft', 'scene', 'themes', 'ui', 'voice', 'games', 'util']),
 ];
 
 const NO_BROWSER_GLOBALS = ['window', 'document', 'navigator', 'localStorage', 'sessionStorage', 'indexedDB', 'fetch', 'WebSocket', 'RTCPeerConnection', 'BroadcastChannel', 'Date', 'performance'].map((name) => ({
