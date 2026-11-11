@@ -25,6 +25,8 @@ export interface TextSpec {
   /** Outline colour for legibility over card art; width as a fraction of the size. */
   outline?: string;
   letterSpacing?: number;
+  /** Uniform scale on top of `size` (no glyph re-layout), e.g. to keep a badge legible at far zoom. Default 1. */
+  scale?: number;
 }
 
 let configured = false;
@@ -39,7 +41,11 @@ export class TextLayer {
   private members = new Map<string, { t: Text; spec: TextSpec }>();
   private material: THREE.MeshBasicMaterial;
 
-  constructor() {
+  /**
+   * `renderOrder` 3 (default) draws over the cards (counters, badges, notes); 1 draws under them, over the zone
+   * hairlines (table markings such as zone labels).
+   */
+  constructor(renderOrder = 3, name = 'text') {
     if (!configured) {
       configureTextBuilder({ defaultFontURL: fontUrl, unicodeFontsURL: null });
       configured = true;
@@ -49,9 +55,9 @@ export class TextLayer {
     this.object.material = this.material;
     this.object.font = fontUrl;
     this.object.rotation.x = -Math.PI / 2;
-    this.object.renderOrder = 3;
+    this.object.renderOrder = renderOrder;
     this.object.frustumCulled = false;
-    this.object.name = 'text';
+    this.object.name = name;
   }
 
   /** Set the full set of labels; members not listed are removed. Cheap when nothing changed. */
@@ -91,6 +97,7 @@ export class TextLayer {
       // Batch-local frame: x = table x, y = table y, z = height.
       t.position.set(spec.x, spec.y, spec.z);
       t.rotation.z = -spec.rot * DEG;
+      t.scale.setScalar(spec.scale ?? 1);
       m.spec = { ...spec, text };
     }
   }

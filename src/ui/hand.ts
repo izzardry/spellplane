@@ -53,3 +53,17 @@ export function handOrder(state: TableState, secrets: SecretStore, seat: string)
   const seen = new Set(ordered);
   return [...ordered, ...zone.ids.filter((id) => !seen.has(id))];
 }
+
+/**
+ * Screen edges (CSS px) the HUD's screen-anchored layer covers, for the scene's table fit (DESIGN "Camera and
+ * navigation", Screen-anchored layer): `top` the toolbar and turn-strip row, `log` the open log column at the right
+ * (300 wide, 8 from the edge, 8 clear), `handGap` the margin above the hand fan (22% of viewport height), `avatars`
+ * the avatar column at the left (150 plus padding, 8 from the edge, 8 clear).
+ */
+export const FIT_INSET = { top: 40, log: 316, handGap: 8, avatars: 190 } as const;
+
+/** The scene host's `data-fit-insets` value, "top right bottom left" in CSS px. */
+export function fitInsets(vh: number, logOpen: boolean): string {
+  const bottom = Math.round(vh * SCREEN_LAYER.handCardViewportFraction) + FIT_INSET.handGap;
+  return `${FIT_INSET.top} ${logOpen ? FIT_INSET.log : 0} ${bottom} ${FIT_INSET.avatars}`;
+}

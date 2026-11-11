@@ -1,7 +1,15 @@
 /**
  * The action log as text (DESIGN "Turn flow and confirmation", Action log: every state change is one line with seat
  * colour, actor and card names; life changes within two seconds merge into one line "Anna: 20 → 14"; every undo is
- * shown, and undoing a draw says the card went back on top of the library). Pure.
+ * shown, and undoing a draw says the card went back on top of the library). Pure, apart from the optional name memo.
+ *
+ * To keep the log readable: one gesture over several cards (draws, moves or taps sharing a `group`) is one line
+ * ("draws 7 cards", "moves A, B and C to their graveyard"); the `reveal` that publishes a card's identity just before
+ * the action that makes it public (a play, a cast, a mill) gets no line of its own, since that action names the card;
+ * the M0 public trace of a shuffle (a `reorder` of more than one card) reads as a shuffle.
+ *
+ * Names are frozen when a line is first described (LogContext.names): a card that was hidden when it moved stays
+ * "Hidden card" in that line after it becomes public, so the log never ties earlier hidden moves to an identity.
  */
 import type { Action, UndoableAction } from '../core/actions';
 import type { InstanceId, LogEntry, SeatId, TableState, ZoneId } from '../core/types';
@@ -29,6 +37,11 @@ export interface LogContext {
   /** A card's name if this browser may know it, else null. */
   cardName(id: InstanceId): string | null;
   phaseLabel(id: string): string;
+  /**
+   * Names as first described, keyed by entry and card; filled on first use and read afterwards, so a line keeps the
+   * names it was written with. The HUD keeps one memo for the page's life.
+   */
+  names?: Map<string, string | null>;
 }
 
 /** Window in which life changes merge into one line (DESIGN "Turn flow and confirmation"). */
@@ -43,12 +56,38 @@ function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/** The card an action is about, for actions that name one card. */
+function cardOf(a: Action): InstanceId | null {
+  if (a.type === 'stackPush') return a.card ?? null;
+  if ('card' in a && typeof a.card === 'string') return a.card;
+  return null;
+}
+
+/** Join card names as "A", "A and B", "A, B and C". */
+function joinCards(cards: Seg[]): Seg[] {
+  const out: Seg[] = [];
+  cards.forEach((c, i) => {
+    if (i > 0) out.push(t(i === cards.length - 1 ? ' and ' : ', '));
+    out.push(c);
+  });
+  return out;
+}
+
 /** Build the lines for `entries` (oldest first). */
 export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine[] {
   const st = ctx.state;
   const seatName = (s: SeatId) => st.seats[s]?.name ?? st.teams[s]?.seats.map((x) => st.seats[x]?.name ?? x).join(' & ') ?? s;
+  // The entry being described: its card names are memoised under its key.
+  let entryKey = '';
   const card = (id: InstanceId): Seg => {
-    const name = ctx.cardName(id);
+    const memo = ctx.names;
+    const k = `${entryKey}|${id}`;
+    let name: string | null;
+    if (memo?.has(k)) name = memo.get(k) ?? null;
+    else {
+      name = ctx.cardName(id);
+      memo?.set(k, name);
+    }
     return name ? { card: id, name } : { card: id, name: 'a card' };
   };
   const zone = (z: ZoneId, actor: SeatId): string => {
@@ -81,15 +120,20 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
   const byCid = new Map<string, Action>();
   const lines: LogLine[] = [];
   let lastLife: { line: LogLine; key: string; by: SeatId; at: number; from: number } | null = null;
+  // A line that later actions of the same gesture (same type, actor, group and destination) fold into.
+  let merge: { line: LogLine; sig: string; a: Action; cards: Seg[] } | null = null;
 
-  for (const e of entries) {
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i]!;
     if (e.kind === 'system') {
       lines.push({ key: `sys-${e.seq}-${lines.length}`, kind: 'system', seat: null, colour: null, actor: '', segs: [t(e.text)], at: e.at, level: e.level });
       lastLife = null;
+      merge = null;
       continue;
     }
     const a = e.action;
     byCid.set(a.cid, a);
+    entryKey = `a-${e.seq}-${a.cid}`;
     const life = lifeDelta(a);
     if (life) {
       const before = running.get(life.key) ?? currentLife(life.key);
@@ -109,11 +153,47 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     }
     lastLife = null;
     if (SILENT.has(a.type)) continue;
-    const segs = describe(a, { card, zone, seatName, stackItem, phaseLabel: ctx.phaseLabel, state: st, original: (cid) => byCid.get(cid) ?? null });
+    if (a.type === 'reveal') {
+      // The action right after a reveal by the same seat that is about the same card names it; no line of its own.
+      const next = entries.slice(i + 1).find((x) => x.kind === 'action' && !SILENT.has(x.action.type));
+      if (next?.kind === 'action' && next.action.by === a.by && cardOf(next.action) === a.instanceId) continue;
+    }
+    const d: Describers = { card, zone, seatName, stackItem, phaseLabel: ctx.phaseLabel, state: st, original: (cid) => byCid.get(cid) ?? null };
+    const sig = mergeSig(a);
+    if (sig !== null && merge && merge.sig === sig) {
+      // A draw stays unnamed: it adds a count, not a card.
+      merge.cards.push(a.type === 'draw' ? t('a card') : card(cardOf(a)!));
+      merge.line.segs = mergedSegs(merge.a, merge.cards, d);
+      merge.line.at = e.at;
+      continue;
+    }
+    const segs = describe(a, d);
     if (!segs) continue;
-    lines.push({ key: `a-${e.seq}-${a.cid}`, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: a.by, colour: st.seats[a.by]?.colour ?? null, actor: seatName(a.by), segs, at: e.at });
+    const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: a.by, colour: st.seats[a.by]?.colour ?? null, actor: seatName(a.by), segs, at: e.at };
+    lines.push(line);
+    merge = sig === null ? null : { line, sig, a, cards: [a.type === 'draw' ? t('a card') : card(cardOf(a)!)] };
   }
   return lines;
+}
+
+/** What makes two actions one gesture's line: draws, moves and taps of one actor sharing a group. Null: never merged. */
+function mergeSig(a: Action): string | null {
+  if (a.group === undefined) return null;
+  if (a.type === 'draw') return `draw|${a.by}|${a.group}|${a.to ?? ''}`;
+  if (a.type === 'move') return `move|${a.by}|${a.group}|${a.to}`;
+  if (a.type === 'tap') return `tap|${a.by}|${a.group}|${a.tapped}`;
+  return null;
+}
+
+/** The text of a merged gesture line: `first` is the gesture's first action, `cards` one entry per action. */
+function mergedSegs(first: Action, cards: Seg[], d: Describers): Seg[] {
+  if (first.type === 'draw') {
+    const n = cards.length;
+    return [t(first.to && !first.to.startsWith('hand') ? `draws ${plural(n, 'card')} to ${d.zone(first.to, first.by)}` : `draws ${plural(n, 'card')}`)];
+  }
+  if (first.type === 'move') return [t('moves '), ...joinCards(cards), t(` to ${d.zone(first.to, first.by)}`)];
+  if (first.type === 'tap') return [t(first.tapped ? 'taps ' : 'untaps '), ...joinCards(cards)];
+  return describe(first, d) ?? [];
 }
 
 interface Describers {
@@ -175,7 +255,9 @@ export function describe(a: Action, d: Describers): Seg[] | null {
     case 'shuffleCommit':
       return [t(a.purpose === 'pack' ? 'opens a pack' : `shuffles ${zone(a.zone, a.by)}`)];
     case 'reorder':
-      return [t(`reorders the top ${plural(a.count, 'card')} of ${zone(a.zone, a.by)}`)];
+      // In M0 a reorder of more than one card is the public trace of a shuffle (M1-P2 publishes shuffleCommit
+      // instead); a private reorder moves one card within the library (scry or surveil to top or bottom).
+      return [t(a.count > 1 ? `shuffles ${zone(a.zone, a.by)}` : `moves a card within ${zone(a.zone, a.by)}`)];
     case 'lookAt':
       return a.card ? [t('peeks at '), card(a.card)] : [t(`looks at the top ${plural(a.count, 'card')} of ${zone(a.zone, a.by)}`)];
     case 'mulligan':
@@ -246,7 +328,7 @@ export function describe(a: Action, d: Describers): Seg[] | null {
     case 'settings':
       return [t(a.settings.passTimerMs !== undefined ? `sets the pass timer to ${a.settings.passTimerMs === null ? 'off' : `${a.settings.passTimerMs / 1000} s`}` : 'changes the table settings')];
     case 'stageSet':
-      return [t(`moves the table to ${a.stage}`)];
+      return [t({ lobby: 'returns the table to the lobby', draft: 'starts the draft', build: 'starts deck building', match: 'starts the game' }[a.stage] ?? `moves the table to ${a.stage}`)];
     default:
       return null;
   }

@@ -19,7 +19,17 @@ import type { CardInstance, SecretStore, TableState } from '../../src/core/types
 import { hook, shot } from './helpers/app';
 import { call, decklist, freshProfile, openSolo, waitForSession } from './solo/helpers';
 
-type ShownCard = { id: string; zone: string; tapped: boolean; screen: { x: number; y: number; width: number; height: number }; visible: boolean; moving: boolean; tier: string | null };
+type ShownCard = {
+  id: string;
+  zone: string;
+  tapped: boolean;
+  screen: { x: number; y: number; width: number; height: number };
+  visible: boolean;
+  moving: boolean;
+  tier: string | null;
+  displaced: boolean;
+  ghost: { x: number; y: number; rot: number } | null;
+};
 
 /** sid -> card name and type line, from the recorded fixtures (to pick a land, a creature, the Warleader). */
 const FIXTURE_CARDS = new Map<string, { name: string; type_line: string }>(
@@ -211,6 +221,19 @@ test.describe('M0 gate @gate', () => {
     await expect.poll(async () => (await state(page)).zones[`graveyard:${ME}`]?.ids.length).toBe(3);
     await page.getByRole('button', { name: /^Close .*Library/ }).click();
 
+    // At the fitted view the own piles are clear of the screen-anchored layer: not under the log, not under the hand
+    // fan (DESIGN "Camera and navigation", Screen-anchored layer).
+    await sceneIdle(page);
+    const logBox = (await page.getByTestId('log').boundingBox())!;
+    const handTop = Math.min(...(await page.getByTestId('hand-card').evaluateAll((els) => els.map((e) => e.getBoundingClientRect().top))));
+    const piles = (await shown(page)).filter((c) => c.zone === `library:${ME}` || c.zone === `graveyard:${ME}`);
+    expect(piles.length).toBeGreaterThan(0);
+    for (const c of piles) {
+      expect(c.visible).toBe(true);
+      expect(c.screen.x + c.screen.width <= logBox.x || c.screen.y >= logBox.y + logBox.height).toBe(true);
+      expect(c.screen.y + c.screen.height).toBeLessThanOrEqual(handTop);
+    }
+
     // A land in hand: draw (D) until one comes, as a goldfishing player would.
     const isLand = async (id: string) => (await identify(page, id)).type_line.includes('Land');
     for (let i = 0; i < 20; i++) {
@@ -262,6 +285,14 @@ test.describe('M0 gate @gate', () => {
     await page.keyboard.press('KeyR');
     await expect.poll(async () => (await state(page)).cards[warleader]?.zone).toBe(BF);
     expect((await state(page)).stack).toEqual([]);
+    // The permanent lands in its controller's territory (the near half, y from -550 to -110), clear of the stack
+    // lane's width even when tapped, not at the table centre (DESIGN "The effect stack", Resolving; "Specification:
+    // geometry, layout and motion", Tables and seats).
+    const resolvedAt = (await state(page)).cards[warleader]!.pose;
+    expect(resolvedAt.y - 44).toBeGreaterThanOrEqual(-550);
+    expect(resolvedAt.y + 44).toBeLessThanOrEqual(-110);
+    expect(Math.abs(resolvedAt.x)).toBeGreaterThanOrEqual(100 + 44);
+    expect(resolvedAt.rot).toBe(0);
 
     // --- Two +1/+1 counters (+ twice on the hovered creature) -----------------------------------------------------
     await hoverTable(page, warleader);
@@ -292,6 +323,11 @@ test.describe('M0 gate @gate', () => {
     st = await state(page);
     expect(st.cards[warleader]).toMatchObject({ tapped: true, home: homePose });
     expect(st.cards[warleader]!.pose).not.toEqual(homePose);
+    // 110 mm toward the centre along the seat's forward axis; the scene draws the ghost at home and the marker.
+    expect(st.cards[warleader]!.pose).toEqual({ ...homePose, y: homePose.y + 110 });
+    await sceneIdle(page);
+    expect((await shown(page)).find((c) => c.id === warleader)).toMatchObject({ displaced: true, ghost: homePose });
+    expect((await shown(page)).filter((c) => c.displaced).map((c) => c.id)).toEqual([warleader]);
     await page.mouse.move(720, 120);
     await evidence(page, 'attack', project);
     await zoomedEvidence(page, warleader, 'attack-zoomed', project);
@@ -300,6 +336,8 @@ test.describe('M0 gate @gate', () => {
     st = await state(page);
     expect(st.cards[warleader]).toMatchObject({ pose: homePose, tapped: true });
     expect(st.cards[warleader]!.combat).toBeUndefined();
+    await sceneIdle(page);
+    expect((await shown(page)).some((c) => c.displaced || c.ghost)).toBe(false);
     await page.mouse.move(720, 120);
     await evidence(page, 'mid-game-board', project);
     await zoomedEvidence(page, warleader, 'mid-game-board-zoomed', project);

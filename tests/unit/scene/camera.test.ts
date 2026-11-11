@@ -139,3 +139,58 @@ describe('bird\'s-eye rig', () => {
     expect(halfW).toBeCloseTo((1400 * 1.05) / 2, 6);
   });
 });
+
+describe('fit clear of the screen-anchored layer (DESIGN "Camera and navigation", Screen-anchored layer)', () => {
+  const insets = { top: 40, right: 316, bottom: 206, left: 190 };
+  const corners = [
+    { x: -700, y: -550 },
+    { x: 700, y: -550 },
+    { x: 700, y: 550 },
+    { x: -700, y: 550 },
+  ];
+
+  it('the fitted table (plus margin) lies inside the viewport minus the insets, centred there and tight on one axis', () => {
+    const rig = new BirdseyeRig(TABLE, VP);
+    rig.setInsets(insets);
+    const pts = corners.map((c) => rig.tableToScreen(c));
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    expect(Math.min(...xs)).toBeGreaterThanOrEqual(insets.left - 1e-6);
+    expect(Math.max(...xs)).toBeLessThanOrEqual(VP.w - insets.right + 1e-6);
+    expect(Math.min(...ys)).toBeGreaterThanOrEqual(insets.top - 1e-6);
+    expect(Math.max(...ys)).toBeLessThanOrEqual(VP.h - insets.bottom + 1e-6);
+    const centre = rig.tableToScreen({ x: 0, y: 0 });
+    expect(centre.x).toBeCloseTo((insets.left + VP.w - insets.right) / 2, 6);
+    expect(centre.y).toBeCloseTo((insets.top + VP.h - insets.bottom) / 2, 6);
+    // Tight vertically: the table's depth plus 5% fills the free height.
+    expect((Math.max(...ys) - Math.min(...ys)) * 1.05).toBeCloseTo(VP.h - insets.top - insets.bottom, 6);
+    expect(rig.view.dist).toBeCloseTo(rig.maxDist(), 9);
+  });
+
+  it('a fitted view stays fitted when the insets or the viewport change; another view keeps its centre', () => {
+    const rig = new BirdseyeRig(TABLE, VP);
+    rig.setInsets(insets);
+    expect(rig.atFit()).toBe(true);
+    rig.setInsets({ ...insets, right: 0 });
+    expect(rig.atFit()).toBe(true);
+    rig.resize({ w: 1200, h: 800 });
+    expect(rig.atFit()).toBe(true);
+    rig.zoomAt(600, 400, 3);
+    const v = { ...rig.view };
+    rig.setInsets(insets);
+    expect(rig.view).toEqual(rig.clampView(v));
+  });
+
+  it('a seat view frames the territory in the free area; huge insets never shrink it below 40% of the viewport', () => {
+    const rig = new BirdseyeRig(TABLE, VP);
+    rig.setInsets(insets);
+    const v = rig.rectView({ x: 0, y: -330, w: 1400, d: 440, rot: 0 });
+    const c = rig.tableToScreen({ x: 0, y: -330 }, 0, v);
+    expect(c.x).toBeCloseTo((insets.left + VP.w - insets.right) / 2, 6);
+    expect(c.y).toBeCloseTo((insets.top + VP.h - insets.bottom) / 2, 6);
+    rig.setInsets({ top: 5000, right: 5000, bottom: 5000, left: 5000 });
+    const safe = rig.safeArea();
+    expect(safe.w).toBeCloseTo(VP.w * 0.4, 6);
+    expect(safe.h).toBeCloseTo(VP.h * 0.4, 6);
+  });
+});

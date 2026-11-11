@@ -10,7 +10,8 @@ import { MTG_KEYMAP } from '../../../src/games/mtg/keymap';
 import { checkDeck, errorName, parsePlainList, replaceName } from '../../../src/ui/deck';
 import { logLines } from '../../../src/ui/describe';
 import { FakeCardData, fakeGame, tableWith } from '../../../src/ui/fakes';
-import { CARD_ASPECT, fanLayout, handOrder } from '../../../src/ui/hand';
+import { isEmptyChair } from '../../../src/ui/commands';
+import { CARD_ASPECT, fanLayout, fitInsets, handOrder } from '../../../src/ui/hand';
 import { cardMenu, tableMenu } from '../../../src/ui/menu';
 import { parseRoute, routeHash } from '../../../src/ui/routes';
 import { tidyPoses } from '../../../src/ui/tidy';
@@ -216,6 +217,87 @@ describe('log lines (DESIGN "Turn flow and confirmation", Action log)', () => {
     });
     expect(ls.map(text)).toEqual(['Anna rolls a d20: 17']);
   });
+  describe('quiet and honest lines (gate M0 findings)', () => {
+    const cards = [
+      { id: 'g1', zone: 'graveyard:s0', sid: 'sid-bear' },
+      { id: 'g2', zone: 'graveyard:s0', sid: 'sid-land' },
+      { id: 'g3', zone: 'graveyard:s0', sid: 'sid-bolt' },
+      { id: 'lib1', zone: 'library:s0', sid: 'sid-dfc' },
+    ];
+    const data = new FakeCardData();
+    const ctx = (state: ReturnType<typeof tableWith>['state'], names?: Map<string, string | null>) => ({
+      state,
+      cardName: (id: string) => {
+        const ref = state.cards[id]?.identity;
+        return ref ? (data.peek(ref.sid)?.name ?? null) : null;
+      },
+      phaseLabel: (id: string) => id,
+      ...(names ? { names } : {}),
+    });
+
+    it('a gesture over several cards is one line: draw 7, mill 3 (its reveals get no line), tap 2', () => {
+      const { state } = tableWith(['Anna'], cards);
+      const es: LogEntry[] = [];
+      let n = 0;
+      for (let i = 0; i < 7; i++) es.push(entry(++n, 0, { type: 'draw', by: 's0', instanceId: `d${i}`, group: 'gd' }));
+      for (const id of ['g1', 'g2', 'g3']) {
+        es.push(entry(++n, 0, { type: 'reveal', by: 's0', instanceId: id, ref: { sid: 'x' }, salt: 's', group: 'gm' }));
+        es.push(entry(++n, 0, { type: 'move', by: 's0', card: id, to: 'graveyard:s0', group: 'gm' }));
+      }
+      es.push(entry(++n, 0, { type: 'tap', by: 's0', card: 'g1', tapped: true, group: 'gt' }));
+      es.push(entry(++n, 0, { type: 'tap', by: 's0', card: 'g2', tapped: true, group: 'gt' }));
+      es.push(entry(++n, 0, { type: 'draw', by: 's0', instanceId: 'd9' }));
+      es.push(entry(n + 1, 0, { type: 'draw', by: 's0', instanceId: 'd10' }));
+      const ls = logLines(es, ctx(state));
+      expect(ls.map(text)).toEqual([
+        'Anna draws 7 cards',
+        'Anna moves Test Bear, Verdant Field and Spark Jolt to their graveyard',
+        'Anna taps Test Bear and Verdant Field',
+        'Anna draws a card',
+        'Anna draws a card',
+      ]);
+    });
+
+    it('a reveal keeps its line unless the next action is about the same card (a cast names it)', () => {
+      const { state } = tableWith(['Anna', 'Ben'], cards);
+      const ls = logLines(
+        [
+          entry(1, 0, { type: 'reveal', by: 's0', instanceId: 'g1', ref: { sid: 'x' }, salt: 's' }),
+          entry(2, 0, { type: 'stackPush', by: 's0', item: 'si1', kind: 'spell', card: 'g1', controller: 's0' }),
+          entry(3, 0, { type: 'reveal', by: 's0', instanceId: 'g2', ref: { sid: 'x' }, salt: 's' }),
+          entry(4, 0, { type: 'tap', by: 's0', card: 'g3', tapped: true }),
+        ],
+        ctx(state),
+      );
+      expect(ls.map(text)).toEqual(['Anna casts Test Bear', 'Anna reveals Verdant Field', 'Anna taps Spark Jolt']);
+    });
+
+    it('the M0 shuffle trace reads as a shuffle; a one-card private reorder names nothing; the match start reads plainly', () => {
+      const { state } = tableWith(['Anna'], cards);
+      const ls = logLines(
+        [
+          entry(1, 0, { type: 'stageSet', by: 's0', stage: 'match' }),
+          entry(2, 0, { type: 'reorder', by: 's0', zone: 'library:s0', count: 60, orderHash: 'h' }),
+          entry(3, 0, { type: 'reorder', by: 's0', zone: 'library:s0', count: 1, orderHash: 'h' }),
+        ],
+        ctx(state),
+      );
+      expect(ls.map(text)).toEqual(['Anna starts the game', 'Anna shuffles their library', 'Anna moves a card within their library']);
+    });
+
+    it('names are frozen when a line is first written: a hidden move stays unnamed after the card turns public', () => {
+      const { state } = tableWith(['Anna'], cards);
+      const es = [entry(1, 0, { type: 'toZone', by: 's0', card: 'lib1', to: 'library:s0', position: 'bottom' })];
+      const names = new Map<string, string | null>();
+      expect(logLines(es, ctx(state, names)).map(text)).toEqual(['Anna puts a card on the bottom of their library']);
+      // Later the card is milled and public: the old line keeps its words.
+      const later = structuredClone(state);
+      later.cards.lib1 = { ...later.cards.lib1!, zone: 'graveyard:s0', identity: { sid: 'sid-dfc' } };
+      expect(logLines(es, ctx(later, names)).map(text)).toEqual(['Anna puts a card on the bottom of their library']);
+      // Without the memo the current state would name it.
+      expect(logLines(es, ctx(later)).map(text)).toEqual(['Anna puts Moon Sage on the bottom of their library']);
+    });
+  });
 });
 
 describe('deck import (DESIGN "Pre-game", Constructed decks; "Specification: card data, packs and draft formats")', () => {
@@ -302,5 +384,21 @@ describe('context menus (DESIGN "Input and interaction design": the key beside e
     const loyalty = cardMenu(r.session.getState().cards.bf1!, MTG_KEYMAP, r.commands, () => {}).find((e) => e.id === 'counter:loyalty')!;
     loyalty.run();
     expect(r.session.dispatched.map((a) => a.type === 'counter' && [a.kind, a.delta])).toEqual([['loyalty', 1]]);
+  });
+});
+
+describe('screen-anchored layer and seats (gate M0 findings)', () => {
+  it('the scene fit keeps clear of the toolbar row, the open log, the hand fan and the avatar column', () => {
+    expect(fitInsets(900, true)).toBe('40 316 206 190');
+    expect(fitInsets(900, false)).toBe('40 0 206 190');
+  });
+
+  it('an untaken seat without cards is an empty chair (no avatar); a named, taken or occupied seat is not', () => {
+    const { state } = tableWith(['Anna', ''], [{ id: 'bf1', zone: 'battlefield:s0', sid: 'sid-bear' }]);
+    expect(isEmptyChair(state, 's1')).toBe(true);
+    expect(isEmptyChair(state, 's0')).toBe(false);
+    expect(isEmptyChair({ ...state, seats: { ...state.seats, s1: { ...state.seats.s1!, peer: 'p1' } } }, 's1')).toBe(false);
+    const withCard = tableWith(['Anna', ''], [{ id: 'x', zone: 'graveyard:s1', sid: 'sid-bear' }]).state;
+    expect(isEmptyChair(withCard, 's1')).toBe(false);
   });
 });

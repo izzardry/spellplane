@@ -7,6 +7,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { MTG_KEYMAP, chordToString } from '../../../src/games/mtg/keymap';
 import type { ActionId, KeyBinding } from '../../../src/games/types';
+import { fakeGame, tableWith } from '../../../src/ui/fakes';
+import { freeSlot } from '../../../src/ui/geometry';
 import { drafts, rig, type Rig } from './setup';
 
 const promptByBen = { id: 'r9', askedBy: 's1', durationMs: 5000, startSeq: 0, responses: {} };
@@ -70,7 +72,8 @@ const S: Record<ActionId, Scenario> = {
   settle: { expect: (r) => expect(drafts(r)).toEqual([{ type: 'settle' }]) },
   // Stack
   ability: { setup: { hovered: 'bf1' }, expect: (r) => expect(drafts(r)).toEqual([{ type: 'stackPush', item: 'si1', kind: 'ability', source: 'bf1', controller: 's0', round: 'r2' }]) },
-  resolve: { setup: { stack: [spellOnStack] }, expect: (r) => expect(drafts(r)).toEqual([{ type: 'stackResolve', item: 'si9' }]) },
+  // A permanent resolves to a free front-row slot of its controller's territory, beside the stack lane's width.
+  resolve: { setup: { stack: [spellOnStack] }, expect: (r) => expect(drafts(r)).toEqual([{ type: 'stackResolve', item: 'si9', to: 'battlefield:s0', pose: { x: -150, y: -160, rot: 0 } }]) },
   counterTop: { setup: { stack: [spellOnStack] }, expect: (r) => expect(drafts(r)).toEqual([{ type: 'stackCounter', item: 'si9' }]) },
   // Turn
   nextPhase: { expect: (r) => expect(drafts(r)).toEqual([{ type: 'phaseSet', phase: 'combat' }]) },
@@ -304,13 +307,13 @@ describe('stack and turn keys (DESIGN "The effect stack", "Turn flow and confirm
     expect(r.ui.map((u) => u.hook)).toEqual(['notify']);
     r.clock.t += 500;
     r.press({ key: 'r' });
-    expect(drafts(r)).toEqual([{ type: 'stackResolve', item: 'si9', force: true }]);
+    expect(drafts(r)).toEqual([{ type: 'stackResolve', item: 'si9', to: 'battlefield:s0', pose: { x: -150, y: -160, rot: 0 }, force: true }]);
   });
 
   it('R after everyone passed resolves at once', () => {
     const r = rig({ stack: [spellOnStack], confirm: { id: 'r1', askedBy: 's0', about: 'si9', durationMs: 5000, startSeq: 0, responses: { s1: 'timeout' } } });
     r.press({ key: 'r' });
-    expect(drafts(r)).toEqual([{ type: 'stackResolve', item: 'si9' }]);
+    expect(drafts(r)).toEqual([{ type: 'stackResolve', item: 'si9', to: 'battlefield:s0', pose: { x: -150, y: -160, rot: 0 } }]);
   });
 
   it('R with an empty stack does nothing', () => {
@@ -409,5 +412,61 @@ describe('library and resolve extras (DESIGN "Card manipulation", Library action
     expect(p.session.dispatched).toEqual([]);
     p.commands.resolveTop('hand:s0');
     expect(drafts(p)).toEqual([{ type: 'stackResolve', item: 'si9', to: 'hand:s0', force: true }]);
+  });
+
+  it('an instant resolves to its owner\'s graveyard by default; a marker vanishes with no destination', () => {
+    const r = rig({ stack: [{ id: 'si9', kind: 'spell', controller: 's0', card: 'h1' }] });
+    r.press({ key: 'r' });
+    expect(drafts(r)).toEqual([{ type: 'stackResolve', item: 'si9', to: 'graveyard:s0' }]);
+    const m = rig({ stack: [{ id: 'si8', kind: 'ability', controller: 's0', source: 'bf1' }] });
+    m.press({ key: 'r' });
+    expect(drafts(m)).toEqual([{ type: 'stackResolve', item: 'si8' }]);
+  });
+
+  it('a resolved permanent lands in its controller\'s territory: free front-row slots first, never in the stack lane', () => {
+    // The own front row's first two slots are taken (one by a displaced card's home slot): the next slot is used.
+    const cards = [
+      { id: 'h2', zone: 'stack', sid: 'sid-bear' },
+      { id: 'a', zone: 'battlefield:s0', sid: 'sid-bear', pose: { x: -150, y: -160, rot: 0 } },
+      { id: 'b', zone: 'battlefield:s0', sid: 'sid-bear', pose: { x: 150, y: -50, rot: 0 }, home: { x: 150, y: -160, rot: 0 } },
+    ];
+    const r = rig({ cards, stack: [{ id: 'si9', kind: 'spell', controller: 's0', card: 'h2' }] });
+    r.press({ key: 'r' });
+    expect(drafts(r)).toEqual([{ type: 'stackResolve', item: 'si9', to: 'battlefield:s0', pose: { x: -219, y: -160, rot: 0 } }]);
+    // The far seat's permanent lands in the far territory, facing that seat.
+    const far = rig({ cards: [{ id: 'h2', zone: 'stack', sid: 'sid-bear' }], stack: [{ id: 'si9', kind: 'spell', controller: 's1', card: 'h2' }] });
+    far.press({ key: 'r' });
+    const d = drafts(far)[0] as { to: string; pose: { x: number; y: number; rot: number } };
+    expect(d.to).toBe('battlefield:s1');
+    expect(d.pose).toEqual({ x: 150, y: 160, rot: 180 });
+    // Choosing the battlefield explicitly places it the same way.
+    const pick = rig({ cards: [{ id: 'h2', zone: 'stack', sid: 'sid-bolt' }], stack: [{ id: 'si9', kind: 'spell', controller: 's0', card: 'h2' }] });
+    pick.commands.resolveTop('battlefield:s0');
+    expect(drafts(pick)).toEqual([{ type: 'stackResolve', item: 'si9', to: 'battlefield:s0', pose: { x: -150, y: -160, rot: 0 } }]);
+  });
+
+  it('free slots fill the front row outward, then the rows behind, and stay clear of the pile column', () => {
+    const layout = fakeGame().layout('1v1');
+    const specs: { id: string; zone: string; sid: string; pose: { x: number; y: number; rot: number } }[] = [];
+    const placed: { x: number; y: number }[] = [];
+    for (let i = 0; i < 40; i++) {
+      const p = freeSlot(tableWith(['Anna', 'Ben'], specs).state, 's0', layout);
+      placed.push(p);
+      specs.push({ id: `x${i}`, zone: 'battlefield:s0', sid: 'sid-bear', pose: p });
+    }
+    // Every slot inside the own territory (y from -550 to -110), clear of the pile column and of each other.
+    for (const p of placed.slice(0, 30)) {
+      expect(p.y - 44).toBeGreaterThanOrEqual(-550);
+      expect(p.y + 44).toBeLessThanOrEqual(-110);
+      expect(p.x + 31.5).toBeLessThanOrEqual(700 - 63 - 24);
+    }
+    for (let i = 0; i < 30; i++) for (let j = 0; j < i; j++) expect(Math.abs(placed[i]!.x - placed[j]!.x) >= 69 - 1e-6 || Math.abs(placed[i]!.y - placed[j]!.y) >= 94 - 1e-6).toBe(true);
+    // Front row first (toward the centre), alternating left and right, far enough out that a tapped attacker clears the lane.
+    expect(placed.slice(0, 4)).toEqual([
+      { x: -150, y: -160, rot: 0 },
+      { x: 150, y: -160, rot: 0 },
+      { x: -219, y: -160, rot: 0 },
+      { x: 219, y: -160, rot: 0 },
+    ]);
   });
 });

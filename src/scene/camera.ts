@@ -25,6 +25,22 @@ export interface Viewport {
   h: number;
 }
 
+/**
+ * Screen space the screen-anchored layer covers (hand fan, log, avatars), CSS px from each canvas edge (DESIGN
+ * "Camera and navigation", Screen-anchored layer). Fitting the table, a seat or the zoom-out limit frames the table in
+ * the rest of the viewport, so nothing the HUD draws covers it at the fitted view.
+ */
+export interface Insets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export const NO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
+/** The framed area never shrinks below this fraction of the viewport in either direction, whatever the insets. */
+const MIN_SAFE_FRACTION = 0.4;
+
 const TAN_HALF = Math.tan((CAMERA.birdseye.fovDeg / 2) * DEG);
 /** Pan velocities below this many CSS px per ms stop the inertia. */
 const INERTIA_STOP_PX_PER_MS = 0.005;
@@ -38,6 +54,7 @@ export class BirdseyeRig {
   /** Pan inertia velocity, mm per ms in table space. */
   velocity = { x: 0, y: 0 };
   inertiaMs: number;
+  insets: Insets = NO_INSETS;
   private anim: { from: CameraView; to: CameraView; start: number; dur: number } | null = null;
 
   constructor(table: { w: number; d: number }, viewport: Viewport, angle = 0, inertiaMs = 325) {
@@ -60,13 +77,52 @@ export class BirdseyeRig {
     return this.viewport.h / 2 / this.halfHeight(dist);
   }
 
-  /** The farthest zoom: the whole table plus a 5% margin fits the viewport. */
+  /** The farthest zoom: the whole table plus a 5% margin fits the viewport, clear of the insets. */
   maxDist(): number {
-    const { w, d } = this.extentInView(this.table.w, this.table.d, 0);
+    return Math.max(this.frameDist(this.table.w, this.table.d, 0), this.minDist());
+  }
+
+  /** The part of the viewport not covered by the insets, CSS px. */
+  safeArea(): { x: number; y: number; w: number; h: number } {
+    const vp = this.viewport;
+    const i = this.insets;
+    let l = Math.max(0, i.left);
+    let r = Math.max(0, i.right);
+    let t = Math.max(0, i.top);
+    let b = Math.max(0, i.bottom);
+    const minW = vp.w * MIN_SAFE_FRACTION;
+    const minH = vp.h * MIN_SAFE_FRACTION;
+    if (vp.w - l - r < minW) {
+      const k = Math.max(0, vp.w - minW) / Math.max(1e-9, l + r);
+      l *= k;
+      r *= k;
+    }
+    if (vp.h - t - b < minH) {
+      const k = Math.max(0, vp.h - minH) / Math.max(1e-9, t + b);
+      t *= k;
+      b *= k;
+    }
+    return { x: l, y: t, w: vp.w - l - r, h: vp.h - t - b };
+  }
+
+  /** Camera height that frames a w x d box rotated by `rot` with a 5% margin inside the safe area. */
+  private frameDist(w0: number, d0: number, rot: number): number {
+    const { w, d } = this.extentInView(w0, d0, rot);
     const m = 1 + CAMERA.fitMargin;
-    const aspect = this.viewport.w / this.viewport.h;
-    const half = Math.max((d * m) / 2, (w * m) / 2 / aspect);
-    return Math.max(half / TAN_HALF, this.minDist());
+    const safe = this.safeArea();
+    // Pixels per mm that fit the box into the safe area; the camera height follows from pxPerMm.
+    const k = Math.min(safe.h / (d * m), safe.w / (w * m));
+    return this.viewport.h / 2 / k / TAN_HALF;
+  }
+
+  /** View centred so that table point (x, y) appears at the centre of the safe area, at camera height `dist`. */
+  private framedView(x: number, y: number, dist: number): CameraView {
+    const safe = this.safeArea();
+    const k = this.viewport.h / 2 / this.halfHeight(dist);
+    const sx = safe.x + safe.w / 2 - this.viewport.w / 2;
+    const sy = safe.y + safe.h / 2 - this.viewport.h / 2;
+    const [dx, dy] = rot2(-sx / k, sy / k, this.view.angle);
+    return { cx: x + dx, cy: y + dy, dist, angle: this.view.angle };
   }
 
   /** The closest zoom: one card fills 80% of the viewport height. */
@@ -88,16 +144,28 @@ export class BirdseyeRig {
   }
 
   fitView(): CameraView {
-    return { cx: 0, cy: 0, dist: this.maxDist(), angle: this.view.angle };
+    return this.framedView(0, 0, this.maxDist());
   }
 
-  /** View that frames an oriented rect with a 5% margin (go to a seat's territory). */
+  /** View that frames an oriented rect with a 5% margin in the safe area (go to a seat's territory). */
   rectView(r: Rect): CameraView {
-    const { w, d } = this.extentInView(r.w, r.d, r.rot);
-    const m = 1 + CAMERA.fitMargin;
-    const aspect = this.viewport.w / this.viewport.h;
-    const half = Math.max((d * m) / 2, (w * m) / 2 / aspect);
-    return this.clampView({ cx: r.x, cy: r.y, dist: half / TAN_HALF, angle: this.view.angle });
+    return this.clampView(this.framedView(r.x, r.y, clamp(this.frameDist(r.w, r.d, r.rot), this.minDist(), this.maxDist())));
+  }
+
+  /** Whether the view is (within a pixel) the fitted whole-table view. */
+  atFit(v: CameraView = this.view): boolean {
+    const f = this.fitView();
+    const k = this.pxPerMm(f.dist);
+    return Math.abs(v.dist - f.dist) / f.dist < 1e-3 && Math.hypot(v.cx - f.cx, v.cy - f.cy) * k < 1;
+  }
+
+  /** Change the insets; a view that was fitted stays fitted. */
+  setInsets(insets: Insets): void {
+    const i = { top: insets.top, right: insets.right, bottom: insets.bottom, left: insets.left };
+    if (i.top === this.insets.top && i.right === this.insets.right && i.bottom === this.insets.bottom && i.left === this.insets.left) return;
+    const wasFit = !this.anim && this.atFit();
+    this.insets = i;
+    this.view = wasFit ? this.fitView() : this.clampView(this.view);
   }
 
   /** Table point under a canvas point (on the table plane). */
@@ -199,10 +267,11 @@ export class BirdseyeRig {
     return true;
   }
 
-  /** Resize the viewport; keeps the centre and re-clamps. */
+  /** Resize the viewport; a fitted view stays fitted, any other keeps its centre and is re-clamped. */
   resize(vp: Viewport): void {
+    const wasFit = !this.anim && this.atFit();
     this.viewport = vp;
-    this.view = this.clampView(this.view);
+    this.view = wasFit ? this.fitView() : this.clampView(this.view);
   }
 
   setTable(table: { w: number; d: number }, angle: number): void {

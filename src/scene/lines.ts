@@ -24,14 +24,20 @@ export class LineLayer {
   private geometry: LineSegmentsGeometry;
   private sig = '';
 
-  constructor() {
-    this.material = new LineMaterial({ linewidth: 1.5, vertexColors: true, worldUnits: false, transparent: true, depthTest: false, depthWrite: false });
+  /** `renderOrder` 4 (default) draws over the cards; below 2 draws under them. `opacity` applies to every line. */
+  constructor(opts: { renderOrder?: number; opacity?: number; name?: string } = {}) {
+    this.material = new LineMaterial({ linewidth: 1.5, vertexColors: true, worldUnits: false, transparent: true, opacity: opts.opacity ?? 1, depthTest: false, depthWrite: false });
     this.geometry = new LineSegmentsGeometry();
     this.object = new LineSegments2(this.geometry, this.material);
     this.object.frustumCulled = false;
-    this.object.renderOrder = 4;
+    this.object.renderOrder = opts.renderOrder ?? 4;
     this.object.visible = false;
-    this.object.name = 'lines';
+    this.object.name = opts.name ?? 'lines';
+  }
+
+  /** Line opacity (theme switch). */
+  setOpacity(opacity: number): void {
+    this.material.opacity = opacity;
   }
 
   setResolution(w: number, h: number): void {

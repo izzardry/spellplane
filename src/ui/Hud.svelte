@@ -13,11 +13,11 @@
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
   import { tokensToCssVars } from '../themes/index';
-  import { Commands, promptShowing, roundPassed, type UiHooks } from './commands';
+  import { Commands, isEmptyChair, promptShowing, roundPassed, type UiHooks } from './commands';
   import { parsePlainList } from './deck';
   import { logLines } from './describe';
   import { inZoneKind, layoutOf } from './geometry';
-  import { handOrder } from './hand';
+  import { fitInsets as fitInsetsFor, handOrder } from './hand';
   import { applyOverrides, chordToString, findConflict, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS, reservedConflict, validOverrides } from './keymap';
   import { cardMenu, tableMenu, type MenuEntry } from './menu';
   import type { HudProps } from './props';
@@ -87,6 +87,13 @@
       .join('; '),
   );
   const back = $derived(theme.cardDressing.back ?? game.cardBack);
+  /**
+   * Screen edges the screen-anchored layer covers, "top right bottom left" in CSS px, for the scene's fit (DESIGN
+   * "Camera and navigation", Screen-anchored layer): the toolbar and turn strip row, the open log column, the hand fan
+   * with the row above it, and the avatar column. Fitting the table keeps it clear of them, so the own piles are never
+   * under the log or the hand at the fitted view.
+   */
+  const fitInsets = $derived(fitInsetsFor(vh, logOpen));
 
   // --- Card identity as this browser may know it ----------------------------------------------------------------
   /** The face this viewer may see: public identity, else own hand or own face-down identity, else a targeted reveal. Never a library face. */
@@ -405,11 +412,14 @@
       .map((z) => ({ ...z, isDefault: z.zone === def }))
       .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
   });
+  /** Card names as each log line was first written (DESIGN "Table model", Hidden cards: a later reveal never names an earlier hidden move). */
+  const logNames = new Map<string, string | null>();
   const lines = $derived(
     logLines(entries, {
       state: st,
       cardName: (id) => (st.cards[id] ? nameOf(id) : null),
       phaseLabel: (id) => game.phases.find((p) => p.id === id)?.label ?? id,
+      names: logNames,
     }),
   );
   const inspectCard = $derived<CardInstance | null>(inspectId ? (st.cards[inspectId] ?? null) : null);
@@ -529,7 +539,7 @@
 />
 
 <div class="root" style={cssVars} data-testid="hud">
-  <div class="scene" data-testid="scene-host" bind:this={sceneHost}></div>
+  <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
 
   <div class="layer">
@@ -542,7 +552,7 @@
         {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
         {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
       </nav>
-      {#each seats.filter((s) => s.id !== me) as seat (seat.id)}
+      {#each seats.filter((s) => s.id !== me && !isEmptyChair(st, s.id)) as seat (seat.id)}
         <Avatar
           {seat}
           life={lifeOf(seat.id)}

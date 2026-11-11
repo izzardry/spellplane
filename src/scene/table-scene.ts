@@ -4,8 +4,9 @@
  * gesture becomes ActionDrafts through `opts.dispatch`; the scene never mutates state. Own drags and drops move with
  * the critically damped spring, taps and flips with their timed animations, remote changes ease out over 180 ms.
  *
- * Draw calls (Paper): table plane, hairline zone outlines, all cards (one instanced mesh over texture arrays), SDF
- * text (one batch, plus its outline pass) and connection lines: about six, whatever the card count.
+ * Draw calls (Paper): table plane, hairline zone outlines, zone labels (SDF text under the cards), ghost outlines of
+ * displaced cards, all cards (one instanced mesh over texture arrays), SDF text over the cards (one batch, plus its
+ * outline pass), displacement markers and connection lines: at most nine, whatever the card count.
  */
 import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
@@ -14,11 +15,12 @@ import type { CardInstance, InstanceId, Pose, SeatId, TableState, ZoneId } from 
 import type { TableLayout } from '../games/types';
 import type { ThemeInstance } from '../themes/types';
 import { registerDebug } from '../util/debug';
-import { BirdseyeRig } from './camera';
+import { BirdseyeRig, NO_INSETS, type Insets } from './camera';
 import { CardLayer, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
 import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
 import { LAYER, compareSort, dropTargets, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
+import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, type LineDraw } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion } from './motion';
@@ -54,6 +56,10 @@ export interface SceneDebugCard extends DebugCard {
   /** Tier of the texture drawn this frame, or null while none is loaded. */
   tier: 'small' | 'normal' | 'large' | null;
   order: number;
+  /** Temporarily moved (DESIGN "Combat and annotation", Temporary move): drawn with a displacement marker. */
+  displaced: boolean;
+  /** Where its ghost outline is drawn (the home slot), or null. */
+  ghost: Pose | null;
 }
 
 /** The scene's debug parts plus extras for its own tests. */
@@ -109,6 +115,14 @@ type Gesture =
   | { kind: 'pinch' };
 
 const DRAG_THRESHOLD_PX = 4;
+/** Counter badge type size on the table (mm), its place on the card (over the art box) and its far-zoom floor. */
+const COUNTER_SIZE = 6.5;
+const COUNTER_ART_Y = 14;
+const COUNTER_MIN_PX = 11;
+const COUNTER_MAX_SCALE = 3;
+/** Stroke widths of ghost outlines and displacement markers, CSS px. */
+const GHOST_WIDTH_PX = 1;
+const MARKER_WIDTH_PX = 2;
 const TOUCH_THRESHOLD_PX = 8;
 /** How long a dropped card waits for the state to confirm its new pose before returning. */
 const EXPECT_MS = 1500;
@@ -143,6 +157,20 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const camera = new THREE.PerspectiveCamera(CAMERA.birdseye.fovDeg, 1, 10, 100000);
   const viewport = () => ({ w: Math.max(1, host.clientWidth || innerWidth), h: Math.max(1, host.clientHeight || innerHeight) });
   const rig = new BirdseyeRig(layout.table, viewport(), viewerAngle(null, layout, viewerSeat), theme.motion.panInertiaMs);
+  // The HUD tells the scene which screen edges its screen-anchored layer covers through the host's
+  // `data-fit-insets="top right bottom left"` (CSS px); fitting the table keeps the table clear of them.
+  const readInsets = (): Insets => {
+    const v = (host.getAttribute('data-fit-insets') ?? '').trim().split(/\s+/).map(Number);
+    if (v.length !== 4 || v.some((n) => !Number.isFinite(n) || n < 0)) return NO_INSETS;
+    return { top: v[0]!, right: v[1]!, bottom: v[2]!, left: v[3]! };
+  };
+  rig.insets = readInsets();
+  rig.view = rig.fitView();
+  const insetObserver = new MutationObserver(() => {
+    rig.setInsets(readInsets());
+    dirty = true;
+  });
+  insetObserver.observe(host, { attributes: true, attributeFilter: ['data-fit-insets'] });
 
   let themeInstance: ThemeInstance = theme.build({ renderer, scene, camera, table: layout.table, quality: theme.quality[0]!, reducedMotion: false });
 
@@ -151,11 +179,20 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const cards = new CardLayer(scene, theme.tokens.colours.surface);
   scene.add(cards.mesh);
   const text = new TextLayer();
+  // Table markings (zone labels) lie under the cards, like the hairlines.
+  const labels = new TextLayer(1, 'zone-labels');
   // Glyph layout runs in a worker: redraw once a batch finishes.
   text.object.addEventListener('synccomplete', () => (dirty = true));
+  labels.object.addEventListener('synccomplete', () => (dirty = true));
   scene.add(text.object);
+  scene.add(labels.object);
   const lineLayer = new LineLayer();
   scene.add(lineLayer.object);
+  // Ghost outlines at the home slots of displaced cards (under the cards) and their displacement markers (over them).
+  const ghostLayer = new LineLayer({ renderOrder: 1, opacity: theme.cardDressing.ghost.opacity, name: 'ghosts' });
+  const markerLayer = new LineLayer({ renderOrder: 4, name: 'displacement-markers' });
+  scene.add(ghostLayer.object);
+  scene.add(markerLayer.object);
   const markGeometry = new THREE.BufferGeometry();
   const markMaterial = new THREE.LineBasicMaterial({ color: theme.tokens.colours.border, depthTest: false, depthWrite: false, transparent: true });
   const marks = new THREE.LineSegments(markGeometry, markMaterial);
@@ -269,6 +306,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     renderer.setSize(vp.w, vp.h, false);
     rig.resize(vp);
     lineLayer.setResolution(vp.w, vp.h);
+    ghostLayer.setResolution(vp.w, vp.h);
+    markerLayer.setResolution(vp.w, vp.h);
     dirty = true;
   }
 
@@ -278,7 +317,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return `${kind} ${n}`;
   };
 
-  function textSpecs(): Map<string, TextSpec> {
+  /** Zone labels with their card counts: table markings, drawn under the cards. */
+  function labelSpecs(): Map<string, TextSpec> {
     const t = theme.tokens.colours;
     const specs = new Map<string, TextSpec>();
     const counts = new Map<ZoneId, number>();
@@ -290,6 +330,16 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const n = seat ? counts.get(`${zoneKind}:${seat.id}`) : l.key === 'zl:stack' ? counts.get('stack') : undefined;
       specs.set(l.key, { text: n ? `${l.text}  ${n}` : l.text, x: l.x, y: l.y, z: 0.1, rot: l.rot, size: 5.5, colour: t.muted, letterSpacing: 0.12, anchorY: l.anchorY });
     }
+    return specs;
+  }
+
+  /** Counters, pile counts, notes and token labels: drawn over the cards. */
+  function textSpecs(): Map<string, TextSpec> {
+    const t = theme.tokens.colours;
+    const specs = new Map<string, TextSpec>();
+    // Counter badges keep at least COUNTER_MIN_PX of type on screen at far zoom (DESIGN "Camera and navigation",
+    // Level of detail: counters stay legible as simplified badges).
+    const counterScale = Math.min(COUNTER_MAX_SCALE, Math.max(1, Math.ceil((COUNTER_MIN_PX / (COUNTER_SIZE * rig.pxPerMm())) * 4) / 4));
     const seen = new Set<string>();
     for (const rc of order) {
       const c = rc.inst;
@@ -310,8 +360,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
       const kinds = Object.keys(c.counters).sort();
       if (kinds.length && (rc.place.kind === 'free' || rc.place.kind === 'stack')) {
-        const p = local(CARD_W / 2 - 3, CARD_H / 2 - 4);
-        specs.set(`ctr:${rc.id}`, { text: kinds.map((k) => counterText(k, c.counters[k]!)).join('\n'), x: p.x, y: p.y, z: 20, rot: pose.rot, size: 6.5, colour: t.fg, outline: t.surface, anchorX: 'right', anchorY: 'top' });
+        // Over the art box, clear of the name, mana cost, type line and power/toughness the badge must not hide.
+        const p = local(0, COUNTER_ART_Y);
+        specs.set(`ctr:${rc.id}`, { text: kinds.map((k) => counterText(k, c.counters[k]!)).join('\n'), x: p.x, y: p.y, z: 20, rot: pose.rot, size: COUNTER_SIZE, scale: counterScale, colour: t.fg, outline: t.surface, anchorX: 'center', anchorY: 'middle' });
       }
       if (c.note && rc.place.kind === 'free') {
         const p = local(0, -CARD_H / 2 + 12);
@@ -364,6 +415,28 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return out;
   }
 
+  /** Ghost outlines at home slots and displacement markers (DESIGN "Combat and annotation", Temporary move). */
+  function syncDisplaced(): void {
+    const dressing = theme.cardDressing;
+    const ghosts: LineDraw[] = [];
+    const markers: LineDraw[] = [];
+    const size = markerSize(rig.pxPerMm());
+    for (const rc of order) {
+      const home = ghostOf(rc);
+      if (!home) continue;
+      for (const sgm of ghostSegments(home, dressing.ghost.dashed)) ghosts.push({ ...sgm, colour: dressing.ghost.colour, widthPx: GHOST_WIDTH_PX });
+      for (const sgm of markerSegments(home, rc.motion.pose, size)) markers.push({ ...sgm, colour: dressing.displacedMarker, widthPx: MARKER_WIDTH_PX });
+    }
+    ghostLayer.sync(ghosts);
+    markerLayer.sync(markers);
+  }
+
+  /** The home slot a displaced battlefield card leaves its ghost at, or null. */
+  function ghostOf(rc: RCard): Pose | null {
+    if (!rc.inst.home || rc.place.kind !== 'free' || drag?.ids.includes(rc.id)) return null;
+    return rc.inst.home;
+  }
+
   function draw(): void {
     const t0 = performance.now();
     frame++;
@@ -399,7 +472,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     cards.setTextures(faces.textures());
     cards.write(draws);
     text.sync(textSpecs());
+    labels.sync(labelSpecs());
     lineLayer.sync(lineDraws());
+    syncDisplaced();
     themeInstance.update(0);
     renderer.render(scene, camera);
     stats = { drawCalls: renderer.info.render.calls, textureBytes: faces.bytes, frameMs: performance.now() - t0 };
@@ -963,6 +1038,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           moving: rc.motion.moving,
           tier: rc.tierDrawn,
           order: i,
+          displaced: ghostOf(rc) !== null,
+          ghost: ghostOf(rc),
         };
       });
     },
@@ -1053,6 +1130,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       themeInstance = theme.build({ renderer, scene, camera, table: layout.table, quality: theme.quality[0]!, reducedMotion: reduced() });
       cards.setBackground(theme.tokens.colours.surface);
       markMaterial.color.set(theme.tokens.colours.border);
+      ghostLayer.setOpacity(theme.cardDressing.ghost.opacity);
       rig.inertiaMs = theme.motion.panInertiaMs;
       dirty = true;
     },
@@ -1114,6 +1192,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       disposed = true;
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();
+      insetObserver.disconnect();
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointermove', onPointerMove);
       canvas.removeEventListener('pointerup', onPointerUp);
@@ -1131,7 +1210,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       faces.dispose();
       cards.dispose();
       text.dispose();
+      labels.dispose();
       lineLayer.dispose();
+      ghostLayer.dispose();
+      markerLayer.dispose();
       markGeometry.dispose();
       markMaterial.dispose();
       renderer.dispose();

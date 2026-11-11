@@ -8,11 +8,12 @@
 import type { ActionDraft } from '../core/actions';
 import { GEOMETRY } from '../core/geometry';
 import { sha256 } from '../core/hash';
-import type { CardInstance, InstanceId, SeatId, StackItem, StackItemId, TableState, ZoneId } from '../core/types';
+import { parseZoneId } from '../core/ids';
+import type { CardInstance, InstanceId, Pose, SeatId, StackItem, StackItemId, TableState, ZoneId } from '../core/types';
 import type { ActionId, GameDefinition } from '../games/types';
 import type { TableScene } from '../scene/types';
 import type { TableSession } from '../session/types';
-import { inZoneKind, layoutOf, offsetLocal, seatAngle, seatLayout } from './geometry';
+import { freeSlot, inZoneKind, layoutOf, offsetLocal, seatAngle, seatLayout } from './geometry';
 import { tidyPoses } from './tidy';
 
 /** Kind of counter that + and − change by default (DESIGN "Card manipulation": generic +1/+1 by default). */
@@ -71,6 +72,16 @@ export function promptShowing(state: TableState, seat: SeatId): boolean {
 /** The stack item a card belongs to (a spell's card on the stack), or null. */
 export function stackItemOfCard(state: TableState, card: InstanceId): StackItem | null {
   return state.stack.find((i) => i.card === card) ?? null;
+}
+
+/**
+ * An empty chair: a seat nobody has taken (no name, no peer) that holds no cards, such as the second seat of a solo
+ * goldfish table (DESIGN "Players, seats and formats"). The HUD shows no avatar for it.
+ */
+export function isEmptyChair(state: TableState, seat: SeatId): boolean {
+  const s = state.seats[seat];
+  if (!s || s.name !== '' || s.peer !== undefined) return false;
+  return Object.values(state.zones).every((z) => z.owner !== seat || z.ids.length === 0);
 }
 
 const isPublicZone = (state: TableState, c: CardInstance): boolean => state.zones[c.zone]?.visibility === 'public';
@@ -404,9 +415,11 @@ export class Commands {
   }
 
   /**
-   * Resolve the top item (DESIGN "The effect stack", Resolving): to `to`, or to the game's default destination when
-   * omitted. Before everyone passed it needs a second press within FORCE_RESOLVE_MS, which resolves with `force`
-   * ("Turn flow and confirmation", All passed).
+   * Resolve the top item (DESIGN "The effect stack", Resolving): to `to`, or to the game's default destination for
+   * the card (permanents to the controller's battlefield, instants and sorceries to the owner's graveyard; markers
+   * vanish). A card that resolves onto a battlefield lands in a free slot of that battlefield's territory, never in
+   * the stack lane at the table centre (Resolving 2; "Table model"). Before everyone passed it needs a second press
+   * within FORCE_RESOLVE_MS, which resolves with `force` ("Turn flow and confirmation", All passed).
    */
   resolveTop(to?: ZoneId): void {
     const st = this.state;
@@ -415,21 +428,42 @@ export class Commands {
       this.host.ui.notify('The stack is empty');
       return;
     }
-    const dest = to ? { to } : {};
     const pending = st.confirm && st.confirm.about === top.id && !roundPassed(st);
     if (!pending) {
       this.pendingForce = null;
-      this.host.session.dispatch({ type: 'stackResolve', item: top.id, ...dest });
+      this.host.session.dispatch({ type: 'stackResolve', item: top.id, ...this.resolveDestination(top, to) });
       return;
     }
     const now = this.host.now();
     if (this.pendingForce && this.pendingForce.item === top.id && now - this.pendingForce.at <= FORCE_RESOLVE_MS) {
       this.pendingForce = null;
-      this.host.session.dispatch({ type: 'stackResolve', item: top.id, ...dest, force: true });
+      this.host.session.dispatch({ type: 'stackResolve', item: top.id, ...this.resolveDestination(top, to), force: true });
       return;
     }
     this.pendingForce = { item: top.id, at: now };
     this.host.ui.notify('Not everyone has passed. Resolve again to resolve anyway');
+  }
+
+  /** Where a resolving item goes: `to` or the game's default for its card, with a free-slot pose on a battlefield. */
+  private resolveDestination(item: StackItem, to: ZoneId | undefined): { to?: ZoneId; pose?: Pose } {
+    const st = this.state;
+    const card = item.card ? st.cards[item.card] : undefined;
+    if (!card) return to ? { to } : {};
+    let dest = to ?? null;
+    if (!dest) {
+      const ref = card.identity ?? this.host.session.secrets().identities[card.id]?.card;
+      const data = ref ? this.host.session.cardData(ref) : null;
+      try {
+        dest = this.host.game.defaultDestination(item, data ?? undefined, card);
+      } catch {
+        dest = null;
+      }
+    }
+    if (!dest) return {};
+    const { kind, seat } = parseZoneId(dest);
+    const free = this.host.game.zones.find((z) => z.id === kind)?.presentation === 'free';
+    if (!free || !seat || !st.zones[dest]) return { to: dest };
+    return { to: dest, pose: freeSlot(st, seat, layoutOf(this.host.game, st), card.id) };
   }
 
   /** Mill N: the top `n` cards of the own library to the own graveyard, one move each with a shared group (DESIGN "Card manipulation", Library actions). */
