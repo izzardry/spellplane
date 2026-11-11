@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // pnpm e2e:gate -- M<n>   runs tests/e2e/m<n>.gate.spec.ts (tagged @gate) on Chromium and WebKit.
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { runPlaywright } from './pw-guard.mjs';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const milestone = (args.shift() ?? '').toUpperCase();
@@ -14,8 +14,4 @@ if (!fs.existsSync(spec)) {
   console.error(`gate spec ${spec} does not exist yet`);
   process.exit(1);
 }
-const r = spawnSync('pnpm', ['exec', 'playwright', 'test', spec, ...args], {
-  stdio: 'inherit',
-  env: { ...process.env, SPELLPLANE_GATE: milestone, SPELLPLANE_SHOTS: process.env.SPELLPLANE_SHOTS ?? '1' },
-});
-process.exit(r.status ?? 1);
+await runPlaywright(['test', spec, ...args], { SPELLPLANE_GATE: milestone, SPELLPLANE_SHOTS: process.env.SPELLPLANE_SHOTS ?? '1' });
