@@ -1,0 +1,57 @@
+{
+  "name": "spellplane",
+  "private": true,
+  "version": "0.0.0",
+  "description": "A universal trading card game table in the browser: peer-to-peer, no rules enforcement.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@12.18.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "svelte-check": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings=false",
+    "lint": "eslint .",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "check": "pnpm typecheck && pnpm svelte-check && pnpm lint && pnpm test:run",
+    "e2e": "playwright test --grep-invert \"@network|@gate\"",
+    "e2e:gate": "node scripts/e2e-gate.mjs",
+    "e2e:network": "playwright test --grep @network",
+    "shots": "node scripts/shots.mjs"
+  },
+  "dependencies": {
+    "idb": "^8.0.4",
+    "three": "^0.187.0",
+    "troika-three-text": "^0.53.1",
+    "trystero": "^0.26.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.65.0",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tsconfig/svelte": "^5.0.8",
+    "@types/node": "^26.6.6",
+    "@types/three": "^0.187.0",
+    "eslint": "^10.14.0",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-boundaries": "^7.4.2",
+    "eslint-plugin-svelte": "^3.24.1",
+    "fake-indexeddb": "^6.2.8",
+    "fast-check": "^4.10.2",
+    "globals": "^17.14.0",
+    "svelte": "^5.57.3",
+    "svelte-check": "^4.7.8",
+    "svelte-eslint-parser": "^1.10.1",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.2",
+    "vite": "^8.3.7",
+    "vite-plugin-pwa": "^2.0.0",
+    "vitest": "^5.1.0",
+    "workbox-window": "^7.4.1"
+  }
+}

@@ -5,3 +5,6 @@ test-results/
 playwright-report/
 .DS_Store
 *.local
+dist-test
+dev-dist
+coverage

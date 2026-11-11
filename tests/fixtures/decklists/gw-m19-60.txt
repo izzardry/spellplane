@@ -1,0 +1,22 @@
+// Fixture deck A: green-white creatures from Core Set 2019, plain format (60 cards)
+12 Forest
+12 Plains
+4 Llanowar Elves
+4 Pegasus Courser
+3 Daybreak Chaplain
+3 Ajani's Pridemate
+3 Druid of the Cowl
+2 Elvish Rejuvenator
+2 Leonin Warleader
+2 Resplendent Angel
+2 Pelakka Wurm
+2 Colossal Dreadmaw
+1 Gigantosaurus
+3 Rabid Bite
+2 Titanic Growth
+2 Inspired Charge
+1 Revitalize
+
+Sideboard
+2 Revitalize
+1 Gigantosaurus

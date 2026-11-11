@@ -2,7 +2,7 @@
 
 A rules-free, peer-to-peer virtual card table for the browser: two to four friends draft, build and play Magic-style card games on a shared top-down desk, with no backend and no accounts.
 
-Status: design and planning. No code yet.
+Status: in development. Live build: https://izzardry.github.io/spellplane/
 
 - [Design document](docs/DESIGN.md): what is being built
 - [Implementation plan](docs/PLAN.md): milestones, work packages, acceptance tests and gates

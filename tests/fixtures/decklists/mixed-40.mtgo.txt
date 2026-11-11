@@ -1,0 +1,17 @@
+# Fixture deck C: a 40-card limited deck in MTGO style with an SB: line and an unresolvable name
+8 Forest
+9 Mountain
+2x Llanowar Elves
+2 Shock
+2 Colossal Dreadmaw
+3 Viashino Pyromancer
+2 Hostile Minotaur
+2 Rabid Bite
+2 Titanic Growth
+2 Fire Elemental
+2 Pelakka Wurm
+2 Lava Axe
+1 Gigantosaurus
+1 Volcanic Dragon
+SB: 1 Tormenting Voice
+SB: 1 Not A Real Card Name
