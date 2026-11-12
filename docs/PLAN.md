@@ -415,7 +415,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M1-P8 Networked session
 - [x] M1-G Gate (owner playtest and two-home network check pending)
 - [ ] M2-C Contracts
-- [ ] M2-P1 Pack generation
+- [x] M2-P1 Pack generation
 - [ ] M2-P2 Pass draft and sealed
 - [ ] M2-P3 Open formats
 - [ ] M2-P4 Draft UI
