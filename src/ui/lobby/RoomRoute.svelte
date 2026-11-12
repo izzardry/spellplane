@@ -1,9 +1,9 @@
 <!--
-  The `#/t/<room>/<key>` route (PLAN M1-P5): the networked table (TableRoom: lobby, then the HUD) once a session for the
-  room is at hand, otherwise a page saying what is happening. The session comes from main.ts (AppProps.session whose
-  roomId matches, M1-P8); until then dev and test builds with a dev transport (`?transport=local`) join through the
-  stand-in session of ui/lobby/dev-room.ts, lazily imported and absent from production. The share link is
-  AppProps.link when main.ts hands one for this room, else it is derived from the fragment.
+  The `#/t/<room>/<key>` route (PLAN M1-P5, M1-P8): the networked table (TableRoom: lobby, then the HUD) once a session
+  for the room is at hand, otherwise a page saying what is happening. The session is main.ts's (AppProps.session when
+  its roomId matches this room), or the one AppProps.openRoom joins for this link; the route leaves a session it
+  opened when it goes away. The share link is AppProps.link when main.ts hands one for this room, else it is derived
+  from the fragment.
 -->
 <script lang="ts">
   import type { TableSession } from '../../session/types';
@@ -16,7 +16,7 @@
 
   let { app, room: roomId, roomKey, cssVars }: { app: Partial<AppProps>; room: string; roomKey: string; cssVars: string } = $props();
 
-  type RoomView = { session: TableSession; link: RoomLink; identity: IdentityStore; decks: DeckStore; dispose?: () => void };
+  type RoomView = { session: TableSession; link: RoomLink; identity: IdentityStore; decks: DeckStore };
   const link = $derived.by((): RoomLink | null => {
     const given = app.link;
     if (given && given.roomId === roomId && given.roomKey === roomKey) return given;
@@ -26,55 +26,43 @@
   let joinState = $state<'none' | 'joining' | 'failed'>('none');
   let error = $state('');
 
+  function lobbyDeps(): Promise<{ identity: IdentityStore; decks: DeckStore }> {
+    return app.identity && app.decks ? Promise.resolve({ identity: app.identity, decks: app.decks }) : lobbyStores().then((s) => ({ identity: s.identity, decks: s.decks }));
+  }
+
   $effect(() => {
     const l = link;
     if (!l) return;
-    const session = app.session;
-    // main.ts handed in the networked session for this room (M1-P8).
-    if (session && session.roomId === l.roomId) {
-      let cancelled = false;
-      const stores = app.identity && app.decks ? Promise.resolve({ identity: app.identity, decks: app.decks }) : lobbyStores().then((s) => ({ identity: s.identity, decks: s.decks }));
-      stores.then(
-        (x) => {
-          if (!cancelled) room = { session, link: l, ...x };
-        },
-        (e: unknown) => {
-          joinState = 'failed';
-          error = e instanceof Error ? e.message : String(e);
-        },
-      );
-      return () => {
-        cancelled = true;
-        room = null;
-      };
-    }
-    if (!__SPELLPLANE_DEBUG__ || !app.game || !app.cardData) return;
-    const game = app.game;
-    const cardData = app.cardData;
-    const parseDecklist = app.parseDecklist;
+    const given = app.session;
+    const openRoom = app.openRoom;
+    if (!(given && given.roomId === l.roomId) && !openRoom) return;
     let cancelled = false;
-    let opened: RoomView | null = null;
+    let opened: { leave(): void } | null = null;
     joinState = 'joining';
-    void import('./dev-room').then(async (m) => {
-      if (cancelled || !m.devTransportKind()) {
+    // main.ts handed in the session for this room, or the route joins the room itself (M1-P8).
+    const session: Promise<TableSession> =
+      given && given.roomId === l.roomId
+        ? Promise.resolve(given)
+        : openRoom!(l).then((s) => {
+            if (cancelled) s.leave();
+            else opened = s;
+            return s;
+          });
+    Promise.all([session, lobbyDeps()]).then(
+      ([s, deps]) => {
+        if (cancelled) return;
+        room = { session: s, link: l, ...deps };
         joinState = 'none';
-        return;
-      }
-      try {
-        const r = await m.openDevRoom(l, { game, cardData, ...(parseDecklist ? { parseDecklist } : {}) });
-        if (cancelled) return r.session.leave();
-        opened = { session: r.session, link: l, identity: r.identity, decks: r.stores.decks, dispose: () => r.session.leave() };
-        room = opened;
-        joinState = 'none';
-      } catch (e) {
+      },
+      (e: unknown) => {
         if (cancelled) return;
         joinState = 'failed';
         error = e instanceof Error ? e.message : String(e);
-      }
-    });
+      },
+    );
     return () => {
       cancelled = true;
-      opened?.dispose?.();
+      opened?.leave();
       room = null;
       joinState = 'none';
     };
@@ -120,7 +108,7 @@
     {:else if joinState === 'failed'}
       <p role="alert" data-testid="room-error">Could not join this table: {error}</p>
     {:else}
-      <p>Joining tables by link arrives with peer-to-peer play (milestone 1).</p>
+      <p>This page cannot join tables.</p>
     {/if}
     <p><a href="#/">Back to the solo table</a></p>
   </main>

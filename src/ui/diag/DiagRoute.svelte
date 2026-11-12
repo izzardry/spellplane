@@ -1,6 +1,6 @@
 <!--
-  The `#/diag` and `#/diag/<room>/<key>` routes (PLAN M1 connection check): the check with the props main.ts hands in,
-  the dev transports in dev and test builds, or a plain "not wired" failure. Rendered inside the app shell's page frame.
+  The `#/diag` and `#/diag/<room>/<key>` routes (PLAN M1 connection check): the check with the props main.ts hands in (the
+  page's transport, M1-P8), or a plain "not wired" failure. Rendered inside the app shell's page frame.
 -->
 <script lang="ts">
   import type { DiagProps } from '../types';
@@ -13,10 +13,6 @@
     const r = room;
     if (given) {
       diag = { ...given, room: r };
-      return;
-    }
-    if (__SPELLPLANE_DEBUG__) {
-      void import('../lobby/dev-room').then((m) => (diag = m.devDiagProps(r)));
       return;
     }
     diag = {

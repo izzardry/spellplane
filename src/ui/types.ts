@@ -6,7 +6,7 @@ import type { CardDataSource, FaceSource, ParseResult } from '../data/types';
 import type { GameDefinition } from '../games/types';
 import type { createTableScene } from '../scene/index';
 import type { Transport } from '../net/transport';
-import type { TableSession } from '../session/types';
+import type { NetSession, TableSession } from '../session/types';
 import type { DeckStore, IdentityStore, SettingsStore, TableRecord } from '../store/types';
 
 /** What main.ts hands the app shell (PLAN M0-P4, M0-P7). */
@@ -30,6 +30,12 @@ export interface AppProps {
   start?: StartPageProps;
   /** The connection check at `#/diag`. Added by M1-C. */
   diag?: DiagProps;
+  /**
+   * Join the networked table of a room link and resolve once this browser holds a chair (session/net.ts
+   * createNetSession over the page's transport). The table route (`#/t/<room>/<key>`) calls it and leaves the session
+   * when the route goes away. Added by M1-P8 (additive).
+   */
+  openRoom?: (link: RoomLink) => Promise<NetSession>;
 }
 
 /**
