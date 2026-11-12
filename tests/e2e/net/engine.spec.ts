@@ -45,6 +45,10 @@ async function twoPages(context: BrowserContext, info: TestInfo): Promise<{ a: P
   const seats = [ida.peerId, idb.peerId];
   await harness(a, 'start', room, seats);
   await harness(b, 'start', room, seats);
+  // The pages have met before a test acts: a page whose handshake has not finished is alone and sequences its own
+  // actions (DESIGN "Multiplayer architecture"), and the lowest seat's takeover then logs a handover record, so the
+  // seq counts below would depend on how fast the handshake ran (decision M2-G).
+  await settled([a, b]);
   return { a, b, seats, room, pa };
 }
 

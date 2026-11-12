@@ -52,17 +52,39 @@ async function freeOne(page: Page, opts: { land?: boolean } = {}): Promise<Build
   return c;
 }
 
-/** The column labels shown: `area:column` of each, sorted. */
+/** The column labels shown: `area:column` of each, sorted (read in one round trip: a slow runner pays per call). */
 async function columnLabels(page: Page): Promise<string[]> {
-  const els = page.locator('[data-testid="builder-column-label"]');
-  const out: string[] = [];
-  for (const el of await els.all()) out.push(`${await el.getAttribute('data-area')}:${await el.getAttribute('data-column')}`);
+  const out = await page.locator('[data-testid="builder-column-label"]').evaluateAll((els) => els.map((el) => `${el.getAttribute('data-area')}:${el.getAttribute('data-column')}`));
   return out.sort();
 }
 
 /** The labels a layout sorted by `key` shows: one per column with cards, in each area. */
 function labelsFor(cards: BuilderDebugCard[], key: BuilderSort): string[] {
   return [...new Set(cards.map((c) => `${c.inMain ? 'deck' : 'side'}:${columnOf(lookup(c.ref), key).key}`))].sort();
+}
+
+/**
+ * Open the builder and make a hand-made layout: a few cards into the deck at odd spots, one moved within the
+ * sideboard. Returns the layout and the build.
+ */
+async function handMadeLayout(page: Page): Promise<{ handMade: Layout; b: DeckBuild }> {
+  await openBuilder(page);
+  await settled(page);
+  const ids: string[] = [];
+  for (const [to, ctrl] of [
+    [{ x: -250, y: 250 }, false],
+    [{ x: 40, y: 120 }, false],
+    [{ x: 300, y: 300 }, true],
+    [{ x: 280, y: -300 }, true],
+  ] as const) {
+    const c = (await free(page))[ids.length * 2]!;
+    ids.push(c.id);
+    await dragCardTo(page, c.id, to, { ctrl });
+  }
+  const handMade = await layout(page);
+  const b = await build(page);
+  expect([...b.main].sort()).toEqual(ids.slice(0, 3).sort());
+  return { handMade, b };
 }
 
 async function press(page: Page, key: string): Promise<void> {
@@ -153,25 +175,8 @@ test.describe('the builder table (DESIGN "Pre-game", Deck building)', () => {
     expect((await bh(page, 'cards')).find((x) => x.id === a.id)!.area).toBe('side');
   });
 
-  test('sorting is stable and reversible (PLAN M2-P5 acceptance)', async ({ page }) => {
-    await openBuilder(page);
-    await settled(page);
-    // A hand-made layout: a few cards into the deck at odd spots, one moved within the sideboard.
-    const ids: string[] = [];
-    for (const [to, ctrl] of [
-      [{ x: -250, y: 250 }, false],
-      [{ x: 40, y: 120 }, false],
-      [{ x: 300, y: 300 }, true],
-      [{ x: 280, y: -300 }, true],
-    ] as const) {
-      const c = (await free(page))[ids.length * 2]!;
-      ids.push(c.id);
-      await dragCardTo(page, c.id, to, { ctrl });
-    }
-    const handMade = await layout(page);
-    const b = await build(page);
-    expect([...b.main].sort()).toEqual(ids.slice(0, 3).sort());
-
+  test('sorting is reversible: each key sorts, and the same key again restores the hand-made layout (PLAN M2-P5 acceptance)', async ({ page }) => {
+    const { handMade, b } = await handMadeLayout(page);
     for (const [key, k] of [
       ['manaValue', '2'],
       ['type', '3'],
@@ -195,7 +200,10 @@ test.describe('the builder table (DESIGN "Pre-game", Deck building)', () => {
       expect(await layout(page)).toEqual(handMade);
       expect((await bh(page, 'sort'))!.showing).toBeNull();
     }
+  });
 
+  test('sorting is stable: a chain of sorts unwinds one step at a time, and a sort gives one layout whatever lay there before (PLAN M2-P5 acceptance)', async ({ page }) => {
+    const { b } = await handMadeLayout(page);
     // A chain unwinds one step at a time: colour, then type, then type again gives the colour layout back, and with it
     // the colour columns' labels and the colour key for placing cards.
     await press(page, '1');
