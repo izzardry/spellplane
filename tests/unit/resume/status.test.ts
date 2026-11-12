@@ -5,10 +5,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import { emptySecretStore } from '../../../src/core/secrets';
-import type { CardRef } from '../../../src/core/types';
+import type { CardRef, HiddenZone, TableState } from '../../../src/core/types';
 import type { TableSession } from '../../../src/session/types';
 import { recoveryLibrarySize } from '../../../src/core/recovery';
-import { canRecover, identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recoveryProblem, recoveryStatus, type RecoveryOwed } from '../../../src/session/resume';
+import { canRecover, identitiesFromLog, lostHiddenCards, ownPublishedIds, owedOn, parseRecoveryOwed, recoveryProblem, recoveryStatus, type RecoveryOwed } from '../../../src/session/resume';
 import { deckRefs, readySecretTable, type SecretTable } from '../secrecy/helpers';
 
 const DECK = 20;
@@ -29,14 +29,32 @@ function midGame(n: number, hand: number): SecretTable {
 describe('lostHiddenCards', () => {
   it('names the own hand and library cards whose identities this browser does not hold', () => {
     const t = midGame(3, 4);
-    expect(lostHiddenCards(t.state, t.secrets.s0!, 's0')).toEqual({ hand: [], library: [] });
+    expect(lostHiddenCards(t.state, t.secrets.s0!, 's0')).toEqual({ hand: [], library: [], other: [] });
     const lost = lostHiddenCards(t.state, emptySecretStore('s0'), 's0');
     expect(lost.hand).toEqual(t.state.zones['hand:s0']!.ids);
     expect(lost.library).toEqual(t.state.zones['library:s0']!.ids);
     // Another seat's hidden cards are never "lost" for this browser.
     expect(lostHiddenCards(t.state, t.secrets.s0!, 's1').hand).toEqual([]);
   });
+
+  it('names the cards of the seat\'s other hidden zones (sideboard) too: `recover` discards them as well', () => {
+    const t = midGame(3, 4);
+    const st = withSideboard(t.state, 's0', t.state.zones['battlefield:s0']!.ids[0]!);
+    expect(lostHiddenCards(st, emptySecretStore('s0'), 's0').other).toEqual(st.zones['sideboard:s0']!.ids);
+  });
 });
+
+/** `state` with an owner-only `sideboard:<seat>` zone that `card` (one of the seat's public cards) was moved into. */
+function withSideboard(state: TableState, seat: string, card: string): TableState {
+  const st = structuredClone(state);
+  const from = st.zones[st.cards[card]!.zone]!;
+  from.ids = from.ids.filter((x) => x !== card);
+  const zone: HiddenZone = { id: `sideboard:${seat}`, kind: 'sideboard', owner: seat, visibility: 'owner', count: 1, ids: [card] };
+  st.zones[zone.id] = zone;
+  const { identity: _public, ...hidden } = st.cards[card]!;
+  st.cards[card] = { ...hidden, zone: zone.id, face: 'down' };
+  return st;
+}
 
 describe('recoveryStatus', () => {
   it('none while the save holds every hidden card; lost with counts, deck size and the largest hand when it does not', () => {
@@ -74,6 +92,31 @@ describe('recoveryStatus', () => {
     // A newer recovery replaces it.
     t.apply('s0', { type: 'recover', hand: 2, round: 'rec-2' });
     expect(recoveryStatus(t.state, held, 's0', owed).phase).toBe('proposed');
+  });
+
+  it('a card in the seat\'s sideboard is not public: `recover` discards it, so the largest hand counts it and the panel reports it lost', () => {
+    const t = midGame(3, 4);
+    const st = withSideboard(t.state, 's0', t.state.zones['battlefield:s0']!.ids[0]!);
+    const status = recoveryStatus(st, emptySecretStore('s0'), 's0');
+    expect(status).toMatchObject({ phase: 'lost', deckSize: DECK, publicCards: 2, maxHand: DECK - 2, lost: { hand: 4, library: DECK - 7, other: 1 } });
+    // The reducer allows exactly that hand, and no more.
+    expect(recoveryProblem(st, 's0', deckRefs('s0', DECK), DECK - 2)).toBeNull();
+    expect(recoveryProblem(st, 's0', deckRefs('s0', DECK), DECK - 1)).toMatch(/at most 18 cards/);
+  });
+
+  it('a library card named only because the log published it does not hide a lost save', () => {
+    const t = midGame(3, 4);
+    // A played card goes back on top of the library under the same id; its reveal stays in the log.
+    const back = t.state.zones['battlefield:s0']!.ids[0]!;
+    t.apply('s0', { type: 'toZone', card: back, to: 'library:s0', position: 'top' });
+    expect(t.state.zones['library:s0']!.ids).toContain(back);
+    // A browser that lost its save and named that card from the log (an older page, or a card adopted while public).
+    const named = { ...emptySecretStore('s0'), identities: { [back]: t.secrets.s0!.identities[back]! } };
+    const published = ownPublishedIds(t.log, 's0');
+    expect(published.has(back)).toBe(true);
+    expect(recoveryStatus(t.state, named, 's0', null, published)).toMatchObject({ phase: 'lost', lost: { hand: 4, library: DECK - 7 } });
+    // A browser whose save survived holds library cards the log never published: nothing is offered.
+    expect(recoveryStatus(t.state, t.secrets.s0!, 's0', null, published).phase).toBe('none');
   });
 
   it('tokens are not part of the deck', () => {
@@ -183,6 +226,10 @@ describe('identitiesFromLog', () => {
     // Known identities are kept as they are; another seat's cards are never taken.
     expect(identitiesFromLog(t.log, t.state, 's0', t.secrets.s0!.identities)).toEqual({});
     expect(identitiesFromLog(t.log, t.state, 's1', {})).toEqual({});
+    // A card that went back to the library (or another hidden zone) is not taken: the recovery replaces those zones.
+    const back = onTable[0]!.id;
+    t.apply('s0', { type: 'toZone', card: back, to: 'library:s0', position: 'top' });
+    expect(Object.keys(identitiesFromLog(t.log, t.state, 's0', {})).sort()).toEqual(onTable.slice(1).map((c) => c.id).sort());
     // A salt that does not match the commitment is not taken.
     const forged = t.log.map((a) => (a.type === 'reveal' ? { ...a, salt: 'forged' } : a));
     expect(identitiesFromLog(forged, t.state, 's0', {})).toEqual({});

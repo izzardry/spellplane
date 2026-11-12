@@ -13,6 +13,8 @@ describe('recovery panel text', () => {
     expect(headline(s, false)).toMatch(/lost your hidden cards/);
     expect(lostText(s)).toContain('hand (3 cards) and library (17 cards)');
     expect(lostText(s)).toContain('your 0 cards in play');
+    expect(lostText(s)).not.toContain('other hidden');
+    expect(lostText({ ...s, lost: { ...s.lost, other: 2 } })).toContain('library (17 cards) nor of 2 other hidden cards.');
     expect(libraryAfter(s, 7)).toBe(13);
     expect(headline(recoveryStatus(t.state, t.secrets.s0!, 's0'), false)).toBeNull();
   });

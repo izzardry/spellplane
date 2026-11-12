@@ -46,7 +46,8 @@ export function headline(status: RecoveryStatus, running: boolean): string | nul
 /** The explanation under the headline while nothing is proposed yet. */
 export function lostText(status: RecoveryStatus): string {
   return (
-    `This browser has no save of your hand (${plural(status.lost.hand, 'card')}) and library (${plural(status.lost.library, 'card')}). ` +
+    `This browser has no save of your hand (${plural(status.lost.hand, 'card')}) and library (${plural(status.lost.library, 'card')})` +
+    (status.lost.other > 0 ? ` nor of ${plural(status.lost.other, 'other hidden card')}. ` : '. ') +
     `Re-import the deck you played: the table keeps your ${plural(status.publicCards, 'card')} in play, the rest of the deck becomes a new shuffled library, ` +
     'and you draw a fresh hand once the table agrees. Everyone sees this in the log.'
   );

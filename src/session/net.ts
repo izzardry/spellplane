@@ -98,6 +98,8 @@ const SEAT_ATTEMPTS = 4;
 const ROUND_ATTEMPTS = 3;
 /** The key under which an own recovery keeps what it still owes after its `recoverCommit` (session/nonces.ts 'recovery'). */
 const OWED = 'owed';
+/** Why nothing is taken from a recovered library yet. */
+const UNSHUFFLED = 'Finish the recovery first: your new library is not shuffled yet';
 /** Action types that leave a card where it lies and as it shows: a kept turn-up is still owed after them. */
 const IN_PLACE: ReadonlySet<string> = new Set(['tap', 'rotate', 'counter', 'note', 'attach', 'detach']);
 /** Seat colours a theme provides (DESIGN "Themes and rendering": eight seat colours). */
@@ -433,6 +435,14 @@ class NetTable implements NetSession, SessionRecovery {
       return this.stamp(action);
     }
     const view = this.engine.state();
+    // Nothing leaves a recovered library before it is jointly shuffled (DESIGN "Hidden information" 3): it is still in
+    // the re-imported decklist's order.
+    const taken = referencedCard(action);
+    const leaves = action.type === 'draw' || ((action.type === 'toZone' || action.type === 'move') && action.to !== this.zone('library'));
+    if (leaves && taken !== null && view.cards[taken]?.zone === this.zone('library') && this.libraryUnshuffled()) {
+      this.warn(UNSHUFFLED);
+      return this.stamp(action);
+    }
     if (action.type === 'draw' && view.cards[action.instanceId]?.zone === this.zone('library') && this.sec.libraryOrder[0] !== action.instanceId) {
       this.warn('A draw takes the top card of the library');
       return this.stamp(action);
@@ -570,10 +580,7 @@ class NetTable implements NetSession, SessionRecovery {
   draw(n = 1): Promise<void> {
     return this.run(() => {
       // A recovered library is drawn from only once it is jointly shuffled (DESIGN "Hidden information" 3).
-      const owed = this.recoveryOwed();
-      if (owed && (owed.shuffle === null || this.engine.confirmedState().shuffles[owed.shuffle]?.orderHash == null)) {
-        throw new Error('Finish the recovery first: your new library is not shuffled yet');
-      }
+      if (this.libraryUnshuffled()) throw new Error(UNSHUFFLED);
       this.drawNow(n);
       this.notify();
     });
@@ -627,7 +634,43 @@ class NetTable implements NetSession, SessionRecovery {
 
   recoveryOwed(): RecoveryOwed | null {
     const owed = this.storedOwed();
-    return owedOn(this.engine.confirmedState(), this.sec, this.seat, owed) ? owed : null;
+    if (!owedOn(this.engine.confirmedState(), this.sec, this.seat, owed)) return null;
+    // Done once the new library is shuffled and the agreed hand was drawn after the commit (by the recovery or by hand):
+    // a record that a failed finish left behind is not owed for the rest of the game.
+    return this.recoveryShuffled(owed!) && this.recoveryDrawsLeft(owed!) <= 0 ? null : owed;
+  }
+
+  /** The own actions sequenced after the own `recoverCommit` that created `owed.id`, or null when the log lacks it (a catch-up from a snapshot). */
+  private afterRecoverCommit(owed: RecoveryOwed): Action[] | null {
+    const log = this.entries.flatMap((e) => (e.kind === 'action' ? [e.action] : []));
+    const at = log.findIndex((a) => a.type === 'recoverCommit' && a.by === this.seat && a.instanceIds.includes(owed.id));
+    return at < 0 ? null : log.slice(at + 1).filter((a) => a.by === this.seat);
+  }
+
+  /** Whether the own library was shuffled (a secret shuffle done) since the recovery's commit. */
+  private recoveryShuffled(owed: RecoveryOwed): boolean {
+    const st = this.engine.confirmedState();
+    if (owed.shuffle !== null && st.shuffles[owed.shuffle]?.orderHash != null) return true;
+    const after = this.afterRecoverCommit(owed) ?? [];
+    const library = this.zone('library');
+    const sids = new Set(after.flatMap((a) => (a.type === 'shuffleCommit' && a.zone === library ? [a.sid] : [])));
+    return after.some((a) => a.type === 'shuffleDone' && sids.has(a.sid));
+  }
+
+  /**
+   * How many of the agreed hand are still to be drawn: the agreed count minus the own draws sequenced after the
+   * commit (so a hand played out since is not drawn again), or minus the hand now when the log lacks the commit.
+   */
+  private recoveryDrawsLeft(owed: RecoveryOwed): number {
+    const after = this.afterRecoverCommit(owed);
+    if (after === null) return owed.hand - (this.engine.confirmedState().zones[this.zone('hand')]?.ids.length ?? 0);
+    return owed.hand - after.filter((a) => a.type === 'draw').length;
+  }
+
+  /** Whether an own recovery's new library is committed but not shuffled yet: nothing is drawn from it before. */
+  private libraryUnshuffled(): boolean {
+    const owed = this.recoveryOwed();
+    return owed !== null && !this.recoveryShuffled(owed);
   }
 
   /**
@@ -748,7 +791,9 @@ class NetTable implements NetSession, SessionRecovery {
     const sid = owed.shuffle;
     const started = (id: string): boolean =>
       Object.hasOwn(this.engine.confirmedState().shuffles, id) || this.engine.pending().some((a) => a.type === 'shuffleCommit' && a.sid === id);
-    if (sid !== null && started(sid)) {
+    if (this.recoveryShuffled(owed)) {
+      // Shuffled already (before a reload, or by hand).
+    } else if (sid !== null && started(sid)) {
       await this.shuffleSettled(sid, null);
     } else {
       // Not proposed yet, or lost with the page that proposed it: shuffle now.
@@ -756,15 +801,14 @@ class NetTable implements NetSession, SessionRecovery {
       this.storeOwed({ ...owed, shuffle: next });
       await this.shuffleNow(library, next);
     }
-    const handNow = (): number => this.engine.state().zones[this.zone('hand')]?.ids.length ?? 0;
-    for (let attempt = 0; handNow() < owed.hand; attempt++) {
-      if (attempt >= ROUND_ATTEMPTS) throw new Error(`Only ${handNow()} of the agreed ${owed.hand} cards could be drawn: finish the recovery again`);
-      this.drawNow(owed.hand - handNow());
+    const drawing = (): boolean => this.engine.pending().some((a) => a.type === 'draw' && a.by === seat);
+    // Own draws in flight are counted once they are sequenced.
+    await this.until(() => !drawing(), () => null);
+    for (let attempt = 0; this.recoveryDrawsLeft(owed) > 0; attempt++) {
+      if (attempt >= ROUND_ATTEMPTS) throw new Error(`Only ${owed.hand - this.recoveryDrawsLeft(owed)} of the agreed ${owed.hand} cards could be drawn: finish the recovery again`);
+      this.drawNow(this.recoveryDrawsLeft(owed));
       this.notify();
-      await this.until(
-        () => !this.engine.pending().some((a) => a.type === 'draw' && a.by === seat),
-        () => null,
-      );
+      await this.until(() => !drawing(), () => null);
     }
     this.storeOwed(null);
     // Nothing before the recovery, and none of its draws, can be undone (as after a mulligan).
@@ -1284,6 +1328,12 @@ class NetTable implements NetSession, SessionRecovery {
    * offers it again (`finishRecovery`).
    */
   private resumeRecovery(): void {
+    // A record whose recovery is done (or replaced, or never sequenced) is dropped once the replica is in step.
+    if (this.recoveryRuns === 0 && this.engine.status() === 'connected' && this.storedOwed() !== null && this.recoveryOwed() === null && this.engine.pending().length === 0) {
+      const owed = this.storedOwed()!;
+      const st = this.engine.confirmedState();
+      if ((st.commitments[this.seat]?.instanceIds ?? []).includes(owed.id)) this.storeOwed(null);
+    }
     if (this.recoveryResumed || this.recoveryRuns > 0 || this.engine.status() !== 'connected' || this.recoveryOwed() === null) return;
     this.recoveryResumed = true;
     this.finishRecovery().catch((e: unknown) => this.warn(`The recovery could not be finished: ${errorText(e)}`));

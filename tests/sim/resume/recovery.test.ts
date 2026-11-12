@@ -13,7 +13,9 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Action } from '../../../src/core/actions';
-import { recoveryStatus } from '../../../src/session/resume';
+import { ownDeckCards } from '../../../src/core/recovery';
+import type { CardRef } from '../../../src/core/types';
+import { ownPublishedIds, recoveryStatus } from '../../../src/session/resume';
 import { browser, closeAll, FAKE_TIMERS, fixtureDeck, hashOf, LossyTransport, net, open, settle, until, waitConverged, type Browser, type NetTable } from '../session/harness';
 import { isLand, playScript, type Played } from '../session/script';
 import { deckCards, loseSave, publicCards } from './helpers';
@@ -52,6 +54,7 @@ interface Lost {
   other: NetTable;
   seat: 's0' | 's1';
   deckSize: number;
+  network: ReturnType<typeof net>;
 }
 
 /** Play the script, then `who` loses its save and reopens the link. */
@@ -65,7 +68,7 @@ async function lose(seed: number, who: 'A' | 'B'): Promise<Lost> {
   const s = await open(network, me, { settleMs: 200 });
   const other = who === 'A' ? p.b : p.a;
   await waitConverged([s, other], 'the rejoin after the lost save');
-  return { p, me, s, other, seat, deckSize };
+  return { p, me, s, other, seat, deckSize, network };
 }
 
 describe('the lost-save recovery flow', () => {
@@ -185,7 +188,13 @@ describe('the lost-save recovery flow', () => {
     const wrong = await fixtureDeck(DECK.A);
     expect(await rejection(s.recover(wrong, 7))).toMatch(/not the deck you played/);
     const right = await fixtureDeck(DECK.B);
-    expect(await rejection(s.recover({ main: right.main.slice(0, 30), side: [] }, 7))).toMatch(/has \d+ cards/);
+    // Too small, but covering every public card of the seat (whichever the shuffles put there): only the size is wrong.
+    const pubRefs = ownDeckCards(Object.values(s.engine.confirmedState().cards), seat).flatMap((c): CardRef[] => (c.identity ? [c.identity] : []));
+    expect(pubRefs.length).toBeGreaterThan(0);
+    const rest = [...right.main];
+    for (const r of pubRefs) rest.splice(rest.findIndex((x) => x.sid === r.sid && (x.foil === true) === (r.foil === true)), 1);
+    const small = [...pubRefs, ...rest.slice(0, 10)];
+    expect(await rejection(s.recover({ main: small, side: [] }, 7))).toMatch(new RegExp(`has ${small.length} cards; the table needs ${60 - pubRefs.length}`));
     expect(await rejection(s.recover(right, 61))).toMatch(/at most \d+ cards/);
     expect(await rejection(s.recover(right, -1))).toMatch(/whole number/);
     await vi.advanceTimersByTimeAsync(2000);
@@ -242,6 +251,16 @@ describe('the lost-save recovery flow', () => {
     // The recovery is owed, not finished: the panel says so, and nothing is drawn from the unshuffled library.
     expect(recoveryStatus(lossy.getState(), lossy.secrets(), 's1', lossy.recoveryOwed())).toMatchObject({ phase: 'committed', hand: 7 });
     expect(await rejection(lossy.draw(1))).toMatch(/not shuffled yet/);
+    // Nor through a dispatched draw or a move out of the library: the library is still in the re-imported decklist's order.
+    const top = lossy.secrets().libraryOrder[0]!;
+    lossy.dispatch({ type: 'draw', instanceId: top });
+    lossy.dispatch({ type: 'toZone', card: top, to: 'hand:s1', position: 'any' });
+    lossy.dispatch({ type: 'move', card: top, to: 'battlefield:s1', pose: { x: 0, y: 300, rot: 180 } });
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(lossy.engine.pending().filter((a) => a.type !== 'shuffleCommit')).toEqual([]);
+    expect(p.a.engine.confirmedState().cards[top]).toMatchObject({ zone: 'library:s1' });
+    expect(p.a.engine.confirmedState().zones['hand:s1']!.ids).toEqual([]);
+    expect(warnings(lossy).filter((w) => /not shuffled yet/.test(w))).toHaveLength(3);
     lossy.leave();
 
     const s = await open(network, p.B, { settleMs: 200 });
@@ -322,6 +341,76 @@ describe('the lost-save recovery flow', () => {
     expect(other.engine.confirmedState().cards[back]).toMatchObject({ face: 'up', identity: { sid } });
     expect(other.engine.confirmedState().cards[back]!.suspect).toBeUndefined();
     expect(warnings(other).filter((w) => /Integrity/.test(w))).toEqual([]);
+  });
+
+  it('a card that was public and went back to the library under its id does not hide the lost save: the recovery is offered and completes', async () => {
+    const network = net({ seed: 90 });
+    const p = await playScript(network, browsers);
+    const b = p.b;
+    // B plays two more cards face up (their turn-ups publish identity and salt in the log) ...
+    const [x, y] = b.secrets().hand.slice(0, 2) as [string, string];
+    for (const [i, id] of [x, y].entries()) {
+      b.dispatch({ type: 'move', card: id, to: 'battlefield:s1', pose: { x: 100 + i * 70, y: 200, rot: 180 } });
+      await until(() => p.a.engine.confirmedState().cards[id]?.identity !== undefined, 20_000, 'the card to be turned up');
+    }
+    // ... and puts one back on top of its library under the same id.
+    b.dispatch({ type: 'toZone', card: y, to: 'library:s1', position: 'top' });
+    await waitConverged([b, p.a]);
+    expect(p.a.engine.confirmedState().cards[y]).toMatchObject({ zone: 'library:s1' });
+
+    await loseSave(p.B);
+    const s = await open(network, p.B, { settleMs: 200 });
+    await waitConverged([s, p.a], 'the rejoin after the lost save');
+    const status = (): string => recoveryStatus(s.getState(), s.secrets(), 's1', s.recoveryOwed(), ownPublishedIds(actions(s), 's1')).phase;
+    // The log names the card in the library, but the browser does not take it back: the library is lost as a whole.
+    expect(Object.hasOwn(s.secrets().identities, y)).toBe(false);
+    expect(status()).toBe('lost');
+
+    // A public card bounces to the (lost) hand: the log names B's public cards again, x among them ...
+    s.dispatch({ type: 'toZone', card: p.b.engine.confirmedState().zones['battlefield:s1']!.ids.find((id) => id !== x)!, to: 'hand:s1', position: 'any' });
+    await until(() => Object.hasOwn(s.secrets().identities, x) && s.engine.pending().length === 0, 20_000, 'the public cards to be named from the log');
+    await waitConverged([s, p.a]);
+    // ... and x goes back to the library too: holding it says nothing about the save.
+    s.dispatch({ type: 'toZone', card: x, to: 'library:s1', position: 'top' });
+    await waitConverged([s, p.a]);
+    expect(s.engine.confirmedState().zones['library:s1']!.ids).toContain(x);
+    expect(status()).toBe('lost');
+
+    const pub = publicCards(s.engine.confirmedState(), 's1');
+    await settle(s.recover(await fixtureDeck(DECK.B), 7), 120_000, 'the recovery');
+    await waitConverged([s, p.a]);
+    expect(p.a.engine.confirmedState().zones['library:s1']!.ids).toHaveLength(60 - pub - 7);
+    expect(p.a.engine.confirmedState().zones['hand:s1']!.ids).toHaveLength(7);
+    expect(status()).toBe('none');
+  });
+
+  it('a recovery record left behind after the recovery finished is not owed: a reload draws nothing and drops it', async () => {
+    const { me, s, other, seat, network } = await lose(91, 'B');
+    await settle(s.recover(await fixtureDeck(DECK.B), 7), 120_000, 'the recovery');
+    await waitConverged([s, other]);
+    // The player plays on: a card of the agreed hand leaves it.
+    const card = s.secrets().hand[0]!;
+    s.dispatch({ type: 'move', card, to: `battlefield:${seat}`, pose: { x: 100, y: 300, rot: 180 } });
+    await waitConverged([s, other]);
+    expect(other.engine.confirmedState().zones[`hand:${seat}`]!.ids).toHaveLength(6);
+    // A finish that failed half-way would leave the record (here: put back by hand).
+    const commit = actions(other).find((a) => a.type === 'recoverCommit' && a.by === seat) as Extract<Action, { type: 'recoverCommit' }>;
+    me.nonces.set('recovery', 'owed', JSON.stringify({ id: commit.instanceIds[0], hand: 7, shuffle: null }));
+    expect(s.recoveryOwed()).toBeNull();
+    expect(recoveryStatus(s.getState(), s.secrets(), seat, s.recoveryOwed()).phase).toBe('none');
+    await settle(s.draw(1));
+    await waitConverged([s, other]);
+    expect(other.engine.confirmedState().zones[`hand:${seat}`]!.ids).toHaveLength(7);
+    await settle(s.whenSaved());
+    s.leave();
+    const again = await open(network, me, { settleMs: 200 });
+    await waitConverged([again, other]);
+    await vi.advanceTimersByTimeAsync(5000);
+    await waitConverged([again, other]);
+    expect(other.engine.confirmedState().zones[`hand:${seat}`]!.ids).toHaveLength(7);
+    expect(afterCommit(other, seat).filter((a) => a.type === 'draw' && a.by === seat)).toHaveLength(7 + 1);
+    expect(again.recovering()).toBe(false);
+    expect(me.nonces.ids('recovery')).toEqual([]);
   });
 
   it('nothing is lost after a plain reload: the recovery is not offered', async () => {

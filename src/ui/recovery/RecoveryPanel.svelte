@@ -12,7 +12,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { CardDataSource } from '../../data/types';
-  import { canRecover, recoveryProblem, recoveryStatus, type RecoveryStatus } from '../../session/resume';
+  import { canRecover, ownPublishedIds, recoveryProblem, recoveryStatus, type RecoveryStatus } from '../../session/resume';
   import type { DeckImport as Deck, TableSession } from '../../session/types';
   import DeckImport from '../DeckImport.svelte';
   import type { ParseDecklist } from '../deck';
@@ -27,6 +27,9 @@
   /** A recovery of the session runs (also one the session resumed by itself after a reload). */
   let busy = $state(untrack(() => canRecover(session) && session.recovering()));
   let owed = $state.raw(untrack(() => (canRecover(session) ? session.recoveryOwed() : null)));
+  /** Own cards whose identity the log published: holding one of them does not show that the save survived. */
+  const publishedNow = (): Set<string> => ownPublishedIds(session.log().flatMap((e) => (e.kind === 'action' ? [e.action] : [])), session.seat);
+  let published = $state.raw(untrack(publishedNow));
   let importing = $state(false);
   let failure = $state('');
   let done = $state<{ hand: number; library: number } | null>(null);
@@ -36,6 +39,7 @@
     const follow = (): void => {
       st = session.getState();
       secrets = session.secrets();
+      published = publishedNow();
       if (canRecover(session)) {
         busy = session.recovering();
         owed = session.recoveryOwed();
@@ -50,7 +54,7 @@
     };
   });
 
-  const status: RecoveryStatus = $derived(recoveryStatus(st, secrets, session.seat, owed));
+  const status: RecoveryStatus = $derived(recoveryStatus(st, secrets, session.seat, owed, published));
   const title = $derived(headline(status, running || busy));
   const answers = $derived(seatAnswers(status, st.seats));
   const count = $derived(hand ?? status.hand);
