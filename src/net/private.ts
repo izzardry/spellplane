@@ -22,19 +22,19 @@
  *
  * Draft packs (M2-P2; DESIGN "Specification: network protocol and secrecy", Draft packs: "Handing a pack on sends
  * `pack {packId, cards}` on the pair's `prv` channel together with the public action `packPass`"): a pack's cards go
- * only to the drafter the confirmed state names as its holder, and only from the drafter that passes to it in the
- * pack's direction (`packHandOver`): the hand-over is sent once the `packPass` is sequenced, never before, so a
- * refused pass discloses nothing. A received pack is taken once the confirmed state shows that hand-over (it waits
- * for the log otherwise, and expires like a reveal), and only when every card opens the pack's commitment, the ids
- * are distinct and the count is the pack's (or, when the holder's pick was already taken by the pick timer, the count
- * before that pick). A `pack` with no cards is a request from the pack's current holder to the drafter that passed
- * it to send it again (the hand-over was lost with a reload or an outage); it reaches the `onPack` listeners as an
- * empty list, and only from the confirmed holder.
+ * only to the holder of the pack's current visit in the confirmed state, and only from the holder of the visit before
+ * (`packHandOver`; core/reducer/pass.ts `packVisit`): the hand-over is sent once the `packPass` is sequenced, never
+ * before, so a refused pass discloses nothing. A received pack is taken once the confirmed state shows that visit (it
+ * waits for the log otherwise, and expires like a reveal), and only when every card opens the pack's commitment, the
+ * ids are distinct and the count is the pack's at the start of that visit (also after the pick timer took its pick,
+ * and for the last visit of an emptied pack, in any later stage of the same draft). A `pack` with no cards is a
+ * request from the holder of the current visit to the holder of the visit before to send it again (the hand-over was
+ * lost with a reload or an outage, `packRequestOk`); it reaches the `onPack` listeners as an empty list.
  */
 import type { Action } from '../core/actions';
 import { verifyReveal, type RevealedCard } from '../core/commit';
-import { passTarget } from '../core/drafting';
-import type { CardRef, DraftPack, DraftState, InstanceId, PackId, SeatId, TableState, ZoneId } from '../core/types';
+import { packCountAt, packVisit, packVisitor, picksPerPass } from '../core/reducer/pass';
+import type { CardRef, DraftPack, InstanceId, PackId, SeatId, TableState, ZoneId } from '../core/types';
 import type { SequencedAction } from './messages';
 import type { LookMessage, LookReqMessage, PackMessage, PrivateMessage, RevealMessage } from './messages';
 import { PROTOCOL_VERSION } from './messages';
@@ -99,31 +99,35 @@ function plainCard(c: RevealedCard): RevealedCard {
   return { instanceId: c.instanceId, ref: c.ref.foil ? { sid: c.ref.sid, foil: true } : { sid: c.ref.sid }, salt: c.salt };
 }
 
-/** Picks per pass of a draft that passes hidden packs (pass draft; the Two-Headed Giant draft, M3-P2), or null. */
-function picksPerPass(d: DraftState): number | null {
-  const s = d.settings;
-  return s.format === 'pass' || s.format === 'teamDraft' ? s.picks : null;
-}
-
 /**
- * Whether `cards` are pack `packId` as `from` hands it to `to` in `state` (see the module comment): `to` holds the
- * pack, `from` passes to `to` in the pack's direction, the ids are distinct, every card opens the pack's commitment,
- * and the count is the pack's, or the count before `to`'s pick when that pick (by the pick timer) is already taken.
- * 'wait' while the state does not show `to` holding the pack yet (the pass is not applied here yet).
+ * Whether `cards` are pack `packId` as `from` hands it to `to` in `state` (see the module comment): the pack's current
+ * visit (core/reducer/pass.ts `packVisit`) is `to`'s, `from` held the visit before it, the ids are distinct, every card
+ * opens the pack's commitment, and the count is the pack's at the start of `to`'s visit. That also holds while the
+ * pick of `to`'s visit is already taken by the pick timer, and for the last visit of an emptied pack, so a holder that
+ * was away still gets the cards its timed-out pick took. 'wait' while the state does not show `to`'s visit (the pass
+ * is not applied here yet).
  */
 export function packHandOver(state: TableState, packId: PackId, cards: readonly RevealedCard[], from: SeatId, to: SeatId): 'ok' | 'wait' | 'refuse' {
   const d = state.draft;
-  if (d === undefined || state.stage !== 'draft') return 'wait';
+  if (d === undefined || state.stage === 'lobby') return 'wait';
   const picks = picksPerPass(d);
   if (picks === null) return 'refuse';
   const pack: DraftPack | null = Object.hasOwn(d.packs, packId) ? d.packs[packId]! : null;
-  if (pack === null || pack.holder !== to) return 'wait';
-  if (from === to || !d.drafters.includes(from) || !d.drafters.includes(to) || passTarget(d.drafters, from, pack.number) !== to) return 'refuse';
+  const visit = pack === null ? null : packVisit(d, pack);
+  if (pack === null || visit === null || visit.holder !== to) return 'wait';
+  if (visit.k < 1 || from === to || packVisitor(d, pack, visit.k - 1) !== from) return 'refuse';
   if (cards.length === 0 || new Set(cards.map((c) => c.instanceId)).size !== cards.length) return 'refuse';
-  if (!cards.every((c) => verifyReveal(pack.commitment, c))) return 'refuse';
-  if (cards.length === pack.count) return 'ok';
-  const picked = !(d.queues[to] ?? []).includes(packId);
-  return picked && cards.length - Math.min(picks, cards.length) === pack.count ? 'ok' : 'refuse';
+  if (cards.length !== packCountAt(pack, picks, visit.k)) return 'refuse';
+  return cards.every((c) => verifyReveal(pack.commitment, c)) ? 'ok' : 'refuse';
+}
+
+/** Whether `from` may ask `me` for pack `packId` again: the pack's current visit is `from`'s and `me` held the visit before. */
+export function packRequestOk(state: TableState, packId: PackId, from: SeatId, me: SeatId): boolean {
+  const d = state.draft;
+  if (d === undefined || picksPerPass(d) === null || !Object.hasOwn(d.packs, packId)) return false;
+  const pack = d.packs[packId]!;
+  const visit = packVisit(d, pack);
+  return visit !== null && visit.holder === from && visit.k >= 1 && from !== me && packVisitor(d, pack, visit.k - 1) === me;
 }
 
 /** The pair-channel layer over any host with the engine's private-message and state members. */
@@ -508,11 +512,9 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
     const cards = asCardList(msg.cards);
     if (!isText(msg.packId, 128) || !cards) return;
     if (cards.length > 0) return takePack(msg.packId, cards, from, tick);
-    // A request to send the pack again: only from its confirmed holder, to the drafter that passed it there.
+    // A request to send the pack again: only from the holder of its current visit, to the holder of the visit before.
     const me = host.seat();
-    const d = host.confirmedState().draft;
-    const pack = d && Object.hasOwn(d.packs, msg.packId) ? d.packs[msg.packId]! : null;
-    if (me === null || !d || !pack || pack.holder !== from || !d.drafters.includes(me) || passTarget(d.drafters, me, pack.number) !== from) return;
+    if (me === null || !packRequestOk(host.confirmedState(), msg.packId, from, me)) return;
     for (const l of [...packListeners]) l(msg.packId, [], from);
   };
 
@@ -571,10 +573,8 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
       if (me === null || to === me) throw new Error('a pack goes from one seated drafter to another');
       const st = host.confirmedState();
       if (cards.length === 0) {
-        // A request: only the pack's confirmed holder asks for it again.
-        const d = st.draft;
-        const pack = d && Object.hasOwn(d.packs, packId) ? d.packs[packId]! : null;
-        if (pack === null || pack.holder !== me) throw new Error(`${me} does not hold pack ${packId}`);
+        // A request: only the holder of the pack's current visit asks the holder of the visit before.
+        if (!packRequestOk(st, packId, me, to)) throw new Error(`${me} cannot ask ${to} for pack ${packId}`);
         host.sendPrivate(to, { v: PROTOCOL_VERSION, t: 'pack', packId, cards: [] });
         return;
       }

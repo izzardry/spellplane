@@ -15,24 +15,34 @@
  *   round's direction; once that is sequenced it sends the remaining cards on the pair channel to that drafter only
  *   (`DraftHost.sendPack`) and keeps a copy for a re-send. A drafter that holds a pack (confirmed) without its cards
  *   asks the drafter that passed it, with a pack request (`sendPack` with no cards), after `REQUEST_MS` and then every
- *   `REQUEST_MS` until they arrive; the copy is answered only to the pack's confirmed holder.
+ *   `REQUEST_MS` until they arrive; the copy is answered only to the holder of the pack's current visit.
+ * - All of this follows from the pack's visits (core/reducer/pass.ts `packVisit`), not from the actions this browser
+ *   happened to apply, so a snapshot, a reload or an outage never hands a pack to the wrong pool. A pick the timer took
+ *   while the holder was away still reaches its pool: the copy of a pack's last visit is kept until the match starts (every
+ *   deck is Ready then) or a new draft, since no acknowledgement says it arrived, and the holder asks for it in any
+ *   later stage of the same draft.
  * - Everything private (held packs, the pool with ids, handed-on copies, marks) is in the own SecretStore, so a
  *   reload in the middle of a pick shows the same pack with the same marks.
  */
 import type { RevealedCard } from '../core/commit';
 import { passTarget, pickTimerMs, setForPack } from '../core/drafting';
+import { packCountAt, packVisit, packVisitor } from '../core/reducer/pass';
 import type { DraftPack, DraftState, InstanceId, PackId, PassDraftSettings, SeatId, TableState } from '../core/types';
 import { draftSecretsOf } from './open';
-import { addToPool, isPackKey, openHiddenPack, plainCard, SENT_PREFIX, updateSecrets } from './secret';
+import { addToPool, isPackKey, openHiddenPack, plainCard, poolCards, SENT_PREFIX, updateSecrets } from './secret';
 import type { CreateDraftDriver, DraftDriver, DraftPrivateView } from './types';
 
 /** How often a drafter asks again for a pack it holds without its cards (ms). */
 export const REQUEST_MS = 2000;
 
-/** The running pass draft of `state`, or null. */
-function passDraftOf(state: TableState): DraftState | null {
+/**
+ * The pass draft of `state`, or null: in the draft stage only, unless `anyStage` (the hand-over of the last cards of a
+ * pack whose pick the timer took can still be on its way after the draft ended).
+ */
+function passDraftOf(state: TableState, anyStage = false): DraftState | null {
   const d = state.draft;
-  if (!d || d.settings.format !== 'pass' || state.stage !== 'draft') return null;
+  if (!d || d.settings.format !== 'pass') return null;
+  if (!anyStage && state.stage !== 'draft') return null;
   return d;
 }
 
@@ -40,14 +50,13 @@ function packOf(d: DraftState, id: PackId): DraftPack | null {
   return Object.hasOwn(d.packs, id) ? d.packs[id]! : null;
 }
 
-/** The cards one pick takes from a pack with `left` cards (core/reducer/pass.ts pickCount). */
-function picksFor(d: DraftState, left: number): number {
-  return Math.min((d.settings as PassDraftSettings).picks, left);
+function picksOf(d: DraftState): number {
+  return Math.max(1, (d.settings as PassDraftSettings).picks);
 }
 
-/** The drafter that passes to `seat` in the direction of pack number `number`. */
-function passer(d: DraftState, seat: SeatId, number: number): SeatId | null {
-  return d.drafters.find((s) => s !== seat && passTarget(d.drafters, s, number) === seat) ?? null;
+/** The cards one pick takes from a pack with `left` cards (core/reducer/pass.ts pickCount). */
+function picksFor(d: DraftState, left: number): number {
+  return Math.min(picksOf(d), left);
 }
 
 /** Whether `seat` holds `pack` after picking from it (it owes the pass). */
@@ -64,6 +73,23 @@ function waitingOn(d: DraftState): SeatId[] {
     if (packs.some((p) => p.count > 0 && picked(d, s, p))) return true;
     return !packs.some((p) => p.opener === s && p.number === d.round);
   });
+}
+
+/**
+ * Which visit of `me` (core/reducer/pass.ts PackVisit) `count` held cards of `pack` belong to: the cards at its start
+ * (not resolved yet) or after its pick (resolved, to be passed). Counts fall by the picks per pass with every visit,
+ * so the count names the visit. Null when it names none (the pack moved on without this browser).
+ */
+function heldVisit(d: DraftState, pack: DraftPack, me: SeatId, count: number): { j: number; resolved: boolean } | null {
+  const cur = packVisit(d, pack);
+  if (cur === null) return null;
+  const picks = picksOf(d);
+  for (let j = cur.k; j >= 0; j--) {
+    if (packVisitor(d, pack, j) !== me) continue;
+    if (packCountAt(pack, picks, j) === count) return { j, resolved: false };
+    if (count > 0 && packCountAt(pack, picks, j + 1) === count) return { j, resolved: true };
+  }
+  return null;
 }
 
 /** The driver (draft/types.ts DraftDriver). Implementer: M2-P2. */
@@ -87,52 +113,82 @@ export const createPassDriver: CreateDraftDriver = (host) => {
 
   const held = (): Record<string, RevealedCard[]> => draftSecretsOf(host.secrets()).held;
 
+  const dropHeld = (key: string): void => {
+    updateSecrets(host, (ds) => {
+      const next = { ...ds.held };
+      delete next[key];
+      return { draft: { ...ds, held: next } };
+    });
+  };
+
   /**
-   * Bring the own secrets in step with the confirmed state: resolve every taken pick (the marked cards, then the first
-   * ones), hand on every pack whose pass was sequenced, and forget handed-on copies the receiver has passed on.
+   * Bring the own secrets in step with the confirmed state, from the visits alone (so a snapshot or a reload that
+   * skipped actions changes nothing): resolve every own visit whose pick is taken (the marked cards, then the first
+   * ones), hand on every pack whose pass is sequenced (keeping a copy for a re-send), and forget a handed-on copy once
+   * the receiver's visit is over.
    */
   const reconcile = (): void => {
-    const d = passDraftOf(conf());
-    if (d === null) return;
+    const state = conf();
+    const d = passDraftOf(state, true);
+    if (d === null || state.stage === 'match') {
+      // Every pool is final once the decks are Ready (or the draft is gone): no hand-over is owed any more.
+      for (const key of Object.keys(held())) if (key.startsWith(SENT_PREFIX)) dropHeld(key);
+      return;
+    }
+    const picks = picksOf(d);
     for (const [key, cards] of Object.entries(held())) {
       if (!isPackKey(key)) continue;
       const pack = packOf(d, key);
       if (pack === null) continue;
-      const done = pack.holder === null && pack.count === 0;
-      if ((picked(d, me, pack) || (done && !(d.queues[me] ?? []).includes(pack.id))) && cards.length > pack.count) resolvePick(pack, cards);
-    }
-    for (const [key, cards] of Object.entries(held())) {
-      if (!isPackKey(key)) continue;
-      const pack = packOf(d, key);
-      if (pack === null || pack.holder === null || pack.holder === me) continue;
-      const to = passTarget(d.drafters, me, pack.number);
-      // The cards as passed: the pack's count, or the count before the receiver's pick when the pick timer took it.
-      const asPassed = cards.length === pack.count || (picked(d, to, pack) && cards.length - picksFor(d, cards.length) === pack.count);
-      if (pack.holder !== to || !asPassed) continue;
-      // The pass is sequenced: keep the copy for a re-send, then hand the cards over.
+      const cur = packVisit(d, pack);
+      const mine = heldVisit(d, pack, me, cards.length);
+      if (cur === null || mine === null) continue;
+      if (!mine.resolved) {
+        if (mine.j < cur.k || cur.picked) resolvePick(pack, cards, packCountAt(pack, picks, mine.j) - packCountAt(pack, picks, mine.j + 1));
+        continue;
+      }
+      if (cur.k <= mine.j) continue;
+      // The pass is sequenced: keep the copy for a re-send, then hand the cards to the next visit's holder.
       updateSecrets(host, (ds) => {
         const next = { ...ds.held, [SENT_PREFIX + key]: cards };
         delete next[key];
         return { draft: { ...ds, held: next } };
       });
-      send(to, key, cards);
+      if (cur.k === mine.j + 1) send(cur.holder, key, cards);
     }
     for (const key of Object.keys(held())) {
       if (!key.startsWith(SENT_PREFIX)) continue;
-      const id = key.slice(SENT_PREFIX.length);
-      const pack = packOf(d, id);
-      if (pack !== null && pack.holder === passTarget(d.drafters, me, pack.number)) continue;
-      updateSecrets(host, (ds) => {
-        const next = { ...ds.held };
-        delete next[key];
-        return { draft: { ...ds, held: next } };
-      });
+      const pack = packOf(d, key.slice(SENT_PREFIX.length));
+      if (pack !== null && sentFor(d, pack, held()[key]!.length)) continue;
+      dropHeld(key);
     }
   };
 
-  /** Decide which cards the pick from `pack` took and move them to the pool. */
-  const resolvePick = (pack: DraftPack, cards: readonly RevealedCard[]): void => {
-    const k = cards.length - pack.count;
+  /** Whether a handed-on copy of `count` cards is the pack as its current visit's holder got it from this browser. */
+  const sentFor = (d: DraftState, pack: DraftPack, count: number): boolean => {
+    const cur = packVisit(d, pack);
+    return cur !== null && cur.k >= 1 && cur.holder !== me && packVisitor(d, pack, cur.k - 1) === me && packCountAt(pack, picksOf(d), cur.k) === count;
+  };
+
+  /**
+   * Whether this browser holds the current visit of `pack` without its cards: not received yet, or received after its
+   * pick was taken and not resolved into the pool (the own pool counts fewer of the pack's cards than its visits took).
+   */
+  const missing = (d: DraftState, pack: DraftPack): boolean => {
+    const cur = packVisit(d, pack);
+    // The own fresh pack is in the store from its generation; nobody else has it.
+    if (cur === null || cur.holder !== me || cur.k < 1 || !isPackKey(pack.id)) return false;
+    if (Object.hasOwn(held(), pack.id)) return false;
+    if (!cur.picked) return true;
+    const picks = picksOf(d);
+    let took = 0;
+    for (let j = 0; j <= cur.k; j++) if (packVisitor(d, pack, j) === me) took += packCountAt(pack, picks, j) - packCountAt(pack, picks, j + 1);
+    const ids = new Set(pack.commitment.instanceIds);
+    return poolCards(host.secrets()).filter((c) => ids.has(c.instanceId)).length < took;
+  };
+
+  /** Decide which `k` cards the pick from `pack` took (marked first, then in pack order) and move them to the pool. */
+  const resolvePick = (pack: DraftPack, cards: readonly RevealedCard[], k: number): void => {
     const ids = new Set(cards.map((c) => c.instanceId));
     const marked = draftSecretsOf(host.secrets()).marked.filter((id) => ids.has(id));
     const take = new Set(marked.slice(0, k));
@@ -148,7 +204,7 @@ export const createPassDriver: CreateDraftDriver = (host) => {
       const next = { ...pooled.draft.held };
       if (left.length > 0) next[pack.id] = left.map(plainCard);
       else delete next[pack.id];
-      return { draft: { ...pooled.draft, held: next, marked: ds.marked.filter((id) => !take.has(id)) }, pool: pooled.pool };
+      return { draft: { ...pooled.draft, held: next, marked: ds.marked.filter((id) => !ids.has(id)) }, pool: pooled.pool };
     });
   };
 
@@ -168,16 +224,17 @@ export const createPassDriver: CreateDraftDriver = (host) => {
 
   const offPack = host.onPack((packId, cards, from) => {
     if (disposed || !isPackKey(packId)) return;
-    const d = passDraftOf(conf());
+    reconcile();
+    const d = passDraftOf(conf(), true);
     const pack = d === null ? null : packOf(d, packId);
     if (d === null || pack === null) return;
     if (cards.length === 0) {
-      // A request: send the copy again, to the pack's confirmed holder only.
+      // A request (net/private.ts checked that `from` holds the visit after this browser's): send the copy again.
       const copy = held()[SENT_PREFIX + packId];
-      if (copy !== undefined && pack.holder === from && passTarget(d.drafters, me, pack.number) === from) send(from, packId, copy);
+      if (copy !== undefined && sentFor(d, pack, copy.length) && packVisit(d, pack)?.holder === from) send(from, packId, copy);
       return;
     }
-    if (pack.holder !== me || Object.hasOwn(held(), packId)) return;
+    if (!missing(d, pack)) return;
     updateSecrets(host, (ds) => ({ draft: { ...ds, held: { ...ds.held, [packId]: cards.map(plainCard) } } }));
     asked.delete(packId);
     reconcile();
@@ -204,22 +261,24 @@ export const createPassDriver: CreateDraftDriver = (host) => {
   /** Ask for every pack this drafter has held (confirmed) without its cards for REQUEST_MS, at most every REQUEST_MS each. */
   const askMissing = (d: DraftState): void => {
     const now = Date.now();
-    let missing = false;
+    let any = false;
     for (const pack of Object.values(d.packs)) {
-      if (pack.holder !== me || pack.count === 0 || Object.hasOwn(held(), pack.id) || !isPackKey(pack.id)) continue;
-      // The own fresh pack is in the store from its generation; nobody else has it.
-      if (pack.opener === me && pack.picks === 0) continue;
-      missing = true;
-      const from = passer(d, me, pack.number);
+      if (!missing(d, pack)) {
+        asked.delete(pack.id);
+        continue;
+      }
+      any = true;
+      const cur = packVisit(d, pack)!;
+      const from = packVisitor(d, pack, cur.k - 1);
       // The hand-over usually follows the pass within a moment: ask only after REQUEST_MS without it, then again
       // every REQUEST_MS.
       const since = asked.get(pack.id);
       if (since === undefined) asked.set(pack.id, now);
-      if (from === null || since === undefined || now - since < REQUEST_MS) continue;
+      if (since === undefined || now - since < REQUEST_MS) continue;
       asked.set(pack.id, now);
       send(from, pack.id, []);
     }
-    if (missing && retry === null && !disposed) {
+    if (any && retry === null && !disposed) {
       retry = setTimeout(() => {
         retry = null;
         driver.drive();
@@ -232,6 +291,9 @@ export const createPassDriver: CreateDraftDriver = (host) => {
     drive() {
       if (disposed) return;
       reconcile();
+      // Ask for missing hand-overs in any stage of this draft (the last cards of a pack can arrive after its end).
+      const any = passDraftOf(conf(), true);
+      if (any !== null) askMissing(any);
       const c = passDraftOf(conf());
       const v = passDraftOf(host.state());
       if (c === null || v === null || v.done) return;
@@ -245,7 +307,6 @@ export const createPassDriver: CreateDraftDriver = (host) => {
         if (now === null || !picked(v, me, now)) continue;
         host.dispatch({ type: 'packPass', packId: pack.id, to: passTarget(c.drafters, me, pack.number), count: pack.count });
       }
-      askMissing(c);
     },
     view(): DraftPrivateView {
       const s = host.secrets();

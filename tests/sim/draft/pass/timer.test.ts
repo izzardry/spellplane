@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pickTimerMs } from '../../../../src/core/drafting';
 import { reduce } from '../../../../src/core/reducer';
 import type { TableState } from '../../../../src/core/types';
-import { close, passNet, poolOf, randomBot, runDraft, visits, type PassSeat } from './net';
+import { close, packMessage, passNet, poolOf, randomBot, runDraft, visits, type PassSeat } from './net';
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
@@ -121,6 +121,57 @@ describe('pick timer', () => {
     for (const v of mine) expect(v.taken).toEqual(chosen.get(`${v.packId}#${v.picks}`));
     close(t);
   }, 300_000);
+  it('a holder away when the timer takes the last card of a pack gets that card once it is back, after the draft ended', async () => {
+    // Two seats, one pack each, two picks per pass: 15 cards take visits of 2, 2, …, 2, 1, so the last visit (the
+    // eighth) of s0's pack is s1's and the one of s1's pack is s0's.
+    const t = await passNet(2, { format: 'pass', packs: 1, picks: 2 }, { net: { seed: 6, delay: { min: 0, max: 30 } }, pickTimer: true });
+    const [a, b] = t.seats as [PassSeat, PassSeat];
+    // s0 picks only on its timer, so both packs gather at s0 while s1 picks at once.
+    a.idle = true;
+    const bot = randomBot(12);
+    let killedAt = -1;
+    let doneAt = -1;
+    let revived = false;
+    await runDraft(
+      t,
+      (s) => {
+        if (s === b && killedAt < 0) {
+          const v = b.driver.view();
+          if (v.pack !== null) b.driver.pick(v.pack.cards.slice(0, v.picks).map((c) => c.id));
+        } else if (s !== b) bot(s);
+      },
+      4_000_000,
+      (ms) => {
+        const d = a.peer.state.draft!;
+        const own = Object.values(d.packs).find((p) => p.opener === 's0');
+        const theirs = Object.values(d.packs).find((p) => p.opener === 's1');
+        // s1 leaves once it owes nothing: its pack's last visit is s0's, and s0's pack is at s0 for its seventh visit.
+        if (killedAt < 0 && own !== undefined && theirs !== undefined && theirs.picks >= 7 && own.holder === 's0' && own.picks === 6) {
+          killedAt = ms;
+          b.idle = true;
+          t.net.kill(b.peer.peerId);
+        }
+        if (killedAt >= 0 && doneAt < 0 && d.done) doneAt = ms;
+        if (doneAt >= 0 && !revived && ms - doneAt > 10_000) {
+          revived = true;
+          t.net.revive(b.peer.peerId);
+        }
+      },
+      100,
+    );
+    expect(revived).toBe(true);
+    const last = visits(t).filter((v) => v.packId === Object.values(a.peer.state.draft!.packs).find((p) => p.opener === 's0')!.id).pop()!;
+    // The last card of s0's pack was taken by the timer for s1 while it was away, and is in s1's pool.
+    expect(last).toMatchObject({ holder: 's1', kind: 'timeout', count: 1 });
+    expect(last.taken).toEqual(last.before);
+    expect(poolOf(b).map((c) => c.instanceId)).toContain(last.before[0]);
+    expect(poolOf(b).length).toBe(15);
+    expect(poolOf(a).length).toBe(15);
+    // s1 asked for it after it was back.
+    const asks = t.net.delivered.filter((m) => m.channel === 'prv' && m.from === 'p1' && packMessage(m.msg)?.cards.length === 0);
+    expect(asks.length).toBeGreaterThan(0);
+    close(t);
+  }, 300_000);
 });
 
 describe('peer loss', () => {
@@ -142,7 +193,7 @@ describe('peer loss', () => {
     expect(killed).toBe(2);
     expect(t.seats.reduce((n, x) => n + poolOf(x).length, 0)).toBe(120);
     // s1 asked for at least one pack it held without its cards, and got it.
-    const asks = t.net.delivered.filter((m) => m.channel === 'prv' && m.from === 'p1' && (m.msg as { t?: string; cards?: unknown[] }).t === 'pack' && (m.msg as { cards: unknown[] }).cards.length === 0);
+    const asks = t.net.delivered.filter((m) => m.channel === 'prv' && m.from === 'p1' && packMessage(m.msg)?.cards.length === 0);
     expect(asks.length).toBeGreaterThan(0);
     close(t);
   }, 300_000);

@@ -276,3 +276,9 @@ export function visits(t: PassNet): Visit[] {
   }
   return out;
 }
+
+/** The `pack` pair message in a delivered or received message, or null. */
+export function packMessage(msg: unknown): { packId: string; cards: RevealedCard[] } | null {
+  const m = msg as { t?: unknown; packId?: unknown; cards?: unknown };
+  return m.t === 'pack' && typeof m.packId === 'string' && Array.isArray(m.cards) ? { packId: m.packId, cards: m.cards as RevealedCard[] } : null;
+}

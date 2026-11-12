@@ -15,7 +15,7 @@ import type { SequencedAction } from '../../../../src/net/messages';
 import { reduce } from '../../../../src/core/reducer';
 import type { RevealedCard } from '../../../../src/core/commit';
 import type { SeatId, TableState } from '../../../../src/core/types';
-import { close, generatedPacks, passNet, poolOf, randomBot, runDraft, type PassNet } from './net';
+import { close, generatedPacks, packMessage, passNet, poolOf, randomBot, runDraft, type PassNet } from './net';
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
@@ -54,10 +54,18 @@ function expectEveryCardInOnePool(t: PassNet): void {
     }
   }
   expect(owner.size).toBe(all.size);
-  // Nothing is still held or kept for a re-send.
+  // Nothing is still held. A copy kept for a re-send is only the last visit of an emptied pack (no acknowledgement
+  // says it arrived; draft/pass.ts drops it when the match starts), and its cards are in that visit's holder's pool.
   for (const s of t.seats) {
     const held = s.secrets().draft!.held;
-    expect(Object.keys(held).filter((k) => k !== 'pool:hidden')).toEqual([]);
+    for (const [k, cards] of Object.entries(held)) {
+      if (k === 'pool:hidden') continue;
+      expect(k.startsWith('sent:'), `${s.seat} still holds ${k}`).toBe(true);
+      const pack = d.packs[k.slice('sent:'.length)]!;
+      expect(pack.count).toBe(0);
+      expect(cards.length).toBeLessThanOrEqual((d.settings as { picks: number }).picks);
+      for (const c of cards) expect(owner.get(c.instanceId)).not.toBe(s.seat);
+    }
   }
 }
 
@@ -99,10 +107,10 @@ describe('pass draft on a simulated network', () => {
     // rounds 1 and 3 and to the right one in round 2, from the drafter that passed.
     const peerSeat = (p: string): string => `s${p.slice(1)}`;
     const numberOf = new Map(Object.values(t.seats[0]!.peer.state.draft!.packs).map((p) => [p.id, p.number]));
-    const packMsgs = t.net.delivered.filter((m) => m.channel === 'prv' && (m.msg as { t?: string }).t === 'pack' && ((m.msg as { cards: unknown[] }).cards.length > 0));
+    const packMsgs = t.net.delivered.filter((m) => m.channel === 'prv' && (packMessage(m.msg)?.cards.length ?? 0) > 0);
     expect(packMsgs.length).toBeGreaterThanOrEqual(168);
     for (const m of packMsgs) {
-      const n = numberOf.get((m.msg as { packId: string }).packId)!;
+      const n = numberOf.get(packMessage(m.msg)!.packId)!;
       expect(peerSeat(m.to)).toBe(n === 1 ? right(peerSeat(m.from)) : left(peerSeat(m.from)));
     }
     close(t);

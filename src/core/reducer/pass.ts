@@ -33,7 +33,7 @@
 import type { ActionOf } from '../actions';
 import { passDirection, passTarget, setForPack } from '../drafting';
 import { shuffleReady } from '../rng';
-import type { DraftPack, DraftState, InstanceId, PackId, PassDraftSettings, SealedSettings, SeatId } from '../types';
+import type { DrafterId, DraftPack, DraftState, InstanceId, PackId, PassDraftSettings, SealedSettings, SeatId } from '../types';
 import type { Draft } from './draft';
 import { checkId, checkInt, checkString, own, reject } from './util';
 
@@ -179,6 +179,53 @@ function sealedOpen(d: Draft, a: ActionOf<'packOpen'>): void {
 /** The cards one pick takes from a pack with `left` cards: the picks per pass, or the rest of a short pack. */
 export function pickCount(settings: PassDraftSettings, left: number): number {
   return Math.min(settings.picks, left);
+}
+
+/**
+ * One holder's turn at a pack ("visit"): visit 0 is the opener's, visit k the k-th holder after it in the pack's
+ * direction. Each visit takes one pick, so a pack's history follows from its opener, number, size and picks alone,
+ * whichever actions a browser applied in between (a snapshot, a reload). Used by the reducer's peers: the pair channel
+ * (net/private.ts) and the driver (draft/pass.ts).
+ */
+export interface PackVisit {
+  /** 0-based visit index. */
+  k: number;
+  /** The drafter of this visit. */
+  holder: DrafterId;
+  /** Its pick is taken (the pack awaits its `packPass`, or is empty). */
+  picked: boolean;
+}
+
+/** Picks per pass of a draft whose hidden packs travel (pass draft; the Two-Headed Giant draft), or null. */
+export function picksPerPass(draft: DraftState): number | null {
+  const s = draft.settings;
+  return s.format === 'pass' || s.format === 'teamDraft' ? Math.max(1, s.picks) : null;
+}
+
+/** The drafter of visit `k` of `pack` (core/drafting.ts passTarget applied `k` times from the opener). */
+export function packVisitor(draft: DraftState, pack: DraftPack, k: number): DrafterId {
+  const n = draft.drafters.length;
+  const i = draft.drafters.indexOf(pack.opener);
+  const step = passDirection(pack.number) === 'left' ? 1 : n - 1;
+  return draft.drafters[(i + ((k * step) % n) + n) % n]!;
+}
+
+/** Cards in `pack` at the start of visit `k`: its size less `picks` per earlier visit. */
+export function packCountAt(pack: DraftPack, picks: number, k: number): number {
+  return Math.max(0, pack.commitment.instanceIds.length - picks * k);
+}
+
+/** The pack's current visit: at the front or in the queue of its holder, picked and awaiting its pass, or the last one of an empty pack. */
+export function packVisit(draft: DraftState, pack: DraftPack): PackVisit | null {
+  if (!draft.drafters.includes(pack.opener)) return null;
+  if (pack.holder !== null) {
+    const queued = (draft.queues[pack.holder] ?? []).includes(pack.id);
+    if (queued) return { k: pack.picks, holder: pack.holder, picked: false };
+    if (pack.picks === 0) return null;
+    return { k: pack.picks - 1, holder: pack.holder, picked: true };
+  }
+  if (pack.picks === 0) return null;
+  return { k: pack.picks - 1, holder: packVisitor(draft, pack, pack.picks - 1), picked: true };
 }
 
 /** Take the pick of the front pack of `picker`'s queue (a `pick` or a `draftTimeout`). */
