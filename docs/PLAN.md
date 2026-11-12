@@ -432,7 +432,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M3-C Contracts
 - [x] M3-P1 Multi-seat layouts
 - [ ] M3-P2 Two-Headed Giant
-- [ ] M3-P3 Voice
+- [x] M3-P3 Voice
 - [ ] M3-P4 Dictation and captions
 - [x] M3-P5 Spectators
 - [ ] M3-G Gate and owner playtest

@@ -78,6 +78,8 @@ import { identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recovery
 import { reconcileSecrets, type LibraryPlacement } from './secrets';
 import { buildFromDeck, Evening, type DraftPort } from './draft';
 import type { DraftControls } from '../draft/types';
+import { createSessionVoice, latestTransport } from './voice';
+import type { VoiceControls } from '../voice/types';
 import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
 
 /** How long a browser without a seat listens for a table already in the room before it takes a chair (decision M1-P8). */
@@ -279,6 +281,8 @@ class NetTable implements NetSession, SessionRecovery {
   /** Own pack-seed rounds run one after another. */
   private packChain: Promise<unknown> = Promise.resolve();
   private eveningImpl: Evening | null = null;
+  /** Live voice (M3-P3, session/voice.ts); set by openNetSession when the options ask for it. */
+  voiceImpl: VoiceControls | null = null;
 
   constructor(
     engine: NetEngine,
@@ -317,6 +321,11 @@ class NetTable implements NetSession, SessionRecovery {
   /** The evening's stage flow (M2-P7). */
   get evening(): EveningControls | undefined {
     return this.eveningImpl?.evening;
+  }
+
+  /** Live voice and talk modes (M3-P3); absent without voice options. */
+  get voice(): VoiceControls | undefined {
+    return this.voiceImpl ?? undefined;
   }
 
   /** The own draft view for the debug hook, null outside a draft. */
@@ -450,6 +459,7 @@ class NetTable implements NetSession, SessionRecovery {
     if (this.disposed) return;
     this.disposed = true;
     this.eveningImpl?.dispose();
+    this.voiceImpl?.dispose();
     for (const u of this.unsubs.splice(0)) u();
     this.engine.leave();
     for (const w of this.waiters.splice(0)) {
@@ -1933,9 +1943,10 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
   const start: ResumePoint = saved?.start ?? { snapshot: { seq: 0, state: fresh }, tail: [] };
   const identity = await createNetIdentity(opts.identity.keyPair, opts.identity.peerId, opts.identity.nickname);
   if (signal?.aborted) throw cancelled();
+  const transports = latestTransport(opts.transport);
   const makeEngine = (from: ResumePoint): NetEngine =>
     createNetEngine({
-      transport: opts.transport(),
+      transport: transports.make(),
       roomId: opts.roomId,
       roomKey: opts.roomKey,
       identity,
@@ -1953,6 +1964,10 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
     snapshotSeq: start.snapshot.seq,
     lastSeq: engine.confirmedState().seq,
   });
+  if (opts.voice) {
+    const port = { engine: () => session.engine, transport: transports.current, state: () => session.getState(), subscribe: session.subscribe.bind(session) };
+    session.voiceImpl = createSessionVoice({ ...port, subscribeNet: (l) => session.subscribeNet(() => l()) }, opts.voice);
+  }
   try {
     await abortable(engine.join(), signal);
     if (!saved) session.saveBase();

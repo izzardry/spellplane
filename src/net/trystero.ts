@@ -122,7 +122,12 @@ export class TrysteroTransport implements Transport {
   }
 
   addStream(stream: MediaStream, to?: PeerId): void {
-    this.room?.addStream(stream, to ? { target: to } : {});
+    // A rejected renegotiation means the peer left; liveness handles that.
+    for (const p of this.room?.addStream(stream, to ? { target: to } : {}) ?? []) p.catch(() => undefined);
+  }
+
+  removeStream(stream: MediaStream, to?: PeerId): void {
+    this.room?.removeStream(stream, to ? { target: to } : {});
   }
 
   onStream(handler: (stream: MediaStream, from: PeerId) => void): void {
