@@ -275,7 +275,9 @@ class Voice implements VoiceControls {
       for (const t of stream.getTracks()) t.stop();
       throw new Error('Voice is closed');
     }
-    if (this.internals.meter === undefined) this.meters = webAudioMeters();
+    // One AudioContext for the table, made on the first join (a click, so it may start); a rejoin after the
+    // microphone went away reuses it.
+    if (this.internals.meter === undefined && !this.meters) this.meters = webAudioMeters();
     this.use(stream);
     for (const i of this.inc.values()) {
       i.player.resume?.();
