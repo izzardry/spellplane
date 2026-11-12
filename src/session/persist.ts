@@ -32,6 +32,8 @@ export interface TablePersistenceOptions {
   snapshot: TableState;
   snapshotSeq: number;
   lastSeq: number;
+  /** Writes start after this settles (the queue of a save this one replaces); it never rejects. */
+  after?: Promise<void>;
 }
 
 function errorText(e: unknown): string {
@@ -40,7 +42,7 @@ function errorText(e: unknown): string {
 
 /** The ordered write queue of one table's local save. */
 export class TablePersistence {
-  private writes: Promise<void> = Promise.resolve();
+  private writes: Promise<void>;
   /** The base of the stored table record (updated as writes succeed). */
   private snapshot: TableState;
   private snapshotSeq: number;
@@ -53,6 +55,7 @@ export class TablePersistence {
   private secretsQueued: SecretStore | null = null;
 
   constructor(private readonly o: TablePersistenceOptions) {
+    this.writes = o.after ?? Promise.resolve();
     this.snapshot = o.snapshot;
     this.snapshotSeq = o.snapshotSeq;
     this.lastSeq = o.lastSeq;

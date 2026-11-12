@@ -9,7 +9,7 @@ import type { Channel, Message, MessageHandler, PeerHandler, PeerId, Transport }
 import { mtg } from '../../../src/games/index';
 import { openNetSession } from '../../../src/session/net';
 import { UnreachableTransport } from '../../../src/session/transports';
-import { browser, cards, closeAll, FAKE_TIMERS, fixtureDeck, hashOf, net, open, settle, until, waitConverged, type Browser, KEY, ROOM } from './harness';
+import { browser, cards, closeAll, FAKE_TIMERS, fixtureDeck, hashOf, lateTransport, LossyTransport, net, open, settle, until, waitConverged, type Browser, KEY, ROOM } from './harness';
 import { isLand, playScript } from './script';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
@@ -295,6 +295,40 @@ describe('owed private effects', () => {
     expect(a.engine.confirmedState().cards[hidden]).toMatchObject({ face: 'down' });
     expect(a.engine.confirmedState().cards[hidden]!.identity).toBeUndefined();
   });
+
+  it('a card played face up is turned up after a reload when its move was sequenced but the page crashed before it heard so, once the peers are up', async () => {
+    const network = net({ seed: 62 });
+    const A = await browser('anna', 'peer-a', 'Anna', 1);
+    const B = await browser('ben', 'peer-b', 'Ben', 3);
+    browsers.push(A, B);
+    const a = await open(network, A);
+    let lossy: LossyTransport | null = null;
+    const b = await open(network, B, {}, { transport: () => (lossy = new LossyTransport(network.create('peer-b'), () => false)) });
+    await waitConverged([a, b]);
+    await settle(a.importDeck(await fixtureDeck('gw-m19-60.txt')));
+    await settle(b.importDeck(await fixtureDeck('ur-m19-60.mtga.txt')));
+    await settle(b.draw(7));
+    await waitConverged([a, b]);
+    const card = b.secrets().hand[0]!;
+    const sid = b.secrets().identities[card]!.card.sid;
+    // B's move goes out; B hears nothing more (it crashes), and its save still has the card in the hand.
+    b.dispatch({ type: 'move', card, to: 'battlefield:s1', pose: { x: 0, y: 200, rot: 180 } });
+    lossy!.deaf = true;
+    await until(() => a.engine.confirmedState().cards[card]?.zone === 'battlefield:s1', 10_000, 'the move at A');
+    b.leave();
+    await settle(b.whenSaved());
+    // The reload resumes alone (the peers come up 3 s after the join) on a state that still shows the card in the hand.
+    const b2 = await open(network, B, { settleMs: 200 }, { transport: lateTransport(network, 'peer-b', 3000, false) });
+    expect(b2.engine.status()).not.toBe('connected');
+    expect(b2.engine.confirmedState().cards[card]?.zone).toBe('hand:s1');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(B.nonces.ids('turnUp')).toEqual([card]);
+    await until(() => a.engine.confirmedState().cards[card]?.identity !== undefined, 20_000, 'the turn-up once B caught up');
+    await waitConverged([a, b2]);
+    expect(a.engine.confirmedState().cards[card]).toMatchObject({ zone: 'battlefield:s1', face: 'up', identity: { sid } });
+    expect(a.engine.confirmedState().cards[card]!.suspect).toBeUndefined();
+    expect(B.nonces.ids('turnUp')).toEqual([]);
+  });
 });
 
 describe('joint randomness', () => {
@@ -354,19 +388,6 @@ describe('joint randomness', () => {
     expect(warnings(A).filter((w) => /Integrity/.test(w))).toEqual([]);
   });
 });
-
-/** A transport whose join resolves at once while the peer connection comes up `ms` later (TrysteroTransport: Nostr signalling). */
-function lateTransport(network: ReturnType<typeof net>, peerId: string, ms: number): () => Transport {
-  return () => {
-    const t = network.create(peerId);
-    const join = t.join.bind(t);
-    t.join = (room: string, key: string) => {
-      setTimeout(() => void join(room, key), ms);
-      return Promise.resolve();
-    };
-    return t;
-  };
-}
 
 const chats = (b: Browser): string[] => actions(b).flatMap((a) => (a.type === 'chat' ? [a.text] : []));
 

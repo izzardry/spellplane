@@ -7,14 +7,16 @@
  * down (the owner re-reveals it), a reload (the save holds the same secrets and nothing more), another seat's peek at
  * a face-down card its owner controls (refused) and at one it controls (answered), a look at a hidden zone (refused), a move the sequencer refuses after it passed locally (the
  * card is turned up only once the move is sequenced, so the refusal publishes nothing), another seat moving a face-down
- * card into a graveyard (the owner turns it up), and a negative control that shows the scan is not vacuous.
+ * card into a graveyard (the owner turns it up), a face-up play lost in a crash before it was sequenced and the same
+ * card then played face down after the reload while the peers come up late (it stays face down), and a negative
+ * control that shows the scan is not vacuous.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RevealedCard } from '../../../src/core/commit';
 import type { LoopbackOptions } from '../../../src/net/loopback';
 import { createPrivateChannel } from '../../../src/net/private';
 import { forbiddenFor, leakScan } from '../../leak/leak';
-import { closeAll, FAKE_TIMERS, net, observedBy, settle, until, waitConverged, type Browser } from './harness';
+import { browser, closeAll, FAKE_TIMERS, fixtureDeck, lateTransport, LossyTransport, net, observedBy, open, settle, until, waitConverged, type Browser } from './harness';
 import { isLand, playScript } from './script';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
@@ -185,6 +187,59 @@ describe('shared leak test: the networked session', () => {
     const last = b.log().flatMap((e) => (e.kind === 'action' ? [e.action] : [])).at(-1)!;
     expect(last).toMatchObject({ type: 'flip', by: 's0', card: p.faceDown, ref: secret.card, salt: secret.salt });
     const report = leakScan({ observed: await observedBy(network, p.B), owner: { state: a.engine.confirmedState(), secrets: a.secrets() }, disclosed: p.shownToB });
+    expect(report.tokens).toEqual([]);
+    expect(report.pairs).toEqual([]);
+  });
+
+  // A face-up play kept as an owed turn-up in local storage, lost before it was sequenced (a crash or a reload while
+  // the proposal was in flight); after the reload, the same card is played face down on purpose before the peers are
+  // up (over Trystero the join resolves seconds before any WebRTC peer connects). The kept turn-up names an action
+  // that was never sequenced, so it must not turn up the face-down card (DESIGN "Table model", Face-down on the
+  // battlefield; "Multiplayer architecture", Hidden information 2). Delays: peers up at once, 3 s after a join that
+  // resolved at once, and a join that itself takes 3 s or 50 ms.
+  it.each([
+    [0, false],
+    [3000, false],
+    [3000, true],
+    [50, true],
+  ] as const)('a face-up play lost before it was sequenced does not turn up the same card played face down after a reload (peers up after %i ms, join waits: %s)', async (ms, joinToo) => {
+    const network = net({ seed: 61 });
+    const A = await browser('anna', 'peer-a', 'Anna', 1);
+    const B = await browser('ben', 'peer-b', 'Ben', 3);
+    browsers.push(A, B);
+    const a = await open(network, A);
+    let lost: string | null = null;
+    const b = await open(network, B, {}, { transport: () => new LossyTransport(network.create('peer-b'), (x) => x.type === 'move' && x.card === lost) });
+    await waitConverged([a, b]);
+    await settle(a.importDeck(await fixtureDeck('gw-m19-60.txt')));
+    await settle(b.importDeck(await fixtureDeck('ur-m19-60.mtga.txt')));
+    await settle(b.draw(7));
+    await waitConverged([a, b]);
+    expect(a.engine.isSequencer()).toBe(true);
+    const card = b.secrets().hand[0]!;
+    const secret = b.secrets().identities[card]!;
+    lost = card;
+    b.dispatch({ type: 'move', card, to: 'battlefield:s1', pose: { x: 0, y: 200, rot: 180 } });
+    expect(B.nonces.ids('turnUp')).toEqual([card]);
+    await vi.advanceTimersByTimeAsync(300);
+    b.leave();
+    await settle(b.whenSaved());
+    const b2 = await open(network, B, { settleMs: 200 }, { transport: lateTransport(network, 'peer-b', ms, joinToo) });
+    b2.playFaceDown(card, 'battlefield:s1', { x: 160, y: 200, rot: 180 });
+    expect(B.nonces.ids('turnUp')).toEqual([]);
+    await until(() => b2.engine.status() === 'connected', 20_000, 'B to connect');
+    await waitConverged([a, b2]);
+    await vi.advanceTimersByTimeAsync(3000);
+    await waitConverged([a, b2]);
+    for (const s of [a, b2]) {
+      expect(s.engine.confirmedState().cards[card]).toMatchObject({ zone: 'battlefield:s1', face: 'down' });
+      expect(s.engine.confirmedState().cards[card]!.identity).toBeUndefined();
+    }
+    const aboutCard = a.log().flatMap((e) => (e.kind === 'action' && 'card' in e.action && e.action.card === card ? [e.action.type] : []));
+    expect(aboutCard).not.toContain('flip');
+    const observed = await observedBy(network, A);
+    expect(JSON.stringify(observed)).not.toContain(secret.salt);
+    const report = leakScan({ observed, owner: { state: b2.engine.confirmedState(), secrets: b2.secrets() }, disclosed: [] });
     expect(report.tokens).toEqual([]);
     expect(report.pairs).toEqual([]);
   });

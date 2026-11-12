@@ -91,6 +91,8 @@ export const NET_MULLIGAN_HAND = 7;
 const SEAT_ATTEMPTS = 4;
 /** A contribution to a randomness round that keeps being refused is given up after this many refusals. */
 const ROUND_ATTEMPTS = 3;
+/** Action types that leave a card where it lies and as it shows: a kept turn-up is still owed after them. */
+const IN_PLACE: ReadonlySet<string> = new Set(['tap', 'rotate', 'counter', 'note', 'attach', 'detach']);
 /** Seat colours a theme provides (DESIGN "Themes and rendering": eight seat colours). */
 const SEAT_COLOURS = 8;
 
@@ -283,8 +285,9 @@ class NetTable implements NetSession {
     this.attach(engine);
   }
 
-  private persistence(snapshot: TableState, snapshotSeq: number, lastSeq: number): TablePersistence {
+  private persistence(snapshot: TableState, snapshotSeq: number, lastSeq: number, after?: Promise<void>): TablePersistence {
     return new TablePersistence({
+      ...(after ? { after } : {}),
       store: this.opts.store,
       roomId: this.opts.roomId,
       roomKey: this.opts.roomKey,
@@ -305,7 +308,11 @@ class NetTable implements NetSession {
       engine.onSequenced((a, own) => this.onSequenced(a, own)),
       engine.onRollback((a, reason) => this.onRollback(a, reason)),
       engine.onSystem((level, text) => this.system(level, text)),
-      engine.onStatus(() => this.netChanged()),
+      engine.onStatus(() => {
+        this.netChanged();
+        // A replica now in step decides the turn-ups kept from before a reload (`keptTurnUp`).
+        this.queueDrive();
+      }),
       engine.onPeers(() => {
         this.netChanged();
         // A peer that (re)connected may be the one a randomness round waits for, or this browser may owe it a nonce.
@@ -429,6 +436,10 @@ class NetTable implements NetSession {
       return this.stamp(action);
     }
     if (action.type === 'rngReveal') return this.revealNonce(action);
+    // A card that lies in a hidden zone has no own move of it in flight: a turn-up kept for it is stale (it is kept
+    // again below when this action makes it public).
+    const moved = referencedCard(action);
+    if (moved !== null && view.zones[view.cards[moved]?.zone ?? '']?.visibility !== 'public') this.forgetTurnUp(moved);
     // A face-down card moved into a public zone that shows faces is turned up there, in one undo group with the move.
     const seat = this.seat;
     const turnUp = turnsUpOnMove(view, this.sec, seat, action);
@@ -466,6 +477,9 @@ class NetTable implements NetSession {
       this.notify();
       return action;
     }
+    // A card played face down on purpose is never turned up by a turn-up kept from before (a face-up play of the same
+    // card that was lost in a crash or reload before it was sequenced).
+    this.forgetTurnUp(card);
     // No reveal: the reducer turns a card that leaves a hidden zone without a public identity face down.
     this.propose(action);
     this.notify();
@@ -1086,18 +1100,22 @@ class NetTable implements NetSession {
    */
   private turnUpOwed(st: TableState, me: SeatId): void {
     const ids = new Set(this.turnUpDue.keys());
+    // Cards another seat moved are judged on a replica in step with the table: right after a resume ('alone',
+    // 'syncing') the confirmed state may be stale, and a card it shows face down in a graveyard may lie in a library.
+    const inStep = this.engine.status() === 'connected';
     for (const [id, c] of Object.entries(st.cards)) {
+      if (!inStep) break;
       const z = st.zones[c.zone];
       if (c.owner === me && c.face === 'down' && c.identity === undefined && z?.visibility === 'public' && !FACE_DOWN_KINDS.has(z.kind)) ids.add(id);
     }
-    // Turn-ups kept in local storage (from before a reload): owed once the action that made the card public is no
-    // longer waiting to be sequenced; dropped once the card shows its identity or is no longer public.
-    const status = this.engine.status();
-    const settled = status === 'connected' || status === 'alone';
+    // Turn-ups kept in local storage (from before a reload), decided against the sequenced log (`keptTurnUp`).
+    const waiting = new Set<InstanceId>();
     for (const id of this.nonces.ids('turnUp')) {
       const cid = this.nonces.get('turnUp', id);
-      if (cid !== null && (this.turnUpAfter.has(cid) || this.pendingCid(cid))) continue;
-      if (settled) ids.add(id);
+      const verdict = cid === null ? 'stale' : this.keptTurnUp(id, cid);
+      if (verdict === 'owed') ids.add(id);
+      else if (verdict === 'stale') this.nonces.delete('turnUp', id);
+      else waiting.add(id);
     }
     if (!ids.size) return;
     const view = this.engine.state();
@@ -1107,7 +1125,7 @@ class NetTable implements NetSession {
       if (pending.some((a) => (a.type === 'flip' && a.card === id && a.ref !== undefined) || (a.type === 'reveal' && a.instanceId === id))) continue;
       if (!this.publicWithoutIdentity(st, view, me, id) || (this.turnUpRefusals.get(id) ?? 0) >= ROUND_ATTEMPTS) {
         this.turnUpDue.delete(id);
-        if (settled) this.nonces.delete('turnUp', id);
+        if (!waiting.has(id)) this.nonces.delete('turnUp', id);
         continue;
       }
       this.turnUpDue.delete(id);
@@ -1115,6 +1133,40 @@ class NetTable implements NetSession {
       const flip = this.stamp({ type: 'flip', card: id, face: 'up', ref: secret.card, salt: secret.salt, ...(group !== undefined ? { group } : {}) });
       if (!this.propose(flip, false)) this.turnUpRefusals.set(id, (this.turnUpRefusals.get(id) ?? 0) + 1);
     }
+  }
+
+  /**
+   * A turn-up kept in local storage for own card `id`, whose public-making action is `cid`, decided against the
+   * sequenced log: 'owed' once the replica is in step with the table ('connected') and `cid` is in the log as an
+   * action on `id` after which the card neither moved nor turned; 'stale' when `cid` is in the log but the card moved
+   * or turned since (or the action was about another card), or when the replica is in step and `cid` is neither in the
+   * log nor pending (a play lost in a crash or a reload before it was sequenced); 'wait' otherwise. A kept turn-up is
+   * never honoured on a replica that only resumed ('alone', 'syncing'), so a card is never turned up on a stale
+   * state, and never without the sequenced action that made it public (DESIGN "Multiplayer architecture", Hidden
+   * information 2; "Table model", Face-down on the battlefield).
+   */
+  private keptTurnUp(id: InstanceId, cid: string): 'owed' | 'stale' | 'wait' {
+    if (this.turnUpAfter.has(cid) || this.pendingCid(cid)) return 'wait';
+    const at = this.entries.findLastIndex((e) => e.kind === 'action' && e.action.cid === cid);
+    const inStep = this.engine.status() === 'connected';
+    if (at < 0) return inStep ? 'stale' : 'wait';
+    const made = this.entries[at]!;
+    if (made.kind !== 'action' || referencedCard(made.action) !== id) return 'stale';
+    const to = 'to' in made.action && typeof made.action.to === 'string' ? made.action.to : null;
+    for (const e of this.entries.slice(at + 1)) {
+      if (e.kind !== 'action' || referencedCard(e.action) !== id || IN_PLACE.has(e.action.type)) continue;
+      // Moving it about within the zone it was played into keeps the turn-up owed.
+      if (e.action.type === 'move' && to !== null && e.action.to === to) continue;
+      return 'stale';
+    }
+    return inStep ? 'owed' : 'wait';
+  }
+
+  /** Drop every turn-up owed or kept for own card `id`: an own action that this browser proposes now decides its face. */
+  private forgetTurnUp(id: InstanceId): void {
+    this.nonces.delete('turnUp', id);
+    this.turnUpDue.delete(id);
+    for (const [cid, up] of this.turnUpAfter) if (up.id === id) this.turnUpAfter.delete(cid);
   }
 
   // --- Waiting ----------------------------------------------------------------------------------------------
@@ -1307,7 +1359,11 @@ class NetTable implements NetSession {
     this.reissueCid = null;
     this.reissueRefusals = 0;
     this.seatAttempts = 0;
-    this.saves = this.persistence(fresh, 0, 0);
+    // The turn-ups kept for the alone table name its cards, which the room's table does not have.
+    for (const id of this.nonces.ids('turnUp')) this.nonces.delete('turnUp', id);
+    // The new save queue starts after the old one's last write, so a late write of the abandoned table never lands
+    // over the new seq-0 record.
+    this.saves = this.persistence(fresh, 0, 0, this.saves.whenSaved());
     this.attach(this.eng);
     this.system('info', `Another browser was already at this table: this browser left the table it had started alone and joins that one${readied ? ' (press Ready again)' : ''}.`);
     this.notify();

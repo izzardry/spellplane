@@ -116,7 +116,9 @@ async function boot(el: HTMLElement): Promise<void> {
     return Object.assign(session, { leave: left, dispose: left });
   }
 
-  const props: AppProps = {
+  // `openRoom` reaches the table route (ui/lobby/RoomRoute.svelte, RoomOpener) through the props App hands it; it is
+  // not part of the ui/types.ts contract (decision M1-P8).
+  const props: AppProps & { openRoom: typeof openRoom } = {
     session: solo,
     createScene: createTableScene,
     faces,

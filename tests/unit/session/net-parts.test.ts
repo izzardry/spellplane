@@ -107,6 +107,28 @@ describe('session/persist.ts TablePersistence', () => {
     await p.whenSaved();
     expect((await s.tables.loadTable('room-1'))!.secrets!.hand).toEqual(['a', 'b']);
   });
+
+  it('a save that replaces another (a rejoin) writes only after the old queue, so a late old write never lands over its record', async () => {
+    const start = table();
+    const { s, p: old } = await saver(start);
+    old.saveBase(start, SECRETS);
+    // The old table's last write is slow.
+    const real = s.tables.saveAction.bind(s.tables);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    s.tables.saveAction = async (...args) => {
+      await gate;
+      return real(...args);
+    };
+    const run = steps(start, 5);
+    old.saveAction(run[4]!.action, run[4]!.after, SECRETS);
+    const fresh = new TablePersistence({ store: s.tables, roomId: 'room-1', roomKey: 'key', seat: () => 's1', onError: () => {}, now: () => 2, snapshot: start, snapshotSeq: 0, lastSeq: 0, after: old.whenSaved() });
+    fresh.saveBase(start, { ...SECRETS, seat: 's1' });
+    release();
+    await fresh.whenSaved();
+    const loaded = (await s.tables.loadTable('room-1'))!;
+    expect(loaded.table).toMatchObject({ seat: 's1', lastSeq: 0, snapshotSeq: 0 });
+  });
 });
 
 describe('session/nonces.ts', () => {

@@ -17,6 +17,7 @@ import type { CardData } from '../../../src/data/types';
 import { FixtureCardDataSource } from '../../../src/debug/fixture-cards';
 import { mtg } from '../../../src/games/index';
 import { LoopbackNetwork, type LoopbackOptions } from '../../../src/net/loopback';
+import type { Channel, Message, MessageHandler, PeerHandler, PeerId, Transport } from '../../../src/net/transport';
 import { memoryNonces, type NonceStore } from '../../../src/session/nonces';
 import { openNetSession, type NetSessionInternals, type NetTable } from '../../../src/session/net';
 import type { DeckImport, NetSessionOptions } from '../../../src/session/types';
@@ -179,6 +180,59 @@ export function trackDisclosures(owner: NetTable, to: SeatId): Disclosure[] {
     prior = next;
   });
   return out;
+}
+
+/**
+ * A transport that loses this browser's own proposals `lose` picks (a page that crashes or reloads while they are in
+ * flight), and that goes deaf on `deaf = true` (a page that crashed before it heard anything more).
+ */
+export class LossyTransport implements Transport {
+  deaf = false;
+  constructor(
+    private readonly inner: Transport,
+    private readonly lose: (action: Action) => boolean,
+  ) {}
+  get selfId(): PeerId {
+    return this.inner.selfId;
+  }
+  join(roomId: string, roomKey: string): Promise<void> {
+    return this.inner.join(roomId, roomKey);
+  }
+  leave(): void {
+    this.inner.leave();
+  }
+  peers(): PeerId[] {
+    return this.inner.peers();
+  }
+  send(channel: Channel, msg: Message, to?: PeerId): void {
+    if (channel === 'act' && msg.t === 'propose' && this.lose((msg as unknown as { action: Action }).action)) return;
+    this.inner.send(channel, msg, to);
+  }
+  on(channel: Channel, handler: MessageHandler): void {
+    this.inner.on(channel, (m, from) => {
+      if (!this.deaf) handler(m, from);
+    });
+  }
+  onPeer(handler: PeerHandler): void {
+    this.inner.onPeer(handler);
+  }
+}
+
+/**
+ * A transport factory for `peerId` whose peers come up `ms` after the session's join: with `joinToo` the join itself
+ * resolves only then, otherwise it resolves at once (as Trystero's does, seconds before any WebRTC peer is up).
+ */
+export function lateTransport(network: LoopbackNetwork, peerId: string, ms: number, joinToo = false): () => Transport {
+  return () => {
+    const t = network.create(peerId);
+    const join = t.join.bind(t);
+    t.join = (room: string, key: string): Promise<void> => {
+      if (joinToo) return new Promise<void>((resolve) => setTimeout(() => void join(room, key).then(resolve), ms));
+      setTimeout(() => void join(room, key), ms);
+      return Promise.resolve();
+    };
+    return t;
+  };
 }
 
 /** Close every session and store of these browsers. */

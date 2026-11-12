@@ -1,12 +1,12 @@
 <!--
   The `#/t/<room>/<key>` route (PLAN M1-P5, M1-P8): the networked table (TableRoom: lobby, then the HUD) once a session
   for the room is at hand, otherwise a page saying what is happening. The session is main.ts's (AppProps.session when
-  its roomId matches this room), or the one AppProps.openRoom joins for this link; the route leaves a session it
+  its roomId matches this room), or the one `app.openRoom` (main.ts, see RoomOpener) joins for this link; the route leaves a session it
   opened when it goes away. The share link is AppProps.link when main.ts hands one for this room, else it is derived
   from the fragment.
 -->
 <script lang="ts">
-  import type { TableSession } from '../../session/types';
+  import type { NetSession, TableSession } from '../../session/types';
   import type { DeckStore, IdentityStore } from '../../store/types';
   import type { AppProps, RoomLink } from '../types';
   import TableRoom from './TableRoom.svelte';
@@ -14,7 +14,13 @@
   import { pageBase, parseRoomLink } from './room';
   import { lobbyStores } from './start';
 
-  let { app, room: roomId, roomKey, cssVars }: { app: Partial<AppProps>; room: string; roomKey: string; cssVars: string } = $props();
+  /**
+   * Joins the networked table of a room link and resolves once this browser holds a chair (main.ts, over the page's
+   * transport). Handed by main.ts next to AppProps and declared here, not in the ui/types.ts contract (decision M1-P8):
+   * the integrator may take it into AppProps.
+   */
+  type RoomOpener = { openRoom?: (link: RoomLink) => Promise<NetSession> };
+  let { app, room: roomId, roomKey, cssVars }: { app: Partial<AppProps> & RoomOpener; room: string; roomKey: string; cssVars: string } = $props();
 
   type RoomView = { session: TableSession; link: RoomLink; identity: IdentityStore; decks: DeckStore };
   const link = $derived.by((): RoomLink | null => {
