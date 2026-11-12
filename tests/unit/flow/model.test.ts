@@ -120,7 +120,7 @@ describe('the deck being built', () => {
     const overlapping: CardRef[] = [...old.cards.slice(0, 29).map((c) => c.ref), { sid: 'new-30' }, ...tonight.slice(30)];
     expect(withLatePicks(opened, overlapping)).toBe(opened);
     // A foil and a plain printing of the same card are different picks.
-    const foiled: CardRef[] = [...old.cards.map((c, i) => (i === 4 ? { ...c.ref, foil: true } : c.ref)), ...tonight.slice(30)];
+    const foiled: CardRef[] = [...old.cards.map((c, i): CardRef => (i === 4 ? { sid: c.ref.sid, foil: true } : c.ref)), ...tonight.slice(30)];
     expect(withLatePicks(opened, foiled)).toBe(opened);
     // The same deck is topped up when tonight's pool really is its pool (saved tonight and reopened).
     const same: CardRef[] = [...old.cards.map((c) => c.ref), ...tonight.slice(30)];

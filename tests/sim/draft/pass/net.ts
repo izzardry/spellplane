@@ -23,6 +23,7 @@ import type { DraftDriver, DraftHost } from '../../../../src/draft/types';
 import { mtg } from '../../../../src/games/index';
 import { LoopbackNetwork, type LoopbackOptions } from '../../../../src/net/loopback';
 import { privateChannelOver } from '../../../../src/net/private';
+import type { SequencedAction } from '../../../../src/net/messages';
 import type { PrivateChannel } from '../../../../src/net/types';
 import { mulberry32 } from '../../../../src/util/prng';
 import { testEntropy } from '../../../leak/fixtures';
@@ -290,13 +291,18 @@ export interface Visit {
  * from the owners' side only (generated records, pools), never from what a receiver was sent.
  */
 export function visits(t: PassNet): Visit[] {
-  const packs = generatedPacks(t);
-  const log = t.seats[0]!.peer.log();
-  const pools = new Map(t.seats.map((s) => [s.seat, poolOf(s).map((c) => c.instanceId)]));
+  return visitsOf(t.start, t.seats[0]!.peer.log(), generatedPacks(t), new Map(t.seats.map((s) => [s.seat, poolOf(s).map((c) => c.instanceId)])));
+}
+
+/**
+ * `visits` over any table: `log` is every sequenced action after `start` (a state before the draft started), `packs`
+ * every seat's generated packs by pack id and `pools` every seat's picks (instance ids) in pick order.
+ */
+export function visitsOf(start: TableState, log: readonly SequencedAction[], packs: ReadonlyMap<string, { cards: readonly RevealedCard[] }>, pools: ReadonlyMap<SeatId, readonly string[]>): Visit[] {
   const used = new Map<string, number>();
   const gone = new Map<string, Set<string>>();
   const out: Visit[] = [];
-  let state = t.start;
+  let state = start;
   for (const a of log) {
     const before = state;
     state = reduce(state, a);

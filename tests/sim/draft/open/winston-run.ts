@@ -4,6 +4,7 @@
  * public log alone, and outages of the other player's browser at the moments the dealer must show it something.
  */
 import { expect, vi } from 'vitest';
+import type { Action } from '../../../../src/core/actions';
 import { winstonActive, winstonDealt } from '../../../../src/core/open';
 import { reduce } from '../../../../src/core/reducer';
 import type { InstanceId, TableState } from '../../../../src/core/types';
@@ -28,9 +29,14 @@ export function randomWinston(seed: number): (s: DraftSeat) => void {
 
 /** What `seat` may know of the dealer's cards, from the public log: piles it looked at when it looked, and what it took. */
 export function allowedFor(t: DraftNet, seat: string): Set<InstanceId> {
+  return allowedFrom(t.start, t.seats[0]!.peer.log(), seat);
+}
+
+/** `allowedFor` over any table: `log` is every sequenced action after `start` (a state before the draft started). */
+export function allowedFrom(start: TableState, log: readonly Action[], seat: string): Set<InstanceId> {
   const out = new Set<InstanceId>();
-  let s: TableState = t.start;
-  for (const a of t.seats[0]!.peer.log()) {
+  let s: TableState = start;
+  for (const a of log) {
     s = reduce(s, a);
     const d = s.draft!;
     if (winstonDealt(d.winston) && winstonActive(d) === seat) for (const id of d.winston.pileIds[d.winston.pile]!) out.add(id);
