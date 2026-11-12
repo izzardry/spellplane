@@ -112,6 +112,7 @@ function makeHost(peer: MiniPeer, entropySeed: number): { host: DraftHost; store
   const host: DraftHost = {
     seat: peer.seatId,
     state: () => pending().reduce((s, a) => reduce(s, a), peer.state),
+    confirmedState: () => peer.state,
     secrets: () => store.secrets,
     setSecrets: (next) => {
       store.secrets = next;

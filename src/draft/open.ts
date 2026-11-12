@@ -6,8 +6,10 @@
  * - Pack generation: every pack comes from a fresh pack seed (`DraftHost.packSeed`, the secret-shuffle seed protocol
  *   with purpose 'pack'), whose byte stream drives `generatePack` and, for a grid, the shuffle that picks its nine
  *   cards, so the audit can replay it from the PackRecord. The instance ids are drawn from the same stream after the
- *   pack (core/open.ts `seededCardId`), so the opener cannot choose them (they order the Winston stack); salts come
- *   from the host's entropy. Neither is derived from a card's identity.
+ *   pack (core/open.ts `seededCardId`), so an honest opener does not choose them (they order the Winston stack); salts
+ *   come from the host's entropy. Neither is derived from a card's identity. Nothing checks the ids against the seed
+ *   yet: the reducer cannot regenerate a pack (no set data in core/), so a modified opener could still pick its ids
+ *   (residual risk, DECISIONS [M2-P3]; the post-draft audit can replay the PackRecord).
  * - The pool: shared state lists the ids each drafter took (`DraftState.taken`); the driver adds the matching
  *   identities to the own `SecretStore.pool` in pick order, once each (tracked by id in `DraftSecrets.held[OPEN_POOL]`),
  *   so a reload or a repeated call never adds a card twice. A taken card whose identity is not known yet (a Winston
@@ -24,6 +26,8 @@ import type { DraftHost, DraftPrivateView, PackSeed } from './types';
 export const OPEN_POOL = 'open:pool';
 /** `DraftSecrets.held` key of the Winston identities the dealer showed this (non-dealer) browser. */
 export const WINSTON_SEEN = 'winston:seen';
+/** `DraftSecrets.held` key of face-up cards (Rochester packs, grid cells) this browser saw in shared state, without salts. */
+export const OPEN_SEEN = 'open:seen';
 
 /** The own draft secrets, empty when there are none yet. */
 export function draftSecretsOf(s: SecretStore): DraftSecrets {
@@ -147,6 +151,22 @@ export function faceUpIdentity(host: DraftHost, state: TableState): (id: Instanc
   const held = heldIdentities(host.secrets());
   const table = publicIdentities(state);
   return (id) => held.get(id) ?? table.get(id) ?? null;
+}
+
+/**
+ * Remember every face-up card of `state` (Rochester packs, grid cells) this browser has no identity for yet, so the
+ * pool can still name a picked card after it left the table, even when the `packOpen` that laid it was never seen here
+ * as a sequenced action (a driver created after it, a snapshot resync). Call it with confirmed states (the reducer
+ * checked their face-up cards against the commitments) and with the view a pick was made from (confirmed cards plus
+ * this browser's own pending pack, whose identities it generated).
+ */
+export function rememberFaceUp(host: DraftHost, state: TableState): void {
+  const table = publicIdentities(state);
+  if (table.size === 0) return;
+  const known = heldIdentities(host.secrets());
+  const add = [...table.values()].filter((c) => !known.has(c.instanceId));
+  if (add.length === 0) return;
+  updateDraftSecrets(host, (ds) => ({ ...ds, held: { ...ds.held, [OPEN_SEEN]: [...(ds.held[OPEN_SEEN] ?? []), ...add.map((c) => ({ instanceId: c.instanceId, ref: plainRef(c.ref), salt: '' }))] } }));
 }
 
 /** Whether `c` has the shape of a revealed card (a refused action's cards are unchecked). */

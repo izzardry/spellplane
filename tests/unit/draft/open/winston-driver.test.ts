@@ -21,10 +21,14 @@ interface Sent {
   delivered: boolean;
 }
 
-/** A fake host for `seat`: `online` decides whether sends are delivered. */
-function fakeHost(seat: SeatId, start: TableState, secrets: SecretStore) {
+/**
+ * A fake host for `seat`: `online` decides whether sends are delivered; `state` is the optimistic view and `confirmed`
+ * the confirmed table (both `start` at first). Without `seam` the host offers no `confirmedState`.
+ */
+function fakeHost(seat: SeatId, start: TableState, secrets: SecretStore, seam = true) {
   const h = {
     state: start,
+    confirmed: start,
     secrets,
     online: true,
     sent: [] as Sent[],
@@ -34,6 +38,7 @@ function fakeHost(seat: SeatId, start: TableState, secrets: SecretStore) {
   const host: DraftHost = {
     seat,
     state: () => h.state,
+    ...(seam ? { confirmedState: () => h.confirmed } : {}),
     secrets: () => h.secrets,
     setSecrets: (next) => {
       h.secrets = next;
@@ -63,6 +68,7 @@ function fakeHost(seat: SeatId, start: TableState, secrets: SecretStore) {
   /** Apply `action` as sequenced and tell the driver. */
   const apply = (action: Action): void => {
     h.state = ok(h.state, action);
+    h.confirmed = h.state;
     const sequenced = { ...action, seq: h.state.seq } as Action;
     for (const l of h.seq) l(sequenced, h.state);
   };
@@ -237,6 +243,71 @@ describe('Winston after a reload', () => {
     // It arrives: the pool is every taken card, in pick order.
     for (const l of h.cards) l('c', [byId.get(blind)!], 's0');
     expect(h.secrets.pool).toEqual(taken.map((id) => byId.get(id)!.ref));
+    driver.dispose();
+  });
+});
+
+describe('Winston disclosures follow confirmed states only', () => {
+  it('a dealer created while its own take is pending shows the other player nothing of the pile it would look at', () => {
+    const { s, cards } = dealt();
+    // Confirmed: the dealer looks at pile 1. Optimistic: its take is pending, so s1 would look at pile 1 next.
+    const optimistic = ok(s, act('pileLook', { pile: 0, take: true }, 's0'));
+    expect(draftOf(optimistic).winston!.active).toBe('s1');
+    for (const seam of [true, false]) {
+      const { h, host } = fakeHost('s0', s, dealerSecrets(cards), seam);
+      h.state = optimistic;
+      const driver = createWinstonDriver(host);
+      for (let i = 0; i < 5; i++) driver.drive();
+      for (const l of h.cards) l(WINSTON_NEED, [], 's1');
+      expect(h.sent, `seam ${seam}`).toEqual([]);
+      driver.dispose();
+    }
+  });
+
+  it('once the take is sequenced, the pile goes out', () => {
+    const { s, cards } = dealt();
+    const { h, host, apply } = fakeHost('s0', s, dealerSecrets(cards), false);
+    const driver = createWinstonDriver(host);
+    apply(act('pileLook', { pile: 0, take: true }, 's0'));
+    expect(h.sent.map((x) => x.ids)).toEqual([draftOf(h.state).winston!.pileIds![0]]);
+    driver.dispose();
+  });
+});
+
+describe('Winston after the last look', () => {
+  /** Play a one-pack draft to its end (every look takes its pile) while the pair channel is down. */
+  function playedOut(seat: SeatId): { h: ReturnType<typeof fakeHost>['h']; driver: ReturnType<typeof createWinstonDriver>; end: TableState } {
+    const { s, cards } = dealt();
+    const { h, host, apply } = fakeHost(seat, s, seat === 's0' ? dealerSecrets(cards) : emptySecretStore(seat));
+    h.online = false;
+    const driver = createWinstonDriver(host);
+    for (let i = 0; i < 40 && !draftOf(h.state).done; i++) {
+      const w = draftOf(h.state).winston!;
+      apply(act('pileLook', { pile: w.pile, take: true }, w.active));
+    }
+    expect(draftOf(h.state).done).toBe(true);
+    // The table moves on to deck building (M2-P7's automatic advance) before anything was delivered.
+    const end: TableState = { ...h.state, stage: 'build', seq: h.state.seq + 1 };
+    h.state = end;
+    h.confirmed = end;
+    for (const l of h.seq) l({ type: 'chat', by: 's0', cid: 'stage', seq: end.seq, text: 'build', channel: 'table' } as unknown as Action, end);
+    h.online = true;
+    return { h, driver, end };
+  }
+
+  it('the dealer still shows the other player every card it took once the draft is over', () => {
+    const { h, driver, end } = playedOut('s0');
+    driver.drive();
+    const delivered = h.sent.filter((x) => x.delivered).flatMap((x) => x.ids);
+    expect(new Set(delivered)).toEqual(new Set(draftOf(end).taken!.s1!));
+    for (const id of delivered) expect(draftOf(end).taken!.s0!).not.toContain(id);
+    driver.dispose();
+  });
+
+  it('the other player still asks for its missing taken cards once the draft is over', () => {
+    const { h, driver } = playedOut('s1');
+    driver.drive();
+    expect(h.sent.filter((x) => x.delivered && x.about === WINSTON_NEED && x.to === 's0')).not.toEqual([]);
     driver.dispose();
   });
 });

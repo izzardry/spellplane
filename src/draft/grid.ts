@@ -19,6 +19,7 @@ import {
   openDraftOf,
   packOpenDraft,
   reconcilePool,
+  rememberFaceUp,
   rememberPublicPack,
   setMarked,
   shuffleWith,
@@ -30,11 +31,16 @@ export const createGridDriver: CreateDraftDriver = (host) => {
   let laying = false;
   let disposed = false;
 
-  /** The last confirmed state: the pool follows sequenced picks only, never optimistic ones that may be reordered or refused. */
-  let confirmed: TableState | null = null;
+  /**
+   * The last confirmed state: the pool follows sequenced picks only, never optimistic ones that may be reordered or
+   * refused. A driver created after a reload starts from the host's confirmed state, when the session provides it.
+   */
+  let confirmed: TableState | null = host.confirmedState?.() ?? null;
 
   const reconcile = (): void => {
-    if (confirmed?.draft?.settings.format === 'grid') reconcilePool(host, confirmed, faceUpIdentity(host, confirmed));
+    if (confirmed?.draft?.settings.format !== 'grid') return;
+    rememberFaceUp(host, confirmed);
+    reconcilePool(host, confirmed, faceUpIdentity(host, confirmed));
   };
 
   const off = host.onSequenced((a, state) => {
@@ -93,6 +99,7 @@ export const createGridDriver: CreateDraftDriver = (host) => {
       const d = openDraftOf(host.state(), 'grid');
       if (d === null || d.grid === undefined || gridTaker(d) !== host.seat) return false;
       if ((line !== 'row' && line !== 'col') || !gridLineOpen(d.grid, line, index)) return false;
+      rememberFaceUp(host, host.state());
       host.dispatch({ type: 'gridTake', grid: d.grid.index, line, index });
       return true;
     },

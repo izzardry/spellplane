@@ -7,8 +7,8 @@
  * - Rochester: one public pack at a time; picks in snake order from the opener (core/drafting.ts `rochesterOrder`)
  *   until `burn` cards remain; the opener role then moves left; done when every drafter opened `packs` packs.
  * - Winston: the stack is dealt once every pack is open: the opaque ids of all packs sorted, top first, one card on
- *   each of the three piles. The ids come from each pack's seed stream (`seededCardId`), so the order is a random
- *   interleaving that neither the dealer nor the other player chose, and the audit can replay it. A look either takes the pile (replaced by one stack
+ *   each of the three piles. The ids come from each pack's seed stream (`seededCardId`), so with an honest dealer the
+ *   order is a random interleaving nobody chose, and an audit can replay it. A look either takes the pile (replaced by one stack
  *   card) or adds a stack card to it and moves on; declining the last pile takes the top stack card.
  * - Grid: nine face-up cells row by row; the first player takes a row or column, the second a remaining one that
  *   still holds a card; the rest is discarded and the next grid is laid by the next first player.
@@ -41,8 +41,9 @@ const ID_ALPHABET = '0123456789abcdefghijklmnopqrstuv';
 
 /**
  * The opaque instance id of the next card of a generated pack, drawn from the pack seed's byte stream after the pack
- * itself (16 characters, 80 bits): the opener cannot choose it, the other players cannot predict it without the seed,
- * and the audit can recompute it from the PackRecord (DECISIONS [M2-P3]).
+ * itself (16 characters, 80 bits): an honest opener does not choose it, the other players cannot predict it without
+ * the seed, and an audit can recompute it from the PackRecord. Nothing enforces it yet: the reducer cannot regenerate
+ * a pack, so a modified opener could pick its ids (and with them the Winston stack order); residual risk, DECISIONS [M2-P3].
  */
 export function seededCardId(stream: ByteStream): InstanceId {
   let s = 'c';

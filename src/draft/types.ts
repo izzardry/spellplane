@@ -137,6 +137,12 @@ export interface DraftHost {
   readonly seat: SeatId;
   /** The table as this browser sees it (optimistic view). */
   state(): TableState;
+  /**
+   * Added by M2-P3 (optional; the session wires it to NetEngine `confirmedState`). The confirmed table: sequenced
+   * actions only, without this browser's pending ones. A driver created after a reload starts from it, so it never
+   * discloses a card from a state whose own actions may still be refused.
+   */
+  confirmedState?(): TableState;
   /** The own secret store. */
   secrets(): SecretStore;
   /** Replace the own secret store; persisted with the next save, in step with the log (DESIGN "Local persistence"). */

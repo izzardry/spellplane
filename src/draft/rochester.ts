@@ -18,6 +18,7 @@ import {
   openDraftOf,
   packOpenDraft,
   reconcilePool,
+  rememberFaceUp,
   rememberPublicPack,
   setMarked,
 } from './open';
@@ -28,11 +29,16 @@ export const createRochesterDriver: CreateDraftDriver = (host) => {
   let opening = false;
   let disposed = false;
 
-  /** The last confirmed state: the pool follows sequenced picks only, never optimistic ones that may be reordered or refused. */
-  let confirmed: TableState | null = null;
+  /**
+   * The last confirmed state: the pool follows sequenced picks only, never optimistic ones that may be reordered or
+   * refused. A driver created after a reload starts from the host's confirmed state, when the session provides it.
+   */
+  let confirmed: TableState | null = host.confirmedState?.() ?? null;
 
   const reconcile = (): void => {
-    if (confirmed?.draft?.settings.format === 'rochester') reconcilePool(host, confirmed, faceUpIdentity(host, confirmed));
+    if (confirmed?.draft?.settings.format !== 'rochester') return;
+    rememberFaceUp(host, confirmed);
+    reconcilePool(host, confirmed, faceUpIdentity(host, confirmed));
   };
 
   const off = host.onSequenced((a, state) => {
@@ -98,6 +104,7 @@ export const createRochesterDriver: CreateDraftDriver = (host) => {
       const pack = d.packs[d.rochester.pack];
       const id = cards[0]!;
       if (!pack || !(pack.cards ?? []).some((c) => c.id === id)) return false;
+      rememberFaceUp(host, host.state());
       host.dispatch({ type: 'pick', packId: pack.id, count: 1, cards: [id] });
       setMarked(host, []);
       return true;
