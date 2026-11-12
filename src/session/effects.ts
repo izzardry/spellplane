@@ -101,6 +101,40 @@ export function revealFor(state: TableState, secrets: SecretStore, seat: SeatId,
 }
 
 /**
+ * The networked session's order (DESIGN "Multiplayer architecture", Hidden information 2): the own card whose identity
+ * only this browser holds that `action` leaves in a public zone without an identity (moved or cast out of a hidden
+ * zone, or a face-down card moved into a zone that shows faces, `turnUp`). The session proposes the action alone, so
+ * the reducer puts the card down face down, and publishes the identity with a verified `flip` only once the action is
+ * sequenced: a reveal sent first could be sequenced while the action is refused, publishing a card still in the hand.
+ * Null when the action names no such card or would not apply.
+ */
+export function turnsPublic(state: TableState, secrets: SecretStore, seat: SeatId, action: Action, turnUp: boolean): InstanceId | null {
+  const id = referencedCard(action);
+  if (id === null || action.type === 'reveal' || action.type === 'revealTo' || action.type === 'flip') return null;
+  const card = Object.hasOwn(state.cards, id) ? state.cards[id] : undefined;
+  if (!card || card.owner !== seat || card.identity !== undefined || !Object.hasOwn(secrets.identities, id)) return null;
+  if (state.zones[card.zone]?.visibility === 'public' && !turnUp) return null;
+  const next = reduce(state, { ...action, seq: state.seq + 1 } as Action);
+  if (next === state) return null;
+  const after = next.cards[id];
+  if (!after || after.identity !== undefined || next.zones[after.zone]?.visibility !== 'public') return null;
+  return id;
+}
+
+/**
+ * A `flip` up of an own face-down card whose identity only this browser holds, with its ref and salt added: the
+ * verified flip publishes the identity in the same step that turns the card up, so a refused flip publishes nothing.
+ * Any other action comes back unchanged.
+ */
+export function withProof(state: TableState, secrets: SecretStore, seat: SeatId, action: Action): Action {
+  if (action.type !== 'flip' || action.face !== 'up' || action.ref !== undefined) return action;
+  const card = Object.hasOwn(state.cards, action.card) ? state.cards[action.card] : undefined;
+  const secret = Object.hasOwn(secrets.identities, action.card) ? secrets.identities[action.card] : undefined;
+  if (!card || !secret || card.owner !== seat || card.identity !== undefined || state.zones[card.zone]?.visibility !== 'public') return action;
+  return { ...action, ref: secret.card, salt: secret.salt };
+}
+
+/**
  * The verified re-reveal of an own card an undo brought back face down without its identity (core/undo.ts
  * UndoReveal: a restore patch never puts a committed identity back): `flip` up with ref and salt when it was face up,
  * else `reveal`. Null when the card is not this seat's or its identity is not the one the undo names.

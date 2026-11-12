@@ -2,12 +2,13 @@ import { mount } from 'svelte';
 import { createFaceSource, parseDecklist, ScryfallCardDataSource, type CardDataSource } from './data/index';
 import { mtg } from './games/index';
 import { createTableScene } from './scene/index';
-import { createNetSession, createSoloSession, type NetSession, type TableSession } from './session/index';
+import { createSoloSession, openNetSession, type NetSession, type TableSession } from './session/index';
 import { liveIdentity } from './session/live-identity';
 import { createPageTransport, KillableTransport } from './session/transports';
 import { openStores, SOLO_ROOM_ID, type LocalStores } from './store/index';
 import App from './ui/App.svelte';
 import { startProps } from './ui/lobby/start';
+import { parseRoute } from './ui/routes';
 import type { AppProps, RoomLink } from './ui/types';
 
 const target = document.getElementById('app');
@@ -49,28 +50,47 @@ async function boot(el: HTMLElement): Promise<void> {
 
   const identity = stores ? liveIdentity(stores.identity) : null;
 
-  /** Join a table link with the networked session (the table route leaves it when the route goes away). */
+  /**
+   * Join a table link with the networked session (the table route leaves it when the route goes away). A join still
+   * under way when the page leaves that link's route is cancelled, so its engine and transport do not live on.
+   */
   async function openRoom(link: RoomLink): Promise<NetSession> {
     if (!stores || !identity) throw new Error('this browser blocks local storage, which a table needs for your identity and your hidden cards');
     let transport: KillableTransport | null = null;
-    const session = await createNetSession({
-      game: mtg,
-      cardData,
-      roomId: link.roomId,
-      roomKey: link.roomKey,
-      transport: () => (transport = new KillableTransport(createPageTransport())),
-      identity: await identity.identity(),
-      store: stores.tables,
-    });
+    const joining = new AbortController();
+    const onHash = (): void => {
+      const r = parseRoute(location.hash);
+      if (r.name !== 'room' || r.room !== link.roomId || r.key !== link.roomKey) joining.abort();
+    };
+    window.addEventListener('hashchange', onHash);
+    let session: NetSession;
+    try {
+      session = await openNetSession(
+        {
+          game: mtg,
+          cardData,
+          roomId: link.roomId,
+          roomKey: link.roomKey,
+          transport: () => (transport = new KillableTransport(createPageTransport())),
+          identity: await identity.identity(),
+          store: stores.tables,
+        },
+        {},
+        joining.signal,
+      );
+    } finally {
+      window.removeEventListener('hashchange', onHash);
+    }
     if (debug) {
       registerSession(session);
       debug.registerNetDebug(session, () => transport);
     }
     const leave = session.leave.bind(session);
-    // Leaving the route hands the debug hook back to the solo table.
+    // Leaving the route hands the debug hook back to the solo table (and drops the left room's `net` part).
     const left = (): void => {
       leave();
       registerSession(solo);
+      debug?.clearNetDebug();
     };
     return Object.assign(session, { leave: left, dispose: left });
   }

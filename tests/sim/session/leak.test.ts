@@ -5,10 +5,13 @@
  * scanner (tests/leak/leak.ts) checks everything B received, holds in state and log, keeps in its secret store and in
  * IndexedDB against A's hidden cards, and the other way round. Further scenarios: an undo that brings a card back face
  * down (the owner re-reveals it), a reload (the save holds the same secrets and nothing more), another seat's look at
- * a face-down card (answered) and at a hidden zone (refused), and a negative control that shows the scan is not vacuous.
+ * a face-down card (answered) and at a hidden zone (refused), a move the sequencer refuses after it passed locally (the
+ * card is turned up only once the move is sequenced, so the refusal publishes nothing), another seat moving a face-down
+ * card into a graveyard (the owner turns it up), and a negative control that shows the scan is not vacuous.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RevealedCard } from '../../../src/core/commit';
+import type { LoopbackOptions } from '../../../src/net/loopback';
 import { createPrivateChannel } from '../../../src/net/private';
 import { forbiddenFor, leakScan } from '../../leak/leak';
 import { closeAll, FAKE_TIMERS, net, observedBy, settle, until, waitConverged, type Browser } from './harness';
@@ -16,7 +19,10 @@ import { isLand, playScript } from './script';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
-const FAULTS = { delay: { min: 0, max: 400 }, drop: 0.05 };
+// Delay, loss and reordering on the public channels. The pair channel (prv) has no retransmission: it rides WebRTC's
+// reliable data channel, as in M1-P2's secrecy acceptance test. Undelayed, it overtakes the delayed sequenced log, so
+// a targeted reveal arrives before its `revealTo` is applied.
+const FAULTS: LoopbackOptions = { delay: { min: 0, max: 400 }, drop: 0.05, faultyChannels: ['act', 'ctl', 'pres'] };
 
 let browsers: Browser[] = [];
 beforeEach(() => {
@@ -96,6 +102,65 @@ describe('shared leak test: the networked session', () => {
     const last = b.log().filter((e) => e.kind === 'action').slice(-2).map((e) => (e.kind === 'action' ? e.action.type : ''));
     expect(last).toEqual(['undo', 'flip']);
     expect(a.secrets().libraryOrder).not.toContain(card);
+    const report = leakScan({ observed: await observedBy(network, p.B), owner: { state: a.engine.confirmedState(), secrets: a.secrets() }, disclosed: p.shownToB });
+    expect(report.tokens).toEqual([]);
+    expect(report.pairs).toEqual([]);
+  });
+
+  it('a move the sequencer refuses publishes nothing: the owner turns a card up only after the move that makes it public is sequenced', async () => {
+    const network = net({ seed: 5 });
+    const p = await playScript(network, browsers);
+    const { a, b } = p;
+    expect(a.engine.isSequencer()).toBe(true);
+    const bLand = b.engine.confirmedState().zones['battlefield:s1']!.ids[0]!;
+    // B squares its land into a one-card pile p1.
+    b.dispatch({ type: 'move', card: bLand, to: 'battlefield:s1', pile: { id: 'p1', index: 0, kind: 'squared' } });
+    await waitConverged([a, b]);
+    const x = b.secrets().hand[0]!;
+    const secret = b.secrets().identities[x]!;
+    // Same moment: A (the sequencer) drags pile p1 onto its own battlefield; B drops hand card x onto pile p1. B's move
+    // passes on B's view and is refused by the sequencer.
+    a.dispatch({ type: 'move', card: bLand, to: 'battlefield:s0', pose: { x: 0, y: -100, rot: 0 } });
+    b.dispatch({ type: 'move', card: x, to: 'battlefield:s1', pile: { id: 'p1', index: 1, kind: 'squared' } });
+    await waitConverged([a, b]);
+    await until(() => b.engine.pending().length === 0, 5_000, 'B to settle');
+    expect(b.log().some((e) => e.kind === 'system' && /move refused/.test(e.text))).toBe(true);
+    // x is still in B's hand, and its identity is nowhere on A's side.
+    expect(a.engine.confirmedState().cards[x]).toMatchObject({ zone: 'hand:s1' });
+    expect(a.engine.confirmedState().cards[x]!.identity).toBeUndefined();
+    expect(b.secrets().hand).toContain(x);
+    const aboutX = a.log().flatMap((e) => (e.kind === 'action' && (('card' in e.action && e.action.card === x) || ('instanceId' in e.action && e.action.instanceId === x)) ? [e.action.type] : []));
+    expect(aboutX).not.toContain('reveal');
+    expect(aboutX).not.toContain('flip');
+    const observed = await observedBy(network, p.A);
+    expect(JSON.stringify(observed)).not.toContain(secret.salt);
+    const back = leakScan({ observed, owner: { state: b.engine.confirmedState(), secrets: b.secrets() }, disclosed: [] });
+    expect(back.tokens).toEqual([]);
+    expect(back.pairs).toEqual([]);
+
+    // The same move without the race: the card goes down face down and is turned up, verified, once it is sequenced.
+    b.dispatch({ type: 'move', card: x, to: 'battlefield:s1', pose: { x: 70, y: 200, rot: 180 } });
+    await waitConverged([a, b]);
+    expect(a.engine.confirmedState().cards[x]).toMatchObject({ zone: 'battlefield:s1', face: 'up', identity: secret.card });
+    expect(a.engine.confirmedState().cards[x]!.suspect).toBeUndefined();
+    const steps = a.log().flatMap((e) => (e.kind === 'action' && e.action.by === 's1' && (('card' in e.action && e.action.card === x) || ('instanceId' in e.action && e.action.instanceId === x)) ? [e.action] : []));
+    expect(steps.map((s) => s.type).filter((t) => t !== 'draw')).toEqual(['move', 'flip']);
+    expect(steps.at(-1)).toMatchObject({ type: 'flip', face: 'up', ref: secret.card, salt: secret.salt });
+  });
+
+  it('a face-down card another seat moves into a zone that shows faces is turned up by its owner, verified', async () => {
+    const network = net({ seed: 6 });
+    const p = await playScript(network, browsers);
+    const { a, b } = p;
+    const secret = a.secrets().identities[p.faceDown]!;
+    b.dispatch({ type: 'move', card: p.faceDown, to: 'graveyard:s0' });
+    await waitConverged([a, b]);
+    await until(() => b.engine.confirmedState().cards[p.faceDown]?.identity !== undefined && a.engine.pending().length === 0, 5_000, 'A to turn the card up');
+    await waitConverged([a, b]);
+    for (const s of [a, b]) expect(s.engine.confirmedState().cards[p.faceDown]).toMatchObject({ zone: 'graveyard:s0', face: 'up', identity: secret.card });
+    expect(b.engine.confirmedState().cards[p.faceDown]!.suspect).toBeUndefined();
+    const last = b.log().flatMap((e) => (e.kind === 'action' ? [e.action] : [])).at(-1)!;
+    expect(last).toMatchObject({ type: 'flip', by: 's0', card: p.faceDown, ref: secret.card, salt: secret.salt });
     const report = leakScan({ observed: await observedBy(network, p.B), owner: { state: a.engine.confirmedState(), secrets: a.secrets() }, disclosed: p.shownToB });
     expect(report.tokens).toEqual([]);
     expect(report.pairs).toEqual([]);

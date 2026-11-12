@@ -148,5 +148,9 @@ test('a network where nobody else connects still seats the player alone, as its 
   expect(await hook<string>(page, 'net.status')).toBe('alone');
   // Alone at the table this browser sequences its own actions.
   expect(await hook<string>(page, 'net.sequencer')).toBe(await hook<string>(page, 'net.self'));
+  // Back at the solo table, the debug hook has the solo session again and no network part of the room it left.
+  await page.evaluate(() => (location.hash = '#/'));
+  await expect.poll(() => page.evaluate(() => window.__spellplane?.net === undefined)).toBe(true);
+  expect(await hook<string>(page, 'session.roomId')).not.toBe(room.roomId);
   await context.close();
 });

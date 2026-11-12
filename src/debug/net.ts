@@ -34,3 +34,9 @@ export function registerNetDebug(session: NetSession, transport: () => KillableT
     },
   });
 }
+
+/** Drop `window.__spellplane.net` (the page left its networked table; the solo table has no network part). */
+export function clearNetDebug(): void {
+  if (!__SPELLPLANE_DEBUG__ || typeof window === 'undefined' || !window.__spellplane) return;
+  delete window.__spellplane.net;
+}

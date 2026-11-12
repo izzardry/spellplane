@@ -6,7 +6,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Action } from '../../../src/core/actions';
 import type { Channel, Message, MessageHandler, PeerHandler, PeerId, Transport } from '../../../src/net/transport';
-import { browser, closeAll, FAKE_TIMERS, fixtureDeck, hashOf, net, open, settle, until, waitConverged, type Browser, KEY, ROOM } from './harness';
+import { mtg } from '../../../src/games/index';
+import { openNetSession } from '../../../src/session/net';
+import { UnreachableTransport } from '../../../src/session/transports';
+import { browser, cards, closeAll, FAKE_TIMERS, fixtureDeck, hashOf, net, open, settle, until, waitConverged, type Browser, KEY, ROOM } from './harness';
 import { isLand, playScript } from './script';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
@@ -241,6 +244,31 @@ describe('joint randomness', () => {
   });
 });
 
+describe('joining', () => {
+  it('a join through relays that never answer is cancelled by its signal: the transport is left and the open rejects', async () => {
+    const A = await browser('anna', 'peer-a', 'Anna');
+    browsers.push(A);
+    let left = 0;
+    class Stuck extends UnreachableTransport {
+      override leave(): void {
+        left++;
+      }
+    }
+    const joining = new AbortController();
+    const p = openNetSession({ game: mtg, cardData: cards(), roomId: ROOM, roomKey: KEY, transport: () => new Stuck('t-a'), identity: A.identity, store: A.stores.tables }, { nonces: A.nonces }, joining.signal);
+    let outcome: unknown = null;
+    p.catch((e: unknown) => (outcome = e));
+    // Thirty seconds of table time (in small steps, so the fake IndexedDB's own callbacks run in between).
+    for (let i = 0; i < 3_000; i++) await vi.advanceTimersByTimeAsync(10);
+    expect(outcome).toBeNull();
+    expect(left).toBe(0);
+    joining.abort();
+    await until(() => outcome !== null, 1_000, 'the open to reject');
+    expect(String(outcome)).toMatch(/cancelled/);
+    expect(left).toBe(1);
+  });
+});
+
 describe('resume', () => {
   it('a reload rejoins the same chair with the same hand and library order, the log, and one state hash', async () => {
     const network = net({ seed: 41 });
@@ -279,6 +307,25 @@ describe('resume', () => {
     const done = actions(p.B).filter((x) => x.type === 'shuffleDone').at(-1)!;
     expect(done.type === 'shuffleDone' && done.reissue !== undefined).toBe(true);
     expect(a.getState().cards[land]).toBeUndefined();
+  });
+
+  it('after a catch-up from a snapshot, every own card counts as seen, so the next shuffle re-issues the library', async () => {
+    const network = net({ seed: 44 });
+    const p = await playScript(network, browsers);
+    // A drops off while B plays on for more than a tail's worth of actions: A comes back through a snapshot, and
+    // cannot tell what the skipped stretch showed of its cards.
+    network.kill(p.A.peerId);
+    for (let i = 0; i < 620; i++) {
+      p.b.chat(`line ${i}`);
+      if (i % 50 === 49) await vi.advanceTimersByTimeAsync(200);
+    }
+    await until(() => p.b.engine.pending().length === 0, 60_000, 'B to play on alone');
+    network.revive(p.A.peerId);
+    await waitConverged([p.a, p.b], 'A to catch up');
+    await settle(p.a.shuffle(), 30_000, 'the shuffle after the catch-up');
+    await waitConverged([p.a, p.b]);
+    const done = actions(p.B).filter((x) => x.type === 'shuffleDone').at(-1)!;
+    expect(done.type === 'shuffleDone' && done.reissue !== undefined).toBe(true);
   });
 
   it('every sequenced action is saved with the table record, and the save restores the same state hash', async () => {

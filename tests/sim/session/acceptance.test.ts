@@ -126,10 +126,12 @@ describe('M1-P8 acceptance: a scripted game over two networked sessions', () => 
 
     // Every path the leak test is about was exercised.
     const types = new Set(b.log().flatMap((e) => (e.kind === 'action' ? [e.action.type] : [])));
-    for (const t of ['seatTake', 'ready', 'shuffleCommit', 'shuffleNonce', 'shuffleDone', 'draw', 'mulligan', 'toZone', 'lookAt', 'reorder', 'reveal', 'move', 'stackPush', 'revealTo', 'rngCommit', 'rngReveal']) {
+    for (const t of ['seatTake', 'ready', 'shuffleCommit', 'shuffleNonce', 'shuffleDone', 'draw', 'mulligan', 'toZone', 'lookAt', 'reorder', 'flip', 'move', 'stackPush', 'revealTo', 'rngCommit', 'rngReveal']) {
       expect(types, t).toContain(t);
     }
     expect(b.log().some((e) => e.kind === 'action' && e.action.type === 'reorder' && e.action.reissue !== undefined && e.action.zone === 'hand:s0')).toBe(true);
+    // A's played cards were turned up verified (flip with ref and salt) after their move was sequenced, never revealed ahead of it.
+    expect(b.log().some((e) => e.kind === 'action' && e.action.type === 'flip' && e.action.by === 's0' && e.action.ref !== undefined)).toBe(true);
 
     // The leak scan: nothing B received, holds in state or log, keeps in its secret store or IndexedDB carries an
     // identity, salt, nonce or id mapping of a card that stayed hidden in A's hand or library.

@@ -7,14 +7,17 @@
  *   them optimistically and proposes them to the sequencer (DESIGN "Specification: network protocol and secrecy",
  *   Sequencing 2-4). A refused proposal is rolled back by the engine and logged here with its reason.
  * - Hidden information never leaves this browser except through the design's reveal paths (DESIGN "Multiplayer
- *   architecture", Hidden information): a `reveal {instanceId, ref, salt}` goes first when an own card becomes public;
- *   a targeted reveal is the public `revealTo` plus the identity on the pair channel to the named seats only, sent
+ *   architecture", Hidden information): an action that makes an own card public goes alone (the reducer puts the card
+ *   down face down) and, once it is sequenced, the owner turns the card up with a verified `flip {ref, salt}`, so a
+ *   refused action never publishes an identity; a face-down own card in a zone that shows faces is turned up the same
+ *   way, also when another seat moved it there; a targeted reveal is the public `revealTo` plus the identity on the pair channel to the named seats only, sent
  *   once the `revealTo` is sequenced; another seat's look is answered from the confirmed state and refused for whole
  *   zones (no consent prompt exists yet, decision M1-P8).
  * - The private effects use core/secrets.ts (decision M1-P2): Ready commits the deck, the secret shuffle runs the
  *   commit/nonce/done protocol with the other seats' nonces, a public card returned to the hand re-issues the hand's
  *   opaque ids, a shuffle re-issues the zone's ids when a card in it was seen since it was issued (the `exposed` set,
- *   rebuilt from the stored log after a reload), and an undo re-reveals own cards it brought back face down.
+ *   rebuilt from the stored log after a reload; after a catch-up from a snapshot or a rewind every own card counts as
+ *   seen), and an undo re-reveals own cards it brought back face down once the undo is sequenced.
  * - Joint randomness (DESIGN "Public randomness", "Secret shuffle" 2): this browser contributes its nonce to every
  *   round still waiting for it (also after a reload or reconnect), keeps the nonce of an open round in local storage
  *   (session/nonces.ts) and reuses it whenever it proposes again, and reveals its rng nonce once all commits are in.
@@ -56,7 +59,7 @@ import { createPrivateChannel } from '../net/private';
 import { applySequenced, seatOfPeer } from '../net/sequencer';
 import type { NetEngine, PrivateChannel, ResumePoint, Unsubscribe } from '../net/types';
 import type { LogRecord, TableStore } from '../store/types';
-import { DRY_CID, faceDownAllowed, placementOf, putBack, reRevealDraft, referencedCard, revealFor, sameOrder, SESSION_ONLY, turnsUpOnMove } from './effects';
+import { DRY_CID, FACE_DOWN_KINDS, faceDownAllowed, placementOf, putBack, reRevealDraft, referencedCard, sameOrder, SESSION_ONLY, turnsPublic, turnsUpOnMove, withProof } from './effects';
 import { localNonces, type NonceStore } from './nonces';
 import { TablePersistence } from './persist';
 import { randomId, randomSalt } from './secrecy';
@@ -177,6 +180,16 @@ class NetTable implements NetSession {
   private readonly sentRandomness = new Map<string, Action>();
   /** The private lists before an own action that changed them (reorder, re-issue, shuffle), restored when it is refused. */
   private readonly privateBefore = new Map<string, PrivateLists>();
+  /** Own actions that make an own hidden card public, by cid: once sequenced, the card is turned up verified (`turnUpDue`). */
+  private readonly turnUpAfter = new Map<string, { id: InstanceId; group?: string }>();
+  /** Own cards to turn up with ref and salt, whose public-making action is sequenced (id → the action's undo group). */
+  private readonly turnUpDue = new Map<InstanceId, string | undefined>();
+  /** Refused verified turn-ups by card: given up after ROUND_ATTEMPTS. */
+  private readonly turnUpRefusals = new Map<InstanceId, number>();
+  /** Undo re-reveals waiting for their undo to be sequenced, by the undo's cid. */
+  private readonly reRevealAfter = new Map<string, { reveals: UndoReveal[]; group?: string }>();
+  /** Undo re-reveals whose undo is sequenced. */
+  private reRevealDue: { reveal: UndoReveal; group?: string }[] = [];
   /** Targeted reveals to send on the pair channel once their public `revealTo` is sequenced. */
   private readonly revealsDue = new Map<string, { id: InstanceId; seats: SeatId[] }>();
   /** Refused own proposals by cid, with the reason (for the session's own waits). */
@@ -347,19 +360,23 @@ class NetTable implements NetSession {
     // A face-down card moved into a public zone that shows faces is turned up there, in one undo group with the move.
     const seat = this.seat;
     const turnUp = turnsUpOnMove(view, this.sec, seat, action);
-    const act = turnUp && action.group === undefined ? ({ ...action, group: randomId('g') } as Action) : action;
-    const reveal = revealFor(view, this.sec, seat, act, turnUp);
-    if (reveal && !this.propose(this.stamp(reveal))) return this.stamp(act);
+    const act = withProof(view, this.sec, seat, turnUp && action.group === undefined ? ({ ...action, group: randomId('g') } as Action) : action);
+    // An own card this action makes public goes down face down and is turned up, verified, once the action is
+    // sequenced (Hidden information 2): its identity never goes out with, or ahead of, an action that may be refused.
+    const publishes = turnsPublic(view, this.sec, seat, act, turnUp);
     const stamped = this.stamp(act);
     // Registered before proposing: the sequencer's own proposals come back sequenced inside `propose`.
+    if (publishes !== null) this.turnUpAfter.set(stamped.cid, { id: publishes, ...(act.group !== undefined ? { group: act.group } : {}) });
     if (stamped.type === 'revealTo' && this.ownHidden(stamped.instanceId)) this.revealsDue.set(stamped.cid, { id: stamped.instanceId, seats: [...stamped.seats] });
     if (stamped.type === 'rngCommit') this.sentRandomness.set(stamped.cid, stamped);
     const done = this.propose(stamped);
     if (!done) {
+      this.turnUpAfter.delete(stamped.cid);
       this.revealsDue.delete(stamped.cid);
       this.sentRandomness.delete(stamped.cid);
     }
-    if (done && turnUp) this.propose(this.stamp({ type: 'flip', card: referencedCard(act)!, face: 'up', ...(act.group !== undefined ? { group: act.group } : {}) }));
+    // A card whose identity is already public (or a labelled table object) is turned up at once: no secret goes out.
+    if (done && turnUp && publishes === null) this.propose(this.stamp({ type: 'flip', card: referencedCard(act)!, face: 'up', ...(act.group !== undefined ? { group: act.group } : {}) }));
     this.notify();
     return stamped;
   }
@@ -510,18 +527,21 @@ class NetTable implements NetSession {
       const { hand, library, reveals } = batch[i]!;
       const handPrior = this.sec.hand;
       const libraryPrior = this.sec.libraryOrder;
-      if (!this.propose(this.stamp(u), false)) return;
+      const stamped = this.stamp(u);
+      // A restore patch never puts a committed identity back: the owner re-reveals, verified against the commitment,
+      // once the undo is sequenced (a re-reveal sent ahead of an undo that is then refused would publish the card
+      // wherever it still is).
+      if (reveals.length) this.reRevealAfter.set(stamped.cid, { reveals, ...(group !== undefined ? { group } : {}) });
+      if (!this.propose(stamped, false)) {
+        this.reRevealAfter.delete(stamped.cid);
+        return;
+      }
       // Only the cards this step returns go back to their old places; the rest keep the current private order, so a
       // later scry or other private reorder is not undone with it (DESIGN "Turn flow and confirmation", Undo).
       this.setSecrets({ ...this.sec, hand: putBack(this.sec.hand, handPrior, hand) });
       const now = this.sec.libraryOrder;
       const target = putBack(now, libraryPrior, library);
       if (!sameOrder(now, target)) this.commitReorder(target, 1, group);
-      // A restore patch never puts a committed identity back: the owner re-reveals, verified against the commitment.
-      for (const r of reveals) {
-        const draft = reRevealDraft(this.engine.state(), this.sec, this.seat, r, group);
-        if (draft) this.propose(this.stamp(draft), false);
-      }
     });
     this.notify();
     return true;
@@ -736,6 +756,12 @@ class NetTable implements NetSession {
     }
     this.fold = next;
     if (exact) for (const id of disclosedBy(this.sec, prior, action, next)) this.exposed.add(id);
+    else if (next !== prior) {
+      // A catch-up from a snapshot or a rewound history skipped the actions in between, and with them any reveal, look
+      // or flip of an own card: every own card counts as seen, so the next shuffle re-issues its zone (an extra
+      // re-issue is harmless; a missed one would let a peer follow a card through the shuffle).
+      for (const [id, c] of Object.entries(next.cards)) if (c.owner === this.sec.seat) this.exposed.add(id);
+    }
     // The log: a rewound history replaces the entries from its first replaced seq on.
     const last = this.entries.findLastIndex((e) => e.kind === 'action');
     if (last >= 0 && this.entries[last]!.seq >= action.seq) this.entries = this.entries.filter((e) => e.kind !== 'action' || e.seq < action.seq);
@@ -760,6 +786,16 @@ class NetTable implements NetSession {
       if (canonicalJson(withoutSeq(sent)) !== canonicalJson(withoutSeq(action))) {
         this.system('warn', `Integrity warning: your ${action.type} came back from the sequencer changed (seq ${action.seq})`);
       }
+    }
+    const up = this.turnUpAfter.get(action.cid);
+    if (up) {
+      this.turnUpAfter.delete(action.cid);
+      this.turnUpDue.set(up.id, up.group);
+    }
+    const again = this.reRevealAfter.get(action.cid);
+    if (again) {
+      this.reRevealAfter.delete(action.cid);
+      for (const reveal of again.reveals) this.reRevealDue.push({ reveal, ...(again.group !== undefined ? { group: again.group } : {}) });
     }
     const due = this.revealsDue.get(action.cid);
     if (due) {
@@ -789,6 +825,9 @@ class NetTable implements NetSession {
     if (this.disposed || reason === NACK_DUPLICATE) return;
     this.refused.set(action.cid, reason);
     this.undoStack = this.undoStack.filter((e) => e.cid !== action.cid);
+    this.turnUpAfter.delete(action.cid);
+    this.reRevealAfter.delete(action.cid);
+    if (action.type === 'flip' && action.ref !== undefined) this.turnUpRefusals.set(action.card, (this.turnUpRefusals.get(action.card) ?? 0) + 1);
     this.revealsDue.delete(action.cid);
     this.sentRandomness.delete(action.cid);
     const lists = this.privateBefore.get(action.cid);
@@ -900,8 +939,58 @@ class NetTable implements NetSession {
         if (nonce === null || nonceHash(nonce) !== r.commits[me]) continue;
         this.contribute(`reveal:${rid}`, { type: 'rngReveal', rid, nonce });
       }
+      this.reRevealOwed(st, me);
+      this.turnUpOwed(st, me);
     }
     this.settleWaiters();
+  }
+
+  /** Whether own card `id` is public without an identity in the confirmed state and in the view, and this browser holds it. */
+  private publicWithoutIdentity(st: TableState, view: TableState, me: SeatId, id: InstanceId): boolean {
+    const c = Object.hasOwn(st.cards, id) ? st.cards[id]! : undefined;
+    const v = Object.hasOwn(view.cards, id) ? view.cards[id]! : undefined;
+    if (!c || !v || c.owner !== me || c.identity !== undefined || v.identity !== undefined) return false;
+    return st.zones[c.zone]?.visibility === 'public' && view.zones[v.zone]?.visibility === 'public' && Object.hasOwn(this.sec.identities, id);
+  }
+
+  /** The re-reveals of the own cards a sequenced undo brought back without identity, while they are still public. */
+  private reRevealOwed(st: TableState, me: SeatId): void {
+    const view = this.engine.state();
+    for (const { reveal, group } of this.reRevealDue.splice(0)) {
+      if (!this.publicWithoutIdentity(st, view, me, reveal.card)) continue;
+      const draft = reRevealDraft(view, this.sec, me, reveal, group);
+      if (draft) this.propose(this.stamp(draft), false);
+    }
+  }
+
+  /**
+   * Turn up, verified (`flip {face: 'up', ref, salt}`), every own card that is owed its identity (DESIGN "Multiplayer
+   * architecture", Hidden information 2; "Table model": only a battlefield and exile hold face-down cards): one an own
+   * action made public, once that action is sequenced, and one that lies face down in a public zone that shows faces
+   * (graveyard, stack, command), also when another seat moved it there. The flip needs a public card, so it fails
+   * closed when the card went back into a hidden zone meanwhile.
+   */
+  private turnUpOwed(st: TableState, me: SeatId): void {
+    const ids = new Set(this.turnUpDue.keys());
+    for (const [id, c] of Object.entries(st.cards)) {
+      const z = st.zones[c.zone];
+      if (c.owner === me && c.face === 'down' && c.identity === undefined && z?.visibility === 'public' && !FACE_DOWN_KINDS.has(z.kind)) ids.add(id);
+    }
+    if (!ids.size) return;
+    const view = this.engine.state();
+    const pending = this.engine.pending();
+    for (const id of [...ids].sort()) {
+      const group = this.turnUpDue.get(id);
+      if (!this.publicWithoutIdentity(st, view, me, id) || (this.turnUpRefusals.get(id) ?? 0) >= ROUND_ATTEMPTS) {
+        this.turnUpDue.delete(id);
+        continue;
+      }
+      if (pending.some((a) => (a.type === 'flip' && a.card === id && a.ref !== undefined) || (a.type === 'reveal' && a.instanceId === id))) continue;
+      this.turnUpDue.delete(id);
+      const secret = this.sec.identities[id]!;
+      const flip = this.stamp({ type: 'flip', card: id, face: 'up', ref: secret.card, salt: secret.salt, ...(group !== undefined ? { group } : {}) });
+      if (!this.propose(flip, false)) this.turnUpRefusals.set(id, (this.turnUpRefusals.get(id) ?? 0) + 1);
+    }
   }
 
   // --- Waiting ----------------------------------------------------------------------------------------------
@@ -1132,12 +1221,15 @@ async function loadSaved(store: TableStore | undefined, roomId: string): Promise
 /**
  * Join (or start) the table of `opts.roomId` and resolve once this browser holds a chair (PLAN M1-P8). The starting
  * point is the own save of the room, or the deterministic seq-0 table; the engine then reconciles with the room.
+ * Aborting `signal` before that leaves the room (engine and transport) and rejects.
  */
-export async function openNetSession(opts: NetSessionOptions, internals: NetSessionInternals = {}): Promise<NetTable> {
+export async function openNetSession(opts: NetSessionOptions, internals: NetSessionInternals = {}, signal?: AbortSignal): Promise<NetTable> {
   const saved = await loadSaved(opts.store, opts.roomId).catch(() => null);
+  if (signal?.aborted) throw cancelled();
   const fresh = freshNetTable(opts.game, opts.format ?? '1v1');
   const start: ResumePoint = saved?.start ?? { snapshot: { seq: 0, state: fresh }, tail: [] };
   const identity = await createNetIdentity(opts.identity.keyPair, opts.identity.peerId, opts.identity.nickname);
+  if (signal?.aborted) throw cancelled();
   const engine = createNetEngine({
     transport: opts.transport(),
     roomId: opts.roomId,
@@ -1157,15 +1249,39 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
     lastSeq: engine.confirmedState().seq,
   });
   try {
-    await engine.join();
+    await abortable(engine.join(), signal);
     if (!saved) session.saveBase();
     session.prefetch(session.knownSids());
-    await session.sitDown(internals.settleMs ?? SETTLE_MS, internals.seatTimeoutMs ?? SEAT_TIMEOUT_MS);
+    await abortable(session.sitDown(internals.settleMs ?? SETTLE_MS, internals.seatTimeoutMs ?? SEAT_TIMEOUT_MS), signal);
   } catch (e) {
     session.leave();
     throw e;
   }
   return session;
+}
+
+function cancelled(): Error {
+  return new Error('Joining the table was cancelled');
+}
+
+/** `p`, or a rejection as soon as `signal` aborts (a join through relays that never answer would otherwise never end). */
+function abortable<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(cancelled());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(cancelled());
+    signal.addEventListener('abort', onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(v);
+      },
+      (e: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(e instanceof Error ? e : new Error(String(e)));
+      },
+    );
+  });
 }
 
 /** Join or start the table of `opts.roomId` (PLAN M1-P8; session/types.ts CreateNetSession). */
