@@ -702,7 +702,14 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
         show(c);
       }
     }
-    for (const [key, el] of items) if (!seen.has(key)) el.style.display = 'none';
+    for (const [key, el] of items) {
+      if (seen.has(key)) continue;
+      // Badges of cards that left the table go for good; fixed labels and handles are only hidden.
+      if (key.startsWith('foil-')) {
+        el.remove();
+        items.delete(key);
+      } else el.style.display = 'none';
+    }
   }
 
   // --- Input ----------------------------------------------------------------------------------------------------
