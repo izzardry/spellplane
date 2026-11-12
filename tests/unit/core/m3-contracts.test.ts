@@ -172,8 +172,9 @@ describe('voice, captions and settings contracts', () => {
     expect(() => createVoice(host)).toThrow(/M3-P3/);
     expect(() => createCaptions(host)).toThrow(/M3-P4/);
     await expect(SPEECH_ENGINES.local.create()).rejects.toThrow(/M3-P4/);
-    expect(() => roleProblem(fresh(), act('chat', { text: 'x', channel: 'table' }), { role: 'spectator', peerId: 'p', seat: null })).toThrow(/M3-P5/);
-    expect(() => spectatorsOf([])).toThrow(/M3-P5/);
+    // M3-P5 implemented net/roles.ts (tests/unit/roles).
+    expect(roleProblem(fresh(), act('chat', { text: 'x', channel: 'table' }, 'v:p'), { role: 'spectator', peerId: 'p', seat: null })).toBeNull();
+    expect(spectatorsOf([])).toEqual([]);
     expect(() => createTeamChannel(host)).toThrow(/M3-P2/);
     expect(() => createTeamDraftDriver(host)).toThrow(/M3-P2/);
     expect(() => createTeamSealedDriver(host)).toThrow(/M3-P2/);

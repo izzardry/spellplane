@@ -9,6 +9,7 @@ import { ACTION_FAMILIES, type Action, type ActionType } from '../core/actions';
 import { explain, reduce } from '../core/reducer';
 import type { CoreGameSpec, SeatId, TableState } from '../core/types';
 import type { PeerRole, SequencedAction } from './messages';
+import { spectatorActionProblem } from './roles';
 import { NET_SNAPSHOT_EVERY, SYNC_TAIL_LIMIT, type PeerInfo, type ReceiveResult, type SequenceResult, type Sequencer, type SyncEngine } from './types';
 
 /** Sequenced actions a replica retains for catch-up (twice the tail limit, so a 500-action gap is still answered with a tail). */
@@ -155,10 +156,12 @@ class SequencerImpl implements Sequencer {
     if (typeof a.type !== 'string' || !Object.hasOwn(ACTION_FAMILIES, a.type)) return `unknown action type ${String(a.type)}`;
     if (typeof a.by !== 'string' || typeof a.cid !== 'string' || a.cid === '') return 'an action needs by and cid';
     if (a.restore !== undefined) return 'only the inverse inside an undo carries a restore patch';
-    const family = ACTION_FAMILIES[action.type];
     if (sender.role === 'spectator') {
-      if (family !== 'social') return `a spectator may not send ${action.type}`;
-      if (Object.hasOwn(state.seats, action.by)) return 'a spectator may not act for a seat';
+      // DESIGN "Players, seats and formats", Spectators: chat and ping only, never for a seat (net/roles.ts; M3-P5).
+      // That `by` is the sender's own spectator id and its chat name its handshake nickname needs the sender's
+      // identity, which the engine checks before it calls `sequence` (net/engine.ts `senderPeerCheck`).
+      const why = spectatorActionProblem(state, action);
+      if (why !== null) return why;
     } else if (sender.seat === null) {
       // An unseated player can only take a chair (DESIGN "Players, seats and formats").
       if (action.type !== 'seatTake') return `take a seat before sending ${action.type}`;

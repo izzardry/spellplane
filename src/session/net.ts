@@ -66,6 +66,7 @@ import { createNetEngine, NACK_DUPLICATE } from '../net/engine';
 import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
 import { createPrivateChannel } from '../net/private';
+import { spectatorRevealSender } from '../net/roles';
 import { applySequenced, seatOfPeer } from '../net/sequencer';
 import type { NetEngine, PrivateChannel, ResumePoint, Unsubscribe } from '../net/types';
 import type { LogRecord, TableStore } from '../store/types';
@@ -359,6 +360,8 @@ class NetTable implements NetSession, SessionRecovery {
         if (this.collision()) queueMicrotask(() => void this.rejoin());
       }),
       engine.onSequencerChange(() => this.netChanged()),
+      // A reveal to named spectators (M3-P5, net/roles.ts).
+      spectatorRevealSender(engine, () => this.sec),
       this.channel.onIdentity((card, from, verified) => {
         if (!verified) {
           this.system('warn', `Integrity warning: ${from} showed this browser card ${card.instanceId}, and it does not match ${from}'s deck commitment`);
@@ -1922,6 +1925,8 @@ async function loadSaved(store: TableStore | undefined, roomId: string): Promise
  * Aborting `signal` before that leaves the room (engine and transport) and rejects.
  */
 export async function openNetSession(opts: NetSessionOptions, internals: NetSessionInternals = {}, signal?: AbortSignal): Promise<NetTable> {
+  // A spectator takes no chair: session/spectator.ts openSpectatorSession (M3-P5).
+  if (opts.role === 'spectator') throw new Error('a spectator joins with openSpectatorSession (session/spectator.ts)');
   const saved = await loadSaved(opts.store, opts.roomId).catch(() => null);
   if (signal?.aborted) throw cancelled();
   const fresh = freshNetTable(opts.game, opts.format ?? '1v1');

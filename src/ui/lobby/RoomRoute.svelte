@@ -1,6 +1,8 @@
 <!--
   The `#/t/<room>/<key>` route (PLAN M1-P5, M1-P8): the networked table (TableRoom: lobby, then the HUD) once a session
-  for the room is at hand, otherwise a page saying what is happening. The session is main.ts's (AppProps.session when
+  for the room is at hand, otherwise a page saying what is happening. With `/watch` appended (M3-P5; DESIGN "Players,
+  seats and formats", Spectators: "joins by the same link without taking a chair") the page joins as a spectator; a
+  player's join that fails or takes long offers to watch instead. The session is main.ts's (AppProps.session when
   its roomId matches this room), or the one `app.openRoom` (main.ts, see RoomOpener) joins for this link; the route leaves a session it
   opened when it goes away. The share link is AppProps.link when main.ts hands one for this room, else it is derived
   from the fragment.
@@ -12,6 +14,7 @@
   import TableRoom from './TableRoom.svelte';
   import { CONNECT_CHECK_MS, RELAYS_TEXT } from './connectivity';
   import { pageBase, parseRoomLink } from './room';
+  import { parseRoute, routeHash } from '../routes';
   import { lobbyStores } from './start';
 
   /**
@@ -19,10 +22,17 @@
    * transport). Handed by main.ts next to AppProps and declared here, not in the ui/types.ts contract (decision M1-P8):
    * the integrator may take it into AppProps.
    */
-  type RoomOpener = { openRoom?: (link: RoomLink) => Promise<NetSession> };
+  type RoomOpener = { openRoom?: (link: RoomLink, as?: { watch?: boolean }) => Promise<NetSession> };
   let { app, room: roomId, roomKey, cssVars }: { app: Partial<AppProps> & RoomOpener; room: string; roomKey: string; cssVars: string } = $props();
 
   type RoomView = { session: TableSession; link: RoomLink; identity: IdentityStore; decks: DeckStore };
+  /** Whether the fragment is this room's spectator link (`#/t/<room>/<key>/watch`); App keys this route by room and key only. */
+  const watchingIn = (hash: string): boolean => {
+    const r = parseRoute(hash);
+    return r.name === 'room' && r.room === roomId && r.key === roomKey && r.watch === true;
+  };
+  let watching = $state(typeof location === 'undefined' ? false : watchingIn(location.hash));
+  const watchHash = $derived(routeHash({ name: 'room', room: roomId, key: roomKey, watch: true }));
   const link = $derived.by((): RoomLink | null => {
     const given = app.link;
     if (given && given.roomId === roomId && given.roomKey === roomKey) return given;
@@ -39,7 +49,9 @@
   $effect(() => {
     const l = link;
     if (!l) return;
-    const given = app.session;
+    const watch = watching;
+    // main.ts hands a seated session only; a spectator's page always joins the room itself.
+    const given = watch ? undefined : app.session;
     const openRoom = app.openRoom;
     if (!(given && given.roomId === l.roomId) && !openRoom) return;
     let cancelled = false;
@@ -49,7 +61,7 @@
     const session: Promise<TableSession> =
       given && given.roomId === l.roomId
         ? Promise.resolve(given)
-        : openRoom!(l).then((s) => {
+        : openRoom!(l, { watch }).then((s) => {
             if (cancelled) s.leave();
             else opened = s;
             return s;
@@ -86,6 +98,8 @@
   });
 </script>
 
+<svelte:window onhashchange={() => (watching = watchingIn(location.hash))} />
+
 {#if room && app.createScene && app.faces && app.cardData && app.game}
   <div class="fill" style={cssVars} data-testid="route-room">
     {#key room}
@@ -110,10 +124,12 @@
     {#if !link}
       <p role="alert">This is not a valid table link: the key at its end should be 22 letters, digits, dashes or underscores. Ask for the link again.</p>
     {:else if joinState === 'joining'}
-      <p role="status" data-testid="room-joining">Joining the table…</p>
+      <p role="status" data-testid="room-joining">{watching ? 'Joining the table as a spectator…' : 'Joining the table…'}</p>
       {#if joinSlow}<p role="alert" data-testid="connectivity-problem">{RELAYS_TEXT}</p>{/if}
+      {#if !watching}<p><a href={watchHash} data-testid="watch-instead">Watch without taking a chair</a></p>{/if}
     {:else if joinState === 'failed'}
       <p role="alert" data-testid="room-error">Could not join this table: {error}</p>
+      {#if !watching}<p><a href={watchHash} data-testid="watch-instead">Watch this table as a spectator</a></p>{/if}
     {:else}
       <p>This page cannot join tables.</p>
     {/if}
