@@ -246,7 +246,7 @@ describe.each(LAYOUTS)('$name: zone placement within a territory, in the owner o
 
 const ALL_LAYOUTS: { name: string; layout: () => TableLayout }[] = [
   ...LAYOUTS,
-  ...(['ffa3', 'ffa4', '2hg'] as const).map((f) => ({ name: `${f} (provisional)`, layout: () => mtg.layout(f) })),
+  ...(['ffa3', 'ffa4', '2hg'] as const).map((f) => ({ name: f, layout: () => mtg.layout(f) })),
 ];
 
 describe.each(ALL_LAYOUTS)('$name: the stack lane and the hand rows never cover a battlefield', ({ layout }) => {
@@ -362,7 +362,7 @@ describe('the territory and anchors are canonical-frame positions in plain JSON'
   });
 });
 
-describe('provisional multi-seat layouts (M3-P1) do not crash and follow the spec table', () => {
+describe('multi-seat layouts follow the spec table (settled by M3-P1; its own tests are in tests/unit/layout)', () => {
   const cases: { format: Format; table: { w: number; d: number }; angles: number[]; laneDepth: number }[] = [
     { format: 'ffa3', table: { w: 2000, d: 1300 }, angles: [0, 180, 180], laneDepth: 320 },
     { format: 'ffa4', table: { w: 1800, d: 1800 }, angles: [0, 90, 180, 270], laneDepth: 320 },
@@ -370,7 +370,7 @@ describe('provisional multi-seat layouts (M3-P1) do not crash and follow the spe
   ];
   it.each(cases)('$format', ({ format, table, angles, laneDepth }) => {
     const l = mtg.layout(format);
-    expect(isProvisionalLayout(l)).toBe(true);
+    expect(isProvisionalLayout(l)).toBe(false);
     expect(l.format).toBe(format);
     expect(l.table).toEqual(table);
     expect(l.seats.map((s) => s.angle)).toEqual(angles);
@@ -380,9 +380,8 @@ describe('provisional multi-seat layouts (M3-P1) do not crash and follow the spe
       for (const p of territoryPieces(s)) expect(inside(s.territory, p.rect), `${format} seat ${s.index} ${p.name}`).toBe(true);
       for (const o of l.seats) {
         if (o === s) continue;
-        // The spec's four-player numbers (1100 x 440 centred on each side of 1800) overlap 90 x 90 at the corners;
-        // M3-P1 settles that. Even there, no seat's piles, command area or hand row reach into another territory.
-        if (format !== 'ffa4') expect(overlaps(s.territory, o.territory)).toBe(false);
+        // The four-player territories are shifted toward their owners' right (a pinwheel), so none overlap.
+        expect(overlaps(s.territory, o.territory)).toBe(false);
         for (const p of seatPieces(s)) expect(overlaps(p.rect, o.territory), `${format} seat ${s.index} ${p.name} in seat ${o.index}`).toBe(false);
       }
       // Each viewer still sees their own seat at the bottom.

@@ -651,6 +651,7 @@
           onlife={(delta) => session.dispatch({ type: 'life', seat: seat.id, delta })}
           oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: seat.id, kind, delta })}
           onopenzone={openViewer}
+          ongoto={() => scene?.camera.goToSeat(seat.id)}
         />
       {/each}
     </div>
@@ -715,6 +716,7 @@
           onlife={(delta) => session.dispatch({ type: 'life', seat: me, delta })}
           oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: me, kind, delta })}
           onopenzone={openViewer}
+          ongoto={() => scene?.camera.goToSeat(me)}
         />
       </div>
     {/if}

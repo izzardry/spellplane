@@ -18,6 +18,7 @@
     onlife,
     oncounter,
     onopenzone,
+    ongoto,
   }: {
     seat: Seat;
     life: number;
@@ -31,6 +32,8 @@
     onlife: (delta: number) => void;
     oncounter: (kind: string, delta: number) => void;
     onopenzone: (zone: ZoneId) => void;
+    /** Added by M3-P1: a tap on the name moves the camera to this seat (DESIGN "Camera and navigation": go to another seat, tap an avatar). */
+    ongoto?: () => void;
   } = $props();
 
   let editing = $state<string | null>(null);
@@ -71,7 +74,11 @@
   aria-label="{seat.name}{me ? ' (you)' : ''}{seat.away ? ' (away)' : ''}" style:--seat="var(--sp-seat-{seat.colour}, #111)">
   <header>
     <span class="glyph {glyph}" aria-hidden="true"></span>
-    <span class="name">{seat.name}</span>
+    {#if ongoto}
+      <button type="button" class="name goto" data-testid="avatar-goto" title="Go to {me ? 'your' : 'this'} seat" onclick={ongoto}>{seat.name}</button>
+    {:else}
+      <span class="name">{seat.name}</span>
+    {/if}
     {#if seat.away}<span class="tag away-tag" data-testid="away" title="Disconnected: public cards stay; hand and library are unavailable until this player returns">away</span>{/if}
     {#if active}<span class="tag" title="Active player">turn</span>{/if}
     {#if responding}<span class="tag" data-testid="responding">responding</span>{/if}
@@ -178,6 +185,20 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .goto {
+    background: none;
+    border: 0;
+    padding: 0;
+    min-width: 0;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+    font-weight: var(--sp-font-weight-bold, 600);
+    cursor: pointer;
+  }
+  .goto:hover {
+    text-decoration: underline;
   }
   .tag {
     font-variant: small-caps;

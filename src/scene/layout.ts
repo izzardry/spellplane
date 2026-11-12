@@ -275,7 +275,7 @@ export function dropTargets(state: TableState, layout: TableLayout, angle: numbe
       if (a && state.zones[id]) out.push({ zone: id, rect: { x: a.x, y: a.y, w: CARD_W, d: CARD_H, rot: a.rot } });
     }
     const hand = game.zones.find((z) => z.presentation === 'fan');
-    if (hand && state.zones[`${hand.id}:${seat.id}`]) out.push({ zone: `${hand.id}:${seat.id}`, circle: { x: sl.zones.avatar.x, y: sl.zones.avatar.y, r: 30 } });
+    if (hand && state.zones[`${hand.id}:${seat.id}`]) out.push({ zone: `${hand.id}:${seat.id}`, circle: { x: sl.zones.avatar.x, y: sl.zones.avatar.y, r: AVATAR_SPOT_R } });
   }
   const stack = game.zones.find((z) => z.presentation === 'cascade-lane');
   if (stack && state.zones[stack.id]) out.push({ zone: stack.id, rect: { ...layout.stackLane, rot: layout.stackLane.rot + angle } });
@@ -321,14 +321,41 @@ export function pileLabelPlace(sl: SeatLayout, a: Pose, angle: number): { x: num
   return { x: a.x + lx, y: a.y + ly, rot: angle, anchorX: 'center', anchorY: 'middle' };
 }
 
-/** Hairline zone outlines and their labels (Paper: "zones are hairline outlines with small caps labels"). */
-export function markings(layout: TableLayout, game: GameDefinition, angle: number, seatsInUse: number): Marking {
+/**
+ * Radius of a seat's avatar spot on the table, mm: outside its territory's near edge, centred (DESIGN "Specification:
+ * geometry, layout and motion", Tables and seats). Attack and target lines to a player end there, a tap on it goes to
+ * that seat, and a card dropped on it goes to that player's hand.
+ */
+export const AVATAR_SPOT_R = 30;
+
+/** A circle as segments of `out` ([x1, y1, x2, y2] in mm). */
+const circleSegments = (c: { x: number; y: number }, r: number, out: number[], n = 40) => {
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * Math.PI * 2;
+    const a1 = ((i + 1) / n) * Math.PI * 2;
+    out.push(c.x + Math.cos(a0) * r, c.y + Math.sin(a0) * r, c.x + Math.cos(a1) * r, c.y + Math.sin(a1) * r);
+  }
+};
+
+/**
+ * Hairline zone outlines and their labels (Paper: "zones are hairline outlines with small caps labels"), plus each
+ * seat's avatar spot as a ring with the player's name under it, upright for the viewer (M3-P1: with three or four
+ * seats a line to a player needs a visible end). `names` are by seat index; an empty name draws the ring alone.
+ */
+export function markings(layout: TableLayout, game: GameDefinition, angle: number, seatsInUse: number, names: readonly string[] = []): Marking {
   const segments: number[] = [];
   const labels: Marking['labels'] = [];
   rectSegments({ x: 0, y: 0, w: layout.table.w, d: layout.table.d, rot: 0 }, segments);
   const label = (s: string) => s.toUpperCase();
   layout.seats.slice(0, Math.max(1, seatsInUse)).forEach((sl, i) => {
     rectSegments(sl.territory, segments);
+    const av = sl.zones.avatar;
+    circleSegments(av, AVATAR_SPOT_R, segments);
+    const name = (names[sl.index] ?? '').trim();
+    if (name) {
+      // Inside the ring, upright for the viewer.
+      labels.push({ key: `av:${sl.index}`, text: name.slice(0, 12), x: av.x, y: av.y, rot: angle, anchorX: 'center', anchorY: 'middle' });
+    }
     for (const z of game.zones) {
       if (z.scope !== 'seat' || z.presentation !== 'squared') continue;
       const a = pileAnchor(sl, z.id);
