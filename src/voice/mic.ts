@@ -86,7 +86,8 @@ export function cleanTalk(raw: unknown): TalkSettings {
   const dictation = typeof r.dictation === 'boolean' ? r.dictation : DEFAULT_TALK.dictation;
   if (!voice && !dictation) voice = true;
   const muted = typeof r.muted === 'boolean' ? r.muted : false;
-  const mouseButton = typeof r.mouseButton === 'number' && Number.isInteger(r.mouseButton) && r.mouseButton >= 0 ? r.mouseButton : null;
+  // Left, middle and right stay for the table (select, inspect and pan, menus): only the extra buttons can talk.
+  const mouseButton = typeof r.mouseButton === 'number' && Number.isInteger(r.mouseButton) && r.mouseButton >= 3 ? r.mouseButton : null;
   return { gate, voice, dictation, muted, mouseButton };
 }
 
@@ -385,6 +386,8 @@ class Voice implements VoiceControls {
     this.source = null;
     this.micStream = null;
     this.recompute();
+    // The talk state may not change (the gate was closed), but joined did: the indicator offers "Join voice" again.
+    this.emit();
   };
 
   async devices(): Promise<MediaDeviceInfo[]> {
@@ -406,7 +409,8 @@ class Voice implements VoiceControls {
     await this.host.settings.set('micDevice', id).catch(() => undefined);
     if (!this.source || this.disposed) return;
     const stream = await this.acquire(id);
-    if (this.disposed) {
+    // A later pick (or a lost microphone) overtook this one while it was asked for: the newer choice wins.
+    if (this.disposed || this.chosenDevice !== id || !this.source) {
       for (const t of stream.getTracks()) t.stop();
       return;
     }

@@ -65,6 +65,8 @@ export class FakeMedia {
   /** Device ids that are gone (OverconstrainedError). */
   readonly missing = new Set<string>();
   refuse: string | null = null;
+  /** When set, getUserMedia waits for this per device id (null: the default device) before it resolves. */
+  hold: ((device: string | null) => Promise<void>) | null = null;
   devices: { kind: string; deviceId: string; label: string; groupId: string }[] = [
     { kind: 'audioinput', deviceId: 'default', label: 'Default', groupId: 'g' },
     { kind: 'audioinput', deviceId: 'usb', label: 'USB mic', groupId: 'g2' },
@@ -78,6 +80,7 @@ export class FakeMedia {
     if (exact && this.missing.has(exact)) return Promise.reject(Object.assign(new Error('gone'), { name: 'OverconstrainedError' }));
     const s = new FakeStream([new FakeTrack(exact)]);
     this.streams.push(s);
+    if (this.hold) return this.hold(exact).then(() => s as unknown as MediaStream);
     return Promise.resolve(s as unknown as MediaStream);
   };
   enumerateDevices = (): Promise<MediaDeviceInfo[]> => Promise.resolve(this.devices as unknown as MediaDeviceInfo[]);

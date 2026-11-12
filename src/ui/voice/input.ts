@@ -27,14 +27,25 @@ export function focusKind(el: unknown): { text: boolean; note: boolean } {
   return isNoteField(el) ? { text: false, note: true } : { text: true, note: false };
 }
 
-/** A keymap talk action from the HUD's KeyEngine, mapped onto the controller. */
-export function runTalkAction(voice: VoiceControls, action: 'talk' | 'teamTalk' | 'mute', phase: 'start' | 'end'): void {
+/**
+ * A keymap talk action from the HUD's KeyEngine, mapped onto the controller. A press first re-reads what has focus
+ * (`doc.activeElement`; skipped without a document): a text or note field removed from the page without a focusout must
+ * not leave a stale flag.
+ */
+export function runTalkAction(
+  voice: VoiceControls,
+  action: 'talk' | 'teamTalk' | 'mute',
+  phase: 'start' | 'end',
+  doc: Pick<Document, 'activeElement'> | null = typeof document === 'undefined' ? null : document,
+): void {
   if (action === 'mute') {
     if (phase === 'start') voice.toggleMute();
     return;
   }
-  if (phase === 'start') voice.keyDown(action === 'teamTalk');
-  else voice.keyUp();
+  if (phase === 'start') {
+    if (doc) voice.focus(focusKind(doc.activeElement));
+    voice.keyDown(action === 'teamTalk');
+  } else voice.keyUp();
 }
 
 /**
@@ -64,6 +75,7 @@ export function attachTalkInput(voice: VoiceControls, win: Window = window): () 
     if (b === null || e.button !== b) return;
     e.preventDefault();
     buttonHeld = true;
+    fromFocus(doc.activeElement);
     voice.keyDown(e.shiftKey);
   };
   const onMouseUp = (e: MouseEvent): void => {

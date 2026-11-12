@@ -215,10 +215,17 @@ test.describe('voice on Chromium fake media (PLAN M3-P3)', () => {
     await expect.poll(() => picker.locator('option').count()).toBeGreaterThan(1);
     const id = await picker.locator('option').nth(1).getAttribute('value');
     expect(id).toBeTruthy();
+    await picker.focus();
     await picker.selectOption(id!);
     await expect.poll(async () => (await vh<SentStream[]>(page, 'sent')).filter((s) => s.removed).length).toBe(3);
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
     expect(await vh<{ name: string; value: unknown }[]>(page, 'settingsWrites')).toContainEqual({ name: 'micDevice', value: id });
+    // The picker lets go of focus after a choice (a focused select would swallow V): the talk key works at once.
+    await expect(picker).not.toBeFocused();
+    await page.keyboard.down('v');
+    await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
+    await page.keyboard.up('v');
+    await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
     await toTable(page);
     await page.keyboard.down('v');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);

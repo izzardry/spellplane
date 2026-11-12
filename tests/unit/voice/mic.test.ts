@@ -373,6 +373,51 @@ describe('device picker', () => {
     await v.join();
     expect(fake.enabledTo('t1')).toBe(true);
   });
+
+  it('a microphone lost while the gate is closed tells the subscribers, so the indicator offers joining again', async () => {
+    const fake = new FakeHost({ state: table('1v1') });
+    const v = await voiceOver(fake);
+    expect(v.indicator()).toBe('idle');
+    const seen: string[] = [];
+    v.subscribe(() => seen.push(`${v.joined}:${v.indicator()}`));
+    (fake.media.streams[0]!.getAudioTracks()[0] as unknown as { end(): void }).end();
+    expect(seen).toEqual(['false:noMic']);
+  });
+
+  it('two quick device picks: the later one wins even when the earlier one is granted last', async () => {
+    const fake = new FakeHost({ state: table('1v1') });
+    const v = await voiceOver(fake);
+    v.keyDown(false);
+    const release = new Map<string | null, () => void>();
+    fake.media.hold = (device) => new Promise<void>((r) => release.set(device, r));
+    const a = v.setDevice('usb');
+    await settle();
+    const b = v.setDevice(null);
+    await settle();
+    release.get(null)!();
+    await b;
+    release.get('usb')!();
+    await a;
+    expect(v.device()).toBeNull();
+    expect(fake.settings.values.micDevice).toBeNull();
+    const live = fake.sentTo('t1')!.getAudioTracks()[0] as unknown as { deviceId: string | null };
+    expect(live.deviceId).toBeNull();
+    // The overtaken pick's microphone is released.
+    const usb = fake.media.streams.find((st) => (st.getAudioTracks()[0] as unknown as { deviceId: string | null }).deviceId === 'usb')!;
+    expect(usb.getAudioTracks()[0]!.readyState).toBe('ended');
+    expect(fake.enabledTo('t1')).toBe(true);
+  });
+
+  it('only the extra mouse buttons can talk: left, middle and right stay for the table', async () => {
+    const fake = new FakeHost({ state: table('1v1') });
+    const v = await voiceOver(fake);
+    for (const b of [0, 1, 2]) {
+      await v.setTalk({ mouseButton: b });
+      expect(v.talk().mouseButton).toBeNull();
+    }
+    await v.setTalk({ mouseButton: 4 });
+    expect(v.talk().mouseButton).toBe(4);
+  });
 });
 
 describe('incoming audio: per-player volume and mute', () => {

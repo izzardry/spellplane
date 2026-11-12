@@ -8,10 +8,9 @@ export const GATES: readonly { gate: TalkSettings['gate']; label: string; hint: 
   { gate: 'open', label: 'Open mic', hint: 'The mic is always open; M mutes it.' },
 ];
 
-/** Mouse buttons that can be the talk button (MouseEvent.button); left and right stay for the table. */
+/** Mouse buttons that can be the talk button (MouseEvent.button); left, middle (inspect, pan) and right stay for the table. */
 export const TALK_BUTTONS: readonly { button: number | null; label: string }[] = [
   { button: null, label: 'None' },
-  { button: 1, label: 'Middle button' },
   { button: 3, label: 'Back button' },
   { button: 4, label: 'Forward button' },
 ];

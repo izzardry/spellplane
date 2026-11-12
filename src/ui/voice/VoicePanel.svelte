@@ -92,7 +92,11 @@
 
   <label class="row">
     Microphone
-    <select data-testid="mic-device" value={device} onchange={(e) => chooseDevice(e.currentTarget.value)}>
+    <select data-testid="mic-device" value={device} onchange={(e) => {
+        chooseDevice(e.currentTarget.value);
+        // A focused select counts as a text field (the talk key is ignored there) and would take V to pick an option.
+        e.currentTarget.blur();
+      }}>
       <option value="">Default microphone</option>
       {#each devices as d, i (d.deviceId || i)}
         {#if d.deviceId && d.deviceId !== 'default'}
@@ -105,7 +109,10 @@
 
   <label class="row">
     Talk mouse button
-    <select data-testid="talk-button" value={talk.mouseButton === null ? '' : String(talk.mouseButton)} onchange={(e) => void voice.setTalk({ mouseButton: e.currentTarget.value === '' ? null : Number(e.currentTarget.value) })}>
+    <select data-testid="talk-button" value={talk.mouseButton === null ? '' : String(talk.mouseButton)} onchange={(e) => {
+        void voice.setTalk({ mouseButton: e.currentTarget.value === '' ? null : Number(e.currentTarget.value) });
+        e.currentTarget.blur();
+      }}>
       {#each TALK_BUTTONS as b (b.label)}
         <option value={b.button === null ? '' : String(b.button)}>{b.label}</option>
       {/each}

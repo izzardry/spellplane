@@ -90,6 +90,34 @@ describe('attachTalkInput', () => {
     expect(voice.state()).toMatchObject({ audio: 'off', dictation: 'field' });
   });
 
+  it('a press re-reads the focused element: a field removed without a focusout leaves no stale flag', async () => {
+    const { voice, win, doc, fire } = await setup();
+    // A text field took focus, then was removed from the page without a focusout.
+    fire(win, 'focusin', { target: el('INPUT') });
+    doc.activeElement = null;
+    runTalkAction(voice, 'talk', 'start', doc as unknown as Document);
+    expect(voice.state().audio).toBe('all');
+    runTalkAction(voice, 'talk', 'end', doc as unknown as Document);
+    // A note field that went away the same way: the key is push-to-talk again, not note dictation.
+    fire(win, 'focusin', { target: el('INPUT', { note: true }) });
+    runTalkAction(voice, 'talk', 'start', doc as unknown as Document);
+    expect(voice.state()).toMatchObject({ audio: 'all', dictation: 'off' });
+    runTalkAction(voice, 'talk', 'end', doc as unknown as Document);
+    // The focused element itself still counts: a chat field that has focus ignores the key.
+    doc.activeElement = el('INPUT');
+    runTalkAction(voice, 'talk', 'start', doc as unknown as Document);
+    expect(voice.state().audio).toBe('off');
+  });
+
+  it('the talk mouse button re-reads the focused element too', async () => {
+    const { voice, win, doc, fire } = await setup();
+    await voice.setTalk({ mouseButton: 3 });
+    fire(win, 'focusin', { target: el('INPUT') });
+    doc.activeElement = null;
+    fire(win, 'mousedown', { button: 3, shiftKey: false });
+    expect(voice.state().audio).toBe('all');
+  });
+
   it('the configured mouse button talks while held (Shift for team talk); other buttons do nothing', async () => {
     const { fake, voice, win, fire } = await setup();
     fire(win, 'mousedown', { button: 3, shiftKey: false });

@@ -35,7 +35,8 @@ export const talkState: TalkStateFn = (i: TalkInputs): TalkState => {
     return { audio: gateAudio ? 'all' : 'off', dictation: 'field', reason: 'key', muted: false };
   }
   if (keyLive && i.teamKey) {
-    if (!i.hasTeammate || !canAudio) return close(gateAudio, gateCaption, gateReason);
+    // The gate's caption is public: it stays off while the team key is held, with or without a microphone.
+    if (!i.hasTeammate || !canAudio) return close(gateAudio, false, gateReason);
     return { audio: 'team', dictation: 'off', reason: 'key', muted: false };
   }
   if (keyLive) {

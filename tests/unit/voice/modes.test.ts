@@ -95,6 +95,23 @@ describe('team talk (Shift plus the talk key)', () => {
 
   it('without a teammate opens nothing, so words meant for a partner never reach the table', () => {
     expect(talkState(inputs({ keyHeld: true, teamKey: true, hasTeammate: false }, { dictation: true }))).toEqual(TALK_CLOSED);
+    // Turn mic with captions on the own turn: the held team key never lets the public caption through, joined or not.
+    const turnCaptions = { gate: 'turn', dictation: true } as const;
+    for (const micReady of [true, false]) {
+      for (const voice of [true, false]) {
+        for (const hasTeammate of [true, false]) {
+          const s = talkState(inputs({ keyHeld: true, teamKey: true, hasTeammate, ownTurn: true, micReady }, { ...turnCaptions, voice }));
+          expect(s.dictation).toBe('off');
+          // With a teammate, the turn mic's audio narrows to the team (or stays shut without a microphone).
+          if (hasTeammate) expect(s.audio).not.toBe('all');
+        }
+      }
+    }
+    // Without the microphone (not joined, or voice off) it opens nothing at all.
+    expect(talkState(inputs({ keyHeld: true, teamKey: true, hasTeammate: true, ownTurn: true, micReady: false }, turnCaptions))).toEqual(TALK_CLOSED);
+    expect(talkState(inputs({ keyHeld: true, teamKey: true, hasTeammate: true, ownTurn: true }, { ...turnCaptions, voice: false }))).toEqual(TALK_CLOSED);
+    // Released, the turn mic's caption is back.
+    expect(talkState(inputs({ ownTurn: true, micReady: false }, turnCaptions)).dictation).toBe('caption');
     // The gate that is open anyway stays open.
     expect(talkState(inputs({ keyHeld: true, teamKey: true, hasTeammate: false }, { gate: 'open' })).audio).toBe('all');
   });
