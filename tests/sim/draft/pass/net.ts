@@ -169,7 +169,7 @@ export function randomBot(seed: number): (s: PassSeat) => void {
     if (s.idle) return;
     const v = s.driver.view();
     if (v.pack === null || v.picks === 0 || rand() < 0.5) return;
-    let chosen = v.marked.length === v.picks ? [...v.marked] : [];
+    const chosen = v.marked.length === v.picks ? [...v.marked] : [];
     if (chosen.length === 0) {
       const ids = v.pack.cards.map((c) => c.id);
       while (chosen.length < v.picks) {

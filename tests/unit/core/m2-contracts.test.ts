@@ -145,8 +145,9 @@ describe('lobby settings', () => {
 describe('draft actions route to their packages', () => {
   it('pass formats to M2-P2, open formats to M2-P3', () => {
     const s = fresh();
-    no(s, act('packOpen', { packId: 'p', commits: [], count: 0 }), /M2-P2/);
-    no(s, act('draftTimeout', { packId: 'p', picks: 0 }), /M2-P2/);
+    // Updated by M2-P2 (the stubs named their package): the pass-format reducer refuses outside a draft.
+    no(s, act('packOpen', { packId: 'p', commits: [], count: 0 }), /no draft/);
+    no(s, act('draftTimeout', { packId: 'p', picks: 0 }), /no draft/);
     // The open-format reducers (M2-P3) refuse outside a draft of their format.
     no(s, act('pileLook', { pile: 0, take: true }), /no draft/);
     no(s, act('gridTake', { grid: 0, line: 'row', index: 0 }), /no draft/);
