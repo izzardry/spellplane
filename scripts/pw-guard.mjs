@@ -6,7 +6,8 @@
 //  - a watchdog aborts the run as soon as macOS shows an interactive prompt (SecurityAgent, e.g.
 //    a keychain "allow access" dialog, or UserNotificationCenter, e.g. a privacy or local-network
 //    "allow" alert): every test would hang on it and Playwright would keep relaunching browsers
-//    behind the modal. No run starts while such a prompt is open;
+//    behind the modal. No run starts while such a prompt is open. Only a prompt process with a window on
+//    screen counts (the processes can linger without one);
 //  - a memory watchdog aborts the run when the machine runs short of memory (kern.memorystatus_level
 //    below SPELLPLANE_PW_MIN_FREE_PCT, default 25) or the run's own processes grow past
 //    SPELLPLANE_PW_MAX_RSS_MB (default: a third of physical memory), instead of letting browsers
@@ -82,10 +83,38 @@ function readOwner(dir = LOCK) {
 // Processes that exist only while macOS shows a modal alert waiting for a click.
 const PROMPT_PROCESSES = ['SecurityAgent', 'UserNotificationCenter'];
 
-/** The name of the prompt process macOS is showing, or null. */
+// Owners of the windows on screen, via CGWindowListCopyWindowInfo (JXA; needs no accessibility permission).
+const WINDOW_OWNERS_JXA = [
+  "ObjC.import('CoreGraphics');",
+  'const l = ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, 0));',
+  'const n = [];',
+  "for (let i = 0; i < l.count; i++) n.push(ObjC.unwrap(l.objectAtIndex(i).objectForKey('kCGWindowOwnerName')));",
+  'JSON.stringify(n);',
+].join('\n');
+
+/** Names of the processes owning on-screen windows, or null if that cannot be determined. */
+function onScreenWindowOwners() {
+  const r = spawnSync('osascript', ['-l', 'JavaScript', '-e', WINDOW_OWNERS_JXA], { encoding: 'utf8', timeout: 5000 });
+  if (r.status !== 0) return null;
+  try {
+    return JSON.parse(r.stdout);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The name of the prompt process macOS is showing, or null. The processes can linger without a window
+ * (seen for 45 minutes after a crash), so a running process counts only while it has a window on screen;
+ * if the windows cannot be listed, a running process counts.
+ */
 function securityPromptShowing() {
   if (process.platform !== 'darwin') return null;
-  return PROMPT_PROCESSES.find((name) => spawnSync('pgrep', ['-x', name]).status === 0) ?? null;
+  const running = PROMPT_PROCESSES.filter((name) => spawnSync('pgrep', ['-x', name]).status === 0);
+  if (running.length === 0) return null;
+  const owners = onScreenWindowOwners();
+  if (owners === null) return running[0];
+  return running.find((name) => owners.includes(name)) ?? null;
 }
 
 const MIN_FREE_PCT = Number(process.env.SPELLPLANE_PW_MIN_FREE_PCT ?? 25);
