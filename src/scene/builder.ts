@@ -532,6 +532,8 @@ interface RCard {
 
 const DRAG_THRESHOLD_PX = 4;
 const LONG_PRESS_MS = 500;
+/** Longest gap between the clicks of a double-click the surface allows for (browsers use about 500 ms). */
+const DOUBLE_CLICK_MS = 600;
 const SMALL_CAPS = 'font-variant: all-small-caps; letter-spacing: 0.08em;';
 
 export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurfaceOptionsExt): BuilderSurfaceHandle {
@@ -904,6 +906,8 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     base: string[];
   };
   let press: Press | null = null;
+  /** The last plain click on a card and the selection it replaced (see onDoubleClick). */
+  let lastClick: { card: string; at: number; selection: string[] } | null = null;
   const touches = new Map<number, { x: number; y: number }>();
   let pinch: { d: number; cx: number; cy: number; d0: number; dist0: number } | null = null;
   let pinching = false;
@@ -1153,7 +1157,13 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
       if (next.has(rc.id)) next.delete(rc.id);
       else next.add(rc.id);
       setSelection(next);
-    } else setSelection(new Set([rc.id]));
+    } else {
+      // Remember the selection a plain click collapses, so that a double-click on a selected card sends the whole
+      // selection across (its first click would otherwise have narrowed it to the one card).
+      const now = performance.now();
+      if (!lastClick || lastClick.card !== rc.id || now - lastClick.at > DOUBLE_CLICK_MS) lastClick = { card: rc.id, at: now, selection: [...selection] };
+      setSelection(new Set([rc.id]));
+    }
   }
 
   function onPointerCancel(e: PointerEvent): void {
@@ -1179,7 +1189,10 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
   }
   function onDoubleClick(e: MouseEvent): void {
     const rc = cardAt(e.clientX, e.clientY);
+    const before = lastClick;
+    lastClick = null;
     if (!rc || locked) return;
+    if (before && before.card === rc.id && before.selection.length > 1 && before.selection.includes(rc.id)) setSelection(new Set(before.selection));
     crossOverIds(selection.has(rc.id) && selection.size > 1 ? order.filter((id) => selection.has(id)) : [rc.id]);
   }
   function crossOverIds(ids: readonly string[]): void {

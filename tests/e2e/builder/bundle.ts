@@ -7,6 +7,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { expect, type Page } from '@playwright/test';
 import path from 'node:path';
 import { build, type Rollup } from 'vite';
+import type { BuilderDebugCard } from '../../../src/scene/builder';
 import type { BuilderHarnessApi } from '../../../src/ui/builder/harness';
 
 let code: Promise<string> | null = null;
@@ -77,6 +78,15 @@ export async function centre(page: Page, id: string): Promise<{ x: number; y: nu
   return { x: c.screen.x + c.screen.width / 2, y: c.screen.y + c.screen.height / 2 };
 }
 
+/**
+ * Cards of an area whose centre no card above them in draw order covers (the last card of each cascade), so a press
+ * at their centre takes them; in draw order, bottom first.
+ */
+export async function free(page: Page, area: 'deck' | 'side' = 'side'): Promise<BuilderDebugCard[]> {
+  const cards = await bh(page, 'cards');
+  return cards.filter((c, i) => c.area === area && !cards.slice(i + 1).some((o) => Math.abs(o.pose.x - c.pose.x) < 31.5 && Math.abs(o.pose.y - c.pose.y) < 44));
+}
+
 /** Screen point of a table point. */
 export async function screenOf(page: Page, p: { x: number; y: number }): Promise<{ x: number; y: number }> {
   const s = await bh(page, 'toScreen', p);
@@ -90,9 +100,10 @@ export async function screenOf(page: Page, p: { x: number; y: number }): Promise
  */
 export async function dragFromTo(page: Page, from: { x: number; y: number }, to: { x: number; y: number }, opts: { shift?: boolean; ctrl?: boolean } = {}): Promise<void> {
   if (opts.shift) await page.keyboard.down('Shift');
-  if (opts.ctrl) await page.keyboard.down('Control');
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
+  // Ctrl after the press (macOS turns a Ctrl+press into a secondary click); the drop reads it on release.
+  if (opts.ctrl) await page.keyboard.down('Control');
   await page.mouse.move(from.x + 8, from.y + 8, { steps: 2 });
   await page.mouse.move(to.x, to.y, { steps: 8 });
   await page.mouse.up();
