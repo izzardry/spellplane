@@ -7,12 +7,12 @@
  */
 import { stateHash } from '../core/hash';
 import type { Action } from '../core/actions';
-import type { InstanceId, LogEntry, ZoneId } from '../core/types';
+import type { InstanceId, LogEntry, RngPurpose, ZoneId } from '../core/types';
 import type { CardDataSource, ParseResult } from '../data/types';
-import type { DeckImport, LookedCard, SoloSession } from '../session/index';
+import type { DeckImport, LookedCard, TableSession } from '../session/index';
 import { registerDebug } from '../util/debug';
 
-/** The solo session as the debug hook exposes it. Results are plain JSON so Playwright can read them. */
+/** The session (solo or networked) as the debug hook exposes it. Results are plain JSON so Playwright can read them. */
 export interface SessionDebug {
   /** SHA-256 of the canonical JSON of the current state (DESIGN "Specification: network protocol and secrecy", Sync). */
   hash(): Promise<string>;
@@ -30,6 +30,12 @@ export interface SessionDebug {
   log(): LogEntry[];
   /** Resolves once everything applied so far is written to IndexedDB. */
   saved(): Promise<void>;
+  /** A die roll or coin flip by commit and reveal (TableSession.roll); resolves with the 0-based result. Added by M1-P8. */
+  roll(purpose: RngPurpose, n: number): Promise<number>;
+  /** The table's room id ('solo' for the solo table). Added by M1-P8. */
+  roomId(): string;
+  /** The own seat. Added by M1-P8. */
+  seat(): string;
 }
 
 declare module '../util/debug' {
@@ -44,7 +50,7 @@ export interface SessionDebugDeps {
 }
 
 /** Register the session's parts of window.__spellplane. */
-export function registerSessionDebug(session: SoloSession, deps: SessionDebugDeps): void {
+export function registerSessionDebug(session: TableSession, deps: SessionDebugDeps): void {
   registerDebug({
     state: () => session.getState(),
     secrets: () => session.secrets(),
@@ -75,6 +81,9 @@ export function registerSessionDebug(session: SoloSession, deps: SessionDebugDep
       canUndo: () => session.canUndo(),
       log: () => session.log(),
       saved: () => session.whenSaved(),
+      roll: (purpose, n) => session.roll(purpose, n),
+      roomId: () => session.roomId,
+      seat: () => session.seat,
     },
   });
 }

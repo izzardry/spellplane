@@ -3,20 +3,14 @@
  * `?transport=local` see each other in the lobby, pick chairs and seat colours, press Ready with a deck (commitment
  * only) and start; the opponent's hand shows as card backs and live cursors and drags cross over; a transport that
  * never connects shows the plain connectivity failure (DESIGN "Players, seats and formats"; "Multiplayer architecture").
- * Until M1-P8 the room runs on the stand-in session (ui/lobby/local-session.ts); the tests use only the UI and the
- * debug hook, so they hold for the real session too.
+ * The room runs on the networked session (session/net.ts, M1-P8); the tests use only the UI and the debug hook.
  */
 import { expect, test } from '@playwright/test';
 import type { SecretStore, TableState } from '../../../src/core/types';
 import { hook } from '../helpers/app';
-import { chair, decklist, freshProfile, freshRoom, identityUnavailable, open, openTable, setNickname, twoPages, WEBKIT_KEYCHAIN_SKIP } from './helpers';
+import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname, twoPages } from './helpers';
 
 const KEY_RE = /^[A-Za-z0-9_-]{22}$/;
-
-// Every test here reads the key-pair identity (see helpers.ts).
-test.beforeEach(({ browserName }) => {
-  test.skip(identityUnavailable(browserName), WEBKIT_KEYCHAIN_SKIP);
-});
 
 test('the start page renders and creates a table link with the room id and key in the fragment', async ({ page }, info) => {
   const errors: string[] = [];

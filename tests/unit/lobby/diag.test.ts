@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LoopbackNetwork } from '../../../src/net/loopback';
 import type { Transport } from '../../../src/net/transport';
 import { DIAG_TIMEOUT_MS, NO_PEER, RELAYS_FAILED, newDiagRoom, runDiag, type DiagRun } from '../../../src/ui/diag/diag';
-import { SilentTransport, UnreachableTransport } from '../../../src/ui/lobby/local-session';
+import { SilentTransport, UnreachableTransport } from '../../../src/session/transports';
 import { ROOM_KEY_RE } from '../../../src/ui/lobby/room';
 
 const runs: DiagRun[] = [];

@@ -63,14 +63,3 @@ export async function twoPages(browser: Browser): Promise<{ context: BrowserCont
   const b = await context.newPage();
   return { context, a, b };
 }
-
-/**
- * Playwright's WebKit on macOS blocks the page's main thread when a CryptoKey is stored in IndexedDB (WebKit wraps
- * serialized keys with a keychain-held master key, which the headless build cannot reach). The identity store keeps
- * the ECDSA key pair as a non-extractable CryptoKey (DESIGN "Players, seats and formats", Identity), so every page that
- * reads the identity hangs there. Linux WebKit (CI) and Chromium are unaffected. Reported to the integrator.
- */
-export const WEBKIT_KEYCHAIN_SKIP = 'Playwright WebKit on macOS hangs storing a CryptoKey in IndexedDB (keychain); runs on Linux WebKit and Chromium';
-export function identityUnavailable(browserName: string): boolean {
-  return browserName === 'webkit' && process.platform === 'darwin';
-}
