@@ -266,7 +266,8 @@ describe('an away peer times out (DESIGN "Turn flow and confirmation", Connectio
     await vi.advanceTimersByTimeAsync(30_000);
     expect(t.sequencer.fired).toEqual([]);
     t.net.kill('peer2');
-    // The liveness rule (M1-P7) marks the seat away after 6 s of silence; it is a sequenced action.
+    // The engine's liveness rule marks the seat away after 6 s of silence (AWAY_AFTER_MS); it is a sequenced action,
+    // applied by the real reducer on every peer.
     await vi.advanceTimersByTimeAsync(6000);
     t.sequencer.markAway('s2', true);
     await vi.advanceTimersByTimeAsync(10_000);
@@ -277,6 +278,32 @@ describe('an away peer times out (DESIGN "Turn flow and confirmation", Connectio
       expect(p.state.confirm?.holder).toBeUndefined();
       expect(roundPassed(p.state)).toBe(true);
     }
+    t.stop();
+  });
+  it('away goes through the real reducer: a mark that changes nothing is refused, and a seat back from away answers again', async () => {
+    const t = await table({ seed: 41 });
+    t.sequencer.markAway('s2', true);
+    await vi.advanceTimersByTimeAsync(1000);
+    for (const p of t.peers) expect(p.state.seats.s2!.away).toBe(true);
+    const seq = t.sequencer.state.seq;
+    // Marking an away seat away again is refused by the reducer (no-op), so no peer applies anything.
+    t.sequencer.markAway('s2', true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(t.sequencer.state.seq).toBe(seq);
+    expect(t.sequencer.nacks.at(-1)?.reason).toMatch(/already away/);
+    // Back: the seat is present again and a round waits for it as for anyone.
+    t.sequencer.markAway('s2', false);
+    await vi.advanceTimersByTimeAsync(1000);
+    t.peer('s1').propose(cast('i1', 'r1'));
+    await vi.advanceTimersByTimeAsync(1000);
+    for (const p of t.peers) {
+      expect(p.state.seats.s2!.away).toBeUndefined();
+      expect(waitingOn(p.state)).toContain('s2');
+    }
+    t.peer('s2').propose({ type: 'respond', round: 'r1', seat: 's2', response: 'ok' });
+    await vi.advanceTimersByTimeAsync(1000);
+    for (const p of t.peers) expect(p.state.confirm?.responses.s2).toBe('ok');
+    converged(t);
     t.stop();
   });
 });

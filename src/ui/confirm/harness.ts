@@ -23,8 +23,8 @@ import type { HudProps } from '../props';
 export interface ConfirmHarness {
   /** Dispatch a draft as another seat (a remote player's proposal); returns the stamped action, or the refusal. */
   remote(seat: SeatId, draft: ActionDraft): { action: Action; refused: string | null };
-  /** Mark a seat away or back, as the sequencer's liveness rule does (M1-P7's `away`; patched in here). */
-  away(seat: SeatId, away: boolean): void;
+  /** Mark a seat away or back, as the sequencer's liveness rule does (a sequenced `away`); returns the action, or the refusal. */
+  away(seat: SeatId, away: boolean): { action: Action; refused: string | null };
   state(): TableState;
   /** Every sequenced action, in order. */
   log(): Action[];
@@ -82,16 +82,9 @@ class Sequencer {
     return { action: stamped, refused: null };
   }
 
-  /** Patch a seat's away flag (stand-in for M1-P7's sequenced `away`). */
-  setAway(seat: SeatId, away: boolean): void {
-    const s = this.state.seats[seat];
-    if (!s) return;
-    const next = { ...s };
-    if (away) next.away = true;
-    else delete next.away;
-    this.state = { ...this.state, seats: { ...this.state.seats, [seat]: next } };
-    this.onChange(this.state);
-    this.arm();
+  /** Mark a seat away or back as the sequencer's liveness rule does: a sequenced `away` through the real reducer (M1-P7). */
+  setAway(seat: SeatId, away: boolean): { action: Action; refused: string | null } {
+    return this.submit({ type: 'away', seat, away, by: this.sequencerSeat, cid: `away-${++this.cid}` });
   }
 
   private arm(): void {
@@ -196,7 +189,7 @@ export function mount(target: HTMLElement): void {
       const r = sequencer.submit({ ...draft, by: seat, cid: `${seat}-r${++remoteCid}` } as Action);
       return JSON.parse(JSON.stringify(r)) as { action: Action; refused: string | null };
     },
-    away: (seat, away) => sequencer.setAway(seat, away),
+    away: (seat, away) => JSON.parse(JSON.stringify(sequencer.setAway(seat, away))) as { action: Action; refused: string | null },
     state: () => JSON.parse(JSON.stringify(sequencer.state)) as TableState,
     log: () => JSON.parse(JSON.stringify(sequencer.actions)) as Action[],
     refused: () => JSON.parse(JSON.stringify(sequencer.refusals)) as { action: Action; reason: string }[],
