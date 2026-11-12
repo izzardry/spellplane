@@ -205,8 +205,8 @@ class CaptionController implements CaptionControls {
   private disposed = false;
   /** Log entries already looked at, by count. */
   private seen: number;
-  /** Per other speaker: finals received (the next caption id), and the presence caption that final replaced. */
-  private readonly peers = new Map<string, { finals: number; consumed: PeerPresence['caption']; shown: PeerPresence['caption']; since: number }>();
+  /** Per other speaker: what its captions have reached (PeerCaptions). */
+  private readonly peers = new Map<string, PeerCaptions>();
   /** Final captions of other speakers, until they fade. */
   private finals: Caption[] = [];
   private readonly ready: Promise<void>;
@@ -251,8 +251,11 @@ class CaptionController implements CaptionControls {
     return Promise.all(
       this.factories.map(async (f) => {
         try {
-          // An engine that can say so without loading is asked that way; the others are created to ask them.
-          return { info: f.info, available: f.available ? await f.available() : await (await f.create()).available() };
+          // A factory that can say so without loading (voice/speech/index.ts ProbedSpeechEngineFactory) is asked that
+          // way; the others are created to ask their engine.
+          const probed = 'available' in f && typeof f.available === 'function' ? (f as { available(): Promise<boolean> }) : null;
+          const available = probed ? await probed.available() : await (await f.create()).available();
+          return { info: f.info, available };
         } catch {
           return { info: f.info, available: false };
         }
@@ -275,7 +278,7 @@ class CaptionController implements CaptionControls {
     const wasListening = this.listening;
     if (wasListening) this.stopListening();
     this.engineId = id;
-    this.engineInst = { id, engine };
+    this.replaceEngine({ id, engine });
     if (id === 'webspeech' || id === 'local') await this.host.settings.set('speechEngine', id);
     if (wasListening) this.startListening();
   }
@@ -316,7 +319,8 @@ class CaptionController implements CaptionControls {
     this.timers.clear();
     if (this.graceTimer) clearTimeout(this.graceTimer);
     if (this.clearTimer) clearTimeout(this.clearTimer);
-    void this.engineInst?.engine.then((e) => (e as { dispose?: () => void }).dispose?.()).catch(() => undefined);
+    if (this.engineInst) release(this.engineInst.engine);
+    this.engineInst = null;
     this.listeners.clear();
     this.list = [];
   }
@@ -332,11 +336,18 @@ class CaptionController implements CaptionControls {
     const f = this.factory(this.engineId);
     if (!f) return Promise.reject(new Error('No speech engine is available'));
     const engine = f.create();
-    this.engineInst = { id: this.engineId, engine };
+    this.replaceEngine({ id: this.engineId, engine });
     engine.catch(() => {
       if (this.engineInst?.engine === engine) this.engineInst = null;
     });
     return engine;
+  }
+
+  /** Make `next` the engine in use and release the one it replaces (its microphone, audio graph and model). */
+  private replaceEngine(next: { id: SpeechEngineId; engine: Promise<SpeechEngine> }): void {
+    const old = this.engineInst;
+    this.engineInst = next;
+    if (old && old.engine !== next.engine) release(old.engine);
   }
 
   private async loadLocal(engine: SpeechEngine, onProgress?: (loaded: number, total: number) => void): Promise<void> {
@@ -494,10 +505,10 @@ class CaptionController implements CaptionControls {
     return p.seat ?? `v:${p.peerId}`;
   }
 
-  private peerState(key: string): { finals: number; consumed: PeerPresence['caption']; shown: PeerPresence['caption']; since: number } {
+  private peerState(key: string): PeerCaptions {
     let s = this.peers.get(key);
     if (!s) {
-      s = { finals: 0, consumed: null, shown: null, since: 0 };
+      s = { finals: 0, consumed: null, lastFinal: null, shown: null, since: 0 };
       this.peers.set(key, s);
     }
     return s;
@@ -506,7 +517,8 @@ class CaptionController implements CaptionControls {
   private onLog(): void {
     if (this.disposed) return;
     const log = this.host.log();
-    if (log.length < this.seen) this.seen = 0;
+    // A shorter log (a snapshot resync) is history as it stands: its captions were already shown or are old.
+    if (log.length < this.seen) this.seen = log.length;
     const self = this.host.self();
     let added = false;
     for (let i = this.seen; i < log.length; i++) {
@@ -519,6 +531,7 @@ class CaptionController implements CaptionControls {
       const ps = this.peerState(key);
       const presence = this.host.presence.peers().find((p) => this.speakerOf(p) === key);
       ps.consumed = presence?.caption ?? null;
+      ps.lastFinal = a.text;
       const caption: Caption = { id: `${key}:${ps.finals}`, speaker: key, text: a.text, final: true, anchor: a.anchor ?? null, at: this.host.now() };
       if (a.about !== undefined) caption.about = a.about;
       ps.finals++;
@@ -540,9 +553,17 @@ class CaptionController implements CaptionControls {
     const interims: Caption[] = [];
     for (const p of this.host.presence.peers()) {
       const key = this.speakerOf(p);
-      if (key === self || !p.caption) continue;
+      if (key === self) continue;
+      if (!p.caption) {
+        // The speaker cleared its caption: whatever comes next is a new utterance.
+        const ps = this.peers.get(key);
+        if (ps) ps.lastFinal = null;
+        continue;
+      }
       const ps = this.peerState(key);
       if (p.caption === ps.consumed) continue;
+      // Presence is unordered against the log: an interim of the utterance whose final already came is late, not new.
+      if (ps.lastFinal !== null && lateInterim(p.caption.text, ps.lastFinal)) continue;
       if (p.caption !== ps.shown) {
         ps.shown = p.caption;
         ps.since = now;
@@ -568,6 +589,43 @@ class CaptionController implements CaptionControls {
     }, ms);
     this.timers.add(t);
   }
+}
+
+/**
+ * Per other speaker: finals received (the next caption id), the presence caption the last final replaced, that
+ * final's text until the speaker's presence caption is cleared, and the interim shown with when it last changed.
+ */
+interface PeerCaptions {
+  finals: number;
+  consumed: PeerPresence['caption'];
+  lastFinal: string | null;
+  shown: PeerPresence['caption'];
+  since: number;
+}
+
+function wordsOf(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Whether interim text belongs to the utterance that ended with `final` (the same words, or the start of them). */
+export function lateInterim(interim: string, final: string): boolean {
+  const i = wordsOf(interim);
+  const f = wordsOf(final);
+  return i === f || f.startsWith(i);
+}
+
+/** Stop an engine and free what it holds (LocalWhisperEngine.dispose: microphone, audio graph, model). */
+function release(engine: Promise<SpeechEngine>): void {
+  void engine
+    .then((e) => {
+      e.stop();
+      (e as { dispose?: () => void }).dispose?.();
+    })
+    .catch(() => undefined);
 }
 
 function sameCaption(a: Caption, b: Caption): boolean {

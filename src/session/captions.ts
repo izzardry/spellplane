@@ -25,26 +25,42 @@ export function settingsDictation(talk: TalkSettings, state: TableState, seat: S
   return TALK_CLOSED;
 }
 
-/** A talk source from the stored talk mode and the turn (used while the session has no voice controls). */
+/**
+ * A talk source from the stored talk mode and the turn (used while the session has no voice controls). The stored mode
+ * is read again whenever the turn passes, so a changed setting takes effect by the next turn at the latest.
+ */
 function settingsTalk(settings: SettingsStore, session: Pick<TableSession, 'getState' | 'subscribe' | 'seat'>): Talk & { dispose(): void } {
   let talk: TalkSettings = DEFAULT_TALK;
   const listeners = new Set<(s: TalkState) => void>();
   let current: TalkState = TALK_CLOSED;
+  let disposed = false;
   const seat = (): SeatId | null => session.seat ?? null;
   const update = (): void => {
+    if (disposed) return;
     const next = settingsDictation(talk, session.getState(), seat());
     if (next.dictation === current.dictation && next.reason === current.reason) return;
     current = next;
     for (const l of [...listeners]) l(current);
   };
-  void settings
-    .get('talk')
-    .then((t) => {
-      talk = { ...DEFAULT_TALK, ...t };
-      update();
-    })
-    .catch(() => undefined);
-  const unsub = session.subscribe(() => update());
+  const read = (): void => {
+    void settings
+      .get('talk')
+      .then((t) => {
+        talk = { ...DEFAULT_TALK, ...t };
+        update();
+      })
+      .catch(() => undefined);
+  };
+  read();
+  let turn = session.getState().turn.active;
+  const unsub = session.subscribe(() => {
+    const active = session.getState().turn.active;
+    if (active !== turn) {
+      turn = active;
+      read();
+    }
+    update();
+  });
   return {
     state: () => current,
     subscribe(listener) {
@@ -52,16 +68,60 @@ function settingsTalk(settings: SettingsStore, session: Pick<TableSession, 'getS
       return () => listeners.delete(listener);
     },
     dispose() {
+      disposed = true;
       unsub();
       listeners.clear();
     },
   };
 }
 
-/** Create the session's caption controller (TableSession.captions). Call after the voice controls are mounted. */
+/**
+ * The talk state dictation follows: the session's voice controls (M3-P3) when it has them, else the stored talk mode.
+ * Voice controls mounted after the captions are picked up on the next tick or state change, and from then on win.
+ */
+export function talkSource(session: Pick<TableSession, 'getState' | 'subscribe' | 'seat' | 'voice'>, settings: SettingsStore): Talk & { dispose(): void } {
+  const listeners = new Set<(s: TalkState) => void>();
+  const emit = (s: TalkState): void => {
+    for (const l of [...listeners]) l(s);
+  };
+  let fallback: (Talk & { dispose(): void }) | null = session.voice ? null : settingsTalk(settings, session);
+  let using: Talk = session.voice ?? fallback!;
+  let unsubUsing = using.subscribe(emit);
+  let disposed = false;
+  const adopt = (): void => {
+    const voice = session.voice;
+    if (disposed || !voice || voice === using) return;
+    unsubUsing();
+    fallback?.dispose();
+    fallback = null;
+    using = voice;
+    unsubUsing = voice.subscribe(emit);
+    emit(voice.state());
+  };
+  const unsubSession = session.subscribe(adopt);
+  queueMicrotask(adopt);
+  return {
+    state: () => using.state(),
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    dispose() {
+      disposed = true;
+      unsubSession();
+      unsubUsing();
+      fallback?.dispose();
+      listeners.clear();
+    },
+  };
+}
+
+/**
+ * Create the session's caption controller (TableSession.captions). Mount it after the voice controls (session.voice);
+ * voice controls that arrive later are still adopted (talkSource).
+ */
 export function mountCaptions(session: TableSession, voice: Pick<VoiceSessionOptions, 'settings' | 'engines'>, now: () => number = () => Date.now()): CaptionControls {
-  const fallback = session.voice ? null : settingsTalk(voice.settings, session);
-  const talk: Talk = session.voice ?? fallback!;
+  const talk = talkSource(session, voice.settings);
   const host: CaptionHost = {
     self: () => session.seat,
     state: () => session.getState(),
@@ -90,7 +150,7 @@ export function mountCaptions(session: TableSession, voice: Pick<VoiceSessionOpt
   return Object.assign(controls, {
     dispose: () => {
       dispose();
-      fallback?.dispose();
+      talk.dispose();
     },
   });
 }

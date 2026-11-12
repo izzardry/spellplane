@@ -10,10 +10,27 @@ import { recognitionCtor, WebSpeechEngine } from './webspeech';
 /** Approximate first download of the on-device model (voice/speech/local.ts LOCAL_MODEL_BYTES; kept here so the settings need not load that module). */
 export const LOCAL_MODEL_DOWNLOAD_BYTES = 80_000_000;
 
-// Engines created on this page, newest last (the debug hook reads them: SpeechDebug.engine and say).
+/**
+ * A factory that can say whether its engine runs in this browser without creating it, so the settings can list the
+ * local model without loading its code (voice/captions.ts `engines()` asks it when the method is there). Local to
+ * M3-P4: the contract's SpeechEngineFactory is unchanged.
+ */
+export type ProbedSpeechEngineFactory = SpeechEngineFactory & { available(): Promise<boolean> };
+
+/** Whether `f` can answer availability without creating its engine. */
+export function isProbed(f: SpeechEngineFactory): f is ProbedSpeechEngineFactory {
+  return 'available' in f && typeof (f as { available?: unknown }).available === 'function';
+}
+
+/** How many created engines the debug hook remembers. */
+const TRACKED_MAX = 16;
+// Engines created on this page, newest last, for the debug hook (SpeechDebug.engine and say). Dev and test builds
+// only, and only the latest few, so production pages keep no engine alive through this list.
 const created: SpeechEngine[] = [];
 function track<E extends SpeechEngine>(engine: E): E {
+  if (!__SPELLPLANE_DEBUG__) return engine;
   created.push(engine);
+  if (created.length > TRACKED_MAX) created.splice(0, created.length - TRACKED_MAX);
   return engine;
 }
 
@@ -23,14 +40,14 @@ export function createdEngines(): readonly SpeechEngine[] {
 }
 
 /** The fake engine of the test harness (`?speech=fake`, voice/fake.ts); captures no audio. */
-export const FAKE_SPEECH: SpeechEngineFactory = {
+export const FAKE_SPEECH: ProbedSpeechEngineFactory = {
   info: { id: 'fake', label: 'Test engine', audio: 'none', statement: 'Test engine: no audio is captured.' },
   create: () => Promise.resolve(track(new FakeSpeechEngine())),
   available: () => Promise.resolve(true),
 };
 
 /** Engine factories the settings offer, default first (DESIGN "Chat and voice", Engine). */
-export const SPEECH_ENGINES: Readonly<Record<Exclude<SpeechEngineId, 'fake'>, SpeechEngineFactory>> = {
+export const SPEECH_ENGINES: Readonly<Record<Exclude<SpeechEngineId, 'fake'>, ProbedSpeechEngineFactory>> = {
   webspeech: {
     info: {
       id: 'webspeech',

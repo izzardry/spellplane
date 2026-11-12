@@ -30,7 +30,10 @@ const MIN_SAMPLES = SAMPLE_RATE / 4;
 /** What a transcription returns (transformers.js AutomaticSpeechRecognitionOutput). */
 export type AsrOutput = { text: string } | { text: string }[];
 /** The transformers.js speech-recognition pipeline, as far as this engine uses it. */
-export type AsrPipeline = (audio: Float32Array, opts: { language?: string; task?: 'transcribe'; chunk_length_s?: number; stride_length_s?: number }) => Promise<AsrOutput>;
+export type AsrPipeline = ((audio: Float32Array, opts: { language?: string; task?: 'transcribe'; chunk_length_s?: number; stride_length_s?: number }) => Promise<AsrOutput>) & {
+  /** Frees the model's WebGPU or WASM memory (transformers.js Pipeline.dispose). */
+  dispose?(): Promise<unknown> | void;
+};
 /** A progress report of transformers.js while it downloads a model file. */
 export interface ProgressInfo {
   status: string;
@@ -49,7 +52,10 @@ export interface TransformersLike {
 
 /** Records the microphone as 16 kHz mono samples. */
 export interface AudioCapture {
-  /** Start recording a new utterance (acquires the microphone the first time). */
+  /**
+   * Start recording a new utterance (acquires the microphone the first time). An `end` or `close` while it waits for
+   * the microphone cancels it: it then records nothing and leaves the microphone disabled.
+   */
   begin(): Promise<void>;
   /** The samples recorded so far in this utterance. */
   samples(): Float32Array;
@@ -81,26 +87,52 @@ export class WebAudioCapture implements AudioCapture {
   private node: ScriptProcessorNode | null = null;
   private chunks: Float32Array[] = [];
   private recording = false;
+  /** Bumped by every begin, end and close: a begin whose number is no longer current was cancelled while it waited. */
+  private generation = 0;
+  private closed = false;
 
   constructor(private readonly media: MediaDevicesLike | null = typeof navigator === 'undefined' ? null : navigator.mediaDevices) {}
 
   async begin(): Promise<void> {
+    const gen = ++this.generation;
     this.chunks = [];
-    if (!this.stream) {
+    if (this.closed) throw new Error('The microphone capture was closed');
+    let stream = this.stream;
+    if (!stream) {
       if (!this.media) throw new Error('This browser offers no microphone');
-      this.stream = await this.media.getUserMedia({ audio: MIC_CONSTRAINTS });
-      this.ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
-      const source = this.ctx.createMediaStreamSource(this.stream);
-      this.node = this.ctx.createScriptProcessor(4096, 1, 1);
-      this.node.onaudioprocess = (e) => {
-        if (this.recording) this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-      };
-      source.connect(this.node);
-      this.node.connect(this.ctx.destination);
+      const got = await this.media.getUserMedia({ audio: MIC_CONSTRAINTS });
+      if (this.closed || this.stream) {
+        // Released while the permission prompt was open, or another begin got the microphone first: this stream is
+        // surplus, and nothing may keep it.
+        for (const t of got.getTracks()) t.stop();
+        if (this.closed) return;
+      }
+      stream = this.stream ?? this.attach(got);
     }
-    for (const t of this.stream.getAudioTracks()) t.enabled = true;
+    // The key was released while the prompt was open: the utterance is over before it started.
+    if (gen !== this.generation) return;
+    for (const t of stream.getAudioTracks()) t.enabled = true;
     await this.ctx?.resume();
+    if (gen !== this.generation) {
+      for (const t of this.stream?.getAudioTracks() ?? []) t.enabled = false;
+      return;
+    }
     this.recording = true;
+  }
+
+  /** Keep the microphone stream (disabled until a begin enables it) and record it through Web Audio. */
+  private attach(stream: MediaStream): MediaStream {
+    this.stream = stream;
+    for (const t of stream.getAudioTracks()) t.enabled = false;
+    this.ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    const source = this.ctx.createMediaStreamSource(stream);
+    this.node = this.ctx.createScriptProcessor(4096, 1, 1);
+    this.node.onaudioprocess = (e) => {
+      if (this.recording) this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+    };
+    source.connect(this.node);
+    this.node.connect(this.ctx.destination);
+    return stream;
   }
 
   samples(): Float32Array {
@@ -108,6 +140,7 @@ export class WebAudioCapture implements AudioCapture {
   }
 
   end(): Float32Array {
+    this.generation++;
     this.recording = false;
     for (const t of this.stream?.getAudioTracks() ?? []) t.enabled = false;
     const out = joinChunks(this.chunks);
@@ -116,6 +149,8 @@ export class WebAudioCapture implements AudioCapture {
   }
 
   close(): void {
+    this.generation++;
+    this.closed = true;
     this.recording = false;
     this.node?.disconnect();
     void this.ctx?.close().catch(() => undefined);
@@ -257,11 +292,16 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
     );
   }
 
-  /** Release the microphone (the engine can start again later). */
+  /** Release the microphone and the model (the engine can start again later, loading the model anew). */
   dispose(): void {
     this.stop();
     this.capture?.close();
     this.capture = null;
+    const pipe = this.pipe;
+    this.pipe = null;
+    this.loading = null;
+    // After a transcription still running, so it does not run on freed memory.
+    if (pipe?.dispose) void this.busy.then(() => pipe.dispose?.()).catch(() => undefined);
   }
 
   private interim(l: Listening): void {

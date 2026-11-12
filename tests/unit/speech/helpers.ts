@@ -8,6 +8,7 @@ import type { Anchor, LogEntry, SeatId, TableState } from '../../../src/core/typ
 import type { PeerPresence } from '../../../src/net/types';
 import { DEFAULT_SETTINGS, type Settings, type SettingsStore } from '../../../src/store/types';
 import { FakeSpeechEngine } from '../../../src/voice/fake';
+import type { ProbedSpeechEngineFactory } from '../../../src/voice/speech/index';
 import { TALK_CLOSED, type CaptionHost, type DictationTarget, type SpeechEngine, type SpeechEngineFactory, type SpeechEngineId, type TalkState } from '../../../src/voice/types';
 import { act, ok } from '../core/helpers';
 
@@ -26,7 +27,7 @@ export function memorySettings(init: Partial<Settings> = {}): SettingsStore & { 
 }
 
 /** A factory whose engines are counted (and, for 'local', loadable). */
-export function countingFactory(id: SpeechEngineId, make: () => SpeechEngine = () => new FakeSpeechEngine()): SpeechEngineFactory & { created: SpeechEngine[] } {
+export function countingFactory(id: SpeechEngineId, make: () => SpeechEngine = () => new FakeSpeechEngine()): ProbedSpeechEngineFactory & { created: SpeechEngine[] } {
   const created: SpeechEngine[] = [];
   return {
     created,

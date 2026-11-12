@@ -152,10 +152,11 @@
   .speech {
     position: fixed;
     z-index: 70;
-    top: 48px;
+    /* Below the HUD's Dictation button (its own row under the toolbar), so the button still closes it. */
+    top: 76px;
     left: 16px;
     width: min(420px, calc(100vw - 32px));
-    max-height: calc(100vh - 96px);
+    max-height: calc(100vh - 124px);
     overflow-y: auto;
     background: var(--sp-surface, #fff);
     color: var(--sp-fg, #111);

@@ -5,11 +5,14 @@
  * dictation without voice controls (DESIGN "Chat and voice", Talk modes).
  */
 import { describe, expect, it } from 'vitest';
+import type { TableState } from '../../../src/core/types';
 import { mtgLayout } from '../../../src/games/mtg/layout';
 import { captionPoint, textOn } from '../../../src/scene/captions';
 import { stackPose } from '../../../src/scene/layout';
-import { settingsDictation } from '../../../src/session/captions';
+import { settingsDictation, talkSource } from '../../../src/session/captions';
 import { DEFAULT_TALK } from '../../../src/store/types';
+import { TALK_CLOSED, type TalkState, type VoiceControls } from '../../../src/voice/types';
+import { memorySettings } from './helpers';
 import { sceneCaptions } from '../../../src/ui/settings/captions';
 import { P, act, ok, play, readyTable } from '../core/helpers';
 
@@ -103,5 +106,103 @@ describe('dictation from the stored talk mode, without voice controls', () => {
     expect(settingsDictation({ ...DEFAULT_TALK, dictation: true, gate: 'turn' }, s, other).dictation).toBe('off');
     // Never audio: that is the voice controls' part.
     expect(settingsDictation({ ...DEFAULT_TALK, dictation: true, gate: 'open' }, s, 's0').audio).toBe('off');
+  });
+});
+
+describe('the talk source dictation follows', () => {
+  interface FakeSession {
+    seat: string;
+    state: TableState;
+    voice: Pick<VoiceControls, 'state' | 'subscribe'> | undefined;
+    getState(): TableState;
+    subscribe(l: () => void): () => void;
+    tick(next?: TableState): void;
+  }
+  function fakeSession(state = readyTable(4)): FakeSession {
+    const listeners = new Set<() => void>();
+    const session: FakeSession = {
+      seat: 's0',
+      state,
+      voice: undefined,
+      getState: () => session.state,
+      subscribe(l: () => void) {
+        listeners.add(l);
+        return () => void listeners.delete(l);
+      },
+      tick(next = session.state) {
+        session.state = next;
+        for (const l of [...listeners]) l();
+      },
+    };
+    return session;
+  }
+  function fakeVoice(initial: TalkState) {
+    const listeners = new Set<(s: TalkState) => void>();
+    let current = initial;
+    return {
+      state: () => current,
+      subscribe(l: (s: TalkState) => void) {
+        listeners.add(l);
+        return () => listeners.delete(l);
+      },
+      set(s: TalkState) {
+        current = s;
+        for (const l of [...listeners]) l(s);
+      },
+    };
+  }
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+  const KEY: TalkState = { audio: 'off', dictation: 'caption', reason: 'key', muted: false };
+
+  it('adopts voice controls mounted after the captions, and from then on follows only them', async () => {
+    const session = fakeSession();
+    const settings = memorySettings({ talk: { ...DEFAULT_TALK, dictation: true, gate: 'open' } });
+    const talk = talkSource(session as never, settings);
+    const seen: string[] = [];
+    talk.subscribe((s) => seen.push(s.dictation));
+    await settle();
+    expect(talk.state().dictation).toBe('caption');
+    const voice = fakeVoice(TALK_CLOSED);
+    session.voice = voice;
+    // Picked up with the next state change.
+    session.tick();
+    expect(talk.state().dictation).toBe('off');
+    expect(seen).toEqual(['caption', 'off']);
+    voice.set(KEY);
+    expect(seen.at(-1)).toBe('caption');
+    // The stored mode no longer matters.
+    settings.data.talk = { ...DEFAULT_TALK };
+    session.tick();
+    await settle();
+    expect(talk.state().dictation).toBe('caption');
+    talk.dispose();
+    voice.set(TALK_CLOSED);
+    expect(seen.at(-1)).toBe('caption');
+  });
+
+  it('adopts voice controls mounted right after the captions, before anything happened at the table', async () => {
+    const session = fakeSession();
+    const talk = talkSource(session as never, memorySettings({ talk: { ...DEFAULT_TALK, dictation: true, gate: 'open' } }));
+    session.voice = fakeVoice(KEY);
+    await settle();
+    expect(talk.state()).toEqual(KEY);
+    talk.dispose();
+  });
+
+  it('without voice controls, a changed talk setting takes effect when the turn passes', async () => {
+    const s = readyTable(4);
+    const session = fakeSession(s);
+    const settings = memorySettings({ talk: { ...DEFAULT_TALK } });
+    const talk = talkSource(session as never, settings);
+    await settle();
+    expect(talk.state().dictation).toBe('off');
+    settings.data.talk = { ...DEFAULT_TALK, dictation: true, gate: 'open' };
+    const other = s.turn.active === 's0' ? 's1' : 's0';
+    session.tick(ok(s, act('turnPass', { to: other }, s.turn.active as string)));
+    await settle();
+    expect(talk.state().dictation).toBe('caption');
+    talk.dispose();
   });
 });

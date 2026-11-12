@@ -11,7 +11,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LogEntry } from '../../../src/core/types';
-import { CAPTION_LINGER_MS, TALK_CLOSED, type CaptionControls, type LocalSpeechEngine, type SpeechEngine, type SpeechListener } from '../../../src/voice/types';
+import { CAPTION_LINGER_MS, TALK_CLOSED, type CaptionControls, type LocalSpeechEngine, type SpeechEngine, type SpeechEngineFactory, type SpeechListener } from '../../../src/voice/types';
 import { createCaptions, FINAL_GRACE_MS, INTERIM_STALE_MS, lastTouched, publicAnchor, speechLang } from '../../../src/voice/captions';
 import { FakeSpeechEngine } from '../../../src/voice/fake';
 import { P, play, readyTable } from '../core/helpers';
@@ -311,6 +311,46 @@ describe('other players’ captions', () => {
     expect(c.captions()).toHaveLength(0);
   });
 
+  it('an interim that arrives after its final (presence is unordered against the log) is not a second bubble', async () => {
+    const t = table('s1');
+    const c = await start(t);
+    t.setPeer({ peerId: 'anna', seat: 's0', caption: { text: 'two', anchor: null } });
+    t.apply(act('caption', { text: 'Two damage.' }));
+    // Sent before the final, delivered after it.
+    t.setPeer({ peerId: 'anna', caption: { text: 'two damage', anchor: null } });
+    t.setPeer({ peerId: 'anna', caption: { text: 'two', anchor: null } });
+    expect(c.captions().map((x) => [x.text, x.final])).toEqual([['Two damage.', true]]);
+    // A new utterance before the speaker cleared its caption is shown.
+    t.setPeer({ peerId: 'anna', caption: { text: 'and one more', anchor: null } });
+    expect(c.captions().map((x) => [x.text, x.final])).toEqual([
+      ['Two damage.', true],
+      ['and one more', false],
+    ]);
+    // Once cleared, even words like the last final's start a new bubble.
+    t.setPeer({ peerId: 'anna', caption: null });
+    t.setPeer({ peerId: 'anna', caption: { text: 'two', anchor: null } });
+    expect(c.captions().map((x) => [x.text, x.final])).toEqual([
+      ['Two damage.', true],
+      ['two', false],
+    ]);
+  });
+
+  it('a log that shrinks (a snapshot resync) does not bring its captions back as bubbles', async () => {
+    const t = table('s1');
+    const c = await start(t);
+    for (const card of ['a00', 'a01', 'b00']) t.apply(act('tap', { card, tapped: true }));
+    t.apply(act('caption', { text: 'first' }));
+    t.apply(act('caption', { text: 'second' }));
+    await vi.advanceTimersByTimeAsync(CAPTION_LINGER_MS + 10);
+    expect(c.captions()).toHaveLength(0);
+    // The session replaces its log with a shorter one that still holds the old captions.
+    t.log = t.log.slice(-2);
+    t.apply(act('tap', { card: 'b01', tapped: true }));
+    expect(c.captions()).toHaveLength(0);
+    t.apply(act('caption', { text: 'third' }));
+    expect(c.captions().map((x) => x.text)).toEqual(['third']);
+  });
+
   it('captions in the log from before this page started are history, not bubbles', async () => {
     const t = table('s1');
     t.apply(act('caption', { text: 'old' }));
@@ -408,6 +448,48 @@ describe('engines and language (DESIGN "Chat and voice", Engine and Language)', 
     await flush();
     expect((local.created[0] as FakeSpeechEngine).listening).toBe(true);
     expect((web.created[0] as FakeSpeechEngine).listening).toBe(false);
+  });
+
+  it('switching engines stops and releases the one replaced (its microphone and model)', async () => {
+    const released: string[] = [];
+    const disposable = (id: 'webspeech' | 'local') => () =>
+      Object.assign(new FakeSpeechEngine(), { id, load: async () => undefined, dispose: () => released.push(id) }) as unknown as SpeechEngine;
+    const web = countingFactory('webspeech', disposable('webspeech'));
+    const local = countingFactory('local', disposable('local'));
+    const t = new TestTable(table().state, 's0', memorySettings({ speechEngine: 'local' }), [web, local]);
+    const c = await start(t);
+    expect(local.created).toHaveLength(1);
+    t.setTalk(OPEN);
+    await flush();
+    expect((local.created[0] as FakeSpeechEngine).listening).toBe(true);
+    await c.setEngine('webspeech');
+    await flush();
+    expect(c.engine().id).toBe('webspeech');
+    expect(released).toEqual(['local']);
+    expect((local.created[0] as FakeSpeechEngine).listening).toBe(false);
+    expect((web.created[0] as FakeSpeechEngine).listening).toBe(true);
+    await c.setEngine('local');
+    await flush();
+    expect(released).toEqual(['local', 'webspeech']);
+    expect(local.created).toHaveLength(2);
+    c.dispose();
+    await flush();
+    expect(released).toEqual(['local', 'webspeech', 'local']);
+  });
+
+  it('an engine whose factory cannot answer availability is created to ask it', async () => {
+    const plain: SpeechEngineFactory & { created: number } = {
+      created: 0,
+      info: { id: 'webspeech', label: 'w', audio: 'vendor', statement: 's' },
+      create: async () => {
+        plain.created++;
+        return Object.assign(new FakeSpeechEngine(), { available: async () => false });
+      },
+    };
+    const t = new TestTable(table().state, 's0', memorySettings(), [plain]);
+    const c = await start(t);
+    expect((await c.engines()).map((e) => e.available)).toEqual([false]);
+    expect(plain.created).toBe(1);
   });
 
   it('a failed download keeps the engine as it was', async () => {

@@ -11,6 +11,7 @@
  * asserted on the debug hook (anchors and screen rectangles), never on pixels. Two pages on the local transport.
  */
 import { expect, test, type Page } from '@playwright/test';
+import type { DebugStackEntry } from '../../../src/scene/stack';
 import type { DebugCaption } from '../../../src/scene/types';
 import { centreOf, drawn, held, lastAction, log, playCard, say, startTable, state, type Table } from './helpers';
 
@@ -113,6 +114,40 @@ test.describe('captions with the fake engine', () => {
       expect(sent).not.toHaveProperty('anchor');
       expect(sent).not.toHaveProperty('about');
     }
+  });
+
+  test('a hovered stack marker (an ability without a card) is the caption’s anchor', async ({ browser }, info) => {
+    test.setTimeout(120_000);
+    table = await startTable(browser, info, { speech: true });
+    const { a, b } = table;
+    const card = await playCard(table);
+    // Anna puts an ability of her card on the stack, then passes the turn: her last action touched no card.
+    await a.evaluate((source) => window.__spellplane!.dispatch!({ type: 'stackPush', item: 'cap-ab1', kind: 'ability', source } as never), card);
+    await a.evaluate(() => window.__spellplane!.dispatch!({ type: 'turnPass', to: 's1' } as never));
+    await expect.poll(async () => (await state(b)).turn.active, { timeout: 15_000 }).toBe('s1');
+    // She points at the ability's marker in the stack lane.
+    let marker: DOMRect | null = null;
+    await expect
+      .poll(
+        async () => {
+          const lane = await a.evaluate(() => JSON.parse(JSON.stringify(window.__spellplane!.stack!())) as DebugStackEntry[]);
+          marker = lane.find((e) => e.item === 'cap-ab1' && e.marker)?.screen ?? null;
+          return marker !== null;
+        },
+        { timeout: 15_000 },
+      )
+      .toBe(true);
+    const m = marker!;
+    await a.mouse.move(m.x + m.width / 2 - 4, m.y + m.height / 2 - 4);
+    await a.mouse.move(m.x + m.width / 2, m.y + m.height / 2, { steps: 3 });
+
+    expect(await say(a, 'that trigger', true)).toBe(true);
+    for (const p of [a, b]) {
+      const c = await bubble(p, 'that trigger');
+      expect(c.anchoredTo).toEqual({ kind: 'stackItem', id: 'cap-ab1' });
+    }
+    await expect.poll(async () => (await lastAction(b, 'caption')) !== null, { timeout: 15_000 }).toBe(true);
+    expect(await lastAction(b, 'caption')).toMatchObject({ text: 'that trigger', anchor: { kind: 'stackItem', id: 'cap-ab1' } });
   });
 
   test('dictation while a note field has focus goes into that field, not into a caption', async ({ browser }, info) => {

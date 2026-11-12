@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FAKE_SPEECH, SPEECH_ENGINES, createdEngines } from '../../../src/voice/speech/index';
-import { LocalWhisperEngine, WHISPER_MODEL, type AudioCapture, type ProgressInfo, type TransformersLike } from '../../../src/voice/speech/local';
+import { LocalWhisperEngine, WebAudioCapture, WHISPER_MODEL, type AsrPipeline, type AudioCapture, type ProgressInfo, type TransformersLike } from '../../../src/voice/speech/local';
 import { WebSpeechEngine, recognitionCtor, type RecognitionEventLike, type RecognitionLike } from '../../../src/voice/speech/webspeech';
 
 // --- Web Speech ------------------------------------------------------------------------------------------------------
@@ -235,6 +235,23 @@ describe('on-device Whisper engine', () => {
     expect(cap.closed).toBe(true);
   });
 
+  it('dispose releases the microphone and frees the model', async () => {
+    const disposed: number[] = [];
+    const lib: TransformersLike = {
+      pipeline: async () => Object.assign(async () => ({ text: 'x' }), { dispose: () => void disposed.push(1) }) as AsrPipeline,
+    };
+    const cap = new FakeCapture();
+    const e = new LocalWhisperEngine({ library: async () => lib, capture: () => cap, webgpu: false });
+    await e.load();
+    e.start('en', () => undefined);
+    await vi.advanceTimersByTimeAsync(0);
+    e.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(cap.closed).toBe(true);
+    expect(disposed).toEqual([1]);
+    expect(e.loaded).toBe(false);
+  });
+
   it('a press too short for words ends without a transcription', async () => {
     const f = fakeTransformers(() => 'phantom');
     const cap = new FakeCapture();
@@ -248,6 +265,132 @@ describe('on-device Whisper engine', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(got).toEqual([]);
     expect(f.runs).toEqual([]);
+  });
+});
+
+// --- Microphone capture ----------------------------------------------------------------------------------------------
+
+describe('Web Audio microphone capture', () => {
+  type Track = { enabled: boolean; stopped: boolean; stop(): void };
+  let nodes: { onaudioprocess: ((e: { inputBuffer: { getChannelData(n: number): Float32Array } }) => void) | null }[] = [];
+  let contexts = 0;
+  beforeEach(() => {
+    nodes = [];
+    contexts = 0;
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        destination = {};
+        constructor() {
+          contexts++;
+        }
+        createMediaStreamSource() {
+          return { connect: () => undefined };
+        }
+        createScriptProcessor() {
+          const node = { onaudioprocess: null, connect: () => undefined, disconnect: () => undefined };
+          nodes.push(node);
+          return node;
+        }
+        resume() {
+          return Promise.resolve();
+        }
+        close() {
+          return Promise.resolve();
+        }
+      },
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A microphone whose permission prompt the test answers. */
+  function prompt(): { media: { getUserMedia(): Promise<MediaStream> }; allow(): void; tracks: Track[] } {
+    const tracks: Track[] = [];
+    const pending: ((s: MediaStream) => void)[] = [];
+    return {
+      tracks,
+      media: {
+        getUserMedia: () =>
+          new Promise<MediaStream>((resolve) => {
+            pending.push(resolve);
+          }),
+      },
+      allow() {
+        const track: Track = {
+          enabled: true,
+          stopped: false,
+          stop() {
+            this.stopped = true;
+          },
+        };
+        tracks.push(track);
+        const stream = { getAudioTracks: () => [track], getTracks: () => [track] } as unknown as MediaStream;
+        pending.shift()?.(stream);
+      },
+    };
+  }
+  const buffer = { inputBuffer: { getChannelData: () => new Float32Array(4096) } };
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+
+  it('records while begun and disables the microphone when ended', async () => {
+    const mic = prompt();
+    const cap = new WebAudioCapture(mic.media as never);
+    const begun = cap.begin();
+    mic.allow();
+    await begun;
+    expect(mic.tracks[0]?.enabled).toBe(true);
+    nodes[0]?.onaudioprocess?.(buffer);
+    expect(cap.end().length).toBe(4096);
+    expect(mic.tracks[0]?.enabled).toBe(false);
+    nodes[0]?.onaudioprocess?.(buffer);
+    expect(cap.samples().length).toBe(0);
+  });
+
+  it('a key released while the permission prompt is open records nothing and leaves the microphone disabled', async () => {
+    const mic = prompt();
+    const cap = new WebAudioCapture(mic.media as never);
+    const begun = cap.begin();
+    cap.end();
+    mic.allow();
+    await begun;
+    expect(mic.tracks[0]?.enabled).toBe(false);
+    nodes[0]?.onaudioprocess?.(buffer);
+    expect(cap.samples().length).toBe(0);
+    // The next press records as usual, without asking again.
+    await cap.begin();
+    nodes[0]?.onaudioprocess?.(buffer);
+    expect(cap.samples().length).toBe(4096);
+    expect(mic.tracks).toHaveLength(1);
+  });
+
+  it('closed while the prompt is open: the late stream is stopped at once', async () => {
+    const mic = prompt();
+    const cap = new WebAudioCapture(mic.media as never);
+    const begun = cap.begin();
+    cap.close();
+    mic.allow();
+    await begun;
+    expect(mic.tracks[0]?.stopped).toBe(true);
+    expect(contexts).toBe(0);
+  });
+
+  it('through the engine: stop during the prompt leaves nothing recording', async () => {
+    const mic = prompt();
+    const cap = new WebAudioCapture(mic.media as never);
+    const e = new LocalWhisperEngine({ library: async () => fakeTransformers(() => 'x').lib, capture: () => cap, webgpu: false });
+    await e.load();
+    e.start('en', () => undefined);
+    await settle();
+    e.stop();
+    mic.allow();
+    await settle();
+    nodes[0]?.onaudioprocess?.(buffer);
+    expect(cap.samples().length).toBe(0);
+    expect(mic.tracks[0]?.enabled).toBe(false);
+    e.dispose();
+    expect(mic.tracks[0]?.stopped).toBe(true);
   });
 });
 
@@ -272,8 +415,8 @@ describe('engine factories', () => {
   it('report availability without creating an engine', async () => {
     const before = createdEngines().length;
     // Node has no SpeechRecognition.
-    expect(await SPEECH_ENGINES.webspeech.available!()).toBe(false);
-    await SPEECH_ENGINES.local.available!();
+    expect(await SPEECH_ENGINES.webspeech.available()).toBe(false);
+    await SPEECH_ENGINES.local.available();
     expect(createdEngines().length).toBe(before);
   });
 });

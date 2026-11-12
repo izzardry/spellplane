@@ -7,11 +7,12 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { mergeTimeline, type ChatTab } from '../core/log';
-  import type { CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
+  import type { Anchor, CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import type { ActivePing, TableScene, ViewState } from '../scene/types';
   import { attachPresence, type PresenceHandle } from '../scene/presence';
+  import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
   import { tokensToCssVars } from '../themes/index';
@@ -527,10 +528,21 @@
     scene.update(st, view);
   });
 
-  // The hovered card is a caption's anchor (DESIGN "Chat and voice", Placement: "last acted on or is hovering").
+  // The hovered card or stack item is a caption's anchor (DESIGN "Chat and voice", Placement: "last acted on or is
+  // hovering"). A stack marker (an ability or trigger) has no card: the scene reports it on its own.
+  let captionHover = '';
+  function syncCaptionHover(card: InstanceId | null): void {
+    if (!session.captions) return;
+    const item = card ? null : hoveredStackItem(scene);
+    const anchor: Anchor | null = card ? { kind: 'card', id: card } : item ? { kind: 'stackItem', id: item } : null;
+    const key = anchor ? `${anchor.kind}:${anchor.id}` : '';
+    if (key === captionHover) return;
+    captionHover = key;
+    session.captions.hover(anchor);
+  }
   $effect(() => {
     const h = hovered;
-    session.captions?.hover(h ? { kind: 'card', id: h } : null);
+    untrack(() => syncCaptionHover(h));
   });
   /** While the note field has focus, dictation goes into it (DESIGN "Chat and voice", Notes by voice). */
   function dictateNote(on: boolean): void {
@@ -652,6 +664,7 @@
   onpointermove={(e) => {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
+    syncCaptionHover(hovered);
   }}
 />
 
@@ -675,10 +688,15 @@
         <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
-        {#if session.captions}<button type="button" data-testid="open-speech-settings" aria-pressed={speechOpen} onclick={() => (speechOpen = !speechOpen)}>Dictation</button>{/if}
         {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
         {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
       </nav>
+      {#if session.captions}
+        <!-- The speech settings (M3-P4) on a row of their own, so the shared toolbar keeps its layout. -->
+        <div class="toolbar" role="group" aria-label="Dictation">
+          <button type="button" data-testid="open-speech-settings" aria-pressed={speechOpen} onclick={() => (speechOpen = !speechOpen)}>Dictation</button>
+        </div>
+      {/if}
       {#each seats.filter((s) => s.id !== me && !isEmptyChair(st, s.id)) as seat (seat.id)}
         <Avatar
           {seat}
@@ -1003,9 +1021,6 @@
   }
   .toolbar {
     display: flex;
-    flex-wrap: wrap;
-    /* Wraps before it reaches the turn strip, centred at the top (at 1440 px it starts at about 410 px). */
-    max-width: 400px;
     gap: 4px;
     pointer-events: auto;
     align-items: center;
