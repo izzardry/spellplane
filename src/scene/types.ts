@@ -189,6 +189,11 @@ export interface DraftSurfaceOptions {
   theme: Theme;
   faces: FaceSource;
   events: Partial<DraftSurfaceEvents>;
+  /**
+   * Card data for the pool's colour sort (colour, type), null while loading. Added by M2-P4 (optional): without it
+   * every pool card sorts as colourless.
+   */
+  card?(ref: CardRef): CardData | null;
 }
 
 /** A live draft surface (DESIGN "Pre-game", Drafting interaction: pack fan or grid, pool area, waiting packs). */
