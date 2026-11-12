@@ -25,6 +25,12 @@
  *   TEAM_POOL and as refs in `SecretStore.pool`, so the builder of either teammate shows the whole team pool.
  * - Picking: a pick names the cards it takes (core/reducer/pass.ts), so either teammate's pick adds the same cards to
  *   both teammates' pools. Marks stay local.
+ * - The pick timer (DESIGN "Specification: card data, packs and draft formats": "on expiry the marked card, or else
+ *   the first card, is taken"): it runs from the moment this browser applied the front pack's `sinceSeq`, as the HUD
+ *   shows it. On expiry a teammate's browser picks its marked cards topped up with the first cards in pack order; a
+ *   browser without marks waits UNMARKED_WAIT_MS longer and the second member MEMBER_STAGGER_MS longer, so a marking
+ *   teammate's pick comes first and the two rarely race. The sequencer's `draftTimeout` follows only after
+ *   core/drafting.ts TEAM_PICK_GRACE_MS, for a team none of whose browsers can pick.
  */
 import { verifyReveal, type RevealedCard } from '../core/commit';
 import { pickTimerMs, setForPack } from '../core/drafting';
@@ -43,6 +49,12 @@ export const TEAM_CARDS = 'team:cards';
 export const TEAM_NEED = 'team:need';
 /** How long a browser waits for cards its team may know before it asks, and then between requests (ms). */
 export const REQUEST_MS = 2000;
+/** How much longer than the pick timer a browser without marks on the front pack waits before it takes the first cards (ms). */
+export const UNMARKED_WAIT_MS = 2000;
+/** How much longer the second member of a team waits than the first (ms). Both waits stay well below TEAM_PICK_GRACE_MS. */
+export const MEMBER_STAGGER_MS = 1000;
+/** Seqs remembered with the local time this browser first applied them. */
+const SEEN_SEQS = 256;
 /** How many sequenced actions received cards wait for their pack to appear in shared state. */
 const WAIT_ACTIONS = 200;
 
@@ -105,6 +117,12 @@ function create(host: DraftHost, format: TeamFormat): DraftDriver {
 
   let lastSequenced: TableState = host.confirmedState?.() ?? host.state();
   const conf = (): TableState => host.confirmedState?.() ?? lastSequenced;
+  /** Local time each confirmed seq was first applied here, ascending; a seq from before this driver counts from its start. */
+  const seenSeqs: { seq: number; at: number }[] = [{ seq: conf().seq, at: Date.now() }];
+  const appliedAt = (seq: number): number => seenSeqs.find((e) => e.seq >= seq)?.at ?? Date.now();
+  /** Timed-out picks this browser made, `${packId}:${picks}`, and the timer that wakes it at the next expiry. */
+  const timedOut = new Set<string>();
+  let expiry: ReturnType<typeof setTimeout> | null = null;
   const held = (): Record<string, RevealedCard[]> => draftSecretsOf(host.secrets()).held;
   const known = (packId: PackId): RevealedCard[] => (Object.hasOwn(held(), packId) && packId !== TEAM_POOL ? held()[packId]! : []);
 
@@ -249,10 +267,53 @@ function create(host: DraftHost, format: TeamFormat): DraftDriver {
   };
 
   const off = host.onSequenced((_a, state) => {
+    const last = seenSeqs[seenSeqs.length - 1]!;
+    if (state.seq > last.seq) {
+      seenSeqs.push({ seq: state.seq, at: Date.now() });
+      if (seenSeqs.length > SEEN_SEQS) seenSeqs.splice(0, seenSeqs.length - SEEN_SEQS);
+    }
     if (teamDraftOf(state, format) === null) return;
     lastSequenced = state;
     reconcile();
   });
+
+  /**
+   * The pick timer (see the module comment): once the team's front pack's timer ran out here, pick the marked cards,
+   * then the first ones in pack order; until then, wake up at the expiry.
+   */
+  const pickOnExpiry = (): void => {
+    if (expiry !== null) clearTimeout(expiry);
+    expiry = null;
+    if (format !== 'teamDraft' || disposed) return;
+    const state = conf();
+    const d = live(state);
+    const team = draftTeamOf(state, me);
+    if (d === null || d.done || !d.pickTimer || team === null) return;
+    const frontId = d.queues[team]?.[0];
+    const front = frontId === undefined || !Object.hasOwn(d.packs, frontId) ? null : d.packs[frontId]!;
+    const v = driver.view();
+    // Not while the cards are not all here (the sequencer's fallback takes the pick then) or an own pick is pending.
+    if (front === null || front.count === 0 || v.pack === null || v.pack.packId !== front.id) return;
+    const key = `${front.id}:${front.picks}`;
+    if (timedOut.has(key)) return;
+    const j = Math.max(0, teamMembers(state, team).indexOf(me));
+    const due = appliedAt(front.sinceSeq) + pickTimerMs(front.picks) + (v.marked.length > 0 ? 0 : UNMARKED_WAIT_MS) + j * MEMBER_STAGGER_MS;
+    const now = Date.now();
+    if (now < due) {
+      expiry = setTimeout(() => {
+        expiry = null;
+        driver.drive();
+      }, due - now);
+      return;
+    }
+    const chosen = v.marked.slice(0, v.picks);
+    for (const c of v.pack.cards) {
+      if (chosen.length >= v.picks) break;
+      if (!chosen.includes(c.id)) chosen.push(c.id);
+    }
+    timedOut.add(key);
+    driver.pick(chosen);
+  };
 
   const offCards =
     host.onCards?.((about, cards, from) => {
@@ -326,6 +387,7 @@ function create(host: DraftHost, format: TeamFormat): DraftDriver {
     drive() {
       if (disposed) return;
       reconcile();
+      pickOnExpiry();
       if (opening) return;
       const v = host.state();
       const n = owedPack(v);
@@ -378,6 +440,8 @@ function create(host: DraftHost, format: TeamFormat): DraftDriver {
       disposed = true;
       if (retry !== null) clearTimeout(retry);
       retry = null;
+      if (expiry !== null) clearTimeout(expiry);
+      expiry = null;
       off();
       offCards();
     },

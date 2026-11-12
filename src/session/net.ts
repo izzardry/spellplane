@@ -77,6 +77,7 @@ import { identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recovery
 import { reconcileSecrets, type LibraryPlacement } from './secrets';
 import { buildFromDeck, Evening, type DraftPort } from './draft';
 import { TeamView } from './team';
+import { MAX_TEAM_CHAT } from '../net/team';
 import { formatTeamSeats, isTeamFormat, teamIdOf } from '../core/teams';
 import type { DraftControls } from '../draft/types';
 import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus, TeamControls } from './types';
@@ -564,7 +565,8 @@ class NetTable implements NetSession, SessionRecovery {
   chat(text: string, channel: ChatChannel = 'table'): Action {
     if (channel === 'team') {
       // Team lines go to the teammate on the pair channel only, never into the shared log (M3-P2, session/team.ts).
-      const line = this.stamp({ type: 'chat', text, channel });
+      // A line longer than the channel carries is cut to it, so the own timeline shows what the teammate gets.
+      const line = this.stamp({ type: 'chat', text: text.slice(0, MAX_TEAM_CHAT), channel });
       if (!this.disposed) this.teamView.say(line);
       return line;
     }

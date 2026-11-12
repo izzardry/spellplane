@@ -2,8 +2,9 @@
  * PLAN M3-P2 in the browser: four pages at a Two-Headed Giant table (real networked sessions over BroadcastChannel,
  * real Web Crypto identities, one IndexedDB per profile). DESIGN "Players, seats and formats", Two-Headed Giant:
  * "Each teammate's hand is visible live to the other, shown as a second, smaller fan above the player's own", "one
- * shared life total". Asserted on the harness (state, secrets, received messages) and on the fan's DOM attributes,
- * never on pixels; a screenshot of the teammate's fan is kept as evidence.
+ * shared life total", "A team channel carries voice and text only between teammates". The pages mount the real HUD.
+ * Asserted on the harness (state, secrets, received messages) and on the fan's and chat panel's DOM, never on pixels;
+ * screenshots of the teammate's fan and the team chat are kept as evidence.
  */
 import { expect, test, type Page } from '@playwright/test';
 import crypto from 'node:crypto';
@@ -24,6 +25,20 @@ async function converged(pages: Page[]): Promise<void> {
     .toBe(true);
 }
 
+/** Send a chat line on `tab` through the HUD's chat panel, as a player does. */
+async function say(page: Page, tab: 'table' | 'team', text: string): Promise<void> {
+  await page.getByTestId(`chat-tab-${tab}`).click();
+  await page.getByTestId('chat-input').fill(text);
+  await page.getByTestId('chat-input').press('Enter');
+  await expect(page.getByTestId('chat-input')).toHaveValue('');
+}
+
+/** The chat lines a page's chat panel shows on `tab` that contain `text`. */
+async function shown(page: Page, tab: 'table' | 'team', text: string): Promise<number> {
+  await page.getByTestId(`chat-tab-${tab}`).click();
+  return page.locator('[data-testid=log-line][data-kind=chat]').filter({ hasText: text }).count();
+}
+
 /** The teammate fan as the page draws it: card ids, Scryfall ids and verdicts in fan order. */
 function fan(page: Page, seat: string): Promise<{ id: string; sid: string; verified: string }[]> {
   return page
@@ -31,7 +46,7 @@ function fan(page: Page, seat: string): Promise<{ id: string; sid: string; verif
     .evaluateAll((els) => els.map((e) => ({ id: e.getAttribute('data-card') ?? '', sid: e.getAttribute('data-sid') ?? '', verified: e.getAttribute('data-verified') ?? '' })));
 }
 
-test('a teammate’s page shows the partner’s hand live; an opponent’s page never receives it; life is one team total', async ({ browser }, info) => {
+test('a teammate’s page shows the partner’s hand live; an opponent’s page never receives it; life is one team total; team chat reaches only the teammate', async ({ browser }, info) => {
   test.setTimeout(180_000);
   const context = await browser.newContext();
   const room = `team-room-${crypto.randomBytes(4).toString('hex')}-42`;
@@ -89,6 +104,29 @@ test('a teammate’s page shows the partner’s hand live; an opponent’s page 
     await th(cleo, 'life', 's0', -3);
     await converged(pages);
     for (const p of pages) expect(await th(p, 'teamLife')).toEqual({ t0: 24, t1: 30 });
+
+    // Team chat (DESIGN "A team channel carries voice and text only between teammates"; "Chat and voice": team text
+    // chat is a tab in the chat panel): Anna's line shows on her and Ben's team tab, never on the table tab, and the
+    // opponents' pages neither show nor receive it. Ben's answer reaches Anna.
+    const plan = `team-plan-${crypto.randomBytes(4).toString('hex')}`;
+    const answer = `team-answer-${crypto.randomBytes(4).toString('hex')}`;
+    await say(anna, 'team', plan);
+    await expect.poll(() => shown(ben, 'team', plan), { timeout: 20_000 }).toBe(1);
+    await say(ben, 'team', answer);
+    await expect.poll(() => shown(anna, 'team', answer), { timeout: 20_000 }).toBe(1);
+    expect(await shown(anna, 'team', plan)).toBe(1);
+    expect(await shown(ben, 'team', answer)).toBe(1);
+    for (const p of [anna, ben]) expect(await shown(p, 'table', 'team-')).toBe(0);
+    await say(cleo, 'team', 'cleo-to-dan');
+    await expect.poll(() => shown(dan, 'team', 'cleo-to-dan'), { timeout: 20_000 }).toBe(1);
+    for (const p of [cleo, dan]) {
+      expect(await shown(p, 'team', 'team-')).toBe(0);
+      expect(await shown(p, 'table', 'team-')).toBe(0);
+      expect(scan(await th<unknown[]>(p, 'observed'), [plan, answer])).toEqual([]);
+    }
+    for (const p of [anna, ben]) expect(await shown(p, 'team', 'cleo-to-dan')).toBe(0);
+    expect(scan(await th<unknown[]>(ben, 'observed'), [plan]).length).toBeGreaterThan(0);
+    await shot(ben, 'M3', 'team-chat', info.project.name);
 
     // Leak: nothing the opponents received or hold (messages, state, log, secrets, IndexedDB) carries a hidden card of
     // Anna or Ben; the teammate did receive them (the scan is not vacuous).

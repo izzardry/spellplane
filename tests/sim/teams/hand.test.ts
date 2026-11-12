@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isSeatActive } from '../../../src/core/teams';
 import type { LoopbackOptions } from '../../../src/net/loopback';
+import { MAX_TEAM_CHAT } from '../../../src/net/team';
 import { leakScan } from '../../leak/leak';
 import { scan } from '../../leak/scan';
 import { closeAll, dump, FAKE_TIMERS, net, observedBy, open, settle, trackDisclosures, until, waitConverged, type Browser } from '../session/harness';
@@ -165,5 +166,11 @@ describe('Two-Headed Giant: shared life, turn marker and team chat', () => {
       expect(s.team!.chatLog()).toEqual([]);
       expect(scan(await observedBy(network, obs), ['attack the left one'])).toEqual([]);
     }
+    // A line longer than the channel carries is cut before it is stamped: the sender shows what the teammate gets.
+    const long = a.chat(`${'x'.repeat(MAX_TEAM_CHAT)}tail`, 'team');
+    expect(long.type === 'chat' ? long.text : '').toBe('x'.repeat(MAX_TEAM_CHAT));
+    await until(() => b.team!.chatLog().length === 2, 10_000, 'Ben to get the long line');
+    const texts = (s: typeof a): string[] => s.team!.chatLog().map((e) => (e.kind === 'action' && e.action.type === 'chat' ? e.action.text : ''));
+    expect(texts(b)).toEqual(texts(a));
   }, 120_000);
 });

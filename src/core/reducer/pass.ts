@@ -36,9 +36,11 @@
  * the shared pool; the ids are recorded in `DraftState.taken[team]` in pick order. Opaque ids say nothing about the
  * cards, and the team the pack goes to learns which ids are gone from the cards it receives anyway. A pick hands the
  * rest of the pack on to the next team at once (no `packPass`: the cards travel on the pair channel, draft/team.ts),
- * so a pack never waits for one teammate's browser. The pick timer's `draftTimeout` takes the first remaining ids in
- * sorted order (the sequencer knows neither marks nor pack order). In sealed the team's packs go straight to the team
- * pool. DECISIONS [M3-P2].
+ * so a pack never waits for one teammate's browser. When the pick timer runs out, the team's browsers pick the marked
+ * cards, or else the first cards in pack order, with an ordinary `pick` (draft/team.ts); the sequencer's `draftTimeout`
+ * comes only TEAM_PICK_GRACE_MS later (core/drafting.ts) as the fallback for a team with no browser that can, and takes
+ * the first remaining ids in sorted order (the sequencer knows neither marks nor pack order). In sealed the team's
+ * packs go straight to the team pool. DECISIONS [M3-P2].
  *
  * Pure and total like the rest of the reducer.
  */
@@ -441,7 +443,7 @@ function teamPick(d: Draft, a: ActionOf<'pick'>): void {
   takeTeamPick(d, draft, team, pack, ids, seqOf(d, a));
 }
 
-/** `draftTimeout` of a Two-Headed Giant draft: the front pack's pick, the first remaining ids in sorted order (see the module comment). */
+/** `draftTimeout` of a Two-Headed Giant draft (the fallback, see the module comment): the front pack's pick, the first remaining ids in sorted order. */
 function teamTimeout(d: Draft, a: ActionOf<'draftTimeout'>): void {
   const draft = running(d, 'teamDraft');
   checkId(a.by, 'seat');

@@ -51,6 +51,18 @@
   /** Own chat lines not in the session log yet, and what the HUD notices as the log grows (ui/chat/watch.ts, M1-P6). */
   let pendingChat = $state.raw<readonly LogEntry[]>([]);
   const watch = new LogWatch();
+  /**
+   * Two-Headed Giant team chat this browser sent or received (session.team chatLog, M3-P2): team lines never enter the
+   * shared log (DESIGN "A team channel carries voice and text only between teammates"), so the timeline merges them in.
+   */
+  let teamChat = $state.raw<readonly LogEntry[]>([]);
+  let teamUnsub: (() => void) | null = null;
+  function followTeam(): void {
+    const team = session.team;
+    if (!team || teamUnsub) return;
+    teamUnsub = team.subscribe(() => (teamChat = team.chatLog()));
+    teamChat = team.chatLog();
+  }
 
   // --- Local view state (never shared) -------------------------------------------------------------------------
   let sceneHover = $state<InstanceId | null>(null);
@@ -449,7 +461,7 @@
    * earlier hidden move); the watch fills in the names this browser could see just before each action (M1-P6).
    */
   const lines = $derived(
-    logLines(mergeTimeline(entries, pendingChat), {
+    logLines(mergeTimeline(entries, teamChat, pendingChat), {
       state: st,
       cardName: logName,
       phaseLabel: (id) => game.phases.find((p) => p.id === id)?.label ?? id,
@@ -460,7 +472,11 @@
   const chatTabs = $derived<ChatTab[]>(st.seats[me]?.team ? ['table', 'team'] : ['table']);
   function sendChat(text: string, channel: ChatTab) {
     const a = session.chat(text, channel);
-    pendingChat = addPending(pendingChat, a, session.log(), Date.now());
+    followTeam();
+    const team = session.team;
+    // A team line stays out of the shared log: the team view holds it (and the teammate's), not the pending list.
+    if (channel === 'team' && team) teamChat = team.chatLog();
+    else pendingChat = addPending(pendingChat, a, session.log(), Date.now());
   }
   const inspectCard = $derived<CardInstance | null>(inspectId ? (st.cards[inspectId] ?? null) : null);
   const keyOf = (a: ActionId, ctx: KeyContext = 'table') => keyLabel(keymap, a, ctx);
@@ -538,7 +554,9 @@
   onMount(() => {
     seenLog = entries.length;
     watch.start(entries);
+    followTeam();
     const unsub = session.subscribe((s) => {
+      followTeam();
       const log = session.log();
       // Before the HUD moves on: names this browser could see and other players' cards touched (M1-P6).
       watch.observe(log, st, s, logName);
@@ -592,6 +610,8 @@
     }
     return () => {
       unsub();
+      teamUnsub?.();
+      teamUnsub = null;
       for (const t of timers) clearTimeout(t);
       timers = [];
       engine.blur();

@@ -2,9 +2,10 @@
  * Browser entry for the Two-Headed Giant Playwright specs (tests/e2e/teams/*.spec.ts): bundled from source by
  * ./bundle.ts and served on the app's own origin. Each page opens the real networked session (session/net.ts) at a
  * Two-Headed Giant table over BroadcastChannel, with its own `?profile=` (IndexedDB and key pair, Web Crypto), the
- * recorded Core Set 2019 card data (tests/fixtures) and placeholder faces, and mounts the teammate's hand fan
- * (ui/hand/TeamHands.svelte). The table format is chosen at creation, since the lobby's format choice (`formatSet`)
- * belongs to M3-P1. window.__teamHarness drives it; everything it returns is plain JSON.
+ * recorded Core Set 2019 card data (tests/fixtures) and placeholder faces, and mounts the real table HUD
+ * (ui/Hud.svelte, with the teammate's hand fan and the chat panel) over a recording scene. The table format is chosen
+ * at creation, since the lobby's format choice (`formatSet`) belongs to M3-P1. window.__teamHarness drives it;
+ * everything it returns is plain JSON.
  */
 import { mount } from 'svelte';
 import cards from '../../fixtures/scryfall/m19.json';
@@ -19,7 +20,9 @@ import { openNetSession, type NetTable } from '../../../src/session/net';
 import type { DeckImport } from '../../../src/session/types';
 import { STORE_NAMES } from '../../../src/store/db';
 import { openStores, type LocalStores } from '../../../src/store/stores';
-import Container from './Container.svelte';
+import { paper } from '../../../src/themes/paper/index';
+import { RecordingScene } from '../../../src/ui/fakes';
+import Hud from '../../../src/ui/Hud.svelte';
 
 const all = cards as unknown as CardData[];
 const cardData = new FixtureCardDataSource(all);
@@ -52,7 +55,11 @@ const harness = {
       { game: mtg, cardData, roomId: room, roomKey: key, transport: () => new BroadcastTransport(`${identity.peerId}-${Math.random().toString(36).slice(2, 8)}`), identity, store: stores.tables, format: '2hg' },
       { createdHere: first, loneWaitMs: 0 },
     );
-    mount(Container, { target: document.getElementById('app')!, props: { session, faces } });
+    const host = document.getElementById('app')!;
+    // As the HUD harness (src/ui/harness.ts) mounts it.
+    document.documentElement.style.cssText = 'margin:0;height:100%;overflow:hidden';
+    document.body.style.cssText = 'margin:0;height:100%;overflow:hidden;background:#fff';
+    mount(Hud, { target: host, props: { session, createScene: () => new RecordingScene(), faces, cardData, game: mtg, theme: paper } });
     return session.seat;
   },
   seat: (): SeatId => need().seat,

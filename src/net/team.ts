@@ -3,7 +3,7 @@
  * to the teammate only (DESIGN "Players, seats and formats", Two-Headed Giant: "Each teammate's hand is visible live to
  * the other", "A team channel carries voice and text only between teammates"; "Specification: network protocol and
  * secrecy", prv). Contracts: M3-C (stub); implementer: M3-P2. Its scenario is in the shared leak test
- * (tests/sim/teams/hand-leak.test.ts).
+ * (tests/sim/teams/hand.test.ts; the draft scenario is tests/sim/teams/draft-leak.test.ts).
  *
  * Both directions check the confirmed shared state, never the sender's word:
  * - a hand goes only to a seat on the sender's own team (core/teams.ts `sameTeam`), only while the table shows team

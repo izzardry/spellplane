@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { canonicalJson } from '../../../src/core/hash';
-import { draftDeadlines } from '../../../src/core/drafting';
+import { draftDeadlines, pickTimerMs, TEAM_PICK_GRACE_MS } from '../../../src/core/drafting';
 import { packRemaining } from '../../../src/core/reducer/pass';
 import { formatSeatProblem } from '../../../src/core/stage';
 import { activeSeats, opensInRound, teamDraftRounds, teamMembers, teamSealedNumbers } from '../../../src/core/teams';
@@ -202,12 +202,14 @@ describe('Two-Headed Giant draft: picking', () => {
     for (const p of Object.values(d.packs)) expect(p).toMatchObject({ count: 0, holder: null });
   });
 
-  it('the pick timer times the team\'s front pack, and its timeout takes the first remaining ids for the team', () => {
+  it('the pick timer times the team\'s front pack, and its fallback timeout takes the first remaining ids for the team', () => {
     let s = openRound(teamDraftTable(DRAFT, ['M19'], true));
     const deadlines = draftDeadlines(s);
     expect(deadlines.map((x) => x.emit[0])).toEqual(
       ['t0', 't1'].map((t) => ({ type: 'draftTimeout', packId: draftOf(s).queues[t]![0], picks: 0 })),
     );
+    // The team's browsers pick the marked or first cards at expiry; the sequencer's timeout comes after a grace.
+    expect(deadlines.map((x) => x.afterMs)).toEqual([pickTimerMs(0) + TEAM_PICK_GRACE_MS, pickTimerMs(0) + TEAM_PICK_GRACE_MS]);
     const front = draftOf(s).queues.t1![0]!;
     const before = packRemaining(draftOf(s), draftOf(s).packs[front]!);
     s = ok(s, act('draftTimeout', { packId: front, picks: 0 }, 's0'));

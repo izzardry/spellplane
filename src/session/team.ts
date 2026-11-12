@@ -14,7 +14,8 @@
  *   copy that overtook the log, or a late one, never shows a card the hand does not hold. It is empty while the
  *   teammate is away or no longer a teammate, or the table hides team hands.
  * - Team chat lines go to the teammates only (`teamChat`) and are kept as local log entries for this browser's
- *   timeline (`chatLog`), never in the shared log.
+ *   timeline (`chatLog`, merged in by the HUD), never in the shared log. They live in memory only: a reload starts the
+ *   team tab empty (DECISIONS [M3-P2]).
  */
 import type { Action } from '../core/actions';
 import type { RevealedCard } from '../core/commit';

@@ -80,15 +80,76 @@ describe('Two-Headed Giant draft: the team pool is shared and complete', () => {
     close(t);
   }, 120_000);
 
-  it('the pick timer picks for a team that does not, and the pool stays shared and complete', async () => {
+  it('on expiry of the pick timer the team takes its marked card, or else the first cards in pack order', async () => {
     const t = await teamNet({ format: 'teamDraft', packs: 2, picks: 2 }, { seed: 3, delay: { min: 0, max: 30 } }, ['M19'], true);
-    // Team t1 never picks: every one of its picks is the sequencer's draftTimeout.
-    t.seats[2]!.idle = true;
-    t.seats[3]!.idle = true;
-    await runTeamDraft(t, teamBot(9), 3_000_000, undefined, 100);
+    const [cleo, dan] = [t.seats[2]!, t.seats[3]!];
+    // Team t1 never confirms a pick: Cleo only marks the last card in pack order of every pack she sees, Dan nothing.
+    cleo.idle = true;
+    dan.idle = true;
+    const marked = new Map<string, string>();
+    const picks: { seat: string; cards: string[]; order: string[]; marked: string | null }[] = [];
+    for (const s of [cleo, dan]) {
+      const dispatch = s.host.dispatch.bind(s.host);
+      s.host.dispatch = (draft) => {
+        if (draft.type === 'pick') {
+          const v = s.driver.view();
+          picks.push({ seat: s.seat, cards: [...(draft.cards ?? [])], order: v.pack?.cards.map((c) => c.id) ?? [], marked: s === cleo ? (marked.get(draft.packId) ?? null) : null });
+        }
+        return dispatch(draft);
+      };
+    }
+    await runTeamDraft(t, teamBot(9), 3_000_000, () => {
+      const v = cleo.driver.view();
+      if (v.pack === null || v.marked.length > 0) return;
+      const last = v.pack.cards.at(-1)!.id;
+      cleo.driver.mark([last]);
+      marked.set(v.pack.packId, last);
+    }, 100);
     const log = t.seats[0]!.peer.log();
-    expect(log.some((a) => a.type === 'draftTimeout')).toBe(true);
-    expect(log.filter((a) => a.type === 'pick').every((a) => a.by === 's0' || a.by === 's1')).toBe(true);
+    // The team's own browsers took every pick: the sequencer's fallback never had to.
+    expect(log.some((a) => a.type === 'draftTimeout')).toBe(false);
+    const t1Picks = log.filter((a) => a.type === 'pick' && (a.by === 's2' || a.by === 's3'));
+    expect(t1Picks.length).toBeGreaterThan(0);
+    expect(picks.length).toBeGreaterThanOrEqual(t1Picks.length);
+    // Cleo marks, so her browser picks first: her mark, then the first card in pack order.
+    expect(t1Picks.every((a) => a.by === 's2')).toBe(true);
+    for (const p of picks.filter((x) => x.seat === 's2')) {
+      expect(p.marked).not.toBeNull();
+      expect(p.cards).toEqual([p.marked!, ...p.order.filter((id) => id !== p.marked)].slice(0, p.cards.length));
+    }
+    for (const a of t1Picks) expect(picks.some((p) => p.seat === a.by && p.cards.join() === (a.type === 'pick' ? (a.cards ?? []).join() : ''))).toBe(true);
+    expectSharedAndComplete(t, 2 * 15);
+    close(t);
+  }, 120_000);
+
+  it('without marks the first cards in pack order are taken; a team with no browser gets the sequencer\'s fallback', async () => {
+    const t = await teamNet({ format: 'teamDraft', packs: 2, picks: 2 }, { seed: 5, delay: { min: 0, max: 30 } }, ['M19'], true);
+    const [cleo, dan] = [t.seats[2]!, t.seats[3]!];
+    cleo.idle = true;
+    dan.idle = true;
+    // Team t1's browsers are gone at first (no driver); they come back after the sequencer's first draftTimeout.
+    cleo.driver.dispose();
+    dan.driver.dispose();
+    let back = false;
+    const picks: { cards: string[]; order: string[] }[] = [];
+    for (const s of [cleo, dan]) {
+      const dispatch = s.host.dispatch.bind(s.host);
+      s.host.dispatch = (draft) => {
+        if (draft.type === 'pick') picks.push({ cards: [...(draft.cards ?? [])], order: s.driver.view().pack?.cards.map((c) => c.id) ?? [] });
+        return dispatch(draft);
+      };
+    }
+    await runTeamDraft(t, teamBot(9), 3_000_000, () => {
+      if (back || !t.seats[0]!.peer.log().some((a) => a.type === 'draftTimeout')) return;
+      back = true;
+      cleo.reload();
+      dan.reload();
+    }, 100);
+    expect(back).toBe(true);
+    const log = t.seats[0]!.peer.log();
+    expect(log.filter((a) => a.type === 'pick' && (a.by === 's2' || a.by === 's3')).length).toBeGreaterThan(0);
+    expect(picks.length).toBeGreaterThan(0);
+    for (const p of picks) expect(p.cards).toEqual(p.order.slice(0, p.cards.length));
     expectSharedAndComplete(t, 2 * 15);
     close(t);
   }, 120_000);
