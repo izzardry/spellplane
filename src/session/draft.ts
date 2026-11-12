@@ -226,17 +226,15 @@ export class Evening {
     // Back in the lobby: the pool, draft secrets and deck of the evening's last draft go (the deck library keeps
     // what the player saved there).
     if (st.stage === 'lobby' && sec.draft !== undefined) this.port.setSecrets(withoutDraft(sec));
-    // A builder after a match: the last game's cards are gone from the table, so are their identities here.
-    if (st.stage === 'build' && !Object.hasOwn(st.commitments, me) && Object.keys(sec.identities).length > 0 && !Object.values(st.cards).some((c) => c.owner === me)) {
-      const s = this.port.secrets();
-      this.port.setSecrets({ ...s, identities: {}, libraryOrder: [], hand: [] });
-    }
     const d = st.draft;
     const key = d === undefined || this.port.sets === null || this.port.generatePack === null ? '' : `${d.startSeq}:${d.settings.format}`;
     if (key === this.driverKey) return;
     this.stopDriver();
     if (key === '' || d === undefined) return;
-    if (staleDraftSecrets(st, this.port.secrets(), me)) this.port.setSecrets(withoutDraft(this.port.secrets()));
+    // A new draft starts from nothing: no draft secrets yet (a constructed deck's build and sideboard go too), or ones
+    // of an earlier draft this page never saw end.
+    const current = this.port.secrets();
+    if ((current.draft === undefined && (current.build !== undefined || current.pool !== undefined)) || staleDraftSecrets(st, current, me)) this.port.setSecrets(withoutDraft(current));
     const format: DraftFormat = d.settings.format;
     try {
       this.driver = DRAFT_DRIVERS[format](this.host());
@@ -341,8 +339,11 @@ export class Evening {
     const from = st.stage;
     return new Promise<boolean>((resolve) => {
       let asked = false;
+      let settled = false;
       const done = (v: boolean): void => {
-        off();
+        if (settled) return;
+        settled = true;
+        queueMicrotask(off);
         resolve(v);
       };
       const check = (s: TableState): void => {
@@ -355,7 +356,15 @@ export class Evening {
         }
         if (asked || !this.port.pending().some((a) => a.cid === ask.cid)) done(false);
       };
-      const off = this.port.onSequenced((_a, s) => check(s));
+      const offSequenced = this.port.onSequenced((_a, s) => check(s));
+      // A refused ask is never sequenced: the next change of the view tells.
+      const offChange = this.port.onChange(() => {
+        if (!asked && !this.port.pending().some((a) => a.cid === ask.cid) && this.port.confirmedState().confirm?.id !== round) done(false);
+      });
+      const off = (): void => {
+        offSequenced();
+        offChange();
+      };
       if (this.disposed) done(false);
     });
   }

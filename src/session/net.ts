@@ -1312,8 +1312,9 @@ class NetTable implements NetSession, SessionRecovery {
         }
         if (r.owner === me && r.purpose === 'pack') {
           // An own pack-seed round (M2-P7 `packSeed`): finished with its kept nonce once ready, also after a reload.
-          const nonce = this.nonces.get('shuffle', sid);
-          if (nonce === null || !shuffleReady(st, sid) || this.inFlight('shuffleDone', sid) || this.gaveUp(`done:${sid}`)) continue;
+          // A round whose nonce this browser lost (cleared storage) is closed unused, so the pack zone is free again.
+          const nonce = this.nonces.get('shuffle', sid) ?? randomSalt();
+          if (!shuffleReady(st, sid) || this.inFlight('shuffleDone', sid) || this.gaveUp(`done:${sid}`)) continue;
           if (!this.propose(this.stamp({ type: 'shuffleDone', sid, orderHash: orderHash([], nonce) }), false)) this.roundRefusals.set(`done:${sid}`, (this.roundRefusals.get(`done:${sid}`) ?? 0) + 1);
           continue;
         }
@@ -1823,15 +1824,20 @@ class NetTable implements NetSession, SessionRecovery {
     if (this.disposed) throw new Error('The session is closed');
     const me = this.seat;
     const zone = zoneId('pack', me);
-    const open = Object.values(this.engine.confirmedState().shuffles).find((r) => r.owner === me && r.zone === zone && r.orderHash === null);
+    let open = Object.values(this.engine.confirmedState().shuffles).find((r) => r.owner === me && r.zone === zone && r.orderHash === null);
+    if (open !== undefined && this.nonces.get('shuffle', open.id) === null) {
+      // Its nonce is lost (cleared storage): `drive` closes it unused, then a fresh round starts.
+      const lost = open.id;
+      this.queueDrive();
+      await this.until(() => this.engine.confirmedState().shuffles[lost]?.orderHash != null, () => (this.gaveUp(`done:${lost}`) ? 'an old pack seed could not be closed' : null));
+      open = undefined;
+    }
     let sid: ShuffleId;
     let nonce: string;
     let cid: string | null = null;
     if (open !== undefined) {
-      const kept = this.nonces.get('shuffle', open.id);
-      if (kept === null) throw new Error('A pack seed of yours is still open and this browser no longer has its nonce');
       sid = open.id;
-      nonce = kept;
+      nonce = this.nonces.get('shuffle', open.id)!;
     } else {
       sid = randomId('pk');
       nonce = randomSalt();

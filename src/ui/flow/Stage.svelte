@@ -117,11 +117,12 @@
     transform: translateX(-50%);
     bottom: 12px;
   }
+  /* In a match the bar sits in the bottom-left corner, below the own avatar and clear of the hand fan. */
   .evening.in-match {
-    left: auto;
+    left: 12px;
     transform: none;
-    right: 12px;
     bottom: 12px;
+    max-width: min(320px, calc(50vw - 24px));
   }
   .unavailable {
     margin: 48px auto;

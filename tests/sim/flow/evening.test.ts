@@ -119,7 +119,7 @@ describe('M2-P7: a reload in each stage returns to that stage with the same pool
     await stageIs(e, 'match');
     expect(e.A.session!.engine.confirmedState().games).toBe(1);
     expect(e.A.session!.secrets().pool).toHaveLength(30);
-    expect(e.A.session!.engine.confirmedState().zones['library:s0']!.count).toBe(23);
+    expect(e.A.session!.engine.confirmedState().zones['library:s0']!.ids).toHaveLength(23);
     await settle(Promise.all([e.A.session!.shuffle(), e.B.session!.shuffle()]), 60_000, 'both shuffles');
     await settle(e.A.session!.draw(7));
     await settle(e.B.session!.draw(7));
