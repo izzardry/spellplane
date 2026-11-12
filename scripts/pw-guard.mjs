@@ -10,7 +10,11 @@
 //  - a memory watchdog aborts the run when the machine runs short of memory (kern.memorystatus_level
 //    below SPELLPLANE_PW_MIN_FREE_PCT, default 15) or the run's own processes grow past
 //    SPELLPLANE_PW_MAX_RSS_MB (default: a third of physical memory), instead of letting browsers
-//    swap the machine to death.
+//    swap the machine to death;
+//  - a load guard: no run starts while the 1-minute load average is above SPELLPLANE_PW_MAX_LOAD
+//    (default 3 × CPUs; it waits instead), and a running one is aborted (exit 5) when the load stays above
+//    SPELLPLANE_PW_ABORT_LOAD (default 8 × CPUs) for 30 s. Both machine crashes so far were macOS watchdog
+//    panics under extreme load, and browser tests under such load only time out.
 // playwright.config.ts refuses local runs that do not come through here (SPELLPLANE_PW_GUARD).
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -114,6 +118,11 @@ function memoryShortage(pgid) {
   return null;
 }
 
+const CPUS = os.cpus().length;
+const MAX_LOAD = Number(process.env.SPELLPLANE_PW_MAX_LOAD ?? 3 * CPUS);
+const ABORT_LOAD = Number(process.env.SPELLPLANE_PW_ABORT_LOAD ?? 8 * CPUS);
+const load1 = () => os.loadavg()[0];
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Frees `dir` if its owner died (killing what the dead run left behind) or it was left half-written. */
@@ -143,7 +152,8 @@ async function acquire() {
     }
     // One run per worktree: its build directory and e2e port are shared.
     const sameTree = owners.find((o) => o.cwd === process.cwd());
-    if (!sameTree) {
+    const overloaded = load1() > MAX_LOAD;
+    if (!sameTree && !overloaded) {
       for (let i = 0; i < SLOTS; i++) {
         try {
           fs.mkdirSync(slotDir(i));
@@ -158,14 +168,20 @@ async function acquire() {
       }
     }
     if (Date.now() - started > MAX_WAIT_MS) {
-      console.error(`[pw-guard] waited ${MAX_WAIT_MS / 60_000} min for a free Playwright slot; giving up`);
+      console.error(
+        `[pw-guard] waited ${MAX_WAIT_MS / 60_000} min for a free Playwright slot` +
+          (overloaded ? ` (load average ${load1().toFixed(0)}, limit ${MAX_LOAD})` : '') +
+          '; giving up',
+      );
       process.exit(75);
     }
     if (Date.now() - lastNote > 60_000) {
       console.error(
         sameTree
           ? `[pw-guard] another Playwright run in this worktree is active (pid ${sameTree.pid}); waiting for it to finish`
-          : `[pw-guard] all ${SLOTS} Playwright slots are busy (${owners.map((o) => o.cwd).join(', ')}); waiting`,
+          : overloaded
+            ? `[pw-guard] the machine's load average is ${load1().toFixed(0)} (limit ${MAX_LOAD}); waiting for it to drop`
+            : `[pw-guard] all ${SLOTS} Playwright slots are busy (${owners.map((o) => o.cwd).join(', ')}); waiting`,
       );
       lastNote = Date.now();
     }
@@ -224,8 +240,21 @@ export async function runPlaywright(args, extraEnv = {}) {
       }
     }, 5000).unref();
   };
+  let overloadSince = null;
   const watchdog = setInterval(() => {
     if (aborted) return;
+    if (load1() > ABORT_LOAD) {
+      overloadSince ??= Date.now();
+      if (Date.now() - overloadSince > 30_000) {
+        console.error(
+          `\n[pw-guard] the machine's load average is ${load1().toFixed(0)} (abort limit ${ABORT_LOAD}). ` +
+            'Aborting this Playwright run: results under such load are timeouts, and the machine is at risk.',
+        );
+        exitCode = 5;
+        stop('load');
+        return;
+      }
+    } else overloadSince = null;
     const prompt = securityPromptShowing();
     if (prompt) {
       console.error(
