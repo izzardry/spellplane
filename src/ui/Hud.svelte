@@ -33,6 +33,8 @@
   import ContextMenu from './ContextMenu.svelte';
   import DeckImport from './DeckImport.svelte';
   import HandFan from './HandFan.svelte';
+  import TeamHands from './hand/TeamHands.svelte';
+  import { teamRevealChoices } from './hand/team';
   import Inspect from './Inspect.svelte';
   import LogPanel from './LogPanel.svelte';
   import PileViewer from './PileViewer.svelte';
@@ -766,6 +768,10 @@
       ondragout={(id, x, y) => dragOut(id, x, y)}
       onselect={(id) => (selection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id])}
     />
+    {#if session.team && Object.keys(st.teams).length > 0}
+      <!-- Two-Headed Giant: the teammate's hand above the own fan (M3-P2, ui/hand/*). -->
+      <TeamHands team={session.team} state={st} {faces} {vw} {vh} oninspect={(id, ref) => ((inspectId = id), (inspectRef = ref))} />
+    {/if}
   </div>
 
   {#if viewer}
@@ -857,6 +863,7 @@
         {#each otherSeats as s (s.id)}
           <button type="button" data-seat={s.id} onclick={() => doRevealTo([s.id])}>{s.name}</button>
         {/each}
+        {#each teamRevealChoices(st, me) as c (c.id)}<button type="button" data-seat={c.id} onclick={() => doRevealTo(c.seats)}>{c.label}</button>{/each}
         {#if otherSeats.length > 1}<button type="button" data-seat="all" onclick={() => doRevealTo(otherSeats.map((s) => s.id))}>Everyone</button>{/if}
       {/if}
       <button type="button" class="x" onclick={() => (revealTo = null)}>Cancel</button>
