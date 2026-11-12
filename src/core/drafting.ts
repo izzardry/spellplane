@@ -2,7 +2,7 @@
  * Pure draft rules shared by the reducer, the draft drivers and the HUD (DESIGN "Specification: card data, packs and
  * draft formats", Draft formats and pick timer; "Pre-game: draft, sealed and deck building"). Contracts: M2-C, which
  * implements the formulas the design states outright (pick timer, pass direction, set per pack, the initial draft
- * state). Stubs name their package: M2-P2 (pass draft and sealed: deadlines), M2-P3 (Rochester snake order).
+ * state). M2-P2 implements the pick-timer deadlines, M2-P3 the Rochester snake order.
  */
 import { seatsInOrder } from './selectors';
 import type { Deadline, DrafterId, DraftState, LobbySettings, SeatId, SetCode, TableState } from './types';
@@ -111,9 +111,24 @@ export function rochesterOrder(seats: readonly SeatId[], opener: SeatId): SeatId
 /**
  * The pick-timer deadlines of `state` (DESIGN "Specification: card data, packs and draft formats", pick timer;
  * "Specification: network protocol and secrecy", Timers): for each pack at the front of a queue while the draft's
- * pick timer is on, `pickTimerMs(pack.picks)` after `pack.sinceSeq`, emitting `draftTimeout`. Implementer: M2-P2
- * (returns none until then).
+ * pick timer is on, `pickTimerMs(pack.picks)` after `pack.sinceSeq`, emitting `draftTimeout`. The key names the pack
+ * and its pick number, so each pick of a pack gets its own timer. Only the hidden-pack pass draft has queues and a
+ * timer (core/reducer/pass.ts); the open formats are turn-based and sealed has no picks. Implementer: M2-P2.
  */
-export function draftDeadlines(_state: TableState): Deadline[] {
-  return [];
+export function draftDeadlines(state: TableState): Deadline[] {
+  const d = state.draft;
+  if (d === undefined || state.stage !== 'draft' || d.done || !d.pickTimer || d.settings.format !== 'pass') return [];
+  const out: Deadline[] = [];
+  for (const drafter of d.drafters) {
+    const front = d.queues[drafter]?.[0];
+    const pack = front === undefined || !Object.hasOwn(d.packs, front) ? undefined : d.packs[front];
+    if (pack === undefined || pack.count === 0) continue;
+    out.push({
+      key: `pick:${pack.id}:${pack.picks}`,
+      fromSeq: pack.sinceSeq,
+      afterMs: pickTimerMs(pack.picks),
+      emit: [{ type: 'draftTimeout', packId: pack.id, picks: pack.picks }],
+    });
+  }
+  return out;
 }
