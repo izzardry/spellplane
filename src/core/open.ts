@@ -6,14 +6,16 @@
  *
  * - Rochester: one public pack at a time; picks in snake order from the opener (core/drafting.ts `rochesterOrder`)
  *   until `burn` cards remain; the opener role then moves left; done when every drafter opened `packs` packs.
- * - Winston: the stack is dealt once every pack is open: the opaque ids of all packs sorted (random ids, so a random
- *   interleaving), top first, one card on each of the three piles. A look either takes the pile (replaced by one stack
+ * - Winston: the stack is dealt once every pack is open: the opaque ids of all packs sorted, top first, one card on
+ *   each of the three piles. The ids come from each pack's seed stream (`seededCardId`), so the order is a random
+ *   interleaving that neither the dealer nor the other player chose, and the audit can replay it. A look either takes the pile (replaced by one stack
  *   card) or adds a stack card to it and moves on; declining the last pile takes the top stack card.
  * - Grid: nine face-up cells row by row; the first player takes a row or column, the second a remaining one that
  *   still holds a card; the rest is discarded and the next grid is laid by the next first player.
  */
 import { rochesterOrder } from './drafting';
-import type { DraftState, GridState, InstanceId, RochesterSettings, SeatId, WinstonState } from './types';
+import type { ByteStream } from './rng';
+import type { Commitment, DraftState, GridState, InstanceId, RochesterSettings, SeatId, WinstonState } from './types';
 
 /** Rows and columns of a grid (DESIGN: 3×3). */
 export const GRID_SIDE = 3;
@@ -30,6 +32,22 @@ export function otherDrafter(draft: Readonly<DraftState>, seat: SeatId): SeatId 
   const i = draft.drafters.indexOf(seat);
   if (draft.drafters.length !== 2 || i < 0) throw new RangeError(`${seat} is not one of two drafters`);
   return draft.drafters[1 - i]!;
+}
+
+const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/** Characters of a seeded card id (the alphabet of the session's random ids). */
+const ID_ALPHABET = '0123456789abcdefghijklmnopqrstuv';
+
+/**
+ * The opaque instance id of the next card of a generated pack, drawn from the pack seed's byte stream after the pack
+ * itself (16 characters, 80 bits): the opener cannot choose it, the other players cannot predict it without the seed,
+ * and the audit can recompute it from the PackRecord (DECISIONS [M2-P3]).
+ */
+export function seededCardId(stream: ByteStream): InstanceId {
+  let s = 'c';
+  for (let i = 0; i < 16; i++) s += ID_ALPHABET[stream.next() & 31];
+  return s;
 }
 
 // ---- Rochester --------------------------------------------------------------------------------------------------
@@ -74,6 +92,31 @@ export function winstonDeal(ids: readonly InstanceId[]): { stackIds: InstanceId[
   const pileIds: InstanceId[][] = [];
   for (let i = 0; i < WINSTON_PILE_COUNT; i++) pileIds.push(stack.length > 0 ? [stack.shift()!] : []);
   return { stackIds: stack, pileIds };
+}
+
+/** Every id of a dealt Winston stack, wherever the card is now (stack, piles, taken), sorted; empty before the deal. */
+export function winstonDealtIds(draft: Readonly<DraftState>): InstanceId[] {
+  const w = draft.winston;
+  if (!winstonDealt(w)) return [];
+  const all = [...w.stackIds, ...w.pileIds.flat(), ...Object.values(draft.taken ?? {}).flat()];
+  return all.sort(byText);
+}
+
+/**
+ * The commitment a Winston card shown on the pair channel is checked against: the commitments of every Winston pack
+ * together with every id of the dealt stack (core/commit.ts `verifyReveal`). No single pack lists ids, so a card is
+ * never tied to its pack (DECISIONS [M2-P3]). Null before the deal.
+ */
+export function winstonCommitment(draft: Readonly<DraftState>): Commitment | null {
+  const w = draft.winston;
+  if (!winstonDealt(w)) return null;
+  const packs = Object.values(draft.packs);
+  return {
+    seat: w.dealer,
+    commits: packs.flatMap((p) => p.commitment.commits).sort(byText),
+    instanceIds: winstonDealtIds(draft),
+    atSeq: Math.max(0, ...packs.map((p) => p.commitment.atSeq)),
+  };
 }
 
 /** Whether the Winston stack is dealt (every pack open). */

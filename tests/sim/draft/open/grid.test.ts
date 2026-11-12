@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { verifyReveal } from '../../../../src/core/commit';
-import { gridLineOpen, gridTaker } from '../../../../src/core/open';
+import { gridLineOpen, gridTaker, seededCardId } from '../../../../src/core/open';
 import { mulberry32 } from '../../../../src/util/prng';
 import { close, draftNet, fixtureGenerator, fixtureSet, runDraft, type DraftSeat } from './net';
 import { ByteStream, shuffleSeed } from '../../../../src/core/rng';
@@ -77,7 +77,7 @@ describe('Grid over the network', () => {
     close(t);
   }, 120_000);
 
-  it('each grid is reproducible from its pack seed: the generated booster, shuffled by the same stream, first nine', async () => {
+  it('each grid is reproducible from its pack seed: the generated booster and its ids, shuffled by the same stream, first nine', async () => {
     const t = await draftNet(2, { format: 'grid', grids: 2 }, { seed: 4, delay: { min: 0, max: 30 } });
     await runDraft(t, randomTaker(4));
     const opens = t.seats[0]!.peer.log().flatMap((x) => (x.type === 'packOpen' ? [x] : []));
@@ -86,6 +86,8 @@ describe('Grid over the network', () => {
         const stream = new ByteStream(shuffleSeed(rec.ownerNonce, rec.peerNonces));
         const regenerated = fixtureGenerator()(fixtureSet(rec.set), stream);
         expect(rec.cards.map((c) => c.ref)).toEqual(regenerated.cards.map((c) => c.ref));
+        // The opaque ids come from the same stream, after the pack: the opener could not choose them.
+        expect(rec.cards.map((c) => c.instanceId)).toEqual(regenerated.cards.map(() => seededCardId(stream)));
         const shown = shuffleWith(rec.cards, stream).slice(0, 9);
         const open = opens.find((o) => o.packId === rec.packId)!;
         expect(open.by).toBe(s.seat);

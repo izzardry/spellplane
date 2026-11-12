@@ -5,13 +5,15 @@
  *
  * - Pack generation: every pack comes from a fresh pack seed (`DraftHost.packSeed`, the secret-shuffle seed protocol
  *   with purpose 'pack'), whose byte stream drives `generatePack` and, for a grid, the shuffle that picks its nine
- *   cards, so the audit can replay it from the PackRecord. Instance ids and salts come from the host's entropy, never
- *   from the card identities.
+ *   cards, so the audit can replay it from the PackRecord. The instance ids are drawn from the same stream after the
+ *   pack (core/open.ts `seededCardId`), so the opener cannot choose them (they order the Winston stack); salts come
+ *   from the host's entropy. Neither is derived from a card's identity.
  * - The pool: shared state lists the ids each drafter took (`DraftState.taken`); the driver adds the matching
  *   identities to the own `SecretStore.pool` in pick order, once each (tracked by id in `DraftSecrets.held[OPEN_POOL]`),
  *   so a reload or a repeated call never adds a card twice.
  */
 import { makeCommitments, type RevealedCard } from '../core/commit';
+import { seededCardId } from '../core/open';
 import { ByteStream } from '../core/rng';
 import type { ActionDraft } from '../core/actions';
 import type { CardRef, DraftCard, DraftSecrets, DraftState, InstanceId, PackId, PackRecord, SecretStore, SetCode, TableState } from '../core/types';
@@ -53,7 +55,7 @@ export async function generateOwnPack(host: DraftHost, set: SetCode): Promise<Ow
   const seed = await host.packSeed();
   const stream = new ByteStream(seed.seed);
   const generated = host.generatePack(data, stream);
-  const cards = generated.cards.map((c) => ({ instanceId: host.entropy.id(), ref: plainRef(c.ref), salt: host.entropy.salt() }));
+  const cards = generated.cards.map((c) => ({ instanceId: seededCardId(stream), ref: plainRef(c.ref), salt: host.entropy.salt() }));
   return { packId: `pk-${seed.sid}`, seed, set, cards, stream };
 }
 
@@ -86,6 +88,24 @@ export function packOpenDraft(packId: PackId, cards: readonly RevealedCard[], se
     number,
     set,
     ...(face === 'up' ? { public: true, cards: cards.map((c) => ({ ...c })) } : {}),
+  };
+}
+
+/**
+ * The face-down `packOpen` of a Winston pack: its sorted commitments and no ids, so shared state never ties a stack
+ * card to its pack. The dealing (last) pack passes `stack`, the ids of every pack's cards, listed sorted (the reducer
+ * deals them; DECISIONS [M2-P3]).
+ */
+export function winstonOpenDraft(packId: PackId, cards: readonly RevealedCard[], seed: PackSeed, number: number, set: SetCode, stack: readonly InstanceId[] | null): ActionDraft {
+  return {
+    type: 'packOpen',
+    packId,
+    commits: makeCommitments(cards),
+    count: cards.length,
+    ...(stack !== null ? { instanceIds: [...stack].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)) } : {}),
+    sid: seed.sid,
+    number,
+    set,
   };
 }
 

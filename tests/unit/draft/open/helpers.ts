@@ -18,10 +18,11 @@ export function act<T extends ActionType>(type: T, fields: Omit<ActionOf<T>, 'ty
   return { type, by, cid: `o${++cid}`, ...fields } as unknown as ActionOf<T>;
 }
 
-/** Apply an action that must apply (fails with the reducer's reason otherwise). */
+/** Apply an action that must apply (fails with the reducer's reason otherwise), sequenced as the next seq unless it has one. */
 export function ok(state: TableState, action: Action): TableState {
-  expect(explain(state, action), `${action.type} by ${action.by} should apply`).toBeNull();
-  return reduce(state, action);
+  const sequenced = action.seq === undefined ? ({ ...action, seq: state.seq + 1 } as Action) : action;
+  expect(explain(state, sequenced), `${action.type} by ${action.by} should apply`).toBeNull();
+  return reduce(state, sequenced);
 }
 
 /** An action that must not apply: same state back, and the reason matches. */
@@ -85,6 +86,31 @@ export function packOpenFields(packId: string, cards: readonly RevealedCard[], s
     set,
     ...(face === 'up' ? { public: true, cards: cards.map((c) => ({ ...c })) } : {}),
   };
+}
+
+/** The face-down `packOpen` fields of a Winston pack: commitments, no ids; the dealing pack lists `stack` (every pack's ids). */
+export function winstonPackFields(packId: string, cards: readonly RevealedCard[], sid: string, number: number, set: string, stack: readonly RevealedCard[] | null): Omit<ActionOf<'packOpen'>, 'type' | 'by' | 'cid'> {
+  return {
+    packId,
+    commits: makeCommitments(cards),
+    count: cards.length,
+    ...(stack !== null ? { instanceIds: stack.map((c) => c.instanceId).sort() } : {}),
+    sid,
+    number,
+    set,
+  };
+}
+
+/** The dealer s0 opens `packs` as Winston packs 0.. in order; the last lists the whole stack and deals it. */
+export function openWinston(state: TableState, packs: readonly (readonly RevealedCard[])[], sets: readonly string[] = ['M19']): TableState {
+  let s = state;
+  const all = packs.flat();
+  packs.forEach((cards, k) => {
+    const sealed = sealPackSeed(s, 's0');
+    const set = sets[Math.min(k, sets.length - 1)]!;
+    s = ok(sealed.state, act('packOpen', winstonPackFields(`pack-${sealed.sid}`, cards, sealed.sid, k, set, k === packs.length - 1 ? all : null), 's0'));
+  });
+  return s;
 }
 
 /** Seal a pack seed for `seat` and open `cards` as pack `number`. */

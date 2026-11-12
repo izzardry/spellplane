@@ -8,9 +8,10 @@
  * Shared state may hold only opaque ids and counts: no Winston card identity ever enters it.
  */
 import { describe, expect, it } from 'vitest';
-import type { RevealedCard } from '../../../../src/core/commit';
 import type { SeatId, TableState, WinstonState } from '../../../../src/core/types';
-import { act, applies, draftOf, draftTable, no, ok, openPack, packCards, packOpenFields, prng, sealPackSeed } from './helpers';
+import { verifyReveal, type RevealedCard } from '../../../../src/core/commit';
+import { winstonCommitment, winstonDealtIds } from '../../../../src/core/open';
+import { act, applies, draftOf, draftTable, no, ok, openWinston, packCards, packOpenFields, prng, sealPackSeed, winstonPackFields } from './helpers';
 
 function winston(s: TableState): WinstonState {
   return draftOf(s).winston!;
@@ -18,14 +19,9 @@ function winston(s: TableState): WinstonState {
 
 /** Open `packs` face-down packs of `size` as the dealer s0; returns the state and every card. */
 function dealt(packs: number, size = 15): { s: TableState; cards: RevealedCard[] } {
-  let s = draftTable(2, { format: 'winston', packs });
-  const cards: RevealedCard[] = [];
-  for (let k = 0; k < packs; k++) {
-    const pack = packCards(size);
-    cards.push(...pack);
-    s = openPack(s, 's0', pack, k, 'down');
-  }
-  return { s, cards };
+  const list = Array.from({ length: packs }, () => packCards(size));
+  const s = openWinston(draftTable(2, { format: 'winston', packs }), list);
+  return { s, cards: list.flat() };
 }
 
 function look(s: TableState, take: boolean, by = winston(s).active): TableState {
@@ -37,16 +33,23 @@ describe('Winston dealing', () => {
     let s = draftTable(2, { format: 'winston', packs: 2 });
     expect(winston(s).dealer).toBe('s0');
     const first = packCards(15);
+    const second = packCards(15);
     // Only the dealer opens, and only face down: no identity enters shared state.
     const sealedB = sealPackSeed(s, 's1');
-    no(sealedB.state, act('packOpen', packOpenFields('b', first, sealedB.sid, 0, 'M19', 'down'), 's1'), /deals/);
+    no(sealedB.state, act('packOpen', winstonPackFields('b', first, sealedB.sid, 0, 'M19', null), 's1'), /deals/);
     const sealed = sealPackSeed(s, 's0');
     no(sealed.state, act('packOpen', packOpenFields('a', first, sealed.sid, 0, 'M19', 'up'), 's0'), /face down/);
-    s = ok(sealed.state, act('packOpen', packOpenFields('a', first, sealed.sid, 0, 'M19', 'down'), 's0'));
+    // A Winston pack lists no ids: they would tie every stack card to its pack.
+    no(sealed.state, act('packOpen', packOpenFields('a', first, sealed.sid, 0, 'M19', 'down'), 's0'), /lists no card ids/);
+    s = ok(sealed.state, act('packOpen', winstonPackFields('a', first, sealed.sid, 0, 'M19', null), 's0'));
     expect(winston(s).stackIds).toBeUndefined();
+    expect(draftOf(s).packs.a!.commitment.instanceIds).toEqual([]);
     no(s, act('pileLook', { pile: 0, take: true }, 's0'), /not dealt/);
-    const second = packCards(15);
-    s = openPack(s, 's0', second, 1, 'down');
+    // The dealing pack lists every card of the stack: not just its own, not one too many.
+    const last = sealPackSeed(s, 's0');
+    no(last.state, act('packOpen', winstonPackFields('b', second, last.sid, 1, 'M19', second), 's0'), /lists 30 card ids/);
+    no(last.state, act('packOpen', winstonPackFields('b', second, last.sid, 1, 'M19', null), 's0'), /opaque ids/);
+    s = ok(last.state, act('packOpen', winstonPackFields('b', second, last.sid, 1, 'M19', [...first, ...second]), 's0'));
     const w = winston(s);
     expect(w.stack).toBe(27);
     expect(w.piles).toEqual([1, 1, 1]);
@@ -54,8 +57,10 @@ describe('Winston dealing', () => {
     expect(w.pileIds!.map((p) => p.length)).toEqual([1, 1, 1]);
     expect([...w.stackIds!, ...w.pileIds!.flat()].sort()).toEqual([...first, ...second].map((c) => c.instanceId).sort());
     expect(w).toMatchObject({ active: 's0', pile: 0 });
-    // The stack interleaves the packs (sorted random ids), it does not stack them pack by pack.
+    // The stack interleaves the packs (sorted ids), it does not stack them pack by pack.
     expect(w.stackIds).toEqual([...w.stackIds!].sort());
+    // No pack lists an id, so no stack card is tied to its pack (or its set).
+    for (const p of Object.values(draftOf(s).packs)) expect(p.commitment.instanceIds).toEqual([]);
     // No identity of any Winston card in shared state.
     const json = JSON.stringify(s);
     for (const c of [...first, ...second]) {
@@ -64,13 +69,31 @@ describe('Winston dealing', () => {
     }
     // No more packs after the deal.
     const late = sealPackSeed(s, 's0');
-    no(late.state, act('packOpen', packOpenFields('late', packCards(3), late.sid, 2, 'M19', 'down'), 's0'), /dealt/);
+    no(late.state, act('packOpen', winstonPackFields('late', packCards(3), late.sid, 2, 'M19', null), 's0'), /dealt/);
+  });
+
+  it('a card shown on the pair channel is checked against all packs together, never against its own pack', () => {
+    const packs = [packCards(15), packCards(15)];
+    const s = openWinston(draftTable(2, { format: 'winston', packs: 2 }, ['M19', 'M20']), packs, ['M19', 'M20']);
+    const d = draftOf(s);
+    const c = winstonCommitment(d)!;
+    expect(c.seat).toBe('s0');
+    expect(c.instanceIds).toEqual(packs.flat().map((x) => x.instanceId).sort());
+    for (const card of packs.flat()) expect(verifyReveal(c, card)).toBe(true);
+    // A forged identity does not open any commitment; an unknown id is not in the stack.
+    expect(verifyReveal(c, { ...packs[0]![0]!, ref: { sid: 'forged' } })).toBe(false);
+    expect(verifyReveal(c, { ...packs[0]![0]!, instanceId: 'cother' })).toBe(false);
+    // Each pack's set is public, but no stack, pile or taken id appears next to a pack, its number or its set.
+    for (const p of Object.values(d.packs)) {
+      const json = JSON.stringify(p);
+      for (const id of winstonDealtIds(d)) expect(json).not.toContain(id);
+    }
   });
 
   it('is for two seats only', () => {
     const s = draftTable(3, { format: 'winston', packs: 1 });
     const sealed = sealPackSeed(s, 's0');
-    no(sealed.state, act('packOpen', packOpenFields('a', packCards(15), sealed.sid, 0, 'M19', 'down'), 's0'), /two seats/);
+    no(sealed.state, act('packOpen', winstonPackFields('a', packCards(15), sealed.sid, 0, 'M19', null), 's0'), /two seats/);
   });
 });
 

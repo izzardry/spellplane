@@ -146,6 +146,24 @@ describe('Rochester pick order', () => {
   });
 });
 
+describe('pack-seed rounds', () => {
+  it('a round backs one pack only, and it must be the opener\'s latest round', () => {
+    // Packs no larger than the burn count leave the table at once, so the opener role moves straight on.
+    let s = draftTable(2, { format: 'rochester', packs: 2, burn: 15 });
+    const first = sealPackSeed(s, 's0');
+    s = ok(first.state, act('packOpen', packOpenFields('a', packCards(15), first.sid, 0, 'M19', 'up'), 's0'));
+    s = openPack(s, 's1', packCards(15), 0, 'up');
+    expect(draftOf(s).rochester).toMatchObject({ opener: 's0', opened: 2, pack: null });
+    // Reusing the round of pack 1 for pack 2 is refused.
+    no(s, act('packOpen', packOpenFields('b', packCards(15), first.sid, 1, 'M19', 'up'), 's0'), /fresh round/);
+    // Of two sealed rounds the opener cannot name the one it likes: only the latest backs the pack.
+    const older = sealPackSeed(s, 's0');
+    const newer = sealPackSeed(older.state, 's0');
+    no(newer.state, act('packOpen', packOpenFields('b', packCards(15), older.sid, 1, 'M19', 'up'), 's0'), /latest/);
+    ok(newer.state, act('packOpen', packOpenFields('b', packCards(15), newer.sid, 1, 'M19', 'up'), 's0'));
+  });
+});
+
 describe('Rochester burn count', () => {
   it('leaves exactly `burn` cards of every pack unpicked, then the opener moves left', () => {
     const burn = 3;

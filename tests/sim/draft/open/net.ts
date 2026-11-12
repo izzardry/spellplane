@@ -134,9 +134,7 @@ function makeHost(peer: MiniPeer, entropySeed: number): { host: DraftHost; store
       throw new Error('open formats hand no packs on');
     },
     onPack: () => () => undefined,
-    sendCards: (to, about, list) => {
-      cards.send(to, about, list);
-    },
+    sendCards: (to, about, list) => cards.send(to, about, list),
     onCards: (l) => cards.on(l),
     onSequenced: (l) => peer.onSequenced((a) => l(a, peer.state)),
     sets: fixtureSets(),
