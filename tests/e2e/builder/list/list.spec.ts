@@ -7,7 +7,7 @@
  */
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import fs from 'node:fs';
-import { card, freshProfile, getBuild, openList, setBuild, tableBuild } from './bundle';
+import { card, freshProfile, getBuild, openList, searchOnlyCards, setBuild, tableBuild } from './bundle';
 
 /** `count name` of every row of a column, in display order. */
 async function rows(page: Page, column: 'pool' | 'deck'): Promise<string[]> {
@@ -122,6 +122,27 @@ test.describe('filters, sort and counts', () => {
     await expect(page.getByTestId('list-deck-shown')).toHaveCount(0);
   });
 
+  test('a card whose data arrives while a filter is set shows up once it matches', async ({ context }, info) => {
+    const { page } = await openList(context, { profile: freshProfile(info) });
+    const bat = searchOnlyCards().find((c) => c.name === 'Kelinore Bat')!;
+    const b = tableBuild();
+    // A pool card the page's card data does not know yet (its data comes with the search below).
+    b.cards.push({ id: 'x1', ref: { sid: bat.id } });
+    await setBuild(page, b);
+    await showList(page);
+    await page.getByTestId('list-filter-text').fill('kelinore');
+    await expect(page.getByTestId('list-pool')).toContainText('No card matches the filters.');
+
+    const search = page.getByTestId('list-search');
+    await search.getByTestId('list-search-query').fill('Kelinore Bat');
+    await search.getByTestId('list-search-go').click();
+    await expect(search.getByTestId('list-search-result')).toHaveCount(1);
+    // Nothing else changes: the filter and the build stay as they are, and the row appears by itself.
+    await expect(row(page, 'pool', 'Kelinore Bat')).toHaveAttribute('data-count', '1');
+    await expect(page.getByTestId('list-pool-shown')).toHaveText('showing 1');
+    expect(await page.evaluate(() => window.__listHarness!.changes())).toBe(0);
+  });
+
   test('sorting groups by colour, mana value and type; the list follows the builder\'s sort until it picks its own', async ({ context }, info) => {
     const { page } = await openList(context, { profile: freshProfile(info) });
     await setBuild(page, tableBuild());
@@ -205,6 +226,7 @@ test.describe('Scryfall search-and-add (fixture-backed)', () => {
     await page.getByTestId('view-table').click();
     await showList(page);
     await expect(search.getByTestId('list-search-query')).toHaveValue('fail');
+    await expect(search.getByTestId('list-search-error')).toContainText('Search failed');
   });
 });
 
@@ -268,6 +290,44 @@ test.describe('local deck and pool library', () => {
     } finally {
       await other.close();
     }
+  });
+
+  test('a new pool on the same page is saved as a new record; the earlier pool is kept', async ({ context }, info) => {
+    const { page } = await openList(context, { profile: freshProfile(info), query: { origin: 'M19' } });
+    const first = tableBuild();
+    await setBuild(page, first);
+    await showList(page);
+    const lib = page.getByTestId('deck-library');
+    await lib.getByTestId('library-name').fill('Tuesday pool');
+    await lib.getByTestId('library-save').click();
+    await expect(lib.getByTestId('library-status')).toContainText('Saved “Tuesday pool”');
+    await expect(lib.getByTestId('library-save')).toHaveText('Save changes');
+
+    // A new draft on the same link, without a reload: the builder table hands over another pool.
+    await page.getByTestId('view-table').click();
+    const second = tableBuild();
+    const drafted = second.cards.filter((c) => !c.basic);
+    const refs = drafted.map((c) => c.ref);
+    drafted.forEach((c, i) => (c.ref = refs[(i + 1) % refs.length]!));
+    second.main = ['p1', 'p2'];
+    await setBuild(page, second);
+    await showList(page);
+    await expect(lib.getByTestId('library-save')).toHaveText('Save to library');
+    await expect(lib.getByTestId('library-save-new')).toHaveCount(0);
+    await expect(lib.getByTestId('library-name')).toHaveValue('');
+    await lib.getByTestId('library-save').click();
+    await expect(lib.getByTestId('library-status')).toContainText('Saved “M19 pool');
+    await expect(lib.getByTestId('library-record')).toHaveCount(2);
+
+    // The earlier pool is in the library as it was saved.
+    const tuesday = lib.getByTestId('library-record').filter({ hasText: 'Tuesday pool' });
+    await expect(tuesday).toContainText('8 + 5 cards');
+    await tuesday.getByTestId('library-open').click();
+    await tuesday.getByTestId('library-confirm').click();
+    expect(await getBuild(page)).toEqual(first);
+    // Opened, it is the current record again: an edit saves into it.
+    await expect(lib.getByTestId('library-save')).toHaveText('Save changes');
+    await expect(lib.getByTestId('library-name')).toHaveValue('Tuesday pool');
   });
 
   test('opening a saved deck asks inline before replacing the builder\'s cards; delete asks too', async ({ context }, info) => {

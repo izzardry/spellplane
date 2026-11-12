@@ -11,7 +11,7 @@ import type { BuilderSort, CreateBuilderSurface, CreateDraftSurface } from '../s
 import type { Theme } from '../themes/types';
 import type { Transport } from '../net/transport';
 import type { EveningControls, TableSession } from '../session/types';
-import type { DeckRecord, DeckStore, IdentityStore, SettingsStore, TableRecord } from '../store/types';
+import type { DeckStore, IdentityStore, SettingsStore, TableRecord } from '../store/types';
 
 /** What main.ts hands the app shell (PLAN M0-P4, M0-P7). */
 export interface AppProps {
@@ -177,10 +177,6 @@ export interface ListViewProps {
   sort: BuilderSort;
   /** Scryfall search-and-add (CardDataSource.searchCards), absent when unavailable. */
   search?(query: string): Promise<CardData[]>;
-  /** The local deck library (DESIGN "Pre-game", Local deck library: decks and drafted pools), absent when the browser blocks storage. Added by M2-P6. */
-  decks?: DeckStore;
-  /** Where a drafted or sealed pool came from: a saved pool is then a 'drafted' record with this origin (store/types.ts DeckRecord). Added by M2-P6. */
-  origin?: DeckRecord['origin'];
 }
 
 /** Props of the stage flow (DESIGN "Specification: card data, packs and draft formats", Evening stages). Implementer: M2-P7 (ui/flow/*). */

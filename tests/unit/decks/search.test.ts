@@ -22,7 +22,7 @@ function stub(pageSize = 175): { calls: Call[]; fetch: (input: string) => Promis
       const url = new URL(input);
       calls.push({ url });
       if (url.hostname !== 'api.scryfall.com' || url.pathname !== '/cards/search') return Promise.resolve(new Response('{}', { status: 400 }));
-      const q = (url.searchParams.get('q') ?? '').replace(/\bgame:paper\b/, '').trim().toLowerCase();
+      const q = (url.searchParams.get('q') ?? '').replace(/^\((.*)\) game:paper$/, '$1').trim().toLowerCase();
       const hits = M19.filter((c) => !/Token/.test(c.type_line) && c.name.toLowerCase().includes(q));
       if (hits.length === 0) return Promise.resolve(new Response(JSON.stringify({ object: 'error', code: 'not_found' }), { status: 404 }));
       const page = hits.slice(0, pageSize).map((c) => ({ object: 'card', ...c, prices: { usd: '1.00' } }));
@@ -48,9 +48,15 @@ describe('searchCards', () => {
     expect(found[0]).not.toHaveProperty('prices');
     expect(s.calls).toHaveLength(1);
     const p = s.calls[0]!.url.searchParams;
-    expect(p.get('q')).toBe('Llanowar game:paper');
+    expect(p.get('q')).toBe('(Llanowar) game:paper');
     expect(p.get('unique')).toBe('cards');
     expect(p.get('order')).toBe('name');
+  });
+
+  it('the paper filter covers every clause of an OR query (AND binds tighter than OR in Scryfall syntax)', async () => {
+    const s = stub();
+    await source(s).searchCards('t:goblin or t:elf');
+    expect(s.calls[0]!.url.searchParams.get('q')).toBe('(t:goblin or t:elf) game:paper');
   });
 
   it('found cards join the card data, so the list view can show what was added at once', async () => {

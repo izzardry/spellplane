@@ -58,7 +58,7 @@ async function routeScryfall(context: BrowserContext, searches: string[]): Promi
   await context.route('https://api.scryfall.com/**', (route) => {
     const url = new URL(route.request().url());
     if (url.pathname !== '/cards/search') return route.fulfill({ status: 404, contentType: 'application/json', body: '{"object":"error"}' });
-    const q = (url.searchParams.get('q') ?? '').replace(/\bgame:paper\b/, '').trim();
+    const q = (url.searchParams.get('q') ?? '').replace(/^\((.*)\) game:paper$/, '$1').trim();
     searches.push(q);
     if (q === 'fail') return route.fulfill({ status: 503, contentType: 'application/json', body: '{"object":"error"}' });
     const hits = cards.filter((c) => c.name.toLowerCase().includes(q.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name));

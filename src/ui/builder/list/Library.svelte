@@ -4,11 +4,12 @@
   modal: replacing the builder's cards and deleting a record ask inline. Implementer: M2-P6.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { CardRef, DeckBuild } from '../../../core/types';
   import type { CardData } from '../../../data/types';
   import { buildFromDeckRecord, deckRecordFromBuild, exportFileName, exportLibrary, importLibrary, newDeckId, planImport } from '../../../store/decks';
   import type { DeckRecord, DeckStore } from '../../../store/types';
-  import { listUi } from './state.svelte';
+  import { currentRecordId, forgetOtherPool, listUi, markSaved } from './state.svelte';
 
   let {
     decks,
@@ -27,14 +28,28 @@
   let confirming = $state<{ id: string; kind: 'open' | 'delete' } | null>(null);
   let fileInput = $state<HTMLInputElement | undefined>();
   let busy = $state(false);
+  /** Whether the first read of the library has finished: until then `current` cannot be known, so Save waits. */
+  let loaded = $state(false);
 
-  const current = $derived(records.find((r) => r.id === listUi.savedId) ?? null);
+  /** The record "Save changes" updates: the one last saved or opened, while the builder still holds that pool. */
+  const currentId = $derived(currentRecordId(build));
+  const current = $derived(records.find((r) => r.id === currentId) ?? null);
+
+  // A new pool on the same page (a new draft without a reload) is not the saved one: forget its record and name. Runs
+  // when the build changes only, so opening a record (which marks it before the builder hands the new build back)
+  // is never undone by a look at the old build.
+  $effect(() => {
+    const b = build;
+    untrack(() => forgetOtherPool(b));
+  });
 
   async function refresh() {
     try {
       records = await decks.list();
     } catch (e) {
       status = `The library could not be read: ${message(e)}`;
+    } finally {
+      loaded = true;
     }
   }
   $effect(() => {
@@ -56,7 +71,9 @@
     busy = true;
     problems = [];
     try {
-      const target = asNew ? null : current;
+      // `current` comes from the last listing; if that listing failed, ask the store for the record itself.
+      const id = asNew ? null : currentId;
+      const target = id === null ? null : (current ?? (await decks.get(id)));
       const name = listUi.name.trim() || target?.name || defaultName();
       const now = Date.now();
       const record = deckRecordFromBuild(build, {
@@ -67,8 +84,7 @@
         ...(origin ? { origin } : target?.origin ? { origin: target.origin } : {}),
       });
       await decks.put(record);
-      listUi.savedId = record.id;
-      listUi.name = name;
+      markSaved(record.id, name, record.pool ?? build);
       status = target ? `Saved changes to “${name}”.` : `Saved “${name}” to the library.`;
       await refresh();
     } catch (e) {
@@ -80,9 +96,9 @@
 
   function open(record: DeckRecord) {
     confirming = null;
-    onOpen(buildFromDeckRecord(record));
-    listUi.savedId = record.id;
-    listUi.name = record.name;
+    const opened = buildFromDeckRecord(record);
+    markSaved(record.id, record.name, opened);
+    onOpen(opened);
     status = `Opened “${record.name}”.`;
   }
 
@@ -90,7 +106,10 @@
     confirming = null;
     try {
       await decks.delete(record.id);
-      if (listUi.savedId === record.id) listUi.savedId = null;
+      if (listUi.savedId === record.id) {
+        listUi.savedId = null;
+        listUi.savedPool = null;
+      }
       status = `Deleted “${record.name}”.`;
       await refresh();
     } catch (e) {
@@ -163,8 +182,8 @@
   <h2>Deck library</h2>
   <div class="save">
     <input type="text" placeholder={current?.name ?? 'Deck name'} aria-label="Deck name" data-testid="library-name" bind:value={listUi.name} maxlength="200" />
-    <button type="button" data-testid="library-save" disabled={busy} onclick={() => save(false)}>{current ? 'Save changes' : 'Save to library'}</button>
-    {#if current}<button type="button" data-testid="library-save-new" disabled={busy} onclick={() => save(true)}>Save as new</button>{/if}
+    <button type="button" data-testid="library-save" disabled={busy || !loaded} onclick={() => save(false)}>{current ? 'Save changes' : 'Save to library'}</button>
+    {#if current}<button type="button" data-testid="library-save-new" disabled={busy || !loaded} onclick={() => save(true)}>Save as new</button>{/if}
   </div>
   <div class="files">
     <button type="button" data-testid="library-export-all" disabled={records.length === 0} onclick={() => download(records)}>Export all</button>
@@ -195,7 +214,7 @@
   {:else}
     <ul class="records">
       {#each records as r (r.id)}
-        <li data-testid="library-record" data-id={r.id} class:current={r.id === listUi.savedId}>
+        <li data-testid="library-record" data-id={r.id} class:current={r.id === currentId}>
           <div class="what">
             <span class="name" data-testid="library-record-name">{r.name}</span>
             <span class="muted"><span class="tag">{r.source === 'drafted' ? 'pool' : r.source}</span> {summary(r)} cards · {when(r.updatedAt)}</span>

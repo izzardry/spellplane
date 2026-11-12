@@ -128,6 +128,21 @@ describe('records from and to the builder (DESIGN "Pre-game", Local deck library
     expect(r.pool!.poses!.p1!.x).toBe(-300);
   });
 
+  it('a build the list tolerates but a file would not (dangling or repeated deck ids, stale positions) is saved normalised, so export then import reproduces it', () => {
+    const build = tableBuild();
+    const messy: DeckBuild = {
+      cards: [...build.cards, { ...build.cards[0]!, ref: { ...build.cards[0]!.ref } }],
+      main: [...build.main, 'zz', build.main[0]!],
+      poses: { ...build.poses, gone: { x: 1, y: 2, rot: 0 } },
+    };
+    const r = deckRecordFromBuild(messy, { id: 'm', name: 'Messy', now: T0 });
+    expect(r.pool).toEqual(build);
+    expect(r.main).toHaveLength(build.main.length);
+    const back = importLibrary(exportLibrary([r], T0 + 1));
+    expect(back.errors).toEqual([]);
+    expect(back.decks).toEqual([r]);
+  });
+
   it('opening a record twice gives two independent builds', () => {
     const r = drafted();
     const a = buildFromDeckRecord(r);
@@ -239,6 +254,17 @@ describe('importing into a library that already has decks (planImport)', () => {
     const fixed = ['taken', 'taken', 'fresh-1', 'fresh-1', 'fresh-2'];
     const plan = planImport([pasted('taken')], [{ ...pasted('taken'), name: 'A' }, { ...pasted('taken'), name: 'B' }], () => fixed.shift()!);
     expect(plan.put.map((r) => r.id)).toEqual(['fresh-1', 'fresh-2']);
+  });
+
+  it('a stored record with details the importer drops (a stale position, an unknown field) still counts as already in the library', () => {
+    const stored = drafted('s');
+    stored.pool!.poses = { ...stored.pool!.poses, gone: { x: 1, y: 2, rot: 0 } };
+    (stored as DeckRecord & { extra?: number }).extra = 1;
+    const incoming = importLibrary(exportLibrary([stored], T0)).decks;
+    expect(incoming).toHaveLength(1);
+    const plan = planImport([stored], incoming, ids);
+    expect(plan.unchanged).toBe(1);
+    expect(plan.put).toEqual([]);
   });
 
   it('importing the same file twice adds nothing the second time', async () => {

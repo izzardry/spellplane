@@ -1,6 +1,6 @@
 // Runs Playwright under a machine-wide guard (local runs only; CI runs it directly):
-//  - one Playwright run at a time across all worktrees (a lock directory in the OS temp dir),
-//    so parallel agents never stack up browsers and eat the machine's memory;
+//  - at most SPELLPLANE_PW_SLOTS (default 4) Playwright runs at a time across all worktrees, one per worktree
+//    (lock directories in the OS temp dir), so parallel agents never stack up browsers and eat the machine's memory;
 //  - a stale lock (its owner died, e.g. a killed shell) is taken over and the dead run's
 //    process group is killed, so orphaned browsers do not linger;
 //  - a watchdog aborts the run as soon as macOS shows an interactive prompt (SecurityAgent, e.g.
@@ -17,8 +17,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-const LOCK = path.join(os.tmpdir(), 'spellplane-playwright.lock');
-const OWNER = path.join(LOCK, 'owner.json');
+// Up to SLOTS runs at once (SPELLPLANE_PW_SLOTS, default 4), one lock directory per slot. Slot 0 keeps the
+// original single-lock path, so an older guard (a worktree branched before the slots) still counts against it.
+const SLOTS = Math.max(1, Number(process.env.SPELLPLANE_PW_SLOTS ?? 4));
+const slotDir = (i) => path.join(os.tmpdir(), i === 0 ? 'spellplane-playwright.lock' : `spellplane-playwright.lock.${i}`);
+/** The slot this process holds, once acquired. */
+let LOCK = null;
+let OWNER = null;
 const MAX_WAIT_MS = 90 * 60_000;
 
 function alive(pid) {
@@ -62,9 +67,9 @@ function killGroup(pgid, signal) {
   }
 }
 
-function readOwner() {
+function readOwner(dir = LOCK) {
   try {
-    return JSON.parse(fs.readFileSync(OWNER, 'utf8'));
+    return JSON.parse(fs.readFileSync(path.join(dir, 'owner.json'), 'utf8'));
   } catch {
     return null;
   }
@@ -111,38 +116,57 @@ function memoryShortage(pgid) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Frees `dir` if its owner died (killing what the dead run left behind) or it was left half-written. */
+function clearIfStale(dir) {
+  const owner = readOwner(dir);
+  if (owner && !alive(owner.pid)) {
+    if (owner.pgid) killGroup(owner.pgid, 'SIGKILL');
+    fs.rmSync(dir, { recursive: true, force: true });
+    console.error(`[pw-guard] removed a stale Playwright lock (pid ${owner.pid}, ${owner.cwd})`);
+    return;
+  }
+  if (!owner) {
+    const age = Date.now() - (fs.statSync(dir, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
+    if (age > 10_000) fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function acquire() {
   const started = Date.now();
   let lastNote = 0;
   for (;;) {
-    try {
-      fs.mkdirSync(LOCK);
-      fs.writeFileSync(OWNER, JSON.stringify({ pid: process.pid, cwd: process.cwd(), since: new Date().toISOString() }));
-      return;
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
+    const owners = [];
+    for (let i = 0; i < SLOTS; i++) {
+      clearIfStale(slotDir(i));
+      const o = readOwner(slotDir(i));
+      if (o) owners.push(o);
     }
-    const owner = readOwner();
-    if (owner && !alive(owner.pid)) {
-      // The previous run's guard died: kill whatever it left behind, then take over.
-      if (owner.pgid) {
-        killGroup(owner.pgid, 'SIGKILL');
+    // One run per worktree: its build directory and e2e port are shared.
+    const sameTree = owners.find((o) => o.cwd === process.cwd());
+    if (!sameTree) {
+      for (let i = 0; i < SLOTS; i++) {
+        try {
+          fs.mkdirSync(slotDir(i));
+        } catch (e) {
+          if (e.code !== 'EEXIST') throw e;
+          continue;
+        }
+        LOCK = slotDir(i);
+        OWNER = path.join(LOCK, 'owner.json');
+        fs.writeFileSync(OWNER, JSON.stringify({ pid: process.pid, cwd: process.cwd(), slot: i, since: new Date().toISOString() }));
+        return;
       }
-      fs.rmSync(LOCK, { recursive: true, force: true });
-      console.error(`[pw-guard] removed a stale Playwright lock (pid ${owner.pid}, ${owner.cwd})`);
-      continue;
-    }
-    if (!owner) {
-      // Lock dir without owner file: either being created right now or left half-written.
-      const age = Date.now() - (fs.statSync(LOCK, { throwIfNoEntry: false })?.mtimeMs ?? Date.now());
-      if (age > 10_000) fs.rmSync(LOCK, { recursive: true, force: true });
     }
     if (Date.now() - started > MAX_WAIT_MS) {
-      console.error(`[pw-guard] waited ${MAX_WAIT_MS / 60_000} min for another Playwright run (${owner?.cwd}); giving up`);
+      console.error(`[pw-guard] waited ${MAX_WAIT_MS / 60_000} min for a free Playwright slot; giving up`);
       process.exit(75);
     }
     if (Date.now() - lastNote > 60_000) {
-      console.error(`[pw-guard] another Playwright run is active (pid ${owner?.pid}, ${owner?.cwd}); waiting for it to finish`);
+      console.error(
+        sameTree
+          ? `[pw-guard] another Playwright run in this worktree is active (pid ${sameTree.pid}); waiting for it to finish`
+          : `[pw-guard] all ${SLOTS} Playwright slots are busy (${owners.map((o) => o.cwd).join(', ')}); waiting`,
+      );
       lastNote = Date.now();
     }
     await sleep(2000);
@@ -150,6 +174,7 @@ async function acquire() {
 }
 
 function release() {
+  if (!LOCK) return;
   const owner = readOwner();
   if (!owner || owner.pid === process.pid) fs.rmSync(LOCK, { recursive: true, force: true });
 }

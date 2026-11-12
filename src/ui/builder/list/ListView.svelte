@@ -5,21 +5,19 @@
   only through `onChange`, so the builder table shows the same deck. Contracts: M2-C; implementer: M2-P6.
 -->
 <script lang="ts">
-  import { SvelteMap } from 'svelte/reactivity';
   import type { CardRef, DeckBuild } from '../../../core/types';
   import type { CardData } from '../../../data/types';
   import type { BuilderSort } from '../../../scene/types';
   import { LIMITED_MINIMUM, type ListViewProps } from '../../types';
   import Library from './Library.svelte';
   import { addCard, CARD_KINDS, COLOUR_FILTERS, COLOUR_LABELS, isBasicLand, KIND_LABELS, listModel, moveToDeck, moveToPool, oneOf, type CardKind, type ColourFilter, type ListRow } from './model';
-  import { listUi } from './state.svelte';
+  import type { ListLibraryProps } from './props';
+  import { foundCards as found, listUi } from './state.svelte';
 
-  let { build, onChange, card, sort, search, decks, origin }: ListViewProps = $props();
+  let { build, onChange, card, sort, search, decks, origin }: ListViewProps & ListLibraryProps = $props();
 
   const SORT_LABELS: Record<BuilderSort, string> = { colour: 'Colour', manaValue: 'Mana value', type: 'Type' };
 
-  /** Card data found by the search box, so added cards show at once even before the page's card data has them. */
-  const found = new SvelteMap<string, CardData>();
   /** Bumped while some card data is still loading, so rows fill in when it arrives. */
   let tick = $state(0);
   const lookup = (ref: CardRef): CardData | null => card(ref) ?? found.get(ref.sid) ?? null;
@@ -29,7 +27,11 @@
     void tick;
     return listModel(build, lookup, effectiveSort, listUi.filters);
   });
-  const loading = $derived([...model.deck.groups, ...model.pool.groups].some((g) => g.rows.some((r) => !r.known)));
+  /** Whether some card of the build (filtered out or not) still has no data: filters hide such cards, so look at all. */
+  const loading = $derived.by(() => {
+    void tick;
+    return build.cards.some((c) => lookup(c.ref) === null);
+  });
   $effect(() => {
     if (!loading) return;
     const t = setInterval(() => tick++, 500);
@@ -37,7 +39,8 @@
   });
 
   const filtered = $derived(listUi.filters.text.trim() !== '' || listUi.filters.colours.length > 0 || listUi.filters.kind !== 'all');
-  const deckCount = $derived(build.main.length);
+  /** Cards in the deck (ids the pool lacks do not count, as in the deck column). */
+  const deckCount = $derived(model.deck.total);
   const toGo = $derived(Math.max(0, LIMITED_MINIMUM - deckCount));
 
   function change(next: DeckBuild) {
@@ -59,24 +62,23 @@
   }
 
   let searching = $state(false);
-  let searchError = $state('');
-  let searchedFor = $state('');
   let searchSeq = 0;
   async function runSearch() {
     const q = listUi.query.trim();
     if (!search || !q) return;
     const my = ++searchSeq;
     searching = true;
-    searchError = '';
+    listUi.searchError = '';
     try {
       const r = await search(q);
       if (my !== searchSeq) return;
       listUi.results = r;
-      searchedFor = q;
+      listUi.searchedFor = q;
     } catch (e) {
       if (my !== searchSeq) return;
       listUi.results = [];
-      searchError = `Search failed: ${e instanceof Error ? e.message : String(e)}`;
+      listUi.searchedFor = q;
+      listUi.searchError = `Search failed: ${e instanceof Error ? e.message : String(e)}`;
     } finally {
       if (my === searchSeq) searching = false;
     }
@@ -171,8 +173,8 @@
         <button type="submit" data-testid="list-search-go" disabled={searching || !listUi.query.trim()}>{searching ? 'Searching…' : 'Search'}</button>
       </form>
       <div aria-live="polite">
-        {#if searchError}<p class="error" data-testid="list-search-error">{searchError}</p>{/if}
-        {#if !searching && searchedFor && listUi.results.length === 0 && !searchError}<p class="muted" data-testid="list-search-empty">No cards match “{searchedFor}”.</p>{/if}
+        {#if listUi.searchError}<p class="error" data-testid="list-search-error">{listUi.searchError}</p>{/if}
+        {#if !searching && listUi.searchedFor && listUi.results.length === 0 && !listUi.searchError}<p class="muted" data-testid="list-search-empty">No cards match “{listUi.searchedFor}”.</p>{/if}
       </div>
       {#if listUi.results.length}
         <ul class="results">

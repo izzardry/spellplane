@@ -87,11 +87,43 @@ export interface RecordFromBuildOptions {
 }
 
 /**
+ * A build in the form a library file holds it (see importLibrary): one card per id (the first wins), refs and basic
+ * flags in canonical form, the deck without unknown or repeated ids, and positions only of cards in the pool, each
+ * with just x, y and rot. Saving stores this form, so a saved record, its export and its import agree.
+ */
+export function normaliseBuild(build: DeckBuild): DeckBuild {
+  const ids = new Set<string>();
+  const cards: PoolCard[] = [];
+  for (const c of build.cards) {
+    if (ids.has(c.id)) continue;
+    ids.add(c.id);
+    const card: PoolCard = { id: c.id, ref: refOf(c.ref) };
+    if (c.basic === true) card.basic = true;
+    cards.push(card);
+  }
+  const inMain = new Set<string>();
+  const main: string[] = [];
+  for (const id of build.main) {
+    if (!ids.has(id) || inMain.has(id)) continue;
+    inMain.add(id);
+    main.push(id);
+  }
+  const out: DeckBuild = { cards, main };
+  if (build.poses) {
+    const poses: Record<string, Pose> = {};
+    for (const [id, p] of Object.entries(build.poses)) if (ids.has(id)) poses[id] = { x: p.x, y: p.y, rot: p.rot };
+    out.poses = poses;
+  }
+  return out;
+}
+
+/**
  * A library record of the builder's state (DESIGN "Pre-game", Local deck library: "Decks and drafted pools are saved
  * in the browser"): `main` is the deck, `side` the rest of the pool, and `pool` the whole build (with the table view's
- * positions) so it opens again exactly as it was.
+ * positions, normalised by normaliseBuild) so it opens again exactly as it was.
  */
-export function deckRecordFromBuild(build: DeckBuild, opts: RecordFromBuildOptions): DeckRecord {
+export function deckRecordFromBuild(input: DeckBuild, opts: RecordFromBuildOptions): DeckRecord {
+  const build = normaliseBuild(input);
   const { main, side } = buildLists(build);
   const record: DeckRecord = {
     id: opts.id,
@@ -101,7 +133,7 @@ export function deckRecordFromBuild(build: DeckBuild, opts: RecordFromBuildOptio
     source: opts.origin ? 'drafted' : 'built',
     createdAt: opts.createdAt ?? opts.now,
     updatedAt: opts.now,
-    pool: cloneJson(build),
+    pool: build,
   };
   if (opts.origin) record.origin = cloneJson(opts.origin);
   return record;
@@ -336,10 +368,14 @@ export interface ImportPlan {
   copied: number;
 }
 
-/** Whether two records are the same deck, field for field (a stored record that cannot be compared counts as different). */
-function sameRecord(a: DeckRecord, b: DeckRecord): boolean {
+/**
+ * Whether a stored record and an imported one are the same deck, field for field. The stored record is first read as
+ * a file would be (deckRecord), so details the importer normalises (stale positions, unknown fields) do not count; a
+ * stored record that cannot be read or compared counts as different.
+ */
+function sameRecord(stored: DeckRecord, imported: DeckRecord): boolean {
   try {
-    return canonicalJson(a) === canonicalJson(b);
+    return canonicalJson(deckRecord(cloneJson(stored))) === canonicalJson(imported);
   } catch {
     return false;
   }

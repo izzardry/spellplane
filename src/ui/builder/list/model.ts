@@ -328,3 +328,30 @@ export function addCard(build: DeckBuild, ref: CardRef, opts: { toDeck: boolean;
   if (opts.toDeck) out.main.push(id);
   return out;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Which pool a library record belongs to (DESIGN "Pre-game", Local deck library: "reusable across evenings")
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * What identifies a pool for the library's "Save changes": every card that is not a dispensed basic, as sorted
+ * `id|sid|foil` keys. Edits in either view only move cards, add cards (search) or add and return dispensed basics, so
+ * a pool keeps all of these keys while it is edited; a new draft or sealed pool does not.
+ */
+export function poolKeys(build: DeckBuild): string[] {
+  return build.cards
+    .filter((c) => !c.basic)
+    .map((c) => `${c.id}|${c.ref.sid}|${c.ref.foil ? 'foil' : ''}`)
+    .sort();
+}
+
+/**
+ * Whether `build` is still the pool `keys` were taken from (poolKeys): it holds every one of them. A pool that held
+ * only dispensed basics matches only another such pool, so its record is never claimed by a new pool.
+ */
+export function samePool(keys: readonly string[], build: DeckBuild): boolean {
+  const now = poolKeys(build);
+  if (keys.length === 0) return now.length === 0;
+  const have = new Set(now);
+  return keys.every((k) => have.has(k));
+}

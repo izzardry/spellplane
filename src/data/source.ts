@@ -107,14 +107,15 @@ export class ScryfallCardDataSource implements CardDataSource {
 
   /**
    * Scryfall-backed card search for the builder's search-and-add (DESIGN "Pre-game", Constructed decks: "Search and
-   * build from all cards with a Scryfall-backed search box"; PLAN M2-P6). Scryfall's query syntax, paper cards, one
+   * build from all cards with a Scryfall-backed search box"; PLAN M2-P6). Scryfall's query syntax (the whole query, OR clauses included, limited to paper cards), one
    * printing per card, by name; only the first result page (up to 175 cards), so a broad query costs one request of
    * the shared limiter. Results join the card cache like any other lookup. An empty query asks nothing.
    */
   async searchCards(query: string): Promise<CardData[]> {
     const q = query.trim();
     if (!q) return [];
-    const sp = new URLSearchParams({ q: `${q} game:paper`, unique: 'cards', order: 'name' });
+    // Parenthesised: Scryfall's AND binds tighter than OR, so `a or b game:paper` would filter only `b`.
+    const sp = new URLSearchParams({ q: `(${q}) game:paper`, unique: 'cards', order: 'name' });
     const page = await this.client.request(`${this.client.baseUrl}/cards/search?${sp.toString()}`);
     const cards = (Array.isArray(page?.data) ? page.data : []).map(trimCard).filter((c): c is CardData => c !== null);
     await this.remember(cards);

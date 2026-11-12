@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { canonicalJson } from '../../../src/core/hash';
 import type { CardRef, DeckBuild } from '../../../src/core/types';
 import type { BuilderSort } from '../../../src/scene/types';
-import { addCard, cardColours, cardKind, freshId, groupOf, listModel, matches, moveToDeck, moveToPool, NO_FILTERS, oneOf, type ListColumn, type ListFilters } from '../../../src/ui/builder/list/model';
+import { addCard, cardColours, cardKind, freshId, groupOf, listModel, matches, moveToDeck, moveToPool, NO_FILTERS, oneOf, poolKeys, samePool, type ListColumn, type ListFilters } from '../../../src/ui/builder/list/model';
 import { lookup, M19, m19, sid, tableBuild } from './helpers';
 
 const BOLAS = 'Nicol Bolas, the Ravager // Nicol Bolas, the Arisen';
@@ -247,5 +247,28 @@ describe('edits', () => {
     const { poses: _p, ...bare } = tableBuild();
     expect(moveToDeck(bare, ['p3'])).not.toHaveProperty('poses');
     expect(moveToPool(bare, ['b1'])).not.toHaveProperty('poses');
+  });
+});
+
+describe('which pool a library record belongs to (DESIGN "Pre-game", Local deck library: "reusable across evenings")', () => {
+  it('a pool stays the same pool through moves, search adds and dispensed basics coming and going', () => {
+    const start = tableBuild();
+    const keys = poolKeys(start);
+    let b = moveToDeck(start, ['p3', 'p7']);
+    b = moveToPool(b, ['p1', 'b1']);
+    b = addCard(b, { sid: sid('Cancel') }, { toDeck: true, basic: false });
+    b = addCard(b, { sid: FOREST }, { toDeck: true, basic: true });
+    expect(samePool(keys, b)).toBe(true);
+    expect(samePool(keys, { cards: [], main: [] })).toBe(false);
+  });
+
+  it('a new pool on the same page is another pool, even with the same card ids', () => {
+    const a = tableBuild();
+    const other: DeckBuild = { cards: a.cards.map((c) => ({ ...c, ref: { sid: sid('Shock') } })), main: [] };
+    expect(samePool(poolKeys(a), other)).toBe(false);
+    // Only dispensed basics: matches only a pool of dispensed basics, never a fresh draft.
+    const basics: DeckBuild = { cards: [{ id: 'b1', ref: { sid: FOREST }, basic: true }], main: ['b1'] };
+    expect(samePool(poolKeys(basics), { cards: [], main: [] })).toBe(true);
+    expect(samePool(poolKeys(basics), a)).toBe(false);
   });
 });
