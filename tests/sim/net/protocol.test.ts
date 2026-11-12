@@ -50,12 +50,14 @@ describe('nack and rollback', () => {
     const [, b] = sim.peers;
     const state = b!.engine.state();
     const theirLibraryCard = state.zones['library:s0']!.ids[0]!;
-    // Only the owner can publish a hidden card's identity; the reducer alone cannot tell.
-    const reveal: Action = { type: 'reveal', by: 's1', cid: 'steal', instanceId: theirLibraryCard, ref: { sid: 'guess' }, salt: 'x' };
-    expect(b!.engine.propose(reveal)).toBe(true);
-    expect(b!.engine.state().cards[theirLibraryCard]!.identity).toEqual({ sid: 'guess' }); // optimistic
+    // Hidden-zone actions come from the zone's owner; the reducer alone does not check who moves a
+    // card between its owner's zones. (A non-owner `reveal` is refused by the reducer itself since M1-P2.)
+    const mill: Action = { type: 'move', by: 's1', cid: 'steal', card: theirLibraryCard, to: 'graveyard:s0' };
+    expect(b!.engine.propose(mill)).toBe(true);
+    expect(b!.engine.state().cards[theirLibraryCard]!.zone).toBe('graveyard:s0'); // optimistic
     await expectConverged(sim.peers);
     expect(b!.rolledBack.get('steal')).toMatch(/belongs to s0/);
+    expect(b!.engine.state().cards[theirLibraryCard]!.zone).toBe('library:s0');
     expect(b!.engine.state().cards[theirLibraryCard]!.identity).toBeUndefined();
     for (const p of sim.peers) expect([...p.log.values()].some((a) => a.cid === 'steal')).toBe(false);
     const nacks = delivered(sim, 'nack');
