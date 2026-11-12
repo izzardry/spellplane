@@ -185,8 +185,9 @@ describe('commit windows (DESIGN "Specification: network protocol and secrecy", 
     const t0 = Date.now();
     const result = settle(b.roll('die', 6), 20_000, 'the roll');
     const rolled = await result;
-    expect(rolled).toBeGreaterThanOrEqual(1);
-    expect(rolled).toBeLessThanOrEqual(6);
+    // The outcome is 0-based in [0, n) (TableSession.roll); the log shows it plus one.
+    expect(rolled).toBeGreaterThanOrEqual(0);
+    expect(rolled).toBeLessThan(6);
     const close = actions(A).find((x) => x.type === 'commitClose' && x.kind === 'rng');
     expect(close).toMatchObject({ by: 's0' });
     expect(Date.now() - t0).toBeGreaterThanOrEqual(3000);

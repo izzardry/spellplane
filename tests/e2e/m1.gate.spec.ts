@@ -611,6 +611,16 @@ test.describe('M1 gate @gate', () => {
         await focus(A);
         await A.page.mouse.move(1000, 160);
         await sceneIdle(A.page);
+        // The screen-anchored layer (turn strip and the stack chip below it) covers none of Ben's row of backs at the
+        // fitted view (DESIGN "Camera and navigation", Screen-anchored layer; gate M1 finding).
+        const chip = (await A.page.getByTestId('stack-chip').boundingBox({ timeout: 5000 }))!;
+        const benHand = (await state(A.page)).zones['hand:s1']!.ids;
+        const backs = (await shown(A.page)).filter((c) => benHand.includes(c.id) && c.visible);
+        expect(backs.length).toBeGreaterThan(0);
+        for (const c of backs) {
+          const overlapsX = c.screen.x < chip.x + chip.width && c.screen.x + c.screen.width > chip.x;
+          if (overlapsX) expect(c.screen.y, `Ben's card back ${c.id} under the stack chip`).toBeGreaterThanOrEqual(chip.y + chip.height);
+        }
         await shot(A.page, 'M1', 'stack-three-items', project);
       });
       await step('turn 5: Titanic Growth and Essence Scatter resolve; the creature spell is countered (Shift+R)', async () => {

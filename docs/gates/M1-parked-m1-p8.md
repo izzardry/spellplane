@@ -1,5 +1,7 @@
 # M1-P8 Networked session: parked
 
+> **Update (gate fix round):** merged into `m1` at `a8bde85` (merge `9ed1838`) after one focused review of the turn-up and resume paths; `m1-p8` is pushed to `origin`. The gate M1 passes on the networked session on Chromium and WebKit. See DECISIONS `[M1-G fix 2]`. The rest of this note is the record at parking.
+
 - **Status:** parked, not merged into `m1`. The pipeline's reason: "did not converge after 3 review rounds". Round 3 still had three blocking findings, listed below. The package then committed fixes for all three (`a8bde85`), but no fourth review ran, so nobody has re-reviewed them.
 - **Branch:** `m1-p8`, local only (not on `origin`), in worktree `/Users/holzschneider/Workspace/spellplane-wt/m1-p8`. It is 9 commits ahead of `m1` (`427b1d3` .. `a8bde85`) and contains `m1` up to `f76bd1a` (M1-P1 and M1-P2 merged), so it needs no rebase. Diff `m1...m1-p8`: 29 files, +4173 / -1621.
 - **State of `m1-p8` at parking (11 Nov 2026, head `a8bde85`):**

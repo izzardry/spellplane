@@ -2,7 +2,8 @@
 // layout and motion" (stack lane cascade 22 toward each viewer, squared pile step 0.4 capped at 20).
 import { describe, expect, it } from 'vitest';
 import { buildHarnessState, harnessGame, harnessLayout, harnessPrivateFaces } from '../../../src/scene/harness-fixture';
-import { dropTargets, fitFrame, placeCards } from '../../../src/scene/layout';
+import { dropTargets, fitFrame, pileAnchor, pileLabelPlace, PILE_LABEL_GAP, placeCards } from '../../../src/scene/layout';
+import { CARD_H, CARD_W, rot2 } from '../../../src/scene/math';
 import { mtgLayout } from '../../../src/games/mtg/layout';
 import { createTable } from '../../../src/core/reducer/index';
 import { mtg } from '../../../src/games/index';
@@ -82,5 +83,34 @@ describe('fit frame (gate M1 finding: the opponent\'s hand row of backs must not
     const solo = createTable({ game: mtg, format: '1v1', seats: [{ name: 'Ann', colour: 0 }, { name: '', colour: 1 }] });
     expect(fitFrame(solo, layout, 's0')).toEqual({ x: 0, y: 0, w: layout.table.w, d: layout.table.d });
     expect(fitFrame(null, layout, null)).toEqual({ x: 0, y: 0, w: layout.table.w, d: layout.table.d });
+  });
+});
+
+describe('pile labels (gate M1 finding: labels crossed the pile outlines)', () => {
+  const layout = mtgLayout('1v1');
+  const piles = ['library', 'graveyard', 'exile'] as const;
+
+  it('in 1v1 each pile label sits beside its pile toward the battlefield, clear of every pile outline, for both viewers', () => {
+    for (const viewer of layout.seats) {
+      for (const sl of layout.seats) {
+        for (const kind of piles) {
+          const a = pileAnchor(sl, kind)!;
+          const p = pileLabelPlace(sl, a, viewer.angle);
+          expect(p.anchorX).not.toBe('center');
+          // The anchor is beside the pile, PILE_LABEL_GAP clear of its outline, on the side of the territory centre.
+          expect(Math.hypot(p.x - a.x, p.y - a.y)).toBeCloseTo(CARD_W / 2 + PILE_LABEL_GAP, 6);
+          expect(Math.abs(p.x - sl.territory.x)).toBeLessThan(Math.abs(a.x - sl.territory.x));
+          // The text runs away from the pile: right-anchored when the pile lies to the viewer's right.
+          const [vx, vy] = rot2(1, 0, viewer.angle);
+          const towardLabel = (p.x - a.x) * vx + (p.y - a.y) * vy;
+          expect(p.anchorX).toBe(towardLabel < 0 ? 'right' : 'left');
+          for (const kind2 of piles) {
+            const b = pileAnchor(sl, kind2)!;
+            const [lx, ly] = rot2(p.x - b.x, p.y - b.y, -b.rot);
+            expect(Math.abs(lx) > CARD_W / 2 || Math.abs(ly) > CARD_H / 2).toBe(true);
+          }
+        }
+      }
+    }
   });
 });

@@ -11,6 +11,7 @@ import type { Action, ActionDraft } from '../../src/core/actions';
 import { nonceHash, type RevealedCard } from '../../src/core/commit';
 import { deadlines } from '../../src/core/deadlines';
 import { explain, reduce } from '../../src/core/reducer';
+import { recoveryRemainder } from '../../src/core/recovery';
 import { rngCommitPhaseComplete, shuffleReady } from '../../src/core/rng';
 import {
   beginShuffle,
@@ -480,6 +481,30 @@ export class Player {
     if (!r) return;
     await this.peer.act(r.action);
     this.secrets = r.secrets;
+  }
+
+  /**
+   * Lost-save recovery, step 1 (DESIGN "Multiplayer architecture", Resume and failure handling): this browser lost its
+   * secret store; the public `recover` discards the seat's hidden zones and opens the round on the fresh hand count.
+   */
+  async loseSaveAndRecover(hand: number): Promise<string> {
+    this.secrets = emptySecretStore(this.seat);
+    this.exposed.clear();
+    const round = `${this.seat}-rec${++this.sidCounter}`;
+    await this.peer.act({ type: 'recover', hand, round });
+    return round;
+  }
+
+  /** Step 2, once the table agreed: re-import, subtract the public cards, commit the rest as the library, shuffle, draw. */
+  async recoverLibrary(deck: readonly CardRef[], hand: number): Promise<void> {
+    const rest = recoveryRemainder(deck, this.state, this.seat);
+    if (!rest) throw new Error('the re-imported deck does not cover the public cards');
+    const r = commitDeck(emptySecretStore(this.seat), rest, this.entropy);
+    if (r.action.type !== 'ready') throw new Error('commitDeck makes a ready action');
+    this.secrets = r.secrets;
+    await this.peer.act({ type: 'recoverCommit', commits: r.action.commits, instanceIds: r.action.instanceIds, zone: this.zone('library') });
+    await this.shuffle();
+    await this.draw(hand);
   }
 
   /** A die roll by commit-and-reveal with every connected seated player; resolves with the 0-based result. */

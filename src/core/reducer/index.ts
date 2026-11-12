@@ -17,6 +17,7 @@ import { Draft } from './draft';
 import { STACK_ZONE } from './place';
 import * as stack from './stack';
 import * as table from './table';
+import * as recovery from './recovery';
 import { applyRestore } from './restore';
 import * as secret from './secret';
 import * as temp from './temp';
@@ -114,8 +115,8 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   sequencerClaim: record,
   settings: table.settings,
   stageSet: table.stageSet,
-  recover: later('M1-P7'),
-  recoverCommit: later('M1-P7'),
+  recover: recovery.recover,
+  recoverCommit: recovery.recoverCommit,
 };
 
 /**

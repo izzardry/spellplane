@@ -146,8 +146,9 @@ const COUNTER_MIN_PX = 11;
 const COUNTER_MAX_SCALE = 3;
 /**
  * Zone label type size on the table (mm) and its far-zoom floor: at the fitted view (about half a pixel per mm) the
- * labels keep ZONE_LABEL_MIN_PX of type on screen, up to ZONE_LABEL_MAX_SCALE, which still fits an upper-case label in
- * the gap between two piles (DESIGN "Themes and rendering": Paper zones carry small caps labels; gate M1 finding).
+ * labels keep ZONE_LABEL_MIN_PX of type on screen, up to ZONE_LABEL_MAX_SCALE; pile labels sit beside their piles, not
+ * in the 12 mm gap between them (`pileLabelPlace`; DESIGN "Themes and rendering": Paper zones carry small caps labels;
+ * gate M1 findings).
  */
 const ZONE_LABEL_SIZE = 5.5;
 const ZONE_LABEL_MIN_PX = 9;
@@ -403,7 +404,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const seatIdx = Number(l.key.split(':')[1]);
       const seat = state ? Object.values(state.seats).find((s) => s.index === seatIdx) : undefined;
       const n = seat ? counts.get(`${zoneKind}:${seat.id}`) : l.key === 'zl:stack' ? state?.stack.length : undefined;
-      specs.set(l.key, { text: n ? `${l.text}  ${n}` : l.text, x: l.x, y: l.y, z: 0.1, rot: l.rot, size: ZONE_LABEL_SIZE, scale, colour: t.muted, letterSpacing: 0.12, anchorY: l.anchorY });
+      specs.set(l.key, { text: n ? `${l.text}  ${n}` : l.text, x: l.x, y: l.y, z: 0.1, rot: l.rot, size: ZONE_LABEL_SIZE, scale, colour: t.muted, letterSpacing: 0.12, ...(l.anchorX ? { anchorX: l.anchorX } : {}), anchorY: l.anchorY });
     }
     return specs;
   }

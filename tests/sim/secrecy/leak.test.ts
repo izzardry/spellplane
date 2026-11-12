@@ -195,6 +195,30 @@ describe('leak test: a scripted two-seat game', () => {
     p.db.close();
   });
 
+  it('lost-save recovery (M1-P7): A loses its store mid-game, the table agrees, A recommits and redraws; B learns none of A’s new hidden cards', async () => {
+    const p = await script(true);
+    const { a, b } = p;
+    const publicBefore = Object.values(a.state.cards).filter((c) => c.owner === 's0' && !c.isToken && a.state.zones[c.zone]?.visibility === 'public').length;
+    const round = await a.loseSaveAndRecover(7);
+    await until(() => b.state.confirm?.id === round, 5_000, 'B to see the recovery round');
+    await b.peer.act({ type: 'respond', round, seat: 's1', response: 'ok' });
+    await a.recoverLibrary(await fixtureDeck('gw-m19-60.txt'), 7);
+    await until(() => b.state.seq === a.state.seq, 10_000, 'B to catch up');
+    await vi.advanceTimersByTimeAsync(1_000);
+    // PLAN M1-P7 acceptance: library = deck size − public cards − agreed hand.
+    expect(a.state.zones['library:s0']!.ids).toHaveLength(60 - publicBefore - 7);
+    expect(a.state.zones['hand:s0']!.ids).toHaveLength(7);
+    expect(b.state.seats.s0!.recovering).toBeUndefined();
+    const types = new Set(b.peer.log().map((x) => x.type));
+    for (const ty of ['recover', 'recoverCommit'] as const) expect(types, ty).toContain(ty);
+    const input = { observed: await observedByB(p), owner: { state: a.state, secrets: a.secrets }, disclosed: a.disclosed.s1 ?? [] };
+    expect(forbiddenFor(input).tokens.length).toBeGreaterThan(40);
+    const report = leakScan(input);
+    expect(report.tokens).toEqual([]);
+    expect(report.pairs).toEqual([]);
+    p.db.close();
+  });
+
   it('a look answers with the cards at its lookAt: not after A drew them, not after A shuffled', async () => {
     const p = await script(true);
     const { a, b } = p;

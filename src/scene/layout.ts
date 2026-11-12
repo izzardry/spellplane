@@ -285,7 +285,7 @@ export function dropTargets(state: TableState, layout: TableLayout, angle: numbe
 export interface Marking {
   /** Line segments as [x1, y1, x2, y2] in table mm. */
   segments: number[];
-  labels: { key: string; text: string; x: number; y: number; rot: number; anchorY: 'top' | 'middle' | 'bottom' }[];
+  labels: { key: string; text: string; x: number; y: number; rot: number; anchorX?: 'left' | 'center' | 'right'; anchorY: 'top' | 'middle' | 'bottom' }[];
 }
 
 const rectSegments = (r: Rect, out: number[], margin = 0) => {
@@ -298,6 +298,28 @@ const rectSegments = (r: Rect, out: number[], margin = 0) => {
     out.push(a.x, a.y, b.x, b.y);
   }
 };
+
+/** Clearance between a pile's outline and its label at the inner side, mm. */
+export const PILE_LABEL_GAP = 4;
+
+/**
+ * Where a pile's label goes: beside the pile on the side that faces the seat's battlefield, reading away from it, when
+ * the viewer reads along that side (the own seat and the one opposite); the 12 mm gap between two piles is too narrow
+ * for type that stays legible at the fitted view (gate M1 finding). Seats the viewer sees sideways keep the label in
+ * the gap below the pile.
+ */
+export function pileLabelPlace(sl: SeatLayout, a: Pose, angle: number): { x: number; y: number; rot: number; anchorX: 'left' | 'center' | 'right'; anchorY: 'middle' } {
+  const [localX] = rot2(a.x - sl.territory.x, a.y - sl.territory.y, -sl.angle);
+  const [dx, dy] = rot2(localX > 0 ? -1 : 1, 0, sl.angle);
+  const [vx, vy] = rot2(1, 0, angle);
+  const along = dx * vx + dy * vy;
+  if (Math.abs(along) > 0.7) {
+    const off = CARD_W / 2 + PILE_LABEL_GAP;
+    return { x: a.x + dx * off, y: a.y + dy * off, rot: angle, anchorX: along < 0 ? 'right' : 'left', anchorY: 'middle' };
+  }
+  const [lx, ly] = rot2(0, CARD_H / 2 + 6, sl.angle);
+  return { x: a.x + lx, y: a.y + ly, rot: angle, anchorX: 'center', anchorY: 'middle' };
+}
 
 /** Hairline zone outlines and their labels (Paper: "zones are hairline outlines with small caps labels"). */
 export function markings(layout: TableLayout, game: GameDefinition, angle: number, seatsInUse: number): Marking {
@@ -312,8 +334,7 @@ export function markings(layout: TableLayout, game: GameDefinition, angle: numbe
       const a = pileAnchor(sl, z.id);
       if (!a) continue;
       rectSegments({ x: a.x, y: a.y, w: CARD_W, d: CARD_H, rot: a.rot }, segments, 2);
-      const [lx, ly] = rot2(0, CARD_H / 2 + 6, sl.angle);
-      labels.push({ key: `zl:${i}:${z.id}`, text: label(z.label), x: a.x + lx, y: a.y + ly, rot: angle, anchorY: 'middle' });
+      labels.push({ key: `zl:${i}:${z.id}`, text: label(z.label), ...pileLabelPlace(sl, a, angle) });
     }
     const cmd = game.zones.find((z) => z.presentation === 'area');
     if (cmd) {

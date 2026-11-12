@@ -1,5 +1,7 @@
 # M1-P7 Resume: parked
 
+> **Update (gate fix round):** M1-P8 is merged. The pure parts of this package landed on `m1`: `chooseResume`, `recoveryLibrarySize`/`recoveryRemainder`, the `recover`/`recoverCommit` reducer (`core/reducer/recovery.ts`), their log lines, unit tests (`tests/unit/recovery/recovery.test.ts`) and the shared leak scenario. Still open: the session's recovery driver and `ui/recovery/*`, and the M1-P7 browser acceptance tests. See DECISIONS `[M1-P7 partial, gate fix]`. The rest of this note is the record at parking.
+
 - **Status:** parked, not merged into `m1`. The package never started. The pipeline's reason: "dependency not merged: M1-P8".
 - **Branch:** none. There is no `m1-p7` branch, local or on `origin`, and no worktree `spellplane-wt/m1-p7`. There is nothing to diff or test.
 - **History:** this note replaces the first park note (`89cc782`, written at `m1` head `9b3ce24`). At that time M1-P1 and M1-P2 were also unmerged. Since then:

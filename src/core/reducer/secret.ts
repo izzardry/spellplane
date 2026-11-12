@@ -334,6 +334,8 @@ export function checkFrozenZones(prior: TableState, next: TableState, action: { 
   for (const r of Object.values(prior.shuffles)) {
     if (!isOpen(r)) continue;
     if (action.type === 'shuffleDone' && action.sid === r.id) continue;
+    // A lost-save `recover` empties the zone and drops its round: the owner cannot choose an order that no longer exists.
+    if (action.type === 'recover' && !Object.hasOwn(next.shuffles, r.id)) continue;
     if (own(prior.zones, r.zone) === own(next.zones, r.zone)) continue;
     if (zoneIds(prior, r.zone) !== zoneIds(next, r.zone)) reject(`${r.zone} is being shuffled (${r.id}); its cards cannot change until the shuffle is done`);
   }
@@ -358,13 +360,15 @@ function stillWaiting(state: TableState, kind: 'rng' | 'shuffle', id: string): S
  * only such step is a `seatLeave` of the peer's chair sent under the owner's name; the check is generic so no later
  * action opens the same hole. The seat itself may still leave, and a third seat's `commitClose` still excludes it.
  */
-export function checkRoundParticipants(prior: TableState, next: TableState, action: { by?: unknown }): void {
+export function checkRoundParticipants(prior: TableState, next: TableState, action: { by?: unknown; type?: unknown }): void {
   const rounds: ['rng' | 'shuffle', string, SeatId][] = [
     ...Object.values(prior.rng).map((r): ['rng', string, SeatId] => ['rng', r.id, r.by]),
     ...Object.values(prior.shuffles).map((r): ['shuffle', string, SeatId] => ['shuffle', r.id, r.owner]),
   ];
   for (const [kind, id, owner] of rounds) {
     if (owner !== action.by) continue;
+    // A lost-save `recover` drops the owner's unfinished shuffle together with every card it would have ordered.
+    if (action.type === 'recover' && kind === 'shuffle' && !Object.hasOwn(next.shuffles, id)) continue;
     const before = stillWaiting(prior, kind, id);
     if (!before || before.length === 0) continue;
     const after = new Set(expectedParticipants(next, id, kind));

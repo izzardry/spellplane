@@ -339,8 +339,15 @@ export function describe(a: Action, d: Describers): Seg[] | null {
       return [t('leaves the table')];
     case 'ready':
       return [t(`is ready with ${plural(a.instanceIds.length, 'card')}`)];
+    case 'recover':
+      return [t(`lost their save: their hand and library are discarded; they propose a new hand of ${plural(a.hand, 'card')}`)];
+    case 'recoverCommit':
+      return [t(`recovers their library with ${plural(a.instanceIds.length, 'card')} from the re-imported deck`)];
     case 'rngReveal': {
       const r = d.state.rng[a.rid];
+      const thing = r?.purpose === 'coin' ? 'coin flip' : r ? `d${r.n}` : '';
+      // Another seat's reveal is its part of the roller's round, not a roll of its own.
+      if (r && r.by !== a.by) return [t(`adds to ${seatName(r.by)}'s ${thing}`)];
       const what = r?.purpose === 'coin' ? 'flips a coin' : r ? `rolls a d${r.n}` : 'reveals a random result';
       const res = r?.result === null || r?.result === undefined ? '' : r.purpose === 'coin' ? `: ${r.result === 0 ? 'heads' : 'tails'}` : `: ${r.result + 1}`;
       return [t(what + res)];
