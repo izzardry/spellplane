@@ -80,6 +80,7 @@ function twoHeadedGiant(): TableState {
   });
   state.teams = { t0: { id: 't0', seats: ['s0', 's1'], life: 30, counters: {} }, t1: { id: 't1', seats: ['s2', 's3'], life: 30, counters: {} } };
   state.format = '2hg';
+  state.stage = 'match';
   state.turn = { ...state.turn, active: 't0' };
   return state;
 }

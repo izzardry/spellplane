@@ -164,6 +164,19 @@ describe('turn mic', () => {
     expect(vc.state().audio).toBe('all');
   });
 
+  it('turns exist in the match only: in the lobby, draft and build the turn mic stays closed', async () => {
+    const fake = new FakeHost({ state: table('1v1', 's0') });
+    const v = await voiceOver(fake);
+    await v.setTalk({ gate: 'turn' });
+    expect(fake.enabledTo('t1')).toBe(true);
+    for (const stage of ['lobby', 'draft', 'build'] as const) {
+      fake.setState({ ...fake.state, stage });
+      expect(fake.enabledTo('t1')).toBe(false);
+    }
+    fake.setState({ ...fake.state, stage: 'match' });
+    expect(fake.enabledTo('t1')).toBe(true);
+  });
+
   it('a page without a seat (a spectator) has no own turn', async () => {
     const fake = new FakeHost({ state: table('1v1', 's0'), seat: null });
     const v = await voiceOver(fake);
@@ -429,17 +442,27 @@ describe('speaking rings', () => {
     clock += 500;
     v.readMeters();
     expect(v.speaking()).toEqual({});
-    // Own ring with a meter: an open gate alone is not speaking; sound is.
+    // Own ring with a meter: an open mic alone is not speaking; sound is.
     const mic = fake.media.streams[0]!;
-    v.keyDown(false);
+    await v.setTalk({ gate: 'open' });
+    expect(v.state().audio).toBe('all');
     expect(v.speaking()).toEqual({});
     expect(fake.announced).toEqual([]);
     levels.set(mic, 0.3);
     v.readMeters();
     expect(v.speaking()).toEqual({ 'peer-0': true });
     expect(fake.announced).toEqual([true]);
-    v.keyUp();
+    levels.set(mic, 0);
+    clock += 1000;
+    v.readMeters();
     expect(fake.announced).toEqual([true, false]);
+    // Holding the talk key is the intent to speak: the ring lights at once, and goes out on release.
+    await v.setTalk({ gate: 'ptt' });
+    v.keyDown(false);
+    expect(v.speaking()).toEqual({ 'peer-0': true });
+    expect(fake.announced).toEqual([true, false, true]);
+    v.keyUp();
+    expect(fake.announced).toEqual([true, false, true, false]);
   });
 });
 

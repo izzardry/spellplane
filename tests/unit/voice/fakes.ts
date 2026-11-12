@@ -114,7 +114,7 @@ export function table(format: Format, active: SeatId | TeamId = 's0'): TableStat
       ...(format === '2hg' ? { team: i < 2 ? 't0' : 't1' } : {}),
     })),
   });
-  return { ...st, turn: { ...st.turn, active } };
+  return { ...st, stage: 'match', turn: { ...st.turn, active } };
 }
 
 export interface Played {

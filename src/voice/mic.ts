@@ -468,10 +468,13 @@ class Voice implements VoiceControls {
     return out;
   }
 
-  /** Own speaking: audio open (to everyone or the teammate) and, where a meter runs, a level above the threshold. */
+  /**
+   * Own speaking: audio open (to everyone or the teammate) while the talk key is held (holding it is the intent to
+   * speak), or, for the turn mic and the open mic, where a meter runs, a level above the threshold (DECISIONS [M3-P3]).
+   */
   private ownSpeaking(): boolean {
     if (this.current.audio === 'off') return false;
-    if (!this.ownMeter) return true;
+    if (!this.ownMeter || this.current.reason === 'key') return true;
     return this.ownLoudAt !== null && this.now() - this.ownLoudAt <= SPEAKING_HOLD_MS;
   }
 
@@ -593,7 +596,11 @@ class Voice implements VoiceControls {
     track.enabled = false;
     const stream = new MediaStream([track]);
     this.out.set(p.transportId, { peerId: p.peerId, seat: this.seatOf(p, state), track, stream });
-    this.host.transport.addStream?.(stream, p.transportId);
+    try {
+      this.host.transport.addStream?.(stream, p.transportId);
+    } catch {
+      // A connection that just closed: the engine drops the peer and the entry goes with it.
+    }
   }
 
   private removeOutgoing(t: PeerId): void {
@@ -602,7 +609,11 @@ class Voice implements VoiceControls {
     this.out.delete(t);
     o.track.enabled = false;
     o.track.stop();
-    this.host.transport.removeStream?.(o.stream, t);
+    try {
+      this.host.transport.removeStream?.(o.stream, t);
+    } catch {
+      // The connection is gone already (or belongs to a transport the session replaced).
+    }
   }
 
   private dropOutgoing(): void {
@@ -617,11 +628,13 @@ class Voice implements VoiceControls {
     const seat = this.host.seat();
     const own = seat !== null && state.seats[seat] !== undefined;
     const mates = own ? teammatesOf(state, seat) : [];
+    // Turns exist in the match only: the lobby, the draft and deck building have no own turn (DECISIONS [M3-P3]).
+    const inMatch = state.stage === 'match';
     const next = talkState({
       settings: this.settings,
       keyHeld: this.keyHeld,
       teamKey: this.teamKey,
-      ownTurn: own && isSeatActive(state, seat),
+      ownTurn: own && inMatch && isSeatActive(state, seat),
       hasTeammate: mates.length > 0,
       textFocus: this.textFocus,
       noteFocus: this.noteFocus,

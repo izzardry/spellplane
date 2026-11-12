@@ -111,7 +111,14 @@ function registerVoiceDebug(voice: VoiceControls): void {
 export function createSessionVoice(port: VoicePort, opts: VoiceSessionOptions): VoiceControls {
   const voice = createVoice(voiceHost(port, opts));
   registerVoiceDebug(voice);
-  return voice;
+  const dispose = voice.dispose.bind(voice);
+  return Object.assign(voice, {
+    dispose: () => {
+      dispose();
+      // The left table's voice part goes with it (the solo table has no voice).
+      if (__SPELLPLANE_DEBUG__ && typeof window !== 'undefined' && window.__spellplane?.voice) delete window.__spellplane.voice;
+    },
+  });
 }
 
 /** Remembers the transport a factory made last (the session's current one). */
