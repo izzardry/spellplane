@@ -422,7 +422,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M2-P5 Builder table
 - [x] M2-P6 List view and deck library
 - [x] M2-P7 Evening flow
-- [ ] M2-G Gate and owner playtest
+- [x] M2-G Gate (owner playtest pending)
 - [ ] M3-C Contracts
 - [ ] M3-P1 Multi-seat layouts
 - [ ] M3-P2 Two-Headed Giant
