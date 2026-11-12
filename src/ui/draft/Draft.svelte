@@ -6,19 +6,23 @@
   table stays live under the status bar. Keys: Enter confirms the marked cards, Escape clears the marks (or closes the
   inspect view), the arrow keys move the mark through the pack (Shift adds the next card in Pick-Two), 0 fits the
   table, hold Space over a card to inspect it; keys never fire while a text field has focus.
+  While the pack shown lies on the shared table (a Rochester pack, the Grid), the other players' cursors are drawn over
+  it and this browser's cursor is reported (DESIGN "Players, seats and formats", Other players' cursors); over a private
+  pack or a Winston pile nothing is reported, so no hint of hidden cards leaves this browser.
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { CardRef, InstanceId, TableState } from '../../core/types';
   import type { DraftPrivateView } from '../../draft/types';
   import { mtg } from '../../games/index';
-  import { picksNeeded, type DraftSurfaceOptionsWithData } from '../../scene/draft';
+  import { draftHandleOf, picksNeeded, sharedPresenceScene, type DraftSurfaceOptionsWithData } from '../../scene/draft';
+  import { attachPresence, type PresenceHandle } from '../../scene/presence';
   import type { DraftSurface } from '../../scene/types';
   import { tokensToCssVars } from '../../themes/index';
   import Inspect from '../Inspect.svelte';
   import type { DraftProps } from '../types';
   import { formatClock, remainingMs, SeqClock, URGENT_MS } from './timer';
-  import { draftStatus, liveMarks, Prefetch, seatChips, shownSids, stepMark, surfaceView } from './view';
+  import { draftStatus, liveMarks, onSharedTable, Prefetch, seatChips, shownSids, stepMark, surfaceView } from './view';
 
   let { session, draft, createSurface, faces, cardData, theme }: DraftProps = $props();
 
@@ -31,7 +35,9 @@
       .join('; '),
   );
   const back = $derived(theme.cardDressing.back ?? game.cardBack);
-  const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Followed live: a change of the system setting reaches the surface with the next view.
+  const motionQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+  let reducedMotion = motionQuery?.matches ?? false;
 
   let st = $state.raw<TableState>(untrack(() => session.getState()));
   let pv = $state.raw<DraftPrivateView>(untrack(() => draft.view()));
@@ -79,7 +85,30 @@
 
   function push(): void {
     if (!surface) return;
-    surface.update(st, surfaceView(st, pv, reducedMotion));
+    const v = surfaceView(st, pv, reducedMotion);
+    surface.update(st, v);
+    syncPresence(onSharedTable(v) ? new Set(v.pack!.cards.filter((c) => c).map((c) => c!.id)) : null);
+  }
+
+  // Cursors on the shared table only: attached while a shared pack is shown, stopped (which withdraws the own cursor)
+  // as soon as a private pack or a Winston pile replaces it.
+  let presence: PresenceHandle | null = null;
+  let sharedIds: ReadonlySet<InstanceId> = new Set();
+  function syncPresence(shared: ReadonlySet<InstanceId> | null): void {
+    sharedIds = shared ?? new Set();
+    const handle = draftHandleOf(surface);
+    if (shared && handle && host && !presence) {
+      presence = attachPresence(host, sharedPresenceScene(handle, () => sharedIds), session.presence, {
+        selfSeat: me,
+        state: () => st,
+        selection: () => [],
+        colourOf: (seat) => theme.tokens.colours.seats[(seat ? st.seats[seat]?.colour : undefined) ?? 0]?.colour ?? theme.tokens.colours.fg,
+        labelOf: (p) => (p.seat && st.seats[p.seat]?.name) || 'Player',
+      });
+    } else if (!shared && presence) {
+      presence.stop();
+      presence = null;
+    }
   }
 
   function flash(text: string): void {
@@ -163,6 +192,7 @@
         theme,
         faces,
         card: (ref) => cardData.peek(ref.sid),
+        reducedMotion,
         events: {
           mark: (cards) => {
             if (pv.pack) draft.mark(cards);
@@ -185,10 +215,18 @@
     const timer = setInterval(() => {
       if (pv.timer) now = Date.now();
     }, 250);
+    const onMotion = (e: MediaQueryListEvent): void => {
+      reducedMotion = e.matches;
+      push();
+    };
+    motionQuery?.addEventListener('change', onMotion);
     return () => {
       unsubState();
       unsubView();
       clearInterval(timer);
+      motionQuery?.removeEventListener('change', onMotion);
+      presence?.stop();
+      presence = null;
       surface?.dispose();
       surface = null;
     };

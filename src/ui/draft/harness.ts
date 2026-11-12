@@ -15,12 +15,14 @@ import type { InstanceId, SeatId, TableState } from '../../core/types';
 import type { CardData, SetSummary } from '../../data/types';
 import type { DraftPrivateView } from '../../draft/types';
 import { createDraftSurfaceImpl, type DraftDebugCard, type DraftDebugQueue, type DraftSurfaceHandle } from '../../scene/draft';
-import type { CreateDraftSurface } from '../../scene/types';
+import type { PresenceShape } from '../../scene/presence';
+import type { CreateDraftSurface, ScreenPoint, TablePoint } from '../../scene/types';
 import { tokensToCssVars } from '../../themes/index';
 import { paper } from '../../themes/paper/index';
+import type { TextureSource } from '../../util/texture';
 import { FakeCardData, FakeFaces } from '../fakes';
 import Draft from './Draft.svelte';
-import { DraftSim, FakeEvening, FakeSets, LocalTable, type SimFormat } from './fakes';
+import { DraftSim, FakeEvening, FakeSets, LocalTable, type SentPresence, type SimFormat } from './fakes';
 import LobbySettings from './LobbySettings.svelte';
 
 export interface DraftHarnessOptions {
@@ -63,6 +65,26 @@ export interface DraftHarnessApi {
   start(): void;
   /** Another seat proposes lobby settings or table settings. */
   dispatchAs(seat: SeatId, draft: Record<string, unknown>): void;
+  /** Presence messages sent so far by `seat` (default this page's seat). */
+  presenceSent(seat?: SeatId): SentPresence[];
+  /** Another seat's pointer moves to a table point (null: off the table), hovering `over`. */
+  presenceAs(seat: SeatId, cursor: TablePoint | null, over?: InstanceId | null): void;
+  /** Seats whose presence layer listens (this page's seat while its layer is attached). */
+  presenceListening(): SeatId[];
+  /** Remote cursors the presence layer drew in its last frame (viewport px). */
+  presenceDrawn(): PresenceShape[];
+  /** Viewport point of a table point on the draft surface. */
+  toScreen(p: TablePoint): ScreenPoint | null;
+  /** The lobby panels' setLobby proposals are refused while on. */
+  refuseLobby(on: boolean): void;
+  /** Give the surface paper's theme with a card back of this id. */
+  setBack(id: string): void;
+  /** The surface's camera pans on by release inertia. */
+  flinging(): boolean;
+  /** The card back the surface draws (its id). */
+  back(): string | null;
+  /** The reduced-motion setting the surface's theme was built with. */
+  reducedMotion(): boolean | null;
 }
 
 declare global {
@@ -128,6 +150,7 @@ export function mount(target: HTMLElement, cards: readonly CardData[], opts: Dra
   const controls = sim.controls(opts.me);
   let surface: DraftSurfaceHandle | null = null;
   const createSurface: CreateDraftSurface = (host, o) => (surface = createDraftSurfaceImpl(host, o));
+  const evenings: FakeEvening[] = [];
 
   if (opts.view === 'lobby') {
     const wrap = document.createElement('div');
@@ -141,7 +164,9 @@ export function mount(target: HTMLElement, cards: readonly CardData[], opts: Dra
       box.dataset.testid = `panel-${seat}`;
       wrap.appendChild(box);
       const session = table.session(seat, data);
-      mountSvelte(LobbySettings, { target: box, props: { session, evening: new FakeEvening(session), sets } });
+      const evening = new FakeEvening(session);
+      evenings.push(evening);
+      mountSvelte(LobbySettings, { target: box, props: { session, evening, sets } });
     }
   } else {
     sim.start();
@@ -165,6 +190,29 @@ export function mount(target: HTMLElement, cards: readonly CardData[], opts: Dra
     gridTake: (seat, line, index) => sim.gridTake(seat, line, index),
     start: () => sim.start(),
     dispatchAs: (seat, d) => void table.dispatch(seat, d as never),
+    presenceSent: (seat = opts.me) => table.presence.sent.filter((m) => m.seat === seat),
+    presenceAs: (seat, cursor, over = null) => table.presence.channel(seat).cursor(cursor, over),
+    presenceListening: () => table.presence.listening(),
+    presenceDrawn: () => window.__spellplane?.presence?.drawn() ?? [],
+    toScreen: (p) => surface?.toScreen(p) ?? null,
+    refuseLobby: (on) => {
+      for (const e of evenings) e.refuse = on;
+    },
+    setBack: (id) => {
+      const back: TextureSource = {
+        id,
+        width: 63,
+        height: 88,
+        draw: (ctx, w, h) => {
+          ctx.fillStyle = '#5a3';
+          ctx.fillRect(0, 0, w, h);
+        },
+      };
+      surface?.setTheme({ ...paper, cardDressing: { ...paper.cardDressing, back } });
+    },
+    flinging: () => surface?.debug.flinging() ?? false,
+    back: () => surface?.debug.back() ?? null,
+    reducedMotion: () => surface?.debug.reducedMotion() ?? null,
   };
   window.__draftHarness = api;
   return api;

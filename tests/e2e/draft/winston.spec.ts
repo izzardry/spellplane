@@ -15,6 +15,11 @@ test('Winston: card clicks on the pile do nothing; the pile is taken or declined
   await settled(page);
   await expect(page.getByTestId('draft-title')).toHaveText('Winston draft');
   await expect(page.getByTestId('draft-prompt')).toHaveText('Your turn: take this pile, or add a card to it and look at the next.');
+  // DESIGN mode table, Winston: "A shared face-down stack and three piles": the pile is named, the stack and the
+  // piles' sizes are in the status line.
+  await expect(page.getByTestId('draft-pack-label')).toHaveText('Pile 1 · 1 card');
+  const stack = (await dh(page, 'state')).draft!.winston!.stack;
+  await expect(page.getByTestId('draft-step')).toHaveText(`Stack ${stack} · piles 1, 1, 1`);
   const [a] = await packCards(page);
   expect(a).toBeDefined();
   await clickCard(page, a!.id);
@@ -30,6 +35,8 @@ test('Winston: card clicks on the pile do nothing; the pile is taken or declined
   await page.getByTestId('pile-pass').click();
   await expect.poll(async () => (await dh(page, 'state')).draft!.winston!.pile).toBe(1);
   await settled(page);
+  await expect(page.getByTestId('draft-pack-label')).toHaveText('Pile 2 · 1 card');
+  await expect(page.getByTestId('draft-step')).toHaveText(`Stack ${stack - 1} · piles 2, 1, 1`);
   await page.getByTestId('pile-take').click();
   await expect.poll(async () => (await poolCards(page)).length).toBe(1);
   expect(await calls(page)).toEqual([

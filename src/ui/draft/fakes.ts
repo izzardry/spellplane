@@ -15,6 +15,7 @@ import { DEFAULT_LOBBY_SETTINGS } from '../../core/types';
 import type { CardData, SetData, SetDataSource, SetSummary } from '../../data/types';
 import type { DraftControls, DraftPrivateView, FrontPack } from '../../draft/types';
 import { mtg } from '../../games/index';
+import type { PeerPresence, Presence } from '../../net/types';
 import type { EveningControls, SessionListener } from '../../session/types';
 import { FakeCardData, FakeSession } from '../fakes';
 
@@ -31,6 +32,8 @@ export class LocalTable {
   readonly refused: { action: Action; reason: string }[] = [];
   private readonly listeners = new Set<SessionListener>();
   private cid = 0;
+  /** Cursors between the seats of this table (as the `pres` channel would carry them). */
+  readonly presence = new LocalPresence();
 
   constructor(names: readonly string[], format: Format = names.length === 2 ? '1v1' : names.length === 3 ? 'ffa3' : 'ffa4') {
     this.state = createTable({ game: mtg, format, seats: names.map((name, i) => ({ name, colour: i as 0 })) });
@@ -66,8 +69,72 @@ export class LocalTable {
   }
 }
 
+/** One presence message a seat sent (LocalPresence.sent). */
+export interface SentPresence {
+  seat: SeatId;
+  cursor: { x: number; y: number } | null;
+  over: InstanceId | null;
+  /** The dragged cards for a drag message, null for a cursor message. */
+  drag: { id: InstanceId; pose: { x: number; y: number; rot: number } }[] | null;
+}
+
+/**
+ * Presence among the seats of one LocalTable: what a seat sends is recorded (`sent`) and reaches every other seat's
+ * listeners at once, as the unreliable `pres` channel would without loss. Not throttled.
+ */
+export class LocalPresence {
+  readonly sent: SentPresence[] = [];
+  private readonly latest = new Map<SeatId, PeerPresence>();
+  private readonly listeners = new Map<SeatId, Set<(peers: PeerPresence[]) => void>>();
+
+  /** Seat `seat`'s Presence. */
+  channel(seat: SeatId): Presence {
+    const update = (patch: Partial<PeerPresence>): void => {
+      const prev = this.latest.get(seat) ?? { peerId: `peer-${seat}`, seat, cursor: null, over: null, drag: [], speaking: false, typing: null, caption: null, at: 0 };
+      this.latest.set(seat, { ...prev, ...patch, at: Date.now() });
+      for (const [other, set] of this.listeners) {
+        if (other === seat) continue;
+        const peers = this.peers(other);
+        for (const l of [...set]) l(peers);
+      }
+    };
+    return {
+      cursor: (at, over = null) => {
+        this.sent.push({ seat, cursor: at ? { x: at.x, y: at.y } : null, over, drag: null });
+        update({ cursor: at ? { x: at.x, y: at.y } : null, over });
+      },
+      drag: (cards) => {
+        const drag = cards.map((c) => ({ id: c.id, pose: { ...c.pose } }));
+        this.sent.push({ seat, cursor: null, over: null, drag });
+        update({ drag });
+      },
+      speaking: () => undefined,
+      typing: () => undefined,
+      captionInterim: () => undefined,
+      peers: () => this.peers(seat),
+      subscribe: (listener) => {
+        let set = this.listeners.get(seat);
+        if (!set) this.listeners.set(seat, (set = new Set()));
+        set.add(listener);
+        return () => set.delete(listener);
+      },
+    };
+  }
+
+  /** Every seat's latest presence except `seat`'s own. */
+  peers(seat: SeatId): PeerPresence[] {
+    return [...this.latest.values()].filter((p) => p.seat !== seat).map((p) => ({ ...p, drag: [...p.drag] }));
+  }
+
+  /** Seats with at least one listener (a presence layer is attached there). */
+  listening(): SeatId[] {
+    return [...this.listeners].filter(([, set]) => set.size > 0).map(([seat]) => seat);
+  }
+}
+
 /** One seat's TableSession over a LocalTable (the HUD fake for everything else). */
 export class TableSeatSession extends FakeSession {
+  override readonly presence: Presence;
   constructor(
     readonly table: LocalTable,
     seat: SeatId,
@@ -75,6 +142,7 @@ export class TableSeatSession extends FakeSession {
   ) {
     const secrets: SecretStore = { seat, identities: {}, libraryOrder: [], hand: [], audit: [], received: {} };
     super(table.state, secrets, data, seat);
+    this.presence = table.presence.channel(seat);
   }
   override getState(): TableState {
     return this.table.state;
@@ -92,12 +160,15 @@ export class TableSeatSession extends FakeSession {
 /** EveningControls over a seat's session: `setLobby` proposes `lobbySet`; `start` hands over to the harness. */
 export class FakeEvening implements EveningControls {
   readonly calls: { method: string; args: unknown[] }[] = [];
+  /** While set, `setLobby` is refused: the proposal never reaches the table (as a rolled-back proposal). */
+  refuse = false;
   constructor(
     private readonly session: TableSeatSession,
     private readonly onStart: () => void = () => {},
   ) {}
   setLobby(lobby: LobbySettings): Action {
     this.calls.push({ method: 'setLobby', args: [lobby] });
+    if (this.refuse) return { type: 'lobbySet', lobby, by: this.session.seat, cid: 'refused', seq: this.session.getState().seq + 1 } as Action;
     return this.session.dispatch({ type: 'lobbySet', lobby });
   }
   start(): Action {

@@ -9,7 +9,7 @@ import type { TableState } from '../../../../src/core/types';
 import type { CardData } from '../../../../src/data/types';
 import { DraftSim, LocalTable } from '../../../../src/ui/draft/fakes';
 import { formatClock, remainingMs, SeqClock } from '../../../../src/ui/draft/timer';
-import { draftStatus, liveMarks, Prefetch, seatChips, shownSids, stepMark, surfaceView, waitingCounts } from '../../../../src/ui/draft/view';
+import { draftStatus, liveMarks, onSharedTable, Prefetch, seatChips, shownSids, stepMark, surfaceView, waitingCounts, winstonSummary } from '../../../../src/ui/draft/view';
 import m19 from '../../../fixtures/scryfall/m19.json';
 
 const CARDS = m19 as unknown as CardData[];
@@ -195,11 +195,19 @@ describe('status line (DESIGN "Pre-game", Drafting interaction; Draft formats: d
     expect(v.pack).toMatchObject({ layout: 'fan', shared: false, packId: 'pile:0' });
     expect(v.pack!.cards).toHaveLength(1);
     expect(v.picks).toBe(0);
+    // DESIGN mode table, Winston: "A shared face-down stack and three piles": the pile is named, and the status line
+    // shows the stack and every pile's size.
+    expect(v.packLabel).toBe('Pile 1');
+    expect(onSharedTable(v)).toBe(false);
+    expect(winstonSummary(table.state)).toBe(`Stack ${table.state.draft!.winston!.stack} · piles 1, 1, 1`);
+    expect(draftStatus(table.state, sim.view('s0'), 's0').step).toBe(winstonSummary(table.state));
+    expect(draftStatus(table.state, sim.view('s1'), 's1').step).toBe(winstonSummary(table.state));
     expect(draftStatus(table.state, sim.view('s0'), 's0')).toMatchObject({ prompt: 'Your turn: take this pile, or add a card to it and look at the next.', confirmable: false });
     expect(sim.view('s1').pile).toBeUndefined();
     expect(sim.pileLook('s1', true)).toBe(false);
     expect(sim.pileLook('s0', false)).toBe(true);
-    expect(surfaceView(table.state, sim.view('s0'), false).pack).toMatchObject({ packId: 'pile:1' });
+    expect(surfaceView(table.state, sim.view('s0'), false)).toMatchObject({ pack: { packId: 'pile:1' }, packLabel: 'Pile 2' });
+    expect(winstonSummary(table.state)).toMatch(/ · piles 2, 1, 1$/);
     expect(sim.pileLook('s0', true)).toBe(true);
     expect(sim.view('s0').pool).toHaveLength(1);
     expect(table.state.draft!.winston).toMatchObject({ active: 's1', pile: 0, piles: [2, 1, 1] });
@@ -209,7 +217,21 @@ describe('status line (DESIGN "Pre-game", Drafting interaction; Draft formats: d
     const table = new LocalTable(['Anna', 'Ben']);
     const sim = new DraftSim(table, { format: 'grid', cards: CARDS, grids: 1 });
     sim.start();
-    expect(surfaceView(table.state, sim.view('s0'), false).picks).toBe(0);
+    const v = surfaceView(table.state, sim.view('s0'), false);
+    expect(v.picks).toBe(0);
+    // The grid lies on the shared table: cursors are shared over it; no label beyond the surface's own.
+    expect(onSharedTable(v)).toBe(true);
+    expect(v.packLabel).toBeUndefined();
+    expect(winstonSummary(table.state)).toBe('');
+  });
+
+  it('cursors are shared over a Rochester pack only, never over a pack passed in private', () => {
+    const roch = new LocalTable(['Anna', 'Ben']);
+    const rsim = new DraftSim(roch, { format: 'rochester', cards: CARDS, packs: 1, packSize: 6 });
+    rsim.start();
+    expect(onSharedTable(surfaceView(roch.state, rsim.view('s1'), false))).toBe(true);
+    const { table, sim } = passDraft();
+    expect(onSharedTable(surfaceView(table.state, sim.view('s0'), false))).toBe(false);
   });
 
   it('sealed: the pool opens at once and the prompt says so', () => {

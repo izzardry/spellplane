@@ -25,7 +25,7 @@ import { BACK_KEY, FaceTextures, faceKey } from './faces';
 import { CARD_H, CARD_W, cardCorners, deltaDeg, forward, pointInCard, rot2 } from './math';
 import { CardMotion } from './motion';
 import { tierForScreenHeight } from './textures';
-import type { CameraControls, CreateDraftSurface, DebugCard, DraftSurface, DraftSurfaceOptions, DraftSurfaceView, ScreenPoint, TablePoint } from './types';
+import type { CameraControls, CreateDraftSurface, DebugCard, DraftSurface, DraftSurfaceOptions, DraftSurfaceView, ScreenPoint, TablePoint, TablePoint3, TableScene } from './types';
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Pure layout (unit-tested in tests/unit/ui/draft/layout.test.ts)
@@ -263,6 +263,12 @@ export interface DraftSurfaceDebug {
   pack(): { packId: PackId; layout: 'fan' | 'grid'; shared: boolean } | null;
   /** The camera's view: centre (table mm) and distance (smaller is closer). */
   view(): { cx: number; cy: number; dist: number };
+  /** The camera is panning on by release inertia. */
+  flinging(): boolean;
+  /** The card back the waiting-pack piles draw (its TextureSource id). */
+  back(): string;
+  /** The reduced-motion setting the theme instance was built with. */
+  reducedMotion(): boolean;
 }
 
 /** A DraftSurface whose debug carries the extras (assignable to DraftSurface). */
@@ -272,6 +278,11 @@ export type DraftSurfaceHandle = Omit<DraftSurface, 'debug'> & {
   cardAt(x: number, y: number): string | null;
   /** Viewport point of a table point. */
   toScreen(p: TablePoint): ScreenPoint;
+  /** Viewport point of a table point at height z (what scene/presence.ts projects remote cursors with). */
+  worldToScreen(p: TablePoint3): ScreenPoint | null;
+  /** Table point under a viewport point (the own cursor scene/presence.ts reports). */
+  screenToTable(x: number, y: number): TablePoint | null;
+  update(state: TableState, view: DraftSurfaceViewWithLabel): void;
 };
 
 interface RCard {
@@ -313,6 +324,40 @@ const SMALL_CAPS = 'font-variant: all-small-caps; letter-spacing: 0.08em;';
  */
 export interface DraftSurfaceOptionsWithData extends DraftSurfaceOptions {
   card?(ref: CardRef): CardData | null;
+  /** Reduced motion before the first view arrives (the theme is built with it); later views carry their own. */
+  reducedMotion?: boolean;
+}
+
+/**
+ * DraftSurfaceView plus the pack area's label, for packs the surface cannot name from `shared` and `layout` alone (a
+ * Winston pile: "Pile 2 · 3 cards"). Without it the label is "Your pack", "Shared table" or "Shared table · grid".
+ */
+export interface DraftSurfaceViewWithLabel extends DraftSurfaceView {
+  packLabel?: string;
+}
+
+/** The pack area's label (DESIGN "Pre-game", Drafting interaction): a given label wins, else from the pack's kind. */
+export function packAreaLabel(pack: DraftSurfaceView['pack'], given?: string): string {
+  if (!pack) return 'Pack';
+  const count = pack.cards.filter((c) => c).length;
+  const n = `${count} ${count === 1 ? 'card' : 'cards'}`;
+  if (given) return `${given} · ${n}`;
+  if (pack.layout === 'grid') return `Shared table · grid · ${n}`;
+  return pack.shared ? `Shared table · ${n}` : `Your pack · ${n}`;
+}
+
+/**
+ * Release inertia of a pan (DESIGN "Camera and navigation": "release inertia on pan"), as the table scene computes it:
+ * the screen velocity in px per ms over the last samples, or null when the pointer had come to rest (the last move is
+ * 80 ms or more before the release) or there is too little to measure.
+ */
+export function panFling(samples: readonly { x: number; y: number; t: number }[], releasedAt: number): { vx: number; vy: number } | null {
+  if (samples.length < 2) return null;
+  const first = samples[0]!;
+  const last = samples[samples.length - 1]!;
+  const dt = last.t - first.t;
+  if (dt <= 0 || releasedAt - last.t >= 80) return null;
+  return { vx: (last.x - first.x) / dt, vy: (last.y - first.y) / dt };
 }
 
 /** Hold a touch this long on a card, without moving, to inspect it (touch has no hover key or middle button). */
@@ -322,7 +367,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   let theme: Theme = opts.theme;
   const card = (ref: CardRef): CardData | null => opts.card?.(ref) ?? null;
   let state: TableState | null = null;
-  let view: DraftSurfaceView | null = null;
+  let view: DraftSurfaceViewWithLabel | null = null;
   let rows = 2;
 
   // --- Three.js -------------------------------------------------------------------------------------------------
@@ -363,8 +408,12 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   });
   insetObserver.observe(host, { attributes: true, attributeFilter: ['data-fit-insets'] });
 
-  let themeInstance: ThemeInstance = theme.build({ renderer, scene, camera, table: geometry.table, quality: theme.quality[0]!, reducedMotion: false });
-  const faces = new FaceTextures(renderer, opts.faces, theme.cardDressing.back ?? opts.game.cardBack);
+  // The theme instance is built with the reduced-motion setting it runs under, and rebuilt when that setting changes.
+  let builtReduced = opts.reducedMotion ?? false;
+  let themeInstance: ThemeInstance = theme.build({ renderer, scene, camera, table: geometry.table, quality: theme.quality[0]!, reducedMotion: builtReduced });
+  const backOf = (t: Theme) => t.cardDressing.back ?? opts.game.cardBack;
+  let back = backOf(theme);
+  let faces = new FaceTextures(renderer, opts.faces, back);
   faces.onChange = () => (dirty = true);
   const cards = new CardLayer(scene, theme.tokens.colours.surface);
   scene.add(cards.mesh);
@@ -390,7 +439,13 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   let disposed = false;
   let lastTick = performance.now();
   let lastSheen = 0;
-  const reduced = () => view?.reducedMotion ?? false;
+  const reduced = () => view?.reducedMotion ?? opts.reducedMotion ?? false;
+  function rebuildTheme(): void {
+    themeInstance.dispose();
+    builtReduced = reduced();
+    themeInstance = theme.build({ renderer, scene, camera, table: geometry.table, quality: theme.quality[0]!, reducedMotion: builtReduced });
+    dirty = true;
+  }
 
   function setRows(next: number): void {
     if (next === rows) return;
@@ -399,9 +454,8 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     const tableChanged = g.table.w !== geometry.table.w || g.table.d !== geometry.table.d;
     geometry = g;
     if (tableChanged) {
-      themeInstance.dispose();
-      themeInstance = theme.build({ renderer, scene, camera, table: geometry.table, quality: theme.quality[0]!, reducedMotion: reduced() });
       rig.table = geometry.table;
+      rebuildTheme();
     }
     rig.setFrame(geometry.frame);
     rebuildOutlines();
@@ -683,8 +737,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     const halfW = (L.perRow * L.colStep) / 2;
     // Pack area label.
     const packLabel = label('pack-label', 'draft-pack-label', SMALL_CAPS);
-    const count = pack ? pack.cards.filter((c) => c).length : 0;
-    packLabel.textContent = !pack ? 'Pack' : pack.layout === 'grid' ? `Shared table · grid · ${count} cards` : pack.shared ? `Shared table · ${count} cards` : `Your pack · ${count} cards`;
+    packLabel.textContent = packAreaLabel(pack, view?.packLabel);
     at(packLabel, { x: L.packX - halfW, y: L.firstRowY + CARD_H / 2 + 12 }, 'left', 'bottom');
     show(packLabel);
     if (!pack && view) {
@@ -794,7 +847,19 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   // One pointer presses (a click marks or confirms, a drag pans, a touch held still inspects); a second touch turns
   // the gesture into a two-finger camera gesture (DESIGN "Input and interaction design", Touch: "two-finger gestures
   // always drive the camera"; "Camera and navigation": pinch zoom centred between the fingers).
-  let press: { pointerId: number; button: number; touch: boolean; x0: number; y0: number; last: { x: number; y: number }; panning: boolean; timer: ReturnType<typeof setTimeout> | null; inspected: boolean } | null = null;
+  // `samples`: recent pan positions (the last 100 ms), for the release inertia.
+  let press: {
+    pointerId: number;
+    button: number;
+    touch: boolean;
+    x0: number;
+    y0: number;
+    last: { x: number; y: number };
+    panning: boolean;
+    samples: { x: number; y: number; t: number }[];
+    timer: ReturnType<typeof setTimeout> | null;
+    inspected: boolean;
+  } | null = null;
   const touches = new Map<number, { x: number; y: number }>();
   // The pinch's finger spread and view distance when it (re)started: the zoom follows the spread relative to these, so
   // fingers that come back to the same spread give back the same zoom, even when the clamp was touched in between
@@ -838,7 +903,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     }
     if (press || pinching) return;
     const touch = e.pointerType === 'touch';
-    press = { pointerId: e.pointerId, button: e.button, touch, x0: e.clientX, y0: e.clientY, last: { x: e.clientX, y: e.clientY }, panning: false, timer: null, inspected: false };
+    press = { pointerId: e.pointerId, button: e.button, touch, x0: e.clientX, y0: e.clientY, last: { x: e.clientX, y: e.clientY }, panning: false, samples: [], timer: null, inspected: false };
     if (touch) {
       const p = press;
       p.timer = setTimeout(() => {
@@ -875,6 +940,9 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       }
       if (press.panning) {
         rig.panBy(e.clientX - press.last.x, e.clientY - press.last.y);
+        const t = performance.now();
+        press.samples.push({ x: e.clientX, y: e.clientY, t });
+        while (press.samples.length > 2 && t - press.samples[0]!.t > 100) press.samples.shift();
         dirty = true;
       }
       press.last = { x: e.clientX, y: e.clientY };
@@ -901,7 +969,16 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     if (!press || press.pointerId !== e.pointerId) return;
     const p = press;
     endPress();
-    if (p.panning || p.inspected) return;
+    if (p.panning) {
+      // Release inertia on pan (DESIGN "Camera and navigation"), not with reduced motion.
+      const v = reduced() ? null : panFling(p.samples, performance.now());
+      if (v) {
+        rig.fling(v.vx, v.vy);
+        dirty = true;
+      }
+      return;
+    }
+    if (p.inspected) return;
     const rc = cardAt(e.clientX, e.clientY);
     if (!rc) return;
     if (p.button === 1) {
@@ -1017,6 +1094,9 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     pendingTextures: () => faces.pending,
     pack: () => (view?.pack ? { packId: view.pack.packId, layout: view.pack.layout, shared: view.pack.shared } : null),
     view: () => ({ cx: rig.view.cx, cy: rig.view.cy, dist: rig.view.dist }),
+    flinging: () => rig.velocity.x !== 0 || rig.velocity.y !== 0,
+    back: () => back.id,
+    reducedMotion: () => builtReduced,
   };
 
   // --- Camera controls ------------------------------------------------------------------------------------------
@@ -1058,12 +1138,25 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       const prev = view;
       state = nextState;
       view = nextView;
+      if (reduced() !== builtReduced) rebuildTheme();
       relayout(prev);
     },
     setTheme(next) {
-      themeInstance.dispose();
       theme = next;
-      themeInstance = theme.build({ renderer, scene, camera, table: geometry.table, quality: theme.quality[0]!, reducedMotion: reduced() });
+      rebuildTheme();
+      // The waiting packs' back follows the theme. FaceTextures takes its back once, so a new back needs a fresh
+      // texture set: every shown face is registered again and reloads over the next frames.
+      const nextBack = backOf(theme);
+      if (nextBack !== back) {
+        back = nextBack;
+        faces.dispose();
+        faces = new FaceTextures(renderer, opts.faces, back);
+        faces.onChange = () => (dirty = true);
+        for (const rc of rcards.values()) {
+          faces.register(rc.ref, 0);
+          rc.tier = null;
+        }
+      }
       cards.setBackground(theme.tokens.colours.surface);
       outlineMaterial.color.set(theme.tokens.colours.border);
       overlay.style.fontFamily = theme.tokens.type.family;
@@ -1081,6 +1174,14 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       const r = canvasRect();
       const s = toScreen(p);
       return { x: r.left + s.x, y: r.top + s.y };
+    },
+    worldToScreen(p) {
+      const r = canvasRect();
+      const s = rig.tableToScreen(p, p.z);
+      return Number.isFinite(s.x) && Number.isFinite(s.y) ? { x: r.left + s.x, y: r.top + s.y } : null;
+    },
+    screenToTable(x, y) {
+      return screenToTable(x, y);
     },
     dispose() {
       disposed = true;
@@ -1107,6 +1208,30 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       canvas.remove();
       overlay.remove();
     },
+  };
+}
+
+/** The draft surface's extras when `surface` is this module's (a test double may lack them). */
+export function draftHandleOf(surface: DraftSurface | null): DraftSurfaceHandle | null {
+  const h = surface as Partial<DraftSurfaceHandle> | null;
+  return h && typeof h.worldToScreen === 'function' && typeof h.screenToTable === 'function' && typeof h.cardAt === 'function' ? (h as DraftSurfaceHandle) : null;
+}
+
+/**
+ * The draft surface as scene/presence.ts sees it, for a pack on the shared table (DESIGN "Pre-game", Drafting
+ * interaction: "Rochester picks happen on the shared table with cursors and voice"). Only cards of the shared pack
+ * (`shared`) are named as hovered, never the own pool; nothing is dragged on the draft table, so no drag is reported.
+ * Shared packs are laid out alike for every viewer, so a cursor's table point lands on the same card on every page.
+ */
+export function sharedPresenceScene(surface: DraftSurfaceHandle, shared: () => ReadonlySet<InstanceId>): Pick<TableScene, 'worldToScreen' | 'screenToTable' | 'cardAt'> & { readonly debug: { cards(): readonly [] } } {
+  return {
+    worldToScreen: (p) => surface.worldToScreen(p),
+    screenToTable: (x, y) => surface.screenToTable(x, y),
+    cardAt: (x, y) => {
+      const id = surface.cardAt(x, y);
+      return id !== null && shared().has(id) ? id : null;
+    },
+    debug: { cards: () => [] },
   };
 }
 

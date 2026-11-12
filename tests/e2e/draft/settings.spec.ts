@@ -108,6 +108,34 @@ test.describe('lobby settings panel', () => {
     await expect(guest.getByTestId('lobby-set')).toHaveCount(0);
   });
 
+  test('a refused write leaves every control showing what the table holds, not the rejected choice', async ({ page }) => {
+    await openDraft(page, { view: 'lobby', seats: 'Anna,Ben' });
+    const host = page.getByTestId('panel-s0');
+    await expect(host.getByTestId('lobby-mode')).toHaveValue('booster');
+    await expect.poll(() => optionValues(host.getByTestId('lobby-set'))).toContain('M10');
+    const before = await lobby(page);
+    await dh(page, 'refuseLobby', true);
+    await host.getByTestId('lobby-mode').selectOption('rochester');
+    await expect(host.getByTestId('lobby-mode')).toHaveValue('booster');
+    await host.getByTestId('lobby-set').selectOption('M10');
+    await expect(host.getByTestId('lobby-set')).toHaveValue('M19');
+    await host.getByTestId('lobby-pick-timer').click();
+    await expect(host.getByTestId('lobby-pick-timer')).not.toBeChecked();
+    // Per-pack sets: a refused pack set snaps back too.
+    await host.getByTestId('lobby-per-pack').check();
+    await expect(host.getByTestId('lobby-pack-set')).toHaveCount(3);
+    await host.getByTestId('lobby-pack-set').nth(1).selectOption('M10');
+    await expect(host.getByTestId('lobby-pack-set').nth(1)).toHaveValue('M19');
+    expect(await lobby(page)).toEqual(before);
+    // Accepted again: the choice sticks.
+    await dh(page, 'refuseLobby', false);
+    await host.getByTestId('lobby-pack-set').nth(1).selectOption('M10');
+    await expect(host.getByTestId('lobby-pack-set').nth(1)).toHaveValue('M10');
+    await host.getByTestId('lobby-mode').selectOption('rochester');
+    await expect(host.getByTestId('lobby-mode')).toHaveValue('rochester');
+    expect((await lobby(page))!.draft).toMatchObject({ format: 'rochester' });
+  });
+
   test('a remote change of the settings shows in the host’s own panel too', async ({ page }) => {
     await openDraft(page, { view: 'lobby', seats: 'Anna,Ben' });
     const host = page.getByTestId('panel-s0');

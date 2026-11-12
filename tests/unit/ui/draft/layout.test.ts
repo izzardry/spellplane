@@ -16,8 +16,10 @@ import {
   foilSheenColour,
   gridLineCells,
   gridLineOpen,
+  packAreaLabel,
   packPoses,
   packRows,
+  panFling,
   poolColumnOf,
   poolColumns,
   POOL_COLUMNS,
@@ -250,5 +252,27 @@ describe('foils (DESIGN "Pre-game", Pack generation: "Foils are marked with a su
     expect(foilSheenColour(0.5, 0)).toBe('hsl(180, 55%, 72%)');
     expect(foilSheenColour(0, 1)).not.toBe(foilSheenColour(0, 0));
     expect(foilSheenColour(1.25, 0)).toBe(foilSheenColour(0.25, 0));
+  });
+});
+
+describe('pack area label and pan release (DESIGN "Pre-game", Drafting interaction; "Camera and navigation": release inertia on pan)', () => {
+  const card = (id: string): DraftCard => ({ id, ref: { sid: id } });
+  it('names the pack by where it lies, or by the label given (a Winston pile)', () => {
+    expect(packAreaLabel(null)).toBe('Pack');
+    expect(packAreaLabel({ packId: 'p', cards: [card('a'), card('b')], layout: 'fan', shared: false })).toBe('Your pack · 2 cards');
+    expect(packAreaLabel({ packId: 'p', cards: [card('a')], layout: 'fan', shared: true })).toBe('Shared table · 1 card');
+    expect(packAreaLabel({ packId: 'g', cards: [card('a'), null, card('c')], layout: 'grid', shared: true })).toBe('Shared table · grid · 2 cards');
+    expect(packAreaLabel({ packId: 'pile:1', cards: [card('a'), card('b'), card('c')], layout: 'fan', shared: false }, 'Pile 2')).toBe('Pile 2 · 3 cards');
+  });
+  it('flings with the velocity of the last samples, but not after the pointer came to rest', () => {
+    const samples = [
+      { x: 0, y: 0, t: 1000 },
+      { x: 30, y: -10, t: 1010 },
+      { x: 60, y: -20, t: 1020 },
+    ];
+    expect(panFling(samples, 1030)).toEqual({ vx: 3, vy: -1 });
+    expect(panFling(samples, 1100)).toBeNull();
+    expect(panFling(samples.slice(0, 1), 1021)).toBeNull();
+    expect(panFling([], 0)).toBeNull();
   });
 });

@@ -8,8 +8,7 @@ import { passDirection } from '../../core/drafting';
 import { seatsInOrder } from '../../core/selectors';
 import type { DrafterId, DraftState, InstanceId, SeatId, TableState } from '../../core/types';
 import type { DraftPrivateView } from '../../draft/types';
-import { canConfirm, picksNeeded } from '../../scene/draft';
-import type { DraftSurfaceView } from '../../scene/types';
+import { canConfirm, picksNeeded, type DraftSurfaceViewWithLabel } from '../../scene/draft';
 
 /** The drafter a seat drafts as: the seat, or its team in the Two-Headed Giant formats (DraftState.drafters). */
 export function drafterOf(state: TableState, draft: DraftState, seat: SeatId): DrafterId | null {
@@ -53,10 +52,12 @@ export function liveMarks(view: DraftPrivateView): InstanceId[] {
 
 /**
  * What the draft surface draws (scene/types.ts DraftSurfaceView); waiting packs only where packs are passed. The grid
- * and a Winston pile take no single cards, so their `picks` is 0 and the surface ignores card clicks on them.
+ * and a Winston pile take no single cards, so their `picks` is 0 and the surface ignores card clicks on them. A Winston
+ * pile is labelled with its number ("Pile 2"), not as the own pack.
  */
-export function surfaceView(state: TableState, view: DraftPrivateView, reducedMotion: boolean): DraftSurfaceView {
-  let pack: DraftSurfaceView['pack'] = null;
+export function surfaceView(state: TableState, view: DraftPrivateView, reducedMotion: boolean): DraftSurfaceViewWithLabel {
+  let pack: DraftSurfaceViewWithLabel['pack'] = null;
+  let packLabel: string | undefined;
   let picks = 0;
   const grid = state.draft?.grid;
   if (view.pack) {
@@ -66,7 +67,9 @@ export function surfaceView(state: TableState, view: DraftPrivateView, reducedMo
     // The Grid draft's 3×3 lies face up on the shared table (DESIGN "Pre-game", Grid draft: None hidden).
     pack = { packId: `grid:${grid.index}`, cards: grid.cells, layout: 'grid', shared: true };
   } else if (view.format === 'winston' && view.pile && view.pile.length > 0) {
-    pack = { packId: `pile:${state.draft?.winston?.pile ?? 0}`, cards: view.pile, layout: 'fan', shared: false };
+    const index = state.draft?.winston?.pile ?? 0;
+    pack = { packId: `pile:${index}`, cards: view.pile, layout: 'fan', shared: false };
+    packLabel = `Pile ${index + 1}`;
   }
   const ids = new Set((pack?.cards ?? []).filter((c) => c).map((c) => c!.id));
   return {
@@ -76,7 +79,23 @@ export function surfaceView(state: TableState, view: DraftPrivateView, reducedMo
     pool: view.pool,
     waiting: passesPacks(state) ? waitingCounts(state) : {},
     reducedMotion,
+    ...(packLabel ? { packLabel } : {}),
   };
+}
+
+/**
+ * The Winston table at a glance (DESIGN mode table, Winston: "A shared face-down stack and three piles"): the cards left
+ * in the stack and the size of each pile, e.g. "Stack 78 · piles 1, 2, 1". Empty outside a Winston draft.
+ */
+export function winstonSummary(state: TableState): string {
+  const w = state.draft?.winston;
+  if (!w) return '';
+  return `Stack ${w.stack} · piles ${w.piles.join(', ')}`;
+}
+
+/** Whether the pack shown lies on the shared table (a Rochester pack, the Grid), where cursors are shared. */
+export function onSharedTable(view: Pick<DraftSurfaceViewWithLabel, 'pack'>): boolean {
+  return view.pack?.shared === true;
 }
 
 /** One seat in the HUD's seat strip. */
@@ -161,6 +180,7 @@ export function draftStatus(state: TableState, view: DraftPrivateView, self: Sea
     title += ` · pack ${Math.min(draft.rochester.opened, settings.packs * draft.drafters.length)} of ${settings.packs * draft.drafters.length}`;
   }
   if (draft && settings?.format === 'grid' && draft.grid) step = `Grid ${draft.grid.index + 1} of ${settings.grids}`;
+  if (draft?.winston && !done) step = winstonSummary(state);
   if (front) step = `Pick ${front.picks + 1}`;
 
   let prompt: string;

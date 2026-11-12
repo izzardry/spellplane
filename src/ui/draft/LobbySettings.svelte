@@ -72,8 +72,14 @@
     }
   }
 
+  // The controls are bound one way: after a write each shows what the table holds, so a refused write (or one that
+  // changes nothing) does not leave the rejected choice on screen.
+  const held = (): LobbySettings => currentLobby(session.getState());
+
   function onMode(e: Event): void {
-    write(withMode(lobby, (e.currentTarget as HTMLSelectElement).value as LobbyMode));
+    const el = e.currentTarget as HTMLSelectElement;
+    write(withMode(lobby, el.value as LobbyMode));
+    el.value = modeOf(held().draft);
   }
 
   function onNumber(field: NumberField, e: Event): void {
@@ -85,11 +91,15 @@
   }
 
   function onSet(e: Event): void {
-    write(withSet(lobby, (e.currentTarget as HTMLSelectElement).value as SetCode));
+    const el = e.currentTarget as HTMLSelectElement;
+    write(withSet(lobby, el.value as SetCode));
+    el.value = held().sets[0] ?? '';
   }
 
   function onPackSet(index: number, e: Event): void {
-    write(withPackSet(lobby, index, (e.currentTarget as HTMLSelectElement).value as SetCode));
+    const el = e.currentTarget as HTMLSelectElement;
+    write(withPackSet(lobby, index, el.value as SetCode));
+    el.value = setsPerPack(held())[index] ?? '';
   }
 
   function onPerPack(e: Event): void {
@@ -100,18 +110,23 @@
   }
 
   function onPickTimer(e: Event): void {
-    write({ ...lobby, pickTimer: (e.currentTarget as HTMLInputElement).checked });
+    const el = e.currentTarget as HTMLInputElement;
+    write({ ...lobby, pickTimer: el.checked });
+    el.checked = held().pickTimer;
   }
 
   function onPassTimer(e: Event): void {
     if (!editable) return;
-    const v = (e.currentTarget as HTMLSelectElement).value;
+    const el = e.currentTarget as HTMLSelectElement;
+    const v = el.value;
     const ms = v === 'off' ? null : Number(v);
     try {
       session.dispatch({ type: 'settings', settings: { passTimerMs: ms } });
     } catch (err) {
       failure = err instanceof Error ? err.message : String(err);
     }
+    const now = session.getState().settings.passTimerMs;
+    el.value = now === null ? 'off' : String(now);
   }
 
   const setLabel = (s: SetSummary): string => (s.name && s.name !== s.code ? `${s.name} (${s.code})` : s.code);
