@@ -33,25 +33,13 @@ export const GAME: CoreGameSpec = {
   startingLife: () => 20,
 };
 
-/**
- * Stand-in for M1-P7's `away` handler (the reducer refuses `away` until that package lands): the sequencer marks a
- * seat away or back. Applied identically on every peer, so it stays a shared, sequenced fact.
- */
-function applyAway(state: TableState, a: Extract<Action, { type: 'away' }>): TableState {
-  const seat = state.seats[a.seat];
-  if (!seat) return state;
-  const next = { ...seat };
-  if (a.away) next.away = true;
-  else delete next.away;
-  return { ...state, seq: a.seq ?? state.seq, seats: { ...state.seats, [a.seat]: next } };
-}
-
+/** Every peer applies a sequenced action with the real reducer, `away` included (core/reducer/table.ts, M1-P7). */
 export function apply(state: TableState, a: Action): TableState {
-  return a.type === 'away' ? applyAway(state, a) : reduce(state, a);
+  return reduce(state, a);
 }
 
 function refusal(state: TableState, a: Action): string | null {
-  return a.type === 'away' ? null : explain(state, a);
+  return explain(state, a);
 }
 
 export interface Applied {
@@ -170,7 +158,7 @@ export class Peer {
     }
   }
 
-  /** Sequencer only: what the M1-P7 liveness rule does when a peer has been silent for 6 s. */
+  /** Sequencer only: what the engine's liveness rule (net/engine.ts syncAwaySeats) does when a peer has gone silent. */
   markAway(seat: SeatId, away: boolean): void {
     this.sequence({ type: 'away', seat, away, by: this.seat, cid: `${this.seat}-away-${++this.cid}` }, this.transport.selfId);
   }

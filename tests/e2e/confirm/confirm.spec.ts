@@ -238,7 +238,10 @@ test.describe('an away peer times out', () => {
     await expect(page.getByTestId('confirm-status')).toContainText('Ben is responding');
     await page.waitForTimeout(TIMER + 500);
     expect((await state(page)).confirm?.responses).toEqual({ s1: 'hold' });
-    await page.evaluate(() => window.__confirmHarness!.away('s1', true));
+    // The sequencer's liveness rule marks Ben away: a sequenced `away` through the real reducer.
+    expect((await page.evaluate(() => window.__confirmHarness!.away('s1', true))).refused).toBeNull();
+    expect((await log(page)).some((a) => a.type === 'away' && a.seat === 's1' && a.away)).toBe(true);
+    await expect.poll(async () => (await state(page)).seats.s1!.away).toBe(true);
     await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: 5000 }).toEqual({ s1: 'timeout' });
     await expect(page.getByTestId('confirm-status')).toContainText('All passed');
   });

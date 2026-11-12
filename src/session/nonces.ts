@@ -13,8 +13,11 @@
  * Which round a nonce belongs to: an rng round (own or another seat's) or another seat's shuffle. 'turnUp' is not a
  * nonce: it keeps, per own card, the cid of the action that made it public until the card is turned up verified, so
  * a reload in between still turns it up (decision M1-P8). Its values are an instance id and a cid, nothing secret.
+ * 'recovery' is not a nonce either: under the id 'owed' it keeps what an own lost-save recovery still owes after its
+ * `recoverCommit` (session/resume.ts RecoveryOwed, JSON: an instance id, the agreed hand count, the shuffle id), so a
+ * reload in between still shuffles the new library and draws the hand (decision M1-P7).
  */
-export type NonceKind = 'rng' | 'shuffle' | 'turnUp';
+export type NonceKind = 'rng' | 'shuffle' | 'turnUp' | 'recovery';
 
 /** Where open-round nonces are kept. */
 export interface NonceStore {

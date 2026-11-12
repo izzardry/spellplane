@@ -21,6 +21,8 @@
  *   opaque ids, a shuffle re-issues the zone's ids when a card in it was seen since it was issued (the `exposed` set,
  *   rebuilt from the stored log after a reload; after a catch-up from a snapshot or a rewind every own card counts as
  *   seen), and an undo re-reveals own cards it brought back face down once the undo is sequenced.
+ * - The lost-save recovery (PLAN M1-P7, session/resume.ts SessionRecovery): `recover`, the table's confirmation
+ *   round, `recoverCommit` of the re-imported deck minus the public cards, the secret shuffle and the agreed draws.
  * - Joint randomness (DESIGN "Public randomness", "Secret shuffle" 2): this browser contributes its nonce to every
  *   round still waiting for it (also after a reload or reconnect), keeps the nonce of an open round in local storage
  *   (session/nonces.ts) and reuses it whenever it proposes again, and reveals its rng nonce once all commits are in.
@@ -35,6 +37,8 @@ import { deadlines } from '../core/deadlines';
 import { canonicalJson } from '../core/hash';
 import { zoneId } from '../core/ids';
 import { createTable, explain, reduce } from '../core/reducer/index';
+import { roundPassed } from '../core/reducer/confirm';
+import { recoveryRemainder } from '../core/recovery';
 import { expectedParticipants, rngCommitPhaseComplete, shuffleReady } from '../core/rng';
 import {
   beginShuffle,
@@ -52,7 +56,7 @@ import {
   shuffleRecord,
   type Entropy,
 } from '../core/secrets';
-import type { CardRef, Format, InstanceId, LogEntry, Pose, RngPurpose, SeatColourIndex, SecretStore, SeatId, TableState, ZoneId } from '../core/types';
+import type { CardRef, Format, InstanceId, LogEntry, Pose, RngPurpose, SeatColourIndex, SecretStore, SeatId, ShuffleId, TableState, ZoneId } from '../core/types';
 import { isUndoable, type UndoableAction } from '../core/actions';
 import { undoPlan, type UndoReveal } from '../core/undo';
 import type { CardData } from '../data/types';
@@ -67,6 +71,7 @@ import { DRY_CID, FACE_DOWN_KINDS, faceDownAllowed, placementOf, putBack, reReve
 import { localNonces, type NonceStore } from './nonces';
 import { TablePersistence } from './persist';
 import { randomId, randomSalt } from './secrecy';
+import { identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recoveryProblem, type RecoveryOwed, type SessionRecovery } from './resume';
 import { reconcileSecrets, type LibraryPlacement } from './secrets';
 import type { CreateNetSession, DeckImport, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
 
@@ -91,6 +96,10 @@ export const NET_MULLIGAN_HAND = 7;
 const SEAT_ATTEMPTS = 4;
 /** A contribution to a randomness round that keeps being refused is given up after this many refusals. */
 const ROUND_ATTEMPTS = 3;
+/** The key under which an own recovery keeps what it still owes after its `recoverCommit` (session/nonces.ts 'recovery'). */
+const OWED = 'owed';
+/** Why nothing is taken from a recovered library yet. */
+const UNSHUFFLED = 'Finish the recovery first: your new library is not shuffled yet';
 /** Action types that leave a card where it lies and as it shows: a kept turn-up is still owed after them. */
 const IN_PLACE: ReadonlySet<string> = new Set(['tap', 'rotate', 'counter', 'note', 'attach', 'detach']);
 /** Seat colours a theme provides (DESIGN "Themes and rendering": eight seat colours). */
@@ -197,7 +206,7 @@ export function peekAnswer(secrets: SecretStore, state: TableState, req: LookReq
   return lookAnswer(secrets, state, req, { allowZoneLook: false });
 }
 
-class NetTable implements NetSession {
+class NetTable implements NetSession, SessionRecovery {
   readonly roomId: string;
   /** The engine of the current join; replaced when this browser gives up a table it started alone (see `collision`). */
   private eng: NetEngine;
@@ -426,6 +435,14 @@ class NetTable implements NetSession {
       return this.stamp(action);
     }
     const view = this.engine.state();
+    // Nothing leaves a recovered library before it is jointly shuffled (DESIGN "Hidden information" 3): it is still in
+    // the re-imported decklist's order.
+    const taken = referencedCard(action);
+    const leaves = action.type === 'draw' || ((action.type === 'toZone' || action.type === 'move') && action.to !== this.zone('library'));
+    if (leaves && taken !== null && view.cards[taken]?.zone === this.zone('library') && this.libraryUnshuffled()) {
+      this.warn(UNSHUFFLED);
+      return this.stamp(action);
+    }
     if (action.type === 'draw' && view.cards[action.instanceId]?.zone === this.zone('library') && this.sec.libraryOrder[0] !== action.instanceId) {
       this.warn('A draw takes the top card of the library');
       return this.stamp(action);
@@ -562,6 +579,8 @@ class NetTable implements NetSession {
 
   draw(n = 1): Promise<void> {
     return this.run(() => {
+      // A recovered library is drawn from only once it is jointly shuffled (DESIGN "Hidden information" 3).
+      if (this.libraryUnshuffled()) throw new Error(UNSHUFFLED);
       this.drawNow(n);
       this.notify();
     });
@@ -590,6 +609,224 @@ class NetTable implements NetSession {
       this.notify();
       return list.slice(0, k).map((id) => ({ id, ref: this.sec.identities[id]!.card }));
     });
+  }
+
+  // --- Lost-save recovery (PLAN M1-P7) --------------------------------------------------------------------
+
+  /** `recover` and `finishRecovery` calls of this page still running. */
+  private recoveryRuns = 0;
+  /** Whether `drive` already started finishing an owed recovery in this page (once; the panel offers it again). */
+  private recoveryResumed = false;
+
+  recovering(): boolean {
+    return this.recoveryRuns > 0;
+  }
+
+  /** The stored rest of an own recovery, whether or not its `recoverCommit` is sequenced yet. */
+  private storedOwed(): RecoveryOwed | null {
+    return parseRecoveryOwed(this.nonces.get('recovery', OWED));
+  }
+
+  private storeOwed(owed: RecoveryOwed | null): void {
+    if (owed === null) this.nonces.delete('recovery', OWED);
+    else this.nonces.set('recovery', OWED, JSON.stringify(owed));
+  }
+
+  recoveryOwed(): RecoveryOwed | null {
+    const owed = this.storedOwed();
+    if (!owedOn(this.engine.confirmedState(), this.sec, this.seat, owed)) return null;
+    // Done once the new library is shuffled and the agreed hand was drawn after the commit (by the recovery or by hand):
+    // a record that a failed finish left behind is not owed for the rest of the game.
+    return this.recoveryShuffled(owed!) && this.recoveryDrawsLeft(owed!) <= 0 ? null : owed;
+  }
+
+  /** The own actions sequenced after the own `recoverCommit` that created `owed.id`, or null when the log lacks it (a catch-up from a snapshot). */
+  private afterRecoverCommit(owed: RecoveryOwed): Action[] | null {
+    const log = this.entries.flatMap((e) => (e.kind === 'action' ? [e.action] : []));
+    const at = log.findIndex((a) => a.type === 'recoverCommit' && a.by === this.seat && a.instanceIds.includes(owed.id));
+    return at < 0 ? null : log.slice(at + 1).filter((a) => a.by === this.seat);
+  }
+
+  /** Whether the own library was shuffled (a secret shuffle done) since the recovery's commit. */
+  private recoveryShuffled(owed: RecoveryOwed): boolean {
+    const st = this.engine.confirmedState();
+    if (owed.shuffle !== null && st.shuffles[owed.shuffle]?.orderHash != null) return true;
+    const after = this.afterRecoverCommit(owed) ?? [];
+    const library = this.zone('library');
+    const sids = new Set(after.flatMap((a) => (a.type === 'shuffleCommit' && a.zone === library ? [a.sid] : [])));
+    return after.some((a) => a.type === 'shuffleDone' && sids.has(a.sid));
+  }
+
+  /**
+   * How many of the agreed hand are still to be drawn: the agreed count minus the own draws sequenced after the
+   * commit (so a hand played out since is not drawn again), or minus the hand now when the log lacks the commit.
+   */
+  private recoveryDrawsLeft(owed: RecoveryOwed): number {
+    const after = this.afterRecoverCommit(owed);
+    if (after === null) return owed.hand - (this.engine.confirmedState().zones[this.zone('hand')]?.ids.length ?? 0);
+    return owed.hand - after.filter((a) => a.type === 'draw').length;
+  }
+
+  /** Whether an own recovery's new library is committed but not shuffled yet: nothing is drawn from it before. */
+  private libraryUnshuffled(): boolean {
+    const owed = this.recoveryOwed();
+    return owed !== null && !this.recoveryShuffled(owed);
+  }
+
+  /**
+   * The lost-save recovery (DESIGN "Multiplayer architecture", Resume and failure handling; session/resume.ts
+   * SessionRecovery): propose the fresh hand count in a confirmation round, wait for the table, then commit the
+   * re-imported deck minus the seat's public cards as the new library, shuffle it with the other seats' nonces and
+   * draw the agreed hand. Re-running it after a reload picks up an open proposal of the same count; once the commit is
+   * sequenced it finishes that recovery (`finishRecovery`, the agreed count) instead.
+   */
+  recover(deck: DeckImport, hand: number): Promise<void> {
+    return this.recoveryRun((seat) => {
+      if (!deck || !Array.isArray(deck.main) || !Array.isArray(deck.side)) throw new TypeError('A recovery needs the re-imported deck');
+      const owed = this.recoveryOwed();
+      return owed ? this.finishNow(seat, owed) : this.recoverNow(seat, deck, hand);
+    });
+  }
+
+  finishRecovery(): Promise<void> {
+    return this.recoveryRun((seat) => {
+      const owed = this.recoveryOwed();
+      return owed ? this.finishNow(seat, owed) : Promise.resolve();
+    });
+  }
+
+  private recoveryRun(fn: (seat: SeatId) => Promise<void>): Promise<void> {
+    return this.run(async () => {
+      const seat = this.engine.seat();
+      if (!seat) throw new Error('Take a chair first.');
+      if (this.recoveryRuns > 0) throw new Error('A recovery is already running in this page');
+      this.recoveryRuns++;
+      this.netChanged();
+      try {
+        await fn(seat);
+      } finally {
+        this.recoveryRuns--;
+        this.notify();
+        this.netChanged();
+      }
+    });
+  }
+
+  private async recoverNow(seat: SeatId, deck: DeckImport, hand: number): Promise<void> {
+    // Own public cards whose identity this browser lost but the log still names (DESIGN "Multiplayer architecture",
+    // Resume): held again, a bounce of one of them later re-issues the hand as usual.
+    this.adoptLoggedIdentities();
+    const view = this.engine.state();
+    const open = view.seats[seat]?.recovering;
+    let round: string;
+    if (open && open.hand === hand && view.confirm?.id === open.round) {
+      // The same count is already proposed (this page reloaded mid-recovery): wait for that round.
+      round = open.round;
+    } else {
+      const problem = recoveryProblem(view, seat, deck.main, hand);
+      if (problem !== null) throw new Error(problem);
+      round = randomId('rec');
+      const a = this.stamp({ type: 'recover', hand, round });
+      if (!this.propose(a, false)) throw new Error(`The recovery was refused: ${this.lastWarning()}`);
+      // Nothing before the recovery can be undone across it (the reducer discarded the hidden zones).
+      this.undoStack = [];
+      this.notify();
+      await this.sequenced(a.cid);
+    }
+    // The table agrees in the round: silence passes after the timer, a hold objects (DESIGN "Turn flow and confirmation").
+    await this.until(
+      () => {
+        const st = this.engine.confirmedState();
+        return st.seats[seat]?.recovering?.round === round && st.confirm?.id === round && roundPassed(st);
+      },
+      () => {
+        const st = this.engine.confirmedState();
+        if (st.seats[seat]?.recovering?.round !== round) return 'The recovery proposal was replaced';
+        if (st.confirm?.id !== round) return 'Another confirmation round started before the table agreed to the recovery: propose it again';
+        return null;
+      },
+    );
+    const st = this.engine.confirmedState();
+    const agreed = st.seats[seat]!.recovering!.hand;
+    const rest = recoveryRemainder(deck.main, st, seat);
+    if (rest === null) throw new Error('The re-imported deck does not cover your cards on the table');
+    // Fresh ids that the table has never seen for this seat (the reducer refuses an id committed before).
+    const used = new Set<string>([...Object.keys(st.cards), ...(st.commitments[seat]?.instanceIds ?? []), ...Object.keys(this.sec.identities)]);
+    const entropy: Entropy = {
+      id: () => {
+        for (let i = 0; i < 100; i++) {
+          const id = this.entropy.id();
+          if (!used.has(id)) return id;
+        }
+        throw new Error('No fresh card id could be made for the recovered library');
+      },
+      salt: this.entropy.salt,
+    };
+    const c = commitDeck({ ...this.sec, seat, libraryOrder: [], hand: [] }, rest, entropy);
+    const pool = deck.side.map((x): CardRef => (x.foil ? { sid: x.sid, foil: true } : { sid: x.sid }));
+    const commit = this.stamp({ type: 'recoverCommit', commits: c.action.commits, instanceIds: c.action.instanceIds, zone: this.zone('library') });
+    // What the recovery owes after its commit is kept before the commit is proposed (the sequencer's own proposal is
+    // sequenced inside `propose`), so a reload at any point after it still shuffles and draws (`finishRecovery`).
+    const first = c.action.instanceIds[0];
+    const owed: RecoveryOwed | null = first === undefined ? null : { id: first, hand: agreed, shuffle: null };
+    this.storeOwed(owed);
+    if (!this.proposePrivate(commit, { ...c.secrets, pool })) {
+      this.storeOwed(null);
+      throw new Error(`The recovered library was refused: ${this.lastWarning()}`);
+    }
+    this.prefetch([...deck.main, ...deck.side].map((x) => x.sid));
+    this.notify();
+    await this.sequenced(commit.cid);
+    // An empty library (every card of the deck is public) has nothing to shuffle and no hand to draw.
+    if (owed) await this.finishNow(seat, owed);
+  }
+
+  /**
+   * The steps a recovery owes after its `recoverCommit`: the secret shuffle of the new library (DESIGN "Hidden
+   * information" 3: the owner cannot choose the order, so nothing is drawn before it), then draws until the hand
+   * holds the agreed count. Each step is decided from the confirmed state, so it resumes after a reload.
+   */
+  private async finishNow(seat: SeatId, owed: RecoveryOwed): Promise<void> {
+    const library = this.zone('library');
+    const sid = owed.shuffle;
+    const started = (id: string): boolean =>
+      Object.hasOwn(this.engine.confirmedState().shuffles, id) || this.engine.pending().some((a) => a.type === 'shuffleCommit' && a.sid === id);
+    if (this.recoveryShuffled(owed)) {
+      // Shuffled already (before a reload, or by hand).
+    } else if (sid !== null && started(sid)) {
+      await this.shuffleSettled(sid, null);
+    } else {
+      // Not proposed yet, or lost with the page that proposed it: shuffle now.
+      const next = randomId('sh');
+      this.storeOwed({ ...owed, shuffle: next });
+      await this.shuffleNow(library, next);
+    }
+    const drawing = (): boolean => this.engine.pending().some((a) => a.type === 'draw' && a.by === seat);
+    // Own draws in flight are counted once they are sequenced.
+    await this.until(() => !drawing(), () => null);
+    for (let attempt = 0; this.recoveryDrawsLeft(owed) > 0; attempt++) {
+      if (attempt >= ROUND_ATTEMPTS) throw new Error(`Only ${owed.hand - this.recoveryDrawsLeft(owed)} of the agreed ${owed.hand} cards could be drawn: finish the recovery again`);
+      this.drawNow(this.recoveryDrawsLeft(owed));
+      this.notify();
+      await this.until(() => !drawing(), () => null);
+    }
+    this.storeOwed(null);
+    // Nothing before the recovery, and none of its draws, can be undone (as after a mulligan).
+    this.undoStack = [];
+    this.notify();
+  }
+
+  /** Hold every own card whose identity this browser lacks but the sequenced log names (session/resume.ts identitiesFromLog). */
+  private adoptLoggedIdentities(): void {
+    const found = identitiesFromLog(
+      this.entries.flatMap((e) => (e.kind === 'action' ? [e.action] : [])),
+      this.engine.confirmedState(),
+      this.sec.seat,
+      this.sec.identities,
+    );
+    if (Object.keys(found).length === 0) return;
+    this.setSecrets({ ...this.sec, identities: { ...this.sec.identities, ...found } });
+    this.saves.saveSecrets(this.sec);
   }
 
   undo(): boolean {
@@ -791,20 +1028,24 @@ class NetTable implements NetSession {
   }
 
   /** The secret shuffle of an own hidden zone (DESIGN "Secret shuffle" 1; `drive` finishes it once the nonces are in). */
-  private async shuffleNow(zone: ZoneId): Promise<void> {
+  private async shuffleNow(zone: ZoneId, sid: ShuffleId = randomId('sh')): Promise<void> {
     this.privateList(zone);
     if (!this.engine.state().zones[zone]) throw new Error(`Unknown zone ${zone}`);
-    const sid = randomId('sh');
     const b = beginShuffle(this.sec, zone, sid, randomSalt());
     const a = this.stamp(b.action);
     if (!this.proposePrivate(a, b.secrets)) throw new Error(`The shuffle was refused: ${this.lastWarning()}`);
     // Shuffles cannot be undone, and nothing before a shuffle can be undone across it.
     this.undoStack = [];
     this.notify();
-    await this.until(
+    await this.shuffleSettled(sid, a.cid);
+  }
+
+  /** Resolve once own shuffle `sid` is done; reject when its `shuffleCommit` (`cid`, if known) is refused or it was given up. */
+  private shuffleSettled(sid: ShuffleId, cid: string | null): Promise<void> {
+    return this.until(
       () => this.engine.confirmedState().shuffles[sid]?.orderHash != null,
       // Only a refusal ends the wait: an own action of a history the engine abandons is proposed again (M1-P1).
-      () => this.refused.get(a.cid) ?? (this.gaveUp(`done:${sid}`) ? 'the shuffle could not be finished' : null),
+      () => (cid !== null ? this.refused.get(cid) : undefined) ?? (this.gaveUp(`done:${sid}`) ? 'the shuffle could not be finished' : null),
     );
   }
 
@@ -915,6 +1156,13 @@ class NetTable implements NetSession {
     }
     const view = this.engine.state();
     const hand = zoneId('hand', this.seat);
+    // A card of the hand this browser cannot name: a public card it lost with its save comes back named by the log;
+    // a hand still lost (its save is gone) cannot get fresh ids, and the lost-save recovery replaces it (M1-P7).
+    if (lostHiddenCards(view, this.sec, this.seat).hand.length > 0) this.adoptLoggedIdentities();
+    if (lostHiddenCards(view, this.sec, this.seat).hand.length > 0) {
+      this.reissueOwed = false;
+      return;
+    }
     const r = reissueZone(this.sec, view, hand, this.entropy);
     if (!r) {
       this.reissueOwed = false;
@@ -1069,8 +1317,26 @@ class NetTable implements NetSession {
       this.reRevealOwed(st, me);
       this.turnUpOwed(st, me);
       this.reissueHand();
+      this.resumeRecovery();
     }
     this.settleWaiters();
+  }
+
+  /**
+   * A recovery whose `recoverCommit` is sequenced but whose shuffle or draws this page never finished (it reloaded in
+   * between, or a step failed): finished once per page on a replica in step with the table; the recovery panel
+   * offers it again (`finishRecovery`).
+   */
+  private resumeRecovery(): void {
+    // A record whose recovery is done (or replaced, or never sequenced) is dropped once the replica is in step.
+    if (this.recoveryRuns === 0 && this.engine.status() === 'connected' && this.storedOwed() !== null && this.recoveryOwed() === null && this.engine.pending().length === 0) {
+      const owed = this.storedOwed()!;
+      const st = this.engine.confirmedState();
+      if ((st.commitments[this.seat]?.instanceIds ?? []).includes(owed.id)) this.storeOwed(null);
+    }
+    if (this.recoveryResumed || this.recoveryRuns > 0 || this.engine.status() !== 'connected' || this.recoveryOwed() === null) return;
+    this.recoveryResumed = true;
+    this.finishRecovery().catch((e: unknown) => this.warn(`The recovery could not be finished: ${errorText(e)}`));
   }
 
   /** Whether own card `id` is public without an identity in the confirmed state and in the view, and this browser holds it. */
