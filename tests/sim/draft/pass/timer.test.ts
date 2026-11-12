@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pickTimerMs } from '../../../../src/core/drafting';
 import { reduce } from '../../../../src/core/reducer';
 import type { TableState } from '../../../../src/core/types';
-import { close, packMessage, passNet, poolOf, randomBot, runDraft, visits, type PassSeat } from './net';
+import { close, packMessage, passNet, poolOf, randomBot, runAwayAtLastVisit, runDraft, visits, type PassSeat } from './net';
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
@@ -126,39 +126,7 @@ describe('pick timer', () => {
     // eighth) of s0's pack is s1's and the one of s1's pack is s0's.
     const t = await passNet(2, { format: 'pass', packs: 1, picks: 2 }, { net: { seed: 6, delay: { min: 0, max: 30 } }, pickTimer: true });
     const [a, b] = t.seats as [PassSeat, PassSeat];
-    // s0 picks only on its timer, so both packs gather at s0 while s1 picks at once.
-    a.idle = true;
-    const bot = randomBot(12);
-    let killedAt = -1;
-    let doneAt = -1;
-    let revived = false;
-    await runDraft(
-      t,
-      (s) => {
-        if (s === b && killedAt < 0) {
-          const v = b.driver.view();
-          if (v.pack !== null) b.driver.pick(v.pack.cards.slice(0, v.picks).map((c) => c.id));
-        } else if (s !== b) bot(s);
-      },
-      4_000_000,
-      (ms) => {
-        const d = a.peer.state.draft!;
-        const own = Object.values(d.packs).find((p) => p.opener === 's0');
-        const theirs = Object.values(d.packs).find((p) => p.opener === 's1');
-        // s1 leaves once it owes nothing: its pack's last visit is s0's, and s0's pack is at s0 for its seventh visit.
-        if (killedAt < 0 && own !== undefined && theirs !== undefined && theirs.picks >= 7 && own.holder === 's0' && own.picks === 6) {
-          killedAt = ms;
-          b.idle = true;
-          t.net.kill(b.peer.peerId);
-        }
-        if (killedAt >= 0 && doneAt < 0 && d.done) doneAt = ms;
-        if (doneAt >= 0 && !revived && ms - doneAt > 10_000) {
-          revived = true;
-          t.net.revive(b.peer.peerId);
-        }
-      },
-      100,
-    );
+    const revived = await runAwayAtLastVisit(t);
     expect(revived).toBe(true);
     const last = visits(t).filter((v) => v.packId === Object.values(a.peer.state.draft!.packs).find((p) => p.opener === 's0')!.id).pop()!;
     // The last card of s0's pack was taken by the timer for s1 while it was away, and is in s1's pool.

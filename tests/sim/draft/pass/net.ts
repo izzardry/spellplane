@@ -200,6 +200,49 @@ export async function runDraft(t: PassNet, bot: (s: PassSeat) => void, maxMs = 9
   throw new Error('the draft did not finish');
 }
 
+/**
+ * Two seats, one pack each, two picks per pass, the pick timer on (`passNet(2, {format: 'pass', packs: 1, picks: 2},
+ * {pickTimer: true})`): s0 picks only on its timer, s1 at once until it owes nothing, then s1 is away until 10 s after
+ * the draft ended. 15 cards take visits of 2, 2, …, 2, 1, so the timer takes the last card of s0's pack (its eighth
+ * visit, s1's) while s1 is away, and s1 asks for it once it is back. Returns whether s1 came back.
+ */
+export async function runAwayAtLastVisit(t: PassNet): Promise<boolean> {
+  const [a, b] = t.seats as [PassSeat, PassSeat];
+  a.idle = true;
+  const bot = randomBot(12);
+  let killedAt = -1;
+  let doneAt = -1;
+  let revived = false;
+  await runDraft(
+    t,
+    (s) => {
+      if (s === b && killedAt < 0) {
+        const v = b.driver.view();
+        if (v.pack !== null) b.driver.pick(v.pack.cards.slice(0, v.picks).map((c) => c.id));
+      } else if (s !== b) bot(s);
+    },
+    4_000_000,
+    (ms) => {
+      const d = a.peer.state.draft!;
+      const own = Object.values(d.packs).find((p) => p.opener === 's0');
+      const theirs = Object.values(d.packs).find((p) => p.opener === 's1');
+      // s1 leaves once it owes nothing: its pack's last visit is s0's, and s0's pack is at s0 for its seventh visit.
+      if (killedAt < 0 && own !== undefined && theirs !== undefined && theirs.picks >= 7 && own.holder === 's0' && own.picks === 6) {
+        killedAt = ms;
+        b.idle = true;
+        t.net.kill(b.peer.peerId);
+      }
+      if (killedAt >= 0 && doneAt < 0 && d.done) doneAt = ms;
+      if (doneAt >= 0 && !revived && ms - doneAt > 10_000) {
+        revived = true;
+        t.net.revive(b.peer.peerId);
+      }
+    },
+    100,
+  );
+  return revived;
+}
+
 /** Whether a seat's pool covers every card the shared state counts for it. */
 function settled(s: PassSeat): boolean {
   return poolOf(s).length === (s.peer.state.draft?.pools[s.seat] ?? -1);

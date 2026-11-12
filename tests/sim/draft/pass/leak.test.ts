@@ -8,12 +8,14 @@
  * Everything else of the other seats' packs (salts, Scryfall ids, the instance-to-card mapping) and every other seat's
  * pack-seed owner nonce must be absent from every message the seat received, its shared state and log, its secret
  * store and its view (tests/leak/draft.ts). The scenarios run under delay, drop and reordering, with a reload and an
- * outage, so the re-sends and requests are scanned too.
+ * outage, so the re-sends and requests are scanned too, and with the pick timer on, so picks the sequencer's clock took
+ * (resolved privately later), requests in later rounds and the last visit of an emptied pack handed to a holder who was
+ * away until after the draft ended are scanned as well.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RevealedCard } from '../../../../src/core/commit';
 import { packLeakScan } from '../../../leak/draft';
-import { close, passNet, randomBot, runDraft, visits, type PassNet, type PassSeat } from './net';
+import { close, passNet, randomBot, runAwayAtLastVisit, runDraft, visits, type PassNet, type PassSeat } from './net';
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
@@ -103,6 +105,47 @@ describe('hidden packs leak scenario', () => {
     expectNoLeak(t);
     close(t);
   }, 240_000);
+
+  it('with the pick timer: an idle seat and a seat with an outage, over two rounds', async () => {
+    const t = await passNet(4, { format: 'pass', packs: 2, picks: 1 }, { net: FAULTY, sets: ['M19', 'M20'], pickTimer: true });
+    const c = t.seats[2]!;
+    t.seats[3]!.idle = true;
+    let killedAt = -1;
+    let revived = false;
+    await runDraft(
+      t,
+      randomBot(47),
+      4_000_000,
+      (ms) => {
+        // s2 is away for a minute once it holds a pack: the timer takes its picks meanwhile.
+        if (killedAt < 0 && ms > 5_000 && (c.peer.state.draft!.queues.s2 ?? []).length > 0) {
+          killedAt = ms;
+          t.net.kill(c.peer.peerId);
+        }
+        if (killedAt >= 0 && !revived && ms - killedAt > 60_000) {
+          revived = true;
+          t.net.revive(c.peer.peerId);
+        }
+      },
+      100,
+    );
+    expect(revived).toBe(true);
+    const timeouts = visits(t).filter((v) => v.kind === 'timeout');
+    expect(new Set(timeouts.map((v) => v.holder))).toEqual(new Set(['s2', 's3']));
+    const packs = t.seats[0]!.peer.state.draft!.packs;
+    expect(new Set(timeouts.map((v) => packs[v.packId]!.number))).toEqual(new Set([0, 1]));
+    expectNoLeak(t);
+    close(t);
+  }, 300_000);
+
+  it('with the pick timer: Pick-Two, a holder away when the timer takes the last card of a pack', async () => {
+    const t = await passNet(2, { format: 'pass', packs: 1, picks: 2 }, { net: { seed: 6, delay: { min: 0, max: 30 } }, pickTimer: true });
+    expect(await runAwayAtLastVisit(t)).toBe(true);
+    const ownOfS0 = Object.values(t.seats[0]!.peer.state.draft!.packs).find((p) => p.opener === 's0')!.id;
+    expect(visits(t).filter((v) => v.packId === ownOfS0).pop()).toMatchObject({ holder: 's1', kind: 'timeout', count: 1 });
+    expectNoLeak(t);
+    close(t);
+  }, 300_000);
 
   it('sealed pools never leave their owner', async () => {
     const t = await passNet(3, { format: 'sealed', packs: 6 }, { net: FAULTY, sets: ['M19', 'M20'] });

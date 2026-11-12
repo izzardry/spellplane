@@ -209,6 +209,10 @@ export const createPassDriver: CreateDraftDriver = (host) => {
   };
 
   const send = (to: SeatId, packId: PackId, cards: readonly RevealedCard[]): void => {
+    // Picked identities stay with the picker (DESIGN Draft packs): a card of the own pool is never handed on, whatever
+    // the held copy says (the receiver's commitment and count checks cannot tell a picked card from a left one).
+    const pooled = new Set(poolCards(host.secrets()).map((c) => c.instanceId));
+    if (cards.some((c) => pooled.has(c.instanceId))) return;
     try {
       host.sendPack(to, packId, cards);
     } catch {

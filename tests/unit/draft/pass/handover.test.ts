@@ -214,4 +214,19 @@ describe('pass driver over a state that jumped ahead', () => {
     expect(h.secrets().draft!.held[POOL_KEY]!.map((c) => c.instanceId)).toEqual([cards[0]!.instanceId]);
     h.driver.dispose();
   });
+
+  it('never hands on a card of its own pool, even if its held copy of the pack lists one', () => {
+    const { s: start, cards, id } = table(3);
+    // A corrupted held copy: cards[1] is already in the own pool and still listed in the pack.
+    const store: SecretStore = { ...emptySecretStore('s0'), draft: { held: { [id]: cards, [POOL_KEY]: [cards[1]!] }, generated: [], marked: [] } };
+    const h = driverOver(start, store);
+    const pick = { ...act('pick', { packId: id, count: 1 }, 's0'), seq: start.seq + 1 } as Action;
+    const s1 = ok(start, pick);
+    h.step(pick, s1);
+    const pass = { ...act('packPass', { packId: id, to: 's1', count: 2 }, 's0'), seq: s1.seq + 1 } as Action;
+    h.step(pass, ok(s1, pass));
+    h.driver.drive();
+    expect(h.sent).toEqual([]);
+    h.driver.dispose();
+  });
 });

@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalJson } from '../../../../src/core/hash';
 import type { TableState } from '../../../../src/core/types';
+import { createSequencer } from '../../../../src/net/sequencer';
 import { act, draftOf, draftTable, no, ok, openPack, packCards, packOpenFields, sealPackSeed } from '../open/helpers';
 
 const PASS3 = { format: 'pass', packs: 3, picks: 1 } as const;
@@ -269,6 +270,17 @@ describe('pass draft: pick timer', () => {
     t = ok(t, act('packPass', { packId: a, to: 's1', count: 14 }, 's0'));
     // s1's queue: its own pack, then s0's pack (not at the front).
     no(t, act('draftTimeout', { packId: a, picks: 1 }, 's1'), /not waiting/);
+  });
+
+  it('is sequenced only from the sequencer itself: another seat cannot time out a drafter\'s pick early', () => {
+    // DESIGN "Specification: network protocol and secrecy", Timers: only the sequencer's clock decides.
+    const s = openRound(timed(draftTable(3, PASS3)), 15);
+    const victim = draftOf(s).queues.s2![0]!;
+    const timeout = act('draftTimeout', { packId: victim, picks: 0 }, 's1');
+    const refused = createSequencer(s.seq).sequence(s, timeout, { seat: 's1', role: 'player', self: false });
+    expect(refused).toEqual({ ok: false, reason: 'only the sequencer sends draftTimeout' });
+    const accepted = createSequencer(s.seq).sequence(s, act('draftTimeout', { packId: victim, picks: 0 }, 's0'), { seat: 's0', role: 'player', self: true });
+    expect(accepted.ok).toBe(true);
   });
 });
 
