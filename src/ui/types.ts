@@ -152,8 +152,6 @@ export interface DraftProps {
   faces: FaceSource;
   cardData: CardDataSource;
   theme: Theme;
-  /** The game definition (table layout, neutral card back). Added by M2-P4, optional: Magic's (games/index.ts `mtg`) when absent. */
-  game?: GameDefinition;
 }
 
 /** Which builder view is showing (DESIGN "Pre-game", Deck building: two views of the same pool, switchable at any time). */

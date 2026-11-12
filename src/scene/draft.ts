@@ -7,7 +7,7 @@
  * reports gestures through `events`. Click a pack card to mark it, click it again to confirm (Enter is the HUD's);
  * confirmed picks fly to the pool area, which sorts into colour columns and stays visible while drafting. Packs
  * waiting at each seat are drawn as a pile of backs per seat with its count. In a Grid draft, row and column handles
- * around the 3×3 grid take a line.
+ * around the 3×3 grid take a line. On touch a tap is a click, a held touch inspects, and two fingers zoom and pan.
  *
  * Layout (table mm, viewer at the bottom, see DRAFT_LAYOUT): the seats' queue piles in a column at the left, the pack
  * (two arced rows of up to eight, or the 3×3 grid) at the top, the pool in eight cascade columns below it
@@ -22,7 +22,7 @@ import type { Theme, ThemeInstance } from '../themes/types';
 import { BirdseyeRig, NO_INSETS, type FrameBox, type Insets } from './camera';
 import { CardLayer, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures, faceKey } from './faces';
-import { CARD_H, CARD_W, cardCorners, deltaDeg, forward, pointInCard } from './math';
+import { CARD_H, CARD_W, cardCorners, deltaDeg, forward, pointInCard, rot2 } from './math';
 import { CardMotion } from './motion';
 import { tierForScreenHeight } from './textures';
 import type { CameraControls, CreateDraftSurface, DebugCard, DraftSurface, DraftSurfaceOptions, DraftSurfaceView, ScreenPoint, TablePoint } from './types';
@@ -238,6 +238,8 @@ export interface DraftDebugCard extends DebugCard {
   /** Pool column, null for pack cards. */
   column: PoolColumn | null;
   moving: boolean;
+  /** The foil sheen (a shimmering rim outside the face) is drawn: a foil card under a theme with `foilSheen`, not marked or hovered. */
+  sheen: boolean;
 }
 
 /** A waiting-pack pile as drawn. */
@@ -259,6 +261,8 @@ export interface DraftSurfaceDebug {
   pendingTextures(): number;
   /** The packId shown, its layout and whether it lies on the shared table. */
   pack(): { packId: PackId; layout: 'fan' | 'grid'; shared: boolean } | null;
+  /** The camera's view: centre (table mm) and distance (smaller is closer). */
+  view(): { cx: number; cy: number; dist: number };
 }
 
 /** A DraftSurface whose debug carries the extras (assignable to DraftSurface). */
@@ -283,9 +287,38 @@ interface RCard {
 }
 
 const DRAG_THRESHOLD_PX = 4;
+
+/**
+ * Foil sheen (DESIGN "Pre-game", Pack generation: "Foils are marked with a subtle sheen and a badge"; "Card faces are
+ * never recoloured"): a thin rim outside the face whose light hue drifts slowly, each card a little out of phase. With
+ * reduced motion the rim holds still.
+ */
+export const FOIL_SHEEN = { widthMm: 0.9, periodMs: 6000, saturation: 55, lightness: 72, frameMs: 50 } as const;
+export function foilSheenColour(phase: number, cardIndex: number): string {
+  const hue = Math.round((((phase + cardIndex * 0.13) % 1) + 1) % 1 * 360);
+  return `hsl(${hue}, ${FOIL_SHEEN.saturation}%, ${FOIL_SHEEN.lightness}%)`;
+}
+/** The foil badge's centre, table mm: in the gutter left of the card's top strip, the part a pool cascade leaves visible. */
+export function foilBadgeAt(pose: Pose): TablePoint {
+  const gutter = DRAFT_LAYOUT.colStep - GEOMETRY.card.w;
+  const [dx, dy] = rot2(-CARD_W / 2 - gutter / 2, CARD_H / 2 - DRAFT_LAYOUT.cascade / 2, pose.rot);
+  return { x: pose.x + dx, y: pose.y + dy };
+}
 const SMALL_CAPS = 'font-variant: all-small-caps; letter-spacing: 0.08em;';
 
-export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOptions): DraftSurfaceHandle {
+/**
+ * DraftSurfaceOptions plus card data for the pool's colour sort (colour, type, mana value; null while loading). The
+ * M2-C options carry no card data; `card` mirrors BuilderSurfaceOptions.card and is reported to the integrator as a
+ * contracts amendment for DraftSurfaceOptions. Without it every pool card sorts as colourless.
+ */
+export interface DraftSurfaceOptionsWithData extends DraftSurfaceOptions {
+  card?(ref: CardRef): CardData | null;
+}
+
+/** Hold a touch this long on a card, without moving, to inspect it (touch has no hover key or middle button). */
+export const LONG_PRESS_MS = 500;
+
+export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOptionsWithData): DraftSurfaceHandle {
   let theme: Theme = opts.theme;
   const card = (ref: CardRef): CardData | null => opts.card?.(ref) ?? null;
   let state: TableState | null = null;
@@ -337,7 +370,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   scene.add(cards.mesh);
 
   // Hairline outlines of the pack area and the pool area (Paper: zones are hairline outlines with small caps labels).
-  const outlineGeometry = new THREE.BufferGeometry();
+  let outlineGeometry = new THREE.BufferGeometry();
   const outlineMaterial = new THREE.LineBasicMaterial({ color: theme.tokens.colours.border, depthTest: false, depthWrite: false, transparent: true });
   const outlines = new THREE.LineSegments(outlineGeometry, outlineMaterial);
   outlines.renderOrder = 1;
@@ -356,6 +389,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   let raf = 0;
   let disposed = false;
   let lastTick = performance.now();
+  let lastSheen = 0;
   const reduced = () => view?.reducedMotion ?? false;
 
   function setRows(next: number): void {
@@ -392,9 +426,14 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     const pt = poolTop(rows);
     const poolBottom = pt.cardY - CARD_H / 2 - L.poolDepth - 4;
     rect(L.packX - halfW, poolBottom, L.packX + halfW, pt.labelY + 10);
-    const pos = new THREE.Float32BufferAttribute(segs, 3);
-    outlineGeometry.setAttribute('position', pos);
-    outlineGeometry.computeBoundingSphere();
+    // A fresh geometry each time (the old one's GL buffer is freed): replacing the attribute would leak it.
+    const next = new THREE.BufferGeometry();
+    next.setAttribute('position', new THREE.Float32BufferAttribute(segs, 3));
+    next.computeBoundingSphere();
+    const old = outlineGeometry;
+    outlineGeometry = next;
+    outlines.geometry = next;
+    old.dispose();
     dirty = true;
   }
   rebuildOutlines();
@@ -524,6 +563,8 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       }
     }
     const lit = lineCells();
+    const sheenOn = dressing.foilSheen;
+    const phase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
     const cellOf = new Map<string, number>();
     view?.pack?.cards.forEach((c, i) => c && cellOf.set(c.id, i));
     for (const id of [...poolOrder, ...packOrder]) {
@@ -533,13 +574,20 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       rc.tier = uv ? (['small', 'normal', 'large'] as const)[uv.tier]! : null;
       const isMarked = rc.area === 'pack' && marked.has(rc.id);
       const isHover = hovered === rc.id || (rc.area === 'pack' && lit.has(cellOf.get(rc.id) ?? -1));
+      const sheen = sheenOn && !!rc.ref.foil;
       draws.push({
         pose: rc.motion.pose,
         z: 0,
         scaleX: 1,
         uv,
         dim: 0,
-        highlight: isMarked ? { colour: dressing.selected.colour, width: dressing.selected.width } : isHover ? { colour: dressing.hover.colour, width: dressing.hover.width } : null,
+        highlight: isMarked
+          ? { colour: dressing.selected.colour, width: dressing.selected.width }
+          : isHover
+            ? { colour: dressing.hover.colour, width: dressing.hover.width }
+            : sheen
+              ? { colour: foilSheenColour(phase, rc.order + (rc.area === 'pool' ? 0.5 : 0)), width: FOIL_SHEEN.widthMm }
+              : null,
       });
     }
     cards.setTextures(faces.textures());
@@ -560,7 +608,12 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     for (const rc of rcards.values()) if (rc.motion.moving && rc.motion.step(now, dt, theme.motion)) changed = true;
     for (const rc of rcards.values()) if (rc.motion.moving) changed = true;
     if (faces.pump(frame)) changed = true;
-    if (changed || dirty) draw();
+    // The foil sheen drifts at a low frame rate while foils are on the table (not with reduced motion).
+    if (!changed && !dirty && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs && [...rcards.values()].some((rc) => rc.ref.foil)) changed = true;
+    if (changed || dirty) {
+      lastSheen = now;
+      draw();
+    }
   }
 
   // --- DOM overlay: labels, foil badges, queue counts, grid handles ----------------------------------------------
@@ -663,28 +716,38 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       const el = label(`queue-${q.seat}`, 'draft-queue', `text-align:center;color:${theme.tokens.colours.fg};`);
       el.dataset.seat = q.seat;
       el.dataset.count = String(q.count);
-      el.textContent = '';
-      const dot = document.createElement('span');
-      dot.style.cssText = `display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;background:${q.colour};`;
-      const name = document.createElement('span');
-      name.textContent = q.name;
-      const num = document.createElement('strong');
-      num.dataset.testid = 'draft-queue-count';
-      num.style.marginLeft = '6px';
-      num.textContent = String(q.count);
-      el.append(dot, name, num);
+      if (el.childElementCount !== 3) {
+        const dot = document.createElement('span');
+        dot.style.cssText = 'display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;';
+        const num = document.createElement('strong');
+        num.dataset.testid = 'draft-queue-count';
+        num.style.marginLeft = '6px';
+        el.replaceChildren(dot, document.createElement('span'), num);
+      }
+      const [dot, name, num] = [...el.children] as [HTMLElement, HTMLElement, HTMLElement];
+      if (dot.style.background !== q.colour) dot.style.background = q.colour;
+      if (name.textContent !== q.name) name.textContent = q.name;
+      if (num.textContent !== String(q.count)) num.textContent = String(q.count);
       el.title = `${q.name}: ${q.count} ${q.count === 1 ? 'pack' : 'packs'} waiting`;
       at(el, { x: q.pose.x, y: q.pose.y - (CARD_H * L.queueScale) / 2 - 8 }, 'center', 'top');
       show(el);
     }
-    // Foil badges (DESIGN "Pre-game", Pack generation: foils are marked with a badge; the face itself is untouched).
+    // Foil badges (DESIGN "Pre-game", Pack generation: foils are marked with a badge; the face itself is untouched): a
+    // small mark in the gutter beside the card's top strip, sized to fit the gutter, so it covers no card (not even the
+    // card above it in a pool cascade).
+    const badgePx = Math.max(7, Math.min(16, (DRAFT_LAYOUT.colStep - GEOMETRY.card.w - 1) * rig.pxPerMm()));
     for (const rc of rcards.values()) {
       if (!rc.ref.foil) continue;
-      const el = label(`foil-${rc.id}`, 'draft-foil', `font-size:10px;font-weight:${theme.tokens.type.weightBold};padding:0 4px;border-radius:3px;background:${theme.tokens.colours.bg};color:${theme.tokens.colours.fg};border:1px solid ${theme.tokens.colours.border};`);
-      el.dataset.card = rc.id;
-      el.textContent = 'Foil';
-      const p = rc.motion.pose;
-      at(el, { x: p.x + CARD_W / 2 - 2, y: p.y + CARD_H / 2 + 2 }, 'right', 'bottom');
+      const el = label(`foil-${rc.id}`, 'draft-foil', `display:flex;align-items:center;justify-content:center;box-sizing:border-box;line-height:1;border-radius:50%;background:${theme.tokens.colours.bg};color:${theme.tokens.colours.fg};border:1px solid ${theme.tokens.colours.border};`);
+      if (!el.dataset.card) {
+        el.dataset.card = rc.id;
+        el.textContent = '\u2726';
+        el.title = 'Foil';
+        el.setAttribute('aria-label', 'Foil');
+      }
+      el.style.width = el.style.height = `${badgePx}px`;
+      el.style.fontSize = `${Math.max(6, Math.round(badgePx * 0.7))}px`;
+      at(el, foilBadgeAt(rc.motion.pose));
       show(el);
     }
     // Grid handles: a row button left of each row, a column button above each column.
@@ -728,16 +791,88 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     return null;
   }
 
-  let press: { pointerId: number; button: number; x0: number; y0: number; last: { x: number; y: number }; panning: boolean } | null = null;
+  // One pointer presses (a click marks or confirms, a drag pans, a touch held still inspects); a second touch turns
+  // the gesture into a two-finger camera gesture (DESIGN "Input and interaction design", Touch: "two-finger gestures
+  // always drive the camera"; "Camera and navigation": pinch zoom centred between the fingers).
+  let press: { pointerId: number; button: number; touch: boolean; x0: number; y0: number; last: { x: number; y: number }; panning: boolean; timer: ReturnType<typeof setTimeout> | null; inspected: boolean } | null = null;
+  const touches = new Map<number, { x: number; y: number }>();
+  // The pinch's finger spread and view distance when it (re)started: the zoom follows the spread relative to these, so
+  // fingers that come back to the same spread give back the same zoom, even when the clamp was touched in between
+  // (each finger's move arrives as its own event, so the spread jitters while two fingers pan together).
+  let pinch: { d: number; cx: number; cy: number; d0: number; dist0: number } | null = null;
+  let pinching = false;
+  function pinchStart(): void {
+    const p = pinchOf();
+    pinch = p ? { ...p, d0: p.d, dist0: rig.view.dist } : null;
+  }
+
+  function pinchOf(): { d: number; cx: number; cy: number } | null {
+    const pts = [...touches.values()];
+    if (pts.length < 2) return null;
+    const [a, b] = pts as [{ x: number; y: number }, { x: number; y: number }];
+    return { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
+  }
+  function endPress(): void {
+    if (press?.timer) clearTimeout(press.timer);
+    press = null;
+  }
+  function capture(id: number): void {
+    try {
+      canvas.setPointerCapture?.(id);
+    } catch {
+      // Synthetic events without an active pointer cannot be captured.
+    }
+  }
+
   function onPointerDown(e: PointerEvent): void {
-    if (press) return;
-    press = { pointerId: e.pointerId, button: e.button, x0: e.clientX, y0: e.clientY, last: { x: e.clientX, y: e.clientY }, panning: false };
+    if (e.pointerType === 'touch') {
+      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.size >= 2) {
+        // Two fingers always drive the camera: the one-finger press (tap, pan, long-press) is abandoned.
+        endPress();
+        pinching = true;
+        pinchStart();
+        capture(e.pointerId);
+        return;
+      }
+    }
+    if (press || pinching) return;
+    const touch = e.pointerType === 'touch';
+    press = { pointerId: e.pointerId, button: e.button, touch, x0: e.clientX, y0: e.clientY, last: { x: e.clientX, y: e.clientY }, panning: false, timer: null, inspected: false };
+    if (touch) {
+      const p = press;
+      p.timer = setTimeout(() => {
+        p.timer = null;
+        if (press !== p || p.panning) return;
+        const rc = cardAt(p.x0, p.y0);
+        if (!rc) return;
+        p.inspected = true;
+        opts.events.inspect?.(rc.ref);
+      }, LONG_PRESS_MS);
+    }
     if (e.button === 1) e.preventDefault();
-    canvas.setPointerCapture?.(e.pointerId);
+    capture(e.pointerId);
   }
   function onPointerMove(e: PointerEvent): void {
+    if (e.pointerType === 'touch' && touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinching) {
+      const next = pinchOf();
+      if (pinch && next && next.d > 0) {
+        const r = canvasRect();
+        rig.panBy(next.cx - pinch.cx, next.cy - pinch.cy);
+        const wanted = (pinch.dist0 * pinch.d0) / next.d;
+        rig.zoomAt(next.cx - r.left, next.cy - r.top, rig.view.dist / wanted);
+        pinch = { ...pinch, ...next };
+        dirty = true;
+      } else pinchStart();
+      return;
+    }
     if (press && press.pointerId === e.pointerId) {
-      if (!press.panning && Math.hypot(e.clientX - press.x0, e.clientY - press.y0) > DRAG_THRESHOLD_PX) press.panning = true;
+      if (!press.panning && !press.inspected && Math.hypot(e.clientX - press.x0, e.clientY - press.y0) > DRAG_THRESHOLD_PX) {
+        press.panning = true;
+        if (press.timer) clearTimeout(press.timer);
+        press.timer = null;
+      }
       if (press.panning) {
         rig.panBy(e.clientX - press.last.x, e.clientY - press.last.y);
         dirty = true;
@@ -745,18 +880,28 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       press.last = { x: e.clientX, y: e.clientY };
       return;
     }
+    if (e.pointerType === 'touch') return;
     const hit = cardAt(e.clientX, e.clientY)?.id ?? null;
     if (hit !== hovered) {
       hovered = hit;
-      canvas.style.cursor = hit && rcards.get(hit)?.area === 'pack' ? 'pointer' : '';
+      canvas.style.cursor = hit && rcards.get(hit)?.area === 'pack' && (view?.picks ?? 0) > 0 && view?.pack?.layout !== 'grid' ? 'pointer' : '';
       dirty = true;
     }
   }
   function onPointerUp(e: PointerEvent): void {
+    if (e.pointerType === 'touch') touches.delete(e.pointerId);
+    if (pinching) {
+      // The camera gesture lasts until the last finger lifts; a finger left on the glass is no tap.
+      if (touches.size === 0) {
+        pinching = false;
+        pinch = null;
+      } else pinchStart();
+      return;
+    }
     if (!press || press.pointerId !== e.pointerId) return;
     const p = press;
-    press = null;
-    if (p.panning) return;
+    endPress();
+    if (p.panning || p.inspected) return;
     const rc = cardAt(e.clientX, e.clientY);
     if (!rc) return;
     if (p.button === 1) {
@@ -764,15 +909,24 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       return;
     }
     if (p.button !== 0 || rc.area !== 'pack' || !view?.pack) return;
-    // Grid cells are taken by line (the handles), not by card.
-    if (view.pack.layout === 'grid') return;
+    // Grid cells are taken by line (the handles), not by card; a pack nothing can be taken from by card (a Winston
+    // pile, taken or declined whole) ignores card clicks.
+    if (view.pack.layout === 'grid' || view.picks < 1) return;
     const available = view.pack.cards.filter((c) => c).length;
     const r = clickPick(view.marked, view.picks, available, rc.id);
     if (r.kind === 'confirm') opts.events.confirm?.(r.cards);
     else opts.events.mark?.(r.cards);
   }
   function onPointerCancel(e: PointerEvent): void {
-    if (press?.pointerId === e.pointerId) press = null;
+    if (e.pointerType === 'touch') touches.delete(e.pointerId);
+    if (pinching) {
+      if (touches.size === 0) {
+        pinching = false;
+        pinch = null;
+      } else pinchStart();
+      return;
+    }
+    if (press?.pointerId === e.pointerId) endPress();
   }
   function onPointerLeave(): void {
     if (hovered) {
@@ -790,8 +944,10 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   const typing = (t: EventTarget | null): boolean => t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName));
   function onKey(e: KeyboardEvent): void {
     // Hold Space to inspect the hovered card (DESIGN "Input and interaction design"); keys never fire in a text field.
-    if (e.code !== 'Space' || e.repeat || typing(e.target) || !hovered) return;
-    const rc = rcards.get(hovered);
+    // Without a hovered card it inspects the card marked last, so keyboard-only drafting can read the marked card.
+    if (e.code !== 'Space' || e.repeat || typing(e.target)) return;
+    const id = hovered ?? [...(view?.marked ?? [])].reverse().find((m) => rcards.get(m)?.area === 'pack') ?? null;
+    const rc = id ? rcards.get(id) : undefined;
     if (!rc) return;
     e.preventDefault();
     opts.events.inspect?.(rc.ref);
@@ -846,6 +1002,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
             foil: !!rc.ref.foil,
             column: rc.column,
             moving: rc.motion.moving,
+            sheen: theme.cardDressing.foilSheen && !!rc.ref.foil && !(rc.area === 'pack' && marked.has(rc.id)) && hovered !== rc.id,
           };
         });
     },
@@ -859,6 +1016,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     idle: () => !rig.moving && ![...rcards.values()].some((rc) => rc.motion.moving),
     pendingTextures: () => faces.pending,
     pack: () => (view?.pack ? { packId: view.pack.packId, layout: view.pack.layout, shared: view.pack.shared } : null),
+    view: () => ({ cx: rig.view.cx, cy: rig.view.cy, dist: rig.view.dist }),
   };
 
   // --- Camera controls ------------------------------------------------------------------------------------------
@@ -926,6 +1084,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     },
     dispose() {
       disposed = true;
+      endPress();
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();
       insetObserver.disconnect();

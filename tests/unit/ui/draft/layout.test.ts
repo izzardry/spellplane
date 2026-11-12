@@ -12,6 +12,8 @@ import {
   clickPick,
   DRAFT_LAYOUT,
   draftFrame,
+  foilBadgeAt,
+  foilSheenColour,
   gridLineCells,
   gridLineOpen,
   packPoses,
@@ -222,4 +224,31 @@ describe('mark and confirm (DESIGN "Pre-game", Drafting interaction: click a car
 
 it('the fixture card helper finds known cards', () => {
   expect(named('Aegis of the Heavens').colors).toEqual(['W']);
+});
+
+describe('foils (DESIGN "Pre-game", Pack generation: "Foils are marked with a subtle sheen and a badge"; faces are never recoloured)', () => {
+  it('the badge sits in the gutter beside its card’s top strip: on no card of a pool cascade, its own or a neighbour column’s', () => {
+    const refs: CardRef[] = CARDS.slice(0, 60).map((c) => ({ sid: c.id, foil: true }));
+    const slots = poolSlots(refs, data, 2);
+    // A badge is at most the gutter wide (the surface sizes it so), centred in the gutter.
+    const half = (DRAFT_LAYOUT.colStep - 63) / 2;
+    for (const s of slots) {
+      const b = foilBadgeAt(s.pose);
+      const badge = { x0: b.x - half + 0.5, x1: b.x + half - 0.5, y0: b.y - 4, y1: b.y + 4 };
+      // Within the card's top strip, the part the next card in the cascade leaves visible.
+      expect(b.y).toBeLessThanOrEqual(s.pose.y + 44);
+      expect(b.y).toBeGreaterThanOrEqual(s.pose.y + 44 - DRAFT_LAYOUT.cascade);
+      for (const o of slots) {
+        const q = box(o.pose);
+        expect(badge.x0 < q.x1 && q.x0 < badge.x1 && badge.y0 < q.y1 && q.y0 < badge.y1).toBe(false);
+      }
+    }
+  });
+
+  it('the sheen is a light hue that drifts with time, each card a little out of phase', () => {
+    expect(foilSheenColour(0, 0)).toBe('hsl(0, 55%, 72%)');
+    expect(foilSheenColour(0.5, 0)).toBe('hsl(180, 55%, 72%)');
+    expect(foilSheenColour(0, 1)).not.toBe(foilSheenColour(0, 0));
+    expect(foilSheenColour(1.25, 0)).toBe(foilSheenColour(0.25, 0));
+  });
 });

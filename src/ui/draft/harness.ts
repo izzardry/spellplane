@@ -5,7 +5,7 @@
  * `mount` with fixture card data, so the app's own entry needs no route for it.
  *
  * Options (from the caller, or the page's query string): `view` 'lobby' | 'draft', `seats` names, `me` seat,
- * `format` 'pass' | 'rochester' | 'grid' | 'sealed', `packs`, `picks`, `burn`, `grids`, `timer` (pick timer on),
+ * `format` 'pass' | 'rochester' | 'grid' | 'sealed' | 'winston', `packs`, `picks`, `burn`, `grids`, `timer` (pick timer on),
  * `packSize`, `foil` (every n-th card foil), `setsDelay` ms before the set list arrives.
  * Test API: window.__draftHarness.
  */
@@ -14,7 +14,6 @@ import type { Action } from '../../core/actions';
 import type { InstanceId, SeatId, TableState } from '../../core/types';
 import type { CardData, SetSummary } from '../../data/types';
 import type { DraftPrivateView } from '../../draft/types';
-import { mtg } from '../../games/index';
 import { createDraftSurfaceImpl, type DraftDebugCard, type DraftDebugQueue, type DraftSurfaceHandle } from '../../scene/draft';
 import type { CreateDraftSurface } from '../../scene/types';
 import { tokensToCssVars } from '../../themes/index';
@@ -55,6 +54,8 @@ export interface DraftHarnessApi {
   picks(): { seat: SeatId; packId: string; cards: InstanceId[] }[];
   cards(): DraftDebugCard[];
   queues(): DraftDebugQueue[];
+  /** The draft surface's camera view (centre, distance). */
+  camera(): { cx: number; cy: number; dist: number } | null;
   /** Another seat picks the first cards of its front pack (or takes from the grid). */
   autoPick(seat: SeatId): boolean;
   gridTake(seat: SeatId, line: 'row' | 'col', index: 0 | 1 | 2): boolean;
@@ -90,7 +91,7 @@ export const HARNESS_SETS: SetSummary[] = [
 export function optionsFromQuery(search: string): DraftHarnessOptions {
   const q = new URLSearchParams(search);
   const num = (k: string): number | undefined => (q.has(k) ? Number(q.get(k)) : undefined);
-  const format = (['pass', 'rochester', 'grid', 'sealed'] as const).find((f) => f === q.get('format')) ?? 'pass';
+  const format = (['pass', 'rochester', 'grid', 'sealed', 'winston'] as const).find((f) => f === q.get('format')) ?? 'pass';
   const out: DraftHarnessOptions = {
     view: q.get('view') === 'lobby' ? 'lobby' : 'draft',
     seats: (q.get('seats') ?? 'Anna,Ben,Cleo').split(',').filter(Boolean),
@@ -145,7 +146,7 @@ export function mount(target: HTMLElement, cards: readonly CardData[], opts: Dra
   } else {
     sim.start();
     const session = table.session(opts.me, data);
-    mountSvelte(Draft, { target, props: { session, draft: controls, createSurface, faces, cardData: data, theme: paper, game: mtg } });
+    mountSvelte(Draft, { target, props: { session, draft: controls, createSurface, faces, cardData: data, theme: paper } });
   }
 
   const api: DraftHarnessApi = {
@@ -159,6 +160,7 @@ export function mount(target: HTMLElement, cards: readonly CardData[], opts: Dra
     picks: () => sim.picks,
     cards: () => surface?.debug.cards() ?? [],
     queues: () => surface?.debug.queues() ?? [],
+    camera: () => surface?.debug.view() ?? null,
     autoPick: (seat) => (opts.format === 'grid' ? false : sim.autoPick(seat)),
     gridTake: (seat, line, index) => sim.gridTake(seat, line, index),
     start: () => sim.start(),

@@ -9,7 +9,7 @@ import type { TableState } from '../../../../src/core/types';
 import type { CardData } from '../../../../src/data/types';
 import { DraftSim, LocalTable } from '../../../../src/ui/draft/fakes';
 import { formatClock, remainingMs, SeqClock } from '../../../../src/ui/draft/timer';
-import { draftStatus, Prefetch, seatChips, shownSids, stepMark, surfaceView, waitingCounts } from '../../../../src/ui/draft/view';
+import { draftStatus, liveMarks, Prefetch, seatChips, shownSids, stepMark, surfaceView, waitingCounts } from '../../../../src/ui/draft/view';
 import m19 from '../../../fixtures/scryfall/m19.json';
 
 const CARDS = m19 as unknown as CardData[];
@@ -154,6 +154,62 @@ describe('status line (DESIGN "Pre-game", Drafting interaction; Draft formats: d
     const { table, sim } = passDraft();
     const v = { ...sim.view('s0'), marked: ['not-in-pack', sim.front('s0')!.cards[1]!.id] };
     expect(surfaceView(table.state, v, true)).toMatchObject({ marked: [sim.front('s0')!.cards[1]!.id], reducedMotion: true, picks: 1 });
+  });
+
+  it('a stale mark (a Rochester card another seat took) counts nowhere: not confirmable, the prompt asks for a mark', () => {
+    // Anna marks X; Ben takes X. A driver that keeps the stale mark must not make the HUD offer to confirm it.
+    const table = new LocalTable(['Anna', 'Ben']);
+    const sim = new DraftSim(table, { format: 'rochester', cards: CARDS, packSize: 5, packs: 1 });
+    sim.start();
+    const x = sim.front('s0')!.cards[0]!.id;
+    expect(sim.autoPick('s0')).toBe(true);
+    // Ben's turn twice (snake order Anna, Ben, Ben, Anna): he takes the next card; then Anna marks a card Ben takes.
+    expect(sim.autoPick('s1')).toBe(true);
+    const y = sim.front('s1')!.cards[0]!.id;
+    expect(sim.autoPick('s1')).toBe(true);
+    const stale = { ...sim.view('s0'), marked: [y] };
+    expect(stale.pack!.cards.some((c) => c.id === y)).toBe(false);
+    expect(liveMarks(stale)).toEqual([]);
+    expect(surfaceView(table.state, stale, false).marked).toEqual([]);
+    expect(draftStatus(table.state, stale, 's0')).toMatchObject({ confirmable: false, prompt: 'Click a card to mark it, click again or press Enter to confirm.', myTurn: true });
+    // A live mark next to the stale one still counts.
+    const live = sim.front('s0')!.cards[0]!.id;
+    const mixed = { ...sim.view('s0'), marked: [y, live] };
+    expect(liveMarks(mixed)).toEqual([live]);
+    expect(draftStatus(table.state, mixed, 's0').confirmable).toBe(true);
+    expect(x).not.toBe(y);
+  });
+
+  it('Pick-Two: a stale mark does not count toward the two', () => {
+    const { table, sim } = passDraft(['Anna', 'Ben'], { picks: 2 });
+    const [a] = sim.front('s0')!.cards;
+    const v = { ...sim.view('s0'), marked: ['gone', a!.id] };
+    expect(draftStatus(table.state, v, 's0')).toMatchObject({ confirmable: false, prompt: 'Mark 2 cards (1 marked), then click a marked card again or press Enter.' });
+  });
+
+  it('Winston: the pile is shown, but takes no single card (picks 0); the turn alternates on take', () => {
+    const table = new LocalTable(['Anna', 'Ben']);
+    const sim = new DraftSim(table, { format: 'winston', cards: CARDS, packs: 1, packSize: 10 });
+    sim.start();
+    const v = surfaceView(table.state, sim.view('s0'), false);
+    expect(v.pack).toMatchObject({ layout: 'fan', shared: false, packId: 'pile:0' });
+    expect(v.pack!.cards).toHaveLength(1);
+    expect(v.picks).toBe(0);
+    expect(draftStatus(table.state, sim.view('s0'), 's0')).toMatchObject({ prompt: 'Your turn: take this pile, or add a card to it and look at the next.', confirmable: false });
+    expect(sim.view('s1').pile).toBeUndefined();
+    expect(sim.pileLook('s1', true)).toBe(false);
+    expect(sim.pileLook('s0', false)).toBe(true);
+    expect(surfaceView(table.state, sim.view('s0'), false).pack).toMatchObject({ packId: 'pile:1' });
+    expect(sim.pileLook('s0', true)).toBe(true);
+    expect(sim.view('s0').pool).toHaveLength(1);
+    expect(table.state.draft!.winston).toMatchObject({ active: 's1', pile: 0, piles: [2, 1, 1] });
+  });
+
+  it('the grid takes no single card either (picks 0)', () => {
+    const table = new LocalTable(['Anna', 'Ben']);
+    const sim = new DraftSim(table, { format: 'grid', cards: CARDS, grids: 1 });
+    sim.start();
+    expect(surfaceView(table.state, sim.view('s0'), false).picks).toBe(0);
   });
 
   it('sealed: the pool opens at once and the prompt says so', () => {

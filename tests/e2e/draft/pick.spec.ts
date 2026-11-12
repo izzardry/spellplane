@@ -173,6 +173,21 @@ test.describe('marking and confirming a pick', () => {
     expect(Number(await timer.getAttribute('data-ms'))).toBeLessThanOrEqual(42_000);
   });
 
+  test('keyboard drafting: hold Space with no card under the pointer to inspect the marked card', async ({ page }) => {
+    await openDraft(page, { format: 'pass', seats: 'Anna,Ben', packSize: 5 });
+    await settled(page);
+    const pack = await packCards(page);
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(async () => (await dh(page, 'view'))!.marked).toEqual([pack[1]!.id]);
+    expect((await dh(page, 'cards')).some((c) => c.hovered)).toBe(false);
+    await page.keyboard.down('Space');
+    await expect(page.getByTestId('inspect')).toBeVisible();
+    await expect(page.getByTestId('inspect-text')).toContainText(DATA.get(pack[1]!.ref.sid)!.name);
+    await page.keyboard.up('Space');
+    await expect(page.getByTestId('inspect')).toHaveCount(0);
+  });
+
   test('hold Space over a card to inspect it; release closes', async ({ page }) => {
     await openDraft(page, { format: 'pass', seats: 'Anna,Ben' });
     await settled(page);

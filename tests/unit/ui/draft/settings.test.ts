@@ -18,6 +18,7 @@ import {
   modeOf,
   packCount,
   PASS_TIMER_CHOICES,
+  passTimerChoices,
   seatHint,
   setOptions,
   setsPerPack,
@@ -185,6 +186,13 @@ describe('who edits (DESIGN "Specification: card data, packs and draft formats",
       expect(t.state.settings.passTimerMs).toBe(ms);
     }
     expect(t.refused).toEqual([]);
+  });
+
+  it('a pass timer outside the choices (set elsewhere) is offered too, in order, so the select never shows blank', () => {
+    expect(passTimerChoices(5000)).toEqual(PASS_TIMER_CHOICES);
+    expect(passTimerChoices(null)).toEqual(PASS_TIMER_CHOICES);
+    expect(passTimerChoices(4000)).toEqual([null, 2000, 3000, 4000, 5000, 8000, 10000, 15000, 20000, 30000]);
+    expect(passTimerChoices(25000)).toContain(25000);
   });
 
   it('a mode that does not suit the seated players says so plainly', () => {

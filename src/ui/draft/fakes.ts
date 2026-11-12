@@ -1,8 +1,8 @@
 /**
  * Fakes for the draft UI's tests and its module test page (src/ui/draft/harness.ts): a table shared by several local
  * seats whose public actions go through the real reducer (so `lobbySet` and `settings` are checked exactly as at a real
- * table), an EveningControls over it, a SetDataSource over a fixed list, and a simulated draft (pass, Rochester, Grid
- * and sealed) that drives `TableState.draft` and offers each seat its DraftControls, built against the M2-C contracts
+ * table), an EveningControls over it, a SetDataSource over a fixed list, and a simulated draft (pass, Rochester, Grid,
+ * Winston and sealed) that drives `TableState.draft` and offers each seat its DraftControls, built against the M2-C contracts
  * (PLAN M2-P4: build against M2-C contracts with fakes). The simulation stands in for the format drivers (M2-P2,
  * M2-P3): it keeps every seat's packs in one place and is not a model of the network.
  */
@@ -134,7 +134,7 @@ const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
 // ---------------------------------------------------------------------------------------------------------------------
 
 /** The formats the simulation plays. */
-export type SimFormat = 'pass' | 'rochester' | 'grid' | 'sealed';
+export type SimFormat = 'pass' | 'rochester' | 'grid' | 'sealed' | 'winston';
 
 export interface SimOptions {
   format: SimFormat;
@@ -164,6 +164,9 @@ export class DraftSim {
   readonly marks = new Map<SeatId, InstanceId[]>();
   /** Every accepted pick: seat, pack, cards. */
   readonly picks: { seat: SeatId; packId: PackId; cards: InstanceId[] }[] = [];
+  /** Winston: the face-down stack and the three piles. */
+  private stack: DraftCard[] = [];
+  private piles: DraftCard[][] = [[], [], []];
   private readonly listeners = new Set<() => void>();
   private next = 0;
   private serial = 0;
@@ -174,7 +177,7 @@ export class DraftSim {
     opts: SimOptions,
   ) {
     this.opts = {
-      packs: opts.format === 'sealed' ? 6 : 3,
+      packs: opts.format === 'sealed' || opts.format === 'winston' ? 6 : 3,
       picks: 1,
       burn: 0,
       grids: 18,
@@ -204,7 +207,9 @@ export class DraftSim {
           ? { format: 'rochester' as const, packs: o.packs, burn: o.burn }
           : o.format === 'grid'
             ? { format: 'grid' as const, grids: o.grids }
-            : { format: 'sealed' as const, packs: o.packs };
+            : o.format === 'winston'
+              ? { format: 'winston' as const, packs: o.packs }
+              : { format: 'sealed' as const, packs: o.packs };
     const lobby: LobbySettings = { ...DEFAULT_LOBBY_SETTINGS, draft: settings, pickTimer: o.pickTimer };
     const base: TableState = { ...this.table.state, stage: 'draft', lobby };
     const draft = createDraftState(base, lobby, base.seq + 1)!;
@@ -213,6 +218,7 @@ export class DraftSim {
     else if (o.format === 'rochester') st = this.openRochester(st, this.seats[0]!);
     else if (o.format === 'grid') st = this.layGrid(st, 0, this.seats[0]!);
     else if (o.format === 'sealed') st = this.openSealed(st);
+    else if (o.format === 'winston') st = this.dealWinston(st);
     this.commit(st);
   }
 
@@ -303,6 +309,44 @@ export class DraftSim {
     return null;
   }
 
+  // --- Winston ---
+  /** Shuffle-free stand-in: the packs' cards in order form the stack, one card starts each pile. */
+  private dealWinston(st: TableState): TableState {
+    this.stack = Array.from({ length: this.opts.packs * this.opts.packSize }, () => this.card());
+    this.piles = [0, 1, 2].map(() => (this.stack.length ? [this.stack.shift()!] : []));
+    return this.withWinston(st, st.draft!.winston!.active, 0);
+  }
+
+  private withWinston(st: TableState, active: SeatId, pile: number): TableState {
+    const w = st.draft!.winston!;
+    return { ...st, draft: { ...st.draft!, winston: { ...w, stack: this.stack.length, piles: this.piles.map((p) => p.length), active, pile } } };
+  }
+
+  /** Winston: the active seat takes the pile it looks at, or adds a card to it and looks at the next (after the third, it takes the top of the stack). */
+  pileLook(seat: SeatId, take: boolean): boolean {
+    const d = this.table.state.draft;
+    const w = d?.winston;
+    if (!d || !w || d.done || w.active !== seat) return false;
+    const other = this.seats.find((s) => s !== seat) ?? seat;
+    const pool = this.pools.get(seat)!;
+    let next: { active: SeatId; pile: number };
+    if (take) {
+      pool.push(...this.piles[w.pile]!.map((c) => c.ref));
+      this.piles[w.pile] = this.stack.length ? [this.stack.shift()!] : [];
+      next = { active: other, pile: 0 };
+    } else {
+      if (this.stack.length) this.piles[w.pile]!.push(this.stack.shift()!);
+      if (w.pile < 2) next = { active: seat, pile: w.pile + 1 };
+      else {
+        if (this.stack.length) pool.push(this.stack.shift()!.ref);
+        next = { active: other, pile: 0 };
+      }
+    }
+    const st: TableState = { ...this.table.state, draft: { ...d, pools: { ...d.pools, [seat]: pool.length } } };
+    this.commit(this.withWinston(st, next.active, next.pile));
+    return true;
+  }
+
   // --- sealed ---
   private openSealed(st: TableState): TableState {
     let s = st;
@@ -339,6 +383,7 @@ export class DraftSim {
     if (!d || d.done) return [];
     if (this.opts.format === 'rochester') return [this.rochesterTurn()].filter((s): s is SeatId => !!s);
     if (this.opts.format === 'grid') return [this.gridTurn()].filter((s): s is SeatId => !!s);
+    if (this.opts.format === 'winston') return d.winston ? [d.winston.active] : [];
     if (this.opts.format === 'pass') return this.seats.filter((s) => (d.queues[s]?.length ?? 0) > 0);
     return [];
   }
@@ -349,7 +394,10 @@ export class DraftSim {
     const packRec = pack && d ? d.packs[pack.packId] : undefined;
     const picks = pack ? (pack.public ? 1 : Math.min(this.opts.picks, pack.cards.length)) : 0;
     const ids = new Set(pack?.cards.map((c) => c.id) ?? []);
+    const w = d?.winston;
+    const pile = this.opts.format === 'winston' && w && !d.done && w.active === seat ? [...this.piles[w.pile]!] : undefined;
     return {
+      ...(pile ? { pile } : {}),
       format: d ? d.settings.format : null,
       pack,
       picks,
@@ -483,7 +531,7 @@ export class DraftSim {
       },
       pileLook: (take) => {
         calls.push({ method: 'pileLook', args: [take] });
-        return false;
+        return this.pileLook(seat, take);
       },
       gridTake: (line, index) => {
         calls.push({ method: 'gridTake', args: [line, index] });

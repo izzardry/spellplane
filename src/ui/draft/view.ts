@@ -41,11 +41,26 @@ export function passesPacks(state: TableState): boolean {
   return f === 'pass' || f === 'teamDraft';
 }
 
-/** What the draft surface draws (scene/types.ts DraftSurfaceView); waiting packs only where packs are passed. */
+/**
+ * The marks that still count: the marked cards still in the pack being picked from (a Rochester card another seat took,
+ * or a stale mark the driver kept, is dropped), so the HUD, the surface and Enter agree on what a confirm takes.
+ */
+export function liveMarks(view: DraftPrivateView): InstanceId[] {
+  if (!view.pack) return [];
+  const ids = new Set(view.pack.cards.map((c) => c.id));
+  return view.marked.filter((id) => ids.has(id));
+}
+
+/**
+ * What the draft surface draws (scene/types.ts DraftSurfaceView); waiting packs only where packs are passed. The grid
+ * and a Winston pile take no single cards, so their `picks` is 0 and the surface ignores card clicks on them.
+ */
 export function surfaceView(state: TableState, view: DraftPrivateView, reducedMotion: boolean): DraftSurfaceView {
   let pack: DraftSurfaceView['pack'] = null;
+  let picks = 0;
   const grid = state.draft?.grid;
   if (view.pack) {
+    picks = view.picks;
     pack = { packId: view.pack.packId, cards: view.pack.cards, layout: 'fan', shared: view.pack.public };
   } else if (view.format === 'grid' && grid && grid.cells.length === 9 && grid.cells.some((c) => c !== null)) {
     // The Grid draft's 3×3 lies face up on the shared table (DESIGN "Pre-game", Grid draft: None hidden).
@@ -57,7 +72,7 @@ export function surfaceView(state: TableState, view: DraftPrivateView, reducedMo
   return {
     pack,
     marked: view.marked.filter((id) => ids.has(id)),
-    picks: view.picks,
+    picks,
     pool: view.pool,
     waiting: passesPacks(state) ? waitingCounts(state) : {},
     reducedMotion,
@@ -135,7 +150,8 @@ export function draftStatus(state: TableState, view: DraftPrivateView, self: Sea
   const others = view.waitingOn.filter((s) => s !== self);
   const done = !!draft?.done;
   const packCards = view.pack ? view.pack.cards.length : 0;
-  const confirmable = !!view.pack && canConfirm(view.marked, view.picks, packCards);
+  const marked = liveMarks(view);
+  const confirmable = !!view.pack && canConfirm(marked, view.picks, packCards);
   const front = view.pack && draft ? draft.packs[view.pack.packId] : undefined;
 
   if (draft && settings && (settings.format === 'pass' || settings.format === 'teamDraft')) {
@@ -156,7 +172,7 @@ export function draftStatus(state: TableState, view: DraftPrivateView, self: Sea
     const need = picksNeeded(view.picks, packCards);
     if (confirmable) prompt = need === 1 ? 'Click the marked card again or press Enter to take it.' : `Click a marked card again or press Enter to take these ${need}.`;
     else if (need === 1) prompt = 'Click a card to mark it, click again or press Enter to confirm.';
-    else prompt = `Mark ${need} cards (${view.marked.length} marked), then click a marked card again or press Enter.`;
+    else prompt = `Mark ${need} cards (${marked.length} marked), then click a marked card again or press Enter.`;
   } else if (view.pack?.public) prompt = others.length ? `${names(state, others, self)} ${others.length === 1 ? 'is' : 'are'} picking.` : 'Waiting…';
   else prompt = others.length ? `Waiting for a pack: ${names(state, others, self)} ${others.length === 1 ? 'is' : 'are'} picking.` : 'Waiting for a pack…';
   return { title, step, prompt, myTurn: myTurn || (!!view.pack && !view.pack.public), confirmable, done };

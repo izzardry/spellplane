@@ -25,7 +25,7 @@
     modeLabel,
     modeOf,
     packCount,
-    PASS_TIMER_CHOICES,
+    passTimerChoices,
     passTimerLabel,
     seatHint,
     setOptions,
@@ -216,7 +216,7 @@
     <label class="row">
       <span class="key">Pass timer</span>
       <select data-testid="lobby-pass-timer" disabled={!editable} value={passTimer === null ? 'off' : String(passTimer)} onchange={onPassTimer}>
-        {#each PASS_TIMER_CHOICES as ms (ms ?? 'off')}<option value={ms === null ? 'off' : String(ms)} selected={ms === passTimer}>{passTimerLabel(ms)}</option>{/each}
+        {#each passTimerChoices(passTimer) as ms (ms ?? 'off')}<option value={ms === null ? 'off' : String(ms)} selected={ms === passTimer}>{passTimerLabel(ms)}</option>{/each}
       </select>
     </label>
   </fieldset>

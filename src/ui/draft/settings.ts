@@ -182,6 +182,13 @@ export function passTimerLabel(ms: number | null): string {
   return ms === null ? 'Off' : `${ms / 1000} s`;
 }
 
+/** The choices to offer: PASS_TIMER_CHOICES plus the current value when the table holds one the list lacks (kept in order). */
+export function passTimerChoices(current: number | null): (number | null)[] {
+  if (PASS_TIMER_CHOICES.includes(current)) return [...PASS_TIMER_CHOICES];
+  const numbers = [...PASS_TIMER_CHOICES.filter((m): m is number => m !== null), current as number].sort((x, y) => x - y);
+  return [null, ...numbers];
+}
+
 /** Whether `seat` may change the lobby settings now: the host (core/stage.ts hostSeat, the reducer's rule) in the lobby. */
 export function lobbyEditable(state: TableState, seat: SeatId): boolean {
   return state.stage === 'lobby' && hostSeat(state) === seat;

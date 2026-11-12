@@ -12,17 +12,18 @@
   import type { CardRef, InstanceId, TableState } from '../../core/types';
   import type { DraftPrivateView } from '../../draft/types';
   import { mtg } from '../../games/index';
-  import { picksNeeded } from '../../scene/draft';
+  import { picksNeeded, type DraftSurfaceOptionsWithData } from '../../scene/draft';
   import type { DraftSurface } from '../../scene/types';
   import { tokensToCssVars } from '../../themes/index';
   import Inspect from '../Inspect.svelte';
   import type { DraftProps } from '../types';
   import { formatClock, remainingMs, SeqClock, URGENT_MS } from './timer';
-  import { draftStatus, Prefetch, seatChips, shownSids, stepMark, surfaceView } from './view';
+  import { draftStatus, liveMarks, Prefetch, seatChips, shownSids, stepMark, surfaceView } from './view';
 
-  let { session, draft, createSurface, faces, cardData, theme, game: gameProp }: DraftProps = $props();
+  let { session, draft, createSurface, faces, cardData, theme }: DraftProps = $props();
 
-  const game = untrack(() => gameProp ?? mtg);
+  // DraftProps carries no game definition (M2-C); the draft is Magic's (DECISIONS [M2-P4]).
+  const game = mtg;
   const me = untrack(() => session.seat);
   const cssVars = $derived(
     Object.entries(tokensToCssVars(theme.tokens))
@@ -51,6 +52,7 @@
   const chips = $derived(seatChips(st, pv, me));
   const remaining = $derived(pv.timer ? remainingMs(pv.timer, clock, now) : null);
   const need = $derived(pv.pack ? picksNeeded(pv.picks, pv.pack.cards.length) : 0);
+  const marked = $derived(liveMarks(pv));
   const winstonTurn = $derived(pv.format === 'winston' && pv.waitingOn.includes(me) && !!pv.pile);
   const seatColour = (i: number): string => theme.tokens.colours.seats[i]?.colour ?? theme.tokens.colours.fg;
 
@@ -64,6 +66,16 @@
       .then(() => push())
       .catch(() => {});
   }
+
+  // A changed theme prop reaches the surface (the HUD's own colours follow through the CSS variables).
+  let appliedTheme: typeof theme | null = null;
+  $effect(() => {
+    const t = theme;
+    if (surface && appliedTheme && t !== appliedTheme) {
+      appliedTheme = t;
+      surface.setTheme(t);
+    }
+  });
 
   function push(): void {
     if (!surface) return;
@@ -79,12 +91,13 @@
   }
 
   function confirm(cards: readonly InstanceId[]): void {
-    if (!cards.length) return;
+    // Cards are taken only from a pack: a Winston pile is taken or declined whole, the grid by line.
+    if (!cards.length || !pv.pack) return;
     if (!draft.pick(cards)) flash(pv.pack?.public ? 'It is not your pick yet.' : 'That pick was not taken.');
   }
 
   function confirmMarked(): void {
-    if (status.confirmable) confirm(pv.marked.slice(0, need));
+    if (status.confirmable) confirm(marked.slice(0, need));
   }
 
   function takeLine(line: 'row' | 'col', index: 0 | 1 | 2): void {
@@ -112,12 +125,12 @@
       }
     } else if (e.key === 'Escape') {
       if (inspectRef) inspectRef = null;
-      else if (pv.marked.length) draft.mark([]);
+      else if (marked.length) draft.mark([]);
     } else if (e.key === '0') {
       surface?.camera.fit();
     } else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && pv.pack) {
       e.preventDefault();
-      draft.mark(stepMark(pv.pack.cards.map((c) => c.id), pv.marked, need, e.key === 'ArrowRight' ? 1 : -1, e.shiftKey));
+      draft.mark(stepMark(pv.pack.cards.map((c) => c.id), marked, need, e.key === 'ArrowRight' ? 1 : -1, e.shiftKey));
     }
   }
 
@@ -142,7 +155,8 @@
       prefetch();
     });
     try {
-      surface = createSurface(host!, {
+      // `card` (the pool's colour sort) is beyond the M2-C options; createDraftSurface reads it (scene/draft.ts).
+      const options: DraftSurfaceOptionsWithData = {
         game,
         layout: game.layout(st.format),
         viewerSeat: me,
@@ -150,7 +164,9 @@
         faces,
         card: (ref) => cardData.peek(ref.sid),
         events: {
-          mark: (cards) => draft.mark(cards),
+          mark: (cards) => {
+            if (pv.pack) draft.mark(cards);
+          },
           confirm: (cards) => confirm(cards),
           takeLine: (line, index) => takeLine(line, index),
           inspect: (ref) => {
@@ -158,7 +174,9 @@
             inspectBySpace = spaceHeld;
           },
         },
-      });
+      };
+      surface = createSurface(host!, options);
+      appliedTheme = theme;
       push();
     } catch (e) {
       surfaceError = e instanceof Error ? e.message : String(e);
@@ -228,7 +246,7 @@
         <button type="button" data-testid="pile-pass" onclick={() => pile(false)}>Add a card, next pile</button>
       {/if}
       {#if pv.pack}
-        {#if pv.marked.length}
+        {#if marked.length}
           <button type="button" class="quiet" data-testid="draft-clear" onclick={() => draft.mark([])} title="Escape">Clear</button>
         {/if}
         <button type="button" class="primary" data-testid="draft-confirm" disabled={!status.confirmable} onclick={confirmMarked} title="Enter">
