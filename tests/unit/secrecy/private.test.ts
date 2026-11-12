@@ -438,12 +438,19 @@ describe('looks at another seat’s hidden cards', () => {
 });
 
 describe('packs', () => {
-  it('go to one seat only', () => {
+  // Updated by M2-P2 (the stub delivered any pack): a pack goes only to the holder of a pass draft's pack, with
+  // exactly that pack's cards (tests/unit/draft/pass/handover.test.ts, tests/sim/draft/pass/*). Outside a draft
+  // nothing is sent or taken.
+  it('are neither sent nor taken outside a pass draft', () => {
     const { t, bus, ch } = setup();
     const received: string[] = [];
     ch.s1!.onPack((packId, cards, from) => received.push(`${packId}:${cards.length}:${from}`));
-    ch.s0!.sendPack('s1', 'p1', [revealedCard(t.secrets.s0!, t.secrets.s0!.hand[0]!)!]);
-    expect(received).toEqual(['p1:1:s0']);
+    const card = revealedCard(t.secrets.s0!, t.secrets.s0!.hand[0]!)!;
+    expect(() => ch.s0!.sendPack('s1', 'p1', [card])).toThrow();
+    expect(bus.inbox.s1).toEqual([]);
+    bus.inject('s1', 's0', { v: 1, t: 'pack', packId: 'p1', cards: [card] });
+    bus.inject('s1', 's0', { v: 1, t: 'pack', packId: 'p1', cards: [] });
+    expect(received).toEqual([]);
     expect(bus.inbox.s2).toEqual([]);
   });
 });

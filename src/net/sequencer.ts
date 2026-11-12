@@ -22,8 +22,11 @@ export const REWIND_KEEP = 12;
 /** Out-of-order arrivals a replica buffers before it relies on catch-up instead. */
 export const BUFFER_LIMIT = 4 * SYNC_TAIL_LIMIT;
 
-/** Actions only the sequencer itself may send (net/types.ts Sequencer.sequence; core/actions.ts AwayAction, CommitCloseAction). */
-const SEQUENCER_ONLY: ReadonlySet<ActionType> = new Set<ActionType>(['away', 'commitClose', 'sequencerClaim']);
+/**
+ * Actions only the sequencer itself may send (net/types.ts Sequencer.sequence; core/actions.ts AwayAction,
+ * CommitCloseAction, DraftTimeoutAction: the pick timer is the sequencer's clock, DESIGN Timers).
+ */
+const SEQUENCER_ONLY: ReadonlySet<ActionType> = new Set<ActionType>(['away', 'commitClose', 'sequencerClaim', 'draftTimeout']);
 
 /** The seat whose `peer` is `peerId` in `state`, or null (DESIGN "Players, seats and formats": a returning key pair reclaims its seat). */
 export function seatOfPeer(state: TableState, peerId: string): SeatId | null {
