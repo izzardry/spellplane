@@ -14,7 +14,8 @@ import type { Caption, SpeechEngineId } from '../voice/types';
 export function registerSpeechDebug(session: TableSession): void {
   registerDebug({
     speech: {
-      engine: (): SpeechEngineId | null => createdEngines().at(-1)?.id ?? null,
+      // The engine in use (a created engine that failed to load is not); null before any was created.
+      engine: (): SpeechEngineId | null => (session.captions && createdEngines().length > 0 ? session.captions.engine().id : null),
       say(text: string, final = true): boolean {
         const listening = createdEngines().filter((e): e is FakeSpeechEngine => e instanceof FakeSpeechEngine && e.listening);
         for (const e of listening) e.say(text, final);

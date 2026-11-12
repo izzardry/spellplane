@@ -63,6 +63,9 @@
       active = captions.engine();
       confirmDownload = false;
     } catch (e) {
+      // The engine stays as it was, and the choice shows it again.
+      confirmDownload = false;
+      active = captions.engine();
       error = `${local ? 'The model could not be downloaded' : 'The engine could not start'}: ${e instanceof Error ? e.message : String(e)}`;
     } finally {
       progress = null;

@@ -7,7 +7,8 @@
  *   utterance, so nothing loads before the player dictates (and the local model only once it was chosen).
  * - **Own captions.** Interim words grow a local caption and go to the others on presence (`captionInterim`); the final
  *   text becomes a `caption` action carrying the anchor and `about`, the cid of the action the speaker last acted on.
- *   The anchor and `about` are fixed when the utterance starts.
+ *   The anchor and `about` are chosen when the utterance starts; an anchored card that leaves the public zones
+ *   meanwhile is no longer named. A final longer than CAPTION_MAX_CHARS goes out as several `caption` actions.
  * - **Others' captions.** A peer's interim text comes from its presence; its final text from the `caption` action in
  *   the log, under the same caption id, so the bubble stays one bubble. A final caption lingers CAPTION_LINGER_MS.
  * - **Notes by voice.** While a note field has focus (`dictateInto`), the transcript goes into that field instead.
@@ -25,7 +26,7 @@ export const FINAL_GRACE_MS = 3000;
 export const INTERIM_CLEAR_MS = 2000;
 /** A peer's interim caption that has not changed for this long is dropped (its final never came), ms. */
 export const INTERIM_STALE_MS = 10_000;
-/** Longest caption text sent (characters). */
+/** Longest caption text sent in one presence message or `caption` action (characters); an interim shows its end. */
 export const CAPTION_MAX_CHARS = 500;
 /** Longest note text (the HUD's note field, ui/Hud.svelte). */
 export const NOTE_MAX_CHARS = 80;
@@ -203,8 +204,10 @@ class CaptionController implements CaptionControls {
   /** Own utterances so far (caption ids `<self>:<n>`). */
   private n = 0;
   private disposed = false;
-  /** Log entries already looked at, by count. */
-  private seen: number;
+  /** The log as last looked at: entries are compared by identity, so a rewritten tail is looked at again. */
+  private seenLog: readonly LogEntry[];
+  /** Cids of other speakers' captions already shown (a re-sequenced caption is not shown twice). */
+  private readonly shownCids = new Set<string>();
   /** Per other speaker: what its captions have reached (PeerCaptions). */
   private readonly peers = new Map<string, PeerCaptions>();
   /** Final captions of other speakers, until they fade. */
@@ -214,7 +217,7 @@ class CaptionController implements CaptionControls {
   constructor(private readonly host: CaptionHost) {
     this.factories = [...host.engines];
     this.engineId = this.factories.some((f) => f.info.id === 'fake') ? 'fake' : (this.factories[0]?.info.id ?? 'webspeech');
-    this.seen = host.log().length;
+    this.seenLog = [...host.log()];
     this.ready = Promise.all([host.settings.get('speechEngine').catch(() => null), host.settings.get('speechLang').catch(() => null)]).then(([engine, lang]) => {
       if (this.disposed) return;
       this.language = speechLang(lang);
@@ -273,8 +276,14 @@ class CaptionController implements CaptionControls {
     }
     // Create (and for the local model, download) first: a failed download leaves the engine as it was.
     const engine = f.create();
-    if (id === 'local') await this.loadLocal(await engine, onProgress);
-    else await engine;
+    try {
+      if (id === 'local') await this.loadLocal(await engine, onProgress);
+      else await engine;
+    } catch (e) {
+      // The engine that could not load holds nothing worth keeping (its microphone capture, a half-built model).
+      release(engine);
+      throw e;
+    }
     const wasListening = this.listening;
     if (wasListening) this.stopListening();
     this.engineId = id;
@@ -401,7 +410,7 @@ class CaptionController implements CaptionControls {
   private onText(text: string, final: boolean): void {
     if (this.disposed) return;
     if (!this.listening && this.host.now() > this.acceptUntil) return;
-    const t = text.replace(/\s+/g, ' ').trim().slice(0, CAPTION_MAX_CHARS);
+    const t = text.replace(/\s+/g, ' ').trim();
     if (!final && !t) return;
     if (!this.utter) {
       if (final && !t) return;
@@ -433,8 +442,10 @@ class CaptionController implements CaptionControls {
       if (u.target?.kind === 'field') u.target.insert(text, false);
       return;
     }
-    this.upsertOwn({ id: u.id, speaker: this.host.self(), text, final: false, anchor: u.anchor, at: this.host.now() });
-    this.host.presence.captionInterim(text, u.anchor);
+    const anchor = this.stillPublic(u);
+    this.upsertOwn({ id: u.id, speaker: this.host.self(), text, final: false, anchor, at: this.host.now() });
+    // A long utterance shows its newest words.
+    this.host.presence.captionInterim(tail(text, CAPTION_MAX_CHARS), anchor);
   }
 
   private finishUtterance(text: string): void {
@@ -451,10 +462,12 @@ class CaptionController implements CaptionControls {
       this.host.presence.captionInterim(null);
       return;
     }
-    const caption: Caption = { id: u.id, speaker: this.host.self(), text, final: true, anchor: u.anchor, at: this.host.now() };
+    const anchor = this.stillPublic(u);
+    const caption: Caption = { id: u.id, speaker: this.host.self(), text, final: true, anchor, at: this.host.now() };
     if (u.about !== undefined) caption.about = u.about;
     this.upsertOwn(caption);
-    this.host.caption(text, u.anchor ?? undefined, u.about);
+    // The whole text reaches the log, in pieces of at most CAPTION_MAX_CHARS.
+    for (const piece of pieces(text, CAPTION_MAX_CHARS)) this.host.caption(piece, anchor ?? undefined, u.about);
     this.later(() => this.removeOwn(u.id, caption), CAPTION_LINGER_MS);
     // The others drop the interim when the caption action lands; the presence is cleared once that had time to happen.
     if (this.clearTimer) clearTimeout(this.clearTimer);
@@ -462,6 +475,12 @@ class CaptionController implements CaptionControls {
       this.clearTimer = null;
       if (!this.utter) this.host.presence.captionInterim(null);
     }, INTERIM_CLEAR_MS);
+  }
+
+  /** The utterance's anchor while it still names something every viewer may see (a card may have left for a hand). */
+  private stillPublic(u: Utterance): Anchor | null {
+    u.anchor = publicAnchor(this.host.state(), u.anchor);
+    return u.anchor;
   }
 
   private writeField(target: DictationTarget | null, text: string): void {
@@ -508,7 +527,7 @@ class CaptionController implements CaptionControls {
   private peerState(key: string): PeerCaptions {
     let s = this.peers.get(key);
     if (!s) {
-      s = { finals: 0, consumed: null, lastFinal: null, shown: null, since: 0 };
+      s = { next: 0, interimId: null, consumed: null, lastFinal: null, shown: null, since: 0 };
       this.peers.set(key, s);
     }
     return s;
@@ -517,24 +536,42 @@ class CaptionController implements CaptionControls {
   private onLog(): void {
     if (this.disposed) return;
     const log = this.host.log();
-    // A shorter log (a snapshot resync) is history as it stands: its captions were already shown or are old.
-    if (log.length < this.seen) this.seen = log.length;
+    const prev = this.seenLog;
+    // A copy: the host may hand out its own array and append to it later.
+    this.seenLog = [...log];
+    // Entries up to `from` are the ones looked at before. A rewound history (a sequencer handover re-sequences the
+    // tail) replaces entries from some seq on, so the log may keep or even lose length and still hold new captions.
+    let from = Math.min(prev.length, log.length);
+    while (from > 0 && log[from - 1] !== prev[from - 1]) from--;
+    // Nothing in common (a snapshot resync rebuilt the log): history as it stands, its captions are old.
+    if (from === 0 && prev.length > 0) {
+      for (const e of log) if (e.kind === 'action' && e.action.type === 'caption') this.markShown(e.action.cid);
+      return;
+    }
     const self = this.host.self();
     let added = false;
-    for (let i = this.seen; i < log.length; i++) {
+    for (let i = from; i < log.length; i++) {
       const e = log[i]!;
       if (e.kind !== 'action' || e.action.type !== 'caption' || e.action.by === self) continue;
-      // A final from the log replaces the interim of the same speaker (same caption id), and that presence caption
-      // is spent: it is not shown again.
       const a = e.action;
+      if (this.shownCids.has(a.cid)) continue;
+      this.markShown(a.cid);
       const key = a.by;
       const ps = this.peerState(key);
-      const presence = this.host.presence.peers().find((p) => this.speakerOf(p) === key);
-      ps.consumed = presence?.caption ?? null;
-      ps.lastFinal = a.text;
-      const caption: Caption = { id: `${key}:${ps.finals}`, speaker: key, text: a.text, final: true, anchor: a.anchor ?? null, at: this.host.now() };
+      const presence = this.host.presence.peers().find((p) => this.speakerOf(p) === key)?.caption ?? null;
+      // A final from the log replaces the interim of the same utterance under the same caption id, and that presence
+      // caption is spent: it is not shown again. An interim that is already the next phrase (its words are not the
+      // start of this final) keeps its bubble, and the final gets one of its own.
+      const ofThis = presence === null || lateInterim(presence.text, a.text);
+      let id: string;
+      if (ofThis) {
+        id = ps.interimId ?? this.nextPeerId(key, ps);
+        ps.interimId = null;
+        ps.consumed = presence;
+        ps.lastFinal = a.text;
+      } else id = this.nextPeerId(key, ps);
+      const caption: Caption = { id, speaker: key, text: a.text, final: true, anchor: a.anchor ?? null, at: this.host.now() };
       if (a.about !== undefined) caption.about = a.about;
-      ps.finals++;
       this.finals = [...this.finals.filter((c) => c.id !== caption.id), caption];
       this.later(() => {
         this.finals = this.finals.filter((c) => c !== caption);
@@ -542,8 +579,17 @@ class CaptionController implements CaptionControls {
       }, CAPTION_LINGER_MS);
       added = true;
     }
-    this.seen = log.length;
     if (added) this.rebuild();
+  }
+
+  private markShown(cid: string): void {
+    this.shownCids.add(cid);
+    // Only recent ones matter (a re-sequenced tail); the oldest are forgotten.
+    if (this.shownCids.size > SHOWN_CIDS_MAX) this.shownCids.delete(this.shownCids.values().next().value!);
+  }
+
+  private nextPeerId(key: string, ps: PeerCaptions): string {
+    return `${key}:${ps.next++}`;
   }
 
   private rebuild(): void {
@@ -570,7 +616,7 @@ class CaptionController implements CaptionControls {
         this.later(() => this.rebuild(), INTERIM_STALE_MS + 1);
       }
       if (now - ps.since > INTERIM_STALE_MS) continue;
-      const id = `${key}:${ps.finals}`;
+      const id = (ps.interimId ??= this.nextPeerId(key, ps));
       // A final already showing under this id wins over a late interim.
       if (this.finals.some((c) => c.id === id)) continue;
       interims.push({ id, speaker: key, text: p.caption.text, final: false, anchor: p.caption.anchor, at: ps.since });
@@ -592,11 +638,13 @@ class CaptionController implements CaptionControls {
 }
 
 /**
- * Per other speaker: finals received (the next caption id), the presence caption the last final replaced, that
- * final's text until the speaker's presence caption is cleared, and the interim shown with when it last changed.
+ * Per other speaker: the next caption number, the caption id of the interim showing now (its final takes it over), the
+ * presence caption the last final replaced, that final's text until the speaker's presence caption is cleared, and the
+ * interim shown with when it last changed.
  */
 interface PeerCaptions {
-  finals: number;
+  next: number;
+  interimId: string | null;
   consumed: PeerPresence['caption'];
   lastFinal: string | null;
   shown: PeerPresence['caption'];
@@ -616,6 +664,31 @@ export function lateInterim(interim: string, final: string): boolean {
   const i = wordsOf(interim);
   const f = wordsOf(final);
   return i === f || f.startsWith(i);
+}
+
+/** How many shown caption cids are remembered. */
+const SHOWN_CIDS_MAX = 512;
+
+/** The end of `text`, at most `max` characters, starting at a word. */
+export function tail(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const end = text.slice(text.length - max);
+  const space = end.indexOf(' ');
+  return space > 0 && space < max / 2 ? end.slice(space + 1) : end;
+}
+
+/** `text` cut at word boundaries into pieces of at most `max` characters. */
+export function pieces(text: string, max: number): string[] {
+  const out: string[] = [];
+  let rest = text;
+  while (rest.length > max) {
+    let cut = rest.lastIndexOf(' ', max);
+    if (cut < max / 2) cut = max;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  return out;
 }
 
 /** Stop an engine and free what it holds (LocalWhisperEngine.dispose: microphone, audio graph, model). */

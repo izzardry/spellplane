@@ -5,8 +5,10 @@
  *
  * Continuous recognition with interim results: every result the browser marks final is one utterance (one final
  * transcript); the words after the last final result are the growing interim text. Chrome ends a session after a
- * stretch of silence; while the engine is meant to listen it starts a new one. After `stop` the browser still delivers
- * the final result of words already spoken, and the engine passes it on.
+ * stretch of silence; while the engine is meant to listen it starts a new one. After an error (the speech service
+ * unreachable, the session aborted) the restart waits, longer after each failure in a row, and listening ends after
+ * MAX_FAILURES of them. After `stop` the browser still delivers the final result of words already spoken, and the
+ * engine passes it on.
  */
 import type { SpeechEngine, SpeechListener } from '../types';
 
@@ -47,6 +49,12 @@ export function recognitionCtor(scope: object = globalThis): RecognitionCtor | n
 
 /** Errors after which listening cannot go on: the player or the browser refused the microphone or the service. */
 const FATAL = new Set(['not-allowed', 'service-not-allowed', 'audio-capture', 'language-not-supported']);
+/** Errors that are part of listening: Chrome reports 'no-speech' after a stretch of silence. */
+const BENIGN = new Set(['no-speech']);
+/** Failures in a row after which listening gives up. */
+export const MAX_FAILURES = 5;
+/** The wait before the first restart after a failure, ms; it doubles with each further one. */
+export const RETRY_MS = 500;
 
 interface Run {
   rec: RecognitionLike;
@@ -57,6 +65,9 @@ interface Run {
   finals: Set<number>;
   /** The last interim text passed on, so an unchanged one is not repeated. */
   interim: string;
+  /** Failed sessions in a row (an error without a result since). */
+  failures: number;
+  retry: ReturnType<typeof setTimeout> | null;
 }
 
 /** Web Speech engine (voice/types.ts SpeechEngine, id 'webspeech'). */
@@ -78,20 +89,30 @@ export class WebSpeechEngine implements SpeechEngine {
     rec.continuous = true;
     rec.interimResults = true;
     rec.maxAlternatives = 1;
-    const run: Run = { rec, on, wanted: true, finals: new Set(), interim: '' };
-    rec.onresult = (e) => this.onResult(run, e);
+    const run: Run = { rec, on, wanted: true, finals: new Set(), interim: '', failures: 0, retry: null };
+    rec.onresult = (e) => {
+      run.failures = 0;
+      this.onResult(run, e);
+    };
     rec.onerror = (e) => {
       if (FATAL.has(e.error)) run.wanted = false;
+      else if (!BENIGN.has(e.error) && ++run.failures >= MAX_FAILURES) run.wanted = false;
     };
     rec.onend = () => {
       // A new recognition session numbers its results from 0 again.
       run.finals.clear();
       if (!run.wanted || this.run !== run) return;
-      try {
-        rec.start();
-      } catch {
-        run.wanted = false;
-      }
+      const restart = (): void => {
+        run.retry = null;
+        if (!run.wanted || this.run !== run) return;
+        try {
+          rec.start();
+        } catch {
+          run.wanted = false;
+        }
+      };
+      if (run.failures === 0) restart();
+      else run.retry = setTimeout(restart, RETRY_MS * 2 ** (run.failures - 1));
     };
     this.run = run;
     try {
@@ -110,6 +131,8 @@ export class WebSpeechEngine implements SpeechEngine {
     const run = this.run;
     if (!run) return;
     run.wanted = false;
+    if (run.retry !== null) clearTimeout(run.retry);
+    run.retry = null;
     if (abort) {
       this.run = null;
       run.rec.onresult = null;

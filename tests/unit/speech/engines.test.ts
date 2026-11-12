@@ -6,8 +6,8 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FAKE_SPEECH, SPEECH_ENGINES, createdEngines } from '../../../src/voice/speech/index';
-import { LocalWhisperEngine, WebAudioCapture, WHISPER_MODEL, type AsrPipeline, type AudioCapture, type ProgressInfo, type TransformersLike } from '../../../src/voice/speech/local';
-import { WebSpeechEngine, recognitionCtor, type RecognitionEventLike, type RecognitionLike } from '../../../src/voice/speech/webspeech';
+import { LocalWhisperEngine, SEGMENT_MAX_S, WebAudioCapture, WHISPER_MODEL, type AsrPipeline, type AudioCapture, type ProgressInfo, type TransformersLike } from '../../../src/voice/speech/local';
+import { MAX_FAILURES, RETRY_MS, WebSpeechEngine, recognitionCtor, type RecognitionEventLike, type RecognitionLike } from '../../../src/voice/speech/webspeech';
 
 // --- Web Speech ------------------------------------------------------------------------------------------------------
 
@@ -107,6 +107,65 @@ describe('Web Speech engine', () => {
     expect(rec.starts).toBe(1);
   });
 
+  it('after a failing session (speech service unreachable) restarts with a growing wait, and gives up after a few in a row', () => {
+    vi.useFakeTimers();
+    try {
+      const e = new WebSpeechEngine(ScriptedRecognition);
+      e.start('en-US', () => undefined);
+      const rec = ScriptedRecognition.all[0]!;
+      // Silence is not a failure: the restart is immediate.
+      rec.onerror?.({ error: 'no-speech' });
+      rec.onend?.();
+      expect(rec.starts).toBe(2);
+      let waited = 0;
+      for (let i = 1; i < MAX_FAILURES; i++) {
+        rec.onerror?.({ error: 'network' });
+        rec.onend?.();
+        expect(rec.starts).toBe(1 + i);
+        const wait = RETRY_MS * 2 ** (i - 1);
+        vi.advanceTimersByTime(wait - 1);
+        expect(rec.starts).toBe(1 + i);
+        vi.advanceTimersByTime(1);
+        expect(rec.starts).toBe(2 + i);
+        waited += wait;
+      }
+      expect(waited).toBeGreaterThan(RETRY_MS * MAX_FAILURES);
+      rec.onerror?.({ error: 'network' });
+      rec.onend?.();
+      vi.advanceTimersByTime(60_000);
+      expect(rec.starts).toBe(1 + MAX_FAILURES);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a result resets the failure count, and stop cancels a pending restart', () => {
+    vi.useFakeTimers();
+    try {
+      const e = new WebSpeechEngine(ScriptedRecognition);
+      e.start('en-US', () => undefined);
+      const rec = ScriptedRecognition.all[0]!;
+      for (let i = 0; i < MAX_FAILURES - 1; i++) {
+        rec.onerror?.({ error: 'aborted' });
+        rec.onend?.();
+        vi.advanceTimersByTime(60_000);
+      }
+      rec.results = [{ isFinal: false, text: 'hi' }];
+      rec.emit(0);
+      rec.onerror?.({ error: 'network' });
+      rec.onend?.();
+      vi.advanceTimersByTime(RETRY_MS);
+      expect(rec.starts).toBe(1 + MAX_FAILURES);
+      rec.onerror?.({ error: 'network' });
+      rec.onend?.();
+      e.stop();
+      vi.advanceTimersByTime(60_000);
+      expect(rec.starts).toBe(1 + MAX_FAILURES);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a new start drops the previous session’s pending words', () => {
     const got: string[] = [];
     const e = new WebSpeechEngine(ScriptedRecognition);
@@ -132,11 +191,19 @@ class FakeCapture implements AudioCapture {
     this.buf = [];
     this.recording = true;
   }
-  feed(seconds: number): void {
-    if (this.recording) this.buf.push(...new Array<number>(Math.round(seconds * 16000)).fill(0.1));
+  /** Record `seconds` of audio at `level` (0.1 is speech, 0 silence). */
+  feed(seconds: number, level = 0.1): void {
+    if (!this.recording) return;
+    const n = Math.round(seconds * 16000);
+    for (let i = 0; i < n; i++) this.buf.push(level);
   }
   samples(): Float32Array {
     return Float32Array.from(this.buf);
+  }
+  cut(): Float32Array {
+    const out = Float32Array.from(this.buf);
+    this.buf = [];
+    return out;
   }
   end(): Float32Array {
     this.recording = false;
@@ -233,6 +300,83 @@ describe('on-device Whisper engine', () => {
     expect(got).toHaveLength(3);
     e.dispose();
     expect(cap.closed).toBe(true);
+  });
+
+  /** Feed audio in real time: `seconds` at `level`, a quarter second at a time, with the timers running. */
+  async function speak(cap: FakeCapture, seconds: number, level = 0.1): Promise<void> {
+    for (let t = 0; t < seconds; t += 0.25) {
+      cap.feed(0.25, level);
+      await vi.advanceTimersByTimeAsync(250);
+    }
+  }
+
+  it('an open microphone gives one final transcript per spoken phrase, transcribing only the current phrase', async () => {
+    const f = fakeTransformers((s) => `phrase of ${Math.round(s)} s`);
+    const cap = new FakeCapture();
+    const e = new LocalWhisperEngine({ library: async () => f.lib, capture: () => cap, webgpu: false });
+    await e.load();
+    const got: [string, boolean][] = [];
+    e.start('en-US', (t, fin) => got.push([t, fin]));
+    await vi.advanceTimersByTimeAsync(0);
+    // Silence first: nothing is transcribed and nothing piles up.
+    await speak(cap, 10, 0);
+    expect(f.runs).toEqual([]);
+    expect(cap.buf.length).toBeLessThan(16000);
+    // Two phrases with a pause after each.
+    await speak(cap, 2);
+    await speak(cap, 1, 0);
+    await speak(cap, 3);
+    await speak(cap, 1, 0);
+    const finals = got.filter(([, fin]) => fin).map(([t]) => t);
+    expect(finals).toHaveLength(2);
+    // Each final holds its own phrase (and the pause that ended it), not everything heard so far.
+    expect(Math.max(...f.runs.map((r) => r.seconds))).toBeLessThanOrEqual(4);
+    // The interim text of a phrase comes before its final, and the next phrase's after it.
+    const firstFinal = got.findIndex(([, fin]) => fin);
+    expect(got.slice(0, firstFinal).every(([, fin]) => !fin)).toBe(true);
+    expect(got.slice(0, firstFinal).length).toBeGreaterThan(0);
+    e.stop();
+    e.dispose();
+  });
+
+  it('a phrase without a pause is cut at the segment length cap, so a whole turn or game never becomes one utterance', async () => {
+    const f = fakeTransformers((s) => `speech of ${Math.round(s)} s`);
+    const cap = new FakeCapture();
+    const e = new LocalWhisperEngine({ library: async () => f.lib, capture: () => cap, webgpu: false });
+    await e.load();
+    const got: [string, boolean][] = [];
+    e.start('en-US', (t, fin) => got.push([t, fin]));
+    await vi.advanceTimersByTimeAsync(0);
+    await speak(cap, 120);
+    const finals = got.filter(([, fin]) => fin);
+    expect(finals.length).toBeGreaterThanOrEqual(4);
+    // No transcription ever covers more than one segment.
+    expect(Math.max(...f.runs.map((r) => r.seconds))).toBeLessThanOrEqual(SEGMENT_MAX_S);
+    // Releasing the key ends the last segment with its own final.
+    e.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(got.filter(([, fin]) => fin).length).toBe(finals.length + 1);
+    e.dispose();
+  });
+
+  it('trailing silence after the last phrase is not transcribed when listening stops', async () => {
+    const f = fakeTransformers(() => 'pass the turn');
+    const cap = new FakeCapture();
+    const e = new LocalWhisperEngine({ library: async () => f.lib, capture: () => cap, webgpu: false });
+    await e.load();
+    const got: [string, boolean][] = [];
+    e.start('en-US', (t, fin) => got.push([t, fin]));
+    await vi.advanceTimersByTimeAsync(0);
+    await speak(cap, 1.5);
+    await speak(cap, 1, 0);
+    expect(got.filter(([, fin]) => fin)).toEqual([['pass the turn', true]]);
+    const runs = f.runs.length;
+    await speak(cap, 0.5, 0);
+    e.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.runs.length).toBe(runs);
+    expect(got.filter(([, fin]) => fin)).toHaveLength(1);
+    e.dispose();
   });
 
   it('dispose releases the microphone and frees the model', async () => {

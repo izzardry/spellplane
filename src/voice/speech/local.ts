@@ -8,8 +8,12 @@
  * engine is not downloaded unless chosen"). transformers.js comes from a pinned CDN build rather than the app bundle,
  * so its ONNX runtime is not part of the static site (DECISIONS [M3-P4]); the browser caches both.
  *
- * Transcription: while listening, the audio captured so far (16 kHz mono) is transcribed about once a second for the
- * interim caption; `stop` transcribes the whole utterance once more for the final text. Audio never leaves the page.
+ * Transcription: while listening, the microphone (16 kHz mono) is cut into segments, one per spoken phrase. A segment
+ * ends after SEGMENT_SILENCE_MS of silence following speech, after SEGMENT_MAX_S, or when listening stops; it is then
+ * transcribed once more and passed on as one final transcript, and recording goes on into the next segment. While a
+ * segment grows, it alone is transcribed about once a second for the interim caption. Silence before any speech is
+ * dropped, so an open microphone (dictation with the open gate, or for the whole own turn) keeps only the current
+ * phrase. Audio never leaves the page.
  */
 import { MIC_CONSTRAINTS, type LocalSpeechEngine, type MediaDevicesLike, type SpeechListener } from '../types';
 
@@ -22,8 +26,21 @@ export const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/trans
 export const WHISPER_MODEL = 'onnx-community/whisper-base';
 /** Whisper's input rate. */
 export const SAMPLE_RATE = 16_000;
-/** How often the growing utterance is transcribed for the interim caption, ms. */
+/** How often the growing segment is transcribed for the interim caption, ms. */
 export const INTERIM_MS = 1000;
+/** How often the recorded audio is checked for the end of a phrase, ms. */
+export const ENDPOINT_TICK_MS = 250;
+/** Silence after speech that ends a segment (one final transcript), ms. */
+export const SEGMENT_SILENCE_MS = 700;
+/** Longest segment: a phrase without a pause is cut here (Whisper reads 30 s windows), s. */
+export const SEGMENT_MAX_S = 25;
+/**
+ * RMS level (full scale 1) from which a stretch of audio counts as speech. The microphone runs with automatic gain and
+ * noise suppression (MIC_CONSTRAINTS), so speech sits far above it and a quiet room far below.
+ */
+export const SPEECH_RMS = 0.01;
+/** Audio is judged speech or silence in windows of this many samples (50 ms). */
+const WINDOW = SAMPLE_RATE / 20;
 /** Shorter audio is not worth a transcription (a key tap without words), samples. */
 const MIN_SAMPLES = SAMPLE_RATE / 4;
 
@@ -57,9 +74,11 @@ export interface AudioCapture {
    * the microphone cancels it: it then records nothing and leaves the microphone disabled.
    */
   begin(): Promise<void>;
-  /** The samples recorded so far in this utterance. */
+  /** The samples recorded so far in this segment. */
   samples(): Float32Array;
-  /** Stop recording and return the utterance. */
+  /** Return the segment recorded so far and go on recording into a new one. */
+  cut(): Float32Array;
+  /** Stop recording and return the segment. */
   end(): Float32Array;
   /** Release the microphone. */
   close(): void;
@@ -139,6 +158,12 @@ export class WebAudioCapture implements AudioCapture {
     return joinChunks(this.chunks);
   }
 
+  cut(): Float32Array {
+    const out = joinChunks(this.chunks);
+    this.chunks = [];
+    return out;
+  }
+
   end(): Float32Array {
     this.generation++;
     this.recording = false;
@@ -180,13 +205,42 @@ export interface LocalEngineOptions {
   interimMs?: number;
 }
 
+/** One phrase being recorded: what of it was judged so far, and whether it holds speech. */
+interface Segment {
+  /** Samples of the segment already judged speech or silence. */
+  judged: number;
+  /** A window of it was speech. */
+  heard: boolean;
+  /** Silent samples since the last speech. */
+  silent: number;
+  /** Interim text was passed on, so the segment owes a final one. */
+  spoke: boolean;
+}
+
+const newSegment = (): Segment => ({ judged: 0, heard: false, silent: 0, spoke: false });
+
 interface Listening {
   lang: string;
   on: SpeechListener;
   active: boolean;
-  /** Interim text was passed on, so the utterance owes a final one. */
-  spoke: boolean;
+  seg: Segment;
+  /** Time since the last interim pass, ms. */
+  sinceInterim: number;
   timer: ReturnType<typeof setInterval> | null;
+}
+
+/** Judge the samples of `seg` not judged yet (`audio` is the segment so far), window by window. */
+function judge(seg: Segment, audio: Float32Array): void {
+  for (let at = seg.judged; at < audio.length; at += WINDOW) {
+    const end = Math.min(at + WINDOW, audio.length);
+    let sum = 0;
+    for (let i = at; i < end; i++) sum += audio[i]! * audio[i]!;
+    if (Math.sqrt(sum / (end - at)) >= SPEECH_RMS) {
+      seg.heard = true;
+      seg.silent = 0;
+    } else seg.silent += end - at;
+  }
+  seg.judged = Math.max(seg.judged, audio.length);
 }
 
 /** The on-device Whisper engine (voice/types.ts LocalSpeechEngine). */
@@ -253,7 +307,7 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
 
   start(lang: string, on: SpeechListener): void {
     this.stop();
-    const l: Listening = { lang, on, active: true, spoke: false, timer: null };
+    const l: Listening = { lang, on, active: true, seg: newSegment(), sinceInterim: 0, timer: null };
     this.listening = l;
     this.capture ??= (this.opts.capture ?? (() => new WebAudioCapture()))();
     const capture = this.capture;
@@ -261,7 +315,8 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
       .then(() => (l.active ? capture.begin() : undefined))
       .then(() => {
         if (!l.active) return;
-        l.timer = setInterval(() => this.interim(l), this.opts.interimMs ?? INTERIM_MS);
+        const tick = Math.min(ENDPOINT_TICK_MS, this.interimMs);
+        l.timer = setInterval(() => this.tick(l, tick), tick);
       })
       .catch((e: unknown) => {
         l.active = false;
@@ -278,18 +333,9 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
     if (l.timer !== null) clearInterval(l.timer);
     if (!wasActive || !this.capture) return;
     const audio = this.capture.end();
-    if (audio.length < MIN_SAMPLES) {
-      if (l.spoke) l.on('', true);
-      return;
-    }
-    void this.transcribe(audio, l.lang).then(
-      (text) => {
-        if (text || l.spoke) l.on(text, true);
-      },
-      () => {
-        if (l.spoke) l.on('', true);
-      },
-    );
+    judge(l.seg, audio);
+    // Trailing silence after the last phrase carries no words (and Whisper would invent some).
+    this.finish(l.seg.heard ? audio : new Float32Array(0), l.seg, l);
   }
 
   /** Release the microphone and the model (the engine can start again later, loading the model anew). */
@@ -304,18 +350,61 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
     if (pipe?.dispose) void this.busy.then(() => pipe.dispose?.()).catch(() => undefined);
   }
 
-  private interim(l: Listening): void {
-    if (!l.active || this.running || !this.capture) return;
+  private get interimMs(): number {
+    return this.opts.interimMs ?? INTERIM_MS;
+  }
+
+  /** Every ENDPOINT_TICK_MS while listening: end the segment at a pause or the length cap, else an interim pass now and then. */
+  private tick(l: Listening, ms: number): void {
+    if (!l.active || !this.capture) return;
     const audio = this.capture.samples();
-    if (audio.length < MIN_SAMPLES) return;
+    const seg = l.seg;
+    judge(seg, audio);
+    if (!seg.heard) {
+      // Nothing said yet: the silence is dropped, so the segment starts with the words.
+      if (seg.silent >= (SEGMENT_SILENCE_MS * SAMPLE_RATE) / 1000) {
+        this.capture.cut();
+        l.seg = newSegment();
+      }
+      return;
+    }
+    if (seg.silent >= (SEGMENT_SILENCE_MS * SAMPLE_RATE) / 1000 || audio.length >= SEGMENT_MAX_S * SAMPLE_RATE) {
+      // The phrase is over: it becomes one final transcript, and recording goes on into the next segment.
+      const done = this.capture.cut();
+      l.seg = newSegment();
+      l.sinceInterim = 0;
+      this.finish(done, seg, l);
+      return;
+    }
+    l.sinceInterim += ms;
+    if (l.sinceInterim < this.interimMs) return;
+    l.sinceInterim = 0;
+    if (this.running || audio.length < MIN_SAMPLES) return;
     void this.transcribe(audio, l.lang).then(
       (text) => {
+        // Transcriptions run one after another, so this interim always arrives before its segment's final.
         if (l.active && text) {
-          l.spoke = true;
+          seg.spoke = true;
           l.on(text, false);
         }
       },
       () => undefined,
+    );
+  }
+
+  /** Transcribe a finished segment and pass it on as final (an empty final ends a segment whose interim text was shown). */
+  private finish(audio: Float32Array, seg: Segment, l: Listening): void {
+    if (audio.length < MIN_SAMPLES) {
+      if (seg.spoke) l.on('', true);
+      return;
+    }
+    void this.transcribe(audio, l.lang).then(
+      (text) => {
+        if (text || seg.spoke) l.on(text, true);
+      },
+      () => {
+        if (seg.spoke) l.on('', true);
+      },
     );
   }
 

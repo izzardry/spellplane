@@ -191,6 +191,57 @@ describe('the talk source dictation follows', () => {
     talk.dispose();
   });
 
+  function manualActivation() {
+    let on = false;
+    const listeners = new Set<() => void>();
+    return {
+      active: () => on,
+      subscribe(l: () => void) {
+        listeners.add(l);
+        return () => void listeners.delete(l);
+      },
+      act() {
+        on = true;
+        for (const l of [...listeners]) l();
+      },
+    };
+  }
+
+  it('without voice controls, an open gate starts dictating only after the player first clicked or pressed a key', async () => {
+    const session = fakeSession();
+    const activation = manualActivation();
+    const talk = talkSource(session as never, memorySettings({ talk: { ...DEFAULT_TALK, dictation: true, gate: 'open' } }), activation);
+    const seen: string[] = [];
+    talk.subscribe((s) => seen.push(s.dictation));
+    await settle();
+    // The table opened (say after a reload) with no gesture yet: no microphone prompt out of nowhere.
+    expect(talk.state().dictation).toBe('off');
+    activation.act();
+    expect(talk.state()).toMatchObject({ dictation: 'caption', reason: 'open' });
+    expect(seen.at(-1)).toBe('caption');
+    talk.dispose();
+  });
+
+  it('with voice controls, dictation without a key waits for the joined microphone; the talk key itself does not', async () => {
+    const session = fakeSession();
+    const voice = Object.assign(fakeVoice({ audio: 'off', dictation: 'caption', reason: 'open', muted: false }), { joined: false });
+    session.voice = voice;
+    const talk = talkSource(session as never, memorySettings(), manualActivation());
+    const seen: string[] = [];
+    talk.subscribe((s) => seen.push(s.dictation));
+    expect(talk.state().dictation).toBe('off');
+    voice.set(KEY);
+    expect(talk.state().dictation).toBe('caption');
+    voice.set({ ...KEY, reason: 'turn' });
+    expect(talk.state().dictation).toBe('off');
+    // Joined with the click on the table; the next state change opens it.
+    voice.joined = true;
+    session.tick();
+    expect(talk.state()).toMatchObject({ dictation: 'caption', reason: 'turn' });
+    expect(seen).toEqual(['caption', 'off', 'caption']);
+    talk.dispose();
+  });
+
   it('without voice controls, a changed talk setting takes effect when the turn passes', async () => {
     const s = readyTable(4);
     const session = fakeSession(s);

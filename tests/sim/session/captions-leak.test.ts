@@ -2,7 +2,7 @@
  * The dictated-captions scenario of the shared leak test (CLAUDE.md: any code touching hidden information adds its
  * scenario; DESIGN "Chat and voice", Dictation and captions; PLAN M3-P4). A dictates over the real networked sessions
  * with the fake engine while hovering a card in its hand, right after drawing (the last card it touched is in its
- * hand), and then about a card it played face down. Neither the interim captions on presence nor the `caption`
+ * hand), then about a card it played face down, and then about that card while returning it to its hand. Neither the interim captions on presence nor the `caption`
  * actions name a card of A's hand or library, nothing B received carries a hidden identity (the shared scanner), and
  * the face-down card is named by its public id only.
  */
@@ -30,6 +30,21 @@ function listeningFake(): FakeSpeechEngine {
   const e = createdEngines().filter((x): x is FakeSpeechEngine => x instanceof FakeSpeechEngine && x.listening);
   if (e.length !== 1) throw new Error(`expected one listening fake engine, found ${e.length}`);
   return e[0]!;
+}
+
+/** Every interim caption and `caption` action in the messages B received. */
+function captionsIn(observed: readonly unknown[]): unknown[] {
+  const out: unknown[] = [];
+  const walk = (v: unknown): void => {
+    if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      if (o.t === 'captionInterim' || o.type === 'caption') out.push(o);
+      else Object.values(o).forEach(walk);
+    }
+  };
+  walk(observed);
+  return out;
 }
 
 describe('shared leak test: dictated captions', () => {
@@ -76,6 +91,24 @@ describe('shared leak test: dictated captions', () => {
     expect(second.anchor).toEqual({ kind: 'card', id: faceDown });
     expect(b.engine.confirmedState().cards[faceDown]!.identity).toBeUndefined();
 
+    // A starts talking about the face-down card and returns it to its hand mid-sentence: from then on neither the
+    // interim captions nor the final action name it.
+    engine.say('this goes', false);
+    await until(() => b.presence.peers().some((p) => p.caption?.text === 'this goes'), 10_000, 'B to see the interim');
+    expect(b.presence.peers().find((p) => p.caption?.text === 'this goes')?.caption?.anchor).toEqual({ kind: 'card', id: faceDown });
+    a.dispatch({ type: 'toZone', card: faceDown, to: 'hand:s0', position: 'any' });
+    await waitConverged([a, b], 'the card back in the hand');
+    engine.say('this goes back', false);
+    engine.say('this goes back to my hand', true);
+    await until(() => b.log().filter((e) => e.kind === 'action' && e.action.type === 'caption').length === 3, 10_000, 'the third caption');
+    await waitConverged([a, b], 'the third caption');
+    const third = b.log().flatMap((e) => (e.kind === 'action' && e.action.type === 'caption' ? [e.action] : []))[2]!;
+    expect(third.anchor).toBeUndefined();
+    const late = captionsIn(await observedBy(network, B)).filter((m) => JSON.stringify(m).includes('this goes back'));
+    // Presence is coalesced and lossy, so the interim may or may not have reached B; the action did.
+    expect(late.length).toBeGreaterThan(0);
+    expect(late.filter((m) => JSON.stringify(m).includes(faceDown))).toEqual([]);
+
     // Every caption and interim B received: no id of a card in A's hand or library.
     const state = a.engine.confirmedState();
     const hidden = Object.values(state.cards)
@@ -83,19 +116,7 @@ describe('shared leak test: dictated captions', () => {
       .map((c) => c.id);
     expect(hidden.length).toBeGreaterThan(40);
     const observed = await observedBy(network, B);
-    const captionStuff = observed.flatMap((m) => {
-      const out: unknown[] = [];
-      const walk = (v: unknown): void => {
-        if (Array.isArray(v)) v.forEach(walk);
-        else if (v && typeof v === 'object') {
-          const o = v as Record<string, unknown>;
-          if (o.t === 'captionInterim' || o.type === 'caption') out.push(o);
-          else Object.values(o).forEach(walk);
-        }
-      };
-      walk(m);
-      return out;
-    });
+    const captionStuff = captionsIn(observed);
     expect(captionStuff.some((m) => (m as { t?: string }).t === 'captionInterim')).toBe(true);
     expect(scan(captionStuff, hidden)).toEqual([]);
 

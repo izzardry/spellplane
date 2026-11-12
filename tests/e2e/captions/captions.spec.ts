@@ -221,6 +221,11 @@ test('the on-device model is not downloaded unless chosen; the settings say wher
   expect(modelRequests().some((u) => /cdn\.jsdelivr\.net\/npm\/@huggingface\/transformers/.test(u))).toBe(true);
   expect(modelRequests().some((u) => /\/assets\/local-[^/]*\.js/.test(u))).toBe(true);
   await expect(statement).toHaveAttribute('data-engine', 'webspeech');
+  // The choice shows the engine in use again, and so does the debug hook.
+  await expect(local.locator('input')).not.toBeChecked();
+  await expect(panel.locator('[data-testid="speech-engine"][data-engine="webspeech"] input')).toBeChecked();
+  await expect(a.getByTestId('speech-download-confirm')).toHaveCount(0);
+  expect(await engineOf(a)).not.toBe('local');
 
   // Closing and reopening keeps the language.
   await a.getByTestId('open-speech-settings').click();
