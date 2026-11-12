@@ -12,19 +12,29 @@ import { registerDebug } from '../util/debug';
  * per join), so `kill()` and `revive()` act on the live connection.
  */
 export function registerNetDebug(session: NetSession, transport: () => KillableTransport | null): void {
-  const engine = session.engine;
+  // The session's current engine (a new one when it gave up a table it started alone for the room's).
+  const engine = () => session.engine;
   // `clearMessages` keeps the engine's log and remembers where the caller's window starts.
   let from = 0;
+  let of = engine();
+  const start = (): number => {
+    if (of !== engine()) {
+      of = engine();
+      from = 0;
+    }
+    return from;
+  };
   registerDebug({
     net: {
-      messages: () => engine.messages().slice(from),
-      sequencer: () => engine.sequencerId() ?? '',
-      self: () => engine.identity.peerId,
-      peers: () => engine.peers(),
-      status: () => engine.status(),
-      seq: () => engine.seq(),
+      messages: () => engine().messages().slice(start()),
+      sequencer: () => engine().sequencerId() ?? '',
+      self: () => engine().identity.peerId,
+      peers: () => engine().peers(),
+      status: () => engine().status(),
+      seq: () => engine().seq(),
       clearMessages: () => {
-        from = engine.messages().length;
+        start();
+        from = engine().messages().length;
       },
       kill: () => transport()?.kill(),
       revive: async () => {

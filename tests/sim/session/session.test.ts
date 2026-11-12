@@ -165,6 +165,46 @@ describe('sequencing', () => {
   });
 });
 
+describe('commit windows (DESIGN "Specification: network protocol and secrecy", Public randomness 2, Secret shuffle 2)', () => {
+  it('three seats: a seat that stays silent in a roll and a shuffle another seat started is excluded by the sequencer after 3 s', async () => {
+    const network = net({ seed: 31 });
+    const A = await browser('anna', 'peer-a', 'Anna', 1);
+    const B = await browser('ben', 'peer-b', 'Ben', 3);
+    const C = await browser('cleo', 'peer-c', 'Cleo', 5);
+    browsers.push(A, B, C);
+    const a = await open(network, A, {}, { format: 'ffa3' });
+    const b = await open(network, B, {}, { format: 'ffa3' });
+    const c = await open(network, C, {}, { format: 'ffa3' });
+    await waitConverged([a, b, c]);
+    expect([a.seat, b.seat, c.seat]).toEqual(['s0', 's1', 's2']);
+    expect(a.engine.isSequencer()).toBe(true);
+    await settle(b.importDeck(await fixtureDeck('ur-m19-60.mtga.txt')));
+    await waitConverged([a, b, c]);
+    // C stays connected (heartbeats go on) but never contributes: every proposal of its own is dropped.
+    const silent = vi.spyOn(c.engine, 'propose').mockReturnValue(false);
+    const t0 = Date.now();
+    const result = settle(b.roll('die', 6), 20_000, 'the roll');
+    const rolled = await result;
+    expect(rolled).toBeGreaterThanOrEqual(1);
+    expect(rolled).toBeLessThanOrEqual(6);
+    const close = actions(A).find((x) => x.type === 'commitClose' && x.kind === 'rng');
+    expect(close).toMatchObject({ by: 's0' });
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(3000);
+    const rid = (close as { id: string }).id;
+    expect(Object.keys(a.engine.confirmedState().rng[rid]!.commits).sort()).toEqual(['s0', 's1']);
+    await settle(b.shuffle(), 20_000, 'the shuffle');
+    const shuffleClose = actions(A).find((x) => x.type === 'commitClose' && x.kind === 'shuffle');
+    expect(shuffleClose).toMatchObject({ by: 's0' });
+    const sid = (shuffleClose as { id: string }).id;
+    expect(Object.keys(a.engine.confirmedState().shuffles[sid]!.nonces).sort()).toEqual(['s0']);
+    expect(a.engine.confirmedState().shuffles[sid]!.orderHash).not.toBeNull();
+    silent.mockRestore();
+    const h = await waitConverged([a, b, c]);
+    expect(hashOf(c.engine.confirmedState())).toBe(h);
+    expect(c.engine.confirmedState().rng[rid]!.result).toBe(rolled);
+  });
+});
+
 describe('undo', () => {
   it('after a public card returns to the hand and the hand gets fresh ids, undo skips the steps naming the old ids', async () => {
     const network = net({ seed: 24 });
@@ -183,6 +223,77 @@ describe('undo', () => {
     await waitConverged([a, p.b]);
     expect(p.b.getState().cards['tok-u']!.tapped).toBe(false);
     expect(warnings(p.A).filter((w) => /Cannot undo/.test(w))).toEqual([]);
+  });
+});
+
+describe('owed private effects', () => {
+  it('a hand re-issue the sequencer refuses is tried again until the hand has fresh ids', async () => {
+    const network = net({ seed: 25 });
+    const A = await browser('anna', 'peer-a', 'Anna');
+    const B = await browser('ben', 'peer-b', 'Ben');
+    browsers.push(A, B);
+    const a = await open(network, A);
+    // B's first hand re-issue reaches the sequencer broken, so it is refused (nack).
+    let broken = 0;
+    const b = await open(network, B, {}, {
+      transport: () =>
+        new Tamper(network.create('peer-b'), (action) => {
+          if (action.type !== 'reorder' || !action.reissue || broken > 0) return action;
+          broken++;
+          return { ...action, count: action.count + 5 };
+        }),
+    });
+    await settle(a.importDeck(await fixtureDeck('gw-m19-60.txt')));
+    await settle(b.importDeck(await fixtureDeck('ur-m19-60.mtga.txt')));
+    await settle(b.draw(7));
+    await waitConverged([a, b]);
+    const card = b.secrets().hand[0]!;
+    b.dispatch({ type: 'move', card, to: 'battlefield:s1', pose: { x: 0, y: 200, rot: 180 } });
+    await until(() => b.engine.confirmedState().cards[card]?.identity !== undefined, 20_000, 'the card to be turned up');
+    b.dispatch({ type: 'toZone', card, to: 'hand:s1', position: 'any' });
+    await until(() => broken === 1 && warnings(B).some((w) => /^reorder refused/.test(w)), 20_000, 'the refused re-issue');
+    await until(() => a.engine.confirmedState().cards[card] === undefined && b.engine.pending().length === 0, 20_000, 'the re-issue to be tried again');
+    await waitConverged([a, b]);
+    expect(b.secrets().hand).not.toContain(card);
+    expect(b.secrets().hand).toHaveLength(7);
+    expect([...b.secrets().hand].sort()).toEqual([...a.engine.confirmedState().zones['hand:s1']!.ids].sort());
+  });
+
+  it('a card played face up is still turned up when the page reloads after its move is sequenced and before its flip is', async () => {
+    const network = net({ seed: 26 });
+    const p = await playScript(network, browsers);
+    const { a, b } = p;
+    const card = b.secrets().hand[0]!;
+    const sid = b.secrets().identities[card]!.card.sid;
+    // B (not the sequencer) closes right after the move comes back sequenced: its verified flip is never proposed.
+    let cut = false;
+    b.engine.onSequenced((x) => {
+      if (!cut && x.type === 'move' && x.card === card) {
+        cut = true;
+        b.leave();
+      }
+    });
+    b.dispatch({ type: 'move', card, to: 'battlefield:s1', pose: { x: 80, y: 200, rot: 180 } });
+    await until(() => cut, 10_000, 'the move');
+    await settle(b.whenSaved());
+    await until(() => a.engine.confirmedState().cards[card]?.zone === 'battlefield:s1', 10_000, 'the move at A');
+    expect(a.engine.confirmedState().cards[card]).toMatchObject({ face: 'down' });
+    expect(a.engine.confirmedState().cards[card]!.identity).toBeUndefined();
+    const b2 = await open(network, p.B, { settleMs: 200 });
+    await until(() => a.engine.confirmedState().cards[card]?.identity !== undefined, 20_000, 'the turn-up after the reload');
+    expect(a.engine.confirmedState().cards[card]).toMatchObject({ face: 'up', identity: { sid } });
+    await waitConverged([a, b2]);
+    expect(p.B.nonces.ids('turnUp')).toEqual([]);
+    // A card played face down on purpose is left face down after a reload.
+    const hidden = b2.secrets().hand[0]!;
+    b2.playFaceDown(hidden, 'battlefield:s1', { x: 160, y: 200, rot: 180 });
+    await waitConverged([a, b2]);
+    b2.leave();
+    const b3 = await open(network, p.B, { settleMs: 200 });
+    await waitConverged([a, b3]);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(a.engine.confirmedState().cards[hidden]).toMatchObject({ face: 'down' });
+    expect(a.engine.confirmedState().cards[hidden]!.identity).toBeUndefined();
   });
 });
 
@@ -241,6 +352,115 @@ describe('joint randomness', () => {
     await waitConverged([a, b]);
     expect(warnings(B).some((w) => /^Integrity warning: your shuffleNonce came back from the sequencer changed/.test(w))).toBe(true);
     expect(warnings(A).filter((w) => /Integrity/.test(w))).toEqual([]);
+  });
+});
+
+/** A transport whose join resolves at once while the peer connection comes up `ms` later (TrysteroTransport: Nostr signalling). */
+function lateTransport(network: ReturnType<typeof net>, peerId: string, ms: number): () => Transport {
+  return () => {
+    const t = network.create(peerId);
+    const join = t.join.bind(t);
+    t.join = (room: string, key: string) => {
+      setTimeout(() => void join(room, key), ms);
+      return Promise.resolve();
+    };
+    return t;
+  };
+}
+
+const chats = (b: Browser): string[] => actions(b).flatMap((a) => (a.type === 'chat' ? [a.text] : []));
+
+describe('a table started alone (decision M1-P8: peers that connect after SETTLE_MS)', () => {
+  async function lateJoiner(seed: number, internals: { createdHere?: boolean; loneWaitMs?: number } = { createdHere: true }) {
+    const network = net({ seed });
+    const A = await browser('anna', 'peer-a', 'Anna', 1);
+    const B = await browser('ben', 'peer-b', 'Ben', 3);
+    browsers.push(A, B);
+    const a = await open(network, A, internals.createdHere ? { createdHere: true } : {});
+    const b = await open(network, B, internals.loneWaitMs !== undefined ? { loneWaitMs: internals.loneWaitMs } : {}, { transport: lateTransport(network, B.peerId, 3000) });
+    return { network, A, B, a, b };
+  }
+
+  it('a joiner that sat alone at the creator’s chair gives it up once they connect, even when both spoke meanwhile', async () => {
+    const { A, B, a, b } = await lateJoiner(41);
+    expect(b.seat).toBe('s0'); // nobody answered within SETTLE_MS
+    await vi.advanceTimersByTimeAsync(5000);
+    a.chat('anyone there?');
+    await vi.advanceTimersByTimeAsync(500);
+    b.chat('hi');
+    await until(() => a.engine.state().seats.s1?.peer === 'peer-b' && chats(A).length === 2 && chats(B).length === 2, 60_000, 'B to rejoin');
+    await waitConverged([a, b]);
+    expect(a.seat).toBe('s0');
+    expect(b.seat).toBe('s1');
+    expect(a.engine.sequencerId()).toBe(b.engine.sequencerId());
+    expect(chats(B)).toEqual(['anyone there?', 'hi']);
+    expect(warnings(B).some((w) => /already at this table/.test(w))).toBe(true);
+    expect(warnings(A).some((w) => /already at this table/.test(w))).toBe(false);
+  });
+
+  it('the same when both changed their seat colour before they connected (histories of equal length)', async () => {
+    const { a, b } = await lateJoiner(42);
+    a.takeSeat('s0', 5);
+    b.takeSeat('s0', 6);
+    await vi.advanceTimersByTimeAsync(4000);
+    await until(() => a.engine.state().seats.s1?.peer === 'peer-b', 60_000, 'B to rejoin');
+    await waitConverged([a, b]);
+    expect([a.seat, b.seat]).toEqual(['s0', 's1']);
+    expect(a.getState().seats.s0).toMatchObject({ peer: 'peer-a', colour: 5 });
+  });
+
+  it('a joiner that pressed Ready alone gives up its table too and is asked to press Ready again; the creator’s Ready stays', async () => {
+    const { A, B, a, b } = await lateJoiner(43);
+    await settle(a.importDeck(await fixtureDeck('gw-m19-60.txt')));
+    await settle(b.importDeck(await fixtureDeck('ur-m19-60.mtga.txt')));
+    a.chat('ready');
+    await vi.advanceTimersByTimeAsync(4000);
+    await until(() => a.engine.state().seats.s1?.peer === 'peer-b', 60_000, 'B to rejoin');
+    await waitConverged([a, b]);
+    const st = a.engine.confirmedState();
+    expect(Object.keys(st.commitments)).toEqual(['s0']);
+    expect(b.secrets().identities).toEqual({});
+    expect(warnings(B).some((w) => /press Ready again/.test(w))).toBe(true);
+    // B readies again at its new chair and both agree.
+    await settle(b.importDeck(await fixtureDeck('ur-m19-60.mtga.txt')));
+    await waitConverged([a, b]);
+    expect(Object.keys(a.engine.confirmedState().commitments).sort()).toEqual(['s0', 's1']);
+    expect(actions(A).filter((x) => x.type === 'ready')).toHaveLength(2);
+    expect(warnings(A).some((w) => /already at this table/.test(w))).toBe(false);
+  });
+
+  it('two browsers that both started alone without a creator both give up, meet afresh and converge', async () => {
+    const { A, B, a, b } = await lateJoiner(44, {});
+    expect([a.seat, b.seat]).toEqual(['s0', 's0']);
+    a.chat('one');
+    b.chat('two');
+    await vi.advanceTimersByTimeAsync(4000);
+    await until(() => new Set([a.engine.seat(), b.engine.seat()]).size === 2 && a.engine.seat() !== null && b.engine.seat() !== null, 60_000, 'different chairs');
+    await waitConverged([a, b]);
+    expect(new Set([a.seat, b.seat])).toEqual(new Set(['s0', 's1']));
+    await until(() => chats(A).length === 2, 10_000, 'both lines said again');
+    await waitConverged([a, b]);
+    expect(new Set(chats(A))).toEqual(new Set(['one', 'two']));
+    expect(chats(B)).toEqual(chats(A));
+  });
+
+  it('a joiner that waits for peers (LONE_WAIT_MS) takes the free chair once they connect and never sits alone', async () => {
+    const { A, B, a, b } = await lateJoiner(45, { createdHere: true, loneWaitMs: 8000 });
+    expect(b.seat).toBe('s1');
+    await waitConverged([a, b]);
+    expect(warnings(B).some((w) => /already at this table/.test(w))).toBe(false);
+    expect(a.getState().seats.s0!.peer).toBe('peer-a');
+    expect(actions(A).filter((x) => x.type === 'seatTake').map((x) => x.by)).toEqual(['s0', 's1']);
+  });
+
+  it('a joiner that waits for peers sits alone once LONE_WAIT_MS passed with nobody there', async () => {
+    const network = net({ seed: 46 });
+    const B = await browser('ben', 'peer-b', 'Ben', 3);
+    browsers.push(B);
+    const start = Date.now();
+    const b = await open(network, B, { loneWaitMs: 8000 });
+    expect(b.seat).toBe('s0');
+    expect(Date.now() - start).toBeGreaterThanOrEqual(8000);
   });
 });
 
@@ -340,8 +560,12 @@ describe('resume', () => {
 });
 
 /** A transport that rewrites this peer's `shuffleNonce` proposals in transit (as a dishonest sequencer could). */
+/** Rewrites own proposals on the way to the sequencer (default: B's shuffle nonces). */
 class Tamper implements Transport {
-  constructor(private readonly inner: Transport) {}
+  constructor(
+    private readonly inner: Transport,
+    private readonly rewrite: (action: Action) => Action = (action) => (action.type === 'shuffleNonce' ? { ...action, nonce: 'chosen-by-the-sequencer' } : action),
+  ) {}
   get selfId(): PeerId {
     return this.inner.selfId;
   }
@@ -357,8 +581,9 @@ class Tamper implements Transport {
   send(channel: Channel, msg: Message, to?: PeerId): void {
     if (channel === 'act' && msg.t === 'propose') {
       const action = (msg as unknown as { action: Action }).action;
-      if (action.type === 'shuffleNonce') {
-        this.inner.send(channel, { ...msg, action: { ...action, nonce: 'chosen-by-the-sequencer' } } as Message, to);
+      const next = this.rewrite(action);
+      if (next !== action) {
+        this.inner.send(channel, { ...msg, action: next } as Message, to);
         return;
       }
     }

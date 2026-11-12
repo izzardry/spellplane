@@ -9,8 +9,12 @@
  * local storage (blocked, or Node in unit tests) the nonces are kept in memory for the page.
  */
 
-/** Which round a nonce belongs to: an rng round (own or another seat's) or another seat's shuffle. */
-export type NonceKind = 'rng' | 'shuffle';
+/**
+ * Which round a nonce belongs to: an rng round (own or another seat's) or another seat's shuffle. 'turnUp' is not a
+ * nonce: it keeps, per own card, the cid of the action that made it public until the card is turned up verified, so
+ * a reload in between still turns it up (decision M1-P8). Its values are an instance id and a cid, nothing secret.
+ */
+export type NonceKind = 'rng' | 'shuffle' | 'turnUp';
 
 /** Where open-round nonces are kept. */
 export interface NonceStore {

@@ -4,8 +4,8 @@
  * over the real sessions on a network with the acceptance faults (delay up to 400 ms, 5 % loss, reordering), then the
  * scanner (tests/leak/leak.ts) checks everything B received, holds in state and log, keeps in its secret store and in
  * IndexedDB against A's hidden cards, and the other way round. Further scenarios: an undo that brings a card back face
- * down (the owner re-reveals it), a reload (the save holds the same secrets and nothing more), another seat's look at
- * a face-down card (answered) and at a hidden zone (refused), a move the sequencer refuses after it passed locally (the
+ * down (the owner re-reveals it), a reload (the save holds the same secrets and nothing more), another seat's peek at
+ * a face-down card its owner controls (refused) and at one it controls (answered), a look at a hidden zone (refused), a move the sequencer refuses after it passed locally (the
  * card is turned up only once the move is sequenced, so the refusal publishes nothing), another seat moving a face-down
  * card into a graveyard (the owner turns it up), and a negative control that shows the scan is not vacuous.
  */
@@ -54,17 +54,18 @@ describe('shared leak test: the networked session', () => {
     expect(back.pairs).toEqual([]);
   });
 
-  it('another seat’s peek at an own face-down card is answered; a look at a hidden zone is refused; neither leaks the rest', async () => {
+  it('another seat’s peek at a face-down card its owner controls is refused, as is a look at a hidden zone; nothing leaks', async () => {
     const network = net({ seed: 5 });
     const p = await playScript(network, browsers);
     const { a, b } = p;
-    // B logs a peek at A's face-down card and asks A for it on the pair channel.
+    // B logs a peek at A's face-down card and asks A for it on the pair channel: its identity stays with its controller
+    // (DESIGN "Table model", Face-down on the battlefield; "Card manipulation", Peek).
     const asker = createPrivateChannel(b.engine);
     b.dispatch({ type: 'lookAt', zone: 'battlefield:s0', count: 1, card: p.faceDown });
     let peeked: RevealedCard[] | null = null;
     void asker.requestLook('s0', 'battlefield:s0', 1, p.faceDown).then((r) => (peeked = r));
     await until(() => peeked !== null, 10_000, 'the peek');
-    expect(peeked).toEqual([{ instanceId: p.faceDown, ref: a.secrets().identities[p.faceDown]!.card, salt: a.secrets().identities[p.faceDown]!.salt }]);
+    expect(peeked).toEqual([]);
     // B logs a look at A's top two library cards: there is no way yet for A to agree, so A refuses.
     b.dispatch({ type: 'lookAt', zone: 'library:s0', count: 2 });
     let looked: RevealedCard[] | null = null;
@@ -72,8 +73,7 @@ describe('shared leak test: the networked session', () => {
     await until(() => looked !== null, 10_000, 'the look');
     expect(looked).toEqual([]);
     await waitConverged([a, b]);
-    const disclosed = [...p.shownToB, { instanceId: p.faceDown, sid: a.secrets().identities[p.faceDown]!.card.sid, salt: a.secrets().identities[p.faceDown]!.salt }];
-    const report = leakScan({ observed: await observedBy(network, p.B), owner: { state: a.engine.confirmedState(), secrets: a.secrets() }, disclosed });
+    const report = leakScan({ observed: await observedBy(network, p.B), owner: { state: a.engine.confirmedState(), secrets: a.secrets() }, disclosed: p.shownToB });
     expect(report.tokens).toEqual([]);
     expect(report.pairs).toEqual([]);
   });
@@ -103,6 +103,29 @@ describe('shared leak test: the networked session', () => {
     expect(last).toEqual(['undo', 'flip']);
     expect(a.secrets().libraryOrder).not.toContain(card);
     const report = leakScan({ observed: await observedBy(network, p.B), owner: { state: a.engine.confirmedState(), secrets: a.secrets() }, disclosed: p.shownToB });
+    expect(report.tokens).toEqual([]);
+    expect(report.pairs).toEqual([]);
+  });
+
+  it('a seat that controls another owner’s face-down card may peek at it; the owner answers that seat only', async () => {
+    const network = net({ seed: 6 });
+    const p = await playScript(network, browsers);
+    const { a, b } = p;
+    // A hands control of its face-down card to B (an effect that steals a morph).
+    a.dispatch({ type: 'move', card: p.faceDown, to: 'battlefield:s1', controller: 's1' });
+    await waitConverged([a, b]);
+    expect(b.engine.confirmedState().cards[p.faceDown]).toMatchObject({ owner: 's0', controller: 's1', face: 'down', zone: 'battlefield:s1' });
+    expect(b.engine.confirmedState().cards[p.faceDown]!.identity).toBeUndefined();
+    const asker = createPrivateChannel(b.engine);
+    b.dispatch({ type: 'lookAt', zone: 'battlefield:s1', count: 1, card: p.faceDown });
+    let peeked: RevealedCard[] | null = null;
+    void asker.requestLook('s0', 'battlefield:s1', 1, p.faceDown).then((r) => (peeked = r));
+    await until(() => peeked !== null, 10_000, 'the peek');
+    const secret = a.secrets().identities[p.faceDown]!;
+    expect(peeked).toEqual([{ instanceId: p.faceDown, ref: secret.card, salt: secret.salt }]);
+    await waitConverged([a, b]);
+    const disclosed = [...p.shownToB, { instanceId: p.faceDown, sid: secret.card.sid, salt: secret.salt }];
+    const report = leakScan({ observed: await observedBy(network, p.B), owner: { state: a.engine.confirmedState(), secrets: a.secrets() }, disclosed });
     expect(report.tokens).toEqual([]);
     expect(report.pairs).toEqual([]);
   });

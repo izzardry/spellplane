@@ -11,8 +11,11 @@
  *   down face down) and, once it is sequenced, the owner turns the card up with a verified `flip {ref, salt}`, so a
  *   refused action never publishes an identity; a face-down own card in a zone that shows faces is turned up the same
  *   way, also when another seat moved it there; a targeted reveal is the public `revealTo` plus the identity on the pair channel to the named seats only, sent
- *   once the `revealTo` is sequenced; another seat's look is answered from the confirmed state and refused for whole
- *   zones (no consent prompt exists yet, decision M1-P8).
+ *   once the `revealTo` is sequenced; another seat's peek at an own face-down card is answered only for the seat that
+ *   controls it, and looks at whole zones are refused (no consent prompt exists yet, decision M1-P8).
+ * - Joining (decision M1-P8): a browser that did not create the room waits for a peer (NetSessionInternals.loneWaitMs)
+ *   before it sits alone; a table started alone that meets the room's table at the same chair is given up for it
+ *   (`collision`, `rejoin`).
  * - The private effects use core/secrets.ts (decision M1-P2): Ready commits the deck, the secret shuffle runs the
  *   commit/nonce/done protocol with the other seats' nonces, a public card returned to the hand re-issues the hand's
  *   opaque ids, a shuffle re-issues the zone's ids when a card in it was seen since it was issued (the `exposed` set,
@@ -27,7 +30,7 @@
  * - Timers: the engine arms core/deadlines.ts (confirmation rounds, commit windows) on the sequencer's clock.
  */
 import type { Action, ActionDraft } from '../core/actions';
-import { nonceHash } from '../core/commit';
+import { nonceHash, type RevealedCard } from '../core/commit';
 import { deadlines } from '../core/deadlines';
 import { canonicalJson } from '../core/hash';
 import { zoneId } from '../core/ids';
@@ -40,6 +43,7 @@ import {
   emptySecretStore,
   finishShuffle,
   lookAnswer,
+  type LookRequest,
   privateReorder,
   pruneReceived,
   receiveIdentity,
@@ -68,8 +72,17 @@ import type { CreateNetSession, DeckImport, LookedCard, NetSession, NetSessionOp
 
 /** How long a browser without a seat listens for a table already in the room before it takes a chair (decision M1-P8). */
 export const SETTLE_MS = 1500;
+/**
+ * How long a browser that opened a shared link over a transport whose peers may connect many seconds after joining
+ * (Trystero: the WebRTC connection comes up after Nostr signalling) waits for a peer before it takes a chair at a table
+ * of its own (decision M1-P8). The creator does not wait; a table started alone that meets the room's table later is
+ * given up for it (`NetTable.collision`).
+ */
+export const LONE_WAIT_MS = 8000;
 /** Taking a chair gives up after this long. */
 export const SEAT_TIMEOUT_MS = 20_000;
+/** A browser gives up a table it started alone for the room's table at most this many times per session. */
+const MAX_REJOINS = 3;
 /** The seat name when the identity has no nickname yet: the reducer refuses an empty one (decision M1-P5). */
 export const DEFAULT_NICKNAME = 'Player';
 /** Cards drawn by a London mulligan (DESIGN "Card manipulation", Library actions). */
@@ -83,8 +96,19 @@ const SEAT_COLOURS = 8;
 
 const SEATS_OF: Record<Format, number> = { '1v1': 2, ffa3: 3, ffa4: 4, '2hg': 4 };
 
-/** What tests (and only tests) may change beyond NetSessionOptions. */
+/** How main.ts opened the room, and what tests may change, beyond NetSessionOptions. */
 export interface NetSessionInternals {
+  /**
+   * This browser created the room on its start page (main.ts records it for the tab): it may take a chair alone after
+   * SETTLE_MS and never gives up its table for another one it meets (decision M1-P8). Default false.
+   */
+  createdHere?: boolean;
+  /**
+   * How long a browser that did not create the room and holds no chair in its save waits for a peer before it sits
+   * alone (from the join; at least SETTLE_MS). main.ts: 0 on the local transport (BroadcastChannel peers connect at
+   * once), LONE_WAIT_MS otherwise. Default 0.
+   */
+  loneWaitMs?: number;
   /** Default SETTLE_MS. */
   settleMs?: number;
   /** Default SEAT_TIMEOUT_MS. */
@@ -159,16 +183,29 @@ export function exposedFromLog(log: readonly Action[], state: TableState, seat: 
   return out;
 }
 
+/**
+ * The answer to another seat's look request (DESIGN "Table model", Face-down on the battlefield; "Card manipulation",
+ * Peek; decision M1-P8): the identity of an own face-down card in a public zone, only for `from` when that seat
+ * controls the card in the confirmed state; null (refused) for everything else, including whole hidden zones.
+ */
+export function peekAnswer(secrets: SecretStore, state: TableState, req: LookRequest, from: SeatId): RevealedCard[] | null {
+  if (req.card === undefined) return null;
+  const c = Object.hasOwn(state.cards, req.card) ? state.cards[req.card]! : null;
+  if (!c || c.controller !== from || c.owner === from) return null;
+  return lookAnswer(secrets, state, req, { allowZoneLook: false });
+}
+
 class NetTable implements NetSession {
   readonly roomId: string;
-  readonly presence: NetEngine['presence'];
-  private readonly channel: PrivateChannel;
+  /** The engine of the current join; replaced when this browser gives up a table it started alone (see `collision`). */
+  private eng: NetEngine;
+  private channel!: PrivateChannel;
   private readonly nonces: NonceStore;
   private readonly entropy: Entropy;
   private readonly peerId: string;
   private sec: SecretStore;
   private entries: LogEntry[];
-  private readonly saves: TablePersistence;
+  private saves: TablePersistence;
   /** The confirmed state as of the last sequenced action this session saw, folded action by action (saves, disclosures). */
   private fold: TableState;
   private readonly listeners = new Set<SessionListener>();
@@ -194,6 +231,11 @@ class NetTable implements NetSession {
   private readonly revealsDue = new Map<string, { id: InstanceId; seats: SeatId[] }>();
   /** Refused own proposals by cid, with the reason (for the session's own waits). */
   private readonly refused = new Map<string, string>();
+  /** A public own card came back to the hand: the hand owes a re-issue of its ids (`reissueHand`). */
+  private reissueOwed = false;
+  /** The cid of the own re-issue in flight. */
+  private reissueCid: string | null = null;
+  private reissueRefusals = 0;
   /** Refusals of contributions to one round, by round key. */
   private readonly roundRefusals = new Map<string, number>();
   private waiters: Waiter[] = [];
@@ -205,17 +247,26 @@ class NetTable implements NetSession {
   private netQueued = false;
   private lastSeat: SeatId;
   private disposed = false;
+  /** Subscriptions to the current engine and its pair channel. */
   private readonly unsubs: Unsubscribe[] = [];
+  /** Whether this browser created the room on its start page (see NetSessionInternals.createdHere). */
+  private readonly createdHere: boolean;
+  /** Times this browser gave up a table it started alone for the one already in the room (see `collision`). */
+  private rejoins = 0;
+  private rejoining = false;
 
   constructor(
-    readonly engine: NetEngine,
+    engine: NetEngine,
+    /** A new engine (with a new transport) over `start`, for a rejoin. */
+    private readonly makeEngine: (start: ResumePoint) => NetEngine,
     private readonly opts: NetSessionOptions,
     private readonly internals: NetSessionInternals,
     init: { secrets: SecretStore; entries: LogEntry[]; snapshot: TableState; snapshotSeq: number; lastSeq: number },
   ) {
+    this.eng = engine;
     this.roomId = opts.roomId;
     this.peerId = opts.identity.peerId;
-    this.presence = engine.presence;
+    this.createdHere = internals.createdHere === true;
     this.nonces = internals.nonces ?? localNonces(opts.roomId, opts.identity.peerId);
     this.entropy = internals.entropy ?? DEFAULT_ENTROPY;
     this.entries = init.entries;
@@ -228,17 +279,26 @@ class NetTable implements NetSession {
       engine.confirmedState(),
       this.sec.seat,
     );
-    this.saves = new TablePersistence({
-      store: opts.store,
-      roomId: opts.roomId,
-      roomKey: opts.roomKey,
+    this.saves = this.persistence(init.snapshot, init.snapshotSeq, init.lastSeq);
+    this.attach(engine);
+  }
+
+  private persistence(snapshot: TableState, snapshotSeq: number, lastSeq: number): TablePersistence {
+    return new TablePersistence({
+      store: this.opts.store,
+      roomId: this.opts.roomId,
+      roomKey: this.opts.roomKey,
       seat: () => this.engine.seat() ?? this.lastSeat,
       onError: (text) => this.system('warn', text),
       now: () => this.now(),
-      snapshot: init.snapshot,
-      snapshotSeq: init.snapshotSeq,
-      lastSeq: init.lastSeq,
+      snapshot,
+      snapshotSeq,
+      lastSeq,
     });
+  }
+
+  /** Follow `engine` and its pair channel. */
+  private attach(engine: NetEngine): void {
     this.channel = createPrivateChannel(engine);
     this.unsubs.push(
       engine.onState((view) => this.onView(view)),
@@ -250,6 +310,7 @@ class NetTable implements NetSession {
         this.netChanged();
         // A peer that (re)connected may be the one a randomness round waits for, or this browser may owe it a nonce.
         this.queueDrive();
+        if (this.collision()) queueMicrotask(() => void this.rejoin());
       }),
       engine.onSequencerChange(() => this.netChanged()),
       this.channel.onIdentity((card, from, verified) => {
@@ -262,11 +323,22 @@ class NetTable implements NetSession {
         this.saves.saveSecrets(this.sec);
         this.notify();
       }),
-      // Another seat's look: answered from the confirmed state (the pair channel itself refuses while own pending actions
-      // may change that zone). Peeks at an own face-down card are answered; looks at a whole hidden zone are refused,
-      // since the owner has no way yet to agree to them (core/secrets.ts lookAnswer; decision M1-P2, M1-P8).
-      this.channel.answerLooks((req) => lookAnswer(this.sec, this.engine.confirmedState(), req, { allowZoneLook: false })),
+      // Another seat's look, answered from the confirmed state (the pair channel itself refuses while own pending actions
+      // may change that zone). A peek at an own face-down card is answered only for the seat that controls it (a card
+      // whose control changed): its identity otherwise stays with its controller until it is turned up, and showing
+      // it to anyone else is the owner's `revealTo` (DESIGN "Table model", Face-down on the battlefield; "Card
+      // manipulation", Peek). Looks at a whole hidden zone are refused, since the owner has no way yet to agree to them
+      // (core/secrets.ts lookAnswer; decisions M1-P2, M1-P8).
+      this.channel.answerLooks((req, from) => peekAnswer(this.sec, this.engine.confirmedState(), req, from)),
     );
+  }
+
+  get engine(): NetEngine {
+    return this.eng;
+  }
+
+  get presence(): NetEngine['presence'] {
+    return this.eng.presence;
   }
 
   // --- Reading -----------------------------------------------------------------------------------------
@@ -366,11 +438,16 @@ class NetTable implements NetSession {
     const publishes = turnsPublic(view, this.sec, seat, act, turnUp);
     const stamped = this.stamp(act);
     // Registered before proposing: the sequencer's own proposals come back sequenced inside `propose`.
-    if (publishes !== null) this.turnUpAfter.set(stamped.cid, { id: publishes, ...(act.group !== undefined ? { group: act.group } : {}) });
+    if (publishes !== null) {
+      this.turnUpAfter.set(stamped.cid, { id: publishes, ...(act.group !== undefined ? { group: act.group } : {}) });
+      // Kept in local storage too, so the card is still turned up after a reload before its flip is sequenced.
+      this.nonces.set('turnUp', publishes, stamped.cid);
+    }
     if (stamped.type === 'revealTo' && this.ownHidden(stamped.instanceId)) this.revealsDue.set(stamped.cid, { id: stamped.instanceId, seats: [...stamped.seats] });
     if (stamped.type === 'rngCommit') this.sentRandomness.set(stamped.cid, stamped);
     const done = this.propose(stamped);
     if (!done) {
+      if (publishes !== null) this.nonces.delete('turnUp', publishes);
       this.turnUpAfter.delete(stamped.cid);
       this.revealsDue.delete(stamped.cid);
       this.sentRandomness.delete(stamped.cid);
@@ -772,13 +849,17 @@ class NetTable implements NetSession {
     // later reveal to this one (DESIGN "Table model", Hidden cards; decision M1-P2).
     const hand = zoneId('hand', this.sec.seat);
     const back = Object.entries(next.cards).some(([id, c]) => c.zone === hand && c.owner === this.sec.seat && prior.cards[id] !== undefined && prior.zones[prior.cards[id]!.zone]?.visibility === 'public');
-    if (back) queueMicrotask(() => this.reissueHand());
+    if (back) this.reissueOwed = true;
     this.queueDrive();
     this.netChanged();
   }
 
   private ownSequenced(action: SequencedAction): void {
     this.refused.delete(action.cid);
+    if (action.cid === this.reissueCid) {
+      this.reissueCid = null;
+      this.reissueRefusals = 0;
+    }
     this.privateBefore.delete(action.cid);
     const sent = this.sentRandomness.get(action.cid);
     if (sent) {
@@ -805,14 +886,37 @@ class NetTable implements NetSession {
     }
   }
 
+  /**
+   * The hand's fresh ids after a public card came back to it (owed from `onSequenced`, run by `drive`). A re-issue
+   * refused locally or by the sequencer (a concurrent action touched a hand id) stays owed and is tried again, up to
+   * ROUND_ATTEMPTS refusals.
+   */
   private reissueHand(): void {
-    if (this.disposed) return;
+    if (this.disposed || !this.reissueOwed || this.reissueCid !== null) return;
+    if (this.reissueRefusals >= ROUND_ATTEMPTS) {
+      this.reissueOwed = false;
+      this.reissueRefusals = 0;
+      this.warn('The hand could not get fresh ids: a card that was public may be recognised in it');
+      return;
+    }
     const view = this.engine.state();
     const hand = zoneId('hand', this.seat);
     const r = reissueZone(this.sec, view, hand, this.entropy);
-    if (!r) return;
+    if (!r) {
+      this.reissueOwed = false;
+      return;
+    }
     const retired = view.zones[hand]?.ids ?? [];
-    if (!this.proposePrivate(this.stamp(r.action), r.secrets)) return;
+    const a = this.stamp(r.action);
+    // Set before proposing: the sequencer's own proposal comes back sequenced inside `propose`.
+    this.reissueCid = a.cid;
+    this.reissueOwed = false;
+    if (!this.proposePrivate(a, r.secrets)) {
+      this.reissueCid = null;
+      this.reissueOwed = true;
+      this.reissueRefusals++;
+      return;
+    }
     // Undo steps that name a retired id can never apply again; left on the stack they would block every later undo.
     this.undoStack = this.undoStack.filter((e) => {
       const text = canonicalJson(e.inverse);
@@ -825,7 +929,16 @@ class NetTable implements NetSession {
     if (this.disposed || reason === NACK_DUPLICATE) return;
     this.refused.set(action.cid, reason);
     this.undoStack = this.undoStack.filter((e) => e.cid !== action.cid);
+    const up = this.turnUpAfter.get(action.cid);
+    if (up && this.nonces.get('turnUp', up.id) === action.cid) this.nonces.delete('turnUp', up.id);
     this.turnUpAfter.delete(action.cid);
+    if (action.cid === this.reissueCid) {
+      // A refused hand re-issue is owed again (`drive` retries it).
+      this.reissueCid = null;
+      this.reissueOwed = true;
+      this.reissueRefusals++;
+      this.queueDrive();
+    }
     this.reRevealAfter.delete(action.cid);
     if (action.type === 'flip' && action.ref !== undefined) this.turnUpRefusals.set(action.card, (this.turnUpRefusals.get(action.card) ?? 0) + 1);
     this.revealsDue.delete(action.cid);
@@ -941,6 +1054,7 @@ class NetTable implements NetSession {
       }
       this.reRevealOwed(st, me);
       this.turnUpOwed(st, me);
+      this.reissueHand();
     }
     this.settleWaiters();
   }
@@ -976,16 +1090,26 @@ class NetTable implements NetSession {
       const z = st.zones[c.zone];
       if (c.owner === me && c.face === 'down' && c.identity === undefined && z?.visibility === 'public' && !FACE_DOWN_KINDS.has(z.kind)) ids.add(id);
     }
+    // Turn-ups kept in local storage (from before a reload): owed once the action that made the card public is no
+    // longer waiting to be sequenced; dropped once the card shows its identity or is no longer public.
+    const status = this.engine.status();
+    const settled = status === 'connected' || status === 'alone';
+    for (const id of this.nonces.ids('turnUp')) {
+      const cid = this.nonces.get('turnUp', id);
+      if (cid !== null && (this.turnUpAfter.has(cid) || this.pendingCid(cid))) continue;
+      if (settled) ids.add(id);
+    }
     if (!ids.size) return;
     const view = this.engine.state();
     const pending = this.engine.pending();
     for (const id of [...ids].sort()) {
       const group = this.turnUpDue.get(id);
+      if (pending.some((a) => (a.type === 'flip' && a.card === id && a.ref !== undefined) || (a.type === 'reveal' && a.instanceId === id))) continue;
       if (!this.publicWithoutIdentity(st, view, me, id) || (this.turnUpRefusals.get(id) ?? 0) >= ROUND_ATTEMPTS) {
         this.turnUpDue.delete(id);
+        if (settled) this.nonces.delete('turnUp', id);
         continue;
       }
-      if (pending.some((a) => (a.type === 'flip' && a.card === id && a.ref !== undefined) || (a.type === 'reveal' && a.instanceId === id))) continue;
       this.turnUpDue.delete(id);
       const secret = this.sec.identities[id]!;
       const flip = this.stamp({ type: 'flip', card: id, face: 'up', ref: secret.card, salt: secret.salt, ...(group !== undefined ? { group } : {}) });
@@ -1093,7 +1217,23 @@ class NetTable implements NetSession {
     // a peer answered, wait until this replica is in step with it.
     await new Promise((r) => setTimeout(r, settleMs));
     if (this.disposed) throw new Error('The session is closed');
-    await this.until(() => this.engine.status() !== 'syncing' && this.engine.status() !== 'joining', () => null, timeoutMs, 'the table to sync');
+    // A browser that opened a shared link waits longer for a peer: the room's table is most likely elsewhere already,
+    // and a chair taken alone would collide with its creator's (decision M1-P8). After a rejoin the room's table is
+    // known to exist: wait for it as long as for a chair.
+    const lone = this.rejoining ? timeoutMs : Math.max(0, (this.internals.loneWaitMs ?? 0) - settleMs);
+    if (!this.createdHere && lone > 0 && !this.peerConnected()) {
+      await this.until(() => this.peerConnected(), () => null, lone, 'a peer').catch(() => undefined);
+      if (this.disposed) throw new Error('The session is closed');
+    }
+    await this.until(
+      () => {
+        const st = this.engine.status();
+        return st !== 'syncing' && st !== 'joining' && (st === 'connected' || !this.peerConnected());
+      },
+      () => null,
+      timeoutMs,
+      'the table to sync',
+    );
     const deadline = this.now() + timeoutMs;
     while (this.engine.seat() === null || seatOfPeer(this.engine.confirmedState(), this.peerId) === null) {
       if (this.disposed) throw new Error('The session is closed');
@@ -1112,6 +1252,78 @@ class NetTable implements NetSession {
       ).catch((e: unknown) => {
         throw new Error(`Could not take a chair at this table. (${errorText(e)})`);
       });
+    }
+  }
+
+  private peerConnected(): boolean {
+    return this.engine.peers().some((p) => p.status === 'connected' && p.peerId !== '' && p.peerId !== this.peerId);
+  }
+
+  /**
+   * Whether this browser sits at a table it started alone and has met the room's own table (decision M1-P8): a
+   * connected peer claims this browser's chair, this browser did not create the room, and its table holds nothing but
+   * its own lobby actions (no other chair taken, every action its own, still in the lobby). Two such histories of the
+   * same length would otherwise both keep sequencing, each with the chair (DESIGN "Multiplayer architecture", Shared
+   * state: one sequencer, every browser converges).
+   */
+  private collision(): boolean {
+    if (this.disposed || this.rejoining || this.createdHere || this.rejoins >= MAX_REJOINS) return false;
+    const seat = this.engine.seat();
+    if (seat === null) return false;
+    if (!this.engine.peers().some((p) => p.status === 'connected' && p.peerId !== '' && p.peerId !== this.peerId && p.seat === seat)) return false;
+    const st = this.engine.confirmedState();
+    if (st.stage !== 'lobby') return false;
+    if (Object.values(st.seats).some((s) => s.peer !== undefined && s.peer !== this.peerId)) return false;
+    return this.entries.every((e) => e.kind !== 'action' || e.action.by === seat);
+  }
+
+  /**
+   * Give up the table this browser started alone and join the room's (see `collision`): leave with the old engine,
+   * start a new one from the seq-0 table, catch up from the peers and take a free chair. Own chat lines are said
+   * again; a deck committed alone has to be readied again.
+   */
+  private async rejoin(): Promise<void> {
+    if (!this.collision()) return;
+    this.rejoining = true;
+    this.rejoins++;
+    const said = this.entries.flatMap((e) => (e.kind === 'action' && e.action.type === 'chat' ? [{ text: e.action.text, channel: e.action.channel }] : []));
+    const readied = this.entries.some((e) => e.kind === 'action' && e.action.type === 'ready');
+    for (const u of this.unsubs.splice(0)) u();
+    this.eng.leave();
+    for (const w of this.waiters.splice(0)) {
+      if (w.timer) clearTimeout(w.timer);
+      w.reject(new Error('This browser joined the table already in the room'));
+    }
+    const fresh = freshNetTable(this.opts.game, this.opts.format ?? '1v1');
+    this.eng = this.makeEngine({ snapshot: { seq: 0, state: fresh }, tail: [] });
+    this.fold = this.eng.confirmedState();
+    this.sec = emptySecretStore(this.sec.seat);
+    this.entries = this.entries.filter((e) => e.kind === 'system');
+    this.undoStack = [];
+    this.exposed.clear();
+    for (const m of [this.sentRandomness, this.privateBefore, this.turnUpAfter, this.turnUpDue, this.turnUpRefusals, this.reRevealAfter, this.revealsDue, this.refused, this.roundRefusals]) m.clear();
+    this.reRevealDue = [];
+    this.reissueOwed = false;
+    this.reissueCid = null;
+    this.reissueRefusals = 0;
+    this.seatAttempts = 0;
+    this.saves = this.persistence(fresh, 0, 0);
+    this.attach(this.eng);
+    this.system('info', `Another browser was already at this table: this browser left the table it had started alone and joins that one${readied ? ' (press Ready again)' : ''}.`);
+    this.notify();
+    this.netChanged();
+    try {
+      await this.eng.join();
+      if (this.disposed) return;
+      this.saveBase();
+      await this.sitDown(this.internals.settleMs ?? SETTLE_MS, this.internals.seatTimeoutMs ?? SEAT_TIMEOUT_MS);
+      for (const line of said) this.chat(line.text, line.channel);
+    } catch (e) {
+      if (!this.disposed) this.warn(`Could not join the table already in the room: ${errorText(e)}`);
+    } finally {
+      this.rejoining = false;
+      this.notify();
+      this.netChanged();
     }
   }
 
@@ -1230,18 +1442,20 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
   const start: ResumePoint = saved?.start ?? { snapshot: { seq: 0, state: fresh }, tail: [] };
   const identity = await createNetIdentity(opts.identity.keyPair, opts.identity.peerId, opts.identity.nickname);
   if (signal?.aborted) throw cancelled();
-  const engine = createNetEngine({
-    transport: opts.transport(),
-    roomId: opts.roomId,
-    roomKey: opts.roomKey,
-    identity,
-    game: opts.game,
-    start,
-    deadlines,
-    ...(opts.now ? { now: opts.now } : {}),
-  });
+  const makeEngine = (from: ResumePoint): NetEngine =>
+    createNetEngine({
+      transport: opts.transport(),
+      roomId: opts.roomId,
+      roomKey: opts.roomKey,
+      identity,
+      game: opts.game,
+      start: from,
+      deadlines,
+      ...(opts.now ? { now: opts.now } : {}),
+    });
+  const engine = makeEngine(start);
   const seat0 = seatOfPeer(engine.confirmedState(), opts.identity.peerId) ?? 's0';
-  const session = new NetTable(engine, opts, internals, {
+  const session = new NetTable(engine, makeEngine, opts, internals, {
     secrets: saved?.secrets ?? emptySecretStore(seat0),
     entries: saved?.entries ?? [],
     snapshot: start.snapshot.state,
@@ -1285,6 +1499,6 @@ function abortable<T>(p: Promise<T>, signal: AbortSignal | undefined): Promise<T
 }
 
 /** Join or start the table of `opts.roomId` (PLAN M1-P8; session/types.ts CreateNetSession). */
-export const createNetSession: CreateNetSession = (opts) => openNetSession(opts);
+export const createNetSession: CreateNetSession = (opts) => openNetSession(opts, { loneWaitMs: LONE_WAIT_MS });
 
 export type { NetTable };

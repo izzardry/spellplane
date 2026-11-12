@@ -2,14 +2,14 @@ import { mount } from 'svelte';
 import { createFaceSource, parseDecklist, ScryfallCardDataSource, type CardDataSource } from './data/index';
 import { mtg } from './games/index';
 import { createTableScene } from './scene/index';
-import { createSoloSession, openNetSession, type NetSession, type TableSession } from './session/index';
+import { createSoloSession, LONE_WAIT_MS, openNetSession, type NetSession, type TableSession } from './session/index';
 import { liveIdentity } from './session/live-identity';
-import { createPageTransport, KillableTransport } from './session/transports';
+import { createPageTransport, KillableTransport, pageTransportKind } from './session/transports';
 import { openStores, SOLO_ROOM_ID, type LocalStores } from './store/index';
 import App from './ui/App.svelte';
 import { startProps } from './ui/lobby/start';
 import { parseRoute } from './ui/routes';
-import type { AppProps, RoomLink } from './ui/types';
+import type { AppProps, RoomLink, StartPageProps } from './ui/types';
 
 const target = document.getElementById('app');
 if (!target) throw new Error('#app missing');
@@ -51,6 +51,26 @@ async function boot(el: HTMLElement): Promise<void> {
   const identity = stores ? liveIdentity(stores.identity) : null;
 
   /**
+   * Rooms this tab created on its start page (kept for the tab, so a reload still knows): their creator may sit alone
+   * at once, while a browser that opened a shared link first waits for the room's table (decision M1-P8).
+   */
+  const CREATED = 'spellplane.created.';
+  const markCreated = (roomId: string): void => {
+    try {
+      sessionStorage.setItem(CREATED + roomId, '1');
+    } catch {
+      /* storage blocked: the creator then waits like a joiner */
+    }
+  };
+  const createdHere = (roomId: string): boolean => {
+    try {
+      return sessionStorage.getItem(CREATED + roomId) === '1';
+    } catch {
+      return false;
+    }
+  };
+
+  /**
    * Join a table link with the networked session (the table route leaves it when the route goes away). A join still
    * under way when the page leaves that link's route is cancelled, so its engine and transport do not live on.
    */
@@ -75,7 +95,8 @@ async function boot(el: HTMLElement): Promise<void> {
           identity: await identity.identity(),
           store: stores.tables,
         },
-        {},
+        // BroadcastChannel peers connect at once; over Trystero they come up seconds after the join.
+        { createdHere: createdHere(link.roomId), loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS },
         joining.signal,
       );
     } finally {
@@ -104,9 +125,21 @@ async function boot(el: HTMLElement): Promise<void> {
     parseDecklist,
     openRoom,
     diag: { createTransport: () => createPageTransport(), room: null, now: () => Date.now() },
-    ...(stores && identity ? { settings: stores.settings, identity: identity.store, decks: stores.decks, start: startProps({ identity: identity.store, tables: stores.tables }) } : {}),
+    ...(stores && identity ? { settings: stores.settings, identity: identity.store, decks: stores.decks, start: createdRooms(startProps({ identity: identity.store, tables: stores.tables }), markCreated) } : {}),
   };
   mount(App, { target: el, props });
+}
+
+/** Start-page props whose new rooms are recorded as created by this tab. */
+function createdRooms(start: StartPageProps, mark: (roomId: string) => void): StartPageProps {
+  return {
+    ...start,
+    newRoom: () => {
+      const link = start.newRoom();
+      mark(link.roomId);
+      return link;
+    },
+  };
 }
 
 if (harness && Object.hasOwn(HARNESSES, harness)) {
