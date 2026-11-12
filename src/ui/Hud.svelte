@@ -38,6 +38,9 @@
   import PileViewer from './PileViewer.svelte';
   import TokenSearch from './TokenSearch.svelte';
   import TurnStrip from './TurnStrip.svelte';
+  import Speech from './settings/Speech.svelte';
+  import { sceneCaptions } from './settings/captions';
+  import type { Caption } from '../voice/types';
 
   let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
 
@@ -97,6 +100,11 @@
   let preview = $state<{ card: InstanceId; x: number; y: number } | null>(null);
   let voice = $state<{ talking: 'talk' | 'teamTalk' | null; muted: boolean }>({ talking: null, muted: false });
   let logPanel = $state<LogPanel | undefined>();
+  /** Dictated captions (M3-P4, session.captions) and the speech settings panel. */
+  let captionList = $state.raw<Caption[]>([]);
+  let speechOpen = $state(false);
+  /** Note text before the words being dictated into the note field (DESIGN "Chat and voice", Notes by voice). */
+  let noteBase: string | null = null;
   let noteInput = $state<HTMLInputElement | undefined>();
   let drawInput = $state<HTMLInputElement | undefined>();
 
@@ -515,8 +523,36 @@
   // --- Scene ------------------------------------------------------------------------------------------------------
   $effect(() => {
     if (!sceneReady || !scene) return;
-    const view: ViewState = { selection: [...selection], hovered, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile };
+    const view: ViewState = { selection: [...selection], hovered, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile, captions: sceneCaptions(captionList, st) };
     scene.update(st, view);
+  });
+
+  // The hovered card is a caption's anchor (DESIGN "Chat and voice", Placement: "last acted on or is hovering").
+  $effect(() => {
+    const h = hovered;
+    session.captions?.hover(h ? { kind: 'card', id: h } : null);
+  });
+  /** While the note field has focus, dictation goes into it (DESIGN "Chat and voice", Notes by voice). */
+  function dictateNote(on: boolean): void {
+    noteBase = null;
+    session.captions?.dictateInto(
+      on
+        ? {
+            kind: 'field',
+            insert: (text, final) => {
+              if (!note) return;
+              noteBase ??= note.text;
+              note.text = (noteBase.trim() ? `${noteBase.trim()} ${text}` : text).slice(0, 80);
+              if (final) noteBase = null;
+            },
+          }
+        : null,
+    );
+  }
+
+  // A note field removed without a blur (Enter, Escape) hands dictation back to captions.
+  $effect(() => {
+    if (note === null) untrack(() => dictateNote(false));
   });
 
   let seenLog = 0;
@@ -546,6 +582,8 @@
       entries = log;
       pendingChat = prunePending(pendingChat, log);
     });
+    captionList = session.captions?.captions() ?? [];
+    const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
     void settings
       ?.get('keymap')
       .then((o) => {
@@ -590,6 +628,8 @@
     }
     return () => {
       unsub();
+      unsubCaptions?.();
+      session.captions?.dictateInto(null);
       for (const t of timers) clearTimeout(t);
       timers = [];
       engine.blur();
@@ -635,6 +675,7 @@
         <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
+        {#if session.captions}<button type="button" data-testid="open-speech-settings" aria-pressed={speechOpen} onclick={() => (speechOpen = !speechOpen)}>Dictation</button>{/if}
         {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
         {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
       </nav>
@@ -813,7 +854,11 @@
           if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) submitNote();
           else if (e.key === 'Escape') note = null;
         }}
-        onblur={() => (note = null)}
+        onfocus={() => dictateNote(true)}
+        onblur={() => {
+          dictateNote(false);
+          note = null;
+        }}
       />
     </div>
   {/if}
@@ -889,6 +934,10 @@
     />
   {/if}
 
+  {#if speechOpen && session.captions}
+    <Speech captions={session.captions} onclose={() => (speechOpen = false)} />
+  {/if}
+
   {#if cheatOpen}
     <CheatSheet {keymap} onremap={remap} onreset={resetKeys} onclose={() => (cheatOpen = false)} />
   {/if}
@@ -954,6 +1003,9 @@
   }
   .toolbar {
     display: flex;
+    flex-wrap: wrap;
+    /* Wraps before it reaches the turn strip, centred at the top (at 1440 px it starts at about 410 px). */
+    max-width: 400px;
     gap: 4px;
     pointer-events: auto;
     align-items: center;

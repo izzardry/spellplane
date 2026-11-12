@@ -10,6 +10,8 @@ import App from './ui/App.svelte';
 import { startProps } from './ui/lobby/start';
 import { parseRoute } from './ui/routes';
 import type { AppProps, RoomLink, StartPageProps } from './ui/types';
+import { flags } from './util/flags';
+import { FAKE_SPEECH, SPEECH_ENGINES } from './voice/speech/index';
 
 const target = document.getElementById('app');
 if (!target) throw new Error('#app missing');
@@ -54,6 +56,7 @@ async function boot(el: HTMLElement): Promise<void> {
   const registerSession = (session: TableSession): void => {
     debug?.registerSessionDebug(session, { cardData, parseDecklist });
     debug?.registerDraftDebug(session);
+    debug?.registerSpeechDebug(session);
   };
   registerSession(solo);
 
@@ -105,6 +108,8 @@ async function boot(el: HTMLElement): Promise<void> {
           store: stores.tables,
           sets,
           generatePack,
+          // Dictation and captions (M3-P4): the fake engine replaces the others with `?speech=fake`.
+          voice: { media: navigator.mediaDevices, settings: stores.settings, engines: flags().speech === 'fake' ? [FAKE_SPEECH] : [SPEECH_ENGINES.webspeech, SPEECH_ENGINES.local] },
         },
         // BroadcastChannel peers connect at once; over Trystero they come up seconds after the join.
         { createdHere: createdHere(link.roomId), loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS },

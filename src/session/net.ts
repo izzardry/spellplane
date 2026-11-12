@@ -76,6 +76,8 @@ import { randomId, randomSalt } from './secrecy';
 import { identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recoveryProblem, type RecoveryOwed, type SessionRecovery } from './resume';
 import { reconcileSecrets, type LibraryPlacement } from './secrets';
 import { buildFromDeck, Evening, type DraftPort } from './draft';
+import { mountCaptions } from './captions';
+import type { CaptionControls } from '../voice/types';
 import type { DraftControls } from '../draft/types';
 import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
 
@@ -278,6 +280,8 @@ class NetTable implements NetSession, SessionRecovery {
   /** Own pack-seed rounds run one after another. */
   private packChain: Promise<unknown> = Promise.resolve();
   private eveningImpl: Evening | null = null;
+  /** Dictation and captions (session/captions.ts, M3-P4); set once joined when the session has voice options. */
+  captions?: CaptionControls;
 
   constructor(
     engine: NetEngine,
@@ -447,6 +451,7 @@ class NetTable implements NetSession, SessionRecovery {
     if (this.disposed) return;
     this.disposed = true;
     this.eveningImpl?.dispose();
+    this.captions?.dispose();
     for (const u of this.unsubs.splice(0)) u();
     this.engine.leave();
     for (const w of this.waiters.splice(0)) {
@@ -1953,6 +1958,7 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
     if (!saved) session.saveBase();
     session.prefetch(session.knownSids());
     await abortable(session.sitDown(internals.settleMs ?? SETTLE_MS, internals.seatTimeoutMs ?? SEAT_TIMEOUT_MS), signal);
+    if (opts.voice) session.captions = mountCaptions(session, opts.voice, opts.now);
   } catch (e) {
     session.leave();
     throw e;

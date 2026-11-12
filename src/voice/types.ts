@@ -222,6 +222,11 @@ export interface SpeechEngineInfo {
 export interface SpeechEngineFactory {
   readonly info: SpeechEngineInfo;
   create(): Promise<SpeechEngine>;
+  /**
+   * Whether the engine can run in this browser, answered without creating it, so the settings can list the local model
+   * without loading its code (added by M3-P4). Absent: the caller creates the engine and asks it.
+   */
+  available?(): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
