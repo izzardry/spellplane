@@ -508,7 +508,8 @@ class NetTable implements NetSession, SessionRecovery {
       // Kept in local storage too, so the card is still turned up after a reload before its flip is sequenced.
       this.nonces.set('turnUp', publishes, stamped.cid);
     }
-    if (stamped.type === 'revealTo' && this.ownHidden(stamped.instanceId)) this.revealsDue.set(stamped.cid, { id: stamped.instanceId, seats: [...stamped.seats] });
+    // A reveal to named spectators goes to their pages too (session/spectator.ts, M3-P5).
+    if (stamped.type === 'revealTo' && this.ownHidden(stamped.instanceId)) this.revealsDue.set(stamped.cid, { id: stamped.instanceId, seats: [...stamped.seats, ...(stamped.spectators ?? [])] });
     if (stamped.type === 'rngCommit') this.sentRandomness.set(stamped.cid, stamped);
     const done = this.propose(stamped);
     if (!done) {
@@ -1922,6 +1923,8 @@ async function loadSaved(store: TableStore | undefined, roomId: string): Promise
  * Aborting `signal` before that leaves the room (engine and transport) and rejects.
  */
 export async function openNetSession(opts: NetSessionOptions, internals: NetSessionInternals = {}, signal?: AbortSignal): Promise<NetTable> {
+  // A spectator takes no chair: session/spectator.ts openSpectatorSession (M3-P5).
+  if (opts.role === 'spectator') throw new Error('a spectator joins with openSpectatorSession (session/spectator.ts)');
   const saved = await loadSaved(opts.store, opts.roomId).catch(() => null);
   if (signal?.aborted) throw cancelled();
   const fresh = freshNetTable(opts.game, opts.format ?? '1v1');

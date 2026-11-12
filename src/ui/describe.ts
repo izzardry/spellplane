@@ -20,6 +20,8 @@ import type { Action, UndoableAction } from '../core/actions';
 import type { ActionLogEntry, Format, InstanceId, LogEntry, SeatId, TableState, ZoneId } from '../core/types';
 import { parseZoneId } from '../core/ids';
 import { parseChatText, type ChatTab } from '../core/log';
+import { isSpectatorId } from '../core/teams';
+import { spectatorLabel } from '../net/roles';
 
 /**
  * A piece of a log line: text, a table card that previews on hover, or (chat, M1-P6) a card named in double brackets
@@ -200,7 +202,9 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     if (!segs) continue;
     // An answer is the answering seat's line, also when the sequencer's clock sent it for that seat (a timeout).
     const who = a.type === 'respond' ? a.seat : a.by;
-    const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: who, colour: st.seats[who]?.colour ?? null, actor: seatName(who), segs, at: e.at };
+    // A spectator's line names it by the nickname its chat carries, never by its raw id (M3-P5, net/roles.ts).
+    const actor = isSpectatorId(who) ? spectatorLabel(a.type === 'chat' ? a.name : undefined) : seatName(who);
+    const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: who, colour: st.seats[who]?.colour ?? null, actor, segs, at: e.at };
     if (a.type === 'chat') line.channel = a.channel;
     lines.push(line);
     merge = sig === null ? null : { line, sig, a, cards: [a.type === 'draw' ? t('a card') : card(cardOf(a)!)] };

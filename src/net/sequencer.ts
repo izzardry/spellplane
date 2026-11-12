@@ -9,6 +9,7 @@ import { ACTION_FAMILIES, type Action, type ActionType } from '../core/actions';
 import { explain, reduce } from '../core/reducer';
 import type { CoreGameSpec, SeatId, TableState } from '../core/types';
 import type { PeerRole, SequencedAction } from './messages';
+import { roleProblem } from './roles';
 import { NET_SNAPSHOT_EVERY, SYNC_TAIL_LIMIT, type PeerInfo, type ReceiveResult, type SequenceResult, type Sequencer, type SyncEngine } from './types';
 
 /** Sequenced actions a replica retains for catch-up (twice the tail limit, so a 500-action gap is still answered with a tail). */
@@ -140,7 +141,7 @@ function hiddenOwnerCheck(state: TableState, a: Action): string | null {
 class SequencerImpl implements Sequencer {
   constructor(public lastSeq: number) {}
 
-  sequence(state: TableState, action: Action, sender: { seat: SeatId | null; role: PeerRole; self: boolean }): SequenceResult {
+  sequence(state: TableState, action: Action, sender: { seat: SeatId | null; role: PeerRole; self: boolean; peerId?: string }): SequenceResult {
     const why = this.check(state, action, sender);
     if (why !== null) return { ok: false, reason: why };
     const seq = Math.max(this.lastSeq, state.seq) + 1;
@@ -149,16 +150,17 @@ class SequencerImpl implements Sequencer {
     return { ok: true, action: { ...rest, seq } as SequencedAction };
   }
 
-  private check(state: TableState, action: Action, sender: { seat: SeatId | null; role: PeerRole; self: boolean }): string | null {
+  private check(state: TableState, action: Action, sender: { seat: SeatId | null; role: PeerRole; self: boolean; peerId?: string }): string | null {
     const a = action as unknown as Record<string, unknown>;
     if (typeof a !== 'object' || a === null) return 'an action must be an object';
     if (typeof a.type !== 'string' || !Object.hasOwn(ACTION_FAMILIES, a.type)) return `unknown action type ${String(a.type)}`;
     if (typeof a.by !== 'string' || typeof a.cid !== 'string' || a.cid === '') return 'an action needs by and cid';
     if (a.restore !== undefined) return 'only the inverse inside an undo carries a restore patch';
-    const family = ACTION_FAMILIES[action.type];
     if (sender.role === 'spectator') {
-      if (family !== 'social') return `a spectator may not send ${action.type}`;
-      if (Object.hasOwn(state.seats, action.by)) return 'a spectator may not act for a seat';
+      // DESIGN "Players, seats and formats", Spectators: chat and ping only, never for a seat, as its own spectator id
+      // (net/roles.ts; M3-P5). Without the sender's peer id the action is refused: its `by` cannot be checked.
+      const why = roleProblem(state, action, { role: sender.role, peerId: sender.peerId ?? '', seat: sender.seat });
+      if (why !== null) return why;
     } else if (sender.seat === null) {
       // An unseated player can only take a chair (DESIGN "Players, seats and formats").
       if (action.type !== 'seatTake') return `take a seat before sending ${action.type}`;

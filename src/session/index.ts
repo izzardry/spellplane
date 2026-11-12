@@ -5,5 +5,6 @@ export { emptySecrets, privateFaces, reconcileSecrets, type LibraryPlacement } f
 export { commitFor, orderHash, shuffledOrder, shuffleSeed, ByteStream } from './secrecy';
 export { sha256Sync } from '../core/sha256';
 export { createNetSession, LONE_WAIT_MS, openNetSession } from './net';
+export { openSpectatorSession, SpectatorTable } from './spectator';
 export { NULL_PRESENCE } from './presence';
 export { deckImportOf } from './deck-build';

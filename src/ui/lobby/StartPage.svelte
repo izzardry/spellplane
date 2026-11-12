@@ -8,6 +8,8 @@
   import type { TableRecord } from '../../store/types';
   import type { StartPageProps } from '../types';
   import { nicknameProblem, normaliseNickname } from './seats';
+  import { isWatchLink } from './spectate';
+  import { WATCH } from '../routes';
 
   let { identity, newRoom, parseLink, savedTables, open }: StartPageProps = $props();
 
@@ -58,7 +60,8 @@
     }
     linkProblem = '';
     if (!(await saveNickname())) return;
-    open(link);
+    // A spectator's link (`…/watch`, M3-P5) opens the same table to watch without a chair.
+    open(isWatchLink(pasted) ? { ...link, url: `${link.url}/${WATCH}` } : link);
   }
 </script>
 
