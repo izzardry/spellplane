@@ -3,8 +3,9 @@
  * "Players, seats and formats"). Confirmation rounds (ask, respond, autoPass) belong to M1-P3.
  */
 import type { ActionOf } from '../actions';
-import type { Anchor, Stage } from '../types';
-import type { Draft } from './draft';
+import { enterStage, stageProblem } from '../stage';
+import type { Anchor } from '../types';
+import type { Draft, RecordDraft } from './draft';
 import { HIDDEN_POSE, isHidden } from './place';
 import { byId, checkAnchor, checkId, checkInt, checkString, isObj, reject } from './util';
 
@@ -171,9 +172,32 @@ export function settings(d: Draft, a: ActionOf<'settings'>): void {
   }
 }
 
-const STAGES: readonly Stage[] = ['lobby', 'draft', 'build', 'match'];
+/** Copy every changed record of `next` into the draft (keys `next` lacks are deleted). */
+function syncRecord<T>(r: RecordDraft<T>, next: Readonly<Record<string, T>>): void {
+  for (const k of r.keys()) if (!Object.hasOwn(next, k)) r.delete(k);
+  for (const [k, v] of Object.entries(next)) if (r.get(k) !== v) r.set(k, v);
+}
 
+/**
+ * `stageSet {stage, round?}`: move the evening on (DESIGN "Specification: card data, packs and draft formats", Evening
+ * stages). The rules are core/stage.ts `stageProblem`; what the new stage does to the table is `enterStage` (M2-P7).
+ */
 export function stageSet(d: Draft, a: ActionOf<'stageSet'>): void {
-  if (!STAGES.includes(a.stage)) reject('invalid stage');
-  d.setStage(a.stage);
+  const problem = stageProblem(d.base, a);
+  if (problem !== null) reject(problem);
+  const next = enterStage(d.base, a.stage, a.seq ?? d.base.seq + 1);
+  syncRecord(d.cards, next.cards);
+  syncRecord(d.zones, next.zones);
+  syncRecord(d.lines, next.lines);
+  syncRecord(d.seats, next.seats);
+  syncRecord(d.teams, next.teams);
+  syncRecord(d.commitments, next.commitments);
+  syncRecord(d.rng, next.rng);
+  syncRecord(d.shuffles, next.shuffles);
+  if (next.stack !== d.base.stack) d.setStack(next.stack);
+  if (next.turn !== d.base.turn) Object.assign(d.turnW(), next.turn);
+  if (next.confirm !== d.base.confirm) d.setConfirm(next.confirm);
+  if (next.draft !== d.base.draft) d.setDraftState(next.draft ?? null);
+  if (next.games !== undefined && next.games !== d.base.games) d.setGames(next.games);
+  d.setStage(next.stage);
 }

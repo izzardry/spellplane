@@ -209,7 +209,11 @@ export function seatHint(mode: LobbyMode, state: TableState): string | null {
   return `${modeLabel(mode)} is for ${want} players; ${n} ${n === 1 ? 'is' : 'are'} seated.`;
 }
 
-/** Whether the mode takes picks against a pick timer (pass, Two-Headed Giant and Rochester drafts). */
+/**
+ * Whether the mode takes picks against a pick timer: the pass drafts, whose held packs the sequencer times
+ * (core/drafting.ts draftDeadlines). Rochester, Winston and Grid are turn-based and have no timer, so the lobby does not
+ * offer one there (M2-P7; DECISIONS [M2-P3]).
+ */
 export function hasPickTimer(draft: DraftFormatSettings | null): boolean {
-  return draft !== null && (draft.format === 'pass' || draft.format === 'teamDraft' || draft.format === 'rochester');
+  return draft !== null && (draft.format === 'pass' || draft.format === 'teamDraft');
 }

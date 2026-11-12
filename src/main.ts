@@ -1,11 +1,11 @@
 import { mount } from 'svelte';
-import { createFaceSource, parseDecklist, ScryfallCardDataSource, type CardDataSource } from './data/index';
+import { createFaceSource, createSetDataSource, generatePack, parseDecklist, ScryfallCardDataSource, type CardDataSource, type SetDataSource } from './data/index';
 import { mtg } from './games/index';
 import { createTableScene } from './scene/index';
 import { createSoloSession, LONE_WAIT_MS, openNetSession, type NetSession, type TableSession } from './session/index';
 import { liveIdentity } from './session/live-identity';
 import { createPageTransport, KillableTransport, pageTransportKind } from './session/transports';
-import { openStores, SOLO_ROOM_ID, type LocalStores } from './store/index';
+import { createSetCache, openStores, SOLO_ROOM_ID, type LocalStores } from './store/index';
 import App from './ui/App.svelte';
 import { startProps } from './ui/lobby/start';
 import { parseRoute } from './ui/routes';
@@ -31,6 +31,7 @@ const harness = __SPELLPLANE_DEBUG__ ? new URLSearchParams(location.search).get(
 async function boot(el: HTMLElement): Promise<void> {
   // Browser tests inject recorded card data (tests/fixtures/) so they never touch the network; dev and test builds only.
   const fixtures = __SPELLPLANE_DEBUG__ ? (await import('./debug/fixture-cards')).injectedCardData() : null;
+  const fixtureSets = __SPELLPLANE_DEBUG__ ? (await import('./debug/fixture-sets')).injectedSets() : null;
 
   let stores: LocalStores | null = null;
   try {
@@ -41,11 +42,16 @@ async function boot(el: HTMLElement): Promise<void> {
   }
 
   const cardData: CardDataSource = fixtures ?? new ScryfallCardDataSource(stores ? {} : { cache: null });
+  // MTGJSON booster data for drafts and the lobby's set picker (M2-P1), cached in the `sets` store; injected fixtures in tests.
+  const sets: SetDataSource = fixtureSets ?? createSetDataSource({ cache: stores ? createSetCache(stores.db) : null });
   const faces = createFaceSource(cardData);
   const solo = await createSoloSession({ game: mtg, cardData, roomId: SOLO_ROOM_ID, ...(stores ? { store: stores.tables } : {}) });
 
   const debug = __SPELLPLANE_DEBUG__ ? await import('./debug/index') : null;
-  const registerSession = (session: TableSession): void => debug?.registerSessionDebug(session, { cardData, parseDecklist });
+  const registerSession = (session: TableSession): void => {
+    debug?.registerSessionDebug(session, { cardData, parseDecklist });
+    debug?.registerDraftDebug(session);
+  };
   registerSession(solo);
 
   const identity = stores ? liveIdentity(stores.identity) : null;
@@ -94,6 +100,8 @@ async function boot(el: HTMLElement): Promise<void> {
           transport: () => (transport = new KillableTransport(createPageTransport())),
           identity: await identity.identity(),
           store: stores.tables,
+          sets,
+          generatePack,
         },
         // BroadcastChannel peers connect at once; over Trystero they come up seconds after the join.
         { createdHere: createdHere(link.roomId), loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS },
@@ -126,6 +134,7 @@ async function boot(el: HTMLElement): Promise<void> {
     game: mtg,
     parseDecklist,
     openRoom,
+    sets,
     diag: { createTransport: () => createPageTransport(), room: null, now: () => Date.now() },
     ...(stores && identity ? { settings: stores.settings, identity: identity.store, decks: stores.decks, start: createdRooms(startProps({ identity: identity.store, tables: stores.tables }), markCreated) } : {}),
   };
