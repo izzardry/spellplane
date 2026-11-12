@@ -7,8 +7,9 @@
  * `stageProblem` and `enterStage` into the `stageSet` reducer (core/reducer/table.ts).
  */
 import type { StageSetAction } from './actions';
-import { seatedInOrder } from './drafting';
-import type { DraftFormatSettings, LobbySettings, SeatId, Stage, TableState } from './types';
+import { createDraftState, seatedInOrder } from './drafting';
+import { roundPassed } from './reducer/confirm';
+import type { DraftFormat, DraftFormatSettings, Format, LobbySettings, Seat, SeatId, Stage, TableState, Team, Zone } from './types';
 import { DEFAULT_LOBBY_SETTINGS } from './types';
 
 /** Every stage in evening order (DESIGN "Data model and protocol", TableState.stage). */
@@ -133,21 +134,207 @@ export function lobbyProblem(lobby: unknown): string | null {
 }
 
 /**
- * Why a `stageSet` does not apply to `state`, or null (DESIGN "Specification: card data, packs and draft formats",
- * Evening stages): the edge exists, only the host leaves the lobby, draft → build only once the draft is done, build →
- * match only when every seated player is Ready, leaving a match needs a passed confirmation round (`action.round`),
- * the seat count suits the format. Implementer: M2-P7 (returns null until then, so M0/M1 behaviour is unchanged).
+ * The label of the confirmation round in which a player proposes to leave a match (DESIGN "Specification: card data,
+ * packs and draft formats", Evening stages: "from match any player proposes 'next game' or 'new draft' and the others
+ * confirm"). A `stageSet` that leaves a match names a passed round with the matching label, so a round about something
+ * else (a stack item, "attacks?") never moves the evening (DECISIONS [M2-P7]).
  */
-export function stageProblem(_state: TableState, _action: StageSetAction): string | null {
+export const STAGE_ROUND_LABELS = { nextGame: 'Next game?', newDraft: 'New draft?' } as const;
+
+/** The proposal a round label stands for, or null (STAGE_ROUND_LABELS). */
+export function stageProposalOf(label: string | undefined): 'nextGame' | 'newDraft' | null {
+  if (label === STAGE_ROUND_LABELS.nextGame) return 'nextGame';
+  if (label === STAGE_ROUND_LABELS.newDraft) return 'newDraft';
   return null;
 }
 
 /**
- * The table after entering `to` at `seq` (DESIGN "Specification: card data, packs and draft formats", Evening stages;
- * PLAN M2-P7): entering the draft creates `TableState.draft` (core/drafting.ts createDraftState); entering build from a
- * match clears the game table (cards, stack, lines, commitments, Ready flags, life) for sideboarding; a new draft drops
- * the draft state; entering a match counts `games`. Implementer: M2-P7 (until then only the stage changes).
+ * Seat counts each acquisition mode is made for (DESIGN "Pre-game", mode table, Players column: booster draft "3–4
+ * (works with 2)", Rochester and sealed 2–4, Winston and Grid 2, the Two-Headed Giant modes 4). Mirrors
+ * draft/types.ts DRAFT_PRESETS, which core cannot import.
  */
-export function enterStage(state: TableState, to: Stage, _seq: number): TableState {
-  return state.stage === to ? state : { ...state, stage: to };
+export const FORMAT_SEATS: Readonly<Record<DraftFormat, { min: number; max: number }>> = {
+  pass: { min: 2, max: 4 },
+  sealed: { min: 2, max: 4 },
+  rochester: { min: 2, max: 4 },
+  winston: { min: 2, max: 2 },
+  grid: { min: 2, max: 2 },
+  teamDraft: { min: 4, max: 4 },
+  teamSealed: { min: 4, max: 4 },
+};
+
+/** Formats whose client side exists (draft/index.ts DRAFT_DRIVERS); the Two-Headed Giant drafts are M3-P2's. */
+const PLAYABLE_FORMATS: ReadonlySet<DraftFormat> = new Set<DraftFormat>(['pass', 'sealed', 'rochester', 'winston', 'grid']);
+
+/**
+ * How a new game starts (DESIGN "Players, seats and formats": 20 life each, 30 per team in Two-Headed Giant; "Turn
+ * flow and confirmation": the turn strip starts at untap of turn 1) for the games core knows by id. The reducer has no
+ * game definition, so these mirror games/mtg (a unit test keeps them in step); for another game a new game keeps life
+ * and phase as they were (DECISIONS [M2-P7]).
+ */
+export const GAME_START: Readonly<Record<string, { life: Readonly<Record<Format, number>>; phase: string }>> = {
+  mtg: { life: { '1v1': 20, ffa3: 20, ffa4: 20, '2hg': 30 }, phase: 'untap' },
+};
+
+/** Whether the seat holds a player (a chair with a name). */
+function seated(state: TableState, seat: SeatId): boolean {
+  const s = Object.hasOwn(state.seats, seat) ? state.seats[seat] : undefined;
+  return s !== undefined && s.name.trim() !== '';
+}
+
+/**
+ * The host as the stage machine reads it: the seated player with the lowest seat index who is not away, else
+ * `hostSeat` (DESIGN "Specification: card data, packs and draft formats", Evening stages: "the host advances from
+ * lobby"; "Multiplayer architecture": an away seat never stalls the table). The lobby's start button uses the same
+ * rule (ui/lobby/seats.ts hostSeat with presence). DECISIONS [M2-P7].
+ */
+export function actingHost(state: TableState): SeatId | null {
+  const seatedIds = seatedInOrder(state);
+  return seatedIds.find((id) => state.seats[id]!.away !== true) ?? seatedIds[0] ?? null;
+}
+
+/** Seated players without a deck commitment (they have not pressed Ready in the builder, or in the lobby). */
+export function notReady(state: TableState): SeatId[] {
+  return seatedInOrder(state).filter((id) => !Object.hasOwn(state.commitments, id));
+}
+
+/** Why the seated players of `state` cannot draft `settings`, or null (DESIGN "Pre-game", mode table, Players column). */
+export function formatSeatProblem(state: TableState, settings: DraftFormatSettings): string | null {
+  const range = Object.hasOwn(FORMAT_SEATS, settings.format) ? FORMAT_SEATS[settings.format] : undefined;
+  if (range === undefined) return 'unknown draft format';
+  if (!PLAYABLE_FORMATS.has(settings.format)) return 'Two-Headed Giant drafts are not available yet';
+  const n = seatedInOrder(state).length;
+  if (n < range.min || n > range.max) {
+    const want = range.min === range.max ? `${range.min}` : `${range.min} to ${range.max}`;
+    return `this mode is for ${want} players, and ${n} ${n === 1 ? 'is' : 'are'} seated`;
+  }
+  if (settings.format === 'teamDraft' || settings.format === 'teamSealed') {
+    if (seatedInOrder(state).some((id) => state.seats[id]!.team === undefined)) return 'a Two-Headed Giant draft needs two teams';
+  }
+  return null;
+}
+
+/**
+ * Why a `stageSet` does not apply to `state`, or null (DESIGN "Specification: card data, packs and draft formats",
+ * Evening stages):
+ * - the edge exists (STAGE_EDGES) and the sender holds a seat;
+ * - only the host leaves the lobby (`actingHost`), to the draft when the lobby chose one and the seated count suits
+ *   it, or straight to a match (the constructed path; the lobby's Ready check is the HUD's, as in M1, and the solo
+ *   table goes straight to play); only the host abandons a draft for the lobby;
+ * - draft → build once the draft is done ("draft advances automatically");
+ * - build → match once every seated player is Ready ("build advances when all seated players are Ready");
+ * - leaving a match (next game: build; new draft: lobby), and build → lobby, needs `round`: the current confirmation
+ *   round, labelled for that proposal (STAGE_ROUND_LABELS), passed by everyone else ("any player proposes … and the
+ *   others confirm").
+ * Total on untrusted input.
+ */
+export function stageProblem(state: TableState, action: StageSetAction): string | null {
+  const to = action.stage;
+  if (!STAGES.includes(to)) return 'invalid stage';
+  const from = state.stage;
+  if (from === to) return `the table is already in the ${to} stage`;
+  if (!canMove(from, to)) return `the evening does not go from ${from} to ${to}`;
+  if (typeof action.by !== 'string' || !seated(state, action.by)) return 'only a seated player moves the evening on';
+  const host = actingHost(state);
+  if (from === 'lobby') {
+    if (action.by !== host) return 'only the host starts';
+    if (to === 'draft') {
+      const lobby = lobbyOf(state);
+      if (lobby.draft === null) return 'the lobby plays constructed decks; there is no draft to start';
+      const bad = lobbyProblem(lobby);
+      if (bad !== null) return bad;
+      return formatSeatProblem(state, lobby.draft);
+    }
+    return null;
+  }
+  if (from === 'draft') {
+    if (to === 'lobby') return action.by === host ? null : 'only the host abandons the draft';
+    return state.draft?.done === true ? null : 'the draft is not finished';
+  }
+  if (from === 'build' && to === 'match') {
+    const waiting = notReady(state);
+    return waiting.length === 0 ? null : `waiting for ${waiting.map((id) => state.seats[id]!.name).join(', ')} to press Ready`;
+  }
+  // match → build (next game), match → lobby and build → lobby (new draft): the others confirmed in a round.
+  const proposal = to === 'build' ? 'nextGame' : 'newDraft';
+  const r = state.confirm;
+  if (typeof action.round !== 'string') return `leaving the ${from} stage needs the others to confirm`;
+  if (r === null || r.id !== action.round) return `round ${action.round} is not the current confirmation round`;
+  if (stageProposalOf(r.label) !== proposal) return `round ${r.id} does not propose ${proposal === 'nextGame' ? 'the next game' : 'a new draft'}`;
+  if (!roundPassed(state)) return 'not everyone has confirmed yet';
+  return null;
+}
+
+/** Every zone emptied (hidden zones also lose their count). */
+function emptyZones(zones: Readonly<Record<string, Zone>>): Record<string, Zone> {
+  const out: Record<string, Zone> = {};
+  for (const [id, z] of Object.entries(zones)) {
+    out[id] = z.visibility === 'public' ? { ...z, ids: [] } : { ...z, ids: [], count: 0 };
+  }
+  return out;
+}
+
+/**
+ * The table with its game cleared (DESIGN "Pre-game", Deck building: "between games, players return to the builder to
+ * sideboard"): no cards, empty zones, no stack, lines, round, commitments, randomness rounds or shuffles of game zones
+ * (the draft's pack rounds stay with the draft, unless `dropPacks`), Ready, auto-pass, counters and recoveries reset,
+ * life and the turn strip back to the start of a game (GAME_START). Chairs, names, colours, away marks, settings,
+ * lobby and draft stay.
+ */
+function clearGame(state: TableState, dropPacks: boolean): TableState {
+  const start = Object.hasOwn(GAME_START, state.game) ? GAME_START[state.game] : undefined;
+  const life = start?.life[state.format];
+  const seats: Record<SeatId, Seat> = {};
+  for (const [id, s] of Object.entries(state.seats)) {
+    const { recovering: _recovering, ...rest } = s;
+    seats[id] = { ...rest, ready: false, autoPass: false, counters: {}, life: life ?? s.life };
+  }
+  const teams: Record<string, Team> = {};
+  for (const [id, t] of Object.entries(state.teams)) teams[id] = { ...t, counters: {}, life: life ?? t.life };
+  const order = Object.values(state.seats).sort((a, b) => a.index - b.index);
+  const first = order.find((s) => s.name.trim() !== '') ?? order[0];
+  const shuffles = Object.fromEntries(Object.entries(state.shuffles).filter(([, r]) => r.purpose === 'pack' && !dropPacks));
+  return {
+    ...state,
+    seats,
+    teams,
+    cards: {},
+    zones: emptyZones(state.zones),
+    stack: [],
+    lines: {},
+    confirm: null,
+    commitments: {},
+    rng: {},
+    shuffles,
+    turn: { number: 1, active: first ? (first.team ?? first.id) : state.turn.active, phase: start?.phase ?? state.turn.phase },
+  };
+}
+
+/**
+ * The table after entering `to` at `seq` (DESIGN "Specification: card data, packs and draft formats", Evening stages;
+ * PLAN M2-P7):
+ * - lobby → draft creates `TableState.draft` from the lobby settings (core/drafting.ts createDraftState) on a cleared
+ *   table (a deck committed in the lobby does not survive into the draft);
+ * - entering build from a match clears the game table for sideboarding; the draft stays, so pools stay countable;
+ * - a new draft (any stage → lobby) clears the game table and drops the draft with its pack-seed rounds;
+ * - entering a match counts `games`.
+ * The caller has checked the move with `stageProblem`.
+ */
+export function enterStage(state: TableState, to: Stage, seq: number): TableState {
+  if (state.stage === to) return state;
+  let next: TableState = { ...state, stage: to };
+  if (to === 'draft') {
+    next = clearGame(next, true);
+    const draft = createDraftState(next, lobbyOf(next), seq);
+    if (draft === null) delete next.draft;
+    else next.draft = draft;
+  } else if (to === 'lobby') {
+    next = clearGame(next, true);
+    delete next.draft;
+  } else if (to === 'build' && state.stage === 'match') {
+    next = clearGame(next, false);
+  } else if (to === 'match') {
+    next.games = (state.games ?? 0) + 1;
+  }
+  return next;
 }

@@ -101,6 +101,26 @@ export class FixtureCardDataSource implements CardDataSource {
     return Promise.resolve(deck);
   }
 
+  /**
+   * The builder's search-and-add over the fixtures (M2-P7, standing in for Scryfall's /cards/search): non-token cards
+   * whose name, a face name or the type line contains every word of the query, one per name, sorted by name.
+   */
+  searchCards(query: string): Promise<CardData[]> {
+    const words = normaliseName(query).split(/\s+/).filter((w) => w !== '');
+    if (words.length === 0) return Promise.resolve([]);
+    const seen = new Set<string>();
+    const out: CardData[] = [];
+    for (const c of this.byId.values()) {
+      if (isToken(c) || seen.has(c.name)) continue;
+      const text = normaliseName([c.name, ...(c.card_faces ?? []).map((f) => f.name), c.type_line].join(' '));
+      if (!words.every((w) => text.includes(w))) continue;
+      seen.add(c.name);
+      out.push(c);
+    }
+    out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    return Promise.resolve(out);
+  }
+
   searchTokens(query: string): Promise<CardData[]> {
     const q = normaliseName(query);
     return Promise.resolve([...this.byId.values()].filter((c) => isToken(c) && normaliseName(c.name).includes(q)));

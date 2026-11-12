@@ -5,3 +5,5 @@ export * from './types';
 export * from './session';
 export { FixtureCardDataSource, injectedCardData, type InjectedFixtures } from './fixture-cards';
 export * from './net';
+export * from './draft';
+export { fixtureSetSource, injectedSets } from './fixture-sets';

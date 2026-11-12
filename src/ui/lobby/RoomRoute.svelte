@@ -100,6 +100,7 @@
         createScene={app.createScene}
         faces={app.faces}
         settings={app.settings}
+        sets={app.sets}
       />
     {/key}
   </div>
