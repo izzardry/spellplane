@@ -162,6 +162,27 @@ describe('sequencing', () => {
   });
 });
 
+describe('undo', () => {
+  it('after a public card returns to the hand and the hand gets fresh ids, undo skips the steps naming the old ids', async () => {
+    const network = net({ seed: 24 });
+    const p = await playScript(network, browsers);
+    const a = p.a;
+    const sidOf = (id: string): string => a.secrets().identities[id]!.card.sid;
+    for (let i = 0; i < 20 && !a.secrets().hand.some((id) => isLand(sidOf(id))); i++) await settle(a.draw(1));
+    const land = a.secrets().hand.find((id) => isLand(sidOf(id)))!;
+    a.dispatch({ type: 'move', card: land, to: 'battlefield:s0', pose: { x: 200, y: -200, rot: 0 } });
+    a.dispatch({ type: 'createToken', card: 'tok-u', zone: 'battlefield:s0', pose: { x: 260, y: -200, rot: 0 }, label: 'Soldier' });
+    a.dispatch({ type: 'tap', card: 'tok-u', tapped: true });
+    a.dispatch({ type: 'toZone', card: land, to: 'hand:s0', position: 'any' });
+    await until(() => a.engine.confirmedState().cards[land] === undefined && a.engine.pending().length === 0, 20_000, 'the re-issue');
+    // The return and the play name the land's retired id: gone from the stack. The tap is undone next.
+    expect(a.undo()).toBe(true);
+    await waitConverged([a, p.b]);
+    expect(p.b.getState().cards['tok-u']!.tapped).toBe(false);
+    expect(warnings(p.A).filter((w) => /Cannot undo/.test(w))).toEqual([]);
+  });
+});
+
 describe('joint randomness', () => {
   it('the HUD’s back-to-back rngCommit and rngReveal: the reveal waits until the other seat committed', async () => {
     const { A, B } = await two(31);

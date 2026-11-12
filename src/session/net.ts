@@ -772,9 +772,16 @@ class NetTable implements NetSession {
   private reissueHand(): void {
     if (this.disposed) return;
     const view = this.engine.state();
-    const r = reissueZone(this.sec, view, zoneId('hand', this.seat), this.entropy);
+    const hand = zoneId('hand', this.seat);
+    const r = reissueZone(this.sec, view, hand, this.entropy);
     if (!r) return;
-    this.proposePrivate(this.stamp(r.action), r.secrets);
+    const retired = view.zones[hand]?.ids ?? [];
+    if (!this.proposePrivate(this.stamp(r.action), r.secrets)) return;
+    // Undo steps that name a retired id can never apply again; left on the stack they would block every later undo.
+    this.undoStack = this.undoStack.filter((e) => {
+      const text = canonicalJson(e.inverse);
+      return !retired.some((id) => text.includes(id));
+    });
     this.notify();
   }
 
