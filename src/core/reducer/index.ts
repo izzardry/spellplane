@@ -3,7 +3,8 @@
  * `reduce` is pure and total: an action that does not apply returns the state unchanged (same object),
  * with the reason available from `explain`. It never reads the clock, randomness or the secret store.
  *
- * Later packages add their cases to HANDLERS: ask, respond and autoPass (M1-P3, confirm.ts), draft actions (M2). The
+ * Later packages add their cases to HANDLERS: ask, respond and autoPass (M1-P3, confirm.ts); the draft actions go
+ * through drafting.ts (M2-C) to pass.ts (M2-P2) and open.ts (M2-P3); `stageSet` becomes M2-P7's (core/stage.ts). The
  * secret shuffle, public randomness and verified reveals are M1-P2's (secret.ts). M1-P4 extends moveTemp and settle in temp.ts.
  */
 import { ACTION_FAMILIES, isUndoable, type Action, type ActionOf, type ActionType } from '../actions';
@@ -14,6 +15,7 @@ import { seatIdOf, zoneId } from '../ids';
 import * as cards from './cards';
 import * as confirm from './confirm';
 import { Draft } from './draft';
+import * as drafting from './drafting';
 import { STACK_ZONE } from './place';
 import * as stack from './stack';
 import * as table from './table';
@@ -44,11 +46,6 @@ export interface CreateTableOptions {
 }
 
 type Handler<T extends ActionType> = (d: Draft, a: ActionOf<T>) => void;
-
-const later =
-  (pkg: string) =>
-  (_d: Draft, a: Action): void =>
-    reject(`${a.type} is not implemented yet (${pkg})`);
 
 /** Public record only: valid when its references exist, no change to shared state. */
 const record = (): void => undefined;
@@ -103,11 +100,12 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   rngCommit: secret.rngCommit,
   rngReveal: secret.rngReveal,
   commitClose: secret.commitClose,
-  packOpen: later('M2'),
-  pick: later('M2'),
-  packPass: later('M2'),
-  pileLook: later('M2'),
-  gridTake: later('M2'),
+  packOpen: drafting.packOpen,
+  pick: drafting.pick,
+  packPass: drafting.packPass,
+  pileLook: drafting.pileLook,
+  gridTake: drafting.gridTake,
+  draftTimeout: drafting.draftTimeout,
   chat: record,
   caption: record,
   undo: applyUndo,
@@ -115,6 +113,7 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   sequencerClaim: record,
   settings: table.settings,
   stageSet: table.stageSet,
+  lobbySet: drafting.lobbySet,
   recover: recovery.recover,
   recoverCommit: recovery.recoverCommit,
 };

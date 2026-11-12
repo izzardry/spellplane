@@ -4,8 +4,8 @@
  * The scene is a pure view of TableState plus local ViewState; it changes shared state only through `dispatch`.
  */
 import type { ActionDraft } from '../core/actions';
-import type { Anchor, CardRef, InstanceId, Line, PileId, Pose, SeatId, TableState, ZoneId } from '../core/types';
-import type { FaceSource } from '../data/types';
+import type { Anchor, CardRef, DeckBuild, DraftCard, InstanceId, Line, PackId, PileId, Pose, SeatId, TableState, ZoneId } from '../core/types';
+import type { CardData, FaceSource } from '../data/types';
 import type { GameDefinition, TableLayout } from '../games/types';
 import type { Theme } from '../themes/types';
 
@@ -143,3 +143,101 @@ export interface TableScene {
 
 /** Create a scene in `host` (DESIGN "Specification: code interfaces"). Implemented in scene/index.ts by M0-P3. */
 export type CreateTableScene = (host: HTMLElement, opts: TableSceneOptions) => TableScene;
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Draft and builder surfaces (DESIGN "Pre-game: draft, sealed and deck building", Drafting interaction, Deck building).
+// Added by M2-C. The draft surface is M2-P4's (scene/draft.ts), the builder table M2-P5's (scene/builder.ts). Both draw
+// local data the HUD hands them (identities this viewer may see) and report gestures through events; like the table
+// scene they never touch the network or the secret store.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Sort keys for the builder's solitaire columns and the list view (DESIGN "Pre-game", Deck building: "by colour, mana value or type"). */
+export type BuilderSort = 'colour' | 'manaValue' | 'type';
+
+/** What the draft surface shows (DESIGN "Pre-game", Drafting interaction). */
+export interface DraftSurfaceView {
+  /**
+   * The pack to pick from: a fan on the private table for a held pack, the shared table for a Rochester pack, or the
+   * 3×3 grid (Grid draft; null cells are taken); null while waiting.
+   */
+  pack: { packId: PackId; cards: (DraftCard | null)[]; layout: 'fan' | 'grid'; shared: boolean } | null;
+  /** Marked cards (first click marks, a second click or Enter confirms). */
+  marked: InstanceId[];
+  /** Cards one confirm takes. */
+  picks: number;
+  /** The own pool, laid out by the surface sorted by colour; stays visible while drafting. */
+  pool: CardRef[];
+  /** Packs waiting behind each seat (DESIGN: "Waiting packs queue visibly behind each seat"). */
+  waiting: Record<SeatId, number>;
+  reducedMotion: boolean;
+}
+
+/** Gestures the draft surface reports (DESIGN "Pre-game", Drafting interaction). */
+export interface DraftSurfaceEvents {
+  mark(cards: InstanceId[]): void;
+  confirm(cards: InstanceId[]): void;
+  /** Grid draft: a row or column was chosen. */
+  takeLine(line: 'row' | 'col', index: 0 | 1 | 2): void;
+  inspect(ref: CardRef): void;
+}
+
+/** Options for createDraftSurface (DESIGN "Pre-game: draft, sealed and deck building", Drafting interaction; M2-P4). */
+export interface DraftSurfaceOptions {
+  game: GameDefinition;
+  layout: TableLayout;
+  viewerSeat: SeatId | null;
+  theme: Theme;
+  faces: FaceSource;
+  events: Partial<DraftSurfaceEvents>;
+}
+
+/** A live draft surface (DESIGN "Pre-game", Drafting interaction: pack fan or grid, pool area, waiting packs). */
+export interface DraftSurface {
+  update(state: TableState, view: DraftSurfaceView): void;
+  setTheme(theme: Theme): void;
+  readonly camera: CameraControls;
+  /** Draft cards on screen for the debug hook (pack cards by instance id, pool cards as `pool:<index>`). */
+  readonly debug: { cards(): DebugCard[] };
+  dispose(): void;
+}
+
+/** Create the draft surface in `host` (DESIGN "Pre-game", Drafting interaction; M2-P4, scene/draft.ts). */
+export type CreateDraftSurface = (host: HTMLElement, opts: DraftSurfaceOptions) => DraftSurface;
+
+/** What the builder table shows (DESIGN "Pre-game", Deck building: pool on a private table, deck and sideboard areas, basic-land dispenser). */
+export interface BuilderSurfaceView {
+  build: DeckBuild;
+  reducedMotion: boolean;
+}
+
+/** Gestures the builder table reports (DESIGN "Pre-game", Deck building: the same gestures as play). */
+export interface BuilderSurfaceEvents {
+  /** The build changed: a card moved between deck and sideboard, a basic was dispensed or removed, cards were re-laid. */
+  change(build: DeckBuild): void;
+  inspect(ref: CardRef): void;
+}
+
+/** Options for createBuilderSurface (DESIGN "Pre-game: draft, sealed and deck building", Deck building; M2-P5). */
+export interface BuilderSurfaceOptions {
+  theme: Theme;
+  faces: FaceSource;
+  /** Card data for sorting (colour, mana value, type); null while loading. */
+  card(ref: CardRef): CardData | null;
+  events: Partial<BuilderSurfaceEvents>;
+}
+
+/** The builder table (DESIGN "Pre-game", Deck building: builder table). */
+export interface BuilderSurface {
+  update(view: BuilderSurfaceView): void;
+  /** Sort into cascade columns by `key`, stable; a second sort by the same key restores the previous layout (PLAN M2-P5: sorting is stable and reversible). */
+  sort(key: BuilderSort): void;
+  /** Basic-land dispenser: add one basic of the given printing to the deck (unlimited). */
+  dispenseBasic(ref: CardRef): void;
+  setTheme(theme: Theme): void;
+  readonly camera: CameraControls;
+  readonly debug: { cards(): DebugCard[] };
+  dispose(): void;
+}
+
+/** Create the builder table in `host` (DESIGN "Pre-game", Deck building; M2-P5, scene/builder.ts). */
+export type CreateBuilderSurface = (host: HTMLElement, opts: BuilderSurfaceOptions) => BuilderSurface;

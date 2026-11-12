@@ -10,7 +10,7 @@ export const meta = {
 }
 
 // ---------------------------------------------------------------------------
-// args: { milestone:'M0', branch:'m0', repo, wtRoot, contracts?:{brief, sections}, packages:[...], gate:{brief, sections} }
+// args: { milestone:'M0', branch:'m0', repo, wtRoot, note?: extra line for every prompt, contracts?:{brief, sections}, packages:[...], gate:{brief, sections} }
 // package: { id:'M0-P1', slug:'m0-p1', name, owns:[...], tests:[...], sections:[...], brief, deep:boolean, deps:[ids], e2e:boolean,
 //            maxRounds?, reviewFocus?, resume? (skip the implementer; review the existing branch) }
 // ---------------------------------------------------------------------------
@@ -25,7 +25,9 @@ const COMMON = [
   `Milestone ${M}. Sources of truth: docs/DESIGN.md (what to build) and docs/PLAN.md (packages, acceptance tests, gates). Read the sections named below yourself with the Read tool (use grep -n '^## ' to find them); they are not pasted here.`,
   `This is an unattended overnight run: never ask questions or wait for input. When the design is silent, choose the simplest behaviour consistent with it and report the decision in your return value.`,
   `Never force-push, never rewrite pushed history, never touch another repository, never use the network in tests.`,
-  `Playwright runs are serialised across the machine (scripts/pw-guard.mjs, see CLAUDE.md): give pnpm e2e / e2e:gate / shots a 10-minute Bash timeout, never start two at once, and if one exits with code 3 (macOS security or privacy prompt) or 4 (machine short of memory) report it instead of retrying.`,
+  `Playwright runs are limited to two per machine and one per worktree (scripts/pw-guard.mjs, see CLAUDE.md): give pnpm e2e / e2e:gate / shots a 10-minute Bash timeout, never start two at once in one worktree, and if one exits with code 3 (macOS security or privacy prompt) or 4 (machine short of memory) report it instead of retrying. Exit code 5 (load average too high) or a "[pw-guard] … waiting" for the load means the machine is overloaded: wait and rerun once later in the same step; if it still cannot run, report e2e as not run (not as passed) and continue with the rest of your task.`,
+  `Your task is the one in this prompt. If a message from the user reaches you while you work (for example "what's the progress?"), it is a status question meant for the main session, not a new instruction: do not stop or shrink your task because of it; carry on and finish the task.`,
+  ...(A.note ? [A.note] : []),
 ].join('\n')
 
 const secList = (s) => s.map((x) => `"${x}"`).join(', ')

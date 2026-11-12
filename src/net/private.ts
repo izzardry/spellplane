@@ -19,10 +19,22 @@
  * since; it is refused at once while the owner has own pending actions that may change that zone (`settled`). A targeted reveal is taken only once its public `revealTo` by the sender, naming this seat and this card, is
  * applied; a look answer only for a look this browser asked for. Requests and reveals waiting for their public
  * action, and looks never asked for, expire after `EXPIRE_AFTER_ACTIONS` sequenced actions.
+ *
+ * Draft packs (M2-P2; DESIGN "Specification: network protocol and secrecy", Draft packs: "Handing a pack on sends
+ * `pack {packId, cards}` on the pair's `prv` channel together with the public action `packPass`"): a pack's cards go
+ * only to the holder of the pack's current visit in the confirmed state, and only from the holder of the visit before
+ * (`packHandOver`; core/reducer/pass.ts `packVisit`): the hand-over is sent once the `packPass` is sequenced, never
+ * before, so a refused pass discloses nothing. A received pack is taken once the confirmed state shows that visit (it
+ * waits for the log otherwise, and expires like a reveal), and only when every card opens the pack's commitment, the
+ * ids are distinct and the count is the pack's at the start of that visit (also after the pick timer took its pick,
+ * and for the last visit of an emptied pack, in any later stage of the same draft). A `pack` with no cards is a
+ * request from the holder of the current visit to the holder of the visit before to send it again (the hand-over was
+ * lost with a reload or an outage, `packRequestOk`); it reaches the `onPack` listeners as an empty list.
  */
 import type { Action } from '../core/actions';
 import { verifyReveal, type RevealedCard } from '../core/commit';
-import type { CardRef, InstanceId, PackId, SeatId, TableState, ZoneId } from '../core/types';
+import { packCountAt, packVisit, packVisitor, picksPerPass } from '../core/reducer/pass';
+import type { CardRef, DraftPack, InstanceId, PackId, SeatId, TableState, ZoneId } from '../core/types';
 import type { SequencedAction } from './messages';
 import type { LookMessage, LookReqMessage, PackMessage, PrivateMessage, RevealMessage } from './messages';
 import { PROTOCOL_VERSION } from './messages';
@@ -85,6 +97,37 @@ function asCardList(v: unknown): RevealedCard[] | null {
 
 function plainCard(c: RevealedCard): RevealedCard {
   return { instanceId: c.instanceId, ref: c.ref.foil ? { sid: c.ref.sid, foil: true } : { sid: c.ref.sid }, salt: c.salt };
+}
+
+/**
+ * Whether `cards` are pack `packId` as `from` hands it to `to` in `state` (see the module comment): the pack's current
+ * visit (core/reducer/pass.ts `packVisit`) is `to`'s, `from` held the visit before it, the ids are distinct, every card
+ * opens the pack's commitment, and the count is the pack's at the start of `to`'s visit. That also holds while the
+ * pick of `to`'s visit is already taken by the pick timer, and for the last visit of an emptied pack, so a holder that
+ * was away still gets the cards its timed-out pick took. 'wait' while the state does not show `to`'s visit (the pass
+ * is not applied here yet).
+ */
+export function packHandOver(state: TableState, packId: PackId, cards: readonly RevealedCard[], from: SeatId, to: SeatId): 'ok' | 'wait' | 'refuse' {
+  const d = state.draft;
+  if (d === undefined || state.stage === 'lobby') return 'wait';
+  const picks = picksPerPass(d);
+  if (picks === null) return 'refuse';
+  const pack: DraftPack | null = Object.hasOwn(d.packs, packId) ? d.packs[packId]! : null;
+  const visit = pack === null ? null : packVisit(d, pack);
+  if (pack === null || visit === null || visit.holder !== to) return 'wait';
+  if (visit.k < 1 || from === to || packVisitor(d, pack, visit.k - 1) !== from) return 'refuse';
+  if (cards.length === 0 || new Set(cards.map((c) => c.instanceId)).size !== cards.length) return 'refuse';
+  if (cards.length !== packCountAt(pack, picks, visit.k)) return 'refuse';
+  return cards.every((c) => verifyReveal(pack.commitment, c)) ? 'ok' : 'refuse';
+}
+
+/** Whether `from` may ask `me` for pack `packId` again: the pack's current visit is `from`'s and `me` held the visit before. */
+export function packRequestOk(state: TableState, packId: PackId, from: SeatId, me: SeatId): boolean {
+  const d = state.draft;
+  if (d === undefined || picksPerPass(d) === null || !Object.hasOwn(d.packs, packId)) return false;
+  const pack = d.packs[packId]!;
+  const visit = packVisit(d, pack);
+  return visit !== null && visit.holder === from && visit.k >= 1 && from !== me && packVisitor(d, pack, visit.k - 1) === me;
 }
 
 /** The pair-channel layer over any host with the engine's private-message and state members. */
@@ -441,10 +484,38 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
     );
   };
 
+  /** Pack hand-overs waiting for their `packPass` to be applied here (the pair channel can overtake the log). */
+  let waitingPacks: { packId: PackId; cards: RevealedCard[]; from: SeatId; at: number }[] = [];
+
+  /** Hand a verified pack to the listeners, keep it waiting, or drop it (see `packHandOver`). */
+  const takePack = (packId: PackId, cards: RevealedCard[], from: SeatId, at: number): void => {
+    const me = host.seat();
+    if (me === null) return;
+    const verdict = packHandOver(host.confirmedState(), packId, cards, from, me);
+    if (verdict === 'refuse') return;
+    if (verdict === 'wait') {
+      if (waitingPacks.length >= MAX_OPEN_LOOKS) waitingPacks.shift();
+      waitingPacks.push({ packId, cards, from, at });
+      return;
+    }
+    for (const l of [...packListeners]) l(packId, cards.map(plainCard), from);
+  };
+
+  host.onState(() => {
+    if (waitingPacks.length === 0) return;
+    const retry = waitingPacks;
+    waitingPacks = [];
+    for (const w of retry) if (tick - w.at <= EXPIRE_AFTER_ACTIONS) takePack(w.packId, w.cards, w.from, w.at);
+  });
+
   const onPack = (msg: PackMessage, from: SeatId): void => {
     const cards = asCardList(msg.cards);
     if (!isText(msg.packId, 128) || !cards) return;
-    for (const l of [...packListeners]) l(msg.packId, cards, from);
+    if (cards.length > 0) return takePack(msg.packId, cards, from, tick);
+    // A request to send the pack again: only from the holder of its current visit, to the holder of the visit before.
+    const me = host.seat();
+    if (me === null || !packRequestOk(host.confirmedState(), msg.packId, from, me)) return;
+    for (const l of [...packListeners]) l(msg.packId, [], from);
   };
 
   host.onPrivate((msg: PrivateMessage, sender) => {
@@ -498,9 +569,20 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
     },
 
     sendPack(to, packId, cards) {
-      // Pack cards change hands, so the holder is not their owner; M2-P2 refines the checks.
-      const msg: PackMessage = { v: PROTOCOL_VERSION, t: 'pack', packId, cards: cards.map(plainCard) };
-      if (to !== host.seat()) host.sendPrivate(to, msg);
+      const me = host.seat();
+      if (me === null || to === me) throw new Error('a pack goes from one seated drafter to another');
+      const st = host.confirmedState();
+      if (cards.length === 0) {
+        // A request: only the holder of the pack's current visit asks the holder of the visit before.
+        if (!packRequestOk(st, packId, me, to)) throw new Error(`${me} cannot ask ${to} for pack ${packId}`);
+        host.sendPrivate(to, { v: PROTOCOL_VERSION, t: 'pack', packId, cards: [] });
+        return;
+      }
+      const list = cards.map(plainCard);
+      // Only to the drafter the sequenced pass made the holder, and only the pack's own cards.
+      if (packHandOver(st, packId, list, me, to) !== 'ok') throw new Error(`pack ${packId} is not ${me}'s to hand to ${to} now`);
+      const msg: PackMessage = { v: PROTOCOL_VERSION, t: 'pack', packId, cards: list };
+      host.sendPrivate(to, msg);
     },
 
     onIdentity(listener): Unsubscribe {

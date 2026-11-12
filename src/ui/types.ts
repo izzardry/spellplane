@@ -2,11 +2,15 @@
  * Props of the app shell src/ui/App.svelte (PLAN M0-P4 HUD, M0-P7 wiring in main.ts; DESIGN "Technology stack and
  * project structure": Svelte draws the HUD around the imperative scene).
  */
-import type { CardDataSource, FaceSource, ParseResult } from '../data/types';
+import type { CardRef, DeckBuild, TableState } from '../core/types';
+import type { CardData, CardDataSource, FaceSource, ParseResult, SetDataSource } from '../data/types';
+import type { DraftControls } from '../draft/types';
 import type { GameDefinition } from '../games/types';
 import type { createTableScene } from '../scene/index';
+import type { BuilderSort, CreateBuilderSurface, CreateDraftSurface } from '../scene/types';
+import type { Theme } from '../themes/types';
 import type { Transport } from '../net/transport';
-import type { TableSession } from '../session/types';
+import type { EveningControls, TableSession } from '../session/types';
 import type { DeckStore, IdentityStore, SettingsStore, TableRecord } from '../store/types';
 
 /** What main.ts hands the app shell (PLAN M0-P4, M0-P7). */
@@ -30,6 +34,8 @@ export interface AppProps {
   start?: StartPageProps;
   /** The connection check at `#/diag`. Added by M1-C. */
   diag?: DiagProps;
+  /** MTGJSON sets for the lobby's set picker (DESIGN "Pre-game", Lobby settings). Added by M2-C; wired by M2-P7 in main.ts. */
+  sets?: SetDataSource;
 }
 
 /**
@@ -97,4 +103,85 @@ export interface DiagReport {
   peers: { peer: string; connectedAfterMs: number; rttMs: number | null }[];
   /** A plain failure message (no peer after the timeout, signalling unreachable), else null. */
   error: string | null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Draft, builder and evening flow (DESIGN "Pre-game: draft, sealed and deck building"; "Specification: card data, packs
+// and draft formats", Evening stages). Added by M2-C. Owners: M2-P4 (ui/draft/*: lobby settings panel, draft HUD),
+// M2-P5 (ui/builder/stats.svelte), M2-P6 (ui/builder/list/*), M2-P7 (ui/flow/*: the stage switch and next-game prompts).
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** Mana colours plus colourless, as the builder counts them (DESIGN "Pre-game", Deck building: colour split). */
+export type ManaColour = 'W' | 'U' | 'B' | 'R' | 'G' | 'C';
+
+/** The limited minimum, shown as a hint and never enforced (DESIGN "Pre-game", Deck building). */
+export const LIMITED_MINIMUM = 40;
+
+/** Highest mana value with its own curve bucket; the last bucket counts this and above (DESIGN "Pre-game", Deck building: mana curve). */
+export const CURVE_MAX = 7;
+
+/**
+ * The builder's live readout (DESIGN "Pre-game", Deck building: "card count, mana curve, colour split and land count";
+ * PLAN M2-P5: matches a hand-computed fixture pool). Computed from the main deck only. Implementer: M2-P5.
+ */
+export interface BuilderStats {
+  /** Cards in the main deck. */
+  cards: number;
+  /** Lands among them (type line contains "Land"). */
+  lands: number;
+  /** Non-land cards by mana value: index 0..CURVE_MAX, the last bucket holding CURVE_MAX and above. */
+  curve: number[];
+  /** Coloured mana symbols in the main deck's costs by colour; 'C' counts generic-free colourless symbols ({C}). */
+  colours: Record<ManaColour, number>;
+  /** Below LIMITED_MINIMUM (the hint shows). */
+  belowMinimum: boolean;
+}
+
+/** Props of the lobby settings panel (DESIGN "Pre-game", Lobby settings). Implementer: M2-P4 (ui/draft/*). */
+export interface LobbySettingsProps {
+  session: TableSession;
+  evening: EveningControls;
+  sets: SetDataSource;
+}
+
+/** Props of the draft HUD around the draft surface (DESIGN "Pre-game", Drafting interaction). Implementer: M2-P4 (ui/draft/*). */
+export interface DraftProps {
+  session: TableSession;
+  draft: DraftControls;
+  createSurface: CreateDraftSurface;
+  faces: FaceSource;
+  cardData: CardDataSource;
+  theme: Theme;
+}
+
+/** Which builder view is showing (DESIGN "Pre-game", Deck building: two views of the same pool, switchable at any time). */
+export type BuilderViewKind = 'table' | 'list';
+
+/** Props of the builder, both views (DESIGN "Pre-game", Deck building). Implementers: M2-P5 (table view, stats), M2-P6 (list view, library). */
+export interface BuilderProps {
+  session: TableSession;
+  draft: DraftControls;
+  createSurface: CreateBuilderSurface;
+  faces: FaceSource;
+  cardData: CardDataSource;
+  theme: Theme;
+  decks?: DeckStore;
+}
+
+/** Props of the list view (DESIGN "Pre-game", Deck building: "a compact two-column list (pool and deck) with filters and counts"). Implementer: M2-P6. */
+export interface ListViewProps {
+  build: DeckBuild;
+  /** Write the changed build back (DraftControls.setBuild), so the table view shows the same deck. */
+  onChange(build: DeckBuild): void;
+  card(ref: CardRef): CardData | null;
+  sort: BuilderSort;
+  /** Scryfall search-and-add (CardDataSource.searchCards), absent when unavailable. */
+  search?(query: string): Promise<CardData[]>;
+}
+
+/** Props of the stage flow (DESIGN "Specification: card data, packs and draft formats", Evening stages). Implementer: M2-P7 (ui/flow/*). */
+export interface FlowProps {
+  session: TableSession;
+  evening: EveningControls;
+  state: TableState;
 }

@@ -41,6 +41,7 @@ describe('Sequencer.sequence', () => {
       { type: 'away', by: 's1', cid: 'x2', seat: 's2', away: true },
       { type: 'commitClose', by: 's1', cid: 'x3', kind: 'rng', id: 'r1' },
       { type: 'respond', by: 's1', cid: 'x4', round: 'r', seat: 's2', response: 'timeout' },
+      { type: 'draftTimeout', by: 's1', cid: 'x6', packId: 'p1', picks: 0 },
     ] as Action[]) {
       expect(s.sequence(state, a, player('s1')), a.type).toEqual({ ok: false, reason: expect.stringMatching(/only the sequencer/) });
     }

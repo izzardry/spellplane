@@ -116,6 +116,13 @@ export type RevealMessage = Envelope<'reveal', RevealedCard & { purpose: 'reveal
 /** A draft pack's remaining cards handed to the next seat, with the public `packPass` (DESIGN "Specification: network protocol and secrecy", Draft packs). Implementer: M2-P2. */
 export type PackMessage = Envelope<'pack', { packId: PackId; cards: RevealedCard[] }>;
 
+/**
+ * Draft card identities for this peer only (DESIGN "Pre-game", Hidden information column: Winston "pile contents
+ * visible to whoever looks"; Two-Headed Giant draft: "team sees its own packs"). `about` is the cid of the public action
+ * it accompanies (a `pileLook`) or the pack id. Added by M2-C; implementers: M2-P3 (Winston), M3-P2 (team packs).
+ */
+export type DraftCardsMessage = Envelope<'draftCards', { about: string; cards: RevealedCard[] }>;
+
 /** Two-Headed Giant: the sender's whole hand in order, sent to the teammate after every change (DESIGN "Players, seats and formats", Two-Headed Giant). Implementer: M3-P2. */
 export type TeamHandMessage = Envelope<'teamHand', { cards: RevealedCard[]; order: InstanceId[] }>;
 
@@ -167,7 +174,7 @@ export type CtlMessage = HelloMessage | WelcomeMessage | SyncReqMessage | SyncRe
 /** Messages on `act` (DESIGN "Specification: network protocol and secrecy", channel table). */
 export type ActMessage = ProposeMessage | SeqMessage | NackMessage;
 /** Messages on `prv`, one pair only (DESIGN "Specification: network protocol and secrecy", channel table). */
-export type PrivateMessage = RevealMessage | PackMessage | TeamHandMessage | NonceMessage | LookReqMessage | LookMessage;
+export type PrivateMessage = RevealMessage | PackMessage | DraftCardsMessage | TeamHandMessage | NonceMessage | LookReqMessage | LookMessage;
 /** Messages on `pres` (DESIGN "Specification: network protocol and secrecy", channel table). */
 export type PresenceMessage = CursorMessage | DragMessage | SpeakingMessage | TypingMessage | CaptionInterimMessage;
 /** Every wire message (DESIGN "Specification: network protocol and secrecy"). */
@@ -193,6 +200,7 @@ export const MESSAGE_CHANNEL: Readonly<{ [T in WireType]: Channel }> = {
   nack: 'act',
   reveal: 'prv',
   pack: 'prv',
+  draftCards: 'prv',
   teamHand: 'prv',
   nonce: 'prv',
   lookReq: 'prv',

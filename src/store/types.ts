@@ -6,7 +6,7 @@
  */
 import type { DBSchema } from 'idb';
 import type { Action } from '../core/actions';
-import type { CardRef, SecretStore, SeatId, Stage, TableState } from '../core/types';
+import type { CardRef, DeckBuild, DraftFormat, SecretStore, SeatId, SetCode, Stage, TableState } from '../core/types';
 
 /** `identity` store, key 'me' (DESIGN "Local persistence"): key pair, nickname, preferred seat colour. */
 export interface IdentityRecord {
@@ -110,6 +110,35 @@ export interface DeckRecord {
   text?: string;
   createdAt: number;
   updatedAt: number;
+  /**
+   * Added by M2-C. For a drafted or sealed pool (DESIGN "Pre-game", Local deck library: "Decks and drafted pools are
+   * saved"): the whole pool as the builder held it, so it can be rebuilt on another evening; `main` and `side` are
+   * then the deck and the rest of the pool.
+   */
+  pool?: DeckBuild;
+  /** Added by M2-C. Where a drafted pool came from: the format and the set per pack. */
+  origin?: { format: DraftFormat; sets: SetCode[] };
+}
+
+/** Format tag of an exported deck library file (DESIGN "Pre-game", Local deck library: exportable and importable as files). Added by M2-C. */
+export const LIBRARY_FILE_FORMAT = 'spellplane-decks';
+
+/** Current version of the library file (M2-P6 bumps it with a migration). Added by M2-C. */
+export const LIBRARY_FILE_VERSION = 1;
+
+/** An exported deck library file, plain JSON (DESIGN "Pre-game", Local deck library). Added by M2-C; implementer: M2-P6. */
+export interface LibraryFile {
+  format: typeof LIBRARY_FILE_FORMAT;
+  version: number;
+  /** ms epoch of the export. */
+  exportedAt: number;
+  decks: DeckRecord[];
+}
+
+/** Result of reading a library file: the records to save and one message per entry that was skipped (M2-P6). Added by M2-C. */
+export interface LibraryImport {
+  decks: DeckRecord[];
+  errors: { index: number; message: string }[];
 }
 
 /** `cards` store record keyed by Scryfall id; `data` is data/'s CardData (DESIGN "Local persistence"). */
@@ -191,6 +220,14 @@ export interface IdentityStore {
   get(): Promise<IdentityRecord>;
   setNickname(nickname: string): Promise<void>;
   setSeatColour(colour: number): Promise<void>;
+}
+
+/** Trimmed MTGJSON set cache, the `sets` store (DESIGN "Local persistence"; "Card data and images", Caching). Added by M2-C; implementer: M2-P1 (store/sets.ts). */
+export interface SetCache {
+  get(code: string): Promise<SetRecord | null>;
+  put(record: SetRecord): Promise<void>;
+  /** Every cached set code. */
+  codes(): Promise<string[]>;
 }
 
 /** Card JSON cache (DESIGN "Card data and images", Caching; refreshed after 30 days). Implementer: M0-P2. */

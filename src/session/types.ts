@@ -4,8 +4,9 @@
  * consumers: the HUD (M0-P4) and the debug hook. Milestone 1 plugs the sequencer and sync in behind the same API.
  */
 import type { Action, ActionDraft } from '../core/actions';
-import type { CardRef, Format, InstanceId, LogEntry, Pose, RngPurpose, SecretStore, SeatColourIndex, SeatId, TableState, ZoneId } from '../core/types';
-import type { CardData, CardDataSource } from '../data/types';
+import type { CardRef, Format, InstanceId, LobbySettings, LogEntry, Pose, RngPurpose, SecretStore, SeatColourIndex, SeatId, TableState, ZoneId } from '../core/types';
+import type { CardData, CardDataSource, GeneratePack, SetDataSource } from '../data/types';
+import type { DraftControls } from '../draft/types';
 import type { GameDefinition } from '../games/types';
 import type { ChatChannel } from '../net/messages';
 import type { Transport } from '../net/transport';
@@ -114,6 +115,31 @@ export interface TableSession {
   log(): LogEntry[];
   /** Stop timers and listeners. */
   dispose(): void;
+  /**
+   * The draft and the builder for this seat (DESIGN "Pre-game: draft, sealed and deck building"). Added by M2-C;
+   * present once M2-P7 wires the draft drivers into the session (absent on sessions without set data).
+   */
+  readonly draft?: DraftControls;
+  /** The evening's stage flow (DESIGN "Specification: card data, packs and draft formats", Evening stages). Added by M2-C; implementer: M2-P7. */
+  readonly evening?: EveningControls;
+}
+
+/**
+ * Stage flow for the HUD (DESIGN "Specification: card data, packs and draft formats", Evening stages: the host advances
+ * from lobby, draft advances automatically, build advances when all seated players are Ready, from match any player
+ * proposes "next game" or "new draft" and the others confirm; PLAN M2-P7: rematch and a new draft on the same link).
+ * Added by M2-C; implementer: M2-P7 (session wiring, ui/flow/*).
+ */
+export interface EveningControls {
+  /** Host only, in the lobby: replace the lobby settings (`lobbySet`). */
+  setLobby(lobby: LobbySettings): Action;
+  /** Host only: leave the lobby for the draft, or straight for a match with constructed decks (core/stage.ts nextStage 'start'). */
+  start(): Action;
+  /**
+   * From a match: ask the others to confirm the next game (or rematch: back to the builder to sideboard) or a new draft
+   * (back to the lobby); resolves true once the stage changed, false when someone held or the round was replaced.
+   */
+  propose(event: 'nextGame' | 'newDraft'): Promise<boolean>;
 }
 
 /** Options for the solo session (PLAN M0-P7). */
@@ -125,6 +151,10 @@ export interface SoloSessionOptions {
   /** Defaults to 'solo'. */
   roomId?: string;
   playerName?: string;
+  /** MTGJSON set data for drafts (M2-P1); without it the session offers no `draft`. Added by M2-C. */
+  sets?: SetDataSource;
+  /** Pack generation (M2-P1). Added by M2-C. */
+  generatePack?: GeneratePack;
 }
 
 /** Create or restore the solo table (PLAN M0-P7). */
@@ -151,6 +181,10 @@ export interface NetSessionOptions {
   format?: Format;
   /** Local clock in ms; default Date.now (tests use fake timers). */
   now?: () => number;
+  /** MTGJSON set data for drafts (M2-P1); without it the session offers no `draft`. Added by M2-C. */
+  sets?: SetDataSource;
+  /** Pack generation (M2-P1). Added by M2-C. */
+  generatePack?: GeneratePack;
 }
 
 /** A networked table session: TableSession over a NetEngine (PLAN M1-P8). Added by M1-C. */

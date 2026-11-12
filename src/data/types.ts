@@ -3,7 +3,9 @@
  * "Specification: geometry, layout and motion" texture tiers). Implementer of the sources: M0-P2.
  * CardData keeps Scryfall's snake_case field names so recorded fixtures and API responses map 1:1.
  */
-import type { CardRef, ScryfallId } from '../core/types';
+import type { CardRef, ScryfallId, SetCode } from '../core/types';
+
+export type { SetCode };
 
 /** Scryfall image URLs per tier (DESIGN "Card data and images", Image tiers). */
 export interface ImageUris {
@@ -158,6 +160,11 @@ export interface ResolvedDeck {
 
 /** Card data access with the shared rate limiter and IndexedDB cache (DESIGN "Specification: card data, packs and draft formats"). Implementer: M0-P2. */
 export interface CardDataSource {
+  /**
+   * Scryfall-backed card search for the builder's search-and-add (DESIGN "Pre-game", Constructed decks: "Search and
+   * build"; PLAN M2-P6). Added by M2-C, optional so existing sources compile; implementer: M2-P6.
+   */
+  searchCards?(query: string): Promise<CardData[]>;
   get(sid: ScryfallId): Promise<CardData | null>;
   getMany(sids: ScryfallId[]): Promise<Record<ScryfallId, CardData>>;
   /** Synchronous cache lookup for views; null when not loaded yet. */
@@ -166,4 +173,129 @@ export interface CardDataSource {
   searchTokens(query: string): Promise<CardData[]>;
   /** Tokens linked from the card's `all_parts` (DESIGN "Card data and images", Tokens). */
   relatedTokens(card: CardData): Promise<CardData[]>;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Set data and pack generation (DESIGN "Specification: card data, packs and draft formats", Booster data, Pack
+// generation; "Card data and images": MTGJSON per-set file, `booster` field). Added by M2-C; implementer: M2-P1.
+// Field names follow MTGJSON v5 (camelCase), so recorded fixtures (tests/fixtures/mtgjson) map 1:1.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** An MTGJSON card uuid (DESIGN "Specification: card data, packs and draft formats", Booster data: the map from MTGJSON uuid to Scryfall id). */
+export type MtgjsonUuid = string;
+
+/**
+ * The ten target sets, listed first in the lobby in this order (DESIGN "Specification: card data, packs and draft
+ * formats": M10, M11, M12, M13, M14, M15, Magic Origins, M19, M20, M21; PLAN Milestone 2 acceptance targets).
+ */
+export const FEATURED_SETS: readonly SetCode[] = ['M10', 'M11', 'M12', 'M13', 'M14', 'M15', 'ORI', 'M19', 'M20', 'M21'];
+
+/** Booster types in order of preference (DESIGN "Specification: card data, packs and draft formats", Booster data: "draft, else default, else play"). */
+export const BOOSTER_TYPES = ['draft', 'default', 'play'] as const;
+
+/** A booster type Spellplane generates from (DESIGN "Specification: card data, packs and draft formats", Booster data). */
+export type BoosterType = (typeof BOOSTER_TYPES)[number];
+
+/** MTGJSON per-set URL (DESIGN "Specification: card data, packs and draft formats", Booster data). */
+export const MTGJSON_SET_URL = (code: SetCode): string => `https://mtgjson.com/api/v5/${code}.json`;
+
+/** One sheet of a booster configuration (MTGJSON `booster.<type>.sheets.<name>`; DESIGN "Pack generation" 2-3: weights, foil, colour balancing). */
+export interface BoosterSheet {
+  /** Card uuid → weight on the sheet. */
+  cards: Record<MtgjsonUuid, number>;
+  totalWeight: number;
+  /** Every card drawn from this sheet is foil. */
+  foil: boolean;
+  /** Draw one mono-coloured card of each colour first when at least five come from this sheet (Pack generation 3). */
+  balanceColors?: boolean;
+  /** Duplicates allowed (otherwise draws are without replacement, Pack generation 2). */
+  allowDuplicates?: boolean;
+  /** MTGJSON marks some sheets fixed (always the same cards in order); M2-P1 decides how to honour it. */
+  fixed?: boolean;
+}
+
+/** One weighted pack layout: how many cards come from each sheet (MTGJSON `boosters[]`; DESIGN "Pack generation" 1). */
+export interface BoosterLayout {
+  /** Sheet name → card count. */
+  contents: Record<string, number>;
+  weight: number;
+}
+
+/** A set's booster configuration of one type (MTGJSON `booster.<type>`; DESIGN "Specification: card data, packs and draft formats", Pack generation). */
+export interface BoosterConfig {
+  boosters: BoosterLayout[];
+  boostersTotalWeight: number;
+  sheets: Record<string, BoosterSheet>;
+}
+
+/** What Spellplane keeps of an MTGJSON card: its Scryfall id plus what colour balancing and pack order read (tests/fixtures/README.md shape). */
+export interface SetCardInfo {
+  scryfallId: ScryfallId;
+  name: string;
+  colors?: string[];
+  /** 'common', 'uncommon', 'rare', 'mythic', 'special' or 'bonus'. */
+  rarity: string;
+  types?: string[];
+  number: string;
+  manaCost?: string;
+}
+
+/**
+ * A trimmed MTGJSON set as cached in the `sets` store (DESIGN "Specification: card data, packs and draft formats",
+ * Booster data: "trimmed to data.booster and a map from MTGJSON uuid to Scryfall id"; "Local persistence": `sets`).
+ */
+export interface SetData {
+  code: SetCode;
+  name: string;
+  /** ISO date, e.g. '2018-07-13'. */
+  releaseDate: string;
+  /** The booster type chosen by preference (BOOSTER_TYPES). */
+  boosterType: BoosterType;
+  booster: BoosterConfig;
+  /** Every card any sheet names. */
+  cards: Record<MtgjsonUuid, SetCardInfo>;
+}
+
+/** A set as the lobby's set picker lists it (DESIGN "Specification: card data, packs and draft formats": featured sets first, then every other set with booster data by release date). */
+export interface SetSummary {
+  code: SetCode;
+  name: string;
+  releaseDate: string;
+  /** One of FEATURED_SETS. */
+  featured: boolean;
+}
+
+/** One generated pack card (DESIGN "Specification: card data, packs and draft formats", Pack generation). */
+export interface PackCard {
+  uuid: MtgjsonUuid;
+  /** Scryfall id and foil flag: the identity committed to (core/types.ts CardRef). */
+  ref: CardRef;
+  /** The sheet it came from. */
+  sheet: string;
+  rarity: string;
+}
+
+/** A generated pack in real pack order: rare or mythic first, then uncommons, commons, land (DESIGN "Pack generation" 4). */
+export interface GeneratedPack {
+  set: SetCode;
+  cards: PackCard[];
+}
+
+/** The random source pack generation draws from: the pack's secret-seed byte stream (core/rng.ts ByteStream satisfies it; DESIGN "Pack generation": reproducible in the audit). */
+export interface PackRandom {
+  /** Uniform integer in [0, n), no modulo bias. */
+  below(n: number): number;
+}
+
+/** Generate one pack of `set` from `random` (DESIGN "Specification: card data, packs and draft formats", Pack generation 1-4). Deterministic for a given random stream. Implementer: M2-P1 (data/packs.ts). */
+export type GeneratePack = (set: SetData, random: PackRandom) => GeneratedPack;
+
+/** MTGJSON set data with the IndexedDB `sets` cache (DESIGN "Card data and images", Caching; "Specification: card data, packs and draft formats", Booster data). Implementer: M2-P1 (data/mtgjson.ts). */
+export interface SetDataSource {
+  /** Sets for the lobby's picker: FEATURED_SETS first in their order, then the rest with booster data by release date. */
+  listSets(): Promise<SetSummary[]>;
+  /** The trimmed set, cache first; null when the set has no usable booster data. */
+  get(code: SetCode): Promise<SetData | null>;
+  /** Synchronous cache lookup for views; null when not loaded yet. */
+  peek(code: SetCode): SetData | null;
 }

@@ -39,7 +39,7 @@ import { zoneId } from '../core/ids';
 import { createTable, explain, reduce } from '../core/reducer/index';
 import { roundPassed } from '../core/reducer/confirm';
 import { recoveryRemainder } from '../core/recovery';
-import { expectedParticipants, rngCommitPhaseComplete, shuffleReady } from '../core/rng';
+import { expectedParticipants, orderHash, rngCommitPhaseComplete, shufflePeerNonces, shuffleReady, shuffleSeed } from '../core/rng';
 import {
   beginShuffle,
   commitDeck,
@@ -56,10 +56,12 @@ import {
   shuffleRecord,
   type Entropy,
 } from '../core/secrets';
-import type { CardRef, Format, InstanceId, LogEntry, Pose, RngPurpose, SeatColourIndex, SecretStore, SeatId, ShuffleId, TableState, ZoneId } from '../core/types';
+import type { CardRef, Format, InstanceId, LogEntry, PackId, Pose, RngPurpose, SeatColourIndex, SecretStore, SeatId, ShuffleId, TableState, ZoneId } from '../core/types';
 import { isUndoable, type UndoableAction } from '../core/actions';
 import { undoPlan, type UndoReveal } from '../core/undo';
 import type { CardData } from '../data/types';
+import type { PackSeed } from '../draft/types';
+import { draftCardsOver } from '../net/draftcards';
 import { createNetEngine, NACK_DUPLICATE } from '../net/engine';
 import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
@@ -73,7 +75,9 @@ import { TablePersistence } from './persist';
 import { randomId, randomSalt } from './secrecy';
 import { identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recoveryProblem, type RecoveryOwed, type SessionRecovery } from './resume';
 import { reconcileSecrets, type LibraryPlacement } from './secrets';
-import type { CreateNetSession, DeckImport, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
+import { buildFromDeck, Evening, type DraftPort } from './draft';
+import type { DraftControls } from '../draft/types';
+import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
 
 /** How long a browser without a seat listens for a table already in the room before it takes a chair (decision M1-P8). */
 export const SETTLE_MS = 1500;
@@ -265,6 +269,15 @@ class NetTable implements NetSession, SessionRecovery {
   /** Times this browser gave up a table it started alone for the one already in the room (see `collision`). */
   private rejoins = 0;
   private rejoining = false;
+  // The evening (session/draft.ts, M2-P7): its listeners survive a rejoin's new engine and pair channel.
+  private readonly packListeners = new Set<(packId: PackId, cards: RevealedCard[], from: SeatId) => void>();
+  private readonly cardsListeners = new Set<(about: string, cards: RevealedCard[], from: SeatId) => void>();
+  private readonly sequencedListeners = new Set<(action: Action, state: TableState) => void>();
+  private readonly changeListeners = new Set<() => void>();
+  private readonly peerListeners = new Set<() => void>();
+  /** Own pack-seed rounds run one after another. */
+  private packChain: Promise<unknown> = Promise.resolve();
+  private eveningImpl: Evening | null = null;
 
   constructor(
     engine: NetEngine,
@@ -292,6 +305,22 @@ class NetTable implements NetSession, SessionRecovery {
     );
     this.saves = this.persistence(init.snapshot, init.snapshotSeq, init.lastSeq);
     this.attach(engine);
+    this.eveningImpl = new Evening(this.draftPort());
+  }
+
+  /** The draft and the builder (M2-P7); absent without set data. */
+  get draft(): DraftControls | undefined {
+    return this.eveningImpl?.draft;
+  }
+
+  /** The evening's stage flow (M2-P7). */
+  get evening(): EveningControls | undefined {
+    return this.eveningImpl?.evening;
+  }
+
+  /** The own draft view for the debug hook, null outside a draft. */
+  draftView(): ReturnType<Evening['view']> {
+    return this.eveningImpl?.view() ?? null;
   }
 
   private persistence(snapshot: TableState, snapshotSeq: number, lastSeq: number, after?: Promise<void>): TablePersistence {
@@ -323,6 +352,7 @@ class NetTable implements NetSession, SessionRecovery {
         this.queueDrive();
       }),
       engine.onPeers(() => {
+        for (const l of [...this.peerListeners]) l();
         this.netChanged();
         // A peer that (re)connected may be the one a randomness round waits for, or this browser may owe it a nonce.
         this.queueDrive();
@@ -346,6 +376,12 @@ class NetTable implements NetSession, SessionRecovery {
       // manipulation", Peek). Looks at a whole hidden zone are refused, since the owner has no way yet to agree to them
       // (core/secrets.ts lookAnswer; decisions M1-P2, M1-P8).
       this.channel.answerLooks((req, from) => peekAnswer(this.sec, this.engine.confirmedState(), req, from)),
+      this.channel.onPack((packId, cards, from) => {
+        for (const l of [...this.packListeners]) l(packId, cards, from);
+      }),
+      draftCardsOver(engine).on((about, cards, from) => {
+        for (const l of [...this.cardsListeners]) l(about, cards, from);
+      }),
     );
   }
 
@@ -410,6 +446,7 @@ class NetTable implements NetSession, SessionRecovery {
   leave(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.eveningImpl?.dispose();
     for (const u of this.unsubs.splice(0)) u();
     this.engine.leave();
     for (const w of this.waiters.splice(0)) {
@@ -559,7 +596,9 @@ class NetTable implements NetSession, SessionRecovery {
       const before = this.sec;
       const r = commitDeck({ ...this.sec, seat }, deck.main, this.entropy);
       const pool = deck.side.map((x): CardRef => (x.foil ? { sid: x.sid, foil: true } : { sid: x.sid }));
-      this.setSecrets({ ...r.secrets, pool });
+      // A constructed deck is kept as the deck being built, so a rematch can sideboard it (M2-P7); a drafted deck's
+      // build is the builder's own.
+      this.setSecrets({ ...r.secrets, pool, ...(s.draft === undefined ? { build: buildFromDeck({ main: deck.main, side: deck.side }) } : {}) });
       const ready = this.stamp(r.action);
       if (!this.propose(ready)) {
         this.setSecrets(before);
@@ -1105,6 +1144,7 @@ class NetTable implements NetSession, SessionRecovery {
     const hand = zoneId('hand', this.sec.seat);
     const back = Object.entries(next.cards).some(([id, c]) => c.zone === hand && c.owner === this.sec.seat && prior.cards[id] !== undefined && prior.zones[prior.cards[id]!.zone]?.visibility === 'public');
     if (back) this.reissueOwed = true;
+    for (const l of [...this.sequencedListeners]) l(action, next);
     this.queueDrive();
     this.netChanged();
   }
@@ -1268,6 +1308,14 @@ class NetTable implements NetSession, SessionRecovery {
       for (const [sid, r] of Object.entries(st.shuffles)) {
         if (r.orderHash !== null) {
           this.nonces.delete('shuffle', sid);
+          continue;
+        }
+        if (r.owner === me && r.purpose === 'pack') {
+          // An own pack-seed round (M2-P7 `packSeed`): finished with its kept nonce once ready, also after a reload.
+          // A round whose nonce this browser lost (cleared storage) is closed unused, so the pack zone is free again.
+          const nonce = this.nonces.get('shuffle', sid) ?? randomSalt();
+          if (!shuffleReady(st, sid) || this.inFlight('shuffleDone', sid) || this.gaveUp(`done:${sid}`)) continue;
+          if (!this.propose(this.stamp({ type: 'shuffleDone', sid, orderHash: orderHash([], nonce) }), false)) this.roundRefusals.set(`done:${sid}`, (this.roundRefusals.get(`done:${sid}`) ?? 0) + 1);
           continue;
         }
         if (r.owner === me) {
@@ -1670,6 +1718,13 @@ class NetTable implements NetSession, SessionRecovery {
   private notify(): void {
     if (this.disposed) return;
     this.settleWaiters();
+    for (const l of [...this.changeListeners]) {
+      try {
+        l();
+      } catch (e) {
+        console.error('session listener failed', e);
+      }
+    }
     const state = this.engine.state();
     for (const l of [...this.listeners]) {
       try {
@@ -1699,6 +1754,115 @@ class NetTable implements NetSession, SessionRecovery {
       }
     }
     this.settleWaiters();
+  }
+
+  // --- The evening (M2-P7, session/draft.ts) ----------------------------------------------------------------
+
+  /** What the evening and its draft driver use of this session. */
+  private draftPort(): DraftPort {
+    const add = <T>(set: Set<T>, l: T): (() => void) => {
+      set.add(l);
+      return () => {
+        set.delete(l);
+      };
+    };
+    return {
+      seat: () => this.seat,
+      state: () => this.engine.state(),
+      confirmedState: () => this.engine.confirmedState(),
+      secrets: () => this.sec,
+      setSecrets: (next) => {
+        if (this.disposed) return;
+        this.setSecrets(next);
+        this.saves.saveSecrets(this.sec);
+        this.notify();
+      },
+      propose: (draft) => {
+        const a = this.stamp(draft);
+        if (this.disposed) return a;
+        this.propose(a, false);
+        this.notify();
+        return a;
+      },
+      pending: () => this.engine.pending(),
+      packSeed: () => this.packSeed(),
+      sendPack: (to, packId, cards) => this.channel.sendPack(to, packId, cards),
+      onPack: (l) => add(this.packListeners, l),
+      sendCards: (to, about, cards) => draftCardsOver(this.engine).send(to, about, cards),
+      onCards: (l) => add(this.cardsListeners, l),
+      onSequenced: (l) => add(this.sequencedListeners, l),
+      onChange: (l) => add(this.changeListeners, l),
+      onPeers: (l) => add(this.peerListeners, l),
+      importDeck: (deck) => this.importDeck(deck),
+      warn: (text) => {
+        this.warn(text);
+        this.notify();
+      },
+      newId: (prefix) => randomId(prefix),
+      sets: this.opts.sets ?? null,
+      generatePack: this.opts.generatePack ?? null,
+      entropy: this.entropy,
+    };
+  }
+
+  /**
+   * A pack seed (DESIGN "Specification: network protocol and secrecy", Draft packs: the secret-shuffle seed protocol
+   * with purpose 'pack' on the own pack zone): commit to a fresh nonce (kept in local storage until the round is
+   * done, so a reload finishes the same round), let the other seats add theirs, finish the round (`drive`), and resolve
+   * with the seed. An own round left open by a reload is finished rather than replaced (its zone is frozen until then).
+   */
+  packSeed(): Promise<PackSeed> {
+    const next = this.packChain.then(
+      () => this.packSeedNow(),
+      () => this.packSeedNow(),
+    );
+    this.packChain = next.catch(() => undefined);
+    return next;
+  }
+
+  private async packSeedNow(): Promise<PackSeed> {
+    if (this.disposed) throw new Error('The session is closed');
+    const me = this.seat;
+    const zone = zoneId('pack', me);
+    let open = Object.values(this.engine.confirmedState().shuffles).find((r) => r.owner === me && r.zone === zone && r.orderHash === null);
+    if (open !== undefined && this.nonces.get('shuffle', open.id) === null) {
+      // Its nonce is lost (cleared storage): `drive` closes it unused, then a fresh round starts.
+      const lost = open.id;
+      this.queueDrive();
+      await this.until(() => this.engine.confirmedState().shuffles[lost]?.orderHash != null, () => (this.gaveUp(`done:${lost}`) ? 'an old pack seed could not be closed' : null));
+      open = undefined;
+    }
+    let sid: ShuffleId;
+    let nonce: string;
+    let cid: string | null = null;
+    if (open !== undefined) {
+      sid = open.id;
+      nonce = this.nonces.get('shuffle', open.id)!;
+    } else {
+      sid = randomId('pk');
+      nonce = randomSalt();
+      this.nonces.set('shuffle', sid, nonce);
+      const a = this.stamp({ type: 'shuffleCommit', sid, zone, h: nonceHash(nonce), purpose: 'pack' });
+      if (!this.propose(a, false)) {
+        this.nonces.delete('shuffle', sid);
+        throw new Error(`The pack seed was refused: ${this.lastWarning()}`);
+      }
+      cid = a.cid;
+      this.notify();
+    }
+    this.queueDrive();
+    await this.until(
+      () => this.engine.confirmedState().shuffles[sid]?.orderHash != null,
+      () => {
+        if (cid !== null && this.refused.has(cid)) return `the pack seed was refused: ${this.refused.get(cid)!}`;
+        if (cid === null || !this.pendingCid(cid)) {
+          if (!Object.hasOwn(this.engine.confirmedState().shuffles, sid)) return 'the pack seed round is gone';
+        }
+        return this.gaveUp(`done:${sid}`) ? 'the pack seed could not be finished' : null;
+      },
+    );
+    const peerNonces = shufflePeerNonces(this.engine.confirmedState(), sid);
+    return { sid, seed: shuffleSeed(nonce, peerNonces), ownerNonce: nonce, peerNonces };
   }
 
   /** Store the current confirmed state as the table record's base (a room this browser has no save of yet). */

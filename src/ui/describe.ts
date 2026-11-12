@@ -362,6 +362,10 @@ export function describe(a: Action, d: Describers): Seg[] | null {
       return [t(a.take ? `takes pile ${a.pile + 1}` : `looks at pile ${a.pile + 1}`)];
     case 'gridTake':
       return [t(`takes ${a.line} ${a.index + 1}`)];
+    case 'draftTimeout':
+      return [t('calls time on a pick')];
+    case 'lobbySet':
+      return [t('changes the lobby settings')];
     case 'chat':
     case 'caption':
       return parseChatText(a.text).map((p): Seg => ('card' in p ? (p.set ? { text: p.card, named: p.card, set: p.set } : { text: p.card, named: p.card }) : t(p.text)));

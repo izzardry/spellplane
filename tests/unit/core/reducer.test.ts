@@ -129,7 +129,8 @@ describe('reducer contract', () => {
       act('pileLook', { pile: 0, take: false }),
       act('gridTake', { grid: 0, line: 'row', index: 0 }),
     ];
-    for (const a of later) no(s, a, /M1-P|M2/);
+    // The open-format reducers (M2-P3) explain that no draft is in progress.
+    for (const a of later) no(s, a, /M1-P|M2|no draft/);
   });
 });
 
