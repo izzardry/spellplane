@@ -13,26 +13,33 @@
  * - Chat and ping: `dispatch` stamps every draft with the spectator id and proposes it; the sequencer accepts `chat`
  *   and `ping` only (net/roles.ts SPECTATOR_ACTIONS) and refuses everything else, which the engine rolls back with a
  *   system line here. A chat line carries the spectator's nickname in `name` (DECISIONS [M3-C]).
- * - No private effects: Ready, shuffles, draws, mulligans, looks, rolls, chairs and undo are refused with a reason.
+ * - No private effects: Ready, shuffles, draws, mulligans, looks, rolls, chairs and undo are refused with a reason
+ *   (their promises reject, already handled, so a HUD call that does not wait for them raises nothing).
+ * - No sequencer reachable (no seated player connected): an action a spectator may not send is refused here at once
+ *   instead of being applied optimistically and left pending until a player comes (net/roles.ts roleProblem).
+ * - One identity, one place: a spectator page whose key pair holds a chair at this table (seen once its replica
+ *   catches up) leaves the room and says so (`heldChair`), so that chair's player page can (re)join; the table keeps
+ *   one connection per identity (net/engine.ts), so the two pages cannot share the room (DESIGN "Multiplayer
+ *   architecture", Resume: "Reloading or reopening the link rejoins the same seat by key pair").
  * - Presence: a spectator's cursor and drags are not shown to the table (they are the players' intent, DESIGN "Other
  *   players' cursors"); its typing indicator is.
  */
 import type { Action, ActionDraft } from '../core/actions';
 import { emptySecretStore, pruneReceived, receiveIdentity } from '../core/secrets';
 import { spectatorIdOf, type SpectatorId } from '../core/teams';
-import type { CardRef, InstanceId, LogEntry, Pose, RngPurpose, SeatColourIndex, SecretStore, TableState, ZoneId } from '../core/types';
+import type { CardRef, InstanceId, LogEntry, Pose, RngPurpose, SeatColourIndex, SeatId, SecretStore, TableState, ZoneId } from '../core/types';
 import type { CardData } from '../data/types';
 import { createNetEngine, NACK_DUPLICATE } from '../net/engine';
 import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
-import { spectatorRevealsOver } from '../net/roles';
+import { roleProblem, spectatorChatName, spectatorRevealsOver, SPECTATOR_DEFAULT_NAME } from '../net/roles';
 import type { NetEngine, Presence, Unsubscribe } from '../net/types';
 import { freshNetTable } from './net';
 import { randomId } from './secrecy';
 import type { DeckImport, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
 
-/** The nickname a spectator's chat carries when the identity has none yet. */
-export const DEFAULT_SPECTATOR_NAME = 'Spectator';
+/** The nickname a spectator's chat carries when the identity has none yet (net/roles.ts). */
+export const DEFAULT_SPECTATOR_NAME = SPECTATOR_DEFAULT_NAME;
 /** Why a spectator cannot do what only a seated player does (DESIGN "Players, seats and formats", Spectators). */
 export const SPECTATOR_ONLY_WATCHES = 'Spectators watch: they can chat and ping, but cannot take a chair or touch cards. Open the table link without /watch to play.';
 
@@ -64,6 +71,10 @@ export class SpectatorTable implements NetSession {
   private readonly cidPrefix = randomId('');
   private cidCount = 0;
   private disposed = false;
+  /** The chair this page's key pair holds at this table, once seen; the page has then left the room. */
+  private held: SeatId | null = null;
+  /** The nickname the engine announced in the handshake, which the sequencer checks a chat's `name` against. */
+  private readonly name: string;
 
   constructor(
     readonly engine: NetEngine,
@@ -71,6 +82,7 @@ export class SpectatorTable implements NetSession {
   ) {
     this.roomId = opts.roomId;
     this.seat = spectatorIdOf(opts.identity.peerId);
+    this.name = spectatorChatName(opts.identity.nickname);
     this.sec = emptySecretStore(this.seat);
     this.presence = watchingPresence(engine.presence);
     this.unsubs.push(
@@ -151,6 +163,11 @@ export class SpectatorTable implements NetSession {
 
   // --- Lifecycle ---------------------------------------------------------------------------------------
 
+  /** The chair this browser's key pair holds at this table, or null; when set, this page has left the room (module comment). */
+  get heldChair(): SeatId | null {
+    return this.held;
+  }
+
   leave(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -170,11 +187,18 @@ export class SpectatorTable implements NetSession {
   dispatch(draft: ActionDraft): Action {
     const { seq: _seq, ...rest } = draft as ActionDraft & { seq?: number };
     const base = { ...rest, by: this.seat, cid: `${this.cidPrefix}${++this.cidCount}` } as Action;
-    const action: Action = base.type === 'chat' ? { ...base, name: this.nickname() } : base;
+    const action: Action = base.type === 'chat' ? { ...base, name: this.name } : base;
     if (this.disposed) return action;
+    if (this.held !== null) {
+      this.refuse();
+      return action;
+    }
     // The sequencer is the authority on what a spectator may do (net/roles.ts roleProblem): a card action is proposed
-    // like any other, refused there and rolled back here with the sequencer's reason.
-    if (!this.engine.propose(action)) this.system('warn', `${action.type} refused: it does not apply to the table as this page sees it`);
+    // like any other, refused there and rolled back here with the sequencer's reason. With no sequencer to ask, the
+    // same rule refuses it here rather than leave it applied on this page until a player comes.
+    const local = this.sequencerReachable() ? null : roleProblem(this.engine.confirmedState(), action, { role: 'spectator', peerId: this.opts.identity.peerId, seat: null });
+    if (local !== null) this.system('warn', `${action.type} refused: ${local}`);
+    else if (!this.engine.propose(action)) this.system('warn', `${action.type} refused: it does not apply to the table as this page sees it`);
     this.notify();
     return action;
   }
@@ -189,7 +213,7 @@ export class SpectatorTable implements NetSession {
   }
 
   takeSeat(seat: string, colour: SeatColourIndex): Action {
-    const action = { type: 'seatTake', seat, name: this.nickname(), colour, peer: this.opts.identity.peerId, by: seat, cid: `${this.cidPrefix}${++this.cidCount}` } as Action;
+    const action = { type: 'seatTake', seat, name: this.name, colour, peer: this.opts.identity.peerId, by: seat, cid: `${this.cidPrefix}${++this.cidCount}` } as Action;
     this.refuse();
     return action;
   }
@@ -220,8 +244,10 @@ export class SpectatorTable implements NetSession {
 
   // --- Internals -----------------------------------------------------------------------------------------
 
-  private nickname(): string {
-    return this.opts.identity.nickname.trim().slice(0, 40) || DEFAULT_SPECTATOR_NAME;
+  /** A seated player's page this spectator is connected to sequences (spectators are never sequencer). */
+  private sequencerReachable(): boolean {
+    const seqr = this.engine.sequencerId();
+    return seqr !== null && this.engine.peers().some((p) => p.peerId === seqr && p.role === 'player' && p.status === 'connected');
   }
 
   private refuse(): void {
@@ -229,16 +255,31 @@ export class SpectatorTable implements NetSession {
     this.notify();
   }
 
+  /** A rejected promise that is already handled: callers that wait see the reason, callers that do not raise nothing. */
   private refused<T>(): Promise<T> {
     this.refuse();
-    return Promise.reject(new Error(SPECTATOR_ONLY_WATCHES));
+    const p = Promise.reject(new Error(SPECTATOR_ONLY_WATCHES));
+    p.catch(() => undefined);
+    return p;
   }
 
   private onView(view: TableState): void {
-    if (this.disposed) return;
+    if (this.disposed || this.held !== null) return;
+    const chair = Object.values(view.seats).find((s) => s.peer === this.opts.identity.peerId);
+    if (chair) return this.shutOut(chair.id, chair.name);
     // A revealed card that went where nobody sees it (a library), was re-issued or became public is forgotten.
     this.sec = pruneReceived(this.sec, view);
     this.prefetchPublic(view);
+    this.notify();
+    this.notifyNet();
+  }
+
+  /** This browser's key pair holds `seat` here: leave the room so that chair's player page can take its place. */
+  private shutOut(seat: SeatId, name: string): void {
+    this.held = seat;
+    for (const u of this.unsubs.splice(0)) u();
+    this.engine.leave();
+    this.system('warn', `This browser holds a chair at this table${name.trim() ? ` (${name.trim()})` : ''}, so it cannot also watch it. Open the table link without /watch to play from your chair.`);
     this.notify();
     this.notifyNet();
   }

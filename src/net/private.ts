@@ -35,7 +35,6 @@ import type { Action } from '../core/actions';
 import { verifyReveal, type RevealedCard } from '../core/commit';
 import { packCountAt, packVisit, packVisitor, picksPerPass } from '../core/reducer/pass';
 import type { CardRef, DraftPack, InstanceId, PackId, SeatId, TableState, ZoneId } from '../core/types';
-import { isSpectatorId } from '../core/teams';
 import type { SequencedAction } from './messages';
 import type { LookMessage, LookReqMessage, PackMessage, PrivateMessage, RevealMessage } from './messages';
 import { PROTOCOL_VERSION } from './messages';
@@ -187,10 +186,9 @@ export function privateChannelOver(host: PrivateChannelHost): PrivateChannel {
     });
   };
 
-  // A seat of the table, or a named spectator (M3-P5: the engine routes a spectator id to that spectator's own page).
   const targets = (to: readonly SeatId[]): SeatId[] => {
     const me = host.seat();
-    return [...new Set(to)].filter((s) => s !== me && (Object.hasOwn(host.state().seats, s) || isSpectatorId(s)));
+    return [...new Set(to)].filter((s) => s !== me && Object.hasOwn(host.state().seats, s));
   };
 
   const ownerConnected = (owner: SeatId): boolean => host.peers().some((p) => p.seat === owner && p.status === 'connected');

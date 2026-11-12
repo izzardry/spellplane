@@ -101,10 +101,8 @@ describe('Sequencer.sequence', () => {
 
   it('lets a spectator chat but not act for a seat', () => {
     const s = createSequencer(state.seq);
-    // A spectator acts as its own spectator id `v:<peerId>` (core/teams.ts, M3-P5).
-    const spectator = { seat: null, role: 'spectator' as const, self: false, peerId: 'peer-v' };
-    expect(s.sequence(state, { type: 'chat', by: 'v:peer-v', cid: 'ch', text: 'hi', channel: 'spectator' }, spectator).ok).toBe(true);
-    expect(s.sequence(state, { type: 'chat', by: 'spectator-1', cid: 'ch1', text: 'hi', channel: 'spectator' }, spectator).ok).toBe(false);
+    const spectator = { seat: null, role: 'spectator' as const, self: false };
+    expect(s.sequence(state, { type: 'chat', by: 'spectator-1', cid: 'ch', text: 'hi', channel: 'spectator' }, spectator).ok).toBe(true);
     expect(s.sequence(state, life('s1', 'l'), spectator).ok).toBe(false);
     expect(s.sequence(state, { type: 'chat', by: 's1', cid: 'ch2', text: 'hi', channel: 'table' }, spectator).ok).toBe(false);
   });

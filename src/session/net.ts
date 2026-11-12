@@ -66,6 +66,7 @@ import { createNetEngine, NACK_DUPLICATE } from '../net/engine';
 import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
 import { createPrivateChannel } from '../net/private';
+import { spectatorRevealSender } from '../net/roles';
 import { applySequenced, seatOfPeer } from '../net/sequencer';
 import type { NetEngine, PrivateChannel, ResumePoint, Unsubscribe } from '../net/types';
 import type { LogRecord, TableStore } from '../store/types';
@@ -359,6 +360,8 @@ class NetTable implements NetSession, SessionRecovery {
         if (this.collision()) queueMicrotask(() => void this.rejoin());
       }),
       engine.onSequencerChange(() => this.netChanged()),
+      // A reveal to named spectators (M3-P5, net/roles.ts).
+      spectatorRevealSender(engine, () => this.sec),
       this.channel.onIdentity((card, from, verified) => {
         if (!verified) {
           this.system('warn', `Integrity warning: ${from} showed this browser card ${card.instanceId}, and it does not match ${from}'s deck commitment`);
@@ -508,8 +511,7 @@ class NetTable implements NetSession, SessionRecovery {
       // Kept in local storage too, so the card is still turned up after a reload before its flip is sequenced.
       this.nonces.set('turnUp', publishes, stamped.cid);
     }
-    // A reveal to named spectators goes to their pages too (session/spectator.ts, M3-P5).
-    if (stamped.type === 'revealTo' && this.ownHidden(stamped.instanceId)) this.revealsDue.set(stamped.cid, { id: stamped.instanceId, seats: [...stamped.seats, ...(stamped.spectators ?? [])] });
+    if (stamped.type === 'revealTo' && this.ownHidden(stamped.instanceId)) this.revealsDue.set(stamped.cid, { id: stamped.instanceId, seats: [...stamped.seats] });
     if (stamped.type === 'rngCommit') this.sentRandomness.set(stamped.cid, stamped);
     const done = this.propose(stamped);
     if (!done) {

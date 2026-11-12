@@ -2,7 +2,8 @@
  * The spectator scenario of the shared leak test (CLAUDE.md; PLAN M3-P5: "A spectator never receives hidden
  * information except a hand explicitly revealed to that spectator"). Two players play the M1-P8 script under delay,
  * loss and reordering while spectator Dee watches from before the first chair is taken; spectator Cy joins after it;
- * player A then shows the hand to Cy by name. The shared scanner (tests/leak/leak.ts) checks everything each spectator
+ * player A then shows the hand to Cy by name, and both spectators reload (A's page sends the shown hand to Cy's new
+ * page again, and nothing to Dee's). The shared scanner (tests/leak/leak.ts) checks everything each spectator
  * received, holds in state and log, keeps in its secret store and in IndexedDB against both players' hidden cards,
  * with only what the owner made public or showed that spectator as disclosures (tests/leak/spectator.ts); and the
  * opponent B against A as in the M1-P8 scenario, so the reveal to Cy reaches nobody else. A negative control shows the
@@ -58,15 +59,28 @@ describe('shared leak test: spectators', { timeout: 120_000 }, () => {
     await until(() => all() && hand.every((id) => Object.hasOwn(cy.session.secrets().received, id)), 30_000, 'Cy to receive the hand');
     expect(aToCy.filter((d) => hand.includes(d.instanceId)).map((d) => d.instanceId).sort()).toEqual([...hand].sort());
 
-    // The spectator Cy: A's shown hand and the public table, nothing else of A's; nothing hidden of B's.
-    const cyObserved = await observedByWatcher(network, cy);
+    // Both spectators reload (a spectator keeps nothing): the hand is owed to Cy's new page and sent again once it
+    // is verified (net/roles.ts spectatorRevealSender); Dee's new page still gets nothing of it.
+    cy.session.leave();
+    dee.session.leave();
+    await until(() => !p.a.engine.peers().some((x) => x.role === 'spectator' && x.status === 'connected'), 30_000, 'the spectators to be gone');
+    const cy2 = await watch(network, 'cy2', 'peer-c', 'Cy');
+    const dee2 = await watch(network, 'dee2', 'peer-0', 'Dee');
+    watchers.push(cy2, dee2);
+    const again = (): boolean => converged([p.a, p.b]) && [dee2, cy2].every((w) => watching(w, hashOf(p.a.engine.confirmedState())));
+    await until(() => again() && hand.every((id) => Object.hasOwn(cy2.session.secrets().received, id)), 30_000, 'Cy’s new page to be shown the hand again');
+    expect(dee2.session.secrets().received).toEqual({});
+    for (const w of [cy2, dee2]) expect(w.session.log().some((e) => e.kind === 'system' && /Integrity/.test(e.text))).toBe(false);
+
+    // The spectator Cy (both pages): A's shown hand and the public table, nothing else of A's; nothing hidden of B's.
+    const cyObserved = [...(await observedByWatcher(network, cy)), ...(await observedByWatcher(network, cy2))];
     const cyVsA = { observed: cyObserved, owner: { state: p.a.engine.confirmedState(), secrets: p.a.secrets() }, disclosed: aToCy };
     expect(forbiddenFor(cyVsA).tokens.length).toBeGreaterThan(40);
     expect(leakScan(cyVsA)).toEqual({ tokens: [], pairs: [] });
     expect(leakScan({ observed: cyObserved, owner: { state: p.b.engine.confirmedState(), secrets: p.b.secrets() }, disclosed: bToCy })).toEqual({ tokens: [], pairs: [] });
 
-    // The other spectator Dee, there from the start: the public table only.
-    const deeObserved = await observedByWatcher(network, dee);
+    // The other spectator Dee, there from the start, and its reloaded page: the public table only.
+    const deeObserved = [...(await observedByWatcher(network, dee)), ...(await observedByWatcher(network, dee2))];
     expect(aToDee.every((d) => !hand.includes(d.instanceId))).toBe(true);
     expect(leakScan({ observed: deeObserved, owner: { state: p.a.engine.confirmedState(), secrets: p.a.secrets() }, disclosed: aToDee })).toEqual({ tokens: [], pairs: [] });
     expect(leakScan({ observed: deeObserved, owner: { state: p.b.engine.confirmedState(), secrets: p.b.secrets() }, disclosed: bToDee })).toEqual({ tokens: [], pairs: [] });

@@ -5,7 +5,8 @@
   treats a viewer without a chair so), with a bar at the bottom that says it is watching and lists the cards a player
   showed this spectator. Before the match it says which stage the evening is in and who sits at the table. The
   session decides what this page may do: chat and ping reach the table, every other action is refused by the
-  sequencer.
+  sequencer. A page whose key pair holds a chair at this table leaves the room (session/spectator.ts `heldChair`) and
+  offers that chair instead.
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
@@ -18,7 +19,7 @@
   import { tokensToCssVars } from '../../themes/index';
   import Hud from '../Hud.svelte';
   import type { LobbyProps } from '../types';
-  import { playHash, seatedPlayers, shownToMe, stageText, watchers } from './spectate';
+  import { heldChairOf, playHash, seatedPlayers, shownToMe, stageText, watchers } from './spectate';
 
   let props: LobbyProps & { createScene: CreateTableScene; faces: FaceSource; cardData: CardDataSource; settings?: SettingsStore | undefined; sets?: SetDataSource | undefined } = $props();
 
@@ -31,10 +32,12 @@
   let st = $state.raw<TableState>(session.getState());
   let secrets = $state.raw<SecretStore>(session.secrets());
   let net = $state.raw<SessionNetStatus>(session.netStatus());
+  let held = $state<string | null>(heldChairOf(session));
   onMount(() => {
     const a = session.subscribe((s) => {
       st = s;
       secrets = session.secrets();
+      held = heldChairOf(session);
     });
     const b = session.subscribeNet((n) => (net = n));
     return () => {
@@ -52,7 +55,15 @@
 </script>
 
 <div class="watch" style={cssVars} data-testid="spectator-view" data-stage={stage}>
-  {#if stage === 'match'}
+  {#if held !== null}
+    <main class="waiting" aria-labelledby="watch-title">
+      <h1 id="watch-title">Watching table <span class="room">{props.link.roomId}</span></h1>
+      <p role="alert" data-testid="spectator-held-chair">
+        This browser holds a chair at this table{st.seats[held]?.name ? ` (${st.seats[held]?.name})` : ''}, so it cannot also watch it: one browser identity is in one place at a table.
+      </p>
+      <p><a href={playHash(props.link)} data-testid="take-chair-instead">Take your chair</a> · <a href="#/">Back to the solo table</a></p>
+    </main>
+  {:else if stage === 'match'}
     {#key st.games ?? 0}
       <Hud session={props.session} createScene={props.createScene} faces={props.faces} cardData={props.cardData} game={props.game} {theme} settings={props.settings} parseDecklist={props.parseDecklist} />
     {/key}
@@ -76,17 +87,19 @@
     </main>
   {/if}
 
-  <aside class="bar" aria-label="Spectator" data-testid="spectator-bar">
-    <span class="badge" data-testid="spectator-badge">Watching</span>
-    <span class="hint" data-testid="spectator-hint">{stage === 'match' ? 'Public view. You can chat and ping; you cannot move cards.' : 'Public view. Chat and pings open once the match is on the table.'}</span>
-    {#each shown as g (g.seat)}
-      <span class="shown" data-testid="spectator-shown" data-seat={g.seat}>
-        {g.name} showed you:
-        {#each g.cards as c, i (c.id)}<span class="card" data-testid="spectator-shown-card" data-card={c.id}>{nameOf(c.ref.sid)}</span>{i < g.cards.length - 1 ? ', ' : ''}{/each}
-      </span>
-    {/each}
-    {#if stage === 'match'}<a href={playHash(props.link)} class="play">Take a chair</a>{/if}
-  </aside>
+  {#if held === null}
+    <aside class="bar" aria-label="Spectator" data-testid="spectator-bar">
+      <span class="badge" data-testid="spectator-badge">Watching</span>
+      <span class="hint" data-testid="spectator-hint">{stage === 'match' ? 'Public view. You can chat and ping; you cannot move cards.' : 'Public view. Chat and pings open once the match is on the table.'}</span>
+      {#each shown as g (g.seat)}
+        <span class="shown" data-testid="spectator-shown" data-seat={g.seat}>
+          {g.name} showed you:
+          {#each g.cards as c, i (c.id)}<span class="card" data-testid="spectator-shown-card" data-card={c.id}>{nameOf(c.ref.sid)}</span>{i < g.cards.length - 1 ? ', ' : ''}{/each}
+        </span>
+      {/each}
+      {#if stage === 'match'}<a href={playHash(props.link)} class="play">Take a chair</a>{/if}
+    </aside>
+  {/if}
 </div>
 
 <style>

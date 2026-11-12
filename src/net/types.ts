@@ -98,10 +98,8 @@ export interface Sequencer {
    * Check structure only (referenced ids exist, `by` is the sender's seat, the sender's role allows the action family,
    * hidden-zone actions come from the zone's owner; only the sequencer itself may send `away`, `commitClose` and
    * `respond … timeout`) against the confirmed state, then stamp the next seq. A refusal becomes a `nack`.
-   * `peerId` (added by M3-P5) is the sender's identity peer id: a spectator's action must carry its own spectator id
-   * (net/roles.ts `roleProblem`), so a spectator sender without it is refused.
    */
-  sequence(state: TableState, action: Action, sender: { seat: SeatId | null; role: PeerRole; self: boolean; peerId?: string }): SequenceResult;
+  sequence(state: TableState, action: Action, sender: { seat: SeatId | null; role: PeerRole; self: boolean }): SequenceResult;
 }
 
 /** What a sequenced action did to the replica (DESIGN "Specification: network protocol and secrecy", Sequencing 4). */

@@ -94,3 +94,12 @@ export function seatedPlayers(state: TableState): { seat: SeatId; name: string; 
     .sort((a, b) => a.index - b.index)
     .map((s) => ({ seat: s.id, name: s.name || s.id, ready: s.ready === true, away: s.away === true }));
 }
+
+/**
+ * The chair a spectator session found its own key pair holding at this table (session/spectator.ts `heldChair`), or
+ * null. Read structurally: the view gets the session as a TableSession.
+ */
+export function heldChairOf(session: object): SeatId | null {
+  const v = (session as { heldChair?: unknown }).heldChair;
+  return typeof v === 'string' ? v : null;
+}

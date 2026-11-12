@@ -22,6 +22,7 @@ import {
   PROTOCOL_VERSION,
   toMessage,
   type HelloMessage,
+  type PeerRole,
   type PresenceMessage,
   type PrivateMessage,
   type ProposeMessage,
@@ -33,7 +34,7 @@ import {
   type WireOf,
 } from './messages';
 import { PresenceChannel } from './presence';
-import { spectatorRoute } from './roles';
+import { roleProblem, spectatorNameProblem, spectatorRoute } from './roles';
 import { createSequencer, electSequencer, Replica, RETAIN_ACTIONS, seatOfPeer, senderSeat } from './sequencer';
 import { CHANNELS, type Channel, type PeerId } from './transport';
 import {
@@ -1116,8 +1117,11 @@ class Engine implements NetEngine {
     for (const a of [...this.replica.pending()]) this.sendProposal(a);
   }
 
-  private senderPeerCheck(action: Action, peerId: string): string | null {
-    if (action.type === 'seatTake' && action.peer !== peerId) return 'a seat is taken with the taker’s own peer id';
+  private senderPeerCheck(state: TableState, action: Action, sender: { peerId: string; role: PeerRole; nickname: string }): string | null {
+    if (action.type === 'seatTake' && action.peer !== sender.peerId) return 'a seat is taken with the taker’s own peer id';
+    // A spectator acts as its own spectator id and chats under the nickname it joined with (net/roles.ts; M3-P5); the
+    // sequencer's own check (net/sequencer.ts) covers the action type and never-for-a-seat.
+    if (sender.role === 'spectator') return roleProblem(state, action, { role: sender.role, peerId: sender.peerId, seat: null }) ?? spectatorNameProblem(action, sender.nickname);
     return null;
   }
 
@@ -1125,8 +1129,8 @@ class Engine implements NetEngine {
     if (!this.seqr) return;
     const state = this.replica.confirmed();
     const me = this.identity.peerId;
-    const bad = this.senderPeerCheck(action, me);
-    const r = bad !== null ? { ok: false as const, reason: bad } : this.seqr.sequence(state, action, { seat: senderSeat(state, action, me), role: this.role, self: true, peerId: me });
+    const bad = this.senderPeerCheck(state, action, { peerId: me, role: this.role, nickname: this.identity.nickname });
+    const r = bad !== null ? { ok: false as const, reason: bad } : this.seqr.sequence(state, action, { seat: senderSeat(state, action, me), role: this.role, self: true });
     if (r.ok) {
       this.broadcastSeq(r.action);
       this.replica.receive(r.action);
@@ -1169,8 +1173,8 @@ class Engine implements NetEngine {
     this.unhold(cid);
     const state = this.replica.confirmed();
     const peerId = e.info.peerId;
-    const bad = this.senderPeerCheck(msg.action, peerId);
-    const r = bad !== null ? { ok: false as const, reason: bad } : this.seqr.sequence(state, msg.action, { seat: senderSeat(state, msg.action, peerId), role: e.info.role, self: false, peerId });
+    const bad = this.senderPeerCheck(state, msg.action, { peerId, role: e.info.role, nickname: e.info.nickname });
+    const r = bad !== null ? { ok: false as const, reason: bad } : this.seqr.sequence(state, msg.action, { seat: senderSeat(state, msg.action, peerId), role: e.info.role, self: false });
     if (r.ok) {
       this.broadcastSeq(r.action);
       this.replica.receive(r.action);

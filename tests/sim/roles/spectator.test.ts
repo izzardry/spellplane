@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Action } from '../../../src/core/actions';
 import type { LoopbackOptions } from '../../../src/net/loopback';
 import { revealHandDrafts, shownToMe } from '../../../src/ui/lobby/spectate';
-import { closeAll, converged, dump, FAKE_TIMERS, hashOf, net, settle, until, waitConverged, type Browser } from '../session/harness';
+import { closeAll, converged, dump, FAKE_TIMERS, hashOf, net, open, settle, until, waitConverged, type Browser } from '../session/harness';
 import { playScript, type Played } from '../session/script';
 import { closeWatchers, watch, watching, type Watcher } from './harness';
 
@@ -149,6 +149,91 @@ describe('M3-P5 spectators on a simulated network', { timeout: 120_000 }, () => 
     await vi.advanceTimersByTimeAsync(10_000);
     expect(cy.session.engine.isSequencer()).toBe(false);
     expect(dee.session.engine.isSequencer()).toBe(false);
+    // With no sequencer to ask, a card action is refused on the spectator's page at once instead of staying applied.
+    const land = cy.session.getState().zones['battlefield:s1']!.ids[0]!;
+    const tap = cy.session.dispatch({ type: 'tap', card: land, tapped: true });
+    expect(cy.session.engine.pending().map((a) => a.cid)).not.toContain(tap.cid);
+    expect(cy.session.getState().cards[land]!.tapped).not.toBe(true);
+    expect(cy.session.log().some((e) => e.kind === 'system' && /tap refused: a spectator may chat and ping only/.test(e.text))).toBe(true);
+    // A chat line still waits for a player.
+    const later = cy.session.chat('anyone?');
+    expect(cy.session.engine.pending().map((a) => a.cid)).toContain(later.cid);
+  });
+
+  it('what only a seat does is refused with a reason, and a HUD call that does not wait raises nothing', async () => {
+    const { cy } = await table(39);
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      // As src/ui/commands.ts and Hud.svelte call them: `void session.draw(1)` and so on.
+      void cy.session.draw(1);
+      void cy.session.shuffle();
+      void cy.session.mulligan();
+      void cy.session.lookAt('library:s0', 1);
+      await expect(cy.session.roll('die', 6)).rejects.toThrow(/Spectators watch/);
+      await expect(cy.session.importDeck({ main: [], side: [] } as never)).rejects.toThrow(/Spectators watch/);
+      await new Promise<void>((r) => setImmediate(r));
+      await new Promise<void>((r) => setImmediate(r));
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
+    expect(cy.session.log().filter((e) => e.kind === 'system' && /Spectators watch/.test(e.text)).length).toBeGreaterThanOrEqual(6);
+  });
+
+  it('a watch page under a seated key pair leaves once it sees that chair, so the player’s page takes it back', async () => {
+    const network = net({ seed: 37, ...FAULTS });
+    const p = await playScript(network, browsers);
+    // A closes the table page and opens the watch link under the same key pair before reopening the table.
+    p.a.leave();
+    await until(() => p.b.engine.isSequencer(), 30_000, 'B to take over');
+    const ghost = await watch(network, 'anna-watch', 'peer-a', 'Anna');
+    watchers.push(ghost);
+    await until(() => ghost.session.heldChair === 's0', 30_000, 'the watch page to see its chair');
+    expect(ghost.session.engine.status()).toBe('closed');
+    expect(ghost.session.log().some((e) => e.kind === 'system' && /holds a chair at this table \(Anna\)/.test(e.text))).toBe(true);
+    // It acts no more.
+    ghost.session.chat('hello?');
+    expect(ghost.session.engine.pending()).toEqual([]);
+    // A's table page reopens and plays from its chair again; B sees it as that chair's player.
+    const a2 = await open(network, p.A);
+    await until(
+      () => converged([a2, p.b]) && a2.engine.seat() === 's0' && p.b.engine.peers().some((x) => x.peerId === 'peer-a' && x.role === 'player' && x.status === 'connected'),
+      30_000,
+      'A to be back in its chair',
+    );
+    a2.dispatch({ type: 'life', seat: 's0', delta: -1 });
+    await waitConverged([a2, p.b]);
+    expect(p.b.engine.confirmedState().seats.s0!.away).not.toBe(true);
+  });
+
+  it('a hand shown while the spectator’s page was away reaches it when it comes back (a reload keeps nothing)', async () => {
+    const { p, dee, cy, network } = await table(38);
+    const a = p.a;
+    const handIds = [...a.engine.confirmedState().zones['hand:s0']!.ids];
+    expect(handIds.length).toBeGreaterThan(1);
+    cy.session.leave();
+    await until(() => !a.engine.peers().some((x) => x.peerId === 'peer-c' && x.status === 'connected'), 30_000, 'Cy to be gone');
+    for (const d of revealHandDrafts(a.getState(), 's0', cy.session.seat, 'g-while-away')) a.dispatch(d);
+    await waitConverged([a, p.b]);
+    const cy2 = await watch(network, 'cy2', 'peer-c', 'Cy');
+    watchers.push(cy2);
+    await until(() => handIds.every((id) => Object.hasOwn(cy2.session.secrets().received, id)), 30_000, 'Cy’s new page to be shown the hand');
+    for (const id of handIds) expect(cy2.session.secrets().received[id]).toEqual({ card: a.secrets().identities[id]!.card, salt: a.secrets().identities[id]!.salt, from: 's0' });
+    expect(dee.session.secrets().received).toEqual({});
+    // A card played since is public, and no longer sent as a reveal to a page that comes back.
+    const played = handIds[0]!;
+    a.dispatch({ type: 'move', card: played, to: 'battlefield:s0', pose: { x: 200, y: -200, rot: 0 } });
+    await allConverged(p, [dee, cy2]);
+    cy2.session.leave();
+    await until(() => !a.engine.peers().some((x) => x.peerId === 'peer-c' && x.status === 'connected'), 30_000, 'Cy to be gone again');
+    const cy3 = await watch(network, 'cy3', 'peer-c', 'Cy');
+    watchers.push(cy3);
+    await allConverged(p, [dee, cy3]);
+    await until(() => handIds.slice(1).every((id) => Object.hasOwn(cy3.session.secrets().received, id)), 30_000, 'Cy’s third page to be shown the rest');
+    const resent = cy3.session.engine.messages().filter((r) => r.dir === 'in' && r.channel === 'prv' && r.msg.t === 'reveal' && r.msg.instanceId === played);
+    expect(resent).toEqual([]);
   });
 
   it('a player shows the hand to a named spectator: that spectator alone gets the identities, verified', async () => {

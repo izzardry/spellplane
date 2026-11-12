@@ -105,13 +105,19 @@ describe('spectators on the engine', () => {
       { type: 'life', by: me, cid: 'w-life', seat: 's1', delta: -1 },
       // In a seat's name.
       { type: 'life', by: 's3', cid: 'w-as-s3', seat: 's3', delta: -1 },
+      // As another spectator, or under another name than its handshake nickname (P4): the engine checks the identity
+      // before the sequencer (net/engine.ts senderPeerCheck), so neither reaches the log.
+      { type: 'chat', by: spectatorIdOf('peer9'), cid: 'w-as-other', text: 'hi', channel: 'spectator', name: 'P4' },
+      { type: 'chat', by: me, cid: 'w-as-anna', text: 'hi', channel: 'table', name: 'Anna' },
     ];
     for (const a of tries) watcher.engine.propose(a);
     holder.engine.propose({ type: 'tap', by: 's0', cid: 'h-tap', card: libraryIds(0)[0]!, tapped: true });
-    watcher.engine.propose({ type: 'chat', by: me, cid: 'w-chat', text: 'hi', channel: 'spectator', name: 'Watcher' });
+    watcher.engine.propose({ type: 'chat', by: me, cid: 'w-chat', text: 'hi', channel: 'spectator', name: 'P4' });
     watcher.engine.propose({ type: 'ping', by: me, cid: 'w-ping', target: { kind: 'card', id: pub } });
     await expectConverged([b, c, watcher, holder]);
     for (const a of tries) expect(watcher.rolledBack.get(a.cid), a.cid).toMatch(/spectator/);
+    expect(watcher.rolledBack.get('w-as-other')).toMatch(/acts as v:peer4 only/);
+    expect(watcher.rolledBack.get('w-as-anna')).toMatch(/nickname it joined with/);
     // A spectator page under s0's key pair still cannot act for s0.
     expect(holder.rolledBack.get('h-tap')).toMatch(/spectator may chat and ping only/);
     const cids = [...b.log.values()].map((a) => a.cid);
