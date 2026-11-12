@@ -106,8 +106,8 @@ describe('reducer additions', () => {
     ok(s, act('chat', { text: 'hi', channel: 'spectator', name: 'Viv' }, spectatorIdOf('0123456789abcdef')));
   });
 
-  it('formatSet is refused until M3-P1 implements it', () => {
-    no(fresh(), act('formatSet', { format: 'ffa3', life: 20 }), /M3-P1/);
+  it('formatSet is implemented (M3-P1; its tests are in tests/unit/layout/format.test.ts)', () => {
+    expect(ok(fresh(), act('formatSet', { format: 'ffa3', life: 20 })).format).toBe('ffa3');
   });
 
   it('teamChat travels on the pair channel', () => {
@@ -127,8 +127,9 @@ describe('layout descriptors', () => {
     expect(l.teams).toHaveLength(2);
     expect(l.seats.map((s) => s.team)).toEqual([0, 0, 1, 1]);
     const [t0, t1] = l.teams!;
-    expect(t0!.seats).toEqual([0, 1]);
-    expect(t1!.seats).toEqual([2, 3]);
+    // Left to right in the team's own orientation; M3-P1 seats every format clockwise, so seat 0 is at the near right.
+    expect(t0!.seats).toEqual([1, 0]);
+    expect(t1!.seats).toEqual([3, 2]);
     expect(t0!.territory).toEqual({ x: 0, y: -330, w: 2200, d: 440, rot: 0 });
     expect(t1!.territory).toEqual({ x: 0, y: 330, w: 2200, d: 440, rot: 180 });
     // Outside the near edge, centred on the team.
