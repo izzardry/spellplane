@@ -76,8 +76,10 @@ import { randomId, randomSalt } from './secrecy';
 import { identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recoveryProblem, type RecoveryOwed, type SessionRecovery } from './resume';
 import { reconcileSecrets, type LibraryPlacement } from './secrets';
 import { buildFromDeck, Evening, type DraftPort } from './draft';
+import { TeamView } from './team';
+import { formatTeamSeats, isTeamFormat, teamIdOf } from '../core/teams';
 import type { DraftControls } from '../draft/types';
-import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
+import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus, TeamControls } from './types';
 
 /** How long a browser without a seat listens for a table already in the room before it takes a chair (decision M1-P8). */
 export const SETTLE_MS = 1500;
@@ -136,7 +138,16 @@ export interface NetSessionInternals {
 
 /** The seq-0 table of a room nobody saved (DESIGN "Players, seats and formats", Seats: every chair free). */
 export function freshNetTable(game: NetSessionOptions['game'], format: Format = '1v1'): TableState {
-  return createTable({ game, format, seats: Array.from({ length: SEATS_OF[format] }, (_, i) => ({ name: '', colour: i as SeatColourIndex })) });
+  // Two-Headed Giant chairs belong to their team from the start (core/teams.ts TABLE_FORMAT_TEAMS; M3-P2).
+  const teamOf = new Map(formatTeamSeats(format).flatMap((seats, t) => seats.map((s) => [s, teamIdOf(t)] as const)));
+  return createTable({
+    game,
+    format,
+    seats: Array.from({ length: SEATS_OF[format] }, (_, i) => {
+      const team = teamOf.get(`s${i}`);
+      return { name: '', colour: i as SeatColourIndex, ...(team !== undefined ? { team } : {}) };
+    }),
+  });
 }
 
 const DEFAULT_ENTROPY: Entropy = { id: () => randomId('c'), salt: randomSalt };
@@ -278,6 +289,8 @@ class NetTable implements NetSession, SessionRecovery {
   /** Own pack-seed rounds run one after another. */
   private packChain: Promise<unknown> = Promise.resolve();
   private eveningImpl: Evening | null = null;
+  /** The Two-Headed Giant team view (M3-P2, session/team.ts). */
+  private readonly teamView = new TeamView({ seat: () => this.seat, confirmedState: () => this.engine.confirmedState(), secrets: () => this.sec, now: () => this.now() });
 
   constructor(
     engine: NetEngine,
@@ -311,6 +324,11 @@ class NetTable implements NetSession, SessionRecovery {
   /** The draft and the builder (M2-P7); absent without set data. */
   get draft(): DraftControls | undefined {
     return this.eveningImpl?.draft;
+  }
+
+  /** The Two-Headed Giant team view (M3-P2); absent outside a team format. */
+  get team(): TeamControls | undefined {
+    return isTeamFormat(this.engine.confirmedState().format) ? this.teamView : undefined;
   }
 
   /** The evening's stage flow (M2-P7). */
@@ -351,8 +369,10 @@ class NetTable implements NetSession, SessionRecovery {
         // A replica now in step decides the turn-ups kept from before a reload (`keptTurnUp`).
         this.queueDrive();
       }),
+      ...this.teamView.attach(engine),
       engine.onPeers(() => {
         for (const l of [...this.peerListeners]) l();
+        this.teamView.sync(true);
         this.netChanged();
         // A peer that (re)connected may be the one a randomness round waits for, or this browser may owe it a nonce.
         this.queueDrive();
@@ -447,6 +467,7 @@ class NetTable implements NetSession, SessionRecovery {
     if (this.disposed) return;
     this.disposed = true;
     this.eveningImpl?.dispose();
+    this.teamView.dispose();
     for (const u of this.unsubs.splice(0)) u();
     this.engine.leave();
     for (const w of this.waiters.splice(0)) {
@@ -541,6 +562,12 @@ class NetTable implements NetSession, SessionRecovery {
   }
 
   chat(text: string, channel: ChatChannel = 'table'): Action {
+    if (channel === 'team') {
+      // Team lines go to the teammate on the pair channel only, never into the shared log (M3-P2, session/team.ts).
+      const line = this.stamp({ type: 'chat', text, channel });
+      if (!this.disposed) this.teamView.say(line);
+      return line;
+    }
     return this.dispatch({ type: 'chat', text, channel });
   }
 
@@ -1718,6 +1745,7 @@ class NetTable implements NetSession, SessionRecovery {
   private notify(): void {
     if (this.disposed) return;
     this.settleWaiters();
+    this.teamView.sync();
     for (const l of [...this.changeListeners]) {
       try {
         l();

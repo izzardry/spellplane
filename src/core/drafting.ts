@@ -117,7 +117,8 @@ export function rochesterOrder(seats: readonly SeatId[], opener: SeatId): SeatId
  */
 export function draftDeadlines(state: TableState): Deadline[] {
   const d = state.draft;
-  if (d === undefined || state.stage !== 'draft' || d.done || !d.pickTimer || d.settings.format !== 'pass') return [];
+  // The Two-Headed Giant draft times the team's front pack the same way (M3-P2, core/reducer/pass.ts).
+  if (d === undefined || state.stage !== 'draft' || d.done || !d.pickTimer || (d.settings.format !== 'pass' && d.settings.format !== 'teamDraft')) return [];
   const out: Deadline[] = [];
   for (const drafter of d.drafters) {
     const front = d.queues[drafter]?.[0];
