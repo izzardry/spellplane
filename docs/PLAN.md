@@ -148,6 +148,15 @@ Two players draft or open sealed packs of a real core set, build decks and play,
 | M2-P6 List view and deck library | Two-column list view with filters, switch between views without losing state, Scryfall search-and-add, local deck and pool library, export and import as JSON files. | `ui/builder/list/*`, `store/decks.ts` | M2-C |
 | M2-P7 Evening flow | Stage transitions for everyone at once, return to builder between games for sideboarding, rematch, new draft on the same link, resume in any stage. | `core/stage.ts`, `ui/flow/*` | M2-C |
 
+**Ownership within M2** *(M2-C)*: the shared draft shapes (`DraftState`, packs, lobby and per-format settings, `DraftSecrets`, `DeckBuild`) live in `core/types.ts` because `TableState` and `SecretStore` hold them; `draft/types.ts` re-exports them and adds the driver seams (`DraftHost`, `DraftDriver`, `DraftControls`). The draft actions reach the format reducers through `core/reducer/drafting.ts` (M2-C, not edited by packages).
+- M2-P1 also owns `store/sets.ts` (the `sets` store, stub by M2-C).
+- M2-P2 owns `core/reducer/pass.ts` and `draftDeadlines` in `core/drafting.ts`, and extends `net/private.ts` (from M1-P2) for the private pack hand-over.
+- M2-P3 owns `core/reducer/open.ts`, `rochesterOrder` in `core/drafting.ts`, and a new `net/draftcards.ts` for the `draftCards` pair message (Winston piles); it does not edit `net/private.ts`.
+- M2-P4 owns `ui/draft/*` and `scene/draft.ts`.
+- M2-P5 owns `scene/builder.ts` and `ui/builder/*` except `ui/builder/list/*` (the builder container with the view switch and `ui/builder/stats.*`).
+- M2-P6 owns `ui/builder/list/*` (stub `ListView.svelte` by M2-C), `store/decks.ts`, and `searchCards` in `data/source.ts`.
+- M2-P7 owns `core/stage.ts`, the `stageSet` case in `core/reducer/table.ts`, `ui/flow/*`, and the session wiring: a new `session/draft.ts`, the `draft` and `evening` members in `session/solo.ts` and `session/net.ts`, `main.ts` (set data, pack generation), the debug hook's `draft` part, and the stage switch in `ui/App.svelte` / `ui/lobby/TableRoom.svelte`.
+
 **Acceptance tests**
 
 - **M2-P1.** For each of the ten target sets, 10,000 generated packs from fixtures match the sheet model: pack size, slot counts, mythic rate within ±0.5 percentage points of the sheet weights (about 1 in 8 for M10–M15, M20, M21), foil rate within ±1 point, no duplicate non-foil card in a pack, every colour present among commons when the sheet has colour balancing. Generation is deterministic for a given seed.

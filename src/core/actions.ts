@@ -16,6 +16,7 @@ import type {
   ConfirmResponse,
   InstanceId,
   Line,
+  LobbySettings,
   LineId,
   LineKind,
   PackId,
@@ -27,6 +28,7 @@ import type {
   RoundId,
   SeatColourIndex,
   SeatId,
+  SetCode,
   ShuffleId,
   Stage,
   StackItem,
@@ -35,6 +37,7 @@ import type {
   TeamId,
   ZoneId,
 } from './types';
+import type { RevealedCard } from './commit';
 
 /** Fields every action carries (DESIGN "Data model and protocol", Action families). */
 export interface ActionBase {
@@ -272,9 +275,18 @@ export type CommitCloseAction = A<'commitClose', { kind: 'rng' | 'shuffle'; id: 
 
 // --- Draft (DESIGN "Specification: network protocol and secrecy", Draft packs; M2 refines the state) -------
 
-/** Open a pack: publishes commitments for its cards (DESIGN "Specification: network protocol and secrecy", Draft packs). */
-export type PackOpenAction = A<'packOpen', { packId: PackId; commits: string[]; count: number; public?: boolean }>;
-/** Pick `count` cards from a held pack; picked identities stay with the picker (Draft packs). */
+/**
+ * Open a pack: publishes commitments for its cards (DESIGN "Specification: network protocol and secrecy", Draft packs).
+ * Fields added by M2-C (optional, so M0's shape still compiles; M2-P2 and M2-P3 require them): `instanceIds` the
+ * pack's sorted opaque ids, `sid` the secret-shuffle round (purpose 'pack') whose seed generated it, `number` the pack
+ * number and `set` its set code. A public pack (Rochester, `public: true`) carries its cards with salts in `cards`, so
+ * every peer verifies them against `commits` in the same step.
+ */
+export type PackOpenAction = A<
+  'packOpen',
+  { packId: PackId; commits: string[]; count: number; public?: boolean; instanceIds?: InstanceId[]; sid?: ShuffleId; number?: number; set?: SetCode; cards?: RevealedCard[] }
+>;
+/** Pick `count` cards from a held pack; picked identities stay with the picker; `cards` names them only in a public pack (Rochester) (Draft packs). */
 export type PickAction = A<'pick', { packId: PackId; count: number; cards?: InstanceId[] }>;
 /** Hand the rest of a pack to `to` (contents go on the pair's `prv` channel) (Draft packs). */
 export type PackPassAction = A<'packPass', { packId: PackId; to: SeatId | TeamId; count: number }>;
@@ -282,6 +294,13 @@ export type PackPassAction = A<'packPass', { packId: PackId; to: SeatId | TeamId
 export type PileLookAction = A<'pileLook', { pile: number; take: boolean }>;
 /** Grid: take row or column `index` of grid `grid` (DESIGN "Specification: card data, packs and draft formats"). */
 export type GridTakeAction = A<'gridTake', { grid: number; line: 'row' | 'col'; index: 0 | 1 | 2 }>;
+/**
+ * The sequencer's clock: the pick timer of pack `packId` ran out at its pick number `picks` (DESIGN "Specification: card
+ * data, packs and draft formats": on expiry the marked card, or else the first card, is taken; "Specification: network
+ * protocol and secrecy", Timers: only the sequencer's clock decides). Only the sequencer proposes it (core/drafting.ts
+ * `draftDeadlines`); the holder's browser then sends the `pick`. Added by M2-C; reducer: M2-P2.
+ */
+export type DraftTimeoutAction = A<'draftTimeout', { packId: PackId; picks: number }>;
 
 // --- Social (DESIGN "Chat and voice") ----------------------------------------------------------------
 
@@ -300,8 +319,18 @@ export type SnapshotHashAction = A<'snapshotHash', { upTo: number; h: string }>;
 export type SequencerClaimAction = A<'sequencerClaim', { fromSeq: number; peer: string }>;
 /** Host changes table settings, e.g. the pass timer (DESIGN "Turn flow and confirmation": the host can change it mid-game). Added by M0-C. */
 export type SettingsAction = A<'settings', { settings: Partial<TableSettings> }>;
-/** Move the evening to another stage (DESIGN "Specification: card data, packs and draft formats", Evening stages). Added by M0-C; M2 refines. */
-export type StageSetAction = A<'stageSet', { stage: Stage }>;
+/**
+ * Move the evening to another stage (DESIGN "Specification: card data, packs and draft formats", Evening stages). Added
+ * by M0-C. `round` (added by M2-C) names the passed confirmation round in which the others agreed to leave a match
+ * ("next game" or "new draft": "any player proposes … and the others confirm"); core/stage.ts (M2-P7) checks it.
+ */
+export type StageSetAction = A<'stageSet', { stage: Stage; round?: RoundId }>;
+/**
+ * The host sets the lobby settings while the table is in the lobby (DESIGN "Pre-game: draft, sealed and deck building",
+ * Lobby settings). Replaces them whole. Added by M2-C; reducer: core/reducer/drafting.ts (host and stage checks,
+ * core/stage.ts `lobbyProblem`).
+ */
+export type LobbySetAction = A<'lobbySet', { lobby: LobbySettings }>;
 
 /** Every shared action (DESIGN "Data model and protocol"). */
 export type Action =
@@ -359,6 +388,7 @@ export type Action =
   | PackPassAction
   | PileLookAction
   | GridTakeAction
+  | DraftTimeoutAction
   | ChatAction
   | CaptionAction
   | UndoAction
@@ -366,6 +396,7 @@ export type Action =
   | SequencerClaimAction
   | SettingsAction
   | StageSetAction
+  | LobbySetAction
   | RecoverAction
   | RecoverCommitAction;
 
@@ -440,6 +471,7 @@ export const ACTION_FAMILIES: Readonly<Record<ActionType, ActionFamily>> = {
   packPass: 'draft',
   pileLook: 'draft',
   gridTake: 'draft',
+  draftTimeout: 'draft',
   chat: 'social',
   caption: 'social',
   undo: 'meta',
@@ -447,6 +479,7 @@ export const ACTION_FAMILIES: Readonly<Record<ActionType, ActionFamily>> = {
   sequencerClaim: 'meta',
   settings: 'meta',
   stageSet: 'meta',
+  lobbySet: 'meta',
   recover: 'zone',
   recoverCommit: 'zone',
 };

@@ -93,9 +93,9 @@ describe('actions', () => {
     phaseSet: true, turnPass: true, ask: true, respond: true, autoPass: true,
     life: true, playerCounter: true, seatTake: true, seatLeave: true, ready: true, away: true,
     rngCommit: true, rngReveal: true, commitClose: true,
-    packOpen: true, pick: true, packPass: true, pileLook: true, gridTake: true,
+    packOpen: true, pick: true, packPass: true, pileLook: true, gridTake: true, draftTimeout: true,
     chat: true, caption: true,
-    undo: true, snapshotHash: true, sequencerClaim: true, settings: true, stageSet: true,
+    undo: true, snapshotHash: true, sequencerClaim: true, settings: true, stageSet: true, lobbySet: true,
     recover: true, recoverCommit: true,
   };
 

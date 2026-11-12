@@ -3,7 +3,7 @@
  * `w`/`set`/`delete` methods, which copy a record before its first change; the input state is never touched, and
  * untouched records keep their identity in the result (cheap change detection for the scene and HUD).
  */
-import type { CardInstance, Commitment, ConfirmRound, Line, RngRound, Seat, ShuffleRound, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
+import type { CardInstance, Commitment, ConfirmRound, DraftState, Line, LobbySettings, RngRound, Seat, ShuffleRound, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
 import { byId, own, reject } from './util';
 
 /** One keyed record of the state (cards, zones, lines, seats, teams, commitments). */
@@ -100,6 +100,12 @@ export class Draft {
   private stageValue: Stage | null = null;
   /** Added by M1-P3: the confirmation round once a handler set it (`undefined`: unchanged). */
   private confirmValue: ConfirmRound | null | undefined = undefined;
+  /** Added by M2-C: the draft state once a handler set it (`undefined`: unchanged; `null`: removed). */
+  private draftValue: DraftState | null | undefined = undefined;
+  /** Added by M2-C: the lobby settings once a handler set them (`undefined`: unchanged). */
+  private lobbyValue: LobbySettings | undefined = undefined;
+  /** Added by M2-C: the games counter once a handler set it (`undefined`: unchanged). */
+  private gamesValue: number | undefined = undefined;
 
   constructor(readonly base: TableState) {
     this.cards = new RecordDraft(base.cards, 'card');
@@ -159,6 +165,45 @@ export class Draft {
     this.confirmValue = round;
   }
 
+  /** The draft state (read-only: never mutate it; use `draftW` or `setDraftState`), null outside a draft. Added by M2-C. */
+  get draft(): Readonly<DraftState> | null {
+    return this.draftValue !== undefined ? this.draftValue : (this.base.draft ?? null);
+  }
+
+  /** A writable deep copy of the draft state, made on first write; rejects when no draft is in progress. Added by M2-C. */
+  draftW(): DraftState {
+    if (this.draftValue === undefined) {
+      if (this.base.draft === undefined) reject('no draft is in progress');
+      this.draftValue = structuredClone(this.base.draft);
+    }
+    if (this.draftValue === null) reject('no draft is in progress');
+    return this.draftValue;
+  }
+
+  /** Replace the draft state (a fresh object, or null to remove it). Added by M2-C. */
+  setDraftState(draft: DraftState | null): void {
+    this.draftValue = draft;
+  }
+
+  /** The lobby settings as stored (absent: defaults apply, core/stage.ts lobbyOf). Added by M2-C. */
+  get lobby(): Readonly<LobbySettings> | undefined {
+    return this.lobbyValue ?? this.base.lobby;
+  }
+
+  /** Replace the lobby settings. Added by M2-C. */
+  setLobby(lobby: LobbySettings): void {
+    this.lobbyValue = lobby;
+  }
+
+  /** Games started this evening (absent: 0). Added by M2-C. */
+  get games(): number {
+    return this.gamesValue ?? this.base.games ?? 0;
+  }
+
+  setGames(n: number): void {
+    this.gamesValue = n;
+  }
+
   get changed(): boolean {
     return (
       this.cards.changed ||
@@ -173,7 +218,10 @@ export class Draft {
       this.turnCopy !== null ||
       this.settingsCopy !== null ||
       this.stageValue !== null ||
-      this.confirmValue !== undefined
+      this.confirmValue !== undefined ||
+      this.draftValue !== undefined ||
+      this.lobbyValue !== undefined ||
+      this.gamesValue !== undefined
     );
   }
 
@@ -185,7 +233,7 @@ export class Draft {
     // out, undo): M1-P3, DESIGN "Turn flow and confirmation".
     let confirm = this.confirm;
     if (confirm?.about !== undefined && !stack.some((i) => i.id === confirm!.about)) confirm = null;
-    return {
+    const next: TableState = {
       ...this.base,
       seq: seq ?? this.base.seq,
       cards: this.cards.result(),
@@ -202,5 +250,11 @@ export class Draft {
       settings: this.settingsCopy ?? this.base.settings,
       stage: this.stageValue ?? this.base.stage,
     };
+    // Optional M2 slots are omitted when absent (plain JSON rule, core/types.ts).
+    if (this.draftValue === null) delete next.draft;
+    else if (this.draftValue !== undefined) next.draft = this.draftValue;
+    if (this.lobbyValue !== undefined) next.lobby = this.lobbyValue;
+    if (this.gamesValue !== undefined) next.games = this.gamesValue;
+    return next;
   }
 }

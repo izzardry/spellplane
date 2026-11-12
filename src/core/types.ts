@@ -11,6 +11,7 @@
  */
 
 import type { Action, ActionDraft } from './actions';
+import type { RevealedCard } from './commit';
 
 // ---------------------------------------------------------------------------
 // Ids
@@ -363,6 +364,22 @@ export interface TableState {
   rng: Record<RngId, RngRound>;
   shuffles: Record<ShuffleId, ShuffleRound>;
   settings: TableSettings;
+  /**
+   * Added by M2-C. The lobby settings the host chose (DESIGN "Pre-game: draft, sealed and deck building", Lobby
+   * settings). Absent until the host first sets them; readers use `DEFAULT_LOBBY_SETTINGS` then.
+   */
+  lobby?: LobbySettings;
+  /**
+   * Added by M2-C. The public side of the current or last draft (DESIGN "Specification: card data, packs and draft
+   * formats", Draft formats). Created when the table enters the draft stage; kept through build and match so pools stay
+   * countable; removed by a new draft (core/stage.ts).
+   */
+  draft?: DraftState;
+  /**
+   * Added by M2-C. Games started this evening on this link (DESIGN "Specification: card data, packs and draft formats",
+   * Evening stages: build → match → build → match …). Absent before the first game; core/stage.ts (M2-P7) counts it.
+   */
+  games?: number;
 }
 
 /**
@@ -379,6 +396,240 @@ export interface Deadline {
   afterMs: number;
   /** Drafts the sequencer dispatches as itself (e.g. `respond {seat, 'timeout'}` per silent seat, `commitClose`). */
   emit: ActionDraft[];
+}
+
+// ---------------------------------------------------------------------------
+// Draft, lobby and deck building (shared and private shapes). Added by M2-C.
+// These live in core because TableState and SecretStore hold them and core imports nothing else; draft/types.ts
+// re-exports them for the draft drivers (DECISIONS [M2-C]).
+// ---------------------------------------------------------------------------
+
+/** A set code as MTGJSON and Scryfall spell it, upper case, e.g. 'M19' (DESIGN "Specification: card data, packs and draft formats", Booster data). */
+export type SetCode = string;
+
+/** Who drafts: a seat, or a team in Two-Headed Giant draft and sealed (DESIGN "Pre-game", Two-Headed Giant draft: the team picks into a shared pool). */
+export type DrafterId = SeatId | TeamId;
+
+/**
+ * Draft formats (DESIGN "Specification: card data, packs and draft formats", Draft formats). Pick-Two is a pass draft
+ * with 2 picks per pass (draft/types.ts DRAFT_PRESETS). 'teamDraft' and 'teamSealed' are the Two-Headed Giant variants
+ * (M3-P2); M2 implements the others.
+ */
+export type DraftFormat = 'pass' | 'sealed' | 'rochester' | 'winston' | 'grid' | 'teamDraft' | 'teamSealed';
+
+/** Pass draft (and the Pick-Two preset): `packs` per player, `picks` per pass (DESIGN "Specification: card data, packs and draft formats", Draft formats: defaults 3 and 1). */
+export interface PassDraftSettings {
+  format: 'pass';
+  packs: number;
+  picks: number;
+}
+
+/** Sealed: `packs` per player, no drafting (DESIGN "Specification: card data, packs and draft formats", Draft formats: default 6). */
+export interface SealedSettings {
+  format: 'sealed';
+  packs: number;
+}
+
+/** Rochester: `packs` per player opened face up one at a time, `burn` cards left unpicked per pack (DESIGN "Specification: card data, packs and draft formats", Draft formats: defaults 3 and 0). */
+export interface RochesterSettings {
+  format: 'rochester';
+  packs: number;
+  burn: number;
+}
+
+/** Winston, two seats: `packs` in total shuffled into one face-down stack (DESIGN "Specification: card data, packs and draft formats", Draft formats: 6 packs). */
+export interface WinstonSettings {
+  format: 'winston';
+  packs: number;
+}
+
+/** Grid, two seats: `grids` grids of nine face-up cards from shuffled packs (DESIGN "Specification: card data, packs and draft formats", Draft formats: 18 grids). */
+export interface GridSettings {
+  format: 'grid';
+  grids: number;
+}
+
+/** Two-Headed Giant draft: `packs` per team, `picks` per pass into the team pool (DESIGN "Specification: card data, packs and draft formats", Draft formats: 6 packs, 2 picks). M3-P2. */
+export interface TeamDraftSettings {
+  format: 'teamDraft';
+  packs: number;
+  picks: number;
+}
+
+/** Two-Headed Giant sealed: `packs` per team into a shared pool (DESIGN "Specification: card data, packs and draft formats", Draft formats: 8 packs). M3-P2. */
+export interface TeamSealedSettings {
+  format: 'teamSealed';
+  packs: number;
+}
+
+/** Per-format draft settings (DESIGN "Specification: card data, packs and draft formats", Draft formats, Setup column). */
+export type DraftFormatSettings =
+  | PassDraftSettings
+  | SealedSettings
+  | RochesterSettings
+  | WinstonSettings
+  | GridSettings
+  | TeamDraftSettings
+  | TeamSealedSettings;
+
+/**
+ * The lobby settings (DESIGN "Pre-game: draft, sealed and deck building", Lobby settings: acquisition mode, set per
+ * pack, packs per player, picks per pass, optional pick timer). The table format (1v1, free-for-all, Two-Headed Giant)
+ * is `TableState.format` and the pass timer is `TableSettings.passTimerMs`; both stay where M0 put them.
+ */
+export interface LobbySettings {
+  /** How cards are acquired; null plays constructed decks chosen in the lobby (no draft or build stage before the first game). */
+  draft: DraftFormatSettings | null;
+  /**
+   * Set code per pack number, index 0 = the first pack (a different set per pack is allowed). A list shorter than the
+   * number of packs repeats its last entry (core/drafting.ts `setForPack`); never empty.
+   */
+  sets: SetCode[];
+  /** Pick timer: 45 s for a pack's first pick, 3 s less per pick, 10 s floor (DESIGN "Specification: card data, packs and draft formats"). Off by default. */
+  pickTimer: boolean;
+}
+
+/** Lobby defaults (DESIGN "Pre-game", Lobby settings: booster draft of 3 packs, pick 1, pick timer off; M19 is the gate's set). */
+export const DEFAULT_LOBBY_SETTINGS: LobbySettings = { draft: { format: 'pass', packs: 3, picks: 1 }, sets: ['M19'], pickTimer: false };
+
+/** A draft card whose identity is public: Rochester packs and grid cells (DESIGN "Pre-game", Hidden information column: "None: packs and picks are public"). */
+export interface DraftCard {
+  id: InstanceId;
+  ref: CardRef;
+}
+
+/**
+ * One booster in the draft (DESIGN "Specification: network protocol and secrecy", Draft packs). Its contents stay with
+ * its holder; shared state knows its commitments, its size and where it is.
+ */
+export interface DraftPack {
+  id: PackId;
+  /** The seat whose browser generated it with the secret-shuffle seed (purpose 'pack') and published its commitments. */
+  opener: SeatId;
+  /** 0-based pack number: the round in a pass or Rochester draft, the pack's index in sealed, Winston and grid. */
+  number: number;
+  set: SetCode;
+  /** The commitments `packOpen` published (`seat` = opener); hand-overs and reveals are verified against it (core/commit.ts verifyReveal). */
+  commitment: Commitment;
+  /** Cards left in it. */
+  count: number;
+  /** The drafter whose queue holds it; null while it lies face up on the shared table (Rochester) or once it is empty or dealt (sealed, Winston, grid). */
+  holder: DrafterId | null;
+  /** Picks taken from it so far (the pick timer shortens with each). */
+  picks: number;
+  /** Seq of the action that put it at the front of its holder's queue (the pick timer runs from there). */
+  sinceSeq: number;
+  /** A public pack (Rochester): its remaining cards face up, in pack order. */
+  cards?: DraftCard[];
+}
+
+/** Rochester draft (DESIGN "Specification: card data, packs and draft formats", Draft formats: snake order from the opener, opener role moves left). M2-P3. */
+export interface RochesterState {
+  /** The pack face up on the shared table, null between packs. */
+  pack: PackId | null;
+  /** The seat that opens (opened) the current pack. */
+  opener: SeatId;
+  /** Index into the snake order of the current pack (core/drafting.ts `rochesterOrder`). */
+  turn: number;
+  /** Packs opened so far. */
+  opened: number;
+}
+
+/** Winston draft (DESIGN "Specification: card data, packs and draft formats", Draft formats: a face-down stack and three piles). M2-P3. */
+export interface WinstonState {
+  /** Cards left in the face-down stack. */
+  stack: number;
+  /** Card count of piles 1 to 3 (index 0..2). */
+  piles: number[];
+  /** The seat whose turn it is. */
+  active: SeatId;
+  /** The pile the active player is looking at (0..2). */
+  pile: number;
+  /** The seat whose browser dealt the stack and answers pile looks (M2-P3 decides the dealing; DECISIONS [M2-C]). */
+  dealer: SeatId;
+}
+
+/** Grid draft (DESIGN "Specification: card data, packs and draft formats", Draft formats: 3×3 face up, row or column, first player alternates). M2-P3. */
+export interface GridState {
+  /** 0-based number of the grid on the table. */
+  index: number;
+  /** Nine cells row by row (row 0 = cells 0..2); null once taken, or before the grid is laid. */
+  cells: (DraftCard | null)[];
+  /** The seat that takes first in this grid. */
+  first: SeatId;
+  /** Lines already taken in this grid, in order. */
+  taken: { line: 'row' | 'col'; index: number }[];
+}
+
+/**
+ * The public side of a draft (DESIGN "Specification: card data, packs and draft formats", Draft formats; "Pre-game",
+ * Drafting interaction: waiting packs queue visibly behind each seat). Plain JSON, identical in every browser.
+ */
+export interface DraftState {
+  /** The format and its settings, copied from the lobby when the draft starts. */
+  settings: DraftFormatSettings;
+  /** Set code per pack number (LobbySettings.sets at the start). */
+  sets: SetCode[];
+  pickTimer: boolean;
+  /** Drafters in seat order (team ids in Two-Headed Giant). */
+  drafters: DrafterId[];
+  /** 0-based round (pack number) of a pass draft; direction is left in rounds 0, 2, … and right in 1, 3, … (core/drafting.ts `passDirection`). */
+  round: number;
+  packs: Record<PackId, DraftPack>;
+  /** Packs waiting at each drafter, oldest first; the first is the one being picked from. */
+  queues: Record<DrafterId, PackId[]>;
+  /** Cards each drafter has taken so far (contents stay with the drafter). */
+  pools: Record<DrafterId, number>;
+  rochester?: RochesterState;
+  winston?: WinstonState;
+  grid?: GridState;
+  /** Seq of the `stageSet` that started the draft. */
+  startSeq: number;
+  /** Set when every pick is made (or every sealed pool is open); the stage machine then advances to build. */
+  done: boolean;
+}
+
+/** Own private draft record of a generated pack, for the audit (DESIGN "Specification: card data, packs and draft formats", Pack generation: reproducible in the audit). */
+export interface PackRecord {
+  packId: PackId;
+  /** The secret-shuffle round (purpose 'pack') whose seed generated it. */
+  sid: ShuffleId;
+  ownerNonce: string;
+  /** Peer nonces in seat order. */
+  peerNonces: string[];
+  set: SetCode;
+  /** The generated cards in pack order. */
+  cards: RevealedCard[];
+}
+
+/** The private side of a draft in its owner's browser (DESIGN "Specification: network protocol and secrecy", Draft packs). Plain JSON; persisted with the SecretStore. */
+export interface DraftSecrets {
+  /** Contents of every pack this browser holds or has queued, by pack id, in pack order. */
+  held: Record<PackId, RevealedCard[]>;
+  /** Packs this browser generated. */
+  generated: PackRecord[];
+  /** Own marked (not yet confirmed) cards of the front pack (DESIGN "Pre-game", Drafting interaction: click to mark, again or Enter to confirm). */
+  marked: InstanceId[];
+}
+
+/** One card of a limited pool as the builder holds it (DESIGN "Pre-game", Deck building). `id` is local to the pool, never a table instance id. */
+export interface PoolCard {
+  id: string;
+  ref: CardRef;
+  /** A basic land from the dispenser (unlimited, any printing), not a drafted card. */
+  basic?: true;
+}
+
+/**
+ * The deck being built from a pool (DESIGN "Pre-game", Deck building: builder table and list view are two views of
+ * the same pool). Cards listed in `main` are the deck, all other cards the sideboard. Plain JSON.
+ */
+export interface DeckBuild {
+  cards: PoolCard[];
+  /** Pool card ids in the deck, in deck order. */
+  main: string[];
+  /** Builder-table positions by pool card id (M2-P5); the list view ignores and keeps them. */
+  poses?: Record<string, Pose>;
 }
 
 // ---------------------------------------------------------------------------
@@ -451,6 +702,10 @@ export interface SecretStore {
   received: Record<InstanceId, ReceivedIdentity>;
   /** Draft picks and sideboard. */
   pool?: CardRef[];
+  /** Added by M2-C. The private side of the draft: packs this browser holds or generated (DESIGN "Specification: network protocol and secrecy", Draft packs). */
+  draft?: DraftSecrets;
+  /** Added by M2-C. The deck being built from `pool`, so a reload in the build stage keeps it (DESIGN "Pre-game", Deck building; PLAN M2-P7). */
+  build?: DeckBuild;
 }
 
 // ---------------------------------------------------------------------------

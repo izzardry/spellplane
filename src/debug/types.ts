@@ -4,7 +4,8 @@
  * so at runtime every member may be missing until its owner registered it.
  */
 import type { Action } from '../core/actions';
-import type { InstanceId, Line, Pose, SecretStore, TableState } from '../core/types';
+import type { DeckBuild, InstanceId, Line, Pose, SecretStore, TableState } from '../core/types';
+import type { DraftPrivateView } from '../draft/types';
 import type { PeerId } from '../net/transport';
 import type { ConnectionStatus, NetMessageRecord, PeerInfo } from '../net/types';
 import type { Vec3 } from '../scene/types';
@@ -35,6 +36,17 @@ export interface NetDebug {
   close(): void;
 }
 
+/**
+ * The draft part of the debug hook (PLAN M2-G gate: picks, pools and builder state are asserted through the hook,
+ * not on pixels). Added by M2-C; registered by M2-P7's session wiring; M2-P4 and M2-P5 may add their surfaces' cards.
+ */
+export interface DraftDebug {
+  /** This page's private draft view, null outside a draft. */
+  view(): DraftPrivateView | null;
+  /** The deck being built, null before a pool exists. */
+  build(): DeckBuild | null;
+}
+
 /** The full debug hook (DESIGN "Specification: code interfaces"). */
 export interface SpellplaneDebug {
   state(): TableState;
@@ -45,6 +57,8 @@ export interface SpellplaneDebug {
   dispatch(action: Action): void;
   net: NetDebug;
   frameStats(): { drawCalls: number; textureBytes: number; frameMs: number };
+  /** Added by M2-C. */
+  draft: DraftDebug;
 }
 
 // Types registerDebug (util/debug.ts) against SpellplaneDebug without util/ importing debug/.

@@ -8,3 +8,4 @@ export * from './tables';
 export * from './stores';
 export * from './persist';
 export * from './images';
+export * from './sets';
