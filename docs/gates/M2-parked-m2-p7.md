@@ -1,5 +1,7 @@
 # M2-P7 Evening flow: parked
 
+- **Update (gate fix round, 12 Nov 2026):** merged into `m2` as `d538d5b merge(m2): M2-P7 Evening flow` (one conflict, in docs/DECISIONS.md, resolved by keeping both sides). `pnpm check` is green on `m2` after the merge. Its browser specs and the M2 gate have still not run: the UserNotificationCenter prompt (pid 97721) was still open, so pw-guard refuses every Playwright run.
+
 - **Status:** parked, not merged into `m2`. The code is finished and `pnpm check` passes, but its browser specs have never run. The only `pnpm e2e` attempt exited with code 3: `scripts/pw-guard.mjs` found a macOS UserNotificationCenter prompt open (pid 97721) and refused to start Playwright. As instructed, the implementer did not retry. The prompt needs a person to click it.
 - **Branch:** `m2-p7` (worktree `spellplane-wt/m2-p7`), head `f48fbb6 test(m2-p7): sealed with search-and-add and Winston browser specs; late picks only for pool builds`. Three commits on top of `cc47731 merge(m2): M2-P5 Builder table`, which is the current `m2` head, so it is 0 commits behind. `git merge-tree m2 m2-p7` reports no conflicts. The working tree is clean. The branch has no remote copy (`origin/m2-p7` does not exist).
 - **Checked by the integrator at parking (12 Nov 2026, about 11:00):**

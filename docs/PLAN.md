@@ -421,7 +421,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M2-P4 Draft UI
 - [x] M2-P5 Builder table
 - [x] M2-P6 List view and deck library
-- [ ] M2-P7 Evening flow
+- [x] M2-P7 Evening flow
 - [ ] M2-G Gate and owner playtest
 - [ ] M3-C Contracts
 - [ ] M3-P1 Multi-seat layouts

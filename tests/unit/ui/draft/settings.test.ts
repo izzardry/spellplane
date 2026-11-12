@@ -12,6 +12,7 @@ import { LocalTable } from '../../../../src/ui/draft/fakes';
 import {
   canonicalSets,
   fieldsOf,
+  hasPickTimer,
   lobbyEditable,
   lobbyModes,
   mixedSets,
@@ -53,6 +54,12 @@ describe('modes and their defaults (DESIGN "Pre-game", mode table; "Specificatio
   it('the defaults are a booster draft of three packs, pick one, pick timer off', () => {
     expect(modeOf(DEFAULT_LOBBY_SETTINGS.draft)).toBe('booster');
     expect(DEFAULT_LOBBY_SETTINGS.pickTimer).toBe(false);
+  });
+
+  it('offers the pick timer only for the pass drafts, whose held packs the sequencer times (gate M2 finding)', () => {
+    const offered = ALL_MODES.filter((m) => hasPickTimer(withMode(DEFAULT_LOBBY_SETTINGS, m).draft));
+    expect(offered).toEqual(['booster', 'pickTwo', 'teamDraft']);
+    expect(hasPickTimer(null)).toBe(false);
   });
 
   it('a pass draft of 3 packs with 2 picks shows as the Pick-Two preset; other pass drafts as booster drafts', () => {
