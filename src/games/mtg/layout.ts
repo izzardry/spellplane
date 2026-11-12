@@ -8,8 +8,9 @@
  */
 import type { Format } from '../../core/types';
 import { GEOMETRY } from '../../core/geometry';
+import { TABLE_FORMAT_TEAMS } from '../../core/teams';
 import { normDeg, seatLocalToTable } from '../frame';
-import type { Rect, SeatLayout, SeatZoneAnchors, TableLayout } from '../types';
+import type { Rect, SeatLayout, SeatZoneAnchors, TableLayout, TeamLayout } from '../types';
 
 /** Within-territory placement constants in mm (the spec fixes the column gap; the rest are M0-P6 choices). */
 export const MTG_LAYOUT = {
@@ -144,13 +145,51 @@ function seatZones(t: TerritorySpec): SeatZoneAnchors {
 /** The Magic table layout for a format (DESIGN "Specification: code interfaces": table size, seat angles, territories, zone anchors). Returns a fresh object. */
 export function mtgLayout(format: Format): TableLayout {
   const spec = tableSpec(format);
+  const teamSpec = TABLE_FORMAT_TEAMS[format];
+  const teamOfSeat = (index: number): number => (teamSpec ?? []).findIndex((t) => t.includes(index));
   const seats: SeatLayout[] = spec.territories.map((t, index) => ({
     index,
     angle: normDeg(t.angle),
     territory: { x: t.x, y: t.y, w: t.w, d: t.d, rot: normDeg(t.angle) },
     zones: seatZones(t),
+    ...(teamSpec ? { team: teamOfSeat(index) } : {}),
   }));
-  return { format, table: { ...spec.table }, seats, stackLane: stackLane(spec.centreBand) };
+  const layout: TableLayout = {
+    format,
+    table: { ...spec.table },
+    seats,
+    stackLane: stackLane(spec.centreBand),
+    // Clockwise from seat 0: seat indices already run clockwise in every format (DESIGN "Players, seats and formats").
+    turnOrder: seats.map((s) => s.index),
+  };
+  if (teamSpec) layout.teams = teamSpec.map((members, index) => teamLayout(index, members, spec.territories));
+  return layout;
+}
+
+/**
+ * A team's territory and shared avatar (PROVISIONAL until M3-P1): the teammates' territories side by side along their
+ * common edge, the avatar outside its near edge, centred. Members are listed left to right in the team's orientation.
+ */
+function teamLayout(index: number, members: readonly number[], territories: readonly TerritorySpec[]): TeamLayout {
+  const ts = members.map((i) => territories[i]!);
+  const angle = ts[0]!.angle;
+  const x = ts.reduce((a, t) => a + t.x, 0) / ts.length;
+  const y = ts.reduce((a, t) => a + t.y, 0) / ts.length;
+  const w = ts.reduce((a, t) => a + t.w, 0);
+  const d = ts[0]!.d;
+  const left = [...members].sort((a, b) => seatU(territories[a]!, angle) - seatU(territories[b]!, angle));
+  return {
+    index,
+    seats: left,
+    territory: { x, y, w, d, rot: normDeg(angle) },
+    avatar: { ...seatLocalToTable({ x, y }, angle, 0, -d / 2 - MTG_LAYOUT.avatarOffset), rot: normDeg(angle) },
+  };
+}
+
+/** A territory centre's coordinate along the owner's right-hand axis for a seat at `angle`. */
+function seatU(t: TerritorySpec, angle: number): number {
+  const a = (normDeg(angle) * Math.PI) / 180;
+  return t.x * Math.cos(a) - t.y * Math.sin(a);
 }
 
 /**
@@ -166,5 +205,5 @@ function stackLane(centreBand: number): Rect {
 /** Solo goldfish: the 1v1 table with seat 0 only (PLAN M0). */
 export function soloLayout(): TableLayout {
   const l = mtgLayout('1v1');
-  return { ...l, seats: l.seats.slice(0, 1) };
+  return { ...l, seats: l.seats.slice(0, 1), turnOrder: [0] };
 }

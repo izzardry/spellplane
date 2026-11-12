@@ -252,7 +252,12 @@ export interface NetEngine {
   onPeers(listener: (peers: PeerInfo[]) => void): Unsubscribe;
   presence: Presence;
 
-  /** Send a pair-channel message to the peer holding `seat` only; false when that seat has no connected peer (DESIGN "Specification: network protocol and secrecy", prv). */
+  /**
+   * Send a pair-channel message to the peer holding `seat` only; false when that seat has no connected peer (DESIGN
+   * "Specification: network protocol and secrecy", prv). From M3 (M3-C) `seat` may also be a spectator id
+   * (core/teams.ts `spectatorIdOf`): the message goes to that connected spectator only (DESIGN "Players, seats and
+   * formats": reveal to a named spectator). Spectator routing: M3-P5.
+   */
   sendPrivate(seat: SeatId, msg: PrivateMessage): boolean;
   /** Pair-channel messages from verified peers, with the sender's seat (null for an unseated peer). */
   onPrivate(listener: (msg: PrivateMessage, from: { seat: SeatId | null; peerId: string }) => void): Unsubscribe;
@@ -270,7 +275,7 @@ export type CreateNetEngine = (opts: NetEngineOptions) => NetEngine;
  * commitment (core/commit.ts verifyReveal). Implementer: M1-P2 (net/private.ts); M2-P2 adds packs, M3-P2 teammate hands.
  */
 export interface PrivateChannel {
-  /** Send identities to the given seats only (targeted reveal with the public `revealTo` action `about`, or a look answer). */
+  /** Send identities to the given seats only (targeted reveal with the public `revealTo` action `about`, or a look answer); from M3 also to spectator ids (M3-P5). */
   reveal(to: readonly SeatId[], cards: readonly RevealedCard[], purpose: 'revealTo' | 'look', about: string): void;
   /** Ask `owner` to show cards of its hidden zone to this browser only; resolves with the verified cards, or [] when refused or the owner is away. */
   requestLook(owner: SeatId, zone: ZoneId, count: number, card?: InstanceId): Promise<RevealedCard[]>;
@@ -285,3 +290,22 @@ export interface PrivateChannel {
 
 /** Create the pair-channel layer over an engine (DESIGN "Multiplayer architecture", Targeted reveal). Implementer: M1-P2. */
 export type CreatePrivateChannel = (engine: NetEngine) => PrivateChannel;
+
+/**
+ * The Two-Headed Giant team pair channel (DESIGN "Players, seats and formats", Two-Headed Giant: "Each teammate's hand
+ * is visible live to the other", "A team channel carries voice and text only between teammates"; "Specification:
+ * network protocol and secrecy", prv `teamHand`). Every received hand card is checked against its owner's commitment
+ * (core/commit.ts verifyReveal) like a targeted reveal. Added by M3-C; implementer: M3-P2 (net/team.ts).
+ */
+export interface TeamChannel {
+  /** Send this browser's whole hand in order to the teammate `to` (after every change of the hand). */
+  sendHand(to: SeatId, cards: readonly RevealedCard[], order: readonly InstanceId[]): void;
+  /** A teammate's hand with the commitment verdict per card; an unverified card is flagged, never shown as genuine. */
+  onHand(listener: (from: SeatId, cards: RevealedCard[], order: InstanceId[], verified: boolean[]) => void): Unsubscribe;
+  /** Send a team chat line to the teammate `to` (net/messages.ts TeamChatMessage). */
+  sendChat(to: SeatId, cid: string, text: string, atSeq: number): void;
+  onChat(listener: (from: SeatId, cid: string, text: string, atSeq: number) => void): Unsubscribe;
+}
+
+/** Create the team channel over an engine (DESIGN "Players, seats and formats", Two-Headed Giant). Added by M3-C; implementer: M3-P2. */
+export type CreateTeamChannel = (engine: NetEngine) => TeamChannel;

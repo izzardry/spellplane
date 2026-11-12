@@ -3,7 +3,7 @@
  * `w`/`set`/`delete` methods, which copy a record before its first change; the input state is never touched, and
  * untouched records keep their identity in the result (cheap change detection for the scene and HUD).
  */
-import type { CardInstance, Commitment, ConfirmRound, DraftState, Line, LobbySettings, RngRound, Seat, ShuffleRound, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
+import type { CardInstance, Commitment, ConfirmRound, DraftState, Format, Line, LobbySettings, RngRound, Seat, ShuffleRound, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
 import { byId, own, reject } from './util';
 
 /** One keyed record of the state (cards, zones, lines, seats, teams, commitments). */
@@ -106,6 +106,8 @@ export class Draft {
   private lobbyValue: LobbySettings | undefined = undefined;
   /** Added by M2-C: the games counter once a handler set it (`undefined`: unchanged). */
   private gamesValue: number | undefined = undefined;
+  /** Added by M3-C: the table format once a handler set it (`undefined`: unchanged); `formatSet` (M3-P1). */
+  private formatValue: Format | undefined = undefined;
 
   constructor(readonly base: TableState) {
     this.cards = new RecordDraft(base.cards, 'card');
@@ -204,6 +206,16 @@ export class Draft {
     this.gamesValue = n;
   }
 
+  /** The table format (DESIGN "Players, seats and formats"). Added by M3-C. */
+  get format(): Format {
+    return this.formatValue ?? this.base.format;
+  }
+
+  /** Replace the table format (`formatSet`, M3-P1). Added by M3-C. */
+  setFormat(format: Format): void {
+    this.formatValue = format;
+  }
+
   get changed(): boolean {
     return (
       this.cards.changed ||
@@ -221,7 +233,8 @@ export class Draft {
       this.confirmValue !== undefined ||
       this.draftValue !== undefined ||
       this.lobbyValue !== undefined ||
-      this.gamesValue !== undefined
+      this.gamesValue !== undefined ||
+      this.formatValue !== undefined
     );
   }
 
@@ -249,6 +262,7 @@ export class Draft {
       turn: this.turnCopy ?? this.base.turn,
       settings: this.settingsCopy ?? this.base.settings,
       stage: this.stageValue ?? this.base.stage,
+      format: this.formatValue ?? this.base.format,
     };
     // Optional M2 slots are omitted when absent (plain JSON rule, core/types.ts).
     if (this.draftValue === null) delete next.draft;

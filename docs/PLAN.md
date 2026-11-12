@@ -182,6 +182,12 @@ Three and four players, Two-Headed Giant, spectators, live voice and dictated ca
 | M3-P4 Dictation and captions | Web Speech engine, optional transformers.js engine loaded on demand, engine and language settings with a plain statement of where audio goes, interim and final captions anchored to the last-touched card or the avatar, caption stored on the action in the log, dictation into note fields. | `voice/speech/*`, `scene/captions.ts`, `ui/settings/Speech.svelte` | M3-C |
 | M3-P5 Spectators | Join without a chair, public-only view, chat and ping, no card manipulation, hand reveal to a named spectator. | `net/roles.ts`, `ui/lobby/*` | M3-C |
 
+**Ownership within M3** *(M3-C)*: the shared shapes are `core/teams.ts` (format seats and teams, spectator ids, reveal targets), the `formatSet` action, `voice/types.ts`, the `TableLayout` team and turn-order descriptors in `games/types.ts`, the `teamChat` pair message and `TeamChannel`, the `Settings` keys `talk`, `micDevice` and `peerAudio`, and the scene, ui, session and debug additions. Each package adds its own session module (`session/team.ts`, `session/voice.ts`, `session/captions.ts`, `session/spectator.ts`) and only the lines that mount it in `session/net.ts` and `main.ts`.
+- **Layouts and teams (M3-P1 and M3-P2 both name them).** M3-P1 owns `games/mtg/layout.ts` for every format, including the Two-Headed Giant territories and the `teams` descriptor, as well as `core/reducer/format.ts` (`formatSet`, stub by M3-C), `scene/layout.ts`, `scene/lines.ts` and the multi-seat parts of `scene/table-scene.ts` (the plan's `scene/table.ts`). It also owns the format choice in the lobby settings panel (`ui/draft/*`, M2-P4's files). M3-P2 does not edit `layout.ts`; it reads `TableLayout.teams`. M3-P2 owns `core/teams.ts` for any additions, `net/team.ts`, `draft/team.ts`, the Two-Headed Giant cases in `core/reducer/pass.ts`, `ui/hand/*`, and team creation on the lobby's chair map (`ui/lobby/seats.ts` and the chairs in `ui/lobby/Lobby.svelte`).
+- **Lobby (M3-P5 and M1-P5 both touch `ui/lobby/*`).** M1-P5's lobby files are M3-P5's for the spectator flow: the watch route `#/t/<room>/<key>/watch` in `ui/routes.ts`, `ui/lobby/RoomRoute.svelte`, `ui/lobby/TableRoom.svelte`, new `ui/lobby/Spectat*` components, and one mount line in `Lobby.svelte`. The chair map stays M3-P2's, as above. M3-P5 also owns `net/roles.ts`, the spectator branch of the sequencer check (`net/sequencer.ts`) and of `sendPrivate` (`net/engine.ts`), and the `revealTo.spectators` case in `core/reducer/zones.ts`.
+- **Voice and captions.** M3-P3 owns `voice/mic.ts`, `voice/modes.ts`, `ui/voice/*` and the talk-key wiring in the HUD's key handling. M3-P4 owns `voice/speech/*`, `voice/captions.ts`, `scene/captions.ts` (plus the call in the table scene's `update`), `ui/settings/Speech.svelte` and the speech part of the debug hook. M3-P4 may add the transformers.js dependency, loaded only by dynamic import.
+- **Shared stubs.** `voice/fake.ts` stays the test engine. `core/reducer/index.ts`, `core/reducer/draft.ts` and the contract files are M3-C's; a package that needs a change there reports it.
+
 **Acceptance tests**
 
 - **M3-P1.** For each format, every seat's territory and zone piles lie inside the table and do not overlap; each viewer sees their own seat at the bottom; an attack line to each opponent can be drawn and survives a camera move.
@@ -423,7 +429,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M2-P6 List view and deck library
 - [x] M2-P7 Evening flow
 - [x] M2-G Gate (owner playtest pending)
-- [ ] M3-C Contracts
+- [x] M3-C Contracts
 - [ ] M3-P1 Multi-seat layouts
 - [ ] M3-P2 Two-Headed Giant
 - [ ] M3-P3 Voice

@@ -30,6 +30,9 @@ const CHANGED: Settings = {
   quality: 'low',
   followStack: true,
   followActive: true,
+  talk: { gate: 'turn', voice: true, dictation: true, muted: false, mouseButton: 3 },
+  micDevice: 'mic-2',
+  peerAudio: { '0123456789abcdef': { volume: 0.5, muted: true } },
 };
 
 describe('settings', () => {

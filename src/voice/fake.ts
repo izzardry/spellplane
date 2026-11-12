@@ -2,7 +2,9 @@
  * Fake speech engine (test harness, ?speech=fake). Shaped like the design's SpeechEngine;
  * tests push transcripts with `say(text, final)`, usually through window.__spellplane.
  */
-export class FakeSpeechEngine {
+import type { SpeechEngine } from './types';
+
+export class FakeSpeechEngine implements SpeechEngine {
   readonly id = 'fake' as const;
   private listener: ((text: string, final: boolean) => void) | null = null;
   lang: string | null = null;

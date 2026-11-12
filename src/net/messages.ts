@@ -2,7 +2,7 @@
  * The wire protocol (docs/DESIGN.md "Specification: network protocol and secrecy"; "Multiplayer architecture"; "Data
  * model and protocol": what is and is not an action). Every message is a plain JSON object `{v: 1, t: <type>, ...}`
  * and travels on exactly one Transport channel (MESSAGE_CHANNEL). Contracts: M1-C. Implementers: M1-P1 (ctl, act,
- * pres), M1-P2 (prv, net/private.ts), M2-P2 (`pack`), M3-P2 (`teamHand`).
+ * pres), M1-P2 (prv, net/private.ts), M2-P2 (`pack`), M3-P2 (`teamHand`, `teamChat`).
  *
  * Hidden information rule (CLAUDE.md): an identity (`ref`, `salt`) appears only in `prv` messages addressed to one
  * peer, and in the public `reveal` action once the card is public. `ctl`, `act` and `pres` messages never carry one.
@@ -127,6 +127,14 @@ export type DraftCardsMessage = Envelope<'draftCards', { about: string; cards: R
 export type TeamHandMessage = Envelope<'teamHand', { cards: RevealedCard[]; order: InstanceId[] }>;
 
 /**
+ * Two-Headed Giant team text chat, to the teammate only (DESIGN "Players, seats and formats": "A team channel carries
+ * voice and text only between teammates"; "Chat and voice", Text chat: team tab). Never a shared action: the reducer
+ * refuses a `chat` on the 'team' channel. `cid` is client-unique (de-duplication); `atSeq` is the sender's last applied
+ * seq, so the receiver files the line in its timeline after that action. Added by M3-C; implementer: M3-P2.
+ */
+export type TeamChatMessage = Envelope<'teamChat', { cid: string; text: string; atSeq: number }>;
+
+/**
  * A secret shuffle's owner nonce shared with one peer (DESIGN "Specification: network protocol and secrecy", prv
  * `nonce`): lets that peer compute the order of shuffle `sid` (a teammate's view, the audit). M1 does not send it.
  */
@@ -158,7 +166,11 @@ export type CursorMessage = Envelope<'cursor', PresenceBase & { at: { x: number;
 /** Cards being dragged and their current poses; an empty list ends the drag (DESIGN "Players, seats and formats", Other players' cursors). */
 export type DragMessage = Envelope<'drag', PresenceBase & { cards: { id: InstanceId; pose: Pose }[] }>;
 
-/** Speaking indicator (DESIGN "Chat and voice", Live voice: each avatar shows a speaking ring). M3-P3 sends it. */
+/**
+ * Speaking indicator (DESIGN "Chat and voice", Live voice: each avatar shows a speaking ring). M3-P3 sends it. Team
+ * talk is not announced here, so opponents see no ring while a player talks to the teammate only; the teammate's
+ * browser lights the ring from the incoming audio (DECISIONS [M3-C]).
+ */
 export type SpeakingMessage = Envelope<'speaking', PresenceBase & { on: boolean }>;
 
 /** Typing indicator on a chat tab, null when stopped (DESIGN "Multiplayer architecture", Shared state: who is typing). */
@@ -174,7 +186,7 @@ export type CtlMessage = HelloMessage | WelcomeMessage | SyncReqMessage | SyncRe
 /** Messages on `act` (DESIGN "Specification: network protocol and secrecy", channel table). */
 export type ActMessage = ProposeMessage | SeqMessage | NackMessage;
 /** Messages on `prv`, one pair only (DESIGN "Specification: network protocol and secrecy", channel table). */
-export type PrivateMessage = RevealMessage | PackMessage | DraftCardsMessage | TeamHandMessage | NonceMessage | LookReqMessage | LookMessage;
+export type PrivateMessage = RevealMessage | PackMessage | DraftCardsMessage | TeamHandMessage | TeamChatMessage | NonceMessage | LookReqMessage | LookMessage;
 /** Messages on `pres` (DESIGN "Specification: network protocol and secrecy", channel table). */
 export type PresenceMessage = CursorMessage | DragMessage | SpeakingMessage | TypingMessage | CaptionInterimMessage;
 /** Every wire message (DESIGN "Specification: network protocol and secrecy"). */
@@ -202,6 +214,7 @@ export const MESSAGE_CHANNEL: Readonly<{ [T in WireType]: Channel }> = {
   pack: 'prv',
   draftCards: 'prv',
   teamHand: 'prv',
+  teamChat: 'prv',
   nonce: 'prv',
   lookReq: 'prv',
   look: 'prv',

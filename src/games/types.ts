@@ -36,6 +36,24 @@ export interface SeatLayout {
   angle: number;
   territory: Rect;
   zones: SeatZoneAnchors;
+  /** Index into `TableLayout.teams` in a team format (Two-Headed Giant), else absent. Added by M3-C. */
+  team?: number;
+}
+
+/**
+ * A team's place at the table (DESIGN "Players, seats and formats", Two-Headed Giant: "Teammates have adjoining
+ * territories with no gap, one shared life total and one shared turn and phase marker"; "Specification: geometry,
+ * layout and motion", Tables and seats: 2200 × 1100, teammates side by side, 1100 × 440 each). Added by M3-C; tuned by
+ * M3-P1.
+ */
+export interface TeamLayout {
+  index: number;
+  /** Seat indices of the teammates, left to right in the team's own orientation. */
+  seats: number[];
+  /** The teammates' territories together (they adjoin with no gap). */
+  territory: Rect;
+  /** Where the shared life total and the team's turn marker show: outside the team's near edge, centred on the team. */
+  avatar: Pose;
 }
 
 /** Table geometry for one format (DESIGN "Specification: geometry, layout and motion", Tables and seats). */
@@ -46,6 +64,14 @@ export interface TableLayout {
   seats: SeatLayout[];
   /** 200 x 320 at the table centre; each viewer rotates it to cascade toward them. */
   stackLane: Rect;
+  /**
+   * Seat indices in turn order, clockwise from seat 0 (DESIGN "Players, seats and formats", Turn marker: "Per player,
+   * clockwise"; per team in Two-Headed Giant, where the team of the first listed seat goes first). Added by M3-C;
+   * absent on layouts built before M3 means seat-index order.
+   */
+  turnOrder?: number[];
+  /** The teams in team-index order (team i is core/teams.ts `teamIdOf(i)`); present only in a team format. Added by M3-C. */
+  teams?: TeamLayout[];
 }
 
 /** The card facts the default resolve destination depends on; Scryfall CardData (data/types.ts) satisfies it (DESIGN "The effect stack", Resolving). */

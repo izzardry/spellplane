@@ -1,0 +1,141 @@
+/**
+ * Teams, formats and spectators (DESIGN "Players, seats and formats": formats, Two-Headed Giant, Spectators;
+ * "Data model and protocol": `teams?: Record<TeamId, SeatId[]>`, `turn.active: SeatId | TeamId`). Contracts: M3-C.
+ *
+ * The shared shapes already exist since M0: `Team` (core/types.ts) holds a Two-Headed Giant team's seats, its ONE
+ * shared life total and its counters, and `TurnState.active` names a team id when the format has teams, so the turn
+ * and phase marker is shared by both teammates. This module adds the format facts (seats and teams per format), the
+ * spectator id, the reveal targets and small pure selectors over them.
+ *
+ * Owners: M3-P2 (Two-Headed Giant: team reveal target, teammate hand, team draft) owns this file; M3-P1 owns
+ * `TABLE_FORMAT_SEATS`/`TABLE_FORMAT_TEAMS` use in the `formatSet` reducer (core/reducer/format.ts); M3-P5 owns the spectator part.
+ * Pure: no DOM, clock, randomness or network.
+ */
+import type { Format, SeatId, TableState, Team, TeamId } from './types';
+import { seatIdOf } from './ids';
+
+/** Seats per format (DESIGN "Players, seats and formats", Seats column: 2, 3, 4, 2 + 2). */
+export const TABLE_FORMAT_SEATS: Readonly<Record<Format, number>> = { '1v1': 2, ffa3: 3, ffa4: 4, '2hg': 4 };
+
+/**
+ * The teams of a format by seat index, or null for a format without teams (DESIGN "Players, seats and formats":
+ * Two-Headed Giant is "2 + 2", teammates side by side on one long edge; "Specification: geometry, layout and motion",
+ * Tables and seats: seat angles 0°, 0°, 180°, 180°). Team i gets id `teamIdOf(i)`; DECISIONS [M3-C].
+ */
+export const TABLE_FORMAT_TEAMS: Readonly<Record<Format, readonly (readonly number[])[] | null>> = {
+  '1v1': null,
+  ffa3: null,
+  ffa4: null,
+  '2hg': [
+    [0, 1],
+    [2, 3],
+  ],
+};
+
+/** Team id for a team index, as the `formatSet` reducer and the lobby create them: 't0', 't1' (DESIGN "Players, seats and formats", Two-Headed Giant). */
+export function teamIdOf(index: number): TeamId {
+  return `t${index}`;
+}
+
+/** Whether a format plays in teams with shared life and turn (DESIGN "Players, seats and formats": Life and Turn marker columns). */
+export function isTeamFormat(format: Format): boolean {
+  return TABLE_FORMAT_TEAMS[format] !== null;
+}
+
+/** The seat ids of each team of a format, team index order (DESIGN "Players, seats and formats", Two-Headed Giant); [] without teams. */
+export function formatTeamSeats(format: Format): SeatId[][] {
+  return (TABLE_FORMAT_TEAMS[format] ?? []).map((t) => t.map(seatIdOf));
+}
+
+const own = <T>(rec: Readonly<Record<string, T>>, key: string): T | undefined => (Object.hasOwn(rec, key) ? rec[key] : undefined);
+
+/** The team of a seat, or null (DESIGN "Players, seats and formats", Two-Headed Giant). */
+export function teamOf(state: TableState, seat: SeatId): Team | null {
+  const t = own(state.seats, seat)?.team;
+  return t === undefined ? null : (own(state.teams, t) ?? null);
+}
+
+/** The other seats of a seat's team, seat order; [] without a team (DESIGN "Players, seats and formats": each teammate's hand is visible live to the other). */
+export function teammatesOf(state: TableState, seat: SeatId): SeatId[] {
+  return (teamOf(state, seat)?.seats ?? []).filter((s) => s !== seat);
+}
+
+/** Whether two seats play on the same team (DESIGN "Players, seats and formats", Two-Headed Giant). */
+export function sameTeam(state: TableState, a: SeatId, b: SeatId): boolean {
+  const t = teamOf(state, a);
+  return t !== null && t.seats.includes(b);
+}
+
+/**
+ * The seats whose turn it is: the active seat, or both seats of the active team (DESIGN "Players, seats and formats":
+ * one shared turn and phase marker per team; "Chat and voice", Turn mic: "In Two-Headed Giant the active team's mics
+ * open"). Seat order.
+ */
+export function activeSeats(state: TableState): SeatId[] {
+  const active = state.turn.active;
+  const team = own(state.teams, active);
+  if (team) return [...team.seats];
+  return own(state.seats, active) ? [active] : [];
+}
+
+/** Whether it is `seat`'s turn, alone or with its team (DESIGN "Chat and voice", Turn mic). */
+export function isSeatActive(state: TableState, seat: SeatId): boolean {
+  return activeSeats(state).includes(seat);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Spectators (DESIGN "Players, seats and formats", Spectators: join by the same link without taking a chair, see only
+// public zones, chat and ping, cannot move cards; a player may reveal their hand to a named spectator).
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * A spectator's id, `v:<peerId>` (peer id = first 16 hex of SHA-256 of the public key) (DESIGN "Players, seats and
+ * formats", Spectators). It is the `by` of a spectator's actions (chat, ping) and the target of a reveal to a named
+ * spectator; it is never a key of `TableState.seats` and owns no zone. DECISIONS [M3-C].
+ */
+export type SpectatorId = string;
+
+/** Prefix of every spectator id (DESIGN "Players, seats and formats", Spectators). */
+export const SPECTATOR_ID_PREFIX = 'v:';
+
+/** The spectator id of a peer (DESIGN "Players, seats and formats", Spectators). */
+export function spectatorIdOf(peerId: string): SpectatorId {
+  return `${SPECTATOR_ID_PREFIX}${peerId}`;
+}
+
+/** Whether an id names a spectator rather than a seat (DESIGN "Players, seats and formats", Spectators). */
+export function isSpectatorId(id: string): id is SpectatorId {
+  return id.startsWith(SPECTATOR_ID_PREFIX) && id.length > SPECTATOR_ID_PREFIX.length;
+}
+
+/** The peer id inside a spectator id, or null when it is not one (DESIGN "Players, seats and formats", Spectators). */
+export function peerOfSpectator(id: string): string | null {
+  return isSpectatorId(id) ? id.slice(SPECTATOR_ID_PREFIX.length) : null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Reveal targets (DESIGN "Multiplayer architecture", Hidden information 5: "Showing a card to one player or to a
+// teammate sends the card id and salt on that pair's channel only"; "Players, seats and formats", Spectators).
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * Whom a targeted reveal goes to (DESIGN "Multiplayer architecture", Targeted reveal; "Players, seats and formats":
+ * Two-Headed Giant team reveal, reveal to a named spectator). A team target expands to that team's seats except the
+ * revealer; the public `revealTo` action then lists the seats (and `spectators`), never the team.
+ */
+export type RevealTarget = { kind: 'seat'; seat: SeatId } | { kind: 'team'; team: TeamId } | { kind: 'spectator'; spectator: SpectatorId };
+
+/**
+ * The seats and spectators a reveal by `by` to `target` reaches (DESIGN "Multiplayer architecture", Targeted reveal).
+ * Unknown seats and teams yield none; the revealer itself is never listed. Seat order within a team.
+ */
+export function revealRecipients(state: TableState, by: SeatId, target: RevealTarget): { seats: SeatId[]; spectators: SpectatorId[] } {
+  switch (target.kind) {
+    case 'seat':
+      return { seats: own(state.seats, target.seat) && target.seat !== by ? [target.seat] : [], spectators: [] };
+    case 'team':
+      return { seats: (own(state.teams, target.team)?.seats ?? []).filter((s) => s !== by), spectators: [] };
+    case 'spectator':
+      return { seats: [], spectators: isSpectatorId(target.spectator) ? [target.spectator] : [] };
+  }
+}

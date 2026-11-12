@@ -4,7 +4,8 @@
  * with the reason available from `explain`. It never reads the clock, randomness or the secret store.
  *
  * Later packages add their cases to HANDLERS: ask, respond and autoPass (M1-P3, confirm.ts); the draft actions go
- * through drafting.ts (M2-C) to pass.ts (M2-P2) and open.ts (M2-P3); `stageSet` becomes M2-P7's (core/stage.ts). The
+ * through drafting.ts (M2-C) to pass.ts (M2-P2) and open.ts (M2-P3); `stageSet` becomes M2-P7's (core/stage.ts);
+ * `formatSet` is M3-P1's (format.ts). The
  * secret shuffle, public randomness and verified reveals are M1-P2's (secret.ts). M1-P4 extends moveTemp and settle in temp.ts.
  */
 import { ACTION_FAMILIES, isUndoable, type Action, type ActionOf, type ActionType } from '../actions';
@@ -16,6 +17,7 @@ import * as cards from './cards';
 import * as confirm from './confirm';
 import { Draft } from './draft';
 import * as drafting from './drafting';
+import * as format from './format';
 import { STACK_ZONE } from './place';
 import * as stack from './stack';
 import * as table from './table';
@@ -106,7 +108,7 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   pileLook: drafting.pileLook,
   gridTake: drafting.gridTake,
   draftTimeout: drafting.draftTimeout,
-  chat: record,
+  chat,
   caption: record,
   undo: applyUndo,
   snapshotHash: record,
@@ -114,9 +116,19 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   settings: table.settings,
   stageSet: table.stageSet,
   lobbySet: drafting.lobbySet,
+  formatSet: format.formatSet,
   recover: recovery.recover,
   recoverCommit: recovery.recoverCommit,
 };
+
+/**
+ * `chat`: a public record, except that team lines never enter the shared log (DESIGN "Players, seats and formats": "A
+ * team channel carries voice and text only between teammates"); they travel on the pair channel (net/messages.ts
+ * `teamChat`, M3-P2). Added by M3-C.
+ */
+function chat(_d: Draft, a: ActionOf<'chat'>): void {
+  if (a.channel === 'team') reject('team chat goes to the teammate on the pair channel, not into the shared log');
+}
 
 /**
  * `undo {of, inverse}`: apply the inverse. The handlers authorise on the inverse's own `by`, so it must be the undo's

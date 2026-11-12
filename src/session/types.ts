@@ -8,10 +8,11 @@ import type { CardRef, Format, InstanceId, LobbySettings, LogEntry, Pose, RngPur
 import type { CardData, CardDataSource, GeneratePack, SetDataSource } from '../data/types';
 import type { DraftControls } from '../draft/types';
 import type { GameDefinition } from '../games/types';
-import type { ChatChannel } from '../net/messages';
+import type { ChatChannel, PeerRole } from '../net/messages';
 import type { Transport } from '../net/transport';
 import type { ConnectionStatus, NetEngine, PeerInfo, Presence } from '../net/types';
-import type { IdentityRecord, TableStore } from '../store/types';
+import type { IdentityRecord, SettingsStore, TableStore } from '../store/types';
+import type { CaptionControls, MediaDevicesLike, SpeechEngineFactory, VoiceControls } from '../voice/types';
 
 /** A deck to import as the seat's library (DESIGN "Pre-game", Constructed decks). */
 export interface DeckImport {
@@ -122,6 +123,44 @@ export interface TableSession {
   readonly draft?: DraftControls;
   /** The evening's stage flow (DESIGN "Specification: card data, packs and draft formats", Evening stages). Added by M2-C; implementer: M2-P7. */
   readonly evening?: EveningControls;
+  /**
+   * This browser's role (DESIGN "Players, seats and formats", Spectators). Added by M3-C; absent means 'player'. For a
+   * spectator `seat` is its spectator id (core/teams.ts `spectatorIdOf`), which no key of `state.seats` matches, and
+   * `dispatch` only offers what net/roles.ts SPECTATOR_ACTIONS allows. Implementer: M3-P5.
+   */
+  readonly role?: PeerRole;
+  /** The Two-Headed Giant team view: the teammate's live hand and team chat (DESIGN "Players, seats and formats", Two-Headed Giant). Added by M3-C; implementer: M3-P2; absent outside team formats and in solo play. */
+  readonly team?: TeamControls;
+  /** Live voice and talk modes (DESIGN "Chat and voice"). Added by M3-C; implementer: M3-P3; absent in solo play. */
+  readonly voice?: VoiceControls;
+  /** Dictation and captions (DESIGN "Chat and voice", Dictation and captions). Added by M3-C; implementer: M3-P4. */
+  readonly captions?: CaptionControls;
+}
+
+/** One card of the teammate's hand as this browser received it (DESIGN "Players, seats and formats", Two-Headed Giant). Added by M3-C. */
+export interface TeammateHandCard {
+  id: InstanceId;
+  ref: CardRef;
+  /** Matches the teammate's commitment; an unverified card is flagged, never shown as genuine. */
+  verified: boolean;
+}
+
+/**
+ * The Two-Headed Giant team view (DESIGN "Players, seats and formats", Two-Headed Giant: "Each teammate's hand is
+ * visible live to the other, shown as a second, smaller fan above the player's own"; "A team channel carries voice
+ * and text only between teammates"). Team lines go through `TableSession.chat(text, 'team')`, which sends them on the
+ * pair channel (net/messages.ts `teamChat`) and files them in this browser's timeline only. Added by M3-C;
+ * implementer: M3-P2.
+ */
+export interface TeamControls {
+  /** The teammates' seats (one in Two-Headed Giant). */
+  teammates(): SeatId[];
+  /** A teammate's hand in its order as last received; [] before anything arrived or while the teammate is away. */
+  hand(seat: SeatId): TeammateHandCard[];
+  /** Called when a teammate's hand changed; returns an unsubscribe function. */
+  subscribe(listener: () => void): () => void;
+  /** Team chat lines received and sent, as log entries for this browser's timeline (never in the shared log). */
+  chatLog(): LogEntry[];
 }
 
 /**
@@ -185,6 +224,22 @@ export interface NetSessionOptions {
   sets?: SetDataSource;
   /** Pack generation (M2-P1). Added by M2-C. */
   generatePack?: GeneratePack;
+  /**
+   * Join as a spectator: no chair is taken, only public zones are seen, chat and ping only (DESIGN "Players, seats and
+   * formats", Spectators). Added by M3-C; default 'player'; implementer: M3-P5. A spectator session resolves once
+   * joined instead of once it holds a chair.
+   */
+  role?: PeerRole;
+  /** Voice and dictation wiring (DESIGN "Chat and voice"); absent: the session offers no `voice` or `captions`. Added by M3-C; implementers: M3-P3, M3-P4. */
+  voice?: VoiceSessionOptions;
+}
+
+/** What the session needs to offer voice and captions (DESIGN "Chat and voice"). Added by M3-C. */
+export interface VoiceSessionOptions {
+  media: MediaDevicesLike;
+  settings: SettingsStore;
+  /** Speech engine factories (voice/speech SPEECH_ENGINES; only FAKE_SPEECH with `?speech=fake`). */
+  engines: readonly SpeechEngineFactory[];
 }
 
 /** A networked table session: TableSession over a NetEngine (PLAN M1-P8). Added by M1-C. */

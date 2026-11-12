@@ -95,7 +95,7 @@ describe('actions', () => {
     rngCommit: true, rngReveal: true, commitClose: true,
     packOpen: true, pick: true, packPass: true, pileLook: true, gridTake: true, draftTimeout: true,
     chat: true, caption: true,
-    undo: true, snapshotHash: true, sequencerClaim: true, settings: true, stageSet: true, lobbySet: true,
+    undo: true, snapshotHash: true, sequencerClaim: true, settings: true, stageSet: true, lobbySet: true, formatSet: true,
     recover: true, recoverCommit: true,
   };
 

@@ -4,7 +4,7 @@
  * The scene is a pure view of TableState plus local ViewState; it changes shared state only through `dispatch`.
  */
 import type { ActionDraft } from '../core/actions';
-import type { Anchor, CardRef, DeckBuild, DraftCard, InstanceId, Line, PackId, PileId, Pose, SeatId, TableState, ZoneId } from '../core/types';
+import type { Anchor, CardRef, DeckBuild, DraftCard, InstanceId, Line, PackId, PileId, Pose, SeatColourIndex, SeatId, TableState, ZoneId } from '../core/types';
 import type { CardData, FaceSource } from '../data/types';
 import type { GameDefinition, TableLayout } from '../games/types';
 import type { Theme } from '../themes/types';
@@ -46,6 +46,40 @@ export interface ViewState {
   pings: ActivePing[];
   /** A pile or zone fanned open in place, or null (DESIGN "Card manipulation"). */
   openPile: PileId | ZoneId | null;
+  /** Captions to draw (DESIGN "Chat and voice", Placement). Added by M3-C; absent means none; drawn by M3-P4 (scene/captions.ts). */
+  captions?: SceneCaption[];
+}
+
+/**
+ * A caption bubble as the scene draws it (DESIGN "Chat and voice", Dictation and captions: a speech bubble anchored to
+ * the card or stack item the speaker last acted on or is hovering, in the speaker's seat colour, upright for every
+ * viewer, growing with interim words and fading after the final result; with no card context beside the speaker's
+ * avatar; "Specification: geometry, layout and motion", Screen layer: at most 280 px wide and three lines). Added by
+ * M3-C; the HUD maps voice/types.ts Caption to it.
+ */
+export interface SceneCaption {
+  id: string;
+  text: string;
+  final: boolean;
+  /** A card or stack item; a seat anchor (or null, or an anchor no longer on the table) places it beside that seat's avatar. */
+  anchor: Anchor | null;
+  /** The speaking seat, whose avatar is the fallback anchor; null for a spectator (no avatar: the bubble sits at the table's near edge). */
+  seat: SeatId | null;
+  /** Seat colour index of the speaker (theme seat colours); null for a spectator's neutral colour. */
+  colour: SeatColourIndex | null;
+  /** 1 while shown, falling to 0 as it fades. */
+  opacity: number;
+}
+
+/** A caption as the debug hook reports it (DESIGN "Chat and voice", Placement; PLAN M3-P4: the caption is anchored to the last-touched card on every page). Added by M3-C. */
+export interface DebugCaption {
+  id: string;
+  text: string;
+  final: boolean;
+  /** What it is attached to after the fallback: the card or stack item, or the speaker's seat (its avatar). */
+  anchoredTo: Anchor | null;
+  /** The bubble's screen rectangle; null while off screen. */
+  screen: DOMRect | null;
 }
 
 /** Scene callbacks to the HUD (DESIGN "Input and interaction design"). */
@@ -118,6 +152,8 @@ export interface SceneDebugParts {
   camera(): DebugCamera;
   lines(): Line[];
   frameStats(): FrameStats;
+  /** Captions on screen (PLAN M3-P4). Added by M3-C; optional until M3-P4 draws them. */
+  captions?(): DebugCaption[];
 }
 
 /** A live table scene (DESIGN "Specification: code interfaces"; "Themes and rendering"). */

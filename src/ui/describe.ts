@@ -17,7 +17,7 @@
  * (DESIGN "Chat and voice", Text chat; core/log.ts parseChatText).
  */
 import type { Action, UndoableAction } from '../core/actions';
-import type { ActionLogEntry, InstanceId, LogEntry, SeatId, TableState, ZoneId } from '../core/types';
+import type { ActionLogEntry, Format, InstanceId, LogEntry, SeatId, TableState, ZoneId } from '../core/types';
 import { parseZoneId } from '../core/ids';
 import { parseChatText, type ChatTab } from '../core/log';
 
@@ -67,6 +67,9 @@ export const LIFE_MERGE_MS = 2000;
 const SILENT = new Set<Action['type']>(['rngCommit', 'shuffleNonce', 'shuffleDone', 'snapshotHash', 'sequencerClaim']);
 
 const t = (text: string): Seg => ({ text });
+
+/** Table formats as the log names them (DESIGN "Players, seats and formats"). Added by M3-C. */
+const FORMAT_LABEL: Readonly<Record<Format, string>> = { '1v1': '1v1', ffa3: 'three-player free-for-all', ffa4: 'four-player free-for-all', '2hg': 'Two-Headed Giant' };
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
@@ -366,6 +369,8 @@ export function describe(a: Action, d: Describers): Seg[] | null {
       return [t('calls time on a pick')];
     case 'lobbySet':
       return [t('changes the lobby settings')];
+    case 'formatSet':
+      return [t(`sets the table to ${FORMAT_LABEL[a.format] ?? String(a.format)}`)];
     case 'chat':
     case 'caption':
       return parseChatText(a.text).map((p): Seg => ('card' in p ? (p.set ? { text: p.card, named: p.card, set: p.set } : { text: p.card, named: p.card }) : t(p.text)));
