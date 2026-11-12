@@ -504,7 +504,8 @@ describe('authority', () => {
     const b = sim.add(1);
     await until(() => b.engine.isSequencing() && spectator.engine.status() === 'connected', 20_000, 'connection');
     expect(spectator.engine.sequencerId()).toBe('peer1');
-    spectator.engine.propose({ type: 'chat', by: 'spectator-0', cid: 'hi', text: 'gl hf', channel: 'spectator' });
+    // A spectator acts as its own spectator id `v:<peerId>` (core/teams.ts, M3-P5).
+    spectator.engine.propose({ type: 'chat', by: 'v:peer0', cid: 'hi', text: 'gl hf', channel: 'spectator' });
     spectator.engine.propose({ type: 'life', by: 's0', cid: 'meddle', seat: 's0', delta: -1 });
     await expectConverged([spectator, b]);
     expect([...b.log.values()].map((a) => a.cid)).toContain('hi');

@@ -4,7 +4,9 @@
  * so Playwright can drive the real scene before the session (M0-P7) exists.
  *
  * URL: `?harness=scene&scenario=demo|bench|empty&viewer=s0|s1|none`. `bench` renders 300 cards.
- * Keys: 0 fit, Home or 1 own side, 2 the other seat, Escape closes an opened pile.
+ * Multi-seat tables (M3-P1): `&format=ffa3|ffa4|2hg&viewer=s0..s3` lays out the Magic table of that format with every
+ * chair taken (scenario ignored).
+ * Keys: 0 fit, Home or 1 own side, 2, 3, 4 the seats clockwise from the viewer, Escape closes an opened pile.
  * Test API: window.__spellplane (state, dispatch, cards, camera, lines, frameStats) and window.__sceneHarness.
  */
 import type { Action, ActionDraft } from '../core/actions';
@@ -13,7 +15,10 @@ import type { FaceSource, ImageTier } from '../data/types';
 import type { TableLayout } from '../games/types';
 import { paper } from '../themes/paper';
 import { registerDebug } from '../util/debug';
-import { buildHarnessState, harnessFaces, harnessGame, harnessLayout, harnessPrivateFaces, harnessReduce, type HarnessScenario } from './harness-fixture';
+import type { Format } from '../core/types';
+import { TABLE_FORMAT_SEATS } from '../core/teams';
+import { mtgLayout } from '../games/mtg/layout';
+import { buildFormatState, buildHarnessState, harnessFaces, harnessGame, harnessLayout, harnessPrivateFaces, harnessReduce, type HarnessScenario } from './harness-fixture';
 import type { DropResult } from './snap';
 import { createTableScene, type SceneDebugCard } from './table-scene';
 import type { ScreenPoint, TablePoint, TableScene, ViewState } from './types';
@@ -55,22 +60,25 @@ export function mount(target: HTMLElement): void {
   const params = new URLSearchParams(location.search);
   const scenario = (['demo', 'bench', 'empty'] as const).find((s) => s === params.get('scenario')) ?? ('demo' satisfies HarnessScenario);
   const viewerParam = params.get('viewer');
-  const viewerSeat = viewerParam === 'none' ? null : viewerParam === 's1' ? 's1' : 's0';
+  const format = (['ffa3', 'ffa4', '2hg'] as const).find((f) => f === params.get('format')) ?? null;
+  const seatCount = format ? TABLE_FORMAT_SEATS[format] : 2;
+  const viewerSeat = viewerParam === 'none' ? null : viewerParam && /^s[0-3]$/.test(viewerParam) && Number(viewerParam.slice(1)) < seatCount ? viewerParam : 's0';
 
   target.textContent = '';
   const host = document.createElement('div');
   Object.assign(host.style, { position: 'fixed', inset: '0', overflow: 'hidden', background: '#fff' });
   const label = document.createElement('div');
-  label.textContent = `harness: scene (${scenario})`;
+  label.textContent = `harness: scene (${format ?? scenario})`;
   Object.assign(label.style, { position: 'fixed', left: '8px', bottom: '6px', font: '11px system-ui, sans-serif', color: '#8a8a8a', pointerEvents: 'none', letterSpacing: '0.04em', zIndex: '1' });
   document.documentElement.style.height = '100%';
   document.body.style.margin = '0';
   target.append(host, label);
 
-  const layout = harnessLayout();
-  let state: TableState = buildHarnessState({ scenario });
+  const layout = format ? mtgLayout(format) : harnessLayout();
+  const game = format ? { ...harnessGame, layout: (f: Format) => (f === format ? mtgLayout(f) : harnessLayout()) } : harnessGame;
+  let state: TableState = format ? buildFormatState(format, layout, seatCount) : buildHarnessState({ scenario });
   const motionQuery = matchMedia('(prefers-reduced-motion: reduce)');
-  let view: ViewState = { selection: [], hovered: null, privateFaces: viewerSeat === 's0' ? harnessPrivateFaces() : {}, reducedMotion: motionQuery.matches, pings: [], openPile: null };
+  let view: ViewState = { selection: [], hovered: null, privateFaces: viewerSeat === 's0' && !format ? harnessPrivateFaces() : {}, reducedMotion: motionQuery.matches, pings: [], openPile: null };
   const actions: ActionDraft[] = [];
   const events: { type: string; args: unknown[] }[] = [];
   let cid = 0;
@@ -94,7 +102,7 @@ export function mount(target: HTMLElement): void {
   const log = (type: string) => (...args: unknown[]) => events.push({ type, args: JSON.parse(JSON.stringify(args)) as unknown[] });
 
   const scene = createTableScene(host, {
-    game: harnessGame,
+    game,
     layout,
     viewerSeat,
     theme: paper,
@@ -128,7 +136,13 @@ export function mount(target: HTMLElement): void {
   addEventListener('keydown', (e) => {
     if (e.key === '0') scene.camera.fit();
     else if (e.key === 'Home' || e.key === '1') scene.camera.goToSeat(viewerSeat ?? 's0');
-    else if (e.key === '2') scene.camera.goToSeat(viewerSeat === 's1' ? 's0' : 's1');
+    else if (e.key === '2' || e.key === '3' || e.key === '4') {
+      // Clockwise from the viewer: seat indices run clockwise (games/mtg/layout.ts).
+      const n = Object.keys(state.seats).length;
+      const steps = Number(e.key) - 1;
+      const from = viewerSeat ? (state.seats[viewerSeat]?.index ?? 0) : 0;
+      if (steps < n) scene.camera.goToSeat(`s${(from + steps) % n}`);
+    }
     else if (e.key === 'Escape' && view.openPile) setView({ openPile: null });
   });
 

@@ -8,8 +8,8 @@
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { hostSeat } from '../../core/stage';
-  import type { LobbySettings, SetCode, TableState } from '../../core/types';
+  import { GAME_START, hostSeat } from '../../core/stage';
+  import type { Format, LobbySettings, SetCode, TableState } from '../../core/types';
   import type { SetSummary } from '../../data/types';
   import type { LobbySettingsProps } from '../types';
   import {
@@ -60,7 +60,11 @@
   const options = $derived(setOptions(list, lobby.sets));
   const hint = $derived(seatHint(mode, st));
   const passTimer = $derived(st.settings.passTimerMs);
-  const formatName = $derived(({ '1v1': 'One versus one', ffa3: 'Free-for-all, three players', ffa4: 'Free-for-all, four players', '2hg': 'Two-Headed Giant' } as const)[st.format]);
+  // The table format (DESIGN "Pre-game", Lobby settings: "Format (1v1, free-for-all, Two-Headed Giant)"; M3-P1): the host
+  // picks it with the other settings; `formatSet` rebuilds the chairs, teams and life totals.
+  const FORMAT_NAMES: Readonly<Record<Format, string>> = { '1v1': 'One versus one', ffa3: 'Free-for-all, three players', ffa4: 'Free-for-all, four players', '2hg': 'Two-Headed Giant' };
+  const FORMATS = Object.keys(FORMAT_NAMES) as Format[];
+  const formatName = $derived(FORMAT_NAMES[st.format]);
 
   function write(next: LobbySettings): void {
     if (!editable) return;
@@ -80,6 +84,23 @@
     const el = e.currentTarget as HTMLSelectElement;
     write(withMode(lobby, el.value as LobbyMode));
     el.value = modeOf(held().draft);
+  }
+
+  function onFormat(e: Event): void {
+    const el = e.currentTarget as HTMLSelectElement;
+    const format = el.value as Format;
+    if (!editable || !FORMATS.includes(format) || format === st.format) return;
+    failure = '';
+    // The starting life of the format; the reducer holds no game definition (core/stage.ts GAME_START mirrors it).
+    const life = (Object.hasOwn(GAME_START, st.game) ? GAME_START[st.game]!.life[format] : undefined) ?? 20;
+    try {
+      session.dispatch({ type: 'formatSet', format, life });
+      // A Two-Headed Giant mode does not suit another table, and the reverse: fall back to the first mode offered.
+      if (!lobbyModes(format).includes(mode)) write(withMode(lobby, lobbyModes(format)[0]!));
+    } catch (err) {
+      failure = err instanceof Error ? err.message : String(err);
+    }
+    el.value = session.getState().format;
   }
 
   function onNumber(field: NumberField, e: Event): void {
@@ -172,10 +193,16 @@
     <p class="hint" data-testid="lobby-settings-readonly">{st.stage === 'lobby' ? `The host, ${hostName}, chooses these.` : 'Fixed for this evening’s draft.'}</p>
   {/if}
 
-  <div class="row">
+  <label class="row">
     <span class="key">Table</span>
-    <span data-testid="lobby-format">{formatName}</span>
-  </div>
+    {#if editable && st.stage === 'lobby'}
+      <select data-testid="lobby-format-select" aria-label="Table format" value={st.format} onchange={onFormat}>
+        {#each FORMATS as f (f)}<option value={f} selected={f === st.format}>{FORMAT_NAMES[f]}</option>{/each}
+      </select>
+    {:else}
+      <span data-testid="lobby-format">{formatName}</span>
+    {/if}
+  </label>
 
   <label class="row">
     <span class="key">Mode</span>

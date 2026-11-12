@@ -16,6 +16,7 @@
   import type { LobbyProps } from '../types';
   import { ConnectivityCheck, type ConnectivityReport } from './connectivity';
   import { pastedDeckId, readyVerdict } from './ready';
+  import SpectatorPanel from './SpectatorPanel.svelte';
   import { chairChoice, chairs, colourClash, colourTakenBy, hostSeat, nicknameProblem, normaliseNickname, pickColour, readiness, seatOf, startProblem, SEAT_COLOURS, teamGroups } from './seats';
 
   let { session, game, link, identity, decks, cardData, parseDecklist }: LobbyProps = $props();
@@ -252,6 +253,8 @@
       <button type="button" data-testid="copy-link" onclick={copyLink}>{copied ? 'Copied' : 'Copy link'}</button>
     </div>
   </section>
+
+  <SpectatorPanel {session} {link} inline />
 
   {#if report.problems.length}
     <section class="problems" role="alert" data-testid="connectivity-problem">

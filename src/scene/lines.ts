@@ -22,7 +22,7 @@ import type { TableLayout } from '../games/types';
 import type { LineStyle, Theme } from '../themes/types';
 import { lineKindFor, opposing } from './combat';
 import type { Segment } from './ghost';
-import { seatLayoutOf, viewerAngle } from './layout';
+import { AVATAR_SPOT_R, seatLayoutOf, viewerAngle } from './layout';
 import { CARD_H, CARD_W, forward, rot2 } from './math';
 import type { TextSpec } from './text';
 import type { ActivePing, TablePoint } from './types';
@@ -66,6 +66,33 @@ export interface DebugPing {
   alpha: number;
 }
 
+/**
+ * One seat of the table as this viewer sees it (M3-P1; DESIGN "Players, seats and formats": every viewer sees their
+ * own seat at the bottom): the canonical layout of its territory and avatar spot, and where they are on screen now.
+ */
+export interface DebugSeatView {
+  seat: SeatId;
+  index: number;
+  /** The seat's angle in the canonical frame (DESIGN "Specification: geometry, layout and motion", Tables and seats). */
+  angle: number;
+  /** Territory centre and avatar spot in table mm (canonical frame). */
+  territory: TablePoint;
+  avatar: TablePoint;
+  /** The same points in viewport (client) px, or null while off the projection. */
+  screen: { territory: TablePoint; avatar: TablePoint } | null;
+}
+
+/** The table as this viewer sees it (debug hook part `seatViews`). */
+export interface DebugTableView {
+  format: string;
+  table: { w: number; d: number };
+  /** The angle this viewer's view is turned by (their seat's angle; seat 0's for a spectator). */
+  viewerAngle: number;
+  /** The camera's centre on the table in mm and its height. */
+  camera: { x: number; y: number; dist: number };
+  seats: DebugSeatView[];
+}
+
 // The scene registers these beside the design's members (dev and test builds; DESIGN "Specification: code interfaces").
 declare module '../util/debug' {
   interface DebugParts {
@@ -73,6 +100,8 @@ declare module '../util/debug' {
     drawnLines: () => DrawnLine[];
     /** Pings being shown. */
     pings: () => DebugPing[];
+    /** The table's seats as this viewer sees them (M3-P1). */
+    tableView: () => DebugTableView | null;
   }
 }
 
@@ -376,8 +405,8 @@ export interface LineViewHost {
   extraLines?(): LineDraw[];
 }
 
-/** Radius of a seat's avatar spot on the table (line end, line target, ping ring), mm. */
-export const AVATAR_R = 30;
+/** Radius of a seat's avatar spot on the table (line end, line target, ping ring), mm (scene/layout.ts AVATAR_SPOT_R). */
+export const AVATAR_R = AVATAR_SPOT_R;
 /** Line label type size on the table, mm; like counter badges it keeps LABEL_MIN_PX on screen, up to LABEL_MAX_SCALE. */
 const LABEL_SIZE = 4.5;
 const LABEL_MIN_PX = 11;
@@ -395,6 +424,22 @@ export function lineSourceOf(state: TableState, card: InstanceId): Anchor | null
   if (!z || z.visibility !== 'public') return null;
   const item = state.stack.find((i) => i.card === card);
   return item ? { kind: 'stackItem', id: item.id } : { kind: 'card', id: card };
+}
+
+/**
+ * How many opponents a seat's attackers can go for (DESIGN "Combat and annotation", Attack target: "In two-player
+ * games the target is implicit. With several opponents ... the attacker drags an attack line"): the opposing sides of
+ * the table, a Two-Headed Giant team counting once (its creatures attack the team, so the target is implicit there
+ * too), and an empty chair not at all. An attacker with no attack line shows a dashed stub when this is above one.
+ */
+export function opponentCount(state: TableState, seat: SeatId): number {
+  const sides = new Set<string>();
+  for (const s of Object.values(state.seats)) {
+    if (!opposing(state, seat, s.id)) continue;
+    if (s.name.trim() === '' && s.peer === undefined) continue;
+    sides.add(s.team ?? s.id);
+  }
+  return sides.size;
 }
 
 /** The seat whose avatar spot covers table point `p`, as a line end. */
@@ -492,11 +537,10 @@ export class LineView {
     return state ? (seatLayoutOf(state, this.host.layout(), seat)?.angle ?? 0) : 0;
   }
 
-  /** Seats that are not `seat` and not its teammates (DESIGN "Combat and annotation", Attack target). */
+  /** How many opponents `seat` can attack (DESIGN "Combat and annotation", Attack target): see `opponentCount`. */
   private opponents(seat: SeatId): number {
     const state = this.host.state();
-    if (!state) return 0;
-    return Object.values(state.seats).filter((s) => opposing(state, seat, s.id)).length;
+    return state ? opponentCount(state, seat) : 0;
   }
 
   private seatColour(seat: SeatId) {

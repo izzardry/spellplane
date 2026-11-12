@@ -20,6 +20,8 @@ import type { Action, UndoableAction } from '../core/actions';
 import type { ActionLogEntry, Format, InstanceId, LogEntry, SeatId, TableState, ZoneId } from '../core/types';
 import { parseZoneId } from '../core/ids';
 import { parseChatText, type ChatTab } from '../core/log';
+import { isSpectatorId } from '../core/teams';
+import { spectatorLabel } from '../net/roles';
 
 /**
  * A piece of a log line: text, a table card that previews on hover, or (chat, M1-P6) a card named in double brackets
@@ -67,6 +69,8 @@ export const LIFE_MERGE_MS = 2000;
 const SILENT = new Set<Action['type']>(['rngCommit', 'shuffleNonce', 'shuffleDone', 'snapshotHash', 'sequencerClaim']);
 
 const t = (text: string): Seg => ({ text });
+/** The spectators a targeted reveal names, as the log says it (M3-P5). */
+const spectatorsText = (n: number): string[] => (n === 0 ? [] : [n === 1 ? 'a spectator' : `${n} spectators`]);
 
 /** Table formats as the log names them (DESIGN "Players, seats and formats"). Added by M3-C. */
 const FORMAT_LABEL: Readonly<Record<Format, string>> = { '1v1': '1v1', ffa3: 'three-player free-for-all', ffa4: 'four-player free-for-all', '2hg': 'Two-Headed Giant' };
@@ -200,7 +204,9 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     if (!segs) continue;
     // An answer is the answering seat's line, also when the sequencer's clock sent it for that seat (a timeout).
     const who = a.type === 'respond' ? a.seat : a.by;
-    const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: who, colour: st.seats[who]?.colour ?? null, actor: seatName(who), segs, at: e.at };
+    // A spectator's line names it by the nickname its chat carries, never by its raw id (M3-P5, net/roles.ts).
+    const actor = isSpectatorId(who) ? spectatorLabel(a.type === 'chat' ? a.name : undefined) : seatName(who);
+    const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: who, colour: st.seats[who]?.colour ?? null, actor, segs, at: e.at };
     if (a.type === 'chat') line.channel = a.channel;
     lines.push(line);
     merge = sig === null ? null : { line, sig, a, cards: [a.type === 'draw' ? t('a card') : card(cardOf(a)!)] };
@@ -283,7 +289,8 @@ export function describe(a: Action, d: Describers): Seg[] | null {
     case 'reveal':
       return [t('reveals '), card(a.instanceId)];
     case 'revealTo':
-      return [t('reveals '), card(a.instanceId), t(` to ${a.seats.map(seatName).join(', ') || 'nobody'}`)];
+      // Spectators are not in the shared state, so a reveal to them names how many (M3-P5).
+      return [t('reveals '), card(a.instanceId), t(` to ${[...a.seats.map(seatName), ...spectatorsText(a.spectators?.length ?? 0)].join(', ') || 'nobody'}`)];
     case 'hide':
       return [t('hides '), card(a.card)];
     case 'shuffleCommit':
