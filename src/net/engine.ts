@@ -88,6 +88,8 @@ interface Ask {
 const STALE_ASK_MS = 4 * SYNC_RETRY_MS;
 /** Catch-up requests remembered for matching answers (see Engine.asks). */
 const KEEP_ASKS = 256;
+/** Catch-up requests a claimant holds per peer until it has taken over (a peer retries at most once per SYNC_RETRY_MS). */
+const KEEP_DEFERRED = 16;
 /** Actions the sequencer proposes as records of its own view, never re-proposed from an abandoned history. */
 const DUTY_RECORDS: ReadonlySet<string> = new Set(['away', 'sequencerClaim']);
 /** Reason of a `nack` for a proposal that was already sequenced (the proposer drops it silently). */
@@ -212,12 +214,14 @@ class Engine implements NetEngine {
    */
   private verifyEpoch = 0;
   /**
-   * While claiming: catch-up requests from peers (the latest per peer), answered once this browser has taken over
-   * (activate) and dropped if it gives the claim up. An answer during the claim would describe a history the claim may
-   * still replace (review M1-P1 retry round 1: a follower took such an answer as the verification of the sequencer's
-   * new history).
+   * While claiming: catch-up requests from peers (each one, in the order received, at most KEEP_DEFERRED per peer),
+   * answered once this browser has taken over (activate) and dropped if it gives the claim up. An answer during the
+   * claim would describe a history the claim may still replace (review M1-P1 retry round 1: a follower took such an
+   * answer as the verification of the sequencer's new history). Every request is answered, not only the latest: the
+   * asker matches answers to its requests one for one, oldest first, so an unanswered older request would take the
+   * answer to its newer one (review M1-P1 retry round 2).
    */
-  private readonly deferredSync = new Map<PeerId, number>();
+  private readonly deferredSync = new Map<PeerId, number[]>();
   private gapSince: number | null = null;
   /** The peer whose snapshot replaces this replica's state (a hash mismatch, or a fork too old to rewind). */
   private forced: PeerId | null = null;
@@ -930,7 +934,7 @@ class Engine implements NetEngine {
   private answerDeferred(): void {
     const list = [...this.deferredSync];
     this.deferredSync.clear();
-    for (const [from, haveSeq] of list) if (this.peerMap.has(from)) this.onSyncReq(from, haveSeq);
+    for (const [from, reqs] of list) for (const haveSeq of reqs) if (this.peerMap.has(from)) this.onSyncReq(from, haveSeq);
   }
 
   /**
@@ -1228,6 +1232,15 @@ class Engine implements NetEngine {
         this.tellHead(from);
         return;
       }
+      if (this.verify !== 'no') {
+        // Not yet verified since the sequencer (re)claimed: this replica may hold an abandoned history whose fork lies
+        // below this seq, so a single differing seq is not the fork point. The seq is dropped like any other during
+        // verification; the overlap read of this epoch finds the earliest fork (review M1-P1 retry round 2: adopting
+        // from here stacked the new history on an abandoned part below it).
+        this.heardSequencer = true;
+        this.ensureVerifyRead(from);
+        return;
+      }
       // Another history at this seq. The sequencer's wins (DESIGN: every peer applies the sequencer's order).
       this.adopt(from, a.seq, `history diverged at seq ${a.seq}`);
       return;
@@ -1239,15 +1252,25 @@ class Engine implements NetEngine {
       // history against the sequencer's first, and its answer carries them (review round 3: a follower's confirmed
       // state equals the sequencer's from the sequencer's first new seq on). Seqs that arrive until the answer are
       // dropped too (reordering may bring a later one first); the answer or the next catch-up holds them.
-      if (this.verify === 'next') {
-        this.verify = 'waiting';
-        this.requestSync(from, 'overlap');
-      }
+      this.ensureVerifyRead(from);
       return;
     }
     this.replica.receive(a);
     if (this.replica.gap() !== null && this.gapSince === null) this.gapSince = this.now();
     this.afterChange();
+  }
+
+  /**
+   * A seq from the sequencer while this replica verifies it: after a change of sequencer its first seq starts the
+   * overlap read; while waiting, a read goes out if none is outstanding (a lost one is otherwise retried by tick).
+   */
+  private ensureVerifyRead(from: PeerId): void {
+    if (this.verify === 'next') {
+      this.verify = 'waiting';
+      this.requestSync(from, 'overlap');
+    } else if (this.verify === 'waiting' && this.sync === null) {
+      this.requestSync(from, 'overlap');
+    }
   }
 
   /** Send our head to one peer at once (at most once per HELLO_RETRY_MS each), as the next heartbeat would. */
@@ -1322,7 +1345,10 @@ class Engine implements NetEngine {
     if (this.mode === 'claiming') {
       // Answered once the claim is over (deferredSync). Another claimant never waits for this: a claim completes
       // only when every connected peer acknowledged it, which a rival claimant does not.
-      this.deferredSync.set(from, haveSeq);
+      const reqs = this.deferredSync.get(from) ?? [];
+      reqs.push(haveSeq);
+      if (reqs.length > KEEP_DEFERRED) reqs.shift();
+      this.deferredSync.set(from, reqs);
       return;
     }
     const seq = this.replica.seq();
@@ -1504,7 +1530,9 @@ class Engine implements NetEngine {
     if (e.info.peerId !== this.sequencer || this.mode === 'active') return;
     this.seqrHashes.set(seq, h);
     trimMap(this.seqrHashes, KEEP_HASHES);
-    this.compareHash(seq);
+    // While this replica verifies its sequencer, its own hash of that seq may describe an abandoned history the
+    // overlap read is about to replace: the sequencer's hash is kept and compared when the seq is (re)applied.
+    if (this.verify === 'no') this.compareHash(seq);
   }
 
   private compareHash(seq: number): void {

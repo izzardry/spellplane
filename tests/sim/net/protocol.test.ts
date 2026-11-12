@@ -370,11 +370,25 @@ describe('fork repair and state hashes', () => {
     await until(() => got.some((m) => m.t === 'syncReq'), 3000, 'the first catch-up request');
     send('ctl', { t: 'syncRes', snapshot: null, tail: [] });
     await until(() => engine.status() === 'connected' && engine.sequencerId() === 'peer0', 3000, 'connected to the scripted sequencer');
-    const requests = got.filter((m) => m.t === 'syncReq').length;
+    const syncReqs = (): Extract<WireMessage, { t: 'syncReq' }>[] => got.filter((m): m is Extract<WireMessage, { t: 'syncReq' }> => m.t === 'syncReq');
+    let requests = syncReqs().length;
     send('act', { t: 'seq', seq: theirs.seq, cid: theirs.cid, action: theirs });
     send('ctl', { t: 'hash', seq: theirs.seq, h: expected });
-    await until(() => got.filter((m) => m.t === 'syncReq').length > requests, 3000, 'the request for the adopted tail');
-    expect(got.filter((m) => m.t === 'syncReq').at(-1)).toMatchObject({ haveSeq: 2 * HASH_EVERY - 1 });
+    // Its first seq from a new sequencer: the engine does not adopt from the single differing seq (the fork may lie
+    // further down) but re-reads the overlap; the sequencer's hash meanwhile is kept, not compared with the abandoned
+    // seq 100 (review M1-P1 retry round 2).
+    await until(() => syncReqs().length > requests, 3000, 'the overlap read');
+    const overlap = syncReqs().at(-1)!.haveSeq;
+    expect(overlap).toBeGreaterThan(0);
+    expect(overlap).toBeLessThan(2 * HASH_EVERY - 1);
+    await vi.advanceTimersByTimeAsync(20);
+    expect(warnings.filter((w) => /hash mismatch/.test(w))).toEqual([]);
+    requests = syncReqs().length;
+    send('ctl', { t: 'syncRes', snapshot: null, tail: [...common.filter((x) => x.seq > overlap), theirs] });
+    // The overlap answer shows the fork at seq 100: rewind to 99 and fetch the sequencer's tail from there.
+    await until(() => syncReqs().length > requests, 3000, 'the request for the adopted tail');
+    expect(syncReqs().at(-1)).toMatchObject({ haveSeq: 2 * HASH_EVERY - 1 });
+    send('ctl', { t: 'hash', seq: theirs.seq, h: expected });
     await vi.advanceTimersByTimeAsync(20);
     expect(warnings.filter((w) => /hash mismatch/.test(w))).toEqual([]);
     send('ctl', { t: 'syncRes', snapshot: null, tail: [theirs] });
@@ -745,16 +759,26 @@ describe('meeting after acting alone, and reloads', () => {
     { seed: 106, drop: 0 },
     { seed: 133, drop: 0.05 },
     { seed: 182, drop: 0 },
+    { seed: 122, drop: 0.05 },
   ])('a split that heals while followers keep acting (seed $seed): no follower stacks the new history on its old one', async ({ seed, drop }) => {
     // Review M1-P1 retry round 1, finding 1: a stamp the sequencer made before its claim, delivered late, made a
     // follower re-read the overlap while the sequencer was still claiming; it took that answer (the history about to
     // be abandoned) as the verification and later stacked the adopted history on its forked copy, losing its acked
     // actions as a "reducer bug". A claimant now answers catch-up only once it has taken over, and only the overlap
-    // read sent after the claim verifies it. Condition (the reviewer's): every peer's history when it first reaches
-    // any seq above the pre-heal heads is the final history, no hash mismatch, every acked action is in the log.
+    // read sent after the claim verifies it. Condition (the reviewer's): every follower's history when it first
+    // reaches any seq above the pre-heal heads is the final history, no hash mismatch, every acked action is in the
+    // log. Seqs a peer stamped while it was itself still sequencing are exempt: the losing side's sequencer may stamp
+    // its own action right after the heal before it learns of the claimant (inherent to a split; the action is
+    // re-proposed and sequenced again, review M1-P1 retry round 2).
     const start = baseTable(4);
     const sim = await connected({ engines: 4, seed, start, ...DELAY, drop });
     const [a, b, c, d] = sim.peers as [SimPeer, SimPeer, SimPeer, SimPeer];
+    const stampedAlone = new Map<SimPeer, Set<number>>(sim.peers.map((p) => [p, new Set<number>()]));
+    for (const p of sim.peers) {
+      p.engine.onSequenced(() => {
+        if (p.engine.isSequencing()) stampedAlone.get(p)!.add(p.trace.length - 1);
+      });
+    }
     const sideA = new Set([tid(a), tid(b)]);
     const split = { on: true };
     for (const p of sim.peers) {
@@ -783,10 +807,14 @@ describe('meeting after acting alone, and reloads', () => {
     const seqr = sim.peers.find((p) => p.engine.isSequencing())!;
     const final = new Map([...seqr.log.values()].map((x) => [x.seq, x.cid]));
     for (const p of sim.peers) {
-      for (const x of p.trace) {
-        if (x.seq <= heads) continue;
-        const h = historyWhenReached(p, x.seq)!;
-        for (let q = start.seq + 1; q <= x.seq; q++) expect(h.get(q)?.cid, `${p.peerId} at its first ${x.seq}, seq ${q}`).toBe(final.get(q));
+      const reached = new Set<number>();
+      for (const [i, x] of p.trace.entries()) {
+        if (x.seq <= heads || stampedAlone.get(p)!.has(i) || reached.has(x.seq)) continue;
+        reached.add(x.seq);
+        // This peer's history when it first applied seq x.seq from a sequencer other than itself.
+        const h = new Map<number, string>();
+        for (const y of p.trace.slice(0, i + 1)) if (y.seq <= x.seq) h.set(y.seq, y.cid);
+        for (let q = start.seq + 1; q <= x.seq; q++) expect(h.get(q), `${p.peerId} at its first ${x.seq}, seq ${q}`).toBe(final.get(q));
       }
       expect(p.system.filter((t) => /mismatch/.test(t)), p.peerId).toEqual([]);
       expect(p.rolledBack.size, p.peerId).toBe(0);
@@ -800,6 +828,9 @@ describe('meeting after acting alone, and reloads', () => {
   it.each([
     { seed: 1, drop: 0.05, groups: [0, 1, 2, 2], what: 'a claimant whose checked peer rewound below its claimAck asks again' },
     { seed: 16, drop: 0, groups: [0, 1, 1, 2], what: 'a follower drops a catch-up answer it no longer waits for' },
+    { seed: 180, drop: 0.05, groups: [0, 1, 2, 2], what: 'a follower still verifying does not adopt from a single forked seq' },
+    { seed: 425, drop: 0.05, groups: [0, 1, 2, 2], what: 'a verification snapshot is not swallowed by an older-epoch request' },
+    { seed: 5, drop: 0.1, groups: [0, 1, 2, 2], what: 'a follower still verifying waits for the overlap read (drop 0.1)' },
   ])('a three-way split heals (seed $seed): $what', async ({ seed, drop, groups }) => {
     // Review M1-P1 retry round 1, findings 2 and 3: {peer0}, {peer1}, {peer2, peer3} (or {peer1, peer2}, {peer3})
     // each sequence alone, then heal. Seed 16 once applied a late answer from a former sequencer on top of a
