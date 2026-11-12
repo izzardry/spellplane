@@ -120,6 +120,14 @@ describe('what a spectator sees', () => {
     );
     expect(lines[0]).toMatchObject({ kind: 'chat', actor: 'Viv (spectator)', colour: null, channel: 'table' });
     expect(lines[1]).toMatchObject({ kind: 'action', actor: 'A spectator', colour: null });
+    const shown = logLines(
+      [
+        { kind: 'action', seq: s.seq + 1, at: 0, action: { type: 'revealTo', by: 's0', cid: 'r1', instanceId: 'a00', seats: [], spectators: [ME], seq: s.seq + 1 } as Action },
+        { kind: 'action', seq: s.seq + 2, at: 0, action: { type: 'revealTo', by: 's0', cid: 'r2', instanceId: 'a01', seats: ['s1'], spectators: [ME, 'v:0000000000000001'], seq: s.seq + 2 } as Action },
+      ],
+      { state: s, cardName: () => 'Forest', phaseLabel: (p) => p },
+    ).map((l) => l.segs.map((g) => ('card' in g ? 'CARD' : g.text)).join(''));
+    expect(shown).toEqual(['reveals CARD to a spectator', 'reveals CARD to P1, 2 spectators']);
     // What a reader sees (actor and text) never shows the raw spectator id.
     expect(JSON.stringify(lines.map((l) => [l.actor, l.segs]))).not.toContain('abcdef0123456789');
   });

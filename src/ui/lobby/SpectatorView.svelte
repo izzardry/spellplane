@@ -78,7 +78,7 @@
 
   <aside class="bar" aria-label="Spectator" data-testid="spectator-bar">
     <span class="badge" data-testid="spectator-badge">Watching</span>
-    <span class="hint">Public view. You can chat and ping; you cannot move cards.</span>
+    <span class="hint" data-testid="spectator-hint">{stage === 'match' ? 'Public view. You can chat and ping; you cannot move cards.' : 'Public view. Chat and pings open once the match is on the table.'}</span>
     {#each shown as g (g.seat)}
       <span class="shown" data-testid="spectator-shown" data-seat={g.seat}>
         {g.name} showed you:

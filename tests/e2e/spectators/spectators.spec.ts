@@ -8,7 +8,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { LogEntry, SecretStore, TableState } from '../../../src/core/types';
 import type { NetMessageRecord } from '../../../src/net/types';
-import { hook } from '../helpers/app';
+import { hook, shot } from '../helpers/app';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname } from '../lobby/helpers';
 
 /** Join a table as a spectator from the start page: nickname, then the pasted watch link. */
@@ -50,6 +50,8 @@ test('a spectator watches by the watch link without a chair, chats and pings, ca
   await expect(v.getByTestId('spectator-view')).toHaveAttribute('data-stage', 'lobby');
   await expect(v.getByTestId('spectator-players')).toContainText('Ann');
   await expect(v.getByTestId('spectator-players')).toContainText('Ben');
+  await expect(a.getByTestId('spectator-name')).toHaveText('Viv');
+  await shot(v, 'M3', 'spectator-lobby', info.project.name);
   await expect(a.getByTestId('spectator-name')).toHaveText('Viv');
   await expect(b.getByTestId('spectator-name')).toHaveText('Viv');
   const vivId = await hook<string>(v, 'session.seat');
@@ -118,6 +120,9 @@ test('a spectator watches by the watch link without a chair, chats and pings, ca
   expect(Object.keys(received).sort()).toEqual([...annHand].sort());
   const annIds = (await hook<SecretStore>(a, 'secrets')).identities;
   for (const id of annHand) expect(received[id]).toMatchObject({ card: annIds[id]!.card, from: 's0' });
+  // Evidence for the M3 gate review (not a baseline): the spectator's table with the shown hand, and Ann's panel.
+  await shot(v, 'M3', 'spectator-view', info.project.name);
+  await shot(a, 'M3', 'spectator-panel', info.project.name);
   const benReceived = (await hook<SecretStore>(b, 'secrets')).received;
   for (const id of annHand) expect(benReceived[id]).toBeUndefined();
   expect(errors).toEqual([]);

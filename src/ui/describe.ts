@@ -69,6 +69,8 @@ export const LIFE_MERGE_MS = 2000;
 const SILENT = new Set<Action['type']>(['rngCommit', 'shuffleNonce', 'shuffleDone', 'snapshotHash', 'sequencerClaim']);
 
 const t = (text: string): Seg => ({ text });
+/** The spectators a targeted reveal names, as the log says it (M3-P5). */
+const spectatorsText = (n: number): string[] => (n === 0 ? [] : [n === 1 ? 'a spectator' : `${n} spectators`]);
 
 /** Table formats as the log names them (DESIGN "Players, seats and formats"). Added by M3-C. */
 const FORMAT_LABEL: Readonly<Record<Format, string>> = { '1v1': '1v1', ffa3: 'three-player free-for-all', ffa4: 'four-player free-for-all', '2hg': 'Two-Headed Giant' };
@@ -287,7 +289,8 @@ export function describe(a: Action, d: Describers): Seg[] | null {
     case 'reveal':
       return [t('reveals '), card(a.instanceId)];
     case 'revealTo':
-      return [t('reveals '), card(a.instanceId), t(` to ${a.seats.map(seatName).join(', ') || 'nobody'}`)];
+      // Spectators are not in the shared state, so a reveal to them names how many (M3-P5).
+      return [t('reveals '), card(a.instanceId), t(` to ${[...a.seats.map(seatName), ...spectatorsText(a.spectators?.length ?? 0)].join(', ') || 'nobody'}`)];
     case 'hide':
       return [t('hides '), card(a.card)];
     case 'shuffleCommit':
