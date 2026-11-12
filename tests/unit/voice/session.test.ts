@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { PeerId, Transport } from '../../../src/net/transport';
 import type { NetEngine, PeerPresence } from '../../../src/net/types';
-import { latestTransport, voiceHost, type VoicePort } from '../../../src/session/voice';
+import { latestTransport, voiceWiring, type VoicePort } from '../../../src/session/voice';
 import { FakeMedia, MemorySettingsStore, table } from './fakes';
 
 function transport(id: string) {
@@ -61,12 +61,12 @@ describe('the session voice host', () => {
         return () => net.delete(l);
       },
     };
-    const host = voiceHost(port, { media: new FakeMedia(), settings: new MemorySettingsStore(), engines: [] });
+    const { host, presence } = voiceWiring(port, { media: new FakeMedia(), settings: new MemorySettingsStore(), engines: [] });
     const got: [unknown, PeerId][] = [];
     host.transport.onStream!((s, from) => got.push([s, from]));
     host.onPeers(() => undefined);
     const presenceSeen: number[] = [];
-    host.presence.subscribe!(() => presenceSeen.push(1));
+    presence.subscribe(() => presenceSeen.push(1));
 
     host.transport.addStream!({} as MediaStream, 'p1');
     t1.emit('s1', 'p1');

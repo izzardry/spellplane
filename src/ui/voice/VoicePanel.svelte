@@ -5,6 +5,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { PeerInfo } from '../../net/types';
+  import { chosenDevice } from '../../voice/mic';
   import type { PeerAudioSetting, TalkSettings } from '../../voice/types';
   import type { VoicePanelProps } from '../types';
   import { GATES, TALK_BUTTONS } from './labels';
@@ -20,7 +21,7 @@
 
   function refresh(): void {
     talk = voice.talk();
-    device = voice.device?.() ?? '';
+    device = chosenDevice(voice) ?? '';
     joined = voice.joined;
     // One row per player: a peer connected twice (a stale connection) is listed once.
     peers = session.netStatus().peers.filter((p, i, all) => p.peerId && all.findIndex((q) => q.peerId === p.peerId) === i);

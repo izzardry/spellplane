@@ -43,7 +43,7 @@ function fakeWindow() {
 
 async function setup() {
   const fake = new FakeHost({ state: table('2hg', 't1'), seat: 's0' });
-  const voice = createVoiceWith(fake.host(), { meter: null });
+  const voice = createVoiceWith(fake.host(), { meter: null, presence: fake.presenceSeam() });
   await settle();
   await voice.join();
   const w = fakeWindow();

@@ -7,7 +7,7 @@
  * Team channel: Shift plus the talk key sends audio only to the teammate. PLAN: device picker.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createVoiceWith, talkFromSettings, type LevelMeter } from '../../../src/voice/mic';
+import { chosenDevice, createVoiceWith, elementPlayer, talkFromSettings, type LevelMeter, type PlayableElement } from '../../../src/voice/mic';
 import { MIC_CONSTRAINTS, type VoiceControls } from '../../../src/voice/types';
 import { DEFAULT_TALK } from '../../../src/store/types';
 import { FakeHost, type FakeStream, installMediaStream, peersOf, settle, table } from './fakes';
@@ -23,7 +23,7 @@ afterEach(() => {
 
 /** A controller over `fake`, without level meters (the open gate counts as speaking). */
 async function voiceOver(fake: FakeHost, join = true): Promise<ReturnType<typeof createVoiceWith>> {
-  const v = createVoiceWith(fake.host(), { meter: null });
+  const v = createVoiceWith(fake.host(), { meter: null, presence: fake.presenceSeam() });
   open.push(v);
   await settle();
   if (join) await v.join();
@@ -246,6 +246,20 @@ describe('team talk', () => {
     fake.setPeers(all);
     expect(enabled(fake, 't1', 't2', 't3')).toEqual([true, false, false]);
   });
+  it('a spectator hears talk to everyone, never team talk (DECISIONS [M3-P3])', async () => {
+    const st = table('2hg', 't1');
+    const watcher = { transportId: 'tv', peerId: 'peer-v', nickname: 'Vera', seat: null, role: 'spectator' as const, status: 'connected' as const, lastSeq: 0 };
+    const fake = new FakeHost({ state: st, seat: 's0', peers: [...peersOf(st, 's0'), watcher] });
+    const v = await voiceOver(fake);
+    expect(enabled(fake, 'tv')).toEqual([false]);
+    v.keyDown(true);
+    expect(enabled(fake, 't1', 'tv')).toEqual([true, false]);
+    v.keyUp();
+    v.keyDown(false);
+    expect(enabled(fake, 't1', 't2', 't3', 'tv')).toEqual([true, true, true, true]);
+    v.keyUp();
+    expect(enabled(fake, 'tv')).toEqual([false]);
+  });
 });
 
 describe('open mic and mute', () => {
@@ -317,7 +331,8 @@ describe('device picker', () => {
     const before = fake.sentTo('t1')!;
     await v.setDevice('usb');
     expect(fake.settings.values.micDevice).toBe('usb');
-    expect(v.device?.()).toBe('usb');
+    expect(v.device()).toBe('usb');
+    expect(chosenDevice(v)).toBe('usb');
     expect(fake.media.calls.at(-1)).toEqual({ audio: { ...MIC_CONSTRAINTS, deviceId: { exact: 'usb' } }, video: false });
     const after = fake.sentTo('t1')!;
     expect(after).not.toBe(before);
@@ -424,7 +439,7 @@ describe('speaking rings', () => {
     const levels = new Map<FakeStream, number>();
     const meter = (s: MediaStream): LevelMeter => ({ level: () => levels.get(s as unknown as FakeStream) ?? 0, stop: () => undefined });
     const fake = new FakeHost({ state: table('2hg'), seat: 's0' });
-    const v = createVoiceWith(fake.host(), { meter, now: () => clock });
+    const v = createVoiceWith(fake.host(), { meter, now: () => clock, presence: fake.presenceSeam() });
     open.push(v);
     await vi.advanceTimersByTimeAsync(0);
     await v.join();
@@ -534,5 +549,62 @@ describe('dispose', () => {
     await expect(joining).rejects.toThrow();
     expect(fake.media.streams.every((s) => s.getTracks().every((t) => t.readyState === 'ended'))).toBe(true);
     expect(fake.added).toEqual([]);
+  });
+});
+
+describe('incoming audio refused by autoplay', () => {
+  /** An audio element whose play() is refused until `allowed`. */
+  function element(): PlayableElement & { allowed: boolean; plays: number; paused: boolean } {
+    return {
+      volume: 1,
+      muted: false,
+      allowed: false,
+      plays: 0,
+      paused: false,
+      play() {
+        this.plays++;
+        return this.allowed ? Promise.resolve() : Promise.reject(new Error('NotAllowedError'));
+      },
+      pause() {
+        this.paused = true;
+      },
+    };
+  }
+
+  it('plays on the next gesture anywhere on the page, without joining voice', async () => {
+    const el = element();
+    const page = new EventTarget();
+    const player = elementPlayer(el, { volume: 0.5, muted: false }, page);
+    await settle();
+    expect(el.plays).toBe(1);
+    expect(el.volume).toBe(0.5);
+    // A key press before the browser allows playback retries and waits again.
+    page.dispatchEvent(new Event('keydown'));
+    await settle();
+    expect(el.plays).toBe(2);
+    el.allowed = true;
+    page.dispatchEvent(new Event('pointerdown'));
+    await settle();
+    expect(el.plays).toBe(3);
+    // Playing: later gestures leave it alone.
+    page.dispatchEvent(new Event('touchend'));
+    page.dispatchEvent(new Event('pointerdown'));
+    await settle();
+    expect(el.plays).toBe(3);
+    player.stop();
+    expect(el.paused).toBe(true);
+  });
+
+  it('a stopped player no longer listens for gestures', async () => {
+    const el = element();
+    const page = new EventTarget();
+    const player = elementPlayer(el, { volume: 1, muted: true }, page);
+    await settle();
+    player.stop();
+    el.allowed = true;
+    page.dispatchEvent(new Event('pointerdown'));
+    await settle();
+    expect(el.plays).toBe(1);
+    expect(el.muted).toBe(true);
   });
 });

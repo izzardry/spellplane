@@ -12,7 +12,7 @@
 import { isSeatActive, teammatesOf } from '../core/teams';
 import type { SeatId, TableState } from '../core/types';
 import type { PeerId } from '../net/transport';
-import type { PeerInfo, Unsubscribe } from '../net/types';
+import type { PeerInfo, Presence, Unsubscribe } from '../net/types';
 import { DEFAULT_TALK, type Settings } from '../store/types';
 import { sameTalk, talkIndicator, talkState } from './modes';
 import {
@@ -53,6 +53,11 @@ export interface VoiceInternals {
   meter?: MeterFactory | null;
   /** Local clock (ms); default Date.now. */
   now?: () => number;
+  /**
+   * The other players' speaking presence, so `speaking()` includes their rings. The contract's `VoiceHost.presence` only
+   * announces; the session passes the engine's presence here (session/voice.ts).
+   */
+  presence?: Pick<Presence, 'peers' | 'subscribe'>;
 }
 
 /** One connection's outgoing audio: a clone of the microphone track in a stream added to that connection only. */
@@ -104,26 +109,79 @@ function cleanPeerAudio(raw: unknown): PeerAudioSetting {
   return { volume, muted: r.muted === true };
 }
 
-/** Plays a remote stream through an audio element (the default `VoiceHost.play`). */
-function audioElementPlayer(stream: MediaStream, setting: PeerAudioSetting): Incoming['player'] {
-  const el = new Audio();
-  el.autoplay = true;
-  el.srcObject = stream;
+/** The parts of an audio element the player uses (HTMLAudioElement in the browser). */
+export interface PlayableElement {
+  volume: number;
+  muted: boolean;
+  play(): Promise<void>;
+  pause(): void;
+}
+
+/** Where user gestures are heard (the window in the browser). */
+export type GestureTarget = Pick<EventTarget, 'addEventListener' | 'removeEventListener'>;
+
+/** Gestures that grant user activation, so a refused `play()` may be retried from them. */
+const GESTURES = ['pointerdown', 'keydown', 'touchend'] as const;
+
+/**
+ * Plays through `el` at the player's volume. Autoplay may be refused until the page saw a gesture (Safari): a refused
+ * `play()` is retried on the next pointer, key or touch gesture anywhere on the page, so a player who never joins voice
+ * (dictation only, or voice off) still hears the table (DECISIONS [M3-P3]). `join` (a click) resumes as well.
+ */
+export function elementPlayer(el: PlayableElement, setting: PeerAudioSetting, gestures: GestureTarget | null): Incoming['player'] {
+  let stopped = false;
+  let waiting = false;
   const apply = (s: PeerAudioSetting): void => {
     el.volume = s.volume;
     el.muted = s.muted;
   };
-  apply(setting);
-  const resume = (): void => {
-    // Autoplay may be refused until the page saw a click; `join` (a click) resumes it.
-    void el.play().catch(() => undefined);
+  const unhook = (): void => {
+    if (!waiting || !gestures) return;
+    waiting = false;
+    for (const g of GESTURES) gestures.removeEventListener(g, onGesture, { capture: true });
   };
+  const hook = (): void => {
+    if (waiting || stopped || !gestures) return;
+    waiting = true;
+    for (const g of GESTURES) gestures.addEventListener(g, onGesture, { capture: true });
+  };
+  const resume = (): void => {
+    if (stopped) return;
+    let played: Promise<void>;
+    try {
+      played = Promise.resolve(el.play());
+    } catch {
+      played = Promise.reject(new Error('play refused'));
+    }
+    played.then(unhook, hook);
+  };
+  function onGesture(): void {
+    unhook();
+    resume();
+  }
+  apply(setting);
   resume();
   return {
     set: apply,
     resume,
     stop: () => {
+      stopped = true;
+      unhook();
       el.pause();
+    },
+  };
+}
+
+/** Plays a remote stream through an audio element (the default `VoiceHost.play`). */
+function audioElementPlayer(stream: MediaStream, setting: PeerAudioSetting): Incoming['player'] {
+  const el = new Audio();
+  el.autoplay = true;
+  el.srcObject = stream;
+  const player = elementPlayer(el, setting, typeof window === 'undefined' ? null : window);
+  return {
+    ...player,
+    stop: () => {
+      player.stop();
       el.srcObject = null;
     },
   };
@@ -214,7 +272,7 @@ class Voice implements VoiceControls {
       host.onPeers(() => this.sync()),
       host.onState(() => this.sync()),
     );
-    const presenceChanged = host.presence.subscribe?.(() => this.speakingChanged());
+    const presenceChanged = internals.presence?.subscribe(() => this.speakingChanged());
     if (presenceChanged) this.unsubs.push(presenceChanged);
     host.transport.onStream?.((stream, from) => this.incoming(stream, from));
     this.sync();
@@ -459,7 +517,7 @@ class Voice implements VoiceControls {
 
   speaking(): Record<string, boolean> {
     const out: Record<string, boolean> = {};
-    for (const p of this.host.presence.peers?.() ?? []) if (p.speaking && p.peerId) out[p.peerId] = true;
+    for (const p of this.internals.presence?.peers() ?? []) if (p.speaking && p.peerId) out[p.peerId] = true;
     const now = this.now();
     for (const [t, i] of this.inc) {
       const id = i.peerId || this.peerIdOf(t);
@@ -688,9 +746,14 @@ class Voice implements VoiceControls {
   }
 }
 
-/** Create the voice controller (voice/types.ts VoiceControls). `internals` are test seams (level meters, clock). */
-export function createVoiceWith(host: VoiceHost, internals: VoiceInternals = {}): VoiceControls & { readMeters(): void } {
+/** Create the voice controller (voice/types.ts VoiceControls). `internals` are seams beyond the contract (presence, level meters, clock). */
+export function createVoiceWith(host: VoiceHost, internals: VoiceInternals = {}): VoiceControls & { readMeters(): void; device(): string | null } {
   return new Voice(host, internals);
+}
+
+/** The chosen microphone (settings key 'micDevice') of a controller made here, null for the default (the device picker). */
+export function chosenDevice(voice: VoiceControls): string | null {
+  return voice instanceof Voice ? voice.device() : null;
 }
 
 /** Create the voice controller (voice/types.ts VoiceControls). Implementer: M3-P3. */

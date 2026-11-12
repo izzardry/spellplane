@@ -7,9 +7,9 @@
  */
 import type { TableState } from '../core/types';
 import type { PeerId, Transport } from '../net/transport';
-import type { NetEngine, PeerPresence, Unsubscribe } from '../net/types';
+import type { NetEngine, PeerPresence, Presence, Unsubscribe } from '../net/types';
 import { registerDebug } from '../util/debug';
-import { createVoice } from '../voice/mic';
+import { createVoiceWith } from '../voice/mic';
 import type { VoiceControls, VoiceHost } from '../voice/types';
 import type { VoiceSessionOptions } from './types';
 
@@ -26,8 +26,14 @@ export interface VoicePort {
   subscribeNet(listener: () => void): Unsubscribe;
 }
 
-/** The voice host over a session port: every call goes to the current engine and transport. */
-export function voiceHost(port: VoicePort, opts: VoiceSessionOptions): VoiceHost {
+/** What the voice controller is made from: the contract's host and the other players' speaking presence (voice/mic.ts VoiceInternals). */
+export interface VoiceWiring {
+  host: VoiceHost;
+  presence: Pick<Presence, 'peers' | 'subscribe'>;
+}
+
+/** The voice host and presence over a session port: every call goes to the current engine and transport. */
+export function voiceWiring(port: VoicePort, opts: VoiceSessionOptions): VoiceWiring {
   const streamHandlers: ((stream: MediaStream, from: PeerId) => void)[] = [];
   const hooked = new WeakSet<Transport>();
   /** Listen for incoming audio on a transport once. */
@@ -53,7 +59,7 @@ export function voiceHost(port: VoicePort, opts: VoiceSessionOptions): VoiceHost
       for (const l of [...presenceListeners]) l(peers);
     });
   };
-  return {
+  const host: VoiceHost = {
     transport: {
       get selfId(): PeerId {
         return port.transport()?.selfId ?? '';
@@ -77,23 +83,26 @@ export function voiceHost(port: VoicePort, opts: VoiceSessionOptions): VoiceHost
     onState: (listener) => port.subscribe(listener),
     presence: {
       speaking: (on) => port.engine().presence.speaking(on),
-      peers: () => port.engine().presence.peers(),
-      subscribe: (listener) => {
-        followPresence();
-        presenceListeners.add(listener);
-        return () => {
-          presenceListeners.delete(listener);
-          if (presenceListeners.size === 0) {
-            presenceUnsub?.();
-            presenceUnsub = null;
-            presenceOf = null;
-          }
-        };
-      },
     },
     media: opts.media,
     settings: opts.settings,
   };
+  const presence: VoiceWiring['presence'] = {
+    peers: () => port.engine().presence.peers(),
+    subscribe: (listener) => {
+      followPresence();
+      presenceListeners.add(listener);
+      return () => {
+        presenceListeners.delete(listener);
+        if (presenceListeners.size === 0) {
+          presenceUnsub?.();
+          presenceUnsub = null;
+          presenceOf = null;
+        }
+      };
+    },
+  };
+  return { host, presence };
 }
 
 /** The debug hook's `voice` part for `voice` (debug/types.ts VoiceDebug). */
@@ -109,7 +118,8 @@ function registerVoiceDebug(voice: VoiceControls): void {
 
 /** Voice for a networked session (PLAN M3-P3); dispose it with the session. */
 export function createSessionVoice(port: VoicePort, opts: VoiceSessionOptions): VoiceControls {
-  const voice = createVoice(voiceHost(port, opts));
+  const { host, presence } = voiceWiring(port, opts);
+  const voice = createVoiceWith(host, { presence });
   registerVoiceDebug(voice);
   const dispose = voice.dispose.bind(voice);
   return Object.assign(voice, {

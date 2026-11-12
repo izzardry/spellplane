@@ -12,7 +12,7 @@ import type { PeerInfo, PeerPresence } from '../../net/types';
 import type { SessionNetStatus } from '../../session/types';
 import { paper } from '../../themes/paper/index';
 import { registerDebug } from '../../util/debug';
-import { createVoice } from '../../voice/mic';
+import { createVoiceWith } from '../../voice/mic';
 import type { PeerAudioSetting, VoiceControls, VoiceTrackState } from '../../voice/types';
 import { FakeCardData, FakeFaces, FakeSession, MemorySettings, RecordingScene, fakeGame, tableWith } from '../fakes';
 import Hud from '../Hud.svelte';
@@ -108,37 +108,43 @@ export function mount(target: HTMLElement): void {
   const presencePeers = new Map<string, PeerPresence>();
   const presenceListeners = new Set<(peers: PeerPresence[]) => void>();
 
-  const voice = createVoice({
-    transport: {
-      selfId: 't-anna',
-      addStream: (stream, to) => {
-        if (to) sent.push({ peer: to, stream, removed: false });
+  const voice = createVoiceWith(
+    {
+      transport: {
+        selfId: 't-anna',
+        addStream: (stream, to) => {
+          if (to) sent.push({ peer: to, stream, removed: false });
+        },
+        removeStream: (stream, to) => {
+          for (const s of sent) if (s.stream === stream && s.peer === to) s.removed = true;
+        },
+        onStream: (h) => streamHandlers.push(h),
       },
-      removeStream: (stream, to) => {
-        for (const s of sent) if (s.stream === stream && s.peer === to) s.removed = true;
+      peers: () => PEERS.map((p) => ({ ...p })),
+      onPeers: () => () => undefined,
+      state: () => session.getState(),
+      seat: () => 's0',
+      onState: (l) => session.subscribe(l),
+      presence: {
+        speaking: (on) => announced.push(on),
       },
-      onStream: (h) => streamHandlers.push(h),
-    },
-    peers: () => PEERS.map((p) => ({ ...p })),
-    onPeers: () => () => undefined,
-    state: () => session.getState(),
-    seat: () => 's0',
-    onState: (l) => session.subscribe(l),
-    presence: {
-      speaking: (on) => announced.push(on),
-      peers: () => [...presencePeers.values()],
-      subscribe: (l) => {
-        presenceListeners.add(l);
-        return () => presenceListeners.delete(l);
+      media: navigator.mediaDevices,
+      settings,
+      play: (peer, _stream, setting) => {
+        played[peer] = setting;
+        return { set: (s) => (played[peer] = s), stop: () => delete played[peer] };
       },
     },
-    media: navigator.mediaDevices,
-    settings,
-    play: (peer, _stream, setting) => {
-      played[peer] = setting;
-      return { set: (s) => (played[peer] = s), stop: () => delete played[peer] };
+    {
+      presence: {
+        peers: () => [...presencePeers.values()],
+        subscribe: (l) => {
+          presenceListeners.add(l);
+          return () => presenceListeners.delete(l);
+        },
+      },
     },
-  });
+  );
   session.voiceControls = voice;
   registerDebug({ voice: { talk: () => voice.state(), indicator: () => voice.indicator(), tracks: () => voice.tracks() } });
 

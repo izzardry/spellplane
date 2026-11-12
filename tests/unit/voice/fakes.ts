@@ -6,7 +6,7 @@ import { createTable } from '../../../src/core/reducer/index';
 import type { Format, SeatColourIndex, SeatId, TableState, TeamId } from '../../../src/core/types';
 import { mtg } from '../../../src/games/index';
 import type { PeerId } from '../../../src/net/transport';
-import type { PeerInfo, PeerPresence } from '../../../src/net/types';
+import type { PeerInfo, PeerPresence, Presence } from '../../../src/net/types';
 import { DEFAULT_SETTINGS, type Settings, type SettingsStore } from '../../../src/store/types';
 import type { PeerAudioSetting, VoiceHost } from '../../../src/voice/types';
 
@@ -169,11 +169,6 @@ export class FakeHost {
       },
       presence: {
         speaking: (on) => this.announced.push(on),
-        peers: () => this.presencePeers,
-        subscribe: (l) => {
-          this.presenceListeners.add(l);
-          return () => this.presenceListeners.delete(l);
-        },
       },
       media: this.media,
       settings: this.settings,
@@ -186,6 +181,17 @@ export class FakeHost {
             },
           }
         : {}),
+    };
+  }
+
+  /** The other players' speaking presence (voice/mic.ts VoiceInternals.presence). */
+  presenceSeam(): Pick<Presence, 'peers' | 'subscribe'> {
+    return {
+      peers: () => this.presencePeers,
+      subscribe: (l) => {
+        this.presenceListeners.add(l);
+        return () => this.presenceListeners.delete(l);
+      },
     };
   }
 
