@@ -1,24 +1,13 @@
-# M1-P7 Resume: parked
+# M1-P7 Resume (remainder): parked
 
-> **Update (gate fix round):** M1-P8 is merged. The pure parts of this package landed on `m1`: `chooseResume`, `recoveryLibrarySize`/`recoveryRemainder`, the `recover`/`recoverCommit` reducer (`core/reducer/recovery.ts`), their log lines, unit tests (`tests/unit/recovery/recovery.test.ts`) and the shared leak scenario. Still open: the session's recovery driver and `ui/recovery/*`, and the M1-P7 browser acceptance tests. See DECISIONS `[M1-P7 partial, gate fix]`. The rest of this note is the record at parking.
-
-- **Status:** parked, not merged into `m1`. The package never started. The pipeline's reason: "dependency not merged: M1-P8".
-- **Branch:** none. There is no `m1-p7` branch, local or on `origin`, and no worktree `spellplane-wt/m1-p7`. There is nothing to diff or test.
-- **History:** this note replaces the first park note (`89cc782`, written at `m1` head `9b3ce24`). At that time M1-P1 and M1-P2 were also unmerged. Since then:
-  - M1-C landed the retry contracts (`54e4eae`), including the lost-save recovery contract.
-  - The PLAN row was corrected.
-  - M1-P2 (`e5f0476`) and M1-P1 (`4d3965e`, `f76bd1a`) were merged.
-  - M1-P8 was parked (`11e5d2e`, `docs/gates/M1-parked-m1-p8.md`).
-- **State of `m1` for this package (11 Nov 2026, head `11e5d2e`):**
-  - `src/net/sync.ts`: holds the `ResumeOffer`/`ResumeChoice` contracts. `chooseResume` is a stub that always keeps the local copy. Nothing calls it.
-    - The merged M1-P1 engine already reconciles on its own: `NetEngine.deferTo()` (`src/net/engine.ts:858`) follows the connected peer with the highest `lastSeq` and catches up from it before electing.
-  - `src/core/recovery.ts`: `recoveryLibrarySize` and `recoveryRemainder` are stubs that throw `not implemented: M1-P7`.
-  - `src/core/reducer/index.ts:117-118`: `recover` and `recoverCommit` are refused as `later('M1-P7')`. `src/core/reducer/recovery.ts` does not exist.
-  - The `away` reducer already exists. The M1-G fix round landed it in core (DECISIONS `[M1-G fix]` line 385; `src/core/reducer/index.ts:101`). The avatar shows away seats.
-  - `src/ui/recovery/` does not exist.
-  - `src/store/tables.ts` has `saveAction`, `saveSnapshot`, `loadTable`, `loadLog`, `saveSecrets`, `listTables` and `deleteTable`.
-  - The solo session (`src/session/solo.ts`) saves the log, the table and the secret store in one transaction, stores a snapshot every 200 actions, and restores from its own save after a reload.
-  - On `m1`, `src/session/net.ts` still rejects with `not implemented: M1-P8`. No networked session exists on `m1`.
+- **Status:** parked, not merged into `m1`. The pipeline's reason: "did not converge after 2 review rounds".
+- **Branch:** `m1-p7`, local only (not on `origin`), worktree `/Users/holzschneider/Workspace/spellplane-wt/m1-p7`, head `587447f`, based on `m1` at `58683a6`. Four commits:
+  - `b0a02ca` test: sequence `away` through the real reducer in the confirm harness and sims.
+  - `157e27a` feat: lost-save recovery driver, recovery panel and resume acceptance tests.
+  - `2cc474e` fix 1: resumable recovery after `recoverCommit`, public identities from the log.
+  - `587447f` fix 2: the recovery stays on offer after a public card returns to the library; owed record and draw guards; deterministic too-small deck in the acceptance test.
+- **Diff** (`git diff m1...m1-p7 --stat`): 18 files, +2180 −39. The main files are `src/session/net.ts` (+278), the new `src/session/resume.ts` (314 lines), `src/ui/recovery/RecoveryPanel.svelte` and `model.ts`, one mount line in `src/ui/lobby/TableRoom.svelte`, and tests: `tests/sim/resume/{recovery,resume,leak}.test.ts`, `tests/unit/resume/*`, `tests/e2e/resume/resume.spec.ts`. It also adds 13 DECISIONS lines (`[M1-P7]`, `[M1-P7 fix 1]`, `[M1-P7 fix 2]`). No contract file changed.
+- **History:** the previous note (`26972aa`) parked M1-P7 because M1-P8 was not merged. M1-P8 was then merged (`9ed1838`). The gate fix round landed the pure parts on `m1` (`chooseResume`, `recoveryLibrarySize`/`recoveryRemainder`, the `recover`/`recoverCommit` reducer, log lines and the leak scenario; DECISIONS `[M1-P7 partial, gate fix]`). This run was the remainder: the session's recovery driver, `ui/recovery/*` and the acceptance tests.
 
 ## What the package was supposed to do
 
@@ -30,64 +19,53 @@ docs/PLAN.md, M1 acceptance tests (line 129):
 
 > **M1-P7.** Reloading either page mid-game rejoins the same seat with the same hand; closing both pages and reopening either restores the table; the recovery flow yields a library whose size equals deck size minus public cards minus the agreed hand.
 
-DESIGN describes the behaviour in two places:
+DESIGN: "Multiplayer architecture" › "Resume and failure handling", in particular: "If a player loses their local save … their hidden zones are gone. The recovery path is public and logged: the player re-imports the deck …".
 
-- "Multiplayer architecture", "Resume and failure handling":
-  - Save the log continuously, with snapshots, and save the own secret store.
-  - Rejoin by key pair and catch up from any connected peer.
-  - The first browser back restores from its own save. Later arrivals reconcile to the highest sequence number.
-  - Away seats.
-  - The public, logged lost-save recovery.
-- "Specification: network protocol and secrecy", Sync: the 200-action snapshot interval.
+## What fails and why
 
-The recovery contract is fixed by M1-C (DECISIONS lines 395-397):
+Neither open finding reproduces at the branch head. Both were raised in review round 2 against `2cc474e`. Fix 2 (`587447f`) addresses both, but no review round was left to confirm that, so the pipeline parked the package. Checked by the integrator in the `m1-p7` worktree at `587447f`:
 
-- `recover {hand, round}` discards the seat's hidden zones, sets `Seat.recovering` and opens an M1-P3 confirmation round.
-- `recoverCommit {commits, instanceIds, zone}` commits exactly `recoveryLibrarySize` fresh ids.
-- Then M1-P2's secret shuffle and `draw` run for the agreed hand.
+- `pnpm check` passed: tsc, svelte-check (0 errors, 0 warnings), eslint, and Vitest with 86 files and 1343 tests.
+- I ran `vitest run tests/sim/resume/recovery.test.ts -t 'refused with nothing proposed|went back to the library'` 30 times in a row. All 30 passed. This loop covers the formerly flaky case and the new regression case.
+- `pnpm e2e` and `pnpm e2e:gate -- M1` were not run on the branch in this integration step. `tests/e2e/resume/resume.spec.ts` is new and has not been verified here.
 
-## Why it is parked
+So the package is parked for lack of a confirming review, not because of a known failure. Fix 2 is a sizeable, unreviewed change (+292 −57 across `session/net.ts`, `session/resume.ts` and the panel). It adds new behaviour, notably the `dispatch` guard that refuses draws and moves out of an unshuffled recovered library, and a reworked owed-record rule.
 
-1. **M1-P8, Networked session, is not merged.** It is parked after 3 review rounds, with an unreviewed fix for a hidden-information leak in its turn-up and resume bookkeeping (`a8bde85` on the local-only branch `m1-p8`); see `docs/gates/M1-parked-m1-p8.md`.
-   - Every acceptance criterion of this package is networked. "Reload either page", "close both pages and reopen either" and a recovery "agreed by the table" all run through M1-P8's `session/net.ts` and the `#/t/<room>/<key>` route. Neither exists on `m1`.
-   - The pipeline correctly did not start M1-P7 on top of an unmerged branch.
-2. **M1-P8 already covers much of this package's row.** On `m1-p8` (not on `m1`):
-   - `session/persist.ts` is the shared save queue with `SNAPSHOT_EVERY = 200`.
-   - `session/net.ts` has `loadSaved` (around line 1463), which restores a room from its own snapshot plus log tail. It also has the rejoin logic.
-   - M1-P8's round-3 findings are in exactly this resume path: kept turn-ups across reloads and late-connecting transports.
+## Open review findings (round 2, against `2cc474e`)
 
-   Building M1-P7 before M1-P8 settles would duplicate that code or conflict with it.
-3. **M1-P1 and M1-P2 are no longer blockers.** Both are merged on `m1`.
+1. **Blocking: flaky acceptance test.** `tests/sim/resume/recovery.test.ts:188`.
+   - **Issue:** the "too small a deck" case re-imported `right.main.slice(0, 30)` and expected `/has \d+ cards/`. Hands and shuffles come from crypto randomness (`session/secrecy.ts`), not the loopback seed. When B's public card (`tests/sim/session/script.ts:74`) is a non-land outside those 30 entries, `recoveryProblem` correctly reports "not the deck you played" instead, and the test fails. The reviewer saw 2 failures in 50 runs, and one red `pnpm check`.
+   - **Suggested fix:** build the small deck from the seat's public identities plus a few other cards. Do not loosen the regex.
+   - **State at `587447f`:** done as suggested. The deck is the public refs plus `rest.slice(0, 10)`, and the test expects the exact message `has N cards; the table needs M`. The 30 runs above passed.
+2. **Blocking: lost-save recovery never offered.** `src/session/resume.ts:111`.
+   - **Issue:** `identitiesFromLog` took back the identity of any own card still on the table, including one back in the seat's library. Once `reissueHand` had named one library card, `recoveryStatus` saw `holdsLibrary` and reported phase 'none'. The panel stayed hidden although 6 hand cards and 52 library cards were lost. The trigger was a revealed or played card put back on top of the library with its id kept; a `reveal` of a library card did the same. This breaks DESIGN "Resume and failure handling" (lost-save recovery).
+   - **Suggested fix:** skip library cards in `identitiesFromLog`, or ignore log-derived ids in `holdsLibrary`, and add a regression test.
+   - **State at `587447f`:** both halves done.
+     - `identitiesFromLog` takes only cards in a public zone or the seat's hand (`resume.ts:117`).
+     - Phase 'lost' ignores library ids that the seat's own log entries published (`ownPublishedIds`, which the panel passes from `session.log()`).
+     - The regression test "a card that was public and went back to the library under its id does not hide the lost save: the recovery is offered and completes" (`recovery.test.ts:346`) passes.
+     - A retry should check one gap. `ownPublishedIds` covers only ids the seat itself published. A card revealed by its owner and then moved to the library by another seat's action still matches. Also check the case where the panel's log (`session.log()`, `RecoveryPanel.svelte:31`) starts at a snapshot and so misses the reveal.
 
-## Open review findings
+Known gaps the branch records in DECISIONS, which the gate report needs:
 
-None. The package was never implemented or reviewed. The open findings that block it are M1-P8's three round-3 findings, all addressed by `a8bde85` but not re-reviewed. They are recorded in `docs/gates/M1-parked-m1-p8.md`.
+- A player whose key pair is gone too (cleared site data, another device) cannot take the chair back in M1. `seatTake` refuses a taken chair.
+- Reveals that a catch-up from a snapshot skipped cannot be recovered, because snapshots carry no salts. Such a card stays unnamed in the hand, and the hand is not re-issued. This is a contract gap.
 
 ## What a retry should do first
 
-1. **Merge M1-P8 first.** Follow its park note:
-   - Push `m1-p8` so it survives another crash.
-   - Run one focused review of `a8bde85` on the turn-up and resume paths.
-   - Settle the `openRoom` contract question.
-   - Run `pnpm check`, `pnpm e2e` and `pnpm e2e:gate -- M1`, one Playwright run at a time.
+1. **Push `m1-p7` to `origin`** so the work survives another crash. Do not rebase it; `m1` has not moved since its base `58683a6`, apart from this note.
+2. **Run one focused review of `587447f` only** (`git diff 2cc474e..587447f`), against the two findings above and the new behaviour fix 2 introduced:
+   - the owed-record and finish-draw rule in `session/net.ts` `drive`, including the fallback to hand size after a snapshot catch-up;
+   - the `dispatch` guard on draws and moves out of an unshuffled recovered library;
+   - the `publicCards`/`lostHiddenCards` change for own sideboard and pack zones (maxHand must equal the reducer's limit);
+   - the gap in `ownPublishedIds` noted above.
 
-   Do not branch M1-P7 off `m1-p8`.
-2. **Start from what `m1` then has; do not add a second save or restore path.**
-   - Persistence and the 200-action snapshot belong to `session/persist.ts`. Restore from the own save belongs to M1-P8's `loadSaved`.
-   - Reconciliation to the highest seq is already in the engine (`deferTo`).
-   - Decide whether `chooseResume` is still needed. Either wire it into the engine or session where the start copy is chosen, or implement it as the pure rule (highest seq wins; own save wins ties) and assert that the engine agrees with it. Log the choice in DECISIONS.
-   - `store/tables.ts` should change only if a gap is found (for example, keeping the secret store when the log is lost).
-3. **Implement the pure parts first, with Vitest:**
-   - `chooseResume`.
-   - `recoveryLibrarySize` and `recoveryRemainder` in `core/recovery.ts`: multiset subtraction by `sid` and foil, tokens excluded, null when the deck cannot cover the public cards.
-   - The `recover`/`recoverCommit` reducer in a new `core/reducer/recovery.ts`, replacing the two `later('M1-P7')` entries.
-   - Log lines for both actions in `ui/describe.ts`.
-4. **Replace the `away` stand-ins** that predate the core reducer: `ui/confirm/harness.ts` (lines 26, 85) and the M1-P3 sim tests (DECISIONS `[M1-P3]` lines 308, 327). Check them against the real reducer and the sequencer's liveness rule.
-5. **Build `ui/recovery/*`.** It is the "my save is lost" entry point: re-import the deck, propose a hand count, and show the confirmation round's state. Then drive `recoverCommit`, the shuffle and the draws from the session.
-6. **Then write the acceptance tests:**
-   - Sim (Vitest, `LoopbackNetwork`, fake timers):
-     - Reload either peer mid-game and rejoin the same seat with the same hand hash.
-     - Kill both peers, revive either one alone from its save, then the other, and check that both reconcile to the higher seq.
-     - The recovery flow ends with library size = deck size − public cards − agreed hand.
-   - Browser (Playwright, `?transport=local`, `?profile=a`/`?profile=b`): reload each page, and close and reopen both. Use the 10-minute timeout and never run two Playwright runs at once.
-   - Add the recovery scenario (re-import after a lost save) to the shared leak test, as CLAUDE.md requires.
+   Do not reopen the whole package.
+3. **Re-verify, one Playwright run at a time:**
+   - `pnpm check`.
+   - A repeat loop (50 or more runs) of `tests/sim/resume/recovery.test.ts` and `tests/sim/resume/resume.test.ts`, since crypto randomness drives their hands.
+   - `pnpm e2e`, which includes the new `tests/e2e/resume/resume.spec.ts`.
+   - `pnpm e2e:gate -- M1`.
+
+   If all are green and the review finds nothing blocking, merge `m1-p7` into `m1` as is.
+4. **If a test is still randomness-dependent,** make its setup derive from the state, as fix 2 did for the small deck. Do not loosen assertions and do not add retries.
