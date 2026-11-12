@@ -100,8 +100,12 @@ export function createDraftState(state: TableState, lobby: LobbySettings, startS
  * starting with the opener: 1, 2, …, S, S, …, 2, 1, repeating"): one full cycle of 2·S seat ids starting at `opener`
  * and going left. Implementer: M2-P3.
  */
-export function rochesterOrder(_seats: readonly SeatId[], _opener: SeatId): SeatId[] {
-  throw new Error('not implemented: M2-P3');
+export function rochesterOrder(seats: readonly SeatId[], opener: SeatId): SeatId[] {
+  const start = seats.indexOf(opener);
+  if (start < 0) throw new RangeError(`${opener} is not drafting`);
+  const n = seats.length;
+  const there = Array.from({ length: n }, (_, i) => seats[(start + i) % n]!);
+  return [...there, ...[...there].reverse()];
 }
 
 /**

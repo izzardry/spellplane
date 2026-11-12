@@ -417,7 +417,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M2-C Contracts
 - [x] M2-P1 Pack generation
 - [ ] M2-P2 Pass draft and sealed
-- [ ] M2-P3 Open formats
+- [x] M2-P3 Open formats
 - [x] M2-P4 Draft UI
 - [ ] M2-P5 Builder table
 - [x] M2-P6 List view and deck library

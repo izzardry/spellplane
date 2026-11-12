@@ -62,7 +62,8 @@ describe('initial draft state', () => {
   });
 
   it('leaves the package stubs naming their package', () => {
-    expect(() => rochesterOrder(['s0', 's1'], 's0')).toThrow(/M2-P3/);
+    // rochesterOrder is M2-P3's (tests/unit/draft/open/rochester.test.ts).
+    expect(rochesterOrder(['s0', 's1'], 's0')).toEqual(['s0', 's1', 's1', 's0']);
     expect(draftDeadlines(fresh())).toEqual([]);
   });
 });
@@ -146,8 +147,9 @@ describe('draft actions route to their packages', () => {
     const s = fresh();
     no(s, act('packOpen', { packId: 'p', commits: [], count: 0 }), /M2-P2/);
     no(s, act('draftTimeout', { packId: 'p', picks: 0 }), /M2-P2/);
-    no(s, act('pileLook', { pile: 0, take: true }), /M2-P3/);
-    no(s, act('gridTake', { grid: 0, line: 'row', index: 0 }), /M2-P3/);
+    // The open-format reducers (M2-P3) refuse outside a draft of their format.
+    no(s, act('pileLook', { pile: 0, take: true }), /no draft/);
+    no(s, act('gridTake', { grid: 0, line: 'row', index: 0 }), /no draft/);
   });
 });
 

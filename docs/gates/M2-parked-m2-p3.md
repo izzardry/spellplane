@@ -99,3 +99,7 @@ The reviewer's text, as handed to the integrator:
 3. **Merge `m2` into `m2-p3`.** Resolve the `docs/DECISIONS.md` conflict by keeping both sides' appended lines. Drop the branch's own contract hunks in favour of `m2`'s. Then confirm that `git diff m2...m2-p3 --stat` lists no `*/types.ts` and no `net/engine.ts`.
 4. **Run one focused review round on the contract-free diff, then `pnpm check` and `pnpm e2e`, and merge.** Rounds 1 and 2 already reviewed the behaviour (Winston secrecy, reload recovery, per-pack seeds). Round 3's only open finding is the one above. The retry does not need a full fresh review unless the merge changes behaviour.
 5. **Carry the two gate-report items into `docs/gates/M2.md`:** the Grid deal interpretation, and the pick timer that the lobby offers for the open formats. Carry the residual-risk note as well: a modified Winston dealer client can choose its seeded ids, because no audit replays the Winston or Grid PackRecords yet.
+
+## Resolved
+
+The main session landed the contracts amendment on `m2` (`e870d35`), merged `m2` into `m2-p3` (no contract-file diff left; `pnpm check` green, 1553 tests) and merged the package into `m2`. Its behaviour had been reviewed in rounds 1 and 2; the only round-3 finding was the contract edits. The session wiring is handed to M2-P7.
