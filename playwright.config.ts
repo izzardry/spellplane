@@ -26,10 +26,12 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0, // a flaky test is a failing test
-  workers: process.env.CI ? 2 : 4,
+  // Two workers locally: each holds a browser with several WebGL pages (software GL on Chromium),
+  // and four of them on top of other agents' work exhausted the machine's memory.
+  workers: process.env.CI ? 2 : Number(process.env.SPELLPLANE_PW_WORKERS ?? 2),
   // Locally, stop early when things go wrong wholesale (e.g. a modal dialog hangs every test)
   // instead of launching browser after browser.
-  maxFailures: process.env.CI ? 0 : 20,
+  maxFailures: process.env.CI ? 0 : 10,
   globalTimeout: process.env.CI ? 0 : 45 * 60_000,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   timeout: 60_000,

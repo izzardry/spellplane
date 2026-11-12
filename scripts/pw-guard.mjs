@@ -3,9 +3,14 @@
 //    so parallel agents never stack up browsers and eat the machine's memory;
 //  - a stale lock (its owner died, e.g. a killed shell) is taken over and the dead run's
 //    process group is killed, so orphaned browsers do not linger;
-//  - a watchdog aborts the run as soon as macOS shows an interactive security prompt
-//    (SecurityAgent, e.g. a keychain "allow access" dialog): every test would hang on it and
-//    Playwright would keep relaunching browsers behind the modal.
+//  - a watchdog aborts the run as soon as macOS shows an interactive prompt (SecurityAgent, e.g.
+//    a keychain "allow access" dialog, or UserNotificationCenter, e.g. a privacy or local-network
+//    "allow" alert): every test would hang on it and Playwright would keep relaunching browsers
+//    behind the modal. No run starts while such a prompt is open;
+//  - a memory watchdog aborts the run when the machine runs short of memory (kern.memorystatus_level
+//    below SPELLPLANE_PW_MIN_FREE_PCT, default 15) or the run's own processes grow past
+//    SPELLPLANE_PW_MAX_RSS_MB (default: a third of physical memory), instead of letting browsers
+//    swap the machine to death.
 // playwright.config.ts refuses local runs that do not come through here (SPELLPLANE_PW_GUARD).
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -65,9 +70,43 @@ function readOwner() {
   }
 }
 
+// Processes that exist only while macOS shows a modal alert waiting for a click.
+const PROMPT_PROCESSES = ['SecurityAgent', 'UserNotificationCenter'];
+
+/** The name of the prompt process macOS is showing, or null. */
 function securityPromptShowing() {
-  if (process.platform !== 'darwin') return false;
-  return spawnSync('pgrep', ['-x', 'SecurityAgent']).status === 0;
+  if (process.platform !== 'darwin') return null;
+  return PROMPT_PROCESSES.find((name) => spawnSync('pgrep', ['-x', name]).status === 0) ?? null;
+}
+
+const MIN_FREE_PCT = Number(process.env.SPELLPLANE_PW_MIN_FREE_PCT ?? 15);
+const MAX_RSS_MB = Number(process.env.SPELLPLANE_PW_MAX_RSS_MB ?? Math.round(os.totalmem() / 3 / 2 ** 20));
+
+/** Percentage of memory macOS considers available (kern.memorystatus_level), or null elsewhere. */
+function freeMemoryPct() {
+  if (process.platform !== 'darwin') return null;
+  const out = spawnSync('sysctl', ['-n', 'kern.memorystatus_level'], { encoding: 'utf8' }).stdout;
+  const n = Number.parseInt(out ?? '', 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Resident memory of the given processes in MiB. */
+function rssMb(pids) {
+  if (pids.length === 0) return 0;
+  const out = spawnSync('ps', ['-o', 'rss=', '-p', pids.join(',')], { encoding: 'utf8' }).stdout ?? '';
+  return out
+    .trim()
+    .split('\n')
+    .reduce((sum, l) => sum + (Number.parseInt(l, 10) || 0), 0) / 1024;
+}
+
+/** A reason to abort for lack of memory, or null. */
+function memoryShortage(pgid) {
+  const free = freeMemoryPct();
+  if (free !== null && free < MIN_FREE_PCT) return `the machine has only ${free}% memory available`;
+  const rss = rssMb(treeOf(pgid));
+  if (rss > MAX_RSS_MB) return `this run uses ${Math.round(rss)} MiB (limit ${MAX_RSS_MB} MiB)`;
+  return null;
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -122,17 +161,29 @@ export async function runPlaywright(args, extraEnv = {}) {
     const r = spawnSync('pnpm', ['exec', 'playwright', ...args], { stdio: 'inherit', env });
     process.exit(r.status ?? 1);
   }
-  if (securityPromptShowing()) {
-    console.error(
-      '[pw-guard] macOS is showing a security prompt (SecurityAgent). Not starting Playwright until it is answered.',
-    );
+  const prompt = securityPromptShowing();
+  if (prompt) {
+    console.error(`[pw-guard] macOS is showing a prompt (${prompt}). Not starting Playwright until it is answered.`);
     process.exit(3);
   }
+  const free = freeMemoryPct();
+  if (free !== null && free < MIN_FREE_PCT) {
+    console.error(`[pw-guard] the machine has only ${free}% memory available. Not starting Playwright.`);
+    process.exit(4);
+  }
   await acquire();
+  // A prompt may have opened while this run waited for the lock.
+  const promptAfterWait = securityPromptShowing();
+  if (promptAfterWait) {
+    release();
+    console.error(`[pw-guard] macOS is showing a prompt (${promptAfterWait}). Not starting Playwright until it is answered.`);
+    process.exit(3);
+  }
   const child = spawn('pnpm', ['exec', 'playwright', ...args], { stdio: 'inherit', env, detached: true });
   fs.writeFileSync(OWNER, JSON.stringify({ ...readOwner(), pgid: child.pid }));
 
   let aborted = null;
+  let exitCode = 3;
   const stop = (why) => {
     if (aborted) return;
     aborted = why;
@@ -149,13 +200,23 @@ export async function runPlaywright(args, extraEnv = {}) {
     }, 5000).unref();
   };
   const watchdog = setInterval(() => {
-    if (securityPromptShowing()) {
+    if (aborted) return;
+    const prompt = securityPromptShowing();
+    if (prompt) {
       console.error(
-        '\n[pw-guard] macOS is showing a security prompt (SecurityAgent, e.g. keychain access). ' +
+        `\n[pw-guard] macOS is showing a prompt (${prompt}, e.g. keychain access or a privacy alert). ` +
           'Aborting this Playwright run so browsers do not pile up behind it. Code that structured-clones a ' +
           'CryptoKey (IndexedDB, postMessage) in WebKit triggers the keychain; store keys as JWK instead.',
       );
-      stop('security prompt');
+      exitCode = 3;
+      stop('prompt');
+      return;
+    }
+    const short = memoryShortage(child.pid);
+    if (short) {
+      console.error(`\n[pw-guard] ${short}. Aborting this Playwright run before the machine runs out of memory.`);
+      exitCode = 4;
+      stop('memory');
     }
   }, 3000);
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
@@ -171,5 +232,5 @@ export async function runPlaywright(args, extraEnv = {}) {
   clearInterval(watchdog);
   killGroup(child.pid, 'SIGKILL'); // leftovers (browsers, preview server) of this run
   release();
-  process.exit(aborted ? 3 : status);
+  process.exit(aborted ? exitCode : status);
 }
