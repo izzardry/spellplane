@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { DeckBuild, Pose } from '../../../src/core/types';
-import { areaOf, BUILDER_LAYOUT, cascadeStep, columnOf, columnsFor, columnX, reconcile, sortLayout, sortToggle, type Poses } from '../../../src/scene/builder';
+import { areaOf, BUILDER_LAYOUT, cascadeStep, columnOf, columnsFor, columnX, liveMemo, reconcile, sortLayout, sortToggle, type Poses } from '../../../src/scene/builder';
 import type { BuilderSort } from '../../../src/scene/types';
 import { buildOf, draftedPool, lookup, m19, shuffled } from './helpers';
 
@@ -173,6 +173,52 @@ describe('sorting is reversible (PLAN M2-P5 acceptance)', () => {
     const u2 = sortToggle(b, u1.poses, lookup, 'type', u1.memo);
     const u3 = sortToggle(b, u2.poses, lookup, 'colour', u2.memo);
     expect(u3.poses).toEqual(mine);
+  });
+
+  it('a restore brings back the column key from before the undone sort (labels, double-click and dispenser placement)', () => {
+    const b = draftedPool();
+    // A fresh pool lies by colour, colour is the key in force.
+    const fresh = reconcile(b, lookup, 'colour');
+    const byType = sortToggle(b, fresh, lookup, 'type', null, 'colour');
+    expect(byType.key).toBe('type');
+    const back = sortToggle(b, byType.poses, lookup, 'type', byType.memo, byType.key);
+    expect(back.restored).toBe(true);
+    expect(back.poses).toEqual(fresh);
+    expect(back.key).toBe('colour');
+    // A chain: colour, type, mana value, then mana value again shows the type layout under the type key.
+    const c1 = sortToggle(b, fresh, lookup, 'colour', null, 'colour');
+    const c2 = sortToggle(b, c1.poses, lookup, 'type', c1.memo, c1.key);
+    const c3 = sortToggle(b, c2.poses, lookup, 'manaValue', c2.memo, c2.key);
+    const u1 = sortToggle(b, c3.poses, lookup, 'manaValue', c3.memo, c3.key);
+    expect([u1.restored, u1.key]).toEqual([true, 'type']);
+    expect(u1.poses).toEqual(c2.poses);
+    const u2 = sortToggle(b, u1.poses, lookup, 'type', u1.memo, u1.key);
+    expect([u2.restored, u2.key]).toEqual([true, 'colour']);
+    // From a hand-made layout made while mana value was in force, the restore gives mana value back.
+    const mine = scatter(b, 4);
+    const s1 = sortToggle(b, mine, lookup, 'type', null, 'manaValue');
+    const s2 = sortToggle(b, s1.poses, lookup, 'type', s1.memo, s1.key);
+    expect([s2.restored, s2.key]).toEqual([true, 'manaValue']);
+  });
+
+  it('cards sorted into the loading column: once their data arrives the memo lapses, so the key sorts them in', () => {
+    const b = draftedPool();
+    const late = new Set(['p1', 'p2']);
+    const sidLate = new Set(b.cards.filter((c) => late.has(c.id)).map((c) => c.ref.sid));
+    const loading = (ref: { sid: string }) => (sidLate.has(ref.sid) ? null : lookup(ref));
+    const mine = scatter(b, 7);
+    const sorted = sortToggle(b, mine, loading, 'type', null, 'colour');
+    const loadingX = columnX(columnsFor('type').length);
+    expect(sorted.poses.p1!.x).toBe(loadingX);
+    // Still loading: the memo applies, the same key restores.
+    expect(liveMemo(b, sorted.poses, loading, sorted.memo)).toBe(sorted.memo);
+    // The data arrived: the memo lapses and the key sorts again, into the right columns.
+    expect(liveMemo(b, sorted.poses, lookup, sorted.memo)).toBeNull();
+    const again = sortToggle(b, sorted.poses, lookup, 'type', liveMemo(b, sorted.poses, lookup, sorted.memo), sorted.key);
+    expect(again.restored).toBe(false);
+    expect(again.poses.p1!.x).toBe(columnX(columnOf(lookup(b.cards[0]!.ref), 'type').index));
+    // A moved card makes it lapse too.
+    expect(liveMemo(b, { ...sorted.poses, p3: { x: 0, y: 0, rot: 0 } }, loading, sorted.memo)).toBeNull();
   });
 
   it('after a card was moved, the key sorts again instead of restoring', () => {

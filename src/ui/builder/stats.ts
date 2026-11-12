@@ -21,13 +21,19 @@ export function isLandCard(card: CardData): boolean {
   return /\bLand\b/.test(frontType(card));
 }
 
+/** Layouts whose halves are printed on one face and cast from the same card: their costs count together. */
+const JOINED_LAYOUTS = new Set(['split', 'flip', 'adventure']);
+
 /**
- * The mana costs a card shows: its own cost, else its faces' costs (a transforming card carries the cost on its front
- * face only; a split card's own cost names both halves).
+ * The mana costs a card shows: its own cost (a split card's names both halves), else its faces' costs joined for
+ * layouts cast from either half of one face (split, flip, adventure), else the front face's cost: a transforming or
+ * modal double-faced card is cast as its front, so its back face's symbols do not count.
  */
 export function manaCosts(card: CardData): string {
   if (card.mana_cost) return card.mana_cost;
-  return (card.card_faces ?? []).map((f) => f.mana_cost ?? '').join('');
+  const faces = card.card_faces ?? [];
+  if (JOINED_LAYOUTS.has(card.layout)) return faces.map((f) => f.mana_cost ?? '').join('');
+  return faces[0]?.mana_cost ?? '';
 }
 
 /**

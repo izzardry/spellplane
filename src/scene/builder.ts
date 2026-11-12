@@ -8,7 +8,8 @@
  * areas: the deck above, the sideboard below. Where a card lies decides where it belongs: dropping it in the deck area
  * puts it in the deck (`main`), in the sideboard area takes it out; a dispensed basic dropped in the sideboard goes back
  * to the dispenser. Gestures are the play table's (DESIGN "Card manipulation"): free drag with magnetic snapping
- * (squared piles, cascades, edge alignment; Ctrl disables it), piles move as one when dragged by their base card,
+ * (squared piles, cascades, edge alignment; Ctrl disables it), piles move as one when dragged by their base card (a
+ * squared pile by its count badge, as on the play table),
  * Shift+click and Shift+drag on empty table select, a drag on empty table pans, the wheel zooms, hold Space or
  * middle-click to inspect. A double-click sends a card (or the selection) to the other area.
  *
@@ -25,6 +26,7 @@ import { mtg } from '../games/index';
 import type { Theme, ThemeInstance } from '../themes/types';
 import { BirdseyeRig, NO_INSETS, type Insets } from './camera';
 import { CardLayer, type CardDraw } from './cards';
+import { FOIL_SHEEN, foilSheenColour } from './draft';
 import { FaceTextures, faceKey } from './faces';
 import { CARD_H, CARD_W, cardCorners, forward, pointInCard, rot2 } from './math';
 import { CardMotion } from './motion';
@@ -293,7 +295,7 @@ export function reconcile(build: DeckBuild, card: CardLookup, key: BuilderSort):
   for (const area of ['deck', 'side'] as const) {
     for (const pc of m[area]) {
       const p = stored[pc.id];
-      if (p && areas.get(pc.id) === area) out[pc.id] = p;
+      if (p && settledArea(areas.get(pc.id), p, area === 'deck') === area) out[pc.id] = p;
       else missing.push({ pc, area });
     }
   }
@@ -321,9 +323,10 @@ function posesFor(build: DeckBuild, poses: Poses): Poses {
  * Cards dropped at new poses (DESIGN "Pre-game", Deck building: deck and sideboard areas). `shown` is every card's
  * current pose, `moved` the dropped cards' new poses in drop order. A card dropped in the deck area joins the deck (at
  * its end), one dropped in the sideboard area leaves it; a dispensed basic (`basic: true`) dropped in the sideboard area
- * goes back to the unlimited dispenser and leaves the build. A card in a cascade or squared pile belongs to its base
- * card's area (`areasOf`), so a pile lying across the line between the areas is wholly deck or wholly sideboard. The
- * result carries every card's pose.
+ * goes back to the unlimited dispenser and leaves the build. A moved card in a cascade or squared pile belongs to its
+ * base card's area (`areasOf`), so a pile dragged or dropped across the line between the areas is wholly deck or wholly
+ * sideboard. Cards that were not moved keep their membership: a drop never changes where an untouched card belongs,
+ * even when the dropped card becomes the base of a pile over it. The result carries every card's pose.
  */
 export function applyDrop(build: DeckBuild, shown: Poses, moved: Poses): DeckBuild {
   const out = copyBuild(build);
@@ -335,8 +338,7 @@ export function applyDrop(build: DeckBuild, shown: Poses, moved: Poses): DeckBui
   const movedIds = Object.keys(moved).filter((id) => live.has(id));
   const ids = [...movedIds, ...out.cards.map((c) => c.id).filter((id) => !(id in moved))];
   const areas = areasOf(poses, ids);
-  const wasMoved = new Set(movedIds);
-  for (const id of ids) {
+  for (const id of movedIds) {
     const area = areas.get(id);
     if (!area) continue;
     if (area === 'deck') {
@@ -349,7 +351,7 @@ export function applyDrop(build: DeckBuild, shown: Poses, moved: Poses): DeckBui
         out.main = out.main.filter((m) => m !== id);
         inMain.delete(id);
       }
-      if (basic.has(id) && wasMoved.has(id)) returned.add(id);
+      if (basic.has(id)) returned.add(id);
     }
   }
   if (returned.size) out.cards = out.cards.filter((c) => !returned.has(c.id));
@@ -408,6 +410,8 @@ export function crossOver(build: DeckBuild, shown: Poses, ids: readonly string[]
  */
 export interface SortMemo {
   key: BuilderSort;
+  /** The column key in force before this sort (column labels and where new cards go), back in force on a restore. */
+  keyBefore: BuilderSort;
   before: Poses;
   after: Poses;
   prev: SortMemo | null;
@@ -427,17 +431,37 @@ function samePoses(a: Poses, b: Poses): boolean {
  * A sort key pressed (PLAN M2-P5: "sorting is stable and reversible"). Pressing the key of the last sort again, while
  * nothing moved since, restores the layout from before that sort exactly and goes back one step in the chain of sorts
  * (so hand-made, colour, type, type, colour ends at the hand-made layout); any other press sorts and remembers the
- * layout it replaced on top of the chain. `shown` is the current layout.
+ * layout it replaced on top of the chain. `shown` is the current layout, `keyNow` the column key in force before the
+ * press. The result's `key` is the column key in force after it: the pressed key after a sort, the key from before the
+ * undone sort after a restore (so column labels, double-click and dispenser placement follow the layout on screen).
  */
-export function sortToggle(build: DeckBuild, shown: Poses, card: CardLookup, key: BuilderSort, memo: SortMemo | null): { poses: Poses; memo: SortMemo | null; restored: boolean } {
+export function sortToggle(
+  build: DeckBuild,
+  shown: Poses,
+  card: CardLookup,
+  key: BuilderSort,
+  memo: SortMemo | null,
+  keyNow: BuilderSort = key,
+): { poses: Poses; memo: SortMemo | null; restored: boolean; key: BuilderSort } {
   const current = posesFor(build, shown);
   const live = memo && samePoses(current, posesFor(build, memo.after)) ? memo : null;
   if (live && live.key === key) {
     const before = posesFor(build, live.before);
-    return { poses: { ...current, ...before }, memo: live.prev, restored: true };
+    return { poses: { ...current, ...before }, memo: live.prev, restored: true, key: live.keyBefore };
   }
   const after = sortLayout(build, card, key);
-  return { poses: after, memo: { key, before: current, after, prev: live }, restored: false };
+  return { poses: after, memo: { key, keyBefore: keyNow, before: current, after, prev: live }, restored: false, key };
+}
+
+/**
+ * The remembered sorts while they still apply, else null: the table shows the last sort's layout, and that sort would
+ * still come out the same (no edit in the list view moved a card between deck and sideboard, no card data arrived for
+ * cards waiting in the loading column). Otherwise the next press of a key sorts instead of restoring.
+ */
+export function liveMemo(build: DeckBuild, shown: Poses, card: CardLookup, memo: SortMemo | null): SortMemo | null {
+  if (!memo) return null;
+  const after = posesFor(build, memo.after);
+  return samePoses(posesFor(build, shown), after) && samePoses(posesFor(build, sortLayout(build, card, memo.key)), after) ? memo : null;
 }
 
 /**
@@ -487,6 +511,16 @@ export function derivePiles(poses: Poses, order: readonly string[]): Map<string,
 }
 
 /**
+ * The area a card lying at `pose` counts for, given its pile's area (`areasOf`) and its deck membership: the pile's
+ * area, unless the card's own spot is in its membership's area. A card left lying under a pile from the other area
+ * (`applyDrop` never moves untouched cards between deck and sideboard) so stays where its membership says.
+ */
+export function settledArea(pileArea: BuilderArea | undefined, pose: { y: number }, inMain: boolean): BuilderArea {
+  const want: BuilderArea = inMain ? 'deck' : 'side';
+  return pileArea === want || areaOf(pose) === want ? want : (pileArea ?? areaOf(pose));
+}
+
+/**
  * The area each card belongs to (see `areaOf`): a card in a cascade or squared pile follows the pile's base card (the
  * top card of a cascade, the bottom card of a squared pile), any other card the area its centre lies in.
  */
@@ -525,12 +559,16 @@ export function selectionPowerToughness(build: DeckBuild, ids: Iterable<string>,
   return out;
 }
 
-/** The cards a press on `id` picks up: a cascade's base takes the whole cascade, a selected card the selection, else the card. */
-export function grabbed(id: string, piles: Map<string, PileRef>, selection: ReadonlySet<string>, single: boolean): string[] {
+/**
+ * The cards a press on `id` picks up: a selected card the selection, a cascade's base the whole cascade, a squared
+ * pile's count badge (`pileGrab`) the whole squared pile (its bottom card lies under the top card, so the badge stands
+ * in for it, as on the play table; DECISIONS M0-P3), else the card. Pile members come in pile order, base first.
+ */
+export function grabbed(id: string, piles: Map<string, PileRef>, selection: ReadonlySet<string>, single: boolean, pileGrab = false): string[] {
   if (single) return [id];
   if (selection.has(id) && selection.size > 1) return [...selection];
   const pile = piles.get(id);
-  if (pile?.kind === 'cascade' && pile.index === 0) {
+  if ((pile?.kind === 'cascade' && pile.index === 0) || (pile?.kind === 'squared' && pileGrab)) {
     return [...piles.entries()]
       .filter(([, p]) => p.id === pile.id)
       .sort((a, b) => a[1].index - b[1].index)
@@ -557,8 +595,11 @@ export interface BuilderSurfaceViewExt extends BuilderSurfaceView {
 
 /** Events beyond the M2-C contract the builder HUD listens to. */
 export interface BuilderSurfaceEventsExt extends BuilderSurfaceEvents {
-  /** The sort state changed: the key of the sort now showing, or null after a restore or a move. */
-  sorted(key: BuilderSort | null): void;
+  /**
+   * The sort state changed: the key of the sort now showing (null after a restore or a move), and the column key in
+   * force (column labels, double-click and dispenser placement; after a restore the key from before the undone sort).
+   */
+  sorted(key: BuilderSort | null, columns: BuilderSort): void;
   /** The selection changed (number of selected cards). */
   selection(count: number): void;
 }
@@ -584,6 +625,8 @@ export interface BuilderDebugCard extends DebugCard {
   pile: (PileRef & { count: number }) | null;
   /** Height above the table the card is drawn at, mm (squared pile steps; 0 for a loose card). */
   z: number;
+  /** The foil sheen (a shimmering rim outside the face, as in the draft) is drawn: a foil card under a theme with `foilSheen`, not selected or hovered. */
+  sheen: boolean;
 }
 
 export interface BuilderSurfaceDebug {
@@ -721,6 +764,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
   let running = false;
   let disposed = false;
   let lastTick = performance.now();
+  let lastSheen = 0;
   let drag: { ids: string[]; anchor: string; start: Poses; grabOffset: TablePoint; cur: TablePoint; ctrl: boolean } | null = null;
 
   function rebuildTheme(): void {
@@ -731,7 +775,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
   }
 
   function emitSorted(): void {
-    opts.events.sorted?.(memo ? memo.key : null);
+    opts.events.sorted?.(memo ? memo.key : null, lastKey);
   }
   function emitSelection(): void {
     opts.events.selection?.(selection.size);
@@ -833,10 +877,15 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     const piles = restingPiles();
     const dragging = drag ? new Set(drag.ids) : new Set<string>();
     const sequence = [...order.filter((id) => !dragging.has(id)), ...order.filter((id) => dragging.has(id))];
+    // Foils carry the draft's sheen (DESIGN "Pre-game", Pack generation: "a subtle sheen and a badge"): a rim outside
+    // the face in the highlight slot, so the face itself is never recoloured; selection and hover rims take precedence.
+    const phase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
+    let row = 0;
     for (const id of sequence) {
       const rc = rcards.get(id);
       if (!rc) continue;
       const dp = dragPose(id);
+      const index = row++;
       draws.push({
         pose: dp ?? rc.motion.pose,
         z: dp ? GEOMETRY.dragLift : pileZ(piles.get(id)),
@@ -847,7 +896,9 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
           ? { colour: dressing.selected.colour, width: dressing.selected.width }
           : hovered === id
             ? { colour: dressing.hover.colour, width: dressing.hover.width }
-            : null,
+            : sheenOn(rc)
+              ? { colour: foilSheenColour(phase, index), width: FOIL_SHEEN.widthMm }
+              : null,
       });
     }
     cards.setTextures(faces.textures());
@@ -857,6 +908,9 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     syncOverlay(piles);
     dirty = false;
   }
+
+  /** A foil card drawn with the sheen (see draw). */
+  const sheenOn = (rc: RCard): boolean => theme.cardDressing.foilSheen && !!rc.pc.ref.foil && !selection.has(rc.id) && hovered !== rc.id;
 
   /** The host is not laid out (the list view hides the table with display: none): nothing to draw. */
   const hidden = (): boolean => host.clientWidth === 0 && host.clientHeight === 0;
@@ -883,7 +937,12 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     for (const rc of rcards.values()) if (rc.motion.moving && rc.motion.step(now, dt, theme.motion)) changed = true;
     for (const rc of rcards.values()) if (rc.motion.moving) changed = true;
     if (faces.pump(frame)) changed = true;
-    if (changed || dirty) draw();
+    // The foil sheen drifts at a low frame rate while foils lie on the table (not with reduced motion).
+    if (!changed && !dirty && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs && [...rcards.values()].some((rc) => rc.pc.ref.foil)) changed = true;
+    if (changed || dirty) {
+      lastSheen = now;
+      draw();
+    }
   }
 
   // --- DOM overlay: area and column labels, pile counts, foil badges, selection count -------------------------------
@@ -1038,6 +1097,8 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     timer: ReturnType<typeof setTimeout> | null;
     inspected: boolean;
     base: string[];
+    /** The press landed on a squared pile's count badge: a drag takes the whole pile. */
+    pileGrab: boolean;
   };
   let press: Press | null = null;
   /** The last plain click on a card and the selection it replaced (see onDoubleClick). */
@@ -1086,7 +1147,8 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     if (press || pinching) return;
     const rc = cardAt(e.clientX, e.clientY);
     const touch = e.pointerType === 'touch';
-    press = { pointerId: e.pointerId, button: e.button, touch, x0: e.clientX, y0: e.clientY, last: { x: e.clientX, y: e.clientY }, card: rc?.id ?? null, shift: e.shiftKey, alt: e.altKey, mode: 'press', samples: [], timer: null, inspected: false, base: [...selection] };
+    const pileGrab = !!rc && onPileBadge(rc, e.clientX, e.clientY);
+    press = { pointerId: e.pointerId, button: e.button, touch, x0: e.clientX, y0: e.clientY, last: { x: e.clientX, y: e.clientY }, card: rc?.id ?? null, shift: e.shiftKey, alt: e.altKey, mode: 'press', samples: [], timer: null, inspected: false, base: [...selection], pileGrab };
     if (touch && rc) {
       const p = press;
       p.timer = setTimeout(() => {
@@ -1100,10 +1162,28 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     capture(e.pointerId);
   }
 
+  /**
+   * A point on the count badge of the squared pile whose top card is `rc` (the badge drawn in syncOverlay): within 8 mm
+   * of the badge corner, as on the play table, or on the badge element itself.
+   */
+  function onPileBadge(rc: RCard, x: number, y: number): boolean {
+    const pile = derivePiles(shown, order).get(rc.id);
+    if (pile?.kind !== 'squared') return false;
+    const el = items.get(`pile-${pile.id}`);
+    if (el && el.style.display !== 'none') {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && x >= r.left - 2 && x <= r.right + 2 && y >= r.top - 2 && y <= r.bottom + 2) return true;
+    }
+    const p = screenToTable(x, y);
+    const pose = rc.motion.pose;
+    const [bx, by] = rot2(-CARD_W / 2 + 8, CARD_H / 2 - 8, pose.rot);
+    return Math.hypot(p.x - (pose.x + bx), p.y - (pose.y + by)) <= 8;
+  }
+
   function startDrag(p: Press, ctrl: boolean): boolean {
     if (locked || p.button !== 0 || !p.card) return false;
     const piles = derivePiles(shown, order);
-    const ids = grabbed(p.card, piles, selection, p.alt).filter((id) => shown[id]);
+    const ids = grabbed(p.card, piles, selection, p.alt, p.pileGrab).filter((id) => shown[id]);
     if (!ids.length) return false;
     const start: Poses = {};
     for (const id of ids) start[id] = { ...rcards.get(id)!.motion.pose };
@@ -1416,7 +1496,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
             screen,
             visible: screen.right > r.left && screen.left < r.right && screen.bottom > r.top && screen.top < r.bottom,
             ref: rc.pc.ref,
-            area: areas.get(rc.id) ?? areaOf(pose),
+            area: settledArea(areas.get(rc.id), shown[rc.id] ?? pose, inMain.has(rc.id)),
             inMain: inMain.has(rc.id),
             basic: !!rc.pc.basic,
             selected: selection.has(rc.id),
@@ -1425,6 +1505,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
             order: i,
             pile: piles.has(rc.id) ? { ...piles.get(rc.id)!, count: counts.get(piles.get(rc.id)!.id)! } : null,
             z: drag?.ids.includes(rc.id) ? GEOMETRY.dragLift : pileZ(piles.get(rc.id)),
+            sheen: sheenOn(rc),
           };
         });
     },
@@ -1478,20 +1559,22 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
       locked = !!view.locked;
       if (locked && drag) cancelDrag();
       build = view.build;
-      // A build that no longer matches the remembered sort (an edit in the list view) forgets it.
+      // A build that no longer matches the remembered sort (an edit in the list view) forgets it, and so does one whose
+      // sort would now come out differently (card data arrived for cards in the loading column): the next press of
+      // the key sorts again instead of restoring.
       const next = reconcile(build, card, lastKey);
       show(next, first ? 'cut' : 'spring', first);
       first = false;
-      if (memo && !samePoses(shown, posesFor(build, memo.after))) {
+      if (memo && !liveMemo(build, shown, card, memo)) {
         memo = null;
         emitSorted();
       }
     },
     sort(key) {
       if (locked) return;
-      lastKey = key;
-      const r = sortToggle(build, shown, card, key, memo);
+      const r = sortToggle(build, shown, card, key, memo, lastKey);
       memo = r.memo;
+      lastKey = r.key;
       const next: DeckBuild = { ...build, poses: posesFor(build, r.poses) };
       build = next;
       show(r.poses, 'settle', true);
@@ -1522,6 +1605,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
       }
       cards.setBackground(theme.tokens.colours.surface);
       outlineMaterial.color.set(theme.tokens.colours.border);
+      marqueeEl.style.border = `1px dashed ${theme.tokens.colours.focus}`;
       overlay.style.fontFamily = theme.tokens.type.family;
       for (const el of items.values()) el.remove();
       items.clear();

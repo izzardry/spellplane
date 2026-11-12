@@ -143,6 +143,19 @@ describe('mana symbols', () => {
     expect(s.colours).toEqual({ W: 0, U: 1, B: 0, R: 2, G: 0, C: 1 });
   });
 
+  it('a modal double-faced or transforming card counts its front cost only; an adventure counts both halves', () => {
+    const extra: CardData[] = [
+      { id: 'esika', name: 'Esika, God of the Tree // The Prismatic Bridge', set: 'x', collector_number: '1', rarity: 'mythic', layout: 'modal_dfc', cmc: 3, type_line: 'Legendary Creature — God // Legendary Enchantment', card_faces: [{ name: 'Esika, God of the Tree', mana_cost: '{1}{G}{G}', type_line: 'Legendary Creature — God' }, { name: 'The Prismatic Bridge', mana_cost: '{W}{U}{B}{R}{G}', type_line: 'Legendary Enchantment' }] },
+      { id: 'tf', name: 'Delver of Secrets // Insectile Aberration', set: 'x', collector_number: '2', rarity: 'common', layout: 'transform', cmc: 1, type_line: 'Creature — Human Wizard // Creature — Human Insect', card_faces: [{ name: 'Delver of Secrets', mana_cost: '{U}', type_line: 'Creature — Human Wizard' }, { name: 'Insectile Aberration', mana_cost: '{R}', type_line: 'Creature — Human Insect' }] },
+      { id: 'adv', name: 'Bonecrusher Giant // Stomp', set: 'x', collector_number: '3', rarity: 'rare', layout: 'adventure', cmc: 3, type_line: 'Creature — Giant // Instant — Adventure', card_faces: [{ name: 'Bonecrusher Giant', mana_cost: '{2}{R}', type_line: 'Creature — Giant' }, { name: 'Stomp', mana_cost: '{1}{W}', type_line: 'Instant — Adventure' }] },
+    ] as CardData[];
+    const card = (ref: { sid: string }) => extra.find((c) => c.id === ref.sid) ?? null;
+    const one = (i: number) => builderStats({ cards: extra.map((c, k) => ({ id: `x${k}`, ref: { sid: c.id } })), main: [`x${i}`] }, card).colours;
+    expect(one(0)).toEqual({ W: 0, U: 0, B: 0, R: 0, G: 2, C: 0 });
+    expect(one(1)).toEqual({ W: 0, U: 1, B: 0, R: 0, G: 0, C: 0 });
+    expect(one(2)).toEqual({ W: 1, U: 0, B: 0, R: 1, G: 0, C: 0 });
+  });
+
   it('cards whose data is still loading count toward the total only, and join the rest when it arrives', () => {
     const b = fixturePool();
     const loading = builderStats(b, () => null);

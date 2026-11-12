@@ -52,6 +52,19 @@ async function freeOne(page: Page, opts: { land?: boolean } = {}): Promise<Build
   return c;
 }
 
+/** The column labels shown: `area:column` of each, sorted. */
+async function columnLabels(page: Page): Promise<string[]> {
+  const els = page.locator('[data-testid="builder-column-label"]');
+  const out: string[] = [];
+  for (const el of await els.all()) out.push(`${await el.getAttribute('data-area')}:${await el.getAttribute('data-column')}`);
+  return out.sort();
+}
+
+/** The labels a layout sorted by `key` shows: one per column with cards, in each area. */
+function labelsFor(cards: BuilderDebugCard[], key: BuilderSort): string[] {
+  return [...new Set(cards.map((c) => `${c.inMain ? 'deck' : 'side'}:${columnOf(lookup(c.ref), key).key}`))].sort();
+}
+
 async function press(page: Page, key: string): Promise<void> {
   await page.keyboard.press(key);
   await settled(page);
@@ -64,6 +77,11 @@ test.describe('the builder table (DESIGN "Pre-game", Deck building)', () => {
     const cards = await bh(page, 'cards');
     expect(cards).toHaveLength(45);
     expect(cards.every((c) => c.area === 'side' && !c.inMain && c.visible)).toBe(true);
+    // Foils carry the sheen (a rim outside the face) and a badge; other cards neither.
+    const foils = cards.filter((c) => c.ref.foil);
+    expect(foils.length).toBeGreaterThan(0);
+    expect(cards.every((c) => c.sheen === !!c.ref.foil)).toBe(true);
+    await expect(page.getByTestId('builder-foil')).toHaveCount(foils.length);
     // Sorted by colour: each card lies in the column its colour names.
     for (const c of cards) expect(c.pose.x).toBeCloseTo(columnX(columnOf(lookup(c.ref), 'colour').index), 3);
     await expect(page.getByTestId('stats-cards')).toHaveAttribute('data-value', '0');
@@ -178,11 +196,31 @@ test.describe('the builder table (DESIGN "Pre-game", Deck building)', () => {
       expect((await bh(page, 'sort'))!.showing).toBeNull();
     }
 
-    // A chain unwinds one step at a time: colour, then type, then type again gives the colour layout back.
+    // A chain unwinds one step at a time: colour, then type, then type again gives the colour layout back, and with it
+    // the colour columns' labels and the colour key for placing cards.
     await press(page, '1');
     const byColour = await layout(page);
+    const colourLabels = await columnLabels(page);
+    expect(colourLabels).toEqual(labelsFor(await bh(page, 'cards'), 'colour'));
     await press(page, '3');
+    expect(await columnLabels(page)).toEqual(labelsFor(await bh(page, 'cards'), 'type'));
     await press(page, '3');
+    expect(await layout(page)).toEqual(byColour);
+    expect(await bh(page, 'sort')).toEqual({ showing: 'colour', key: 'colour' });
+    expect(await columnLabels(page)).toEqual(colourLabels);
+    // A double-click now sends a card to its colour column in the deck.
+    const crossing = (await free(page))[0]!;
+    const at = await centre(page, crossing.id);
+    await page.mouse.dblclick(at.x, at.y);
+    await settled(page);
+    expect((await bh(page, 'cards')).find((c) => c.id === crossing.id)!.pose.x).toBeCloseTo(columnX(columnOf(lookup(crossing.ref), 'colour').index), 3);
+    // And back, so the pool is as before; the key sorts again (the move forgot the remembered sorts).
+    const back = await centre(page, crossing.id);
+    await page.mouse.dblclick(back.x, back.y);
+    await settled(page);
+    await page.keyboard.press('Escape');
+    expect((await build(page)).main).toEqual(b.main);
+    await press(page, '1');
     expect(await layout(page)).toEqual(byColour);
     // Stable: sorting by colour from the type layout gives the same colour layout as from the hand-made one.
     await press(page, '3');
@@ -282,6 +320,25 @@ test.describe('the builder table (DESIGN "Pre-game", Deck building)', () => {
     expect((await pileOf(d.id)).pile).toMatchObject({ kind: 'squared', index: 1, count: 2 });
     expect((await pileOf(d.id)).z).toBeCloseTo(0.4, 6);
     expect((await pileOf(b2.id)).z).toBe(0);
+    // The pile's bottom card lies under its top card, so the count badge stands in for it (as on the play table):
+    // dragging the badge moves the whole pile, still squared, by the same distance.
+    const box = (await badge.boundingBox())!;
+    const spotBefore = await pose(b2.id);
+    await dragFromTo(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 }, await screenOf(page, { x: 250, y: 120 }), { ctrl: true });
+    await settled(page);
+    const moved = await pose(b2.id);
+    expect(Math.hypot(moved.x - spotBefore.x, moved.y - spotBefore.y)).toBeGreaterThan(50);
+    expect((await pose(d.id)).x).toBeCloseTo(moved.x, 6);
+    expect((await pose(d.id)).y).toBeCloseTo(moved.y, 6);
+    expect((await pileOf(d.id)).pile).toMatchObject({ kind: 'squared', index: 1, count: 2 });
+    await expect(badge).toHaveCount(1);
+    await expect(badge).toHaveText('×2');
+    // Elsewhere on the top card, a press pulls the top card off alone.
+    await dragCardTo(page, d.id, { x: 250, y: -250 }, { ctrl: true });
+    expect((await pose(b2.id)).x).toBeCloseTo(moved.x, 6);
+    expect((await pileOf(b2.id)).pile).toBeNull();
+    await dragCardTo(page, d.id, { x: moved.x + 3, y: moved.y - 3 });
+    expect((await pose(d.id)).x).toBeCloseTo(moved.x, 6);
     // With Ctrl held the same drop stays where it was let go.
     await dragCardTo(page, c.id, { x: 250, y: 300 });
     await dragCardTo(page, c.id, { x: -95, y: 140 }, { ctrl: true });

@@ -160,9 +160,10 @@
 
   function sort(key: BuilderSort): void {
     if (locked) return flash('The deck is locked: you are Ready.');
-    sortKey = key;
-    if (viewKind !== 'table') return;
-    surface?.sort(key);
+    // The surface owns the column key (a restore brings back the key from before the undone sort) and reports it
+    // through `sorted`; it sorts while hidden too, so both views keep the same key.
+    if (surface) surface.sort(key);
+    else sortKey = key;
   }
 
   function addBasic(name: BasicName): void {
@@ -273,7 +274,10 @@
             inspectRef = ref;
             inspectBySpace = spaceHeld;
           },
-          sorted: (key) => (sortShowing = key),
+          sorted: (key, columns) => {
+            sortShowing = key;
+            sortKey = columns;
+          },
           selection: (n) => (selected = n),
         },
       };

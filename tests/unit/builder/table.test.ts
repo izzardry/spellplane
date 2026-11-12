@@ -196,6 +196,33 @@ describe('piles and snapping read from positions (DESIGN "Card manipulation": pi
     expect(grabbed('a', piles, new Set(), true)).toEqual(['a']);
     // A selected card takes the selection.
     expect(grabbed('f', piles, new Set(['f', 'd']), false).sort()).toEqual(['d', 'f']);
+    // A squared pile's bottom card lies under its top card: a press on the count badge (pileGrab) takes the whole pile,
+    // bottom first; elsewhere on the top card, the top card comes off alone.
+    expect(grabbed('e', piles, new Set(), false, true)).toEqual(['d', 'e']);
+    expect(grabbed('e', piles, new Set(), false, false)).toEqual(['e']);
+    expect(grabbed('e', piles, new Set(), true, true)).toEqual(['e']);
+    // The badge means nothing on a cascade's lower card or a loose card.
+    expect(grabbed('b', piles, new Set(), false, true)).toEqual(['b']);
+    expect(grabbed('f', piles, new Set(), false, true)).toEqual(['f']);
+  });
+
+  it('a drop never changes the membership of a card nobody touched, even when the dropped card becomes the base of a cascade over it', () => {
+    // Divination lies in the sideboard band just below the line; Shock is dropped in the deck band 14 above it, so the
+    // two read as a cascade whose base is in the deck.
+    const b = buildOf(['Shock', 'Divination', 'Llanowar Elves', 'Duress'], ['p3']);
+    b.poses = { p1: { x: -200, y: -150, rot: 0 }, p2: { x: 200, y: -6, rot: 0 }, p3: { x: -200, y: 200, rot: 0 }, p4: { x: 0, y: -200, rot: 0 } };
+    const r = applyDrop(b, b.poses, { p1: { x: 200, y: 8, rot: 0 } });
+    expect(derivePiles(r.poses!, ['p1', 'p2', 'p3']).get('p2')).toMatchObject({ kind: 'cascade', index: 1 });
+    expect(r.main).toEqual(['p3', 'p1']);
+    // The table keeps both where they lie (Divination is not re-laid into a sideboard column).
+    expect(reconcile(r, lookup, 'colour')).toEqual(r.poses);
+    // A card dropped onto the bottom of a cascade whose base lies in the deck joins the deck, even below the line; the
+    // untouched card between them still stays in the sideboard.
+    const c = applyDrop(r, r.poses!, { p4: { x: 200, y: -6 - 14, rot: 0 } });
+    expect(c.main).toEqual(['p3', 'p1', 'p4']);
+    // Moved along (dragged as part of the cascade), it follows the base too.
+    const d = applyDrop(r, r.poses!, { p4: { x: 200, y: -6 - 14, rot: 0 }, p2: { x: 200, y: -6, rot: 0 } });
+    expect(d.main).toEqual(['p3', 'p1', 'p4', 'p2']);
   });
 
   it('a pile lying across the line between the areas belongs wholly to its base card\'s area', () => {
