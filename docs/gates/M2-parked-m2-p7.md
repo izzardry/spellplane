@@ -1,8 +1,11 @@
 # M2-P7 Evening flow: parked
 
-- **Status:** parked, not merged into `m2`. No work was attempted. The pipeline did not start the package because three of the packages it wires together are not on `m2`: M2-P2, M2-P4 and M2-P5.
-- **Branch:** none. There is no `m2-p7` branch, local or on `origin`, and no worktree `spellplane-wt/m2-p7`. Nothing was built, so there is nothing to test or review.
-- **State of `m2` at parking (12 Nov 2026, checked by the integrator):** head `0b56fed docs(m2): park M2-P3`, the same as `origin/m2`. On `m2`: M2-C (contracts), M2-P1 (pack generation) and M2-P6 (list view and deck library). M2-P3 is parked (`docs/gates/M2-parked-m2-p3.md`).
+- **Status:** parked, not merged into `m2`. The code is finished and `pnpm check` passes, but its browser specs have never run. The only `pnpm e2e` attempt exited with code 3: `scripts/pw-guard.mjs` found a macOS UserNotificationCenter prompt open (pid 97721) and refused to start Playwright. As instructed, the implementer did not retry. The prompt needs a person to click it.
+- **Branch:** `m2-p7` (worktree `spellplane-wt/m2-p7`), head `f48fbb6 test(m2-p7): sealed with search-and-add and Winston browser specs; late picks only for pool builds`. Three commits on top of `cc47731 merge(m2): M2-P5 Builder table`, which is the current `m2` head, so it is 0 commits behind. `git merge-tree m2 m2-p7` reports no conflicts. The working tree is clean. The branch has no remote copy (`origin/m2-p7` does not exist).
+- **Checked by the integrator at parking (12 Nov 2026, about 11:00):**
+  - `pnpm check` is green in the worktree: tsc, svelte-check (1263 files, 0 errors, 0 warnings), eslint, and vitest with 1741 tests in 124 files.
+  - `pnpm e2e` was not run: pid 97721 (`UserNotificationCenter`) is still running. The user also reported that the machine ran out of memory under parallel Playwright runs, so the integrator did not try again.
+- This note replaces the earlier park note (`f39173c`), which was written when M2-P2, M2-P4 and M2-P5 were not yet on `m2`. All six other M2 packages are now merged: P1, P6, P4, P3, P2, P5.
 
 ## What the package was supposed to do
 
@@ -24,64 +27,57 @@ docs/PLAN.md, "Ownership within M2": M2-P7 owns
   - the debug hook's `draft` part;
   - the stage switch in `ui/App.svelte` / `ui/lobby/TableRoom.svelte`.
 
-DESIGN "Specification: card data, packs and draft formats", Evening stages: `lobby → draft → build → match → build → match …`. The host advances from the lobby. The draft advances automatically. The build stage advances when every seated player is Ready. From a match, any player proposes "next game" or "new draft" and the others confirm.
+Gate M2-G needs this package for its whole script: two pages run a full evening (draft, build, game, back to the builder, sideboard, game two), then a sealed start and a two-seat Rochester.
 
-Gate M2-G depends on this package for its whole script: two pages run a full evening (draft, build, game, back to the builder, sideboard, game two), then a sealed start and a two-seat Rochester.
+## What the branch contains
 
-## What M2-C left for M2-P7 on `m2`
+`git diff m2...m2-p7 --stat`: 26 files, +2743/−43. The diff touches no contract file (`*/types.ts`, `core/actions.ts`, `net/messages.ts`).
 
-The contracts and stubs are in place. M2-P7 fills them in and edits no contract file:
-
-- `src/core/stage.ts`: `STAGE_EDGES`, `nextStage`, `hostSeat` and lobby validation are done. `stageProblem` returns `null` and `enterStage` only sets `stage`. M2-P7 implements both:
-  - `stageProblem` checks the host rule, draft done, everyone Ready, the confirmation `round` and the seat count.
-  - `enterStage` creates `TableState.draft`, clears the game table when going from a match back to the builder, drops the draft on a new draft, and counts `games`.
-
-  M2-P7 then wires both into `stageSet` in `src/core/reducer/table.ts:176`.
-- `src/session/types.ts`: `TableSession.draft?` (`DraftControls`) and `TableSession.evening?` (`EveningControls`). Neither session provides them yet.
-- `src/draft/types.ts`: the `DraftHost` seam that the drivers expect from the session.
-- `src/ui/types.ts`: `FlowProps` for `ui/flow/*`. The `sets` prop is to be wired in `main.ts`.
-- `src/debug/types.ts`: the `draft` part of the debug hook.
-- DECISIONS lines that bind M2-P7: `[M2-C]` stage edges, `stageSet.round`, `DeckBuild` in the SecretStore (needed for the reload-in-build test), and session ownership.
+- **Pure part:**
+  - `src/core/stage.ts`: `stageProblem` covers the host rule (`actingHost`), draft done, everyone committed, the labelled confirmation round and the seat count. `enterStage` creates the draft, clears the game on match → build, drops the draft on a new draft, and counts `games`. A `GAME_START` table holds starting life and phase.
+  - `src/core/reducer/table.ts`: the `stageSet` case.
+- **Session:**
+  - `src/session/draft.ts` (new): `DraftHost`/`DraftControls`, the driver lifetime, pack seeds and the M2-P3 hand-off (`sendCards`/`onCards`, `confirmedState`, `drive()` on peer join).
+  - `src/session/net.ts`: the `draft` and `evening` members.
+  - `src/main.ts`: set data and pack generation.
+  - The solo session offers neither member (DECISIONS).
+- **UI:**
+  - `src/ui/flow/Stage.svelte`, `EveningBar.svelte`, `LobbyDraft.svelte` and `model.ts`.
+  - The stage switch in `ui/lobby/TableRoom.svelte`, plus a one-line `sets` pass-through in `ui/lobby/RoomRoute.svelte`.
+  - `ui/draft/settings.ts`: the pick timer is offered only for the pass drafts. This settles the gate-report item from M2-P3 and M2-P4.
+- **Debug and fixtures:**
+  - `src/debug/draft.ts` adds the `draft` part and a `flow` part.
+  - `src/debug/fixture-sets.ts` injects MTGJSON fixtures as `window.__spellplaneSets` in dev and test builds.
+  - `src/debug/fixture-cards.ts` makes the fixture source answer `searchCards`.
+- **Tests:**
+  - Unit: `tests/unit/flow/stage.test.ts`, `tests/unit/flow/model.test.ts`.
+  - Simulation: `tests/sim/flow/evening.test.ts`, `edges.test.ts`, `open.test.ts`, and `leak.test.ts`, which adds the evening scenario to the shared leak test.
+  - Browser: `tests/e2e/flow/evening.spec.ts` with three specs, never run:
+    1. a reload in each stage returns to that stage with the same pool, deck and table (the PLAN acceptance test);
+    2. sealed: pools open for everyone at once; the builder searches card data and a reload keeps the added card;
+    3. Winston: the piles reach only the player looking at them, through the session, until the builder.
+- **`docs/DECISIONS.md`:** 20 `[M2-P7]` lines. They cover the stage rules, the acting host, the `enterStage` clearing rules, `GAME_START`, refusing a next game during an open shuffle, refusing Two-Headed Giant drafts until M3-P2, host-only automatic steps, driver lifetime, pack seeds, pool card ids, keeping a constructed deck as `SecretStore.build`, dropping a stale draft's private state, the solo session, the placement of the lobby panel and the evening bar, remount keys, the pick timer, fixture injection, the `flow` debug part, and the `RoomRoute` pass-through.
 
 ## What fails and why
 
-Nothing was run, so nothing failed. The package is blocked on its inputs. M2-P7 is the integration package of M2: it connects the drivers, the draft UI and the builder to the session and to the stage switch. It cannot be built or tested against stubs for all three:
+Nothing in the code is known to fail. The package is parked because it is unverified, not because it is broken:
 
-- **M2-P2 Pass draft and sealed:** not on `m2`. There is no `m2-p2` branch or worktree. Without it, the draft stage has no pass or sealed driver for `session/draft.ts` to start. "draft advances automatically" (the `draftDone` event) has no producer. The gate's M19 booster draft and sealed start cannot run.
-- **M2-P4 Draft UI:** not on `m2`. The branch `m2-p4` (head `c3683c9`, worktree `spellplane-wt/m2-p4`) exists. A local, unpushed branch `m2-p4-integrated` holds a merge commit `f66bf17 merge(m2): M2-P4 Draft UI` on top of `0b56fed`, made on 11 Nov 2026 at 23:39. That commit has not reached `m2` or `origin/m2`. Until it does, the stage switch has no draft stage view to show.
-- **M2-P5 Builder table:** not on `m2`. There is no `m2-p5` branch or worktree. Without it:
-  - the build stage has no builder container (M2-P5 owns `ui/builder/*` outside `list/*`);
-  - there is no Ready with commitment, so the `allReady` event has no producer;
-  - "return to builder between games for sideboarding" has nothing to return to.
+- `pnpm e2e` exited with code 3 (macOS security or privacy prompt) before Playwright started. The UserNotificationCenter prompt (pid 97721) stayed open through five checks over about 20 minutes, and it was still open when this note was written.
+- The acceptance test for M2-P7 exists only as a browser spec (spec 1 above), so the package's acceptance test has not passed yet.
+- The real app path through the stages (lobby → draft → build → match → build) has never run in a browser. M2-P4 and M2-P6 tested their surfaces only on module pages and left the app-level path to M2-P7.
+- `ui/lobby/RoomRoute.svelte` belongs to M1-P5 and lies outside the files the plan gives M2-P7. The edit is a one-line prop pass-through and is recorded in DECISIONS. The integrator should accept or move it when merging.
 
 ## Open review findings
 
-None. No review ran, because there is no branch.
-
-## Work handed to M2-P7 by other packages
-
-A retry must pick these up. They are recorded on the package branches, not yet on `m2`:
-
-- **From M2-P3** (`docs/gates/M2-parked-m2-p3.md`, "What a retry should do first" step 2, and the `[M2-P3]` DECISIONS lines on `m2-p3`). `session/draft.ts` must:
-  - implement `DraftHost.sendCards`/`onCards` on top of `net/draftcards.ts`;
-  - implement `DraftHost.confirmedState` on top of NetEngine `confirmedState`;
-  - call the Winston driver's `drive()` when a peer (re)joins;
-  - keep the Winston driver alive after the draft ends until the other player's pool covers `taken`.
-
-  These seams depend on the M2-C contracts amendment requested in the M2-P3 park note.
-- **From M2-P3 and M2-P4:** the lobby offers a pick timer for Rochester, Winston and Grid, where it does nothing. This is a gate-report item: either hide the setting or have `draftDeadlines` time those formats.
-- **From M2-P4 and M2-P6:** both packages test their surfaces on module pages bundled by their own specs, because the `?harness=` registry in `main.ts` belongs to M2-P7. Once the real stage switch exists, the M2-P7 browser specs should drive the real app path through the stages.
+None. The package was parked before review because e2e could not run.
 
 ## What a retry should do first
 
-1. **Wait until M2-P2, M2-P4 and M2-P5 are merged into `m2`,** and land the M2-C contracts amendment from the M2-P3 park note. M2-P3 itself should merge too, since the gate's Rochester run needs it. If only M2-P4 is missing, check whether `m2-p4-integrated` (`f66bf17`) just needs to be pushed to `m2`.
-2. **Create `m2-p7` from the current `m2`** in `spellplane-wt/m2-p7`. Run `pnpm install --frozen-lockfile`, then `pnpm check`.
-3. **Build the pure part first:** `stageProblem`, `enterStage` and the `stageSet` case, with unit tests for every edge, the host rule, the confirmation round, and the clearing of the game table on match → build. This part depends only on M2-C and could start before the other packages land.
-4. **Then wire the session:**
-   - `session/draft.ts` (`DraftHost` and `DraftControls`, including the M2-P3 hand-off above);
-   - the `evening` members in `solo.ts` and `net.ts`;
-   - `main.ts` set data and `generatePack` from M2-P1;
-   - the debug hook's `draft` part;
-   - the stage switch with `ui/flow/*`.
-5. **Write the acceptance test as a browser spec:** a reload in each of lobby, draft, build and match returns to that stage with the same pool, `DeckBuild` and table, checked by state hash through the debug hook. Add any new hidden-information path (for example the pool and deck across reload and rematch) to the shared leak test.
-6. **Then run `pnpm e2e` and the M2 gate script.**
+1. **Dismiss the macOS prompt** (UserNotificationCenter, pid 97721; check with `pgrep -lf UserNotificationCenter`). Also make sure no other Playwright run is active on the machine: an earlier run with more parallel Playwright runs exhausted the memory.
+2. In `spellplane-wt/m2-p7`, confirm that `m2` has not moved (`git log m2-p7..m2`). If it has, merge `m2` in and rerun `pnpm check`.
+3. **Run the new specs alone first:** `pnpm e2e -- tests/e2e/flow --project=chromium`, with a 10-minute timeout. Then run the full `pnpm e2e` (Chromium and WebKit). Run one at a time. Fix any failures on `m2-p7` and never add retries.
+4. **Review** the diff, especially:
+   - `session/draft.ts` (driver lifetime, pack-seed recovery after reload);
+   - the stage-clearing rules in `enterStage` (what a rematch keeps and what it drops);
+   - the leak scenario for pools and builds across reload, rematch and new draft.
+5. **Merge into `m2`,** remove this note, and then run the M2 gate script (`pnpm e2e:gate -- M2`, `pnpm shots -- M2`).
