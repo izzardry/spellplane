@@ -33,6 +33,8 @@
   import ContextMenu from './ContextMenu.svelte';
   import DeckImport from './DeckImport.svelte';
   import HandFan from './HandFan.svelte';
+  import TeamHands from './hand/TeamHands.svelte';
+  import { teamRevealChoices } from './hand/team';
   import Inspect from './Inspect.svelte';
   import LogPanel from './LogPanel.svelte';
   import PileViewer from './PileViewer.svelte';
@@ -52,6 +54,18 @@
   /** Own chat lines not in the session log yet, and what the HUD notices as the log grows (ui/chat/watch.ts, M1-P6). */
   let pendingChat = $state.raw<readonly LogEntry[]>([]);
   const watch = new LogWatch();
+  /**
+   * Two-Headed Giant team chat this browser sent or received (session.team chatLog, M3-P2): team lines never enter the
+   * shared log (DESIGN "A team channel carries voice and text only between teammates"), so the timeline merges them in.
+   */
+  let teamChat = $state.raw<readonly LogEntry[]>([]);
+  let teamUnsub: (() => void) | null = null;
+  function followTeam(): void {
+    const team = session.team;
+    if (!team || teamUnsub) return;
+    teamUnsub = team.subscribe(() => (teamChat = team.chatLog()));
+    teamChat = team.chatLog();
+  }
 
   // --- Local view state (never shared) -------------------------------------------------------------------------
   let sceneHover = $state<InstanceId | null>(null);
@@ -460,7 +474,7 @@
    * earlier hidden move); the watch fills in the names this browser could see just before each action (M1-P6).
    */
   const lines = $derived(
-    logLines(mergeTimeline(entries, pendingChat), {
+    logLines(mergeTimeline(entries, teamChat, pendingChat), {
       state: st,
       cardName: logName,
       phaseLabel: (id) => game.phases.find((p) => p.id === id)?.label ?? id,
@@ -471,7 +485,11 @@
   const chatTabs = $derived<ChatTab[]>(st.seats[me]?.team ? ['table', 'team'] : ['table']);
   function sendChat(text: string, channel: ChatTab) {
     const a = session.chat(text, channel);
-    pendingChat = addPending(pendingChat, a, session.log(), Date.now());
+    followTeam();
+    const team = session.team;
+    // A team line stays out of the shared log: the team view holds it (and the teammate's), not the pending list.
+    if (channel === 'team' && team) teamChat = team.chatLog();
+    else pendingChat = addPending(pendingChat, a, session.log(), Date.now());
   }
   const inspectCard = $derived<CardInstance | null>(inspectId ? (st.cards[inspectId] ?? null) : null);
   const keyOf = (a: ActionId, ctx: KeyContext = 'table') => keyLabel(keymap, a, ctx);
@@ -549,7 +567,9 @@
   onMount(() => {
     seenLog = entries.length;
     watch.start(entries);
+    followTeam();
     const unsub = session.subscribe((s) => {
+      followTeam();
       const log = session.log();
       // Before the HUD moves on: names this browser could see and other players' cards touched (M1-P6).
       watch.observe(log, st, s, logName);
@@ -608,6 +628,8 @@
       unsub();
       voiceOff?.();
       speakOff?.();
+      teamUnsub?.();
+      teamUnsub = null;
       for (const t of timers) clearTimeout(t);
       timers = [];
       engine.blur();
@@ -794,6 +816,10 @@
       ondragout={(id, x, y) => dragOut(id, x, y)}
       onselect={(id) => (selection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id])}
     />
+    {#if session.team && Object.keys(st.teams).length > 0}
+      <!-- Two-Headed Giant: the teammate's hand above the own fan (M3-P2, ui/hand/*). -->
+      <TeamHands team={session.team} state={st} {faces} {vw} {vh} oninspect={(id, ref) => ((inspectId = id), (inspectRef = ref))} />
+    {/if}
   </div>
 
   {#if viewer}
@@ -886,6 +912,7 @@
         {#each otherSeats as s (s.id)}
           <button type="button" data-seat={s.id} onclick={() => doRevealTo([s.id])}>{s.name}</button>
         {/each}
+        {#each teamRevealChoices(st, me) as c (c.id)}<button type="button" data-seat={c.id} onclick={() => doRevealTo(c.seats)}>{c.label}</button>{/each}
         {#if otherSeats.length > 1}<button type="button" data-seat="all" onclick={() => doRevealTo(otherSeats.map((s) => s.id))}>Everyone</button>{/if}
       {/if}
       <button type="button" class="x" onclick={() => (revealTo = null)}>Cancel</button>

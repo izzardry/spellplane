@@ -15,6 +15,13 @@ export function pickTimerMs(picks: number): number {
   return Math.max(PICK_TIMER.floorMs, PICK_TIMER.firstMs - PICK_TIMER.stepMs * Math.max(0, Math.floor(picks)));
 }
 
+/**
+ * Two-Headed Giant draft (M3-P2): how long after a pick timer ran out the sequencer's `draftTimeout` waits. On expiry
+ * the team's own browsers pick the marked cards, or else the first cards in pack order (draft/team.ts), since only they
+ * know the marks and the pack order; the sequencer's timeout is the fallback for a team with no browser that can.
+ */
+export const TEAM_PICK_GRACE_MS = 6_000;
+
 /** Pass direction of a round (DESIGN "Specification: card data, packs and draft formats": left for odd rounds, right for even rounds, counting from 1). */
 export type PassDirection = 'left' | 'right';
 
@@ -117,7 +124,10 @@ export function rochesterOrder(seats: readonly SeatId[], opener: SeatId): SeatId
  */
 export function draftDeadlines(state: TableState): Deadline[] {
   const d = state.draft;
-  if (d === undefined || state.stage !== 'draft' || d.done || !d.pickTimer || d.settings.format !== 'pass') return [];
+  // The Two-Headed Giant draft times the team's front pack the same way, with a grace for the team's own browsers
+  // to take the marked or first cards (M3-P2, TEAM_PICK_GRACE_MS, core/reducer/pass.ts).
+  if (d === undefined || state.stage !== 'draft' || d.done || !d.pickTimer || (d.settings.format !== 'pass' && d.settings.format !== 'teamDraft')) return [];
+  const grace = d.settings.format === 'teamDraft' ? TEAM_PICK_GRACE_MS : 0;
   const out: Deadline[] = [];
   for (const drafter of d.drafters) {
     const front = d.queues[drafter]?.[0];
@@ -126,7 +136,7 @@ export function draftDeadlines(state: TableState): Deadline[] {
     out.push({
       key: `pick:${pack.id}:${pack.picks}`,
       fromSeq: pack.sinceSeq,
-      afterMs: pickTimerMs(pack.picks),
+      afterMs: pickTimerMs(pack.picks) + grace,
       emit: [{ type: 'draftTimeout', packId: pack.id, picks: pack.picks }],
     });
   }

@@ -808,6 +808,7 @@ class Engine implements NetEngine {
       case 'pack':
       case 'draftCards':
       case 'teamHand':
+      case 'teamChat':
       case 'nonce':
       case 'lookReq':
       case 'look':

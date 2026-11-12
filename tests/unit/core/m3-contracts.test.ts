@@ -27,8 +27,6 @@ import { MESSAGE_CHANNEL } from '../../../src/net/messages';
 import { DEFAULT_SETTINGS } from '../../../src/store/types';
 import { CAPTION_MAX_LINES, CAPTION_MAX_WIDTH_PX, FAKE_SPEECH, FakeSpeechEngine, SPEECH_ENGINES, TALK_CLOSED, createCaptions } from '../../../src/voice/index';
 import { roleProblem, spectatorsOf } from '../../../src/net/roles';
-import { createTeamChannel } from '../../../src/net/team';
-import { createTeamDraftDriver, createTeamSealedDriver } from '../../../src/draft/team';
 import { act, fresh, no, ok } from './helpers';
 
 const FORMATS: Format[] = ['1v1', 'ffa3', 'ffa4', '2hg'];
@@ -173,8 +171,5 @@ describe('voice, captions and settings contracts', () => {
     // M3-P5 implemented net/roles.ts (tests/unit/roles).
     expect(roleProblem(fresh(), act('chat', { text: 'x', channel: 'table' }, 'v:p'), { role: 'spectator', peerId: 'p', seat: null })).toBeNull();
     expect(spectatorsOf([])).toEqual([]);
-    expect(() => createTeamChannel(host)).toThrow(/M3-P2/);
-    expect(() => createTeamDraftDriver(host)).toThrow(/M3-P2/);
-    expect(() => createTeamSealedDriver(host)).toThrow(/M3-P2/);
   });
 });

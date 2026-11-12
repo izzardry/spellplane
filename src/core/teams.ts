@@ -11,7 +11,7 @@
  * `TABLE_FORMAT_SEATS`/`TABLE_FORMAT_TEAMS` use in the `formatSet` reducer (core/reducer/format.ts); M3-P5 owns the spectator part.
  * Pure: no DOM, clock, randomness or network.
  */
-import type { Format, SeatId, TableState, Team, TeamId } from './types';
+import type { DraftState, Format, SeatId, TableState, Team, TeamId } from './types';
 import { seatIdOf } from './ids';
 
 /** Seats per format (DESIGN "Players, seats and formats", Seats column: 2, 3, 4, 2 + 2). */
@@ -138,4 +138,80 @@ export function revealRecipients(state: TableState, by: SeatId, target: RevealTa
     case 'spectator':
       return { seats: [], spectators: isSpectatorId(target.spectator) ? [target.spectator] : [] };
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Two-Headed Giant draft and sealed (DESIGN "Pre-game: draft, sealed and deck building", mode table: Two-Headed Giant
+// draft "Teams pick two cards per pack into a shared team pool; 6 packs per team", "Team sees its own packs and pool";
+// Two-Headed Giant sealed "8 packs per team, shared pool"; "Specification: card data, packs and draft formats", Draft
+// formats: "A team shares each pack and pool; the team picks 2 cards per pass; passing goes team to team, alternating
+// direction per round … After 3 rounds"). Added by M3-P2; read by core/reducer/pass.ts and draft/team.ts.
+//
+// The drafter is the team (DraftState.drafters lists team ids). Every teammate opens packs for the team: in a draft
+// each member opens one pack per round until the team has opened its `packs` (6 packs and two members: 3 rounds), in
+// sealed member j opens the team's packs j, j + m, j + 2m, … (m members). DECISIONS [M3-P2].
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** The seated members of team `team` in seat order: the seats whose `team` it is and that hold a player. */
+export function teamMembers(state: TableState, team: TeamId): SeatId[] {
+  return Object.values(state.seats)
+    .filter((s) => s.team === team && s.name.trim() !== '')
+    .sort((a, b) => a.index - b.index)
+    .map((s) => s.id);
+}
+
+/**
+ * The drafting members of team `team` in a Two-Headed Giant draft or sealed (`draft`), in seat order: the seats of the
+ * team that hold a player or that opened a pack of this draft. A player who leaves the chair after opening a pack keeps
+ * the place, so the member count and each member's opening duties and set slots stay as they were (the draft waits for
+ * the chair, as a pass draft waits for a drafter). DECISIONS [M3-P2].
+ */
+export function draftMembers(state: TableState, draft: DraftState, team: TeamId): SeatId[] {
+  const openers = new Set<SeatId>();
+  for (const p of Object.values(draft.packs)) openers.add(p.opener);
+  return Object.values(state.seats)
+    .filter((s) => s.team === team && (s.name.trim() !== '' || openers.has(s.id)))
+    .sort((a, b) => a.index - b.index)
+    .map((s) => s.id);
+}
+
+/** The team a seat drafts for, or null (a seat without a team, or a team that is not drafting). */
+export function draftTeamOf(state: TableState, seat: SeatId): TeamId | null {
+  const t = own(state.seats, seat)?.team;
+  if (t === undefined) return null;
+  const d = state.draft;
+  return d !== undefined && d.drafters.includes(t) ? t : null;
+}
+
+/** Rounds of a Two-Headed Giant draft of `packs` packs per team with `members` members: each member opens one pack per round. */
+export function teamDraftRounds(packs: number, members: number): number {
+  return members <= 0 ? 0 : Math.ceil(packs / members);
+}
+
+/** Whether member `j` (index in `draftMembers`) of a team of `members` opens a pack in round `round` (the team's `packs` are not all open yet). */
+export function opensInRound(packs: number, members: number, j: number, round: number): boolean {
+  return j >= 0 && j < members && round >= 0 && round * members + j < packs;
+}
+
+/**
+ * The team pack index of the pack member `j` of `members` opens in round `round` of a Two-Headed Giant draft:
+ * round · members + j. The lobby's set list is per team pack ("set per pack", "6 packs per team"), as in sealed.
+ */
+export function teamDraftPackIndex(members: number, j: number, round: number): number {
+  return round * members + j;
+}
+
+/** How many packs a Two-Headed Giant draft's round `round` holds over all teams (`members` per team, in team order). */
+export function packsInRound(packs: number, members: readonly number[], round: number): number {
+  let n = 0;
+  for (const m of members) for (let j = 0; j < m; j++) if (opensInRound(packs, m, j, round)) n++;
+  return n;
+}
+
+/** The team pack numbers member `j` of `members` opens in Two-Headed Giant sealed, in order: j, j + m, j + 2m, … below `packs`. */
+export function teamSealedNumbers(packs: number, members: number, j: number): number[] {
+  const out: number[] = [];
+  if (j < 0 || j >= members) return out;
+  for (let n = j; n < packs; n += members) out.push(n);
+  return out;
 }
