@@ -9,16 +9,19 @@ import { createSetCache, openStores, SOLO_ROOM_ID, type LocalStores } from './st
 import App from './ui/App.svelte';
 import { startProps } from './ui/lobby/start';
 import { parseRoute } from './ui/routes';
+import { flags } from './util/flags';
+import { FAKE_SPEECH, SPEECH_ENGINES, type MediaDevicesLike } from './voice/index';
 import type { AppProps, RoomLink, StartPageProps } from './ui/types';
 
 const target = document.getElementById('app');
 if (!target) throw new Error('#app missing');
 
-/** Module test pages (dev and test builds only): `?harness=scene`, `?harness=ui` or `?harness=confirm` mounts that module's harness instead of the app. */
+/** Module test pages (dev and test builds only): `?harness=scene`, `?harness=ui`, `?harness=confirm` or `?harness=voice` mounts that module's harness instead of the app. */
 const HARNESSES = {
   scene: () => import('./scene/harness'),
   ui: () => import('./ui/harness'),
   confirm: () => import('./ui/confirm/harness'),
+  voice: () => import('./ui/voice/harness'),
 } as const;
 
 const harness = __SPELLPLANE_DEBUG__ ? new URLSearchParams(location.search).get('harness') : null;
@@ -105,6 +108,8 @@ async function boot(el: HTMLElement): Promise<void> {
           store: stores.tables,
           sets,
           generatePack,
+          // Live voice (M3-P3): the microphone is acquired only when the player clicks "Join voice".
+          voice: { media: pageMedia(), settings: stores.settings, engines: flags().speech === 'fake' ? [FAKE_SPEECH] : Object.values(SPEECH_ENGINES) },
         },
         // BroadcastChannel peers connect at once; over Trystero they come up seconds after the join.
         { createdHere: createdHere(link.roomId), loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS },
@@ -142,6 +147,13 @@ async function boot(el: HTMLElement): Promise<void> {
     ...(stores && identity ? { settings: stores.settings, identity: identity.store, decks: stores.decks, start: createdRooms(startProps({ identity: identity.store, tables: stores.tables }), markCreated) } : {}),
   };
   mount(App, { target: el, props });
+}
+
+/** The page's media devices; without them (an insecure page) joining voice says so instead of failing silently. */
+function pageMedia(): MediaDevicesLike {
+  if (typeof navigator !== 'undefined' && navigator.mediaDevices) return navigator.mediaDevices;
+  const missing = (): Promise<never> => Promise.reject(Object.assign(new Error('this page has no microphone access'), { name: 'NotFoundError' }));
+  return { getUserMedia: missing, enumerateDevices: () => Promise.resolve([]) };
 }
 
 /** Start-page props whose new rooms are recorded as created by this tab. */

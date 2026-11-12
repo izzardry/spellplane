@@ -38,6 +38,9 @@
   import PileViewer from './PileViewer.svelte';
   import TokenSearch from './TokenSearch.svelte';
   import TurnStrip from './TurnStrip.svelte';
+  import TalkIndicator from './voice/TalkIndicator.svelte';
+  import VoicePanel from './voice/VoicePanel.svelte';
+  import { attachTalkInput, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
 
   let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
 
@@ -96,6 +99,15 @@
   let logOpen = $state(true);
   let preview = $state<{ card: InstanceId; x: number; y: number } | null>(null);
   let voice = $state<{ talking: 'talk' | 'teamTalk' | null; muted: boolean }>({ talking: null, muted: false });
+  /** Live voice of a networked table (M3-P3); the solo table and the harness have none. */
+  const liveVoice = untrack(() => session.voice);
+  let voicePanel = $state(false);
+  /** Who speaks now, by identity peer id (the avatars' speaking rings). */
+  let speaking = $state.raw<Record<string, boolean>>({});
+  const speaks = (seat: string): boolean => {
+    const peer = st.seats[seat]?.peer;
+    return !!peer && speaking[peer] === true;
+  };
   let logPanel = $state<LogPanel | undefined>();
   let noteInput = $state<HTMLInputElement | undefined>();
   let drawInput = $state<HTMLInputElement | undefined>();
@@ -194,6 +206,7 @@
     },
     voice(action, phase) {
       onVoice?.(action, phase);
+      if (liveVoice) runTalkAction(liveVoice, action, phase);
       if (action === 'mute') voice = { ...voice, muted: !voice.muted };
       else voice = { ...voice, talking: phase === 'start' ? action : null };
     },
@@ -546,6 +559,9 @@
       entries = log;
       pendingChat = prunePending(pendingChat, log);
     });
+    // The talk key's focus rules and the talk mouse button (M3-P3), and the speaking rings.
+    const voiceOff = liveVoice ? attachTalkInput(liveVoice) : null;
+    const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
     void settings
       ?.get('keymap')
       .then((o) => {
@@ -590,6 +606,8 @@
     }
     return () => {
       unsub();
+      voiceOff?.();
+      speakOff?.();
       for (const t of timers) clearTimeout(t);
       timers = [];
       engine.blur();
@@ -635,15 +653,22 @@
         <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
-        {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
-        {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
+        {#if !liveVoice}
+          {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
+          {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
+        {/if}
       </nav>
+      {#if liveVoice}
+        <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'V'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
+        {#if voicePanel}<VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} />{/if}
+      {/if}
       {#each seats.filter((s) => s.id !== me && !isEmptyChair(st, s.id)) as seat (seat.id)}
         <Avatar
           {seat}
           life={lifeOf(seat.id)}
           me={false}
           active={st.turn.active === seat.id || st.turn.active === seat.team}
+          speaking={speaks(seat.id)}
           responding={st.confirm?.holder === seat.id}
           asking={asking(seat.id)}
           glyph={glyphOf(seat.colour)}
@@ -708,6 +733,7 @@
           life={lifeOf(me)}
           me={true}
           active={st.turn.active === me || st.turn.active === st.seats[me].team}
+          speaking={speaks(me)}
           responding={st.confirm?.holder === me}
           asking={asking(me)}
           glyph={glyphOf(st.seats[me].colour)}
@@ -806,6 +832,7 @@
         bind:this={noteInput}
         bind:value={note.text}
         data-testid="note-input"
+        {...{ [NOTE_FIELD_ATTR]: '' }}
         maxlength="80"
         placeholder="Note (Enter to save, empty clears)"
         aria-label="Note"

@@ -25,7 +25,7 @@ import { mtgLayout, soloLayout } from '../../../src/games/mtg/layout';
 import { mtgStartingLife } from '../../../src/games/mtg/index';
 import { MESSAGE_CHANNEL } from '../../../src/net/messages';
 import { DEFAULT_SETTINGS } from '../../../src/store/types';
-import { CAPTION_MAX_LINES, CAPTION_MAX_WIDTH_PX, FAKE_SPEECH, FakeSpeechEngine, SPEECH_ENGINES, TALK_CLOSED, createCaptions, createVoice, talkState } from '../../../src/voice/index';
+import { CAPTION_MAX_LINES, CAPTION_MAX_WIDTH_PX, FAKE_SPEECH, FakeSpeechEngine, SPEECH_ENGINES, TALK_CLOSED, createCaptions } from '../../../src/voice/index';
 import { roleProblem, spectatorsOf } from '../../../src/net/roles';
 import { createTeamChannel } from '../../../src/net/team';
 import { createTeamDraftDriver, createTeamSealedDriver } from '../../../src/draft/team';
@@ -167,8 +167,6 @@ describe('voice, captions and settings contracts', () => {
 
   it('stubs name their package', async () => {
     const host = {} as never;
-    expect(() => talkState(host)).toThrow(/M3-P3/);
-    expect(() => createVoice(host)).toThrow(/M3-P3/);
     expect(() => createCaptions(host)).toThrow(/M3-P4/);
     await expect(SPEECH_ENGINES.local.create()).rejects.toThrow(/M3-P4/);
     expect(() => roleProblem(fresh(), act('chat', { text: 'x', channel: 'table' }), { role: 'spectator', peerId: 'p', seat: null })).toThrow(/M3-P5/);

@@ -112,8 +112,11 @@ export interface VoiceHost {
   state(): TableState;
   seat(): SeatId | null;
   onState(listener: (state: TableState) => void): Unsubscribe;
-  /** Announces the speaking ring on `pres` (never during team talk; DECISIONS [M3-C]). */
-  presence: Pick<Presence, 'speaking'>;
+  /**
+   * Announces the speaking ring on `pres` (never during team talk; DECISIONS [M3-C]). `peers` and `subscribe` (added by
+   * M3-P3, optional) let `VoiceControls.speaking` include the other players' presence rings.
+   */
+  presence: Pick<Presence, 'speaking'> & Partial<Pick<Presence, 'peers' | 'subscribe'>>;
   media: MediaDevicesLike;
   settings: SettingsStore;
   /** Plays a remote peer's audio at the player's volume; injectable so unit tests need no audio output. */
@@ -146,6 +149,8 @@ export interface VoiceControls {
   /** Audio input devices for the device picker (PLAN M3-P3), and the chosen one (null: default). */
   devices(): Promise<MediaDeviceInfo[]>;
   setDevice(deviceId: string | null): Promise<void>;
+  /** The chosen device id (settings key 'micDevice'), null for the default. Added by M3-P3 (optional) for the picker. */
+  device?(): string | null;
   /** Personal volume and mute per other player by identity peer id (DESIGN "Chat and voice", Live voice). */
   peerAudio(peerId: string): PeerAudioSetting;
   setPeerAudio(peerId: string, setting: PeerAudioSetting): Promise<void>;

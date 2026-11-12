@@ -13,6 +13,7 @@
     active,
     responding,
     asking = false,
+    speaking = false,
     glyph,
     zones,
     onlife,
@@ -26,6 +27,8 @@
     responding: boolean;
     /** Added by M1-P3: this seat asked a manual round that still waits; its avatar pulses (DESIGN "Turn flow and confirmation", Prompt). */
     asking?: boolean;
+    /** Added by M3-P3: this player is speaking; the avatar shows a speaking ring (DESIGN "Chat and voice", Live voice). */
+    speaking?: boolean;
     glyph: string;
     zones: { id: ZoneId; label: string; count: number }[];
     onlife: (delta: number) => void;
@@ -64,6 +67,8 @@
   class:active
   class:me
   class:away={seat.away === true}
+  class:speaking
+  data-speaking={speaking ? 'true' : 'false'}
   data-testid="avatar"
   data-seat={seat.id}
   data-line-seat={seat.id}
@@ -161,6 +166,11 @@
     background: var(--sp-fg, #111);
     color: var(--sp-surface, #fff);
     border-color: var(--sp-fg, #111);
+  }
+  /* The speaking ring (M3-P3): a thick outline in the seat colour, so it reads without hue as well. */
+  .avatar.speaking {
+    outline: 3px solid var(--seat);
+    outline-offset: 2px;
   }
   .avatar.active {
     border-color: var(--sp-fg, #111);
