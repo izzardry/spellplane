@@ -339,8 +339,8 @@ const circleSegments = (c: { x: number; y: number }, r: number, out: number[], n
 
 /**
  * Hairline zone outlines and their labels (Paper: "zones are hairline outlines with small caps labels"), plus each
- * seat's avatar spot as a ring with the player's name under it, upright for the viewer (M3-P1: with three or four
- * seats a line to a player needs a visible end). `names` are by seat index; an empty name draws the ring alone.
+ * taken seat's avatar spot as a ring with the player's name in it, upright for the viewer (M3-P1: with three or four
+ * seats a line to a player needs a visible end). `names` are by seat index; an empty chair draws no ring.
  */
 export function markings(layout: TableLayout, game: GameDefinition, angle: number, seatsInUse: number, names: readonly string[] = []): Marking {
   const segments: number[] = [];
@@ -350,10 +350,10 @@ export function markings(layout: TableLayout, game: GameDefinition, angle: numbe
   layout.seats.slice(0, Math.max(1, seatsInUse)).forEach((sl, i) => {
     rectSegments(sl.territory, segments);
     const av = sl.zones.avatar;
-    circleSegments(av, AVATAR_SPOT_R, segments);
     const name = (names[sl.index] ?? '').trim();
     if (name) {
-      // Inside the ring, upright for the viewer.
+      // A ring at the spot, the name inside it, upright for the viewer. An empty chair (the solo table's far seat) has none.
+      circleSegments(av, AVATAR_SPOT_R, segments);
       labels.push({ key: `av:${sl.index}`, text: name.slice(0, 12), x: av.x, y: av.y, rot: angle, anchorX: 'center', anchorY: 'middle' });
     }
     for (const z of game.zones) {

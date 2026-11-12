@@ -199,6 +199,14 @@ describe('avatar spots: line ends, taps and markings', () => {
       }
     }
   });
+
+  it('an empty chair has no ring and no name', () => {
+    const layout = mtg.layout('1v1');
+    const m = markings(layout, mtg, 0, 2, ['Anna', '']);
+    expect(m.labels.filter((l) => l.key.startsWith('av:')).map((l) => l.key)).toEqual(['av:0']);
+    const far = layout.seats[1]!.zones.avatar;
+    for (let i = 0; i < m.segments.length; i += 4) expect(Math.abs(Math.hypot(m.segments[i]! - far.x, m.segments[i + 1]! - far.y) - AVATAR_SPOT_R)).toBeGreaterThan(1e-6);
+  });
 });
 
 describe('the camera: own seat at the bottom, seat keys and fitting', () => {
