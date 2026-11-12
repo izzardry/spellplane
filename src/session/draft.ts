@@ -98,14 +98,20 @@ const POOL_ID = new RegExp(`^${POOL_ID_PREFIX}([1-9][0-9]*)$`);
 
 /**
  * `build` with the picks that reached the pool after it was made (pool cards past its highest pool card id) added to
- * the sideboard; the same object when there are none. A build without any pool card id (a deck the player opened from
- * the library instead) gets nothing added.
+ * the sideboard; the same object when there are none. Only a build of this pool is topped up: every pool card id `p<n>`
+ * it holds names `pool[n-1]`. A build without any pool card id, or with one that names another card (a deck the player
+ * opened from the library instead, also one saved from an earlier draft, whose ids are `p1`…`pN` too), gets nothing
+ * added.
  */
 export function withLatePicks(build: DeckBuild, pool: readonly CardRef[]): DeckBuild {
   let highest = 0;
   for (const c of build.cards) {
     const m = POOL_ID.exec(c.id);
-    if (m !== null) highest = Math.max(highest, Number(m[1]));
+    if (m === null) continue;
+    const n = Number(m[1]);
+    const ref = n <= pool.length ? pool[n - 1] : undefined;
+    if (ref === undefined || ref.sid !== c.ref.sid || (ref.foil === true) !== (c.ref.foil === true)) return build;
+    highest = Math.max(highest, n);
   }
   if (highest === 0 || highest >= pool.length) return build;
   const add: PoolCard[] = pool.slice(highest).map((ref, i) => ({ id: `${POOL_ID_PREFIX}${highest + i + 1}`, ref: plainRef(ref) }));

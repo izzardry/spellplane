@@ -11,6 +11,7 @@ import type { CardRef, DeckBuild, LobbySettings, SecretStore, SeatId, TableState
 import { mtg } from '../../../src/games/index';
 import { deckImportOf } from '../../../src/session/deck-build';
 import { buildFromDeck, buildFromPool, staleDraftSecrets, withLatePicks } from '../../../src/session/draft';
+import { buildFromDeckRecord, deckRecordFromBuild } from '../../../src/store/decks';
 import { draftStart, openProposal, proposals, stageStatus } from '../../../src/ui/flow/model';
 
 let cid = 0;
@@ -104,6 +105,26 @@ describe('the deck being built', () => {
     // Nor does it bring back a pool card the build no longer has (only picks past its last one count as late).
     const dropped: DeckBuild = { cards: [{ id: 'p2', ref: { sid: 'b', foil: true } }], main: [] };
     expect(withLatePicks(dropped, pool).cards.map((c) => c.id)).toEqual(['p2', 'p3']);
+  });
+
+  it('adds nothing to a drafted deck from an earlier draft reopened from the library, though its ids are p1…pN too', () => {
+    // An earlier evening: a 30-card pool saved to the library as a drafted deck (its pool build keeps ids p1…p30).
+    const old = buildFromPool(Array.from({ length: 30 }, (_, i) => ({ sid: `old-${i + 1}` })));
+    const record = deckRecordFromBuild({ ...old, main: old.cards.slice(0, 23).map((c) => c.id) }, { id: 'x', name: 'old deck', now: 1, origin: { format: 'pass', sets: ['m19'] } });
+    const opened = buildFromDeckRecord(record);
+    expect(opened.cards.map((c) => c.id)).toContain('p30');
+    // Tonight: a 45-card pool; the player opens the old deck in the builder instead.
+    const tonight: CardRef[] = Array.from({ length: 45 }, (_, i) => ({ sid: `new-${i + 1}` }));
+    expect(withLatePicks(opened, tonight)).toBe(opened);
+    // Nor when the old deck's first cards happen to be tonight's first picks: one other card is enough.
+    const overlapping: CardRef[] = [...old.cards.slice(0, 29).map((c) => c.ref), { sid: 'new-30' }, ...tonight.slice(30)];
+    expect(withLatePicks(opened, overlapping)).toBe(opened);
+    // A foil and a plain printing of the same card are different picks.
+    const foiled: CardRef[] = [...old.cards.map((c, i): CardRef => (i === 4 ? { sid: c.ref.sid, foil: true } : c.ref)), ...tonight.slice(30)];
+    expect(withLatePicks(opened, foiled)).toBe(opened);
+    // The same deck is topped up when tonight's pool really is its pool (saved tonight and reopened).
+    const same: CardRef[] = [...old.cards.map((c) => c.ref), ...tonight.slice(30)];
+    expect(withLatePicks(opened, same).cards.map((c) => c.id)).toEqual(Array.from({ length: 45 }, (_, i) => `p${i + 1}`));
   });
 
   it('keeps a constructed deck as a build, so a rematch sideboards it like a drafted one', () => {
