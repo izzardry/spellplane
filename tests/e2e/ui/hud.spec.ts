@@ -567,9 +567,7 @@ test.describe('app shell routes (PLAN M0-P4: #/ solo table, room for #/t/<room>/
     ['/t/abc/key123', 'route-room'],
     ['/nowhere', 'route-notFound'],
   ] as const) {
-    test(`#${hash} shows its page`, async ({ page, browserName }) => {
-      // M1-P5: the start page reads the key-pair identity, which Playwright WebKit on macOS cannot store (tests/e2e/lobby/helpers.ts).
-      test.skip(hash === '/lobby' && browserName === 'webkit' && process.platform === 'darwin', 'Playwright WebKit on macOS hangs storing a CryptoKey in IndexedDB');
+    test(`#${hash} shows its page`, async ({ page }) => {
       await page.goto(`./?faces=placeholder#${hash}`);
       await expect(page.getByTestId(id)).toBeVisible();
       await page.getByRole('link', { name: /solo table/i }).click();
