@@ -36,5 +36,8 @@ export default defineConfig(({ mode }) => ({
     environment: 'node',
     setupFiles: ['tests/setup.ts'],
     testTimeout: 30_000,
+    // Locally, several agents run the suite at once in parallel worktrees: cap each run's workers so they
+    // do not starve the machine (CI uses Vitest's default). SPELLPLANE_TEST_WORKERS overrides.
+    ...(process.env.CI ? {} : { maxWorkers: Number(process.env.SPELLPLANE_TEST_WORKERS ?? 4) }),
   },
 }));

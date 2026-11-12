@@ -8,7 +8,7 @@ function worktreePort(): number {
   return 4200 + (h % 700);
 }
 // Local runs must come through scripts/pw-guard.mjs (pnpm e2e, e2e:gate, e2e:network, shots):
-// it allows up to four Playwright runs per machine (one per worktree) and aborts on a macOS prompt. Workers
+// it allows up to two Playwright runs per machine (one per worktree) and aborts on a macOS prompt. Workers
 // re-load this config, so only the runner process (no TEST_WORKER_INDEX) checks.
 if (!process.env.CI && !process.env.SPELLPLANE_PW_GUARD && process.env.TEST_WORKER_INDEX === undefined) {
   throw new Error(
