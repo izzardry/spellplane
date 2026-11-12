@@ -21,8 +21,8 @@ import type { Action } from '../core/actions';
 import type { RevealedCard } from '../core/commit';
 import { teammatesOf } from '../core/teams';
 import type { InstanceId, LogEntry, SecretStore, SeatId, TableState } from '../core/types';
-import { teamChannelOver, type TeamChannelHost } from '../net/team';
-import type { TeamChannel, Unsubscribe } from '../net/types';
+import { teamChannelOver, type SendingTeamChannel, type TeamChannelHost } from '../net/team';
+import type { Unsubscribe } from '../net/types';
 import type { TeamControls, TeammateHandCard } from './types';
 
 /** What the session hands the team view (NetTable implements it). */
@@ -55,7 +55,7 @@ export function ownHandPayload(state: TableState, secrets: SecretStore, me: Seat
 }
 
 export class TeamView implements TeamControls {
-  private channel: TeamChannel | null = null;
+  private channel: SendingTeamChannel | null = null;
   /** Copies of each teammate's hand as received, oldest first. */
   private readonly hands = new Map<SeatId, TeammateHandCard[][]>();
   /** What was last sent to each teammate (a key of the payload); cleared when a peer (re)connects. */
@@ -117,9 +117,10 @@ export class TeamView implements TeamControls {
     const key = payload.cards.map((c) => `${c.instanceId}:${c.ref.sid}:${c.ref.foil === true ? 'f' : 'n'}`).join(',');
     for (const to of mates) {
       if (this.lastSent.get(to) === key) continue;
-      // Not sent (the teammate is not connected): no harm; the next (re)connect sends it.
-      this.channel.sendHand(to, payload.cards, payload.order);
-      this.lastSent.set(to, key);
+      // Remembered only once it went out: a hand the engine could not send yet (the teammate's peer not connected or
+      // not verified) goes again on the next sync, whatever event that is.
+      if (this.channel.sendHand(to, payload.cards, payload.order)) this.lastSent.set(to, key);
+      else this.lastSent.delete(to);
     }
   }
 

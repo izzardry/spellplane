@@ -3,13 +3,14 @@
  * t1 = s2 + s3 (core/teams.ts TABLE_FORMAT_TEAMS), entered into the draft stage with core/drafting.ts
  * `createDraftState`, as the stage machine does; everything after that goes through actions.
  */
-import type { RevealedCard } from '../../../src/core/commit';
+import { nonceHash, type RevealedCard } from '../../../src/core/commit';
 import { createDraftState } from '../../../src/core/drafting';
 import { createTable } from '../../../src/core/reducer';
+import { orderHash } from '../../../src/core/rng';
 import { formatTeamSeats, teamIdOf } from '../../../src/core/teams';
 import type { DraftFormatSettings, LobbySettings, SeatId, TableState } from '../../../src/core/types';
 import { mtg } from '../../../src/games/index';
-import { act, ok, packOpenFields, sealPackSeed } from '../draft/open/helpers';
+import { act, ok, packOpenFields } from '../draft/open/helpers';
 
 export const NAMES = ['Anna', 'Ben', 'Cleo', 'Dan'];
 
@@ -32,6 +33,18 @@ let packCounter = 0;
 /** `n` pack cards with unique opaque ids and distinct identities. */
 export function cards(n: number, tag = `t${++packCounter}`): RevealedCard[] {
   return Array.from({ length: n }, (_, i) => ({ instanceId: `id-${tag}-${String(i).padStart(2, '0')}`, ref: { sid: `sid-${tag}-${i}` }, salt: `salt-${tag}-${i}` }));
+}
+
+let sidCounter = 0;
+
+/** A sealed pack-seed round of `seat` with a nonce from every other seated player (a free chair gives none). */
+export function sealPackSeed(state: TableState, seat: SeatId): { state: TableState; sid: string } {
+  const sid = `${seat}-tseed${++sidCounter}`;
+  const nonce = `nonce-${sid}`;
+  let s = ok(state, act('shuffleCommit', { sid, zone: `pack:${seat}`, h: nonceHash(nonce), purpose: 'pack' }, seat));
+  for (const other of Object.values(s.seats)) if (other.id !== seat && other.name.trim() !== '') s = ok(s, act('shuffleNonce', { sid, nonce: `peer-${other.id}-${sid}` }, other.id));
+  s = ok(s, act('shuffleDone', { sid, orderHash: orderHash([], nonce) }, seat));
+  return { state: s, sid };
 }
 
 /** Seal a pack seed for `seat` and open `list` face down as pack `number`; returns the state and the pack id. */

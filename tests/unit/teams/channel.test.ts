@@ -147,6 +147,27 @@ describe('session/team.ts: the team view', () => {
     expect(view(state, 's2', emptySecretStore('s2'), engine('s2')).hand('s0')).toEqual([]);
   });
 
+  it('a hand the engine could not send yet (teammate not verified) goes out on the next sync, without a peers event', () => {
+    const hand = [card('h1'), card('h2')];
+    const state = { current: withHand(teamTable(), 's0', hand) };
+    const { engine, sent } = wire(state);
+    const secrets: SecretStore = { ...emptySecretStore('s0'), hand: ['h1', 'h2'], identities: Object.fromEntries(hand.map((c) => [c.instanceId, { card: c.ref, salt: c.salt }])) };
+    let verified = false;
+    const real = engine('s0');
+    const gated: TeamChannelHost = { ...real, sendPrivate: (to, msg) => verified && real.sendPrivate(to, msg) };
+    const anna = view(state, 's0', secrets, gated);
+    const ben = view(state, 's1', emptySecretStore('s1'), engine('s1'));
+    anna.sync();
+    expect(sent).toHaveLength(0);
+    verified = true;
+    // Any later change of the session syncs again; the unchanged hand is not taken as delivered.
+    anna.sync();
+    expect(sent).toHaveLength(1);
+    expect(ben.hand('s0').map((c) => c.id)).toEqual(['h1', 'h2']);
+    anna.sync();
+    expect(sent).toHaveLength(1);
+  });
+
   it('shows the copy that matches the hand zone, never a card that left it, and nothing while the teammate is away', () => {
     const state = { current: withHand(teamTable(), 's0', [card('h1'), card('h2')]) };
     const { engine } = wire(state);

@@ -70,13 +70,19 @@ function handsGo(state: TableState, me: SeatId | null, to: SeatId): boolean {
   return me !== null && to !== me && state.settings.teamHandsVisible && sameTeam(state, me, to);
 }
 
+/** The team channel as session/team.ts uses it: `sendHand` says whether the hand went out (the engine's `sendPrivate`). */
+export interface SendingTeamChannel extends TeamChannel {
+  /** As TeamChannel.sendHand; false when nothing was sent (not a teammate, hands hidden, or the teammate's peer not connected and verified). */
+  sendHand(to: SeatId, cards: readonly RevealedCard[], order: readonly InstanceId[]): boolean;
+}
+
 /** The team channel over any host with the engine's private-message and state members. */
-export function teamChannelOver(host: TeamChannelHost): TeamChannel {
+export function teamChannelOver(host: TeamChannelHost): SendingTeamChannel {
   return {
     sendHand(to, cards, order) {
       const me = host.seat();
       const st = host.confirmedState();
-      if (!handsGo(st, me, to)) return;
+      if (!handsGo(st, me, to)) return false;
       // Only cards the confirmed state has in the own hand zone (see the module comment).
       const zone = Object.hasOwn(st.zones, `hand:${me}`) ? st.zones[`hand:${me}`]! : null;
       const inHand = new Set(zone?.ids ?? []);
@@ -88,7 +94,7 @@ export function teamChannelOver(host: TeamChannelHost): TeamChannel {
       }
       const ids = new Set(list.map((c) => c.instanceId));
       const msg: TeamHandMessage = { v: PROTOCOL_VERSION, t: 'teamHand', cards: list, order: order.filter((id, i) => ids.has(id) && order.indexOf(id) === i) };
-      host.sendPrivate(to, msg);
+      return host.sendPrivate(to, msg);
     },
     onHand(listener): Unsubscribe {
       return host.onPrivate((msg: PrivateMessage, sender) => {

@@ -35,7 +35,7 @@
 import { verifyReveal, type RevealedCard } from '../core/commit';
 import { pickTimerMs, setForPack } from '../core/drafting';
 import { packRemaining } from '../core/reducer/pass';
-import { draftTeamOf, opensInRound, teamMembers, teamSealedNumbers } from '../core/teams';
+import { draftMembers, draftTeamOf, opensInRound, teamDraftPackIndex, teamSealedNumbers } from '../core/teams';
 import type { DraftPack, DraftState, InstanceId, PackId, SeatId, TableState, TeamDraftSettings, TeamSealedSettings } from '../core/types';
 import { draftSecretsOf } from './open';
 import { openHiddenPack, plainCard, updateSecrets } from './secret';
@@ -53,8 +53,6 @@ export const REQUEST_MS = 2000;
 export const UNMARKED_WAIT_MS = 2000;
 /** How much longer the second member of a team waits than the first (ms). Both waits stay well below TEAM_PICK_GRACE_MS. */
 export const MEMBER_STAGGER_MS = 1000;
-/** Seqs remembered with the local time this browser first applied them. */
-const SEEN_SEQS = 256;
 /** How many sequenced actions received cards wait for their pack to appear in shared state. */
 const WAIT_ACTIONS = 200;
 
@@ -268,11 +266,20 @@ function create(host: DraftHost, format: TeamFormat): DraftDriver {
 
   const off = host.onSequenced((_a, state) => {
     const last = seenSeqs[seenSeqs.length - 1]!;
-    if (state.seq > last.seq) {
-      seenSeqs.push({ seq: state.seq, at: Date.now() });
-      if (seenSeqs.length > SEEN_SEQS) seenSeqs.splice(0, seenSeqs.length - SEEN_SEQS);
+    if (state.seq > last.seq) seenSeqs.push({ seq: state.seq, at: Date.now() });
+    // Forget only what no front pack's timer can ask for: entries before the oldest front pack's `sinceSeq` (the
+    // first entry at or after a seq answers it), always keeping the latest.
+    const d = teamDraftOf(state, format);
+    let oldest = state.seq;
+    if (d !== null) {
+      for (const t of d.drafters) {
+        const front = d.queues[t]?.[0];
+        if (front !== undefined && Object.hasOwn(d.packs, front)) oldest = Math.min(oldest, d.packs[front]!.sinceSeq);
+      }
     }
-    if (teamDraftOf(state, format) === null) return;
+    const keep = seenSeqs.findIndex((e) => e.seq >= oldest);
+    if (keep > 0) seenSeqs.splice(0, keep);
+    if (d === null) return;
     lastSequenced = state;
     reconcile();
   });
@@ -296,7 +303,7 @@ function create(host: DraftHost, format: TeamFormat): DraftDriver {
     if (front === null || front.count === 0 || v.pack === null || v.pack.packId !== front.id) return;
     const key = `${front.id}:${front.picks}`;
     if (timedOut.has(key)) return;
-    const j = Math.max(0, teamMembers(state, team).indexOf(me));
+    const j = Math.max(0, draftMembers(state, d, team).indexOf(me));
     const due = appliedAt(front.sinceSeq) + pickTimerMs(front.picks) + (v.marked.length > 0 ? 0 : UNMARKED_WAIT_MS) + j * MEMBER_STAGGER_MS;
     const now = Date.now();
     if (now < due) {
@@ -347,21 +354,24 @@ function create(host: DraftHost, format: TeamFormat): DraftDriver {
     }
   };
 
-  /** The pack number this browser opens next, or null: its pack of the round (draft), its next team pack (sealed). */
-  const owedPack = (state: TableState): number | null => {
+  /**
+   * The pack this browser opens next, or null: its pack of the round (draft: `number` the round), its next team pack
+   * (sealed); `setIndex` is its team pack index, which picks the set (core/teams.ts `teamDraftPackIndex`).
+   */
+  const owedPack = (state: TableState): { number: number; setIndex: number } | null => {
     const d = live(state);
     const team = draftTeamOf(state, me);
     if (d === null || d.done || team === null) return null;
-    const members = teamMembers(state, team);
+    const members = draftMembers(state, d, team);
     const j = members.indexOf(me);
     const mine = Object.values(d.packs).filter((p) => p.opener === me);
     if (format === 'teamDraft') {
       const packs = (d.settings as TeamDraftSettings).packs;
       if (!opensInRound(packs, members.length, j, d.round) || mine.some((p) => p.number === d.round)) return null;
-      return d.round;
+      return { number: d.round, setIndex: teamDraftPackIndex(members.length, j, d.round) };
     }
     const numbers = teamSealedNumbers((d.settings as TeamSealedSettings).packs, members.length, j);
-    return mine.length < numbers.length ? numbers[mine.length]! : null;
+    return mine.length < numbers.length ? { number: numbers[mine.length]!, setIndex: numbers[mine.length]! } : null;
   };
 
   /** Seats the table waits for: a team holding a pack (both members), and members still owing a pack. */
@@ -369,7 +379,7 @@ function create(host: DraftHost, format: TeamFormat): DraftDriver {
     if (d.done) return [];
     const out: SeatId[] = [];
     for (const team of d.drafters) {
-      const members = teamMembers(state, team);
+      const members = draftMembers(state, d, team);
       const busy = (d.queues[team] ?? []).length > 0;
       for (const [j, seat] of members.entries()) {
         const mine = Object.values(d.packs).filter((p) => p.opener === seat);
@@ -391,10 +401,11 @@ function create(host: DraftHost, format: TeamFormat): DraftDriver {
       if (opening) return;
       const v = host.state();
       const n = owedPack(v);
+      const same = (o: { number: number; setIndex: number } | null): boolean => o !== null && n !== null && o.number === n.number && o.setIndex === n.setIndex;
       // Only once the confirmed state agrees (a new seed round must start after the previous own pack is sequenced).
-      if (n === null || owedPack(conf()) !== n) return;
+      if (n === null || !same(owedPack(conf()))) return;
       const d = live(v)!;
-      void open(n, setForPack(d.sets, n), () => owedPack(host.state()) === n);
+      void open(n.number, setForPack(d.sets, n.setIndex), () => same(owedPack(host.state())));
     },
     view(): DraftPrivateView {
       const s = host.secrets();

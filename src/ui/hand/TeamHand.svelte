@@ -7,7 +7,7 @@
 -->
 <script lang="ts">
   import CardFace from '../CardFace.svelte';
-  import type { TeamHandProps } from '../types';
+  import { TEAM_FAN_HEIGHT, type TeamHandProps } from '../types';
   import { teamFanBottom, teamFanLayout } from './team';
 
   let { seat, state: table, cards, faces, inspect, vw, vh }: TeamHandProps & { vw: number; vh: number } = $props();
@@ -21,7 +21,7 @@
 
 <div class="team-hand" data-testid="team-hand" data-seat={seat} aria-label={label} role="group" style:--seat="var(--sp-seat-{owner?.colour ?? 0}, #111)">
   {#if cards.length > 0}
-    <div class="label" style:bottom="{teamFanBottom(vh) + vh * 0.14 + 4}px" data-testid="team-hand-label">
+    <div class="label" style:bottom="{teamFanBottom(vh) + vh * TEAM_FAN_HEIGHT + 4}px" data-testid="team-hand-label">
       <span class="dot" aria-hidden="true"></span>{label} · {cards.length}
     </div>
   {/if}

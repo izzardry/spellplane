@@ -31,7 +31,9 @@
  * Two-Headed Giant (M3-P2; DESIGN "Specification: card data, packs and draft formats", Draft formats: "A team shares
  * each pack and pool; the team picks 2 cards per pass; passing goes team to team, alternating direction per round"):
  * the drafters are the teams. Every member opens packs for its team (core/teams.ts `opensInRound`,
- * `teamSealedNumbers`); a pack's opener is the seat, its holder the team. In the draft either teammate picks for the
+ * `teamSealedNumbers`, over the frozen `draftMembers`), each of the set of its team pack index (the lobby's set list is
+ * per team pack: in the draft member j of m opens team pack round · m + j); a pack's opener is the seat, its holder the
+ * team. In the draft either teammate picks for the
  * team: the pick names the opaque ids it takes (`cards`), because both teammates' browsers must add the same cards to
  * the shared pool; the ids are recorded in `DraftState.taken[team]` in pick order. Opaque ids say nothing about the
  * cards, and the team the pack goes to learns which ids are gone from the cards it receives anyway. A pick hands the
@@ -47,7 +49,7 @@
 import type { ActionOf } from '../actions';
 import { passDirection, passTarget, setForPack } from '../drafting';
 import { shuffleReady } from '../rng';
-import { opensInRound, packsInRound, teamMembers, teamSealedNumbers } from '../teams';
+import { draftMembers, opensInRound, packsInRound, teamDraftPackIndex, teamSealedNumbers } from '../teams';
 import type { DrafterId, DraftPack, DraftState, InstanceId, PackId, PassDraftSettings, SealedSettings, SeatId, TeamDraftSettings, TeamSealedSettings } from '../types';
 import type { Draft } from './draft';
 import { checkId, checkInt, checkString, own, reject } from './util';
@@ -97,9 +99,10 @@ interface HiddenPack {
 /**
  * Check a face-down `packOpen` of `by`: a new pack id; 1 to MAX_PACK_CARDS cards with as many sorted commitments and
  * sorted, unused opaque ids; no identities; generated from a pack-seed round of `by` that is sealed, its latest, and
- * newer than its previous pack; the set of the pack number.
+ * newer than its previous pack; the set of the pack number (or of `setIndex`: the team pack index in the Two-Headed
+ * Giant draft, whose `number` is the round).
  */
-function checkHiddenOpen(d: Draft, draft: DraftState, by: SeatId, a: ActionOf<'packOpen'>): HiddenPack {
+function checkHiddenOpen(d: Draft, draft: DraftState, by: SeatId, a: ActionOf<'packOpen'>, setIndex?: number): HiddenPack {
   const packId = checkId(a.packId, 'pack');
   if (own(draft.packs, packId)) reject(`pack ${packId} is already open`);
   if (a.public === true || a.cards !== undefined) reject('this pack stays hidden: only its holder sees its cards');
@@ -132,7 +135,8 @@ function checkHiddenOpen(d: Draft, draft: DraftState, by: SeatId, a: ActionOf<'p
   }
   const number = checkInt(a.number, 'pack number', 0, 1000);
   const set = checkString(a.set, 'set code', 16);
-  if (set !== setForPack(draft.sets, number)) reject(`pack ${number + 1} is of set ${setForPack(draft.sets, number)}`);
+  const want = setForPack(draft.sets, setIndex ?? number);
+  if (set !== want) reject(`${setIndex === undefined ? `pack ${number + 1}` : `team pack ${setIndex + 1}`} is of set ${want}`);
   return { packId, ids, commits, number, set };
 }
 
@@ -338,9 +342,9 @@ function checkTeamDrafter(d: Draft, draft: DraftState, by: unknown): { seat: Sea
   return { seat, team };
 }
 
-/** Member counts of the drafting teams, in drafter order. */
+/** Member counts of the drafting teams (core/teams.ts `draftMembers`), in drafter order. */
 function memberCounts(d: Draft, draft: DraftState): number[] {
-  return draft.drafters.map((t) => teamMembers(d.base, t).length);
+  return draft.drafters.map((t) => draftMembers(d.base, draft, t).length);
 }
 
 /** Every id some drafter took (`DraftState.taken`). */
@@ -363,15 +367,19 @@ function takenOf(draft: DraftState, team: DrafterId): InstanceId[] {
   return draft.taken[team]!;
 }
 
-/** `packOpen` of a Two-Headed Giant draft: a member opens its pack of the round; it joins the back of its team's queue. */
+/**
+ * `packOpen` of a Two-Headed Giant draft: a member opens its pack of the round (`number` = the round), of the set of
+ * its team pack index (core/teams.ts `teamDraftPackIndex`); it joins the back of its team's queue.
+ */
 function teamDraftOpen(d: Draft, a: ActionOf<'packOpen'>): void {
   const draft = running(d, 'teamDraft');
   const { seat, team } = checkTeamDrafter(d, draft, a.by);
-  const p = checkHiddenOpen(d, draft, seat, a);
+  const members = draftMembers(d.base, draft, team);
+  const j = members.indexOf(seat);
+  const p = checkHiddenOpen(d, draft, seat, a, teamDraftPackIndex(members.length, j, draft.round));
   if (p.number !== draft.round) reject(`round ${draft.round + 1} opens pack ${draft.round + 1}`);
-  const members = teamMembers(d.base, team);
   const packs = (draft.settings as TeamDraftSettings).packs;
-  if (!opensInRound(packs, members.length, members.indexOf(seat), draft.round)) reject(`${seat} opens no pack in round ${draft.round + 1}: the team has opened its ${packs} packs`);
+  if (!opensInRound(packs, members.length, j, draft.round)) reject(`${seat} opens no pack in round ${draft.round + 1}: the team has opened its ${packs} packs`);
   if (Object.values(draft.packs).some((x) => x.opener === seat && x.number === p.number)) reject(`${seat} already opened pack ${p.number + 1}`);
   takenOf(draft, team);
   const seq = seqOf(d, a);
@@ -384,7 +392,7 @@ function teamSealedOpen(d: Draft, a: ActionOf<'packOpen'>): void {
   const draft = running(d, 'teamSealed');
   const { seat, team } = checkTeamDrafter(d, draft, a.by);
   const total = (draft.settings as TeamSealedSettings).packs;
-  const members = teamMembers(d.base, team);
+  const members = draftMembers(d.base, draft, team);
   const mine = teamSealedNumbers(total, members.length, members.indexOf(seat));
   const opened = Object.values(draft.packs).filter((x) => x.opener === seat).length;
   if (opened >= mine.length) reject(`${seat} opened all of its ${mine.length} packs for the team`);

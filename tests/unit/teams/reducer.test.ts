@@ -10,7 +10,9 @@ import { canonicalJson } from '../../../src/core/hash';
 import { draftDeadlines, pickTimerMs, TEAM_PICK_GRACE_MS } from '../../../src/core/drafting';
 import { packRemaining } from '../../../src/core/reducer/pass';
 import { formatSeatProblem } from '../../../src/core/stage';
-import { activeSeats, opensInRound, teamDraftRounds, teamMembers, teamSealedNumbers } from '../../../src/core/teams';
+import { activeSeats, draftMembers, opensInRound, teamDraftPackIndex, teamDraftRounds, teamMembers, teamSealedNumbers } from '../../../src/core/teams';
+import { freshNetTable } from '../../../src/session/net';
+import { mtg } from '../../../src/games/index';
 import type { DraftState, TableState } from '../../../src/core/types';
 import { act, no, ok } from '../draft/open/helpers';
 import { cards, open, teamDraftTable, teamTable } from './helpers';
@@ -217,6 +219,80 @@ describe('Two-Headed Giant draft: picking', () => {
     expect(draftOf(s).packs[front]!.holder).toBe('t0');
     no(s, act('draftTimeout', { packId: front, picks: 0 }, 's0'), /not waiting|over/);
     no(openRound(teamDraftTable(DRAFT)), act('draftTimeout', { packId: front, picks: 0 }, 's0'), /pick timer is off|unknown pack/);
+  });
+});
+
+describe('Two-Headed Giant draft: sets per team pack and frozen members', () => {
+  // DESIGN Lobby settings: "set per pack (… a different set per pack is allowed)"; the lobby offers one slot per team pack.
+  const SETS = ['M19', 'M20', 'DOM', 'GRN', 'RNA', 'WAR'];
+
+  /** Every pack of the running round goes round its tables until the round ends (t0 picks by s0, t1 by s2). */
+  function drainRound(state: TableState): TableState {
+    let s = state;
+    const round = draftOf(s).round;
+    while (!draftOf(s).done && draftOf(s).round === round && (draftOf(s).queues.t0!.length > 0 || draftOf(s).queues.t1!.length > 0)) {
+      for (const team of ['t0', 't1']) if (draftOf(s).queues[team]!.length > 0) s = pickFront(s, team, team === 't0' ? 's0' : 's2');
+    }
+    return s;
+  }
+
+  it('member j of m opens team pack round · m + j, of that slot\'s set, not the round\'s', () => {
+    expect([0, 1, 2].flatMap((round) => [0, 1].map((j) => teamDraftPackIndex(2, j, round)))).toEqual([0, 1, 2, 3, 4, 5]);
+    let s = teamDraftTable(DRAFT, SETS);
+    for (let round = 0; round < 3; round++) {
+      expect(draftOf(s).round).toBe(round);
+      for (const [seat, j] of [['s0', 0], ['s1', 1], ['s2', 0], ['s3', 1]] as const) {
+        const want = SETS[round * 2 + j]!;
+        // The round's set (the old reading) is refused unless it is the slot's.
+        if (SETS[round] !== want) expect(() => open(s, seat, cards(4), round, SETS[round])).toThrow(new RegExp(`team pack ${round * 2 + j + 1} is of set ${want}`));
+        const o = open(s, seat, cards(4), round, want);
+        s = o.state;
+        expect(draftOf(s).packs[o.packId]!.set).toBe(want);
+      }
+      s = drainRound(s);
+    }
+    expect(draftOf(s).done).toBe(true);
+    expect(Object.values(draftOf(s).packs).map((p) => p.set).sort()).toEqual([...SETS, ...SETS].sort());
+  });
+
+  it('a member who leaves the chair keeps the place: the round waits for their pack, and the team keeps its 3 rounds and set slots', () => {
+    let s = teamDraftTable(DRAFT, SETS);
+    for (const [seat, j] of [['s0', 0], ['s1', 1], ['s2', 0], ['s3', 1]] as const) s = open(s, seat, cards(4), 0, SETS[j]).state;
+    // Ben leaves his chair after opening his round-1 pack.
+    s = ok(s, act('seatLeave', { seat: 's1' }, 's1'));
+    expect(teamMembers(s, 't0')).toEqual(['s0']);
+    expect(draftMembers(s, draftOf(s), 't0')).toEqual(['s0', 's1']);
+    s = drainRound(s);
+    expect(draftOf(s).round).toBe(1);
+    // Anna still opens team pack 3 (DOM), not pack 2 as a one-member team would, and Ben's turn is not hers.
+    expect(() => open(s, 's0', cards(4), 1, 'M20')).toThrow(/set DOM/);
+    for (const [seat, j] of [['s0', 0], ['s2', 0], ['s3', 1]] as const) s = open(s, seat, cards(4), 1, SETS[2 + j]).state;
+    s = drainRound(s);
+    // Three of the round's four packs are empty: the round waits for Ben's.
+    expect(draftOf(s).round).toBe(1);
+    expect(draftOf(s).done).toBe(false);
+    no(s, act('packOpen', { packId: 'x', commits: [], count: 0 }, 's1'), /not seated/);
+    s = ok(s, act('seatTake', { seat: 's1', name: 'Ben', colour: 1, peer: 'p1' }, 's1'));
+    s = open(s, 's1', cards(4), 1, 'GRN').state;
+    s = drainRound(s);
+    expect(draftOf(s).round).toBe(2);
+    for (const [seat, j] of [['s0', 0], ['s1', 1], ['s2', 0], ['s3', 1]] as const) s = open(s, seat, cards(4), 2, SETS[4 + j]).state;
+    s = drainRound(s);
+    expect(draftOf(s).done).toBe(true);
+    expect(draftOf(s).pools).toEqual({ t0: 24, t1: 24 });
+  });
+});
+
+describe('Two-Headed Giant tables: teams from the start and from formatSet agree', () => {
+  it('a room created as 2hg and a 1v1 table switched to 2hg in the lobby give the same seats the same teams', () => {
+    const fresh = freshNetTable(mtg, '2hg');
+    let s = freshNetTable(mtg, '1v1');
+    s = ok(s, act('seatTake', { seat: 's0', name: 'Anna', colour: 0, peer: 'p0' }, 's0'));
+    s = ok(s, act('formatSet', { format: '2hg', life: 30 }, 's0'));
+    const teamsOf = (t: TableState): Record<string, string | undefined> => Object.fromEntries(Object.values(t.seats).map((x) => [x.id, x.team]));
+    expect(teamsOf(s)).toEqual(teamsOf(fresh));
+    expect(teamsOf(s)).toEqual({ s0: 't0', s1: 't0', s2: 't1', s3: 't1' });
+    expect(Object.values(s.teams).map((t) => [t.id, t.seats])).toEqual(Object.values(fresh.teams).map((t) => [t.id, t.seats]));
   });
 });
 

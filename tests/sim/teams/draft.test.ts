@@ -47,8 +47,10 @@ function expectSharedAndComplete(t: TeamNet, cardsPerTeam: number): void {
 }
 
 describe('Two-Headed Giant draft: the team pool is shared and complete', () => {
-  it('6 packs per team, 2 picks per pass, under delay, drop, a reload and an outage', async () => {
-    const t = await teamNet({ format: 'teamDraft', packs: 6, picks: 2 }, FAULTY, ['M19', 'M20', 'M21']);
+  it('6 packs per team, 2 picks per pass, under delay, drop, a reload and an outage; the set list is per team pack', async () => {
+    // DESIGN Lobby settings: "set per pack (… a different set per pack is allowed)"; the lobby offers one slot per team pack.
+    const sets = ['M19', 'M19', 'M19', 'M20', 'M20', 'M20'];
+    const t = await teamNet({ format: 'teamDraft', packs: 6, picks: 2 }, FAULTY, sets);
     const ben = t.seats[1]!;
     const dan = t.seats[3]!;
     let reloaded = false;
@@ -74,6 +76,14 @@ describe('Two-Headed Giant draft: the team pool is shared and complete', () => {
     const d = t.seats[0]!.peer.state.draft!;
     expect(d.round).toBe(2);
     expect(Object.keys(d.packs)).toHaveLength(12);
+    // Member j of a team opens team pack round · 2 + j in round `round`, of that slot's set: the M20 packs appear.
+    for (const p of Object.values(d.packs)) {
+      const team = t.start.seats[p.opener]!.team!;
+      const j = Object.values(t.start.seats).filter((x) => x.team === team).sort((a, b) => a.index - b.index).map((x) => x.id).indexOf(p.opener);
+      expect(p.set, `${p.opener}'s pack of round ${p.number + 1}`).toBe(sets[p.number * 2 + j]);
+    }
+    expect(Object.values(d.packs).filter((p) => p.set === 'M20')).toHaveLength(6);
+    for (const s of t.seats) for (const g of s.secrets().draft?.generated ?? []) expect(g.set).toBe(d.packs[g.packId]!.set);
     // Pool order is pick order: the ids the team's picks named.
     for (const s of t.seats) expect(poolOf(s).map((c) => c.instanceId)).toEqual(d.taken![s.team]);
     expectSharedAndComplete(t, 6 * 15);
