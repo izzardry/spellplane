@@ -5,29 +5,11 @@
  */
 import type { CardRef, DeckBuild, SeatId, SetCode, TableState } from '../../core/types';
 import type { CardData, CardDataSource, DeckEntry, SetDataSource } from '../../data/types';
-import type { DeckImport } from '../../session/types';
 import type { DeckRecord } from '../../store/types';
 import { moveToPool } from './list/model';
 
-/**
- * What Ready commits (DESIGN "Pre-game", Deck building: "Ready locks the deck and publishes its commitment"): the main
- * deck in deck order as the library, every other pool card as the sideboard (dispensed basics outside the deck are
- * back in the dispenser, so they are not part of the sideboard). Deck ids the pool lacks and repeats are skipped.
- */
-export function deckImportOf(build: DeckBuild): DeckImport {
-  const byId = new Map(build.cards.map((c) => [c.id, c] as const));
-  const ref = (r: CardRef): CardRef => (r.foil ? { sid: r.sid, foil: true } : { sid: r.sid });
-  const seen = new Set<string>();
-  const main: CardRef[] = [];
-  for (const id of build.main) {
-    const c = byId.get(id);
-    if (!c || seen.has(id)) continue;
-    seen.add(id);
-    main.push(ref(c.ref));
-  }
-  const side = build.cards.filter((c) => !seen.has(c.id) && !c.basic).map((c) => ref(c.ref));
-  return { main, side };
-}
+/** What Ready commits (moved next to the session for DraftControls.ready(); re-exported for the builder). */
+export { deckImportOf } from '../../session/deck-build';
 
 /** The seat has committed its deck (Ready): the builder is locked until the next return to the builder. */
 export function isLocked(state: TableState, seat: SeatId): boolean {

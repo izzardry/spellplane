@@ -14,7 +14,9 @@ import type { DraftControls, DraftPrivateView } from '../../draft/types';
 import { mtg } from '../../games/index';
 import { createBuilderSurfaceImpl, type BuilderDebugCard, type BuilderSurfaceHandle } from '../../scene/builder';
 import type { BuilderSort, CreateBuilderSurface, ScreenPoint, TablePoint } from '../../scene/types';
+import { deckImportOf } from '../../session/deck-build';
 import { createSoloSession } from '../../session/solo';
+import type { TableSession } from '../../session/types';
 import { paper } from '../../themes/paper/index';
 import { FakeCardData, FakeFaces } from '../fakes';
 import type { BuilderViewKind } from '../types';
@@ -50,7 +52,11 @@ declare global {
 export class BuildHolder implements DraftControls {
   writes = 0;
   private listeners = new Set<(v: DraftPrivateView) => void>();
-  constructor(public current: DeckBuild | null) {}
+  /** `session`, when given, is where Ready commits (as M2-P7's DraftControls does: deckImportOf, then importDeck). */
+  constructor(
+    public current: DeckBuild | null,
+    private readonly session?: Pick<TableSession, 'importDeck'>,
+  ) {}
   view(): DraftPrivateView {
     return { format: 'pass', pack: null, picks: 0, marked: [], queued: 0, pool: (this.current?.cards ?? []).filter((c) => !c.basic).map((c) => c.ref), timer: null, waitingOn: [] };
   }
@@ -82,7 +88,8 @@ export class BuildHolder implements DraftControls {
     for (const l of this.listeners) l(v);
   }
   ready(): Promise<void> {
-    return Promise.resolve();
+    if (!this.session || !this.current) return Promise.resolve();
+    return this.session.importDeck(deckImportOf(this.current));
   }
 }
 
@@ -135,7 +142,7 @@ export async function mount(target: HTMLElement, cards: readonly CardData[]): Pr
   const session = await createSoloSession({ game: mtg, cardData: data, playerName: 'Anna' });
   const kind = q.get('pool') ?? 'draft';
   const pool = kind === 'none' ? null : kind === 'empty' ? { cards: [], main: [] } : harnessPool(cards, kind === 'sealed' ? 90 : 45);
-  const holder = new BuildHolder(pool);
+  const holder = new BuildHolder(pool, session);
   let surface: BuilderSurfaceHandle | null = null;
   const createSurface: CreateBuilderSurface = (host, o) => (surface = createBuilderSurfaceImpl(host, o));
   const view: BuilderViewKind = q.get('view') === 'list' ? 'list' : 'table';

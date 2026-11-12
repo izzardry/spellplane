@@ -170,6 +170,25 @@ test.describe('the basic-land dispenser (unlimited basics of any chosen printing
     await expect(row.getByTestId('dispenser-count')).toHaveText('2');
     await expect(page.getByTestId('stats-lands')).toHaveAttribute('data-value', String(lands0 + 2));
   });
+
+  test('the lands of a limited deck all stay in sight: two drafted lands and 17 dispensed Forests make one cascade, no hidden pile', async ({ page }) => {
+    await openBuilder(page);
+    await settled(page);
+    const b0 = await build(page);
+    const drafted = b0.cards.filter((c) => !c.basic && /\bLand\b/.test(lookup(c.ref)!.type_line)).slice(0, 2);
+    expect(drafted).toHaveLength(2);
+    await bh(page, 'setBuild', { ...b0, main: drafted.map((c) => c.id) });
+    await settled(page);
+    const row = page.locator('[data-testid="dispenser-row"][data-basic="Forest"]');
+    for (let i = 0; i < 17; i++) await row.getByTestId('dispenser-add').click();
+    await settled(page);
+    const deck = (await bh(page, 'cards')).filter((c) => c.area === 'deck');
+    expect(deck).toHaveLength(19);
+    expect(new Set(deck.map((c) => `${c.pose.x.toFixed(2)}:${c.pose.y.toFixed(2)}`)).size).toBe(19);
+    expect(deck.every((c) => c.pile?.kind === 'cascade' && c.pile.count === 19 && c.visible)).toBe(true);
+    await expect(page.getByTestId('builder-pile-count')).toHaveCount(0);
+    await expect(page.locator('[data-testid="builder-column-label"][data-area="deck"][data-column="L"]')).toHaveAttribute('data-count', '19');
+  });
 });
 
 test.describe('Ready (DESIGN: Ready locks the deck and publishes its commitment)', () => {

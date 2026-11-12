@@ -5,8 +5,8 @@
   deck area and a sideboard area, and the basic-land dispenser with a printing per basic. The list view (M2-P6,
   ui/builder/list/) is the compact two-column list. Both read and write the one shared DeckBuild through
   DraftControls.build/setBuild, so switching keeps everything. Beside both: the live readout (card count, mana curve,
-  colour split, land count, the 40-card hint) and Ready, which commits the deck through TableSession.importDeck and
-  locks the builder. Keys: 1/2/3 sort, 0 fits the table, Escape clears the selection or closes the inspect view, hold
+  colour split, land count, the 40-card hint) and Ready, which commits the deck through DraftControls.ready() (the
+  M1 ready path: deckImportOf, then TableSession.importDeck) and locks the builder. Keys: 1/2/3 sort, 0 fits the table, Escape clears the selection or closes the inspect view, hold
   Space over a card to inspect it; keys never fire in a text field. Implementer: M2-P5.
 -->
 <script lang="ts">
@@ -68,6 +68,9 @@
   let inspectRef = $state.raw<CardRef | null>(null);
   let inspectBySpace = false;
   let spaceHeld = false;
+  /** Panel width and the narrow layout's breakpoint, as in the style block. */
+  const PANEL_PX = 284;
+  const NARROW_PX = 720;
   let vw = $state(1280);
   let vh = $state(800);
   let host: HTMLDivElement | undefined = $state();
@@ -92,11 +95,13 @@
     return Object.fromEntries(BASIC_NAMES.map((n) => [n, b ? dispensedCount(b, n, lookup) : 0])) as Record<BasicName, number>;
   });
 
+  let flashTimer: ReturnType<typeof setTimeout> | null = null;
   function flash(text: string): void {
     note = text;
-    const shown = text;
-    setTimeout(() => {
-      if (note === shown) note = '';
+    if (flashTimer) clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => {
+      flashTimer = null;
+      note = '';
     }, 3000);
   }
 
@@ -182,7 +187,9 @@
     if (!deck.main.length) return flash('Put some cards in the deck first.');
     readying = true;
     try {
-      await session.importDeck(deck);
+      // The contract's Ready path (draft/types.ts DraftControls.ready): it commits deckImportOf(build) of the build
+      // written through setBuild, so the stage bookkeeping around Ready stays in one place.
+      await draft.ready();
     } catch (e) {
       flash(e instanceof Error ? e.message : String(e));
     } finally {
@@ -288,10 +295,15 @@
       unsubState();
       unsubDraft();
       motionQuery?.removeEventListener('change', onMotion);
+      if (flashTimer) clearTimeout(flashTimer);
+      flashTimer = null;
       surface?.dispose();
       surface = null;
     };
   });
+
+  /** What the bar and the panel cover of the table (top right bottom left, px): the panel sits right, or at the bottom (40%) below 720 px. */
+  const fitInsets = $derived(vw <= NARROW_PX ? `56 0 ${Math.round(vh * 0.4)} 0` : `56 ${PANEL_PX} 0 0`);
 
   const SORTS: { key: BuilderSort; label: string; hotkey: string }[] = [
     { key: 'colour', label: 'Colour', hotkey: '1' },
@@ -303,7 +315,7 @@
 <svelte:window bind:innerWidth={vw} bind:innerHeight={vh} {onkeydowncapture} {onkeydown} {onkeyup} />
 
 <div class="root" style={cssVars} data-testid="builder" data-view={viewKind} data-locked={locked ? 'true' : 'false'}>
-  <div class="surface" class:hidden={viewKind !== 'table'} data-testid="builder-surface" data-fit-insets="56 284 0 0" bind:this={host}></div>
+  <div class="surface" class:hidden={viewKind !== 'table'} data-testid="builder-surface" data-fit-insets={fitInsets} bind:this={host}></div>
   {#if viewKind === 'list' && build}
     <div class="list" data-testid="builder-list-host">
       <ListView {build} onChange={change} card={lookup} sort={sortKey} {search} {decks} origin={listOrigin} />

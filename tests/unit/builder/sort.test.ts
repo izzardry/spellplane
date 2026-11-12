@@ -153,6 +153,28 @@ describe('sorting is reversible (PLAN M2-P5 acceptance)', () => {
     expect(start).toEqual(sortLayout(b, lookup, 'colour'));
   });
 
+  it('the chain is a stack: hand-made, colour, type, type, colour ends at the hand-made layout', () => {
+    const b = draftedPool();
+    b.main = b.cards.slice(0, 12).map((c) => c.id);
+    const mine = scatter(b, 11);
+    const byColour = sortToggle(b, mine, lookup, 'colour', null);
+    const byType = sortToggle(b, byColour.poses, lookup, 'type', byColour.memo);
+    const backToColour = sortToggle(b, byType.poses, lookup, 'type', byType.memo);
+    expect(backToColour.restored).toBe(true);
+    expect(backToColour.poses).toEqual(byColour.poses);
+    const backToMine = sortToggle(b, backToColour.poses, lookup, 'colour', backToColour.memo);
+    expect(backToMine.restored).toBe(true);
+    expect(backToMine.poses).toEqual(mine);
+    expect(backToMine.memo).toBeNull();
+    // A different key in the middle of the chain sorts and goes on top; unwinding passes through it.
+    const mv = sortToggle(b, byType.poses, lookup, 'manaValue', byType.memo);
+    const u1 = sortToggle(b, mv.poses, lookup, 'manaValue', mv.memo);
+    expect(u1.poses).toEqual(byType.poses);
+    const u2 = sortToggle(b, u1.poses, lookup, 'type', u1.memo);
+    const u3 = sortToggle(b, u2.poses, lookup, 'colour', u2.memo);
+    expect(u3.poses).toEqual(mine);
+  });
+
   it('after a card was moved, the key sorts again instead of restoring', () => {
     const b = draftedPool();
     const mine = scatter(b, 5);

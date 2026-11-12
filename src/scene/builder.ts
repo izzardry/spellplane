@@ -62,7 +62,11 @@ export const BUILDER_LAYOUT = {
 /** The two marked areas of the builder table (DESIGN "Pre-game", Deck building: "A deck area and a sideboard area"). */
 export type BuilderArea = 'deck' | 'side';
 
-/** The area a table point lies in: the upper half is the deck, the lower half the sideboard. */
+/**
+ * The area a table point belongs to: the nearer of the two marked areas, so the upper half is the deck and the lower
+ * half the sideboard (the unmarked band between the outlines and the table edge go to the nearer area). A card in a
+ * pile follows its pile's base card (`areasOf`).
+ */
 export function areaOf(p: { y: number }): BuilderArea {
   return p.y >= 0 ? 'deck' : 'side';
 }
@@ -237,16 +241,41 @@ export function sortLayout(build: DeckBuild, card: CardLookup, key: BuilderSort)
   return out;
 }
 
-/** Where a card joins the bottom of its column in an area, given the poses already taken. */
-export function columnSlot(poses: Poses, area: BuilderArea, column: number): Pose {
+/**
+ * Card `id` joins the bottom of its column in an area, given the poses already taken. Returns the new card's pose and,
+ * when the column has no room left for another cascade step, the column's cards re-laid as one cascade from its top
+ * with a compressed step (`cascadeStep`), so no card ends up on another's spot.
+ */
+export function columnPlace(poses: Poses, area: BuilderArea, column: number, id: string): Poses {
   const x = columnX(column);
-  let lowest: number | null = null;
-  for (const p of Object.values(poses)) {
-    if (areaOf(p) !== area || Math.abs(p.x - x) >= CARD_W / 2) continue;
-    if (lowest === null || p.y < lowest) lowest = p.y;
+  const inColumn: [string, Pose][] = [];
+  for (const [k, p] of Object.entries(poses)) {
+    if (k === id || areaOf(p) !== area || Math.abs(p.x - x) >= CARD_W / 2) continue;
+    inColumn.push([k, p]);
   }
-  const y = lowest === null ? columnTopY(area) : Math.max(columnBottomY(area), lowest - BUILDER_LAYOUT.cascade);
-  return { x, y, rot: 0 };
+  if (!inColumn.length) return { [id]: { x, y: columnTopY(area), rot: 0 } };
+  const lowest = Math.min(...inColumn.map(([, p]) => p.y));
+  const bottom = columnBottomY(area);
+  if (lowest - BUILDER_LAYOUT.cascade >= bottom - 1e-6) return { [id]: { x, y: lowest - BUILDER_LAYOUT.cascade, rot: 0 } };
+  // Full: the column's cards top to bottom (draw order on a shared spot kept by pose order), the new card last.
+  const list = inColumn.sort((a, b) => b[1].y - a[1].y).map(([k]) => k);
+  list.push(id);
+  const n = list.length;
+  let top = Math.min(columnTopY(area), Math.max(...inColumn.map(([, p]) => p.y)));
+  let step = Math.min(BUILDER_LAYOUT.cascade, (top - bottom) / (n - 1));
+  if (step < 1) {
+    top = columnTopY(area);
+    step = cascadeStep(n, area);
+  }
+  const out: Poses = {};
+  list.forEach((k, row) => (out[k] = { x, y: top - row * step, rot: 0 }));
+  return out;
+}
+
+/** Where a card joins the bottom of its column in an area, given the poses already taken (see `columnPlace`). */
+export function columnSlot(poses: Poses, area: BuilderArea, column: number): Pose {
+  const id = '\u0000new';
+  return columnPlace(poses, area, column, id)[id]!;
 }
 
 /**
@@ -255,19 +284,20 @@ export function columnSlot(poses: Poses, area: BuilderArea, column: number): Pos
  * under `key` in the right area, deck cards in deck order first. A build without any stored pose is laid out sorted.
  */
 export function reconcile(build: DeckBuild, card: CardLookup, key: BuilderSort): Poses {
-  const stored = build.poses ?? {};
-  if (!build.cards.some((c) => validPose(stored[c.id]))) return sortLayout(build, card, key);
+  const stored = posesFor(build, build.poses ?? {});
+  if (!Object.keys(stored).length) return sortLayout(build, card, key);
+  const areas = areasOf(stored, build.cards.map((c) => c.id));
   const m = membership(build);
   const out: Poses = {};
   const missing: { pc: PoolCard; area: BuilderArea }[] = [];
   for (const area of ['deck', 'side'] as const) {
     for (const pc of m[area]) {
       const p = stored[pc.id];
-      if (validPose(p) && areaOf(p) === area) out[pc.id] = { x: p.x, y: p.y, rot: p.rot };
+      if (p && areas.get(pc.id) === area) out[pc.id] = p;
       else missing.push({ pc, area });
     }
   }
-  for (const { pc, area } of missing) out[pc.id] = columnSlot(out, area, columnOf(card(pc.ref), key).index);
+  for (const { pc, area } of missing) Object.assign(out, columnPlace(out, area, columnOf(card(pc.ref), key).index, pc.id));
   return out;
 }
 
@@ -291,17 +321,25 @@ function posesFor(build: DeckBuild, poses: Poses): Poses {
  * Cards dropped at new poses (DESIGN "Pre-game", Deck building: deck and sideboard areas). `shown` is every card's
  * current pose, `moved` the dropped cards' new poses in drop order. A card dropped in the deck area joins the deck (at
  * its end), one dropped in the sideboard area leaves it; a dispensed basic (`basic: true`) dropped in the sideboard area
- * goes back to the unlimited dispenser and leaves the build. The result carries every card's pose.
+ * goes back to the unlimited dispenser and leaves the build. A card in a cascade or squared pile belongs to its base
+ * card's area (`areasOf`), so a pile lying across the line between the areas is wholly deck or wholly sideboard. The
+ * result carries every card's pose.
  */
 export function applyDrop(build: DeckBuild, shown: Poses, moved: Poses): DeckBuild {
   const out = copyBuild(build);
-  const poses: Poses = { ...shown, ...moved };
+  const poses: Poses = posesFor(out, { ...shown, ...moved });
   const inMain = new Set(out.main);
   const returned = new Set<string>();
   const basic = new Set(out.cards.filter((c) => c.basic).map((c) => c.id));
-  for (const [id, p] of Object.entries(moved)) {
-    if (!out.cards.some((c) => c.id === id)) continue;
-    if (areaOf(p) === 'deck') {
+  const live = new Set(out.cards.map((c) => c.id));
+  const movedIds = Object.keys(moved).filter((id) => live.has(id));
+  const ids = [...movedIds, ...out.cards.map((c) => c.id).filter((id) => !(id in moved))];
+  const areas = areasOf(poses, ids);
+  const wasMoved = new Set(movedIds);
+  for (const id of ids) {
+    const area = areas.get(id);
+    if (!area) continue;
+    if (area === 'deck') {
       if (!inMain.has(id)) {
         out.main.push(id);
         inMain.add(id);
@@ -311,7 +349,7 @@ export function applyDrop(build: DeckBuild, shown: Poses, moved: Poses): DeckBui
         out.main = out.main.filter((m) => m !== id);
         inMain.delete(id);
       }
-      if (basic.has(id)) returned.add(id);
+      if (basic.has(id) && wasMoved.has(id)) returned.add(id);
     }
   }
   if (returned.size) out.cards = out.cards.filter((c) => !returned.has(c.id));
@@ -337,14 +375,15 @@ export function dispense(build: DeckBuild, shown: Poses, ref: CardRef, card: Car
   out.cards.push({ id, ref: ref.foil ? { sid: ref.sid, foil: true } : { sid: ref.sid }, basic: true });
   out.main.push(id);
   const poses = posesFor(build, shown);
-  poses[id] = columnSlot(poses, 'deck', columnOf(card(ref), key).index);
+  Object.assign(poses, columnPlace(poses, 'deck', columnOf(card(ref), key).index, id));
   out.poses = posesFor(out, poses);
   return out;
 }
 
 /**
  * Send cards to the other area (double-click): each card goes to the bottom of its column under `key` in the area it
- * is not in, in the given order. Returns the drop as `applyDrop` takes it.
+ * is not in, in the given order. Returns the drop as `applyDrop` takes it: the crossing cards and any cards of a full
+ * column that were re-laid to make room (`columnPlace`).
  */
 export function crossOver(build: DeckBuild, shown: Poses, ids: readonly string[], card: CardLookup, key: BuilderSort): Poses {
   const poses: Poses = { ...shown };
@@ -356,18 +395,22 @@ export function crossOver(build: DeckBuild, shown: Poses, ids: readonly string[]
     if (!pc) continue;
     const to: BuilderArea = inMain.has(id) ? 'side' : 'deck';
     delete poses[id];
-    const p = columnSlot(poses, to, columnOf(card(pc.ref), key).index);
-    poses[id] = p;
-    moved[id] = p;
+    const placed = columnPlace(poses, to, columnOf(card(pc.ref), key).index, id);
+    Object.assign(poses, placed);
+    Object.assign(moved, placed);
   }
   return moved;
 }
 
-/** What `sortToggle` remembers between sorts: the layout before the last sort and the layout it made. */
+/**
+ * What `sortToggle` remembers between sorts: the layout before the last sort, the layout it made, and the sorts before
+ * it (a stack, so a chain of sorts unwinds one step at a time).
+ */
 export interface SortMemo {
   key: BuilderSort;
   before: Poses;
   after: Poses;
+  prev: SortMemo | null;
 }
 
 function samePoses(a: Poses, b: Poses): boolean {
@@ -382,17 +425,19 @@ function samePoses(a: Poses, b: Poses): boolean {
 
 /**
  * A sort key pressed (PLAN M2-P5: "sorting is stable and reversible"). Pressing the key of the last sort again, while
- * nothing moved since, restores the layout from before that sort exactly; any other press sorts and remembers the
- * layout it replaced. `shown` is the current layout.
+ * nothing moved since, restores the layout from before that sort exactly and goes back one step in the chain of sorts
+ * (so hand-made, colour, type, type, colour ends at the hand-made layout); any other press sorts and remembers the
+ * layout it replaced on top of the chain. `shown` is the current layout.
  */
 export function sortToggle(build: DeckBuild, shown: Poses, card: CardLookup, key: BuilderSort, memo: SortMemo | null): { poses: Poses; memo: SortMemo | null; restored: boolean } {
   const current = posesFor(build, shown);
-  if (memo && memo.key === key && samePoses(current, memo.after)) {
-    const before = posesFor(build, memo.before);
-    return { poses: { ...current, ...before }, memo: null, restored: true };
+  const live = memo && samePoses(current, posesFor(build, memo.after)) ? memo : null;
+  if (live && live.key === key) {
+    const before = posesFor(build, live.before);
+    return { poses: { ...current, ...before }, memo: live.prev, restored: true };
   }
   const after = sortLayout(build, card, key);
-  return { poses: after, memo: { key, before: current, after }, restored: false };
+  return { poses: after, memo: { key, before: current, after, prev: live }, restored: false };
 }
 
 /**
@@ -438,6 +483,45 @@ export function derivePiles(poses: Poses, order: readonly string[]): Map<string,
     chain.push(id);
   }
   flush();
+  return out;
+}
+
+/**
+ * The area each card belongs to (see `areaOf`): a card in a cascade or squared pile follows the pile's base card (the
+ * top card of a cascade, the bottom card of a squared pile), any other card the area its centre lies in.
+ */
+export function areasOf(poses: Poses, ids: readonly string[]): Map<string, BuilderArea> {
+  const piles = derivePiles(poses, ids);
+  const base = new Map<string, string>();
+  for (const [id, pile] of piles) if (pile.index === 0) base.set(pile.id, id);
+  const out = new Map<string, BuilderArea>();
+  for (const id of ids) {
+    const p = poses[id];
+    if (!p) continue;
+    const pile = piles.get(id);
+    const b = pile ? poses[base.get(pile.id) ?? id] : undefined;
+    out.set(id, areaOf(b ?? p));
+  }
+  return out;
+}
+
+/** Summed power/toughness of the creatures among `ids` by their front face ('*' and 'X' count 0; DESIGN "Card manipulation", Multi-select). */
+export function selectionPowerToughness(build: DeckBuild, ids: Iterable<string>, card: CardLookup): { creatures: number; power: number; toughness: number } {
+  const byId = new Map(build.cards.map((c) => [c.id, c] as const));
+  const num = (v: string): number => (/^-?\d+$/.test(v.trim()) ? Number(v) : 0);
+  const out = { creatures: 0, power: 0, toughness: 0 };
+  for (const id of new Set(ids)) {
+    const pc = byId.get(id);
+    const data = pc ? card(pc.ref) : null;
+    if (!data) continue;
+    const face = data.card_faces?.[0];
+    const power = face?.power ?? data.power;
+    const toughness = face?.toughness ?? data.toughness;
+    if (power === undefined || toughness === undefined) continue;
+    out.creatures++;
+    out.power += num(power);
+    out.toughness += num(toughness);
+  }
   return out;
 }
 
@@ -496,6 +580,10 @@ export interface BuilderDebugCard extends DebugCard {
   moving: boolean;
   /** Draw order, 0 at the bottom. */
   order: number;
+  /** The cascade or squared pile the card lies in (read from positions), with the pile's card count. */
+  pile: (PileRef & { count: number }) | null;
+  /** Height above the table the card is drawn at, mm (squared pile steps; 0 for a loose card). */
+  z: number;
 }
 
 export interface BuilderSurfaceDebug {
@@ -630,6 +718,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
   let dirty = true;
   let frame = 0;
   let raf = 0;
+  let running = false;
   let disposed = false;
   let lastTick = performance.now();
   let drag: { ids: string[]; anchor: string; start: Poses; grabOffset: TablePoint; cur: TablePoint; ctrl: boolean } | null = null;
@@ -726,12 +815,22 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     return { x: ax + (s.x - a.x), y: ay + (s.y - a.y), rot: s.rot };
   }
 
+  /** Piles among the resting cards (the dragged ones left out), read from the shown poses. */
+  function restingPiles(): Map<string, PileRef> {
+    const dragging = drag ? new Set(drag.ids) : null;
+    const ids = dragging ? order.filter((id) => !dragging.has(id)) : order;
+    return derivePiles(shown, ids);
+  }
+  /** Height of a resting card: a squared pile steps up 0.4 per card, capped (DESIGN "Specification: geometry, layout and motion"). */
+  const pileZ = (pile: PileRef | undefined): number => (pile?.kind === 'squared' ? Math.min(pile.index * GEOMETRY.squaredStep, GEOMETRY.squaredStepCap) : 0);
+
   function draw(): void {
     frame++;
     syncCamera();
     const want = tierForScreenHeight(CARD_H * rig.pxPerMm());
     const dressing = theme.cardDressing;
     const draws: CardDraw[] = [];
+    const piles = restingPiles();
     const dragging = drag ? new Set(drag.ids) : new Set<string>();
     const sequence = [...order.filter((id) => !dragging.has(id)), ...order.filter((id) => dragging.has(id))];
     for (const id of sequence) {
@@ -740,7 +839,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
       const dp = dragPose(id);
       draws.push({
         pose: dp ?? rc.motion.pose,
-        z: dp ? GEOMETRY.dragLift : 0,
+        z: dp ? GEOMETRY.dragLift : pileZ(piles.get(id)),
         scaleX: 1,
         uv: faces.use(rc.key, want, frame),
         dim: 0,
@@ -755,12 +854,27 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     cards.write(draws);
     themeInstance.update(0);
     renderer.render(scene, camera);
-    syncOverlay();
+    syncOverlay(piles);
     dirty = false;
+  }
+
+  /** The host is not laid out (the list view hides the table with display: none): nothing to draw. */
+  const hidden = (): boolean => host.clientWidth === 0 && host.clientHeight === 0;
+  /** Start the frame loop unless it runs; it stops itself while the host is hidden and restarts on the next resize. */
+  function startLoop(): void {
+    if (running || disposed) return;
+    running = true;
+    lastTick = performance.now();
+    dirty = true;
+    raf = requestAnimationFrame(tick);
   }
 
   function tick(): void {
     if (disposed) return;
+    if (hidden()) {
+      running = false;
+      return;
+    }
     raf = requestAnimationFrame(tick);
     const now = performance.now();
     const dt = Math.min(100, now - lastTick);
@@ -772,7 +886,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     if (changed || dirty) draw();
   }
 
-  // --- DOM overlay: area and column labels, foil badges, selection count ------------------------------------------
+  // --- DOM overlay: area and column labels, pile counts, foil badges, selection count -------------------------------
   const items = new Map<string, HTMLElement>();
   function label(key: string, testid: string, css: string): HTMLElement {
     let el = items.get(key);
@@ -794,7 +908,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     el.style.transform = `translate(${ax === 'left' ? '0' : '-50%'}, -50%)`;
   }
 
-  function syncOverlay(): void {
+  function syncOverlay(piles: Map<string, PileRef>): void {
     const seen = new Set<string>();
     const showEl = (el: HTMLElement) => {
       seen.add(el.dataset.key!);
@@ -832,6 +946,25 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
         showEl(cl);
       }
     }
+    // Squared piles: a count badge at the top card's top-left corner, as on the play table (DESIGN "Card manipulation":
+    // "Dropping squarely on a card makes a squared pile with a count badge").
+    const squared = new Map<string, string[]>();
+    for (const id of order) {
+      const pile = piles.get(id);
+      if (pile?.kind === 'squared') squared.set(pile.id, [...(squared.get(pile.id) ?? []), id]);
+    }
+    for (const [pileId, members] of squared) {
+      const top = rcards.get(members[members.length - 1]!);
+      if (!top) continue;
+      const el = label(`pile-${pileId}`, 'builder-pile-count', `color:${theme.tokens.colours.fg};background:${theme.tokens.colours.bg};border:1px solid ${theme.tokens.colours.border};border-radius:999px;padding:0 5px;line-height:1.4;`);
+      el.dataset.pile = pileId;
+      el.dataset.count = String(members.length);
+      el.textContent = `×${members.length}`;
+      const p = top.motion.pose;
+      const [dx, dy] = rot2(-CARD_W / 2 + 6, CARD_H / 2 - 5, p.rot);
+      at(el, { x: p.x + dx, y: p.y + dy }, 'left');
+      showEl(el);
+    }
     // Foil badges beside each foil card's top strip (DESIGN "Pre-game", Pack generation: foils carry a badge; faces untouched).
     const badgePx = Math.max(7, Math.min(14, (GEOMETRY.gap - 1) * rig.pxPerMm()));
     for (const rc of rcards.values()) {
@@ -848,7 +981,8 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     }
     if (selection.size > 1) {
       const el = label('selection', 'builder-selection', `color:${theme.tokens.colours.fg};background:${theme.tokens.colours.bg};border:1px solid ${theme.tokens.colours.border};border-radius:999px;padding:1px 8px;`);
-      el.textContent = `${selection.size} selected`;
+      const pt = selectionPowerToughness(build, selection, card);
+      el.textContent = pt.creatures ? `${selection.size} selected · ${pt.power}/${pt.toughness}` : `${selection.size} selected`;
       let top: Pose | null = null;
       for (const id of selection) {
         const p = rcards.get(id)?.motion.pose;
@@ -861,7 +995,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     }
     for (const [key, el] of items) {
       if (seen.has(key)) continue;
-      if (key.startsWith('foil-') || key.startsWith('col-')) {
+      if (key.startsWith('foil-') || key.startsWith('col-') || key.startsWith('pile-')) {
         el.remove();
         items.delete(key);
       } else el.style.display = 'none';
@@ -1198,8 +1332,9 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
   function crossOverIds(ids: readonly string[]): void {
     if (locked || !ids.length) return;
     const moved = crossOver(build, shown, ids, card, lastKey);
-    const moving = new Set(Object.keys(moved));
-    order = [...order.filter((id) => !moving.has(id)), ...ids.filter((id) => moving.has(id))];
+    // The crossing cards go on top; cards of a full column re-laid to make room keep their place in the draw order.
+    const crossing = new Set(ids.filter((id) => id in moved));
+    order = [...order.filter((id) => !crossing.has(id)), ...ids.filter((id) => crossing.has(id))];
     const now = performance.now();
     for (const [id, pose] of Object.entries(moved)) rcards.get(id)?.motion.moveTo(pose, 'spring', now, theme.motion, reduced());
     commitMoves(moved);
@@ -1238,7 +1373,10 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
   canvas.addEventListener('wheel', onWheel, { passive: false });
   canvas.addEventListener('contextmenu', onContextMenu);
   addEventListener('keydown', onKey);
-  const resizeObserver = new ResizeObserver(() => resize());
+  const resizeObserver = new ResizeObserver(() => {
+    resize();
+    startLoop();
+  });
   resizeObserver.observe(host);
   resize();
 
@@ -1262,6 +1400,10 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     cards() {
       const r = canvasRect();
       const inMain = new Set(build.main);
+      const areas = areasOf(shown, order);
+      const piles = restingPiles();
+      const counts = new Map<string, number>();
+      for (const p of piles.values()) counts.set(p.id, (counts.get(p.id) ?? 0) + 1);
       return order
         .map((id, i) => ({ rc: rcards.get(id), i }))
         .filter((x): x is { rc: RCard; i: number } => !!x.rc)
@@ -1274,17 +1416,20 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
             screen,
             visible: screen.right > r.left && screen.left < r.right && screen.bottom > r.top && screen.top < r.bottom,
             ref: rc.pc.ref,
-            area: areaOf(shown[rc.id] ?? pose),
+            area: areas.get(rc.id) ?? areaOf(pose),
             inMain: inMain.has(rc.id),
             basic: !!rc.pc.basic,
             selected: selection.has(rc.id),
             hovered: hovered === rc.id,
             moving: rc.motion.moving,
             order: i,
+            pile: piles.has(rc.id) ? { ...piles.get(rc.id)!, count: counts.get(piles.get(rc.id)!.id)! } : null,
+            z: drag?.ids.includes(rc.id) ? GEOMETRY.dragLift : pileZ(piles.get(rc.id)),
           };
         });
     },
-    idle: () => !rig.moving && !drag && ![...rcards.values()].some((rc) => rc.motion.moving),
+    // Hidden (list view), nothing animates until the table shows again.
+    idle: () => hidden() || (!rig.moving && !drag && ![...rcards.values()].some((rc) => rc.motion.moving)),
     pendingTextures: () => faces.pending,
     sort: () => ({ showing: memo?.key ?? null, key: lastKey }),
     selection: () => order.filter((id) => selection.has(id)),
@@ -1323,7 +1468,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     rig: () => 'birdseye',
   };
 
-  raf = requestAnimationFrame(tick);
+  startLoop();
   let first = true;
 
   return {
@@ -1395,6 +1540,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     clearSelection: () => setSelection(new Set()),
     dispose() {
       disposed = true;
+      running = false;
       endPress();
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();

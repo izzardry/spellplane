@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { DeckBuild } from '../../../src/core/types';
-import { applyDrop, areaOf, columnsFor, columnSlot, columnTopY, columnX, crossOver, derivePiles, dispense, dispensedId, drawOrder, grabbed, reconcile, sortLayout } from '../../../src/scene/builder';
+import { applyDrop, areaOf, areasOf, cascadeStep, columnBottomY, columnsFor, columnSlot, columnTopY, columnX, crossOver, derivePiles, dispense, dispensedId, drawOrder, grabbed, reconcile, selectionPowerToughness, sortLayout, type Poses } from '../../../src/scene/builder';
 import { listModel, moveToDeck, moveToPool } from '../../../src/ui/builder/list/model';
 import { buildOf, draftedPool, lookup, sid } from './helpers';
 
@@ -123,8 +123,44 @@ describe('the basic-land dispenser (unlimited, any printing)', () => {
       expect(areaOf(b.poses![c.id]!)).toBe('deck');
       expect(b.poses![c.id]!.x).toBe(columnX(colIndex('L')));
     }
-    // The first two lie one cascade offset apart.
-    expect(b.poses![basics[0]!.id]!.y - b.poses![basics[1]!.id]!.y).toBeCloseTo(14);
+    // One cascade, compressed to fit the area once 20 cards no longer fit 14 apart.
+    expect(b.poses![basics[0]!.id]!.y - b.poses![basics[1]!.id]!.y).toBeCloseTo(cascadeStep(20, 'deck'));
+    expect(cascadeStep(20, 'deck')).toBeLessThan(14);
+  });
+
+  it('a full column re-lays itself instead of stacking cards on one spot: 17 dispensed basics plus 2 drafted lands are all in sight', () => {
+    // The usual limited deck: two drafted lands in the deck, then 17 Forests from the dispenser under the colour sort.
+    let b: DeckBuild = buildOf(['Shock', 'Forest', 'Island'], ['p2', 'p3']);
+    b.poses = sortLayout(b, lookup, 'colour');
+    for (let i = 0; i < 17; i++) b = dispense(b, b.poses!, { sid: sid('Forest') }, lookup, 'colour');
+    const lands = b.cards.filter((c) => c.id !== 'p1');
+    expect(lands).toHaveLength(19);
+    const spots = new Set(lands.map((c) => `${b.poses![c.id]!.x}:${b.poses![c.id]!.y.toFixed(3)}`));
+    expect(spots.size).toBe(19);
+    // One cascade from the top of the column to its bottom, every card inside the deck area: no squared pile hides a card.
+    const piles = derivePiles(b.poses!, b.cards.map((c) => c.id));
+    for (const c of lands) {
+      expect(piles.get(c.id)?.kind).toBe('cascade');
+      expect(b.poses![c.id]!.y).toBeGreaterThanOrEqual(columnBottomY('deck') - 1e-6);
+      expect(b.poses![c.id]!.y).toBeLessThanOrEqual(columnTopY('deck') + 1e-6);
+    }
+    expect(new Set(lands.map((c) => piles.get(c.id)!.id)).size).toBe(1);
+    // Membership is untouched by the re-lay.
+    expect(b.main).toEqual(['p2', 'p3', ...b.cards.filter((c) => c.basic).map((c) => c.id)]);
+    expect(reconcile(b, lookup, 'colour')).toEqual(b.poses);
+  });
+
+  it('a double-click into a full column re-lays it too; the column keeps its cards in the deck', () => {
+    let b: DeckBuild = buildOf(['Forest'], []);
+    b.poses = sortLayout(b, lookup, 'colour');
+    for (let i = 0; i < 18; i++) b = dispense(b, b.poses!, { sid: sid('Forest') }, lookup, 'colour');
+    const moved = crossOver(b, b.poses!, ['p1'], lookup, 'colour');
+    expect(Object.keys(moved).length).toBeGreaterThan(1);
+    const r = applyDrop(b, b.poses!, moved);
+    expect(r.main).toContain('p1');
+    expect(r.main).toHaveLength(19);
+    const spots = new Set(r.cards.map((c) => `${r.poses![c.id]!.x}:${r.poses![c.id]!.y.toFixed(3)}`));
+    expect(spots.size).toBe(19);
   });
 
   it('never reuses an id of the pool', () => {
@@ -160,6 +196,29 @@ describe('piles and snapping read from positions (DESIGN "Card manipulation": pi
     expect(grabbed('a', piles, new Set(), true)).toEqual(['a']);
     // A selected card takes the selection.
     expect(grabbed('f', piles, new Set(['f', 'd']), false).sort()).toEqual(['d', 'f']);
+  });
+
+  it('a pile lying across the line between the areas belongs wholly to its base card\'s area', () => {
+    // A cascade at y = 20, 6, -8 (base at the top, in the deck area) and a squared pile on a spot just below the line.
+    const poses: Poses = { p1: { x: 0, y: 20, rot: 0 }, p2: { x: 0, y: 6, rot: 0 }, p3: { x: 0, y: -8, rot: 0 }, p4: { x: 200, y: -5, rot: 0 }, p5: { x: 200, y: -5, rot: 0 } };
+    const areas = areasOf(poses, ['p1', 'p2', 'p3', 'p4', 'p5']);
+    expect([areas.get('p1'), areas.get('p2'), areas.get('p3')]).toEqual(['deck', 'deck', 'deck']);
+    expect([areas.get('p4'), areas.get('p5')]).toEqual(['side', 'side']);
+    // Dropping such a cascade puts all of it in the deck, in drop order; the stored layout then reconciles unchanged.
+    const b = buildOf(['Shock', 'Divination', 'Llanowar Elves', 'Duress', 'Shock']);
+    b.poses = sortLayout(b, lookup, 'colour');
+    const r = applyDrop(b, b.poses, { p1: poses.p1!, p2: poses.p2!, p3: poses.p3! });
+    expect(r.main).toEqual(['p1', 'p2', 'p3']);
+    expect(reconcile(r, lookup, 'colour')).toEqual(r.poses);
+    // A card in the unmarked band between the outlines counts for the nearer area.
+    expect(areaOf({ y: 12 })).toBe('deck');
+    expect(areaOf({ y: -12 })).toBe('side');
+  });
+
+  it('sums the power and toughness of the selected creatures (front face; * counts 0)', () => {
+    const b = buildOf(['Shock', 'Llanowar Elves', 'Llanowar Elves', 'Divination']);
+    expect(selectionPowerToughness(b, ['p1', 'p2', 'p3', 'p4'], lookup)).toEqual({ creatures: 2, power: 2, toughness: 2 });
+    expect(selectionPowerToughness(b, ['p1'], lookup)).toEqual({ creatures: 0, power: 0, toughness: 0 });
   });
 
   it('draws the lower cards of a cascade over the ones above', () => {

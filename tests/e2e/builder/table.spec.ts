@@ -273,6 +273,15 @@ test.describe('the builder table (DESIGN "Pre-game", Deck building)', () => {
     const spot = await pose(b2.id);
     expect((await pose(d.id)).x).toBeCloseTo(spot.x, 6);
     expect((await pose(d.id)).y).toBeCloseTo(spot.y, 6);
+    // The squared pile shows: a count badge, and its upper card one 0.4 mm step up (DESIGN "Card manipulation").
+    const badge = page.getByTestId('builder-pile-count');
+    await expect(badge).toHaveCount(1);
+    await expect(badge).toHaveAttribute('data-count', '2');
+    await expect(badge).toHaveText('×2');
+    const pileOf = async (id: string) => (await bh(page, 'cards')).find((x) => x.id === id)!;
+    expect((await pileOf(d.id)).pile).toMatchObject({ kind: 'squared', index: 1, count: 2 });
+    expect((await pileOf(d.id)).z).toBeCloseTo(0.4, 6);
+    expect((await pileOf(b2.id)).z).toBe(0);
     // With Ctrl held the same drop stays where it was let go.
     await dragCardTo(page, c.id, { x: 250, y: 300 });
     await dragCardTo(page, c.id, { x: -95, y: 140 }, { ctrl: true });
