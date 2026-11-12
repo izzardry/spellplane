@@ -1,14 +1,13 @@
 # M1-P8 Networked session: parked
 
-- **Status:** parked, not merged into `m1`. The package never started. The pipeline did not run it because its dependencies were not merged. The pipeline's reason was "dependency not merged: M1-P1, M1-P2, M1-P5".
-- **Branch:** none. There is no `m1-p8` branch, local or on `origin`, and no worktree `spellplane-wt/m1-p8`. There is nothing to diff or test.
-- **State of `m1` for this package (11 Nov 2026, at parking, head `0e9261a`):** only the M1-C stubs exist.
-  - `src/session/net.ts`: `createNetSession` rejects with "not implemented: M1-P8".
-  - `src/session/types.ts`: holds the `NetSessionOptions`, `NetSession` and `CreateNetSession` contracts.
-  - `src/main.ts`: still starts only the solo session.
-  - `src/debug/`: has no `net` part.
-  - `tests/leak/scan.ts`: the shared leak scanner is on `m1`.
-  - The stubs this package would call are still in place in `src/net/engine.ts`, `src/net/sequencer.ts`, `src/net/identity.ts` and `src/net/private.ts`. Their packages, M1-P1 and M1-P2, are parked.
+- **Status:** parked, not merged into `m1`. The pipeline's reason: "did not converge after 3 review rounds". Round 3 still had three blocking findings, listed below. The package then committed fixes for all three (`a8bde85`), but no fourth review ran, so nobody has re-reviewed them.
+- **Branch:** `m1-p8`, local only (not on `origin`), in worktree `/Users/holzschneider/Workspace/spellplane-wt/m1-p8`. It is 9 commits ahead of `m1` (`427b1d3` .. `a8bde85`) and contains `m1` up to `f76bd1a` (M1-P1 and M1-P2 merged), so it needs no rebase. Diff `m1...m1-p8`: 29 files, +4173 / -1621.
+- **State of `m1-p8` at parking (11 Nov 2026, head `a8bde85`):**
+  - `pnpm check` is green: tsc, svelte-check, eslint, and vitest with 80 files and 1290 tests.
+  - The last `pnpm e2e` before the round-3 fix (Chromium and WebKit) had 339 passed and 1 skipped.
+  - `pnpm e2e:gate -- M1` passed 4 of 4 on Chromium and WebKit, including "two pages play a scripted 1v1 game to the same state hash, and the leak scan finds nothing".
+  - Playwright was not run again while parking: the machine had just crashed under parallel Playwright load.
+  - The round-3 reviewer's scratch repro (`zz-review3.test.ts`, seed 61, late-connecting transport) now passes against `a8bde85`, so the card stays face down. It was copied into the worktree, run and removed again.
 
 ## What the package was supposed to do
 
@@ -20,46 +19,100 @@ docs/PLAN.md, M1 acceptance tests:
 
 > **M1-P8.** Two `LoopbackNetwork` sessions converge on the same hash for a scripted game and the leak scan (`tests/leak/scan.ts`) finds nothing.
 
-DECISIONS `[M1-C]` added the package because the plan had no owner for this glue.
+## What the branch contains
+
+- `src/session/net.ts` (about 1560 lines): the networked `TableSession` over `NetEngine` and the pair channel.
+  - Turn-ups happen only after the action that made a card public is sequenced: the owner proposes a verified `flip {face:'up', ref, salt}` afterwards.
+  - Owed turn-ups and hand re-issues are kept in the nonce store and retried.
+  - Peeks are answered only for the controller of a stolen face-down card; every other look is refused.
+  - The session takes a chair after `SETTLE_MS`, or after `LONE_WAIT_MS` for a joiner. If it sat alone and then meets a connected peer that claims its chair, it rejoins.
+  - Joins can be aborted.
+- `src/session/persist.ts` and `src/session/effects.ts` hold the save queue and the reveal rules. `solo.ts` and `net.ts` now share them.
+- Other new session files:
+  - `session/nonces.ts`: the open-round nonce store.
+  - `session/live-identity.ts`: a nickname that follows renames.
+  - `session/transports.ts`.
+- `src/main.ts` routes `#/t/<room>/<key>` to the networked session.
+- `src/debug/net.ts` is the `net` part of the debug hook.
+- The lobby stand-in is deleted: `ui/lobby/local-session.ts`, `ui/lobby/dev-room.ts` and their test.
+- Tests:
+  - `tests/sim/session/acceptance.test.ts`, `session.test.ts` and `leak.test.ts` (scenarios added to the shared leak test).
+  - `tests/unit/session/net-parts.test.ts`.
+  - `tests/e2e/session/net.spec.ts`.
+  - The webkit+darwin skip is removed from the lobby e2e specs.
+- `docs/DECISIONS.md` gains 23 `[M1-P8]` lines, several of them superseding earlier ones.
+- Edits outside the package's files, all logged in DECISIONS:
+  - `ui/lobby/RoomRoute.svelte`: wiring.
+  - `ui/diag/DiagRoute.svelte`.
+  - `tests/unit/lobby/diag.test.ts`.
+  - `tests/sim/net/chairs.test.ts`: its stand-in describe moved to the real session.
+  - `tests/e2e/lobby/*`.
+
+## Open review findings (round 3, all blocking)
+
+1. **`src/session/net.ts:1095`: a stored turn-up publishes a card later played face down.**
+   - **What went wrong:** the `turnUp` nonce entry (instance id → cid), added in round 2, was honoured whenever its cid was neither pending nor in `turnUpAfter`. The code never checked that the action had actually been sequenced.
+   - **Repro:**
+     1. A face-up `move` to `battlefield:s1` is lost before it reaches the sequencer (crash, or reload while the proposal is in flight).
+     2. B reopens on a transport whose join resolves before its peers connect, as Trystero's does. B is now 'alone' and the entry is still stored.
+     3. B calls `playFaceDown` on the same card.
+   - **Result:** A's confirmed state has the card `face:'up'` with its secret sid. This breaks DESIGN "Table model", Face-down on the battlefield, and the CLAUDE.md hidden-information rule.
+   - **Suggested fix:**
+     - Honour a kept turn-up only for an action this replica has seen sequenced, and only if the card has not moved since.
+     - Drop the entry on any own move of the card.
+     - Drop entries only while the replica is 'connected'.
+     - Add the scenario to the shared leak test with a late-connecting transport.
+2. **`src/ui/types.ts:38`: contract file edited outside a contracts package.**
+   - **What went wrong:** the branch added `AppProps.openRoom?: (link: RoomLink) => Promise<NetSession>`. CLAUDE.md allows contract edits only in a contracts package.
+   - **Suggested fix:** the integrator takes the field over in a separate contracts commit, or the package reverts it.
+3. **`src/session/net.ts:1097`: same root cause as finding 1, a second repro.**
+   - **What went wrong:** `turnUpOwed` treats a kept entry as owed without checking that its cid is in the sequenced history.
+   - **Repro:** seed 26. The 'act' sends are dropped, and the loopback join completes 3 s after the session's join resolves. The `flip` with `ref.sid` and `salt` was delivered to peer-a at seq 57.
+   - **Also:** the same leak happens without a reload delay whenever the first `drive()` after the reload comes from the face-down move's own `onSequenced`.
+   - **Suggested fix:** check `this.entries` for an action with that cid. When the cid is neither pending nor sequenced and the replica is in step, drop the entry.
+
+**What `a8bde85` changed for these (unreviewed):**
+
+- **Findings 1 and 3:**
+  - A kept turn-up is honoured only while the replica is 'connected', and only when its cid is in the sequenced log as an action on that card, with no move to another zone and no turn since.
+  - The entry is dropped once the replica is in step and the cid is neither sequenced nor pending.
+  - `playFaceDown`, and any own action on a card that lies in a hidden zone, drop the entry first.
+  - The scan for own face-down cards in zones that show faces also waits for 'connected'.
+  - The shared leak test gained the scenario, with join and peer delays of 0, 3000 and 50 ms.
+- **Finding 2:** `ui/types.ts` is back to the contract. `main.ts` hands `openRoom` next to AppProps, and `RoomRoute.svelte` declares it locally as `RoomOpener`.
+- **Hardening:** a rejoin's new save queue waits for the old queue's last write.
 
 ## Why it is parked
 
-1. **M1-P1, Transport and sequencer, is not merged.** It is parked, see `docs/gates/M1-parked-m1-p1.md`. Without its `NetEngine`, sequencer, handshake and transports, a networked session has nothing to run on. The stubs on `m1` reject.
-2. **M1-P2, Secrecy, is not merged.** It is parked, see `docs/gates/M1-parked-m1-p2.md`. Without it the pair channel (`net/private.ts`), commitments, the shuffle protocol and the commit-window deadlines are stubs, and the acceptance leak scan cannot pass meaningfully. The M1-P2 branch also hands this package concrete work, listed under "What a retry should do first" below.
-3. **M1-P5, Lobby and seats, is in fact merged.** It went into `m1` as `77bda8b merge(m1): M1-P5 Lobby and seats` and is ticked in PLAN. So the pipeline's listing of M1-P5 among the unmerged dependencies looks stale, probably because the dependency state was read before that merge landed. It does not change the outcome, since M1-P1 and M1-P2 alone block this package.
-4. **A related gap the plan does not list as a dependency:** the `NetEngine` scope includes "sync", and `net/sync.ts` belongs to M1-P7, Resume. M1-P7 is not merged either, though it is not parked as such. A retry will need at least the catch-up sync M1-P1 implements, and reload or rejoin needs M1-P7.
+Each review round found a new hidden-information path in the owed-turn-up and resume logic:
 
-## Open review findings
+- Round 1: a reveal was sequenced ahead of an action that was then refused.
+- Round 2: a reload lost a turn-up, and peeks were answered for any seat.
+- Round 3: a stored turn-up outlived an action that was never sequenced.
 
-None. The package was never implemented or reviewed. The open findings that matter here belong to M1-P1 (2 blocking, round 3) and M1-P2 (3 blocking, round 3). They are recorded in those packages' park notes.
+The round-3 fix has not been reviewed. The turn-up bookkeeping has a lot of state:
+
+- what is pending, kept and owed, with `turnUpAfter`
+- connection status gating
+- rejoin
+- resume from a snapshot
+
+So the pipeline's round limit stopped it rather than merge an unreviewed fix to a leak.
 
 ## What a retry should do first
 
-1. **Unblock the dependencies, in this order:**
-   1. Land the M1-C contract amendments on `m1`:
-      - `NetEngine.pending()` in `net/types.ts`.
-      - `Reissue` and `reissue?` in `core/actions.ts`.
-      - `ReissueRecord` and `reissue?` in `core/types.ts`.
-   2. Merge M1-P1, after its focused round-3 re-review.
-   3. Merge M1-P2, after its focused round-3 re-review. Ideally its leak test then moves from the minimal sequencer to M1-P1's engine.
+1. **Do not reimplement.** Resume from `m1-p8` at `a8bde85` in the existing worktree, and push the branch to `origin` so it survives another crash.
+2. **Run one focused review of `a8bde85` and the turn-up and resume paths only.** Check that the turn-up bookkeeping cannot outlive the action or the card position it was recorded for:
+   - `turnUpOwed`, the `turnUp` nonce entries, the drop rules and the 'connected' gating.
+   - The reload, catch-up and rejoin paths.
+   - Cases to check:
+     - Undo of the sequenced move.
+     - A move sequenced after a snapshot catch-up, when the cid is no longer in the log.
+     - Another seat moving the card.
+     - The three rejoin attempts.
 
-   Do not start M1-P8 on unmerged branches. Its acceptance test and the M1 gate both need the real engine and the real pair channel.
-2. **Create `m1-p8` from `m1` once both are merged**, in worktree `spellplane-wt/m1-p8`. Run `pnpm install --frozen-lockfile` first.
-3. **Carry the integration notes the other packages left for M1-P8 into the package brief:**
-   - **From M1-P5 (DECISIONS lines 296-298, 312-314):**
-     - Replace the stand-in `ui/lobby/local-session.ts` with the real `NetSession`, passed through `AppProps`. `RoomRoute` takes main.ts's session when its `roomId` matches. `local-session.ts` and `dev-room.ts` may be deleted.
-     - `takeSeat` must read the current nickname from the `IdentityStore`, not the `NetSessionOptions` snapshot.
-     - `takeSeat` must fall back to a non-empty name ('Player'), because a fresh identity's nickname is '' and the reducer refuses it.
-     - A chair move takes the new chair before it leaves the old one.
-     - The lobby stamps a chair move as `seatTake {seat: new, by: new}`. M1-P1's round-3 fix is meant to accept that, and M1-P8 should have a sim test that drives it through the real engine.
-   - **From M1-P1:** at seq 0 with nobody seated, a creator's table and a fresh joiner's table are indistinguishable. The session should take its chair before others join.
-   - **From M1-P2:**
-     - Call `undoPlan` and send the owner's verified re-reveals after an undo, as `solo.ts` does on the M1-P2 branch.
-     - Call `reissueZone` after a card returns to the hand.
-     - Keep the `disclosed` set, and rebuild it from the log on reload.
-     - Keep a pending rng nonce in local storage.
-     - Answer looks from `engine.confirmedState()`, and pass `pending()` to the pair channel.
-   - **From M1-P6 (DECISIONS line 202):** own chat lines that the log does not hold yet are shown as pending until their cid is sequenced. The optimistic networked session must feed this.
-   - **From M1-P3:** the confirmation-round timer deadlines in `core/reducer/confirm.ts` are driven by the sequencer's clock, which this package owns.
-4. **Write the acceptance test first.** It runs two `LoopbackNetwork` sessions through a scripted game under Vitest fake timers, asserts equal `stateHash`, and runs `tests/leak/scan.ts` over B's received messages, state, stores and SecretStore against A's `secretTokens`. Add the package's leak scenarios to the shared leak test, as CLAUDE.md requires.
-5. **Expect the macOS WebKit limit** from DECISIONS `[M1-P5]`, CryptoKey in IndexedDB. It should be gone since `7b61414`, which keeps the identity keys as JWK. Confirm that before the session's browser tests skip on webkit+darwin.
+   If the design allows it, consider a simpler shape: derive the owed turn-ups from the sequenced log plus own pending cids on every drive, and keep no separate durable entry.
+3. **Decide the contract question as integrator.** Either accept `openRoom` on AppProps through a contracts commit (DECISIONS `[M1-P8]` proposes `openRoom?: (link: RoomLink) => Promise<NetSession>`) or keep the local `RoomOpener` declaration in `RoomRoute.svelte`.
+4. **Re-run the checks, one Playwright run at a time:** `pnpm check`, then `pnpm e2e`, then `pnpm e2e:gate -- M1`, each with a 10-minute timeout.
+5. **Carry the open M1-P1 gap the package reported:** in the engine's equal-seq, same-seat case, two sequencers never reconcile (DECISIONS `[M1-P8]` LONE_WAIT_MS line). The session works around it with its rejoin, but the engine fix belongs to M1-P1.
+6. **After the merge:** M1-P7 Resume depends on this package. Its park note (`docs/gates/M1-parked-m1-p7.md`) lists what it needs from here.
