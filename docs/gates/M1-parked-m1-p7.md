@@ -1,5 +1,7 @@
 # M1-P7 Resume (remainder): parked
 
+> **Resolved:** the remainder (recovery driver, `ui/recovery/*`, resume acceptance tests) was retried by the main session and merged into `m1` after a focused review of `2cc474e..587447f`. See `docs/gates/M1.md`.
+
 - **Status:** parked, not merged into `m1`. The pipeline's reason: "did not converge after 2 review rounds".
 - **Branch:** `m1-p7`, local only (not on `origin`), worktree `/Users/holzschneider/Workspace/spellplane-wt/m1-p7`, head `587447f`, based on `m1` at `58683a6`. Four commits:
   - `b0a02ca` test: sequence `away` through the real reducer in the confirm harness and sims.

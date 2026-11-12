@@ -402,9 +402,9 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M1-P4 Combat and lines
 - [x] M1-P5 Lobby and seats
 - [x] M1-P6 Chat and log
-- [ ] M1-P7 Resume
-- [ ] M1-P8 Networked session
-- [ ] M1-G Gate and owner playtest
+- [x] M1-P7 Resume
+- [x] M1-P8 Networked session
+- [x] M1-G Gate (owner playtest and two-home network check pending)
 - [ ] M2-C Contracts
 - [ ] M2-P1 Pack generation
 - [ ] M2-P2 Pass draft and sealed

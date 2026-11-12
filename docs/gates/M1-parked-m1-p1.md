@@ -1,5 +1,7 @@
 # M1-P1 Transport and sequencer: parked
 
+> **Resolved:** merged into `m1` (`4d3965e`, `f76bd1a`) in the second retry after one focused review round. See `docs/gates/M1.md`.
+
 - **Status:** parked, not merged into `m1`. The pipeline ran out of rounds: it did not converge after 3 review rounds.
 - **Branch:** `m1-p1` (worktree `spellplane-wt/m1-p1`), head `3eeee9e fix(m1-p1): review round 3 — chair moves, fork re-verification on re-claim`. It branches from `d981303 feat(m1-c): contracts` and is 19 commits behind `m1` (M1-P3, M1-P4, M1-P5, M1-P6, the JWK identity-key fix and the M1-P2 park note). `git merge-tree m1 m1-p1` reports one conflict, in `docs/DECISIONS.md`, where both sides appended lines. No source file conflicts.
 - **State of the branch (11 Nov 2026, at parking):** `pnpm check` is green in the worktree, with tsc, svelte-check, eslint and 784 vitest tests in 47 files. `pnpm e2e` was not run for this note. The diff against `m1` touches 27 files, +5236/−32, all inside `net/*`, `tests/` and `docs/DECISIONS.md`. It edits no contract file.

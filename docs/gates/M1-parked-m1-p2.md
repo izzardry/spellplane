@@ -1,5 +1,7 @@
 # M1-P2 Secrecy: parked (retry)
 
+> **Resolved:** merged into `m1` (`e5f0476`) in the second retry after one focused review of the seatLeave fix. See `docs/gates/M1.md`.
+
 - **Status:** parked again, not merged into `m1`. The retry pipeline did not converge after 2 review rounds (overall rounds 4 and 5; the first run's rounds 1 to 3 parked it once already, see the history at the end).
 - **Branch:** `m1-p2` (worktree `spellplane-wt/m1-p2`), head `4253d05 fix(m1-p2): only a seat itself, or anyone once it is away, empties its chair`. It contains all of `m1` up to `54e4eae` (the M1-C retry amendment) and `git merge-tree` against `m1` reports no conflicts. The branch has no remote copy (`origin/m1-p2` does not exist).
 - **State of the branch (11 Nov 2026, at parking, checked by the integrator):**
