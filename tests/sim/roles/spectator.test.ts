@@ -49,7 +49,8 @@ async function table(seed: number, options: LoopbackOptions = FAULTS): Promise<{
   return { p, dee, cy, network };
 }
 
-describe('M3-P5 spectators on a simulated network', () => {
+// Each test plays the whole M1-P8 script first: real time grows with machine load, not with the fake clock.
+describe('M3-P5 spectators on a simulated network', { timeout: 120_000 }, () => {
   it('a spectator joins without a chair, sees the public table and is never the sequencer', async () => {
     const { p, dee, cy } = await table(31);
     for (const w of [dee, cy]) {

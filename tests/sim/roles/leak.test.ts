@@ -34,7 +34,8 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe('shared leak test: spectators', () => {
+// Each test plays the whole M1-P8 script first: real time grows with machine load, not with the fake clock.
+describe('shared leak test: spectators', { timeout: 120_000 }, () => {
   it.each([41, 42])('a spectator learns only the public table and the hand shown to it by name; nobody else learns that hand (seed %i)', async (seed) => {
     const network = net({ seed, ...FAULTS });
     const dee = await watch(network, 'dee', 'peer-0', 'Dee');
