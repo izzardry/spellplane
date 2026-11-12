@@ -15,10 +15,39 @@ import { canonicalJson } from './hash';
 import { explain, reduce } from './reducer';
 import { STACK_ZONE } from './reducer/place';
 import { q } from './reducer/util';
-import type { CardInstance, TableState } from './types';
+import type { CardInstance, CardRef, InstanceId, TableState } from './types';
+
+/**
+ * A card that an undo brings back into a public zone without the identity it had there (M1-P2). A restore patch never
+ * puts the identity of a committed card back, since the reducer cannot check it against the owner's commitment
+ * (DESIGN "Specification: network protocol and secrecy", Commitments); the card comes back face down, and its owner
+ * re-reveals it with its salt (`flip` up with `ref`/`salt` when it was face up, else `reveal`).
+ */
+export interface UndoReveal {
+  card: InstanceId;
+  /** The identity the card had before the undone action (public then). */
+  ref: CardRef;
+  /** Its face before the undone action. */
+  face: 'up' | 'down';
+}
+
+/** An inverse and the re-reveals the card owners send after it (`UndoReveal`). */
+export interface UndoPlan {
+  inverse: UndoableAction;
+  reveals: UndoReveal[];
+}
 
 /** The inverse of `action` given the state before it, or null (DESIGN "Turn flow and confirmation", Undo). */
 export function inverse(before: TableState, action: Action): UndoableAction | null {
+  return undoPlan(before, action)?.inverse ?? null;
+}
+
+/**
+ * The inverse of `action` and the re-reveals it leaves to the cards' owners, or null when the action is not undoable.
+ * Applied to `reduce(before, action)`, the inverse restores `withoutReveals(before, reveals)` (seq aside); the owners'
+ * verified reveals then complete `before`.
+ */
+export function undoPlan(before: TableState, action: Action): UndoPlan | null {
   if (!isUndoable(action) || action.restore !== undefined) return null;
   if (explain(before, action) !== null) return null;
   const after = reduce(before, action);
@@ -27,19 +56,37 @@ export function inverse(before: TableState, action: Action): UndoableAction | nu
   if (!natural) return null;
   if (explain(after, natural) !== null) return null;
   const replayed = reduce(after, natural);
-  const patch = diff(before, replayed);
-  if (!patch) return null;
+  const found = diff(before, replayed);
+  if (!found) return null;
+  const { patch, reveals } = found;
   const inv = Object.keys(patch).length ? ({ ...natural, restore: patch } as UndoableAction) : natural;
   // Guard: never hand out an inverse that does not restore the previous state.
   const undo: Action = { type: 'undo', by: action.by, cid: `check:${action.cid}`, of: action.cid, inverse: inv };
-  if (explain(after, undo) !== null || undoKey(reduce(after, undo)) !== undoKey(before)) return null;
-  return inv;
+  if (explain(after, undo) !== null || undoKey(reduce(after, undo)) !== undoKey(withoutReveals(before, reveals))) return null;
+  return { inverse: inv, reveals };
+}
+
+/** `state` with the identities that `reveals` name taken off their cards, which lie face down (what an undo leaves). */
+export function withoutReveals(state: TableState, reveals: readonly UndoReveal[]): TableState {
+  if (!reveals.length) return state;
+  const cards = { ...state.cards };
+  for (const r of reveals) {
+    const c = Object.hasOwn(cards, r.card) ? cards[r.card] : undefined;
+    if (!c) continue;
+    const { identity: _dropped, ...rest } = c;
+    cards[r.card] = { ...rest, face: 'down' };
+  }
+  return { ...state, cards };
 }
 
 /**
  * Comparison key of a state for undo: `seq` set aside, and identities of cards in hidden zones dropped. A card that
  * an undo returns to a hidden zone loses its identity there, as every public card returning to a hidden zone does
  * (DESIGN "Table model", Hidden cards), even when it had been revealed in that zone before.
+ * The confirmation round is set aside too (M1-P3): answers are not undoable, and a round is not part of what an
+ * action did to the table. Undoing a resolve or a counter brings the item back without the round that ended with it;
+ * undoing a push ends the round about the item it took away (reducer/draft.ts `finish`), and a round it replaced
+ * stays replaced.
  */
 export function undoKey(state: TableState): string {
   const cards: Record<string, CardInstance> = {};
@@ -51,7 +98,7 @@ export function undoKey(state: TableState): string {
       cards[id] = c;
     }
   }
-  return canonicalJson({ ...state, seq: 0, cards });
+  return canonicalJson({ ...state, seq: 0, confirm: null, cards });
 }
 
 /** The natural opposite action, with `by` of the undoing seat and a derived cid. */
@@ -245,8 +292,9 @@ function stepOf<T>(expect: T | undefined, put: T | undefined): RestoreStep<T> {
  * The compare-and-set steps that take `got` (the state the natural opposite leaves) back to `before`: an empty patch
  * when nothing is left to do, or null when the difference is outside what a restore patch may touch.
  */
-function diff(before: TableState, got: TableState): RestorePatch | null {
+function diff(before: TableState, got: TableState): { patch: RestorePatch; reveals: UndoReveal[] } | null {
   const patch: RestorePatch = {};
+  const reveals: UndoReveal[] = [];
   const ids = (a: object, b: object): string[] => [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
 
   const cards: NonNullable<RestorePatch['cards']> = {};
@@ -256,12 +304,17 @@ function diff(before: TableState, got: TableState): RestorePatch | null {
     if (same(b, g)) continue;
     if (!b || !g) return null;
     const hidden = got.zones[g.zone]?.visibility !== 'public';
+    // A committed card's identity is never put back by a patch (the reducer could not verify it): the card stays face
+    // down and its owner re-reveals it (UndoReveal).
+    const reveal = !hidden && g.isToken !== true && b.identity !== undefined && g.identity === undefined;
+    if (reveal) reveals.push({ card: id, ref: structuredClone(b.identity!), face: b.face });
     const fields: Record<string, RestoreStep<unknown>> = {};
     const br = b as unknown as Record<string, unknown>;
     const gr = g as unknown as Record<string, unknown>;
     for (const f of ids(b, g)) {
       if (same(br[f], gr[f])) continue;
       if (hidden && f === 'identity') continue; // dropped in a hidden zone (see undoKey)
+      if (reveal && (f === 'identity' || f === 'face')) continue; // left to the owner's verified reveal
       if (hidden || !RESTORABLE.has(f)) return null;
       fields[f] = stepOf(gr[f], br[f]);
     }
@@ -303,5 +356,5 @@ function diff(before: TableState, got: TableState): RestorePatch | null {
   if (Object.keys(seats).length) patch.seats = seats;
 
   if (!same(before.teams, got.teams)) return null;
-  return patch;
+  return { patch, reveals };
 }

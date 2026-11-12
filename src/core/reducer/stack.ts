@@ -1,6 +1,9 @@
 /**
  * Stack family (DESIGN "The effect stack"). Items pile up bottom to top; a spell's card sits in the 'stack' zone.
- * Starting a confirmation round on push (`round`) and the `force` record of an early resolve belong to M1-P3.
+ * A push that carries `round` opens a confirmation round about the new item (DESIGN "The effect stack", Stack and
+ * confirmation). Resolving the item of a round that still waits for someone needs `force`: the HUD's second press,
+ * which the log shows (DESIGN "Turn flow and confirmation", All passed). Counter, reorder and dragging an item out
+ * are never held back (DESIGN "The effect stack", Resolving 3-4).
  *
  * Default destinations: the reducer has no card data, so the client passes `to` from
  * GameDefinition.defaultDestination; without it a resolving spell goes to its controller's battlefield and a
@@ -10,6 +13,7 @@ import type { ActionOf } from '../actions';
 import type { StackItem } from '../types';
 import type { Draft } from './draft';
 import { STACK_ZONE, ZONE_KIND, dropItem, relocate, removeLinesWhere, syncStackZone } from './place';
+import { pendingAbout, startRound } from './confirm';
 import { checkId, checkInt, checkPose, checkString, reject } from './util';
 
 const KINDS: readonly StackItem['kind'][] = ['spell', 'ability', 'trigger', 'copy'];
@@ -45,9 +49,11 @@ export function stackPush(d: Draft, a: ActionOf<'stackPush'>): void {
     reject('only copy markers carry copyOf');
   }
   if (note !== '') it.note = note;
+  const round = a.round === undefined ? undefined : checkId(a.round, 'round');
   if (it.card !== undefined) relocate(d, it.card, STACK_ZONE, { controller });
   d.stackW().push(it);
   syncStackZone(d);
+  if (round !== undefined) startRound(d, a, round, id);
 }
 
 export function stackNote(d: Draft, a: ActionOf<'stackNote'>): void {
@@ -79,6 +85,10 @@ function leaveTop(d: Draft, a: { item: unknown; to?: unknown; pose?: unknown }, 
 
 export function stackResolve(d: Draft, a: ActionOf<'stackResolve'>): void {
   if (a.force !== undefined && typeof a.force !== 'boolean') reject('force must be a boolean');
+  const top = d.stack[d.stack.length - 1];
+  if (a.force !== true && top !== undefined && top.id === a.item && pendingAbout({ seats: d.seats.result(), confirm: d.confirm }, top.id)) {
+    reject('not everyone has passed: resolving now needs the second press (force)');
+  }
   leaveTop(d, a, 'resolve', (it) => `${ZONE_KIND.battlefield}:${it.controller}`);
 }
 

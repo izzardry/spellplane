@@ -10,7 +10,7 @@
  * table's shape use `null` (e.g. `confirm: null`). Records keyed by id are plain objects.
  */
 
-import type { Action } from './actions';
+import type { Action, ActionDraft } from './actions';
 
 // ---------------------------------------------------------------------------
 // Ids
@@ -130,6 +130,24 @@ export interface Seat {
   autoPass: boolean;
   /** Peer id that holds the seat (first 16 hex of SHA-256 of the public key); absent in solo play. */
   peer?: string;
+  /** Added by M1-C (amendment). Set from `recover` until `recoverCommit` (DESIGN "Multiplayer architecture", Resume: lost-save recovery). */
+  recovering?: SeatRecovery;
+}
+
+/**
+ * An open lost-save recovery of one seat (DESIGN "Multiplayer architecture", Resume and failure handling: "the
+ * remainder is committed and shuffled as a new library with a fresh hand count agreed by the table"). Added by M1-C
+ * (amendment); set and cleared by M1-P7's reducer.
+ */
+export interface SeatRecovery {
+  /** The fresh hand count the recovering player proposed; the table agrees to it in `round`. */
+  hand: number;
+  /** The confirmation round that agrees on `hand`. */
+  round: RoundId;
+  /** The seat's non-token cards (public and hidden) counted just before the first `recover` of this recovery discarded the hidden ones: the deck size; a later proposal keeps it. */
+  deckSize: number;
+  /** Seq of the `recover` action that set this (the latest proposal). */
+  startSeq: number;
 }
 
 /** A Two-Headed Giant team with shared life (DESIGN "Players, seats and formats", Two-Headed Giant). */
@@ -257,6 +275,12 @@ export interface ConfirmRound {
   responses: Record<SeatId, ConfirmResponse>;
   /** Seat currently holding the floor, if any. */
   holder?: SeatId;
+  /**
+   * Added by M1-C. The seq from which the current countdown runs when it is not `startSeq`: the action that released
+   * the last hold (DESIGN "Turn flow and confirmation", Hold stops everyone's timers). Absent: the countdown runs
+   * from `startSeq`. Every client animates from the moment it applied that action; the sequencer's clock decides.
+   */
+  timerSeq?: number;
 }
 
 /** A seat's deck commitment published on Ready (DESIGN "Specification: network protocol and secrecy", Commitments). */
@@ -286,6 +310,8 @@ export interface RngRound {
   reveals: Record<SeatId, string>;
   /** 0-based outcome once all reveals arrived and verified; null while pending. */
   result: number | null;
+  /** Added by M1-C. Seq of the sequencer's `commitClose`: commits after it are refused, and seats without one are excluded (Public randomness 2). */
+  closedSeq?: number;
 }
 
 /** A secret shuffle (or pack generation) in progress or finished (DESIGN "Specification: network protocol and secrecy", Secret shuffle). */
@@ -301,6 +327,8 @@ export interface ShuffleRound {
   nonces: Record<SeatId, string>;
   /** Set by `shuffleDone`. */
   orderHash: string | null;
+  /** Added by M1-C. Seq of the sequencer's `commitClose`: nonces after it are refused, so the seed uses the nonces sequenced before it (Secret shuffle 2). */
+  closedSeq?: number;
 }
 
 /** Table-wide settings the host can change (DESIGN "Turn flow and confirmation", "Players, seats and formats"). */
@@ -337,6 +365,22 @@ export interface TableState {
   settings: TableSettings;
 }
 
+/**
+ * A deadline that only the sequencer's clock enforces (DESIGN "Specification: network protocol and secrecy", Timers,
+ * Public randomness 2, Secret shuffle 2). Added by M1-C. `afterMs` after the sequencer applied action `fromSeq`, it
+ * stamps `emit` with its own seat and sequences it, unless the state no longer yields a deadline with this `key`.
+ * Pure data derived from TableState (core/deadlines.ts), so every peer computes the same list and a new sequencer
+ * after a handover restarts the same timers from its own apply times.
+ */
+export interface Deadline {
+  /** Stable identity, e.g. 'confirm:<roundId>:<timerSeq>' or 'rng:<rid>'; a timer is re-armed only when the key changes. */
+  key: string;
+  fromSeq: number;
+  afterMs: number;
+  /** Drafts the sequencer dispatches as itself (e.g. `respond {seat, 'timeout'}` per silent seat, `commitClose`). */
+  emit: ActionDraft[];
+}
+
 // ---------------------------------------------------------------------------
 // Private state
 // ---------------------------------------------------------------------------
@@ -358,6 +402,18 @@ export interface ShuffleRecord {
   peerNonces: string[];
   /** Resulting order, index 0 = top. */
   order: InstanceId[];
+  /** Added by M1-P2: set when the shuffle re-issued the zone's opaque ids (`shuffleDone.reissue`). */
+  reissue?: ReissueRecord;
+}
+
+/**
+ * The private side of a re-issue of opaque ids (DESIGN "Table model", Hidden cards). Added by M1-P2. `before[i]` is
+ * the old id of the card now at `order[i]`; `retired` keeps the old ids' identities so the post-game audit can check
+ * that every card kept its identity across the re-issue.
+ */
+export interface ReissueRecord {
+  before: InstanceId[];
+  retired: Record<InstanceId, SecretIdentity>;
 }
 
 /** Private audit record of a private reorder (scry to bottom, put on top) (DESIGN "Specification: network protocol and secrecy"). */
@@ -369,6 +425,8 @@ export interface ReorderRecord {
   nonce: string;
   /** Full order after the reorder, index 0 = top. */
   order: InstanceId[];
+  /** Added by M1-P2: set when the reorder re-issued the zone's opaque ids (`reorder.reissue`). */
+  reissue?: ReissueRecord;
 }
 
 /** One private audit record (DESIGN "Multiplayer architecture", Audit). */

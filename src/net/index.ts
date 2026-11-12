@@ -1,3 +1,12 @@
 export * from './transport';
+export * from './messages';
+export * from './types';
 export { LoopbackNetwork, LoopbackTransport, type LoopbackOptions } from './loopback';
 export { BroadcastTransport } from './broadcast';
+export { TrysteroTransport, type TrysteroOptions } from './trystero';
+export { createNetEngine, type NetEngineImpl } from './engine';
+export { createSequencer, createSyncEngine, electSequencer, seatOfPeer } from './sequencer';
+export { createNetIdentity, verifySignature, peerIdOfPubKey } from './identity';
+export { PresenceChannel } from './presence';
+export { createPrivateChannel } from './private';
+export { chooseResume, type ResumeChoice, type ResumeOffer } from './sync';

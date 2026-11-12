@@ -7,6 +7,11 @@
  * It can only reach what an inverse action cannot rebuild on its own: listed fields of existing cards in public
  * zones, the draw order of public zones, lines, the stack, the turn number and auto-pass flags. Every value it puts
  * is validated like an action field; the reducer checks the table invariants afterwards.
+ *
+ * It never puts an identity on a card that is not a token (M1-P2): a committed card's identity becomes public only
+ * through a reveal that opens the owner's commitment (DESIGN "Specification: network protocol and secrecy",
+ * Commitments; DECISIONS [M0-P1] restore patch). An undo brings such a card back face down, and its owner re-reveals
+ * it with the salt (core/undo.ts `UndoReveal`).
  */
 import type { RestorableCardField, RestorePatch } from '../actions';
 import { canonicalJson } from '../hash';
@@ -71,7 +76,10 @@ type FieldCheck = (d: Draft, c: CardInstance, v: unknown) => unknown;
 /** Validators for the card fields a patch may put; `optional` fields may be put back to absent (null). */
 const CARD_FIELDS: Record<RestorableCardField, { optional: boolean; check: FieldCheck }> = {
   controller: { optional: false, check: (d, _c, v) => d.seats.need(checkId(v, 'seat')).id },
-  identity: { optional: true, check: (_d, _c, v) => checkRef(v) },
+  identity: {
+    optional: true,
+    check: (_d, c, v) => (c.isToken === true ? checkRef(v) : reject(`a restore patch cannot reveal card ${c.id}; its owner reveals it with the salt`)),
+  },
   face: { optional: false, check: (_d, _c, v) => (v === 'up' || v === 'down' ? v : reject('face must be up or down')) },
   faceIndex: { optional: false, check: (_d, _c, v) => (v === 0 || v === 1 ? v : reject('faceIndex must be 0 or 1')) },
   tapped: { optional: false, check: (_d, _c, v) => (typeof v === 'boolean' ? v : reject('tapped must be a boolean')) },

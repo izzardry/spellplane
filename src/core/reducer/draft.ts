@@ -3,7 +3,7 @@
  * `w`/`set`/`delete` methods, which copy a record before its first change; the input state is never touched, and
  * untouched records keep their identity in the result (cheap change detection for the scene and HUD).
  */
-import type { CardInstance, Commitment, Line, Seat, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
+import type { CardInstance, Commitment, ConfirmRound, Line, RngRound, Seat, ShuffleRound, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
 import { byId, own, reject } from './util';
 
 /** One keyed record of the state (cards, zones, lines, seats, teams, commitments). */
@@ -90,10 +90,16 @@ export class Draft {
   readonly seats: RecordDraft<Seat>;
   readonly teams: RecordDraft<Team>;
   readonly commitments: RecordDraft<Commitment>;
+  /** Public-randomness rounds (M1-P2). */
+  readonly rng: RecordDraft<RngRound>;
+  /** Secret-shuffle rounds (M1-P2). */
+  readonly shuffles: RecordDraft<ShuffleRound>;
   private stackCopy: StackItem[] | null = null;
   private turnCopy: TurnState | null = null;
   private settingsCopy: TableSettings | null = null;
   private stageValue: Stage | null = null;
+  /** Added by M1-P3: the confirmation round once a handler set it (`undefined`: unchanged). */
+  private confirmValue: ConfirmRound | null | undefined = undefined;
 
   constructor(readonly base: TableState) {
     this.cards = new RecordDraft(base.cards, 'card');
@@ -102,6 +108,8 @@ export class Draft {
     this.seats = new RecordDraft(base.seats, 'seat');
     this.teams = new RecordDraft(base.teams, 'team');
     this.commitments = new RecordDraft(base.commitments, 'commitment');
+    this.rng = new RecordDraft(base.rng, 'randomness round');
+    this.shuffles = new RecordDraft(base.shuffles, 'shuffle');
   }
 
   /** The stack, bottom to top (read-only). */
@@ -141,6 +149,16 @@ export class Draft {
     this.stageValue = stage;
   }
 
+  /** The current confirmation round (read-only: never mutate it; use `setConfirm`). Added by M1-P3. */
+  get confirm(): Readonly<ConfirmRound> | null {
+    return this.confirmValue !== undefined ? this.confirmValue : this.base.confirm;
+  }
+
+  /** Replace the confirmation round (a fresh object, or null to close it). Added by M1-P3. */
+  setConfirm(round: ConfirmRound | null): void {
+    this.confirmValue = round;
+  }
+
   get changed(): boolean {
     return (
       this.cards.changed ||
@@ -149,16 +167,24 @@ export class Draft {
       this.seats.changed ||
       this.teams.changed ||
       this.commitments.changed ||
+      this.rng.changed ||
+      this.shuffles.changed ||
       this.stackCopy !== null ||
       this.turnCopy !== null ||
       this.settingsCopy !== null ||
-      this.stageValue !== null
+      this.stageValue !== null ||
+      this.confirmValue !== undefined
     );
   }
 
   /** The resulting state; `seq` is stamped when given. Returns the base object when nothing changed. */
   finish(seq: number | undefined): TableState {
     if (!this.changed && (seq === undefined || seq === this.base.seq)) return this.base;
+    const stack = this.stackCopy ?? this.base.stack;
+    // A round about a stack item ends when that item leaves the stack, however it left (resolve, counter, a drag
+    // out, undo): M1-P3, DESIGN "Turn flow and confirmation".
+    let confirm = this.confirm;
+    if (confirm?.about !== undefined && !stack.some((i) => i.id === confirm!.about)) confirm = null;
     return {
       ...this.base,
       seq: seq ?? this.base.seq,
@@ -168,7 +194,10 @@ export class Draft {
       seats: this.seats.result(),
       teams: this.teams.result(),
       commitments: this.commitments.result(),
-      stack: this.stackCopy ?? this.base.stack,
+      rng: this.rng.result(),
+      shuffles: this.shuffles.result(),
+      stack,
+      confirm,
       turn: this.turnCopy ?? this.base.turn,
       settings: this.settingsCopy ?? this.base.settings,
       stage: this.stageValue ?? this.base.stage,

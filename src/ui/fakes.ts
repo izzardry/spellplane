@@ -4,12 +4,15 @@
  * Card data here is invented for tests; no real card data is bundled (CLAUDE.md hard rules).
  */
 import type { Action, ActionDraft } from '../core/actions';
-import { DEFAULT_TABLE_SETTINGS, type CardInstance, type CardRef, type InstanceId, type LogEntry, type SecretStore, type SeatId, type TableState, type Zone, type ZoneId, type ZoneSpec } from '../core/types';
+import { DEFAULT_TABLE_SETTINGS, type CardInstance, type CardRef, type InstanceId, type LogEntry, type Pose, type RngPurpose, type SeatColourIndex, type SecretStore, type SeatId, type TableState, type Zone, type ZoneId, type ZoneSpec } from '../core/types';
 import type { CardData, CardDataSource, DeckEntry, DeckList, FaceImage, FaceSource, ParseError, ResolvedDeck } from '../data/types';
 import type { GameDefinition, SeatLayout, TableLayout } from '../games/types';
 import { MTG_KEYMAP } from '../games/mtg/keymap';
 import type { CameraControls, CameraRig, DebugCamera, SceneDebugParts, TableScene, ViewState } from '../scene/types';
-import type { DeckImport, LookedCard, SessionListener, TableSession } from '../session/types';
+import type { ChatChannel } from '../net/messages';
+import type { Presence } from '../net/types';
+import { NULL_PRESENCE } from '../session/presence';
+import type { DeckImport, LookedCard, NetStatusListener, SessionListener, SessionNetStatus, TableSession } from '../session/types';
 import { DEFAULT_SETTINGS, type Settings, type SettingsStore } from '../store/types';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -343,9 +346,9 @@ export function tableWith(names: string[], cards: FakeCardSpec[], me: SeatId = '
 // Session
 // ---------------------------------------------------------------------------------------------------------------
 
-/** A session call that is not a dispatch (draw, shuffle, mulligan, lookAt, importDeck, undo). */
+/** A session call that is not a dispatch (draw, shuffle, mulligan, lookAt, importDeck, undo, playFaceDown, roll). */
 export interface SessionCall {
-  method: 'draw' | 'shuffle' | 'mulligan' | 'lookAt' | 'importDeck' | 'undo';
+  method: 'draw' | 'shuffle' | 'mulligan' | 'lookAt' | 'importDeck' | 'undo' | 'playFaceDown' | 'roll';
   args: unknown[];
 }
 
@@ -634,6 +637,33 @@ export class FakeSession implements TableSession {
   }
   dispose(): void {
     this.listeners.clear();
+  }
+
+  // Members added to TableSession by M1-C: recorded, with solo-table answers.
+  readonly roomId = 'fake';
+  readonly presence: Presence = NULL_PRESENCE;
+  playFaceDown(card: InstanceId, to: ZoneId, pose?: Pose): Action {
+    this.calls.push({ method: 'playFaceDown', args: pose ? [card, to, pose] : [card, to] });
+    return this.dispatch({ type: 'move', card, to, ...(pose ? { pose } : {}) });
+  }
+  chat(text: string, channel: ChatChannel = 'table'): Action {
+    return this.dispatch({ type: 'chat', text, channel });
+  }
+  takeSeat(seat: SeatId, colour: SeatColourIndex): Action {
+    return this.dispatch({ type: 'seatTake', seat, name: this.state.seats[this.seat]?.name ?? '', colour });
+  }
+  async roll(purpose: RngPurpose, n: number): Promise<number> {
+    this.calls.push({ method: 'roll', args: [purpose, n] });
+    return 0;
+  }
+  netStatus(): SessionNetStatus {
+    return { mode: 'solo', connection: 'solo', peers: [], sequencer: null, seq: this.state.seq };
+  }
+  subscribeNet(_listener: NetStatusListener): () => void {
+    return () => undefined;
+  }
+  whenSaved(): Promise<void> {
+    return Promise.resolve();
   }
 }
 

@@ -4,7 +4,7 @@
  */
 import type { KeyChord, Keymap } from '../../../src/games/types';
 import { MTG_KEYMAP } from '../../../src/games/mtg/keymap';
-import { Commands, promptShowing, type UiHooks } from '../../../src/ui/commands';
+import { Commands, promptKeys, type UiHooks } from '../../../src/ui/commands';
 import { FakeCardData, FakeSession, RecordingScene, fakeGame, tableWith, type FakeCardSpec } from '../../../src/ui/fakes';
 import { KeyEngine, type KeyInput } from '../../../src/ui/keymap';
 import type { ConfirmRound, InstanceId, StackItem } from '../../../src/core/types';
@@ -58,7 +58,7 @@ export function rig(opts: { cards?: FakeCardSpec[]; names?: string[]; hovered?: 
   const view = { hovered: opts.hovered ?? null, selection: opts.selection ?? [] };
   let n = 0;
   const commands = new Commands({ session, game: fakeGame(), scene: () => scene, view: () => view, ui: hooks, newId: (p) => `${p}${++n}`, now: () => clock.t });
-  const engine = new KeyEngine(opts.keymap ?? MTG_KEYMAP, { start: (b) => commands.run(b.action, 'start'), end: (b) => commands.run(b.action, 'end') }, () => promptShowing(session.getState(), session.seat), () => clock.t);
+  const engine = new KeyEngine(opts.keymap ?? MTG_KEYMAP, { start: (b) => commands.run(b.action, 'start'), end: (b) => commands.run(b.action, 'end') }, () => promptKeys(session.getState(), session.seat), () => clock.t);
   const down = (chord: KeyChord, o: { inText?: boolean; repeat?: boolean } = {}) => engine.keydown({ ...eventFor(chord), repeat: !!o.repeat }, !!o.inText);
   const up = (chord: KeyChord) => void engine.keyup(eventFor(chord));
   const press = (chord: KeyChord, o: { inText?: boolean; repeat?: boolean } = {}) => {

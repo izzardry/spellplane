@@ -79,6 +79,39 @@ export function seatLayoutOf(state: TableState, layout: TableLayout, seat: SeatI
   return s ? (layout.seats[s.index] ?? null) : null;
 }
 
+/**
+ * The box the fitted view frames (DESIGN "Camera and navigation": the screen-anchored layer never covers the table's
+ * content): the table plus the hand rows of card backs the scene draws outside its edges for every seat but the
+ * viewer's and empty chairs (PLAN M1-P5: the opponent's hand as card backs), so the fitted view shows how many cards
+ * each hand holds.
+ * Axis-aligned in table space; centre and size in mm.
+ */
+export function fitFrame(state: TableState | null, layout: TableLayout, viewerSeat: SeatId | null): { x: number; y: number; w: number; d: number } {
+  let x0 = -layout.table.w / 2;
+  let x1 = layout.table.w / 2;
+  let y0 = -layout.table.d / 2;
+  let y1 = layout.table.d / 2;
+  if (state) {
+    const own = seatLayoutOf(state, layout, viewerSeat);
+    for (const seat of Object.values(state.seats)) {
+      const sl = layout.seats[seat.index];
+      // Empty chairs (the solo table's second seat) hold no hand to show.
+      if (!sl || sl === own || (seat.name === '' && seat.peer === undefined)) continue;
+      const r = sl.zones.handRow;
+      const a = (r.rot * Math.PI) / 180;
+      const c = Math.abs(Math.cos(a));
+      const sn = Math.abs(Math.sin(a));
+      const hw = (c * r.w + sn * r.d) / 2;
+      const hd = (sn * r.w + c * r.d) / 2;
+      x0 = Math.min(x0, r.x - hw);
+      x1 = Math.max(x1, r.x + hw);
+      y0 = Math.min(y0, r.y - hd);
+      y1 = Math.max(y1, r.y + hd);
+    }
+  }
+  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, d: y1 - y0 };
+}
+
 /** The viewer's seat angle (spectators see seat 0's view). */
 export function viewerAngle(state: TableState | null, layout: TableLayout, viewerSeat: SeatId | null): number {
   if (state && viewerSeat) {
@@ -151,7 +184,12 @@ export function placeCards(state: TableState, view: ViewState, ctx: Presentation
     }
 
     if (pres === 'cascade-lane') {
-      ids.forEach((id, i) => out.set(id, make(state, view, ctx, id, zone.id, 'stack', stackPose(ctx.layout.stackLane, i, angle), 0, [LAYER.stack, 0, i])));
+      // A spell takes its item's slot, so ability and trigger markers between spells keep theirs (scene/stack.ts).
+      ids.forEach((id, i) => {
+        const slot = state.stack.findIndex((it) => it.card === id);
+        const at = slot < 0 ? i : slot;
+        out.set(id, make(state, view, ctx, id, zone.id, 'stack', stackPose(ctx.layout.stackLane, at, angle), 0, [LAYER.stack, 0, at]));
+      });
       continue;
     }
 
@@ -247,7 +285,7 @@ export function dropTargets(state: TableState, layout: TableLayout, angle: numbe
 export interface Marking {
   /** Line segments as [x1, y1, x2, y2] in table mm. */
   segments: number[];
-  labels: { key: string; text: string; x: number; y: number; rot: number; anchorY: 'top' | 'middle' | 'bottom' }[];
+  labels: { key: string; text: string; x: number; y: number; rot: number; anchorX?: 'left' | 'center' | 'right'; anchorY: 'top' | 'middle' | 'bottom' }[];
 }
 
 const rectSegments = (r: Rect, out: number[], margin = 0) => {
@@ -260,6 +298,28 @@ const rectSegments = (r: Rect, out: number[], margin = 0) => {
     out.push(a.x, a.y, b.x, b.y);
   }
 };
+
+/** Clearance between a pile's outline and its label at the inner side, mm. */
+export const PILE_LABEL_GAP = 4;
+
+/**
+ * Where a pile's label goes: beside the pile on the side that faces the seat's battlefield, reading away from it, when
+ * the viewer reads along that side (the own seat and the one opposite); the 12 mm gap between two piles is too narrow
+ * for type that stays legible at the fitted view (gate M1 finding). Seats the viewer sees sideways keep the label in
+ * the gap below the pile.
+ */
+export function pileLabelPlace(sl: SeatLayout, a: Pose, angle: number): { x: number; y: number; rot: number; anchorX: 'left' | 'center' | 'right'; anchorY: 'middle' } {
+  const [localX] = rot2(a.x - sl.territory.x, a.y - sl.territory.y, -sl.angle);
+  const [dx, dy] = rot2(localX > 0 ? -1 : 1, 0, sl.angle);
+  const [vx, vy] = rot2(1, 0, angle);
+  const along = dx * vx + dy * vy;
+  if (Math.abs(along) > 0.7) {
+    const off = CARD_W / 2 + PILE_LABEL_GAP;
+    return { x: a.x + dx * off, y: a.y + dy * off, rot: angle, anchorX: along < 0 ? 'right' : 'left', anchorY: 'middle' };
+  }
+  const [lx, ly] = rot2(0, CARD_H / 2 + 6, sl.angle);
+  return { x: a.x + lx, y: a.y + ly, rot: angle, anchorX: 'center', anchorY: 'middle' };
+}
 
 /** Hairline zone outlines and their labels (Paper: "zones are hairline outlines with small caps labels"). */
 export function markings(layout: TableLayout, game: GameDefinition, angle: number, seatsInUse: number): Marking {
@@ -274,8 +334,7 @@ export function markings(layout: TableLayout, game: GameDefinition, angle: numbe
       const a = pileAnchor(sl, z.id);
       if (!a) continue;
       rectSegments({ x: a.x, y: a.y, w: CARD_W, d: CARD_H, rot: a.rot }, segments, 2);
-      const [lx, ly] = rot2(0, CARD_H / 2 + 6, sl.angle);
-      labels.push({ key: `zl:${i}:${z.id}`, text: label(z.label), x: a.x + lx, y: a.y + ly, rot: angle, anchorY: 'middle' });
+      labels.push({ key: `zl:${i}:${z.id}`, text: label(z.label), ...pileLabelPlace(sl, a, angle) });
     }
     const cmd = game.zones.find((z) => z.presentation === 'area');
     if (cmd) {

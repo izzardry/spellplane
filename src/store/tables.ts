@@ -57,6 +57,14 @@ export function createTableStore(db: IDBPDatabase<SpellplaneDB>): TableStore {
       return { table, log, secrets: secrets?.secrets ?? null };
     },
 
+    loadLog(roomId: string, afterSeq?: number): Promise<LogRecord[]> {
+      return db.getAll('log', roomLogRange(roomId, afterSeq));
+    },
+
+    async saveSecrets(roomId: string, secrets: SecretStore): Promise<void> {
+      await db.put('secrets', { roomId, secrets });
+    },
+
     async listTables(): Promise<TableRecord[]> {
       const all = await db.getAll('tables');
       return all.sort((a, b) => b.updatedAt - a.updatedAt || (a.roomId < b.roomId ? -1 : a.roomId > b.roomId ? 1 : 0));

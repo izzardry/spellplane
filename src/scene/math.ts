@@ -53,7 +53,7 @@ export function cardHalfExtents(rot: number, frameDeg = 0, w = CARD_W, h = CARD_
 }
 
 /** Whether a table point lies on a card at `pose` (oriented box test). */
-export function pointInCard(p: TablePoint, pose: Pose, w = CARD_W, h = CARD_H): boolean {
+export function pointInCard(p: TablePoint, pose: Pose, w: number = CARD_W, h: number = CARD_H): boolean {
   const [lx, ly] = rot2(p.x - pose.x, p.y - pose.y, -pose.rot);
   return Math.abs(lx) <= w / 2 && Math.abs(ly) <= h / 2;
 }
@@ -71,7 +71,7 @@ export function rectPoint(r: Rect, lx: number, ly: number): TablePoint {
 }
 
 /** The four corners of a card at `pose` in table coordinates, counter-clockwise from bottom-left (card frame). */
-export function cardCorners(pose: Pose, w = CARD_W, h = CARD_H): TablePoint[] {
+export function cardCorners(pose: Pose, w: number = CARD_W, h: number = CARD_H): TablePoint[] {
   return [
     [-w / 2, -h / 2],
     [w / 2, -h / 2],
@@ -84,3 +84,12 @@ export function cardCorners(pose: Pose, w = CARD_W, h = CARD_H): TablePoint[] {
 }
 
 export const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
+
+/**
+ * Uniform scale for table text of `sizeMm` that keeps at least `minPx` of type on screen at `pxPerMm`, in quarter steps,
+ * never below 1 and never above `maxScale` (counter badges, line labels, zone labels at far zoom).
+ */
+export function legibleScale(sizeMm: number, minPx: number, maxScale: number, pxPerMm: number): number {
+  if (!(pxPerMm > 0)) return maxScale;
+  return Math.min(maxScale, Math.max(1, Math.ceil((minPx / (sizeMm * pxPerMm)) * 4) / 4));
+}

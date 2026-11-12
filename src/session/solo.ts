@@ -15,7 +15,6 @@
 import {
   createTable,
   explain,
-  inverse,
   isUndoable,
   reduce,
   seatIdOf,
@@ -26,43 +25,36 @@ import {
   type InstanceId,
   type LogEntry,
   type Pose,
+  type RngPurpose,
+  type SeatColourIndex,
   type SecretIdentity,
   type SecretStore,
   type SeatId,
   type TableState,
   type UndoableAction,
+  type UndoReveal,
   type ZoneId,
+  undoPlan,
 } from '../core/index';
 import type { CardData } from '../data/types';
 import { SOLO_ROOM_ID } from '../store/tables';
-import type { LogRecord, TableRecord } from '../store/types';
+import type { LogRecord } from '../store/types';
+import { DRY_CID, faceDownAllowed, placementOf, putBack, reRevealDraft, referencedCard, revealFor, sameOrder, SESSION_ONLY, turnsUpOnMove } from './effects';
+import { SNAPSHOT_EVERY, TablePersistence } from './persist';
 import { commitFor, orderHash, randomId, randomSalt, shuffledOrder, shuffleSeed } from './secrecy';
 import { emptySecrets, reconcileSecrets, type LibraryPlacement } from './secrets';
-import type { DeckImport, LookedCard, SessionListener, SoloSessionOptions, TableSession } from './types';
+import type { ChatChannel } from '../net/messages';
+import type { Presence } from '../net/types';
+import { NULL_PRESENCE } from './presence';
+import type { DeckImport, LookedCard, NetStatusListener, SessionListener, SessionNetStatus, SoloSessionOptions, TableSession } from './types';
 
 /** Room id of the solo table: the store's own constant, re-exported so the two cannot drift apart. */
 export const SOLO_ROOM = SOLO_ROOM_ID;
 
-/** A snapshot of the table goes into the table record every this many actions (DESIGN "Specification: network protocol and secrecy", Sync). */
-export const SNAPSHOT_EVERY = 200;
+export { SNAPSHOT_EVERY };
 
 /** Cards drawn by a London mulligan (DESIGN "Card manipulation", Library actions). */
 export const MULLIGAN_HAND = 7;
-
-/**
- * Action types that need the owner's secrets and therefore run only through the session's own methods
- * (importDeck, shuffle, mulligan, undo, a toZone within the own library), never through `dispatch`.
- */
-const SESSION_ONLY: ReadonlySet<string> = new Set(['ready', 'shuffleCommit', 'shuffleNonce', 'shuffleDone', 'reorder', 'mulligan', 'undo']);
-
-/**
- * Public zone kinds that may hold a face-down card (DESIGN "Table model": face-down on the battlefield, face-down
- * exile). Every other public zone (graveyard, stack, command) shows faces to everyone.
- */
-const FACE_DOWN_KINDS: ReadonlySet<string> = new Set(['battlefield', 'exile']);
-
-/** Placeholder `by`/`cid` for dry runs of drafts that are stamped only when they are committed. */
-const DRY_CID = 'dry-run';
 
 /** The solo session: TableSession plus what tests and the debug hook need. */
 export interface SoloSession extends TableSession {
@@ -73,7 +65,7 @@ export interface SoloSession extends TableSession {
    * Put an own hand or library card onto a battlefield or into exile face down, keeping its identity in this browser
    * (DESIGN "Table model": face-down on the battlefield, face-down exile; other public zones show faces). No `reveal`
    * is emitted; turning it face up, or moving it into a zone that shows faces, reveals it.
-   * Not yet on TableSession: the contract has no face-down placement (reported to the integrator).
+   * On TableSession since M1-C.
    */
   playFaceDown(card: InstanceId, to: ZoneId, pose?: Pose): Action;
 }
@@ -82,6 +74,8 @@ interface UndoEntry {
   cid: string;
   group?: string;
   inverse: UndoableAction;
+  /** Cards the undo brings back face down without their identity; own ones are re-revealed with the salt (M1-P2). */
+  reveals: UndoReveal[];
   /** The private hand order before the action: a card the undo returns to the hand goes back to its old place in it. */
   hand: InstanceId[];
   /**
@@ -106,38 +100,7 @@ interface Init {
   snapshotSeq: number;
 }
 
-function placementOf(a: Action): LibraryPlacement {
-  if (a.type === 'toZone') return a.position === 'bottom' ? 'bottom' : 'top';
-  if (a.type === 'undo') return placementOf(a.inverse);
-  return 'top';
-}
-
-/** The one existing card an action is about, if any. */
-function referencedCard(a: Action): InstanceId | null {
-  if (a.type === 'draw' || a.type === 'reveal' || a.type === 'revealTo') return a.instanceId;
-  if (a.type === 'createToken' || a.type === 'copy') return null;
-  if ('card' in a && typeof a.card === 'string') return a.card;
-  return null;
-}
-
-function sameOrder(a: readonly string[], b: readonly string[]): boolean {
-  return a.length === b.length && a.every((x, i) => x === b[i]);
-}
-
-/**
- * `now` with every card that is not in `prior` but is in `old` (the cards an undo just returned to this list) moved
- * back to its index in `old`; every other card keeps its current relative order.
- */
-export function putBack(now: readonly InstanceId[], prior: readonly InstanceId[], old: readonly InstanceId[]): InstanceId[] {
-  const before = new Set(prior);
-  const oldIndex = new Map(old.map((id, i) => [id, i] as const));
-  const returned = now.filter((id) => !before.has(id) && oldIndex.has(id)).sort((a, b) => oldIndex.get(a)! - oldIndex.get(b)!);
-  if (!returned.length) return [...now];
-  const back = new Set(returned);
-  const out = now.filter((id) => !back.has(id));
-  for (const id of returned) out.splice(Math.min(oldIndex.get(id)!, out.length), 0, id);
-  return out;
-}
+export { putBack };
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -148,14 +111,10 @@ class Solo implements SoloSession {
   private state: TableState;
   private sec: SecretStore;
   private entries: LogEntry[];
-  /** The base of the stored table record: the snapshot the stored log continues from (updated as writes succeed). */
-  private snapshot: TableState;
-  private snapshotSeq: number;
-  /** A write failed, so the stored log has a hole: the next write stores a fresh snapshot (DESIGN "Multiplayer architecture", Resume). */
-  private saveBroken = false;
+  /** The local save (DESIGN "Local persistence"): one ordered write queue, shared with the networked session. */
+  private readonly saves: TablePersistence;
   private undoStack: UndoEntry[] = [];
   private readonly listeners = new Set<SessionListener>();
-  private writes: Promise<void> = Promise.resolve();
   private readonly cidPrefix = randomId('');
   private cidCount = 0;
   private disposed = false;
@@ -168,8 +127,17 @@ class Solo implements SoloSession {
     this.state = init.state;
     this.sec = init.secrets;
     this.entries = init.entries;
-    this.snapshot = init.snapshot;
-    this.snapshotSeq = init.snapshotSeq;
+    this.saves = new TablePersistence({
+      store: opts.store,
+      roomId,
+      roomKey: '',
+      seat: () => this.seat,
+      onError: (text) => this.warn(text),
+      now: () => Date.now(),
+      snapshot: init.snapshot,
+      snapshotSeq: init.snapshotSeq,
+      lastSeq: init.state.seq,
+    });
   }
 
   // --- Reading -------------------------------------------------------------------------------------
@@ -202,12 +170,39 @@ class Solo implements SoloSession {
   }
 
   whenSaved(): Promise<void> {
-    return this.writes;
+    return this.saves.whenSaved();
   }
 
   dispose(): void {
     this.disposed = true;
     this.listeners.clear();
+  }
+
+  // --- Network members (TableSession, M1-C): a solo table has no peers --------------------------------
+
+  readonly presence: Presence = NULL_PRESENCE;
+
+  netStatus(): SessionNetStatus {
+    return { mode: 'solo', connection: 'solo', peers: [], sequencer: null, seq: this.state.seq };
+  }
+
+  subscribeNet(_listener: NetStatusListener): () => void {
+    return () => undefined;
+  }
+
+  chat(text: string, channel: ChatChannel = 'table'): Action {
+    return this.dispatch({ type: 'chat', text, channel });
+  }
+
+  takeSeat(seat: SeatId, colour: SeatColourIndex): Action {
+    const action = this.stamp({ type: 'seatTake', seat, name: this.state.seats[this.seat]?.name ?? '', colour });
+    this.warn('The solo table has one chair');
+    this.notify();
+    return action;
+  }
+
+  roll(_purpose: RngPurpose, _n: number): Promise<number> {
+    return Promise.reject(new Error('not implemented: M1-P8'));
   }
 
   // --- Public actions ------------------------------------------------------------------------------
@@ -232,9 +227,9 @@ class Solo implements SoloSession {
     }
     // A face-down card moved into a public zone that shows faces (graveyard, stack, command) is turned up there,
     // in one undo group with the move.
-    const turnUp = this.turnsUpOnMove(action);
+    const turnUp = turnsUpOnMove(this.state, this.sec, this.seat, action);
     const act = turnUp && action.group === undefined ? ({ ...action, group: randomId('g') } as Action) : action;
-    const reveal = this.revealFor(act, turnUp);
+    const reveal = revealFor(this.state, this.sec, this.seat, act, turnUp);
     if (reveal && !this.commit(this.stamp(reveal))) return this.stamp(act);
     const stamped = this.stamp(act);
     const done = this.commit(stamped);
@@ -246,10 +241,7 @@ class Solo implements SoloSession {
   playFaceDown(card: InstanceId, to: ZoneId, pose?: Pose): Action {
     const action = this.stamp({ type: 'move', card, to, ...(pose ? { pose } : {}) });
     if (this.disposed) return action;
-    const s = this.state;
-    const c = Object.hasOwn(s.cards, card) ? s.cards[card] : undefined;
-    const dest = Object.hasOwn(s.zones, to) ? s.zones[to] : undefined;
-    if (!c || c.owner !== this.seat || s.zones[c.zone]?.visibility === 'public' || dest?.visibility !== 'public' || !FACE_DOWN_KINDS.has(dest.kind)) {
+    if (!faceDownAllowed(this.state, this.seat, card, to)) {
       this.warn('Only a card from your own hand or library can be put onto a battlefield or into exile face down');
       this.notify();
       return action;
@@ -366,12 +358,21 @@ class Solo implements SoloSession {
       const now = this.sec.libraryOrder;
       const target = putBack(now, libraryPrior, library);
       if (!sameOrder(now, target)) this.commitReorder(target, 1, group);
+      // A restore patch never puts a committed identity back: the card came back face down, and only its owner can
+      // reveal it again, verified against the commitment (core/undo.ts UndoReveal).
+      for (const r of batch[i]!.reveals) this.reReveal(r, group);
     });
     this.notify();
     return true;
   }
 
   // --- Internals ---------------------------------------------------------------------------------------
+
+  /** Re-reveal an own card an undo brought back face down (turned up again when it was face up). */
+  private reReveal(r: UndoReveal, group: string | undefined): void {
+    const draft = reRevealDraft(this.state, this.sec, this.seat, r, group);
+    if (draft) this.commit(this.stamp(draft), {}, false);
+  }
 
   private zone(kind: string): ZoneId {
     return zoneId(kind, this.seat);
@@ -407,48 +408,6 @@ class Solo implements SoloSession {
   }
 
   /**
-   * Whether `action` moves a face-down card that may be turned up (it has a public identity, is a labelled table
-   * object, or is an own card whose identity this browser holds) from a public zone into a public zone that shows
-   * faces to everyone: graveyard, stack, command (DESIGN "Table model"; only a battlefield and exile hold face-down cards).
-   */
-  private turnsUpOnMove(action: Action): boolean {
-    if (action.type !== 'move') return false;
-    const s = this.state;
-    const card = Object.hasOwn(s.cards, action.card) ? s.cards[action.card] : undefined;
-    const dest = Object.hasOwn(s.zones, action.to) ? s.zones[action.to] : undefined;
-    if (!card || !dest || card.face !== 'down' || card.zone === action.to) return false;
-    if (s.zones[card.zone]?.visibility !== 'public' || dest.visibility !== 'public' || FACE_DOWN_KINDS.has(dest.kind)) return false;
-    const own = card.owner === this.seat && Object.hasOwn(this.sec.identities, card.id);
-    return card.identity !== undefined || card.tokenLabel !== undefined || own;
-  }
-
-  /**
-   * The reveal an action needs first: the action names an own card whose identity only this browser holds, and the
-   * card ends up public (moved out of a hidden zone, cast, turned face up, or moved face down into a zone that shows
-   * faces, `turnUp`). Null when the action would not apply even with the reveal, so a refused action never publishes
-   * an identity. Returned unstamped: it gets its cid only when it is committed.
-   */
-  private revealFor(action: Action, turnUp: boolean): ActionDraft | null {
-    const id = referencedCard(action);
-    if (id === null || action.type === 'reveal' || (action.type === 'flip' && action.ref !== undefined)) return null;
-    const s = this.state;
-    const card = Object.hasOwn(s.cards, id) ? s.cards[id] : undefined;
-    const secret = Object.hasOwn(this.sec.identities, id) ? this.sec.identities[id] : undefined;
-    if (!card || !secret || card.owner !== this.seat || card.identity !== undefined) return null;
-    const hidden = s.zones[card.zone]?.visibility !== 'public';
-    const turnsUp = turnUp || (!hidden && card.face === 'down' && action.type === 'flip' && action.face === 'up');
-    if (!hidden && !turnsUp) return null;
-    const reveal: ActionDraft = { type: 'reveal', instanceId: id, ref: secret.card, salt: secret.salt, ...(action.group !== undefined ? { group: action.group } : {}) };
-    const s1 = reduce(s, { ...reveal, by: this.seat, cid: DRY_CID, seq: s.seq + 1 } as Action);
-    if (s1 === s) return null;
-    const s2 = reduce(s1, { ...action, seq: s.seq + 2 } as Action);
-    if (s2 === s1) return null;
-    const after = s2.cards[id];
-    if (!after || s2.zones[after.zone]?.visibility !== 'public') return null;
-    return reveal;
-  }
-
-  /**
    * Apply a stamped action: reduce, update the secrets, record the undo entry, log, persist. Returns the sequenced
    * action, or null (with a warning in the log) when the reducer refuses it.
    */
@@ -460,7 +419,7 @@ class Solo implements SoloSession {
       this.warn(`${action.type} refused: ${explain(before, action) ?? 'no effect'}`);
       return null;
     }
-    const inv = undoable && isUndoable(action) ? inverse(before, action) : null;
+    const inv = undoable && isUndoable(action) ? undoPlan(before, action) : null;
     const handBefore = this.sec.hand;
     const libraryBefore = this.sec.libraryOrder;
     let sec = o.secrets ? o.secrets(this.sec) : this.sec;
@@ -472,60 +431,21 @@ class Solo implements SoloSession {
       this.undoStack.push({
         cid: action.cid,
         ...(action.group !== undefined ? { group: action.group } : {}),
-        inverse: inv,
+        inverse: inv.inverse,
+        reveals: inv.reveals,
         hand: [...handBefore],
         library: [...libraryBefore],
       });
     }
     const at = Date.now();
     this.entries.push({ kind: 'action', seq: action.seq!, at, action });
-    this.persist(action, at);
+    this.persist(action);
     return action;
   }
 
-  /**
-   * Queue the write of an applied action with the table record and the secret store (one transaction). The record's
-   * snapshot moves to this action every SNAPSHOT_EVERY actions, and also after a failed write: the stored log then has
-   * a hole, and a snapshot taken after it makes the hole irrelevant to a restore. Writes run in order, so the stored
-   * log between the record's snapshotSeq and lastSeq is always the current timeline.
-   */
-  private persist(action: Action, at: number): void {
-    const store = this.opts.store;
-    if (!store) return;
-    const seq = action.seq!;
-    const entry: LogRecord = { roomId: this.roomId, seq, action, at };
-    // State and secrets are never mutated in place, so these references stay valid until the write runs.
-    const state = this.state;
-    const secrets = this.sec;
-    this.writes = this.writes
-      .then(async () => {
-        const rebase = this.saveBroken || seq % SNAPSHOT_EVERY === 0;
-        const snapshot = rebase ? state : this.snapshot;
-        const snapshotSeq = rebase ? seq : this.snapshotSeq;
-        await store.saveAction(this.roomId, entry, this.tableRecord(state, snapshot, snapshotSeq, at), secrets);
-        this.snapshot = snapshot;
-        this.snapshotSeq = snapshotSeq;
-        this.saveBroken = false;
-      })
-      .catch((e: unknown) => this.saveFailed(e));
-  }
-
-  private saveFailed(e: unknown): void {
-    this.saveBroken = true;
-    this.warn(`Could not save the table: ${errorText(e)}`);
-  }
-
-  private tableRecord(state: TableState, snapshot: TableState, snapshotSeq: number, at: number): TableRecord {
-    return {
-      roomId: this.roomId,
-      roomKey: '',
-      lastSeq: state.seq,
-      snapshot,
-      snapshotSeq,
-      seat: this.seat,
-      stage: state.stage,
-      updatedAt: at,
-    };
+  /** Queue the write of an applied action with the table record and the secret store (one transaction; session/persist.ts). */
+  private persist(action: Action): void {
+    this.saves.saveAction(action, this.state, this.sec);
   }
 
   /**
@@ -533,18 +453,7 @@ class Solo implements SoloSession {
    * only up to a gap, whose stored log past the restored seq belongs to an abandoned timeline.
    */
   saveBase(): void {
-    const store = this.opts.store;
-    if (!store) return;
-    const state = this.state;
-    const secrets = this.sec;
-    this.writes = this.writes
-      .then(async () => {
-        await store.saveSnapshot(this.tableRecord(state, state, state.seq, Date.now()), secrets);
-        this.snapshot = state;
-        this.snapshotSeq = state.seq;
-        this.saveBroken = false;
-      })
-      .catch((e: unknown) => this.saveFailed(e));
+    this.saves.saveBase(this.state, this.sec);
   }
 
   /** Secret shuffle of an own hidden zone (DESIGN "Specification: network protocol and secrecy", Secret shuffle). */

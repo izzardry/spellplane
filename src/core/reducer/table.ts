@@ -116,6 +116,21 @@ export function seatLeave(d: Draft, a: ActionOf<'seatLeave'>): void {
   delete w.away;
 }
 
+/**
+ * Away: the sequencer marks a seated player's seat away when its peer has gone silent, and back when it returns (DESIGN
+ * "Multiplayer architecture", Resume: "A disconnected player's seat is marked away"). Only a taken chair can be away;
+ * marking it as it already is changes nothing. Who may propose it is the sequencer's check (DECISIONS [M1-C]).
+ */
+export function away(d: Draft, a: ActionOf<'away'>): void {
+  const seat = d.seats.need(checkId(a.seat, 'seat'));
+  if (typeof a.away !== 'boolean') reject('away needs true or false');
+  if (a.away && seat.peer === undefined && seat.name === '') reject(`seat ${seat.id} is empty`);
+  if ((seat.away === true) === a.away) reject(`seat ${seat.id} is already ${a.away ? 'away' : 'present'}`);
+  const w = d.seats.w(seat.id);
+  if (a.away) w.away = true;
+  else delete w.away;
+}
+
 /** Ready: publish the deck commitment and create the seat's hidden cards as opaque ids (DESIGN "Specification: network protocol and secrecy", Commitments). */
 export function ready(d: Draft, a: ActionOf<'ready'>): void {
   const seat = d.seats.need(checkId(a.by, 'seat'));

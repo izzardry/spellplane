@@ -11,7 +11,8 @@ export const meta = {
 
 // ---------------------------------------------------------------------------
 // args: { milestone:'M0', branch:'m0', repo, wtRoot, contracts?:{brief, sections}, packages:[...], gate:{brief, sections} }
-// package: { id:'M0-P1', slug:'m0-p1', name, owns:[...], tests:[...], sections:[...], brief, deep:boolean, deps:[ids], e2e:boolean }
+// package: { id:'M0-P1', slug:'m0-p1', name, owns:[...], tests:[...], sections:[...], brief, deep:boolean, deps:[ids], e2e:boolean,
+//            maxRounds?, reviewFocus?, resume? (skip the implementer; review the existing branch) }
 // ---------------------------------------------------------------------------
 const A = args
 const M = A.milestone
@@ -24,6 +25,7 @@ const COMMON = [
   `Milestone ${M}. Sources of truth: docs/DESIGN.md (what to build) and docs/PLAN.md (packages, acceptance tests, gates). Read the sections named below yourself with the Read tool (use grep -n '^## ' to find them); they are not pasted here.`,
   `This is an unattended overnight run: never ask questions or wait for input. When the design is silent, choose the simplest behaviour consistent with it and report the decision in your return value.`,
   `Never force-push, never rewrite pushed history, never touch another repository, never use the network in tests.`,
+  `Playwright runs are serialised across the machine (scripts/pw-guard.mjs, see CLAUDE.md): give pnpm e2e / e2e:gate / shots a 10-minute Bash timeout, never start two at once, and if one exits with code 3 (macOS security or privacy prompt) or 4 (machine short of memory) report it instead of retrying.`,
 ].join('\n')
 
 const secList = (s) => s.map((x) => `"${x}"`).join(', ')
@@ -160,7 +162,7 @@ if (A.contracts) {
       A.contracts.brief,
       ``,
       `Rules: contracts are shared types, interfaces, constants and compiling stubs (stub functions may throw new Error('not implemented: <pkg>') or return trivial values, and must name the package that implements them). Document every exported type with a one-line comment that cites the design section. Keep the B0 smoke e2e test passing.`,
-      `Finish: pnpm check green and pnpm e2e green; commit on ${BR} with message "feat(${M.toLowerCase()}-c): contracts" (plus the Co-Authored-By trailer: "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"); git push origin ${BR}. Return the schema.`,
+      `Finish: pnpm check green and pnpm e2e green; commit on ${BR} with message "${A.contracts.message || `feat(${M.toLowerCase()}-c): contracts`}" (plus the Co-Authored-By trailer: "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"); git push origin ${BR}. Return the schema.`,
     ].join('\n'),
     { label: `contracts:${M}`, phase: 'Contracts', schema: CONTRACTS_SCHEMA },
   )
@@ -247,6 +249,9 @@ function reviewPrompt(pkg, round, focus) {
     focus === 'deep'
       ? `Focus ONLY on: (1) determinism — reducer/protocol code that depends on wall clock, Math.random, object key order, Set/Map iteration order where order matters, floating-point drift across peers, non-canonical JSON for hashes, async races; (2) hidden information — any path by which a card identity, library order, hand content, nonce or salt could reach another peer, the shared state, the log, the debug hook of another page, or a store that syncs. Each concrete defect is blocking.`
       : `Hunt for: behaviour that contradicts the design; acceptance tests from the plan that are missing, hollow, or test the implementation instead of the design; real bugs (edge cases, off-by-one, state that goes stale, leaks of listeners/GPU resources); hard-rule violations (CLAUDE.md); boundary-rule evasions; files edited outside the package's ownership (${pkg.owns.join(', ')}). Style nits are minor.`,
+    pkg.reviewFocus
+      ? `FOCUS (overrides the hunting brief above where they conflict): ${pkg.reviewFocus}`
+      : `Severity rule: mark a finding blocking only if you can demonstrate it (a failing scratch test or an exact reproduction), it contradicts an explicit design sentence or acceptance test, or it breaks a CLAUDE.md hard rule. Hardening ideas, design-interpretation questions and polish are minor; they go to the gate report.`,
     `Blocking = must be fixed before merge. Be concrete: file, line, what is wrong, which design sentence it violates, how to fix. Do not report things you have not verified. Return the schema; verdict=approve only if there are no blocking findings.`,
   ].join('\n')
 }
@@ -273,7 +278,10 @@ async function runPackage(pkg) {
       }
       log(`${pkg.id}: dependencies merged, starting`)
     }
-    const impl = await agent(implPrompt(pkg), { label: `impl:${pkg.id}`, phase: 'Packages', schema: IMPL_SCHEMA })
+    // resume: the implementation already exists on branch pkg.slug (e.g. after a crash); go straight to review.
+    const impl = pkg.resume
+      ? { status: 'green', check_green: true, decisions: [], summary: `resumed from existing branch ${pkg.slug}` }
+      : await agent(implPrompt(pkg), { label: `impl:${pkg.id}`, phase: 'Packages', schema: IMPL_SCHEMA })
     if (!impl || impl.status !== 'green' || !impl.check_green) {
       settled = true
       return { pkg: pkg.id, impl, rounds: 0, integration: await integrate(pkg, { park: true, reason: impl ? impl.blocked_reason || impl.summary : 'implementer died', decisions: impl ? impl.decisions : [] }) }
@@ -283,7 +291,8 @@ async function runPackage(pkg) {
     let round = 0
     let approved = false
     let lastFix = null
-    while (round < 3) {
+    const maxRounds = pkg.maxRounds || 3
+    while (round < maxRounds) {
       round++
       const reviewers = [() => agent(reviewPrompt(pkg, round, 'main'), { label: `review${round}:${pkg.id}`, phase: 'Packages', schema: REVIEW_SCHEMA })]
       if (pkg.deep) reviewers.push(() => agent(reviewPrompt(pkg, round, 'deep'), { label: `review${round}-deep:${pkg.id}`, phase: 'Packages', schema: REVIEW_SCHEMA }))
@@ -301,7 +310,7 @@ async function runPackage(pkg) {
         open = open.concat([{ severity: 'blocking', issue: `fixer round ${round} left pnpm check red or died` }])
       }
     }
-    if (!approved && round === 3 && lastFix && lastFix.check_green && (lastFix.not_fixed || []).length === 0) {
+    if (!approved && round === maxRounds && lastFix && lastFix.check_green && (lastFix.not_fixed || []).length === 0) {
       // Third fix claimed everything resolved; accept without a fourth review, but say so.
       log(`${pkg.id}: accepted after third fix round without a further review`)
       approved = true

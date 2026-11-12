@@ -2,7 +2,11 @@
 // layout and motion" (stack lane cascade 22 toward each viewer, squared pile step 0.4 capped at 20).
 import { describe, expect, it } from 'vitest';
 import { buildHarnessState, harnessGame, harnessLayout, harnessPrivateFaces } from '../../../src/scene/harness-fixture';
-import { dropTargets, placeCards } from '../../../src/scene/layout';
+import { dropTargets, fitFrame, pileAnchor, pileLabelPlace, PILE_LABEL_GAP, placeCards } from '../../../src/scene/layout';
+import { CARD_H, CARD_W, rot2 } from '../../../src/scene/math';
+import { mtgLayout } from '../../../src/games/mtg/layout';
+import { createTable } from '../../../src/core/reducer/index';
+import { mtg } from '../../../src/games/index';
 import type { ViewState } from '../../../src/scene/types';
 
 const view = (over: Partial<ViewState> = {}): ViewState => ({ selection: [], hovered: null, privateFaces: {}, reducedMotion: false, pings: [], openPile: null, ...over });
@@ -59,5 +63,54 @@ describe('presentation', () => {
   it('drop targets: every seat\'s library, graveyard and exile, its avatar (hand) and the stack lane', () => {
     const zones = dropTargets(s, harnessLayout(), 0, harnessGame).map((t) => t.zone).sort();
     expect(zones).toEqual(['exile:s0', 'exile:s1', 'graveyard:s0', 'graveyard:s1', 'hand:s0', 'hand:s1', 'library:s0', 'library:s1', 'stack'].sort());
+  });
+});
+
+describe('fit frame (gate M1 finding: the opponent\'s hand row of backs must not sit under the turn strip)', () => {
+  it('1v1: the frame is the table plus the other seat\'s hand row; an empty chair adds nothing', () => {
+    const layout = mtgLayout('1v1');
+    const st = createTable({ game: mtg, format: '1v1', seats: [{ name: 'Ann', colour: 0 }, { name: 'Ben', colour: 1 }] });
+    const row0 = layout.seats[0]!.zones.handRow;
+    const row1 = layout.seats[1]!.zones.handRow;
+    const fromBen = fitFrame(st, layout, 's1');
+    // Ann's row lies beyond her near edge: the frame reaches it and still holds the whole table.
+    expect(fromBen.y - fromBen.d / 2).toBeCloseTo(row0.y - row0.d / 2, 6);
+    expect(fromBen.y + fromBen.d / 2).toBeCloseTo(layout.table.d / 2, 6);
+    expect(fromBen.w).toBeGreaterThanOrEqual(layout.table.w);
+    const fromAnn = fitFrame(st, layout, 's0');
+    expect(fromAnn.y + fromAnn.d / 2).toBeCloseTo(row1.y + row1.d / 2, 6);
+    expect(fromAnn.y - fromAnn.d / 2).toBeCloseTo(-layout.table.d / 2, 6);
+    const solo = createTable({ game: mtg, format: '1v1', seats: [{ name: 'Ann', colour: 0 }, { name: '', colour: 1 }] });
+    expect(fitFrame(solo, layout, 's0')).toEqual({ x: 0, y: 0, w: layout.table.w, d: layout.table.d });
+    expect(fitFrame(null, layout, null)).toEqual({ x: 0, y: 0, w: layout.table.w, d: layout.table.d });
+  });
+});
+
+describe('pile labels (gate M1 finding: labels crossed the pile outlines)', () => {
+  const layout = mtgLayout('1v1');
+  const piles = ['library', 'graveyard', 'exile'] as const;
+
+  it('in 1v1 each pile label sits beside its pile toward the battlefield, clear of every pile outline, for both viewers', () => {
+    for (const viewer of layout.seats) {
+      for (const sl of layout.seats) {
+        for (const kind of piles) {
+          const a = pileAnchor(sl, kind)!;
+          const p = pileLabelPlace(sl, a, viewer.angle);
+          expect(p.anchorX).not.toBe('center');
+          // The anchor is beside the pile, PILE_LABEL_GAP clear of its outline, on the side of the territory centre.
+          expect(Math.hypot(p.x - a.x, p.y - a.y)).toBeCloseTo(CARD_W / 2 + PILE_LABEL_GAP, 6);
+          expect(Math.abs(p.x - sl.territory.x)).toBeLessThan(Math.abs(a.x - sl.territory.x));
+          // The text runs away from the pile: right-anchored when the pile lies to the viewer's right.
+          const [vx, vy] = rot2(1, 0, viewer.angle);
+          const towardLabel = (p.x - a.x) * vx + (p.y - a.y) * vy;
+          expect(p.anchorX).toBe(towardLabel < 0 ? 'right' : 'left');
+          for (const kind2 of piles) {
+            const b = pileAnchor(sl, kind2)!;
+            const [lx, ly] = rot2(p.x - b.x, p.y - b.y, -b.rot);
+            expect(Math.abs(lx) > CARD_W / 2 || Math.abs(ly) > CARD_H / 2).toBe(true);
+          }
+        }
+      }
+    }
   });
 });

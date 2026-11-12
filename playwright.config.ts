@@ -7,6 +7,15 @@ function worktreePort(): number {
   for (const ch of process.cwd()) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return 4200 + (h % 700);
 }
+// Local runs must come through scripts/pw-guard.mjs (pnpm e2e, e2e:gate, e2e:network, shots):
+// it allows one Playwright run per machine and aborts on a macOS security prompt. Workers
+// re-load this config, so only the runner process (no TEST_WORKER_INDEX) checks.
+if (!process.env.CI && !process.env.SPELLPLANE_PW_GUARD && process.env.TEST_WORKER_INDEX === undefined) {
+  throw new Error(
+    'Run Playwright through the pnpm scripts (pnpm e2e / e2e:gate / e2e:network / shots), not `playwright test` directly: ' +
+      'they serialise runs across worktrees and stop when macOS shows a keychain prompt.',
+  );
+}
 const PORT = Number(process.env.PW_PORT ?? (process.env.CI ? 4173 : worktreePort()));
 export const BASE_URL = `http://localhost:${PORT}/spellplane/`;
 
@@ -17,7 +26,13 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0, // a flaky test is a failing test
-  workers: process.env.CI ? 2 : 4,
+  // Two workers locally: each holds a browser with several WebGL pages (software GL on Chromium),
+  // and four of them on top of other agents' work exhausted the machine's memory.
+  workers: process.env.CI ? 2 : Number(process.env.SPELLPLANE_PW_WORKERS ?? 2),
+  // Locally, stop early when things go wrong wholesale (e.g. a modal dialog hangs every test)
+  // instead of launching browser after browser.
+  maxFailures: process.env.CI ? 0 : 10,
+  globalTimeout: process.env.CI ? 0 : 45 * 60_000,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   timeout: 60_000,
   use: {

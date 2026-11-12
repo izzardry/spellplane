@@ -138,9 +138,11 @@ test('dragging empty table pans and keeps gliding (inertia); 0 fits the table ag
   expect(movedPx).toBeGreaterThan(205);
   await page.keyboard.press('0');
   await settle(page);
-  const fit = (await page.evaluate(() => window.__spellplane!.camera!())).position;
-  expect(fit[0]).toBeCloseTo(0, 6);
-  expect(fit[1]).toBeCloseTo(0, 6);
+  // The fit frames the table plus Bo's hand row beyond the far edge (y 606 ± 44, scene/layout.ts fitFrame): its centre
+  // (0, 50) is at the viewport centre.
+  const centre = (await harness(page, 'toScreen', 0, 50)) as { x: number; y: number };
+  expect(centre.x).toBeCloseTo(720, 0);
+  expect(centre.y).toBeCloseTo(450, 0);
 });
 
 test('trackpad scroll pans without zooming; the zoom is clamped at both ends', async ({ page }) => {
@@ -157,8 +159,9 @@ test('trackpad scroll pans without zooming; the zoom is clamped at both ends', a
   // Closest zoom: one card is 80% of the viewport height.
   expect((await card(page, 'a'))!.screen.height).toBeCloseTo(0.8 * 900, 0);
   for (let i = 0; i < 40; i++) await page.mouse.wheel(0, 200);
-  // Farthest: the table plus 5% fits (the 1100 deep table is the tight axis at 1440 x 900).
-  const tl = (await harness(page, 'toScreen', -700, 550)) as { x: number; y: number };
+  // Farthest: the table and Bo's hand row of backs beyond its far edge (to y 650) plus 5% fit; the 1200 deep frame is the
+  // tight axis at 1440 x 900.
+  const tl = (await harness(page, 'toScreen', -700, 650)) as { x: number; y: number };
   const br = (await harness(page, 'toScreen', 700, -550)) as { x: number; y: number };
   expect((br.y - tl.y) / 900).toBeCloseTo(1 / 1.05, 3);
 });

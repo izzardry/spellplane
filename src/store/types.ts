@@ -11,9 +11,26 @@ import type { CardRef, SecretStore, SeatId, Stage, TableState } from '../core/ty
 /** `identity` store, key 'me' (DESIGN "Local persistence"): key pair, nickname, preferred seat colour. */
 export interface IdentityRecord {
   id: 'me';
-  /** ECDSA P-256; the private key is non-extractable and stored as a CryptoKey. */
+  /** ECDSA P-256; in memory the private key is non-extractable (stored as JWK, see StoredIdentity). */
   keyPair: CryptoKeyPair;
   /** First 16 hex characters of SHA-256 of the public key (DESIGN "Specification: network protocol and secrecy"). */
+  peerId: string;
+  nickname: string;
+  seatColour: number;
+}
+
+/**
+ * How the identity is kept in the `identity` store (DESIGN "Local persistence"). The key pair is stored as JWK data,
+ * not as CryptoKey objects: WebKit wraps stored CryptoKeys with a master key from the macOS keychain, which made
+ * Playwright's WebKit raise keychain dialogs. `get()` imports the private key as non-extractable. Records written by
+ * earlier builds hold `keyPair` CryptoKeys instead and are still read.
+ */
+export interface StoredIdentity {
+  id: 'me';
+  privateJwk?: JsonWebKey;
+  publicJwk?: JsonWebKey;
+  /** Earlier builds (before 11 Nov 2026) only. */
+  keyPair?: CryptoKeyPair;
   peerId: string;
   nickname: string;
   seatColour: number;
@@ -111,7 +128,7 @@ export interface SetRecord {
 
 /** The IndexedDB schema v1: the eight stores of the persistence table (DESIGN "Local persistence"). */
 export interface SpellplaneDB extends DBSchema {
-  identity: { key: 'me'; value: IdentityRecord };
+  identity: { key: 'me'; value: StoredIdentity };
   settings: { key: keyof Settings; value: SettingsRecord };
   tables: { key: string; value: TableRecord };
   log: { key: [string, number]; value: LogRecord };
@@ -129,13 +146,25 @@ export interface LoadedTable {
   secrets: SecretStore | null;
 }
 
-/** Table persistence (DESIGN "Local persistence": log, tables and secrets for one action in one transaction). Implementer: M0-P5 (solo), M1-P7. */
+/** Table persistence (DESIGN "Local persistence": log, tables and secrets for one action in one transaction). Implementer: M0-P5 (solo), M1-C (loadLog, saveSecrets), M1-P7. */
 export interface TableStore {
   /** Writes the log entry, the table record and (if given) the secrets in ONE transaction. */
   saveAction(roomId: string, entry: LogRecord, table: TableRecord, secrets: SecretStore | null): Promise<void>;
   /** Writes a snapshot into the table record (and secrets) without a log entry. */
   saveSnapshot(table: TableRecord, secrets: SecretStore | null): Promise<void>;
   loadTable(roomId: string): Promise<LoadedTable | null>;
+  /**
+   * Stored log records of a room with `seq > afterSeq` (default: all), ascending (DESIGN "Turn flow and confirmation",
+   * Action log: the log is what gets saved for resume). Added by M1-C for the full log after a reload (M0-P7 known
+   * limit). Entries past the table record's `lastSeq` belong to an abandoned timeline; callers stop there.
+   */
+  loadLog(roomId: string, afterSeq?: number): Promise<LogRecord[]>;
+  /**
+   * Writes the secret store alone (DESIGN "Local persistence": `secrets` keyed by roomId). Added by M1-C for networked
+   * tables, whose secret store also changes without an own logged action (an identity received on the pair channel,
+   * a peer's shuffle nonce folded into the order).
+   */
+  saveSecrets(roomId: string, secrets: SecretStore): Promise<void>;
   listTables(): Promise<TableRecord[]>;
   deleteTable(roomId: string): Promise<void>;
 }

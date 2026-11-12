@@ -5,8 +5,35 @@
  */
 import type { Action } from '../core/actions';
 import type { InstanceId, Line, Pose, SecretStore, TableState } from '../core/types';
-import type { Message, PeerId } from '../net/transport';
+import type { PeerId } from '../net/transport';
+import type { ConnectionStatus, NetMessageRecord, PeerInfo } from '../net/types';
 import type { Vec3 } from '../scene/types';
+
+/**
+ * The network part of the debug hook (DESIGN "Specification: code interfaces", SpellplaneDebug.net; PLAN M1-P2 leak
+ * test, M1-G gate: reloads, closing the sequencer page). Added by M1-C as a superset of the design's
+ * `{messages, sequencer}`; registered by the networked session's debug assembly (M1-P8).
+ */
+export interface NetDebug {
+  /** Every wire message this page sent or received since it joined, oldest first; the leak test scans the `in` ones. */
+  messages(): NetMessageRecord[];
+  /** Identity peer id of the current sequencer; '' while none is known. */
+  sequencer(): PeerId;
+  /** This page's identity peer id. */
+  self(): string;
+  peers(): PeerInfo[];
+  status(): ConnectionStatus;
+  /** Last seq applied in order. */
+  seq(): number;
+  /** Forget the recorded messages (e.g. before a scripted phase of the leak test). */
+  clearMessages(): void;
+  /** Drop off the network abruptly, without `bye` (simulates a crash or lost connection; peers see silence). */
+  kill(): void;
+  /** Rejoin after `kill`, as a reconnect would. */
+  revive(): Promise<void>;
+  /** Leave cleanly with `bye`, as closing the tab does. */
+  close(): void;
+}
 
 /** The full debug hook (DESIGN "Specification: code interfaces"). */
 export interface SpellplaneDebug {
@@ -16,7 +43,7 @@ export interface SpellplaneDebug {
   camera(): { rig: string; fov: number; position: Vec3; pitch: number };
   lines(): Line[];
   dispatch(action: Action): void;
-  net: { messages(): { dir: 'in' | 'out'; channel: string; msg: Message }[]; sequencer(): PeerId };
+  net: NetDebug;
   frameStats(): { drawCalls: number; textureBytes: number; frameMs: number };
 }
 

@@ -111,7 +111,15 @@ const S: Record<ActionId, Scenario> = {
   nextTurn: { check: expectDraft({ type: 'turnPass', to: 's1' }) },
   untapAll: { check: expectDraft({ type: 'tap', card: 'bf2', tapped: false }) },
   autoPass: { check: expectDraft({ type: 'autoPass', on: true }) },
-  ask: { check: expectDraft({ type: 'ask' }) },
+  ask: {
+    check: async (page) => {
+      // K opens the inline Ask field for an optional label; Enter asks.
+      await expect(page.getByTestId('ask-input')).toBeFocused();
+      await page.getByTestId('ask-input').fill('attacks?');
+      await page.keyboard.press('Enter');
+      await expect.poll(() => first(page)).toMatchObject({ type: 'ask', label: 'attacks?' });
+    },
+  },
   confirmOk: { hover: 'bf1', setup: promptByBen, check: expectDraft({ type: 'respond', round: 'r9', seat: 's0', response: 'ok' }) },
   confirmHold: { hover: 'bf1', setup: promptByBen, check: expectDraft({ type: 'respond', round: 'r9', seat: 's0', response: 'hold' }) },
   tidy: { check: expectDraft({ type: 'tidy', seat: 's0' }) },

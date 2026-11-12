@@ -115,7 +115,10 @@ Two players in different homes play a complete game from a shared link, with han
 | M1-P4 Combat and lines | Temporary move with home slot and ghost, settle, attack and block shortcuts with blocker fan and ordering, all five line kinds rendered and following their endpoints, ping. | `core/reducer/temp.ts`, `scene/lines.ts`, `scene/ghost.ts` | M1-C |
 | M1-P5 Lobby and seats | Create table, share link, nickname, chair selection and seat colour, deck selection and Ready with commitment, pairwise connectivity check with a plain failure message, two-seat layout with the opponent's hand as card backs, live cursors and drags. | `ui/lobby/*`, `scene/presence.ts`, `games/mtg/layout.ts` | M1-C |
 | M1-P6 Chat and log | Text chat, double-bracket card previews, one timeline with action lines, filters, attribution flash when someone touches another player's card. | `ui/chat/*`, `core/log.ts` | M1-C |
-| M1-P7 Resume | Persist the sequenced log, snapshots every 200 actions and the secret store; rejoin a seat by key pair; restore with no peers present and reconcile to the highest sequence number; away seats; the logged lost-save recovery (re-import, subtract public cards, recommit, reshuffle). | `store/table.ts`, `net/sync.ts`, `ui/recovery/*` | M1-C |
+| M1-P7 Resume | Persist the sequenced log, snapshots every 200 actions and the secret store; rejoin a seat by key pair; restore with no peers present and reconcile to the highest sequence number; away seats; the logged lost-save recovery (re-import, subtract public cards, recommit, reshuffle). | `store/tables.ts`, `net/sync.ts`, `core/recovery.ts`, `core/reducer/recovery.ts`, `ui/recovery/*` | M1-P1, M1-P2, M1-P8 |
+| M1-P8 Networked session | *(added 11 Nov 2026 by M1-C)* The networked game client that glues the modules: `TableSession` over a transport, the `NetEngine` (sequencer, sync, presence), the pair channel for hidden information and the sequencer's confirmation and commit-window timers, with the owner's secret store and persistence as in the solo session; routes `#/t/<room>/<key>` to the networked session in `main.ts`; debug-hook `net` part. | `session/*`, `main.ts`, `debug/*` | M1-P1, M1-P2, M1-P5 |
+
+**Ownership within `net/`** *(M1-C)*: M1-P1 owns `net/*` except `net/private.ts` (M1-P2) and `net/sync.ts` (M1-P7). M1-P5 also owns the `/#/diag` page (`ui/diag/*`). M1-P3 owns `core/reducer/confirm.ts` (stub created by M1-C) and the confirmation-timer deadline in it; M1-P2 owns the commit-window deadlines in `core/rng.ts`.
 
 **Acceptance tests**
 
@@ -124,6 +127,7 @@ Two players in different homes play a complete game from a shared link, with han
 - **M1-P3.** A stack item starts a round; silence passes after the configured duration on all peers at the same sequence number; hold stops the timer; an away peer times out; resolve before all-pass requires the second press and logs it.
 - **M1-P4.** Attack moves 110 mm forward and taps; settle returns every displaced card to its home pose and removes attack and block lines but not persistent marks; lines follow moved endpoints.
 - **M1-P7.** Reloading either page mid-game rejoins the same seat with the same hand; closing both pages and reopening either restores the table; the recovery flow yields a library whose size equals deck size minus public cards minus the agreed hand.
+- **M1-P8.** Two `LoopbackNetwork` sessions converge on the same hash for a scripted game and the leak scan (`tests/leak/scan.ts`) finds nothing.
 
 **Gate M1-G:** two pages on the broadcast transport play a scripted game: both ready with fixture decks, mulligans, eight turns with lands, spells through the stack with targets and a counterspell, a hold in response, combat with a double block, a face-down card revealed to the opponent only, dice roll, life changes to zero. During the game each page is reloaded once and the sequencer page is closed and reopened. The leak test runs on the captured messages. Screenshot set: lobby, connectivity failure message, opponent view, stack with three items and targets, confirmation prompt, combat with blocks, away seat.
 
@@ -391,15 +395,16 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M0-P6 Magic definition
 - [x] M0-P7 Solo session
 - [x] M0-G Gate (owner playtest pending)
-- [ ] M1-C Contracts
-- [ ] M1-P1 Transport and sequencer
-- [ ] M1-P2 Secrecy
-- [ ] M1-P3 Stack and confirmation
-- [ ] M1-P4 Combat and lines
-- [ ] M1-P5 Lobby and seats
-- [ ] M1-P6 Chat and log
-- [ ] M1-P7 Resume
-- [ ] M1-G Gate and owner playtest
+- [x] M1-C Contracts
+- [x] M1-P1 Transport and sequencer
+- [x] M1-P2 Secrecy
+- [x] M1-P3 Stack and confirmation
+- [x] M1-P4 Combat and lines
+- [x] M1-P5 Lobby and seats
+- [x] M1-P6 Chat and log
+- [x] M1-P7 Resume
+- [x] M1-P8 Networked session
+- [x] M1-G Gate (owner playtest and two-home network check pending)
 - [ ] M2-C Contracts
 - [ ] M2-P1 Pack generation
 - [ ] M2-P2 Pass draft and sealed
