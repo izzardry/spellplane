@@ -6,3 +6,4 @@ export { commitFor, orderHash, shuffledOrder, shuffleSeed, ByteStream } from './
 export { sha256Sync } from '../core/sha256';
 export { createNetSession, LONE_WAIT_MS, openNetSession } from './net';
 export { NULL_PRESENCE } from './presence';
+export { deckImportOf } from './deck-build';
