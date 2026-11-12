@@ -336,6 +336,15 @@ export interface ImportPlan {
   copied: number;
 }
 
+/** Whether two records are the same deck, field for field (a stored record that cannot be compared counts as different). */
+function sameRecord(a: DeckRecord, b: DeckRecord): boolean {
+  try {
+    return canonicalJson(a) === canonicalJson(b);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * How imported records join a library: a record that is new is written as it is; one equal to the stored record of
  * its id is left alone; one whose id holds a different deck is written as a copy with a new id from `newId`, so
@@ -349,7 +358,7 @@ export function planImport(existing: readonly DeckRecord[], incoming: readonly D
     if (!stored) {
       plan.put.push(cloneJson(record));
       byId.set(record.id, record);
-    } else if (canonicalJson(stored) === canonicalJson(record)) {
+    } else if (sameRecord(stored, record)) {
       plan.unchanged++;
     } else {
       let id = newId();
