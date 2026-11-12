@@ -1,5 +1,5 @@
 // Runs Playwright under a machine-wide guard (local runs only; CI runs it directly):
-//  - at most SPELLPLANE_PW_SLOTS (default 4) Playwright runs at a time across all worktrees, one per worktree
+//  - at most SPELLPLANE_PW_SLOTS (default 2) Playwright runs at a time across all worktrees, one per worktree
 //    (lock directories in the OS temp dir), so parallel agents never stack up browsers and eat the machine's memory;
 //  - a stale lock (its owner died, e.g. a killed shell) is taken over and the dead run's
 //    process group is killed, so orphaned browsers do not linger;
@@ -8,7 +8,7 @@
 //    "allow" alert): every test would hang on it and Playwright would keep relaunching browsers
 //    behind the modal. No run starts while such a prompt is open;
 //  - a memory watchdog aborts the run when the machine runs short of memory (kern.memorystatus_level
-//    below SPELLPLANE_PW_MIN_FREE_PCT, default 15) or the run's own processes grow past
+//    below SPELLPLANE_PW_MIN_FREE_PCT, default 25) or the run's own processes grow past
 //    SPELLPLANE_PW_MAX_RSS_MB (default: a third of physical memory), instead of letting browsers
 //    swap the machine to death;
 //  - a load guard: no run starts while the 1-minute load average is above SPELLPLANE_PW_MAX_LOAD
@@ -21,9 +21,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-// Up to SLOTS runs at once (SPELLPLANE_PW_SLOTS, default 4), one lock directory per slot. Slot 0 keeps the
+// Up to SLOTS runs at once (SPELLPLANE_PW_SLOTS, default 2), one lock directory per slot. Slot 0 keeps the
 // original single-lock path, so an older guard (a worktree branched before the slots) still counts against it.
-const SLOTS = Math.max(1, Number(process.env.SPELLPLANE_PW_SLOTS ?? 4));
+const SLOTS = Math.max(1, Number(process.env.SPELLPLANE_PW_SLOTS ?? 2));
 const slotDir = (i) => path.join(os.tmpdir(), i === 0 ? 'spellplane-playwright.lock' : `spellplane-playwright.lock.${i}`);
 /** The slot this process holds, once acquired. */
 let LOCK = null;
@@ -88,7 +88,7 @@ function securityPromptShowing() {
   return PROMPT_PROCESSES.find((name) => spawnSync('pgrep', ['-x', name]).status === 0) ?? null;
 }
 
-const MIN_FREE_PCT = Number(process.env.SPELLPLANE_PW_MIN_FREE_PCT ?? 15);
+const MIN_FREE_PCT = Number(process.env.SPELLPLANE_PW_MIN_FREE_PCT ?? 25);
 const MAX_RSS_MB = Number(process.env.SPELLPLANE_PW_MAX_RSS_MB ?? Math.round(os.totalmem() / 3 / 2 ** 20));
 
 /** Percentage of memory macOS considers available (kern.memorystatus_level), or null elsewhere. */
