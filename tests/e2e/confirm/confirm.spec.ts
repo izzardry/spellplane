@@ -2,7 +2,8 @@
  * PLAN M1-P3 in the browser: the stack lane and confirmation rounds with the real HUD and the real table scene, over
  * an in-page sequenced table (`?harness=confirm`, src/ui/confirm/harness.ts) whose sequencer runs the confirmation
  * deadlines on its own clock. The other players are scripted through `window.__confirmHarness`; the local player uses
- * real keys. Pass timer: 2 s (the shortest the host can set).
+ * real keys. Pass timer: 4 s (TIMER), so the steps a test about the timer takes before it runs out fit on a slow machine
+ * too; tests whose premise is that a round still waits when a key is pressed use LONG_TIMER (decision M2-G).
  *
  * DESIGN "The effect stack" (Stack and confirmation, Resolving), "Turn flow and confirmation" (Confirmation rounds),
  * "Specification: network protocol and secrecy" (Timers).
@@ -12,12 +13,18 @@ import type { Action, ActionDraft } from '../../../src/core/actions';
 import type { TableState } from '../../../src/core/types';
 import type { DebugStackEntry } from '../../../src/scene/stack';
 
-const TIMER = 2000;
+const TIMER = 4000;
+/**
+ * A pass timer no test outlives, for tests about what a player does while a round waits (answer, hold, resolve):
+ * with a timer of seconds their premise, that the round still waits when the key is pressed, would hold only on a fast
+ * machine (decision M2-G). The other tests keep TIMER; what they check of the log ignores timer passes (`acted`).
+ */
+const LONG_TIMER = 600_000;
 
-async function open(page: Page, opts: { seat: 's0' | 's1'; seats?: string[] }): Promise<void> {
+async function open(page: Page, opts: { seat: 's0' | 's1'; seats?: string[]; timer?: number }): Promise<void> {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const q = new URLSearchParams({ faces: 'placeholder', harness: 'confirm', seat: opts.seat, timer: String(TIMER), seats: (opts.seats ?? ['Anna', 'Ben']).join(',') });
+  const q = new URLSearchParams({ faces: 'placeholder', harness: 'confirm', seat: opts.seat, timer: String(opts.timer ?? TIMER), seats: (opts.seats ?? ['Anna', 'Ben']).join(',') });
   await page.goto(`./?${q.toString()}`);
   await expect.poll(() => page.evaluate(() => typeof window.__confirmHarness === 'object' && typeof window.__spellplane?.stack === 'function')).toBe(true);
   await expect(page.getByTestId('hud')).toBeVisible();
@@ -28,6 +35,13 @@ const remote = (page: Page, seat: string, draft: ActionDraft) =>
   page.evaluate(([s, d]) => window.__confirmHarness!.remote(s as string, d as ActionDraft), [seat, draft] as const) as Promise<{ action: Action; refused: string | null }>;
 const state = (page: Page) => page.evaluate(() => window.__confirmHarness!.state()) as Promise<TableState>;
 const log = (page: Page) => page.evaluate(() => window.__confirmHarness!.log()) as Promise<Action[]>;
+/**
+ * The log without the sequencer's timer passes (`respond … 'timeout'`). A round's deadline runs on the sequencer's
+ * clock (DESIGN "Turn flow and confirmation", Confirmation rounds), so its pass lands whenever the timer runs out,
+ * which on a slow machine can be after a gesture the test made later: assertions about what a gesture logged read
+ * this, never the raw log's last entry.
+ */
+const acted = async (page: Page) => (await log(page)).filter((a) => !(a.type === 'respond' && a.response === 'timeout'));
 const fired = (page: Page) => page.evaluate(() => window.__confirmHarness!.fired()) as Promise<{ key: string; seq: number }[]>;
 const lane = (page: Page) => page.evaluate(() => JSON.parse(JSON.stringify(window.__spellplane!.stack!())) as DebugStackEntry[]);
 
@@ -89,7 +103,7 @@ test.describe('a stack item starts a round; silence passes after the configured 
     expect((await lane(page)).map((e) => [e.item, e.kind, e.face, e.pending])).toEqual([['i1', 'spell', 'abolt', true]]);
     expect((await state(page)).confirm?.responses).toEqual({});
 
-    await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: 5000 }).toEqual({ s1: 'timeout' });
+    await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: TIMER + 3000 }).toEqual({ s1: 'timeout' });
     expect(Date.now() - t0).toBeGreaterThanOrEqual(TIMER);
     // The sequencer (Anna's browser, seat 0) sent the timeout for Ben.
     const last = (await log(page)).at(-1)!;
@@ -103,7 +117,7 @@ test.describe('a stack item starts a round; silence passes after the configured 
   });
 
   test('OK (Enter) answers at once', async ({ page }) => {
-    await open(page, { seat: 's1' });
+    await open(page, { seat: 's1', timer: LONG_TIMER });
     await annaCasts(page);
     await expect(page.getByTestId('confirm-prompt')).toBeVisible();
     await hoverNothing(page);
@@ -140,14 +154,14 @@ test.describe('hold stops the timer', () => {
     const status = page.getByTestId('confirm-status');
     await expect(status).toContainText('Waiting for');
     await expect(status).toContainText('Cleo');
-    await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: 5000 }).toEqual({ s1: 'ok', s2: 'timeout' });
+    await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: TIMER + 3000 }).toEqual({ s1: 'ok', s2: 'timeout' });
     expect(Date.now() - releasedAt).toBeGreaterThanOrEqual(TIMER - 100);
     const release = (await log(page)).find((a) => a.type === 'respond' && a.response === 'release')!;
     expect((await fired(page)).map((f) => f.key)).toEqual([`confirm:r1:${release.seq}:s2`]);
   });
 
   test('the holder adds to the stack, which starts a new round on the new top item', async ({ page }) => {
-    await open(page, { seat: 's1' });
+    await open(page, { seat: 's1', timer: LONG_TIMER });
     await annaCasts(page);
     await hoverNothing(page);
     await expect(page.getByTestId('confirm-prompt')).toBeVisible();
@@ -174,7 +188,7 @@ test.describe('hold stops the timer', () => {
   });
 
   test('while another player holds the floor, Hold is not offered; OK still is', async ({ page }) => {
-    await open(page, { seat: 's1', seats: ['Anna', 'Ben', 'Cleo'] });
+    await open(page, { seat: 's1', seats: ['Anna', 'Ben', 'Cleo'], timer: LONG_TIMER });
     await annaCasts(page);
     const prompt = page.getByTestId('confirm-prompt');
     await expect(prompt.getByTestId('prompt-hold')).toBeVisible();
@@ -193,7 +207,7 @@ test.describe('hold stops the timer', () => {
 
 test.describe('resolve before all-pass requires the second press and logs it', () => {
   test('R with a waiting round warns; a second R resolves with force; the log says so', async ({ page }) => {
-    await open(page, { seat: 's0' });
+    await open(page, { seat: 's0', timer: LONG_TIMER });
     await hoverTableCard(page, 'abear');
     await page.keyboard.press('KeyQ');
     await expect.poll(async () => (await state(page)).stack.length).toBe(1);
@@ -206,12 +220,12 @@ test.describe('resolve before all-pass requires the second press and logs it', (
     expect((await log(page)).some((a) => a.type === 'stackResolve')).toBe(false);
     await page.keyboard.press('KeyR');
     await expect.poll(async () => (await state(page)).stack.length).toBe(0);
-    expect((await log(page)).at(-1)).toMatchObject({ type: 'stackResolve', force: true, by: 's0' });
+    expect((await acted(page)).at(-1)).toMatchObject({ type: 'stackResolve', force: true, by: 's0' });
     await expect(page.getByTestId('log-line').last()).toContainText('before everyone passed');
   });
 
   test('after everyone passed, Resolve is lit and one press resolves', async ({ page }) => {
-    await open(page, { seat: 's0' });
+    await open(page, { seat: 's0', timer: LONG_TIMER });
     await hoverTableCard(page, 'abear');
     await page.keyboard.press('KeyQ');
     await expect.poll(async () => (await state(page)).confirm?.id ?? null).not.toBeNull();
@@ -222,8 +236,8 @@ test.describe('resolve before all-pass requires the second press and logs it', (
     await hoverNothing(page);
     await page.keyboard.press('KeyR');
     await expect.poll(async () => (await state(page)).stack.length).toBe(0);
-    expect((await log(page)).at(-1)).toMatchObject({ type: 'stackResolve' });
-    expect((await log(page)).at(-1)).not.toHaveProperty('force');
+    expect((await acted(page)).at(-1)).toMatchObject({ type: 'stackResolve' });
+    expect((await acted(page)).at(-1)).not.toHaveProperty('force');
   });
 });
 
@@ -242,7 +256,7 @@ test.describe('an away peer times out', () => {
     expect((await page.evaluate(() => window.__confirmHarness!.away('s1', true))).refused).toBeNull();
     expect((await log(page)).some((a) => a.type === 'away' && a.seat === 's1' && a.away)).toBe(true);
     await expect.poll(async () => (await state(page)).seats.s1!.away).toBe(true);
-    await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: 5000 }).toEqual({ s1: 'timeout' });
+    await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: TIMER + 3000 }).toEqual({ s1: 'timeout' });
     await expect(page.getByTestId('confirm-status')).toContainText('All passed');
   });
 });
@@ -282,7 +296,7 @@ test.describe('the stack lane (DESIGN "The effect stack", Reading it; Resolving 
     // Drag the bottom spell by its title strip onto the top slot.
     await dragBetween(page, stripPoint(entries[0]!), stripPoint(entries[2]!));
     await expect.poll(async () => (await state(page)).stack.map((i) => i.id)).toEqual(['i2', 'i3', 'i1']);
-    expect((await log(page)).at(-1)).toMatchObject({ type: 'stackReorder', item: 'i1', index: 2, by: 's1' });
+    expect((await acted(page)).at(-1)).toMatchObject({ type: 'stackReorder', item: 'i1', index: 2, by: 's1' });
     // The round about the copy keeps going.
     expect((await state(page)).confirm?.id).toBe('r3');
   });
@@ -305,12 +319,12 @@ test.describe('markers can be acted on (DESIGN "The effect stack": Note, Copy, R
     const marker = () => lane(page).then((e) => e.find((x) => x.item === 'i2')!);
     let at = stripPoint(await marker());
     await page.mouse.move(at.x, at.y);
-    const before = (await log(page)).length;
+    const before = (await acted(page)).length;
     // Card keys over a marker do nothing (they never fall through to the selection).
     await page.keyboard.press('KeyG');
     await page.keyboard.press('KeyT');
     await page.waitForTimeout(200);
-    expect((await log(page)).length).toBe(before);
+    expect((await acted(page)).length).toBe(before);
     expect((await state(page)).cards.bbear!.zone).toBe('battlefield:s1');
 
     // N: the note field opens for the marker.
@@ -319,7 +333,7 @@ test.describe('markers can be acted on (DESIGN "The effect stack": Note, Copy, R
     await page.getByTestId('note-input').fill('once per turn');
     await page.keyboard.press('Enter');
     await expect.poll(async () => (await state(page)).stack.find((i) => i.id === 'i2')?.note).toBe('once per turn');
-    expect((await log(page)).at(-1)).toMatchObject({ type: 'stackNote', item: 'i2', by: 's1' });
+    expect((await acted(page)).at(-1)).toMatchObject({ type: 'stackNote', item: 'i2', by: 's1' });
 
     // X: a copy marker of it goes on the stack, with a round.
     await page.mouse.move(at.x, at.y + 1);
@@ -334,14 +348,14 @@ test.describe('markers can be acted on (DESIGN "The effect stack": Note, Copy, R
     at = stripPoint(entries.find((x) => x.item === 'i2')!);
     await dragBetween(page, at, stripPoint(entries[3]!));
     await expect.poll(async () => (await state(page)).stack.map((i) => i.id)).toEqual(['i1', 'i3', copy.id, 'i2']);
-    expect((await log(page)).at(-1)).toMatchObject({ type: 'stackReorder', item: 'i2', index: 3, by: 's1' });
+    expect((await acted(page)).at(-1)).toMatchObject({ type: 'stackReorder', item: 'i2', index: 3, by: 's1' });
 
     // Drag the buried ability marker i3 out of the lane: it leaves the stack, as one grouped step.
     entries = await laneSettled(page);
     at = stripPoint(entries.find((x) => x.item === 'i3')!);
     await dragBetween(page, at, { x: 720, y: 160 });
     await expect.poll(async () => (await state(page)).stack.map((i) => i.id)).toEqual(['i1', copy.id, 'i2']);
-    const [reorder, counter] = (await log(page)).slice(-2);
+    const [reorder, counter] = (await acted(page)).slice(-2);
     expect(reorder).toMatchObject({ type: 'stackReorder', item: 'i3', index: 3 });
     expect(counter).toMatchObject({ type: 'stackCounter', item: 'i3' });
     expect(reorder!.group).toBeDefined();
@@ -368,12 +382,12 @@ test.describe('manual ask (DESIGN "Turn flow and confirmation", Confirmation rou
     const mine = page.locator('[data-testid="avatar"][data-seat="s0"]');
     await expect(mine.getByTestId('asking')).toBeVisible();
     await expect(page.getByTestId('confirm-status')).toContainText('Waiting for Ben');
-    await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: 5000 }).toEqual({ s1: 'timeout' });
+    await expect.poll(async () => (await state(page)).confirm?.responses, { timeout: TIMER + 3000 }).toEqual({ s1: 'timeout' });
     await expect(mine.getByTestId('asking')).toHaveCount(0);
   });
 
   test('K with a typed label asks with it; Esc in the field asks nothing', async ({ page }) => {
-    await open(page, { seat: 's0' });
+    await open(page, { seat: 's0', timer: LONG_TIMER });
     await hoverNothing(page);
     await page.keyboard.press('KeyK');
     await page.keyboard.press('Escape');
@@ -383,11 +397,11 @@ test.describe('manual ask (DESIGN "Turn flow and confirmation", Confirmation rou
     await page.getByTestId('ask-input').fill('attacks?');
     await page.keyboard.press('Enter');
     await expect.poll(async () => (await state(page)).confirm?.label ?? null).toBe('attacks?');
-    expect((await log(page)).at(-1)).toMatchObject({ type: 'ask', label: 'attacks?', by: 's0' });
+    expect((await acted(page)).at(-1)).toMatchObject({ type: 'ask', label: 'attacks?', by: 's0' });
   });
 
   test('another player\'s labelled ask shows its label in the prompt', async ({ page }) => {
-    await open(page, { seat: 's1' });
+    await open(page, { seat: 's1', timer: LONG_TIMER });
     expect((await remote(page, 's0', { type: 'ask', round: 'k1', label: 'attacks?' })).refused).toBeNull();
     await expect(page.getByTestId('confirm-prompt')).toContainText('Anna asks “attacks?”');
     await expect(page.locator('[data-testid="avatar"][data-seat="s0"]').getByTestId('asking')).toBeVisible();
