@@ -172,3 +172,71 @@ describe('Winston other player', () => {
     driver.dispose();
   });
 });
+
+describe('Winston after a reload', () => {
+  /** s0 takes pile 1, so s1 now looks at pile 1: the table both browsers reload into. */
+  function s1Looking(): { s: TableState; cards: RevealedCard[] } {
+    const { s, cards } = dealt();
+    return { s: ok(s, act('pileLook', { pile: 0, take: true }, 's0')), cards };
+  }
+
+  it('the other player, reloaded without its pile, asks the dealer from drive() alone (no action follows)', () => {
+    const { s } = s1Looking();
+    expect(draftOf(s).winston!.active).toBe('s1');
+    const { h, host } = fakeHost('s1', s, emptySecretStore('s1'));
+    const driver = createWinstonDriver(host);
+    for (let i = 0; i < 200; i++) driver.drive();
+    expect(driver.view().pile).toBeUndefined();
+    const asks = h.sent.filter((x) => x.about === WINSTON_NEED);
+    expect(asks.length).toBeGreaterThan(0);
+    expect(asks.every((x) => x.to === 's0' && x.ids.length === 0)).toBe(true);
+    driver.dispose();
+  });
+
+  it('the dealer, reloaded, answers a request before any action is sequenced', () => {
+    const { s, cards } = s1Looking();
+    const { h, host } = fakeHost('s0', s, dealerSecrets(cards));
+    const driver = createWinstonDriver(host);
+    const d = draftOf(s);
+    const before = h.sent.length;
+    for (const l of h.cards) l(WINSTON_NEED, [], 's1');
+    const answer = h.sent.slice(before);
+    expect(answer).toHaveLength(1);
+    expect(answer[0]!.to).toBe('s1');
+    expect(new Set(answer[0]!.ids)).toEqual(new Set(d.winston!.pileIds![0]!));
+    driver.dispose();
+  });
+
+  it('a late identity holds back later picks, so the pool stays in pick order', () => {
+    // s1 takes pile 1 (cards it was shown), then declines every pile and takes the top stack card, whose identity it
+    // is not shown before it takes it; then it takes a pile it is shown.
+    const { s: start, cards } = dealt();
+    const byId = new Map(cards.map((c) => [c.instanceId, c]));
+    const { h, host, apply } = fakeHost('s1', start, emptySecretStore('s1'));
+    const driver = createWinstonDriver(host);
+    apply(act('pileLook', { pile: 0, take: true }, 's0'));
+    const first = draftOf(h.state).winston!.pileIds![0]!;
+    for (const l of h.cards) l('a', first.map((id) => byId.get(id)!), 's0');
+    apply(act('pileLook', { pile: 0, take: true }, 's1'));
+    expect(h.secrets.pool).toEqual(first.map((id) => byId.get(id)!.ref));
+    // After the dealer's take, s1 declines all three piles: it takes the top stack card, unseen.
+    apply(act('pileLook', { pile: 0, take: true }, 's0'));
+    for (let pile = 0; pile < 3; pile++) apply(act('pileLook', { pile, take: false }, 's1'));
+    const afterBlind = draftOf(h.state).taken!.s1!;
+    const blind = afterBlind.at(-1)!;
+    expect(first).not.toContain(blind);
+    // The dealer takes a pile; s1 takes the pile it is shown now.
+    apply(act('pileLook', { pile: 0, take: true }, 's0'));
+    const w = draftOf(h.state).winston!;
+    const next = w.pileIds![w.pile]!;
+    for (const l of h.cards) l('b', next.map((id) => byId.get(id)!), 's0');
+    apply(act('pileLook', { pile: w.pile, take: true }, 's1'));
+    const taken = draftOf(h.state).taken!.s1!;
+    // The unseen card is missing: nothing after it is in the pool yet.
+    expect(h.secrets.pool).toEqual(first.map((id) => byId.get(id)!.ref));
+    // It arrives: the pool is every taken card, in pick order.
+    for (const l of h.cards) l('c', [byId.get(blind)!], 's0');
+    expect(h.secrets.pool).toEqual(taken.map((id) => byId.get(id)!.ref));
+    driver.dispose();
+  });
+});

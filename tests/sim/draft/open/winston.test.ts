@@ -61,4 +61,12 @@ describe('Winston over the network', () => {
     expectEveryCardInOnePool(run, 6);
     close(run.t);
   }, 120_000);
+
+  it('the other player reloaded between the turn passing to it and its pile arriving asks for the pile and drafts on', async () => {
+    const run = await winstonDraft(6, 3, { reloadLacking: true });
+    expect(run.outages.reloadedLacking).toBe(true);
+    expect(requestsTo(run.t.seats[0]!)).toBeGreaterThan(0);
+    expectEveryCardInOnePool(run, 3);
+    close(run.t);
+  }, 120_000);
 });

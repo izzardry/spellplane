@@ -40,7 +40,7 @@ export const createGridDriver: CreateDraftDriver = (host) => {
   const off = host.onSequenced((a, state) => {
     if (state.draft?.settings.format !== 'grid') return;
     confirmed = state;
-    if (a.type === 'packOpen' && Array.isArray(a.cards)) rememberPublicPack(host, a.packId, a.cards);
+    if (a.type === 'packOpen') rememberPublicPack(host, state, a);
     reconcile();
   });
 

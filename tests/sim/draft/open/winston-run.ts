@@ -7,6 +7,7 @@ import { expect, vi } from 'vitest';
 import { winstonActive, winstonDealt } from '../../../../src/core/open';
 import { reduce } from '../../../../src/core/reducer';
 import type { InstanceId, TableState } from '../../../../src/core/types';
+import { heldIdentities } from '../../../../src/draft/open';
 import { WINSTON_NEED } from '../../../../src/draft/winston';
 import { mulberry32 } from '../../../../src/util/prng';
 import { draftNet, runDraft, type DraftNet, type DraftSeat } from './net';
@@ -46,6 +47,8 @@ export interface Outages {
   offline: boolean;
   /** `sendCards` calls of the dealer that found no connected peer. */
   undelivered: number;
+  /** s1 reloaded after the turn passed to it and before its pile arrived (the disclosure died with the old page). */
+  reloadedLacking: boolean;
 }
 
 export interface WinstonRun {
@@ -61,10 +64,10 @@ const OUTAGE_MS = 1500;
  * the dealer passes it the turn, so the pile it must be shown is lost on the way, and once while the dealer is active,
  * so the dealer passes the turn to a seat with no connected peer.
  */
-export async function winstonDraft(seed: number, packs: number, options: { outages?: boolean; sets?: string[] } = {}): Promise<WinstonRun> {
+export async function winstonDraft(seed: number, packs: number, options: { outages?: boolean; reloadLacking?: boolean; sets?: string[] } = {}): Promise<WinstonRun> {
   const t = await draftNet(2, { format: 'winston', packs }, { seed, delay: { min: 0, max: 100 }, drop: 0.05, faultyChannels: ['act', 'ctl'] }, options.sets);
   const [a, b] = t.seats as [DraftSeat, DraftSeat];
-  const outages: Outages = { inFlight: false, offline: false, undelivered: 0 };
+  const outages: Outages = { inFlight: false, offline: false, undelivered: 0, reloadedLacking: false };
   const send = a.host.sendCards!.bind(a.host);
   a.host.sendCards = (to, about, cards) => {
     const delivered = send(to, about, cards);
@@ -98,6 +101,37 @@ export async function winstonDraft(seed: number, packs: number, options: { outag
         }, OUTAGE_MS * 2);
       }
       if (active !== null) previous = active;
+    });
+  }
+  if (options.reloadLacking === true) {
+    // s1 reloads after the sequenced action that passed it the turn arrived and before its pile did: the dealer's
+    // disclosure went out (sendCards reported a connected peer) but never arrived, and the old page's request goes
+    // down with it. No further action follows, since only s1 can act now, so the reloaded driver must ask by itself.
+    let lost = false;
+    const deliver = a.host.sendCards!;
+    a.host.sendCards = (to, about, cards) => {
+      const took = a.peer.state.draft?.taken?.s1?.length ?? 0;
+      const last = a.peer.log().at(-1);
+      // The disclosure the dealer sends as its own pileLook is sequenced and passes the turn to s1.
+      const passing = last !== undefined && last.cid === about && last.type === 'pileLook' && last.by === 's0';
+      if (!lost && passing && cards.length > 0 && took >= 2 && winstonActive(a.peer.state.draft!) === 's1') {
+        lost = true;
+        return true;
+      }
+      return deliver(to, about, cards);
+    };
+    b.peer.onSequenced(() => {
+      const d = b.peer.state.draft!;
+      // Caught up with the sequencer: no sequenced action is still on its way to s1.
+      if (!lost || outages.reloadedLacking || b.peer.state.seq !== a.peer.state.seq) return;
+      if (winstonActive(d) !== 's1' || !winstonDealt(d.winston)) return;
+      const known = heldIdentities(b.secrets());
+      if (d.winston.pileIds[d.winston.pile]!.every((id) => known.has(id))) return;
+      // The page goes: whatever the old driver just asked for, and the dealer's answer, are lost with it.
+      outages.reloadedLacking = true;
+      t.net.kill(b.peer.peerId);
+      setTimeout(() => b.reload(), 0);
+      setTimeout(() => t.net.revive(b.peer.peerId), 300);
     });
   }
   const bot = randomWinston(seed * 7);

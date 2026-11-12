@@ -10,9 +10,10 @@
  *   from the host's entropy. Neither is derived from a card's identity.
  * - The pool: shared state lists the ids each drafter took (`DraftState.taken`); the driver adds the matching
  *   identities to the own `SecretStore.pool` in pick order, once each (tracked by id in `DraftSecrets.held[OPEN_POOL]`),
- *   so a reload or a repeated call never adds a card twice.
+ *   so a reload or a repeated call never adds a card twice. A taken card whose identity is not known yet (a Winston
+ *   disclosure still on its way) holds back every later one, so the pool never leaves pick order.
  */
-import { makeCommitments, type RevealedCard } from '../core/commit';
+import { makeCommitments, verifyReveal, type RevealedCard } from '../core/commit';
 import { seededCardId } from '../core/open';
 import { ByteStream } from '../core/rng';
 import type { ActionDraft } from '../core/actions';
@@ -148,13 +149,33 @@ export function faceUpIdentity(host: DraftHost, state: TableState): (id: Instanc
   return (id) => held.get(id) ?? table.get(id) ?? null;
 }
 
-/** Remember the face-up cards of a public pack (salts included) so the pool can name them after they left the table. */
-export function rememberPublicPack(host: DraftHost, packId: PackId, cards: readonly RevealedCard[]): void {
-  if (Object.hasOwn(draftSecretsOf(host.secrets()).held, packId)) return;
-  updateDraftSecrets(host, (ds) => ({ ...ds, held: { ...ds.held, [packId]: cards.map((c) => ({ instanceId: c.instanceId, ref: plainRef(c.ref), salt: c.salt })) } }));
+/** Whether `c` has the shape of a revealed card (a refused action's cards are unchecked). */
+function isRevealedCard(c: unknown): c is RevealedCard {
+  if (typeof c !== 'object' || c === null) return false;
+  const r = c as { instanceId?: unknown; salt?: unknown; ref?: unknown };
+  if (typeof r.instanceId !== 'string' || typeof r.salt !== 'string' || typeof r.ref !== 'object' || r.ref === null) return false;
+  const ref = r.ref as { sid?: unknown; foil?: unknown };
+  return typeof ref.sid === 'string' && (ref.foil === undefined || typeof ref.foil === 'boolean');
 }
 
-/** Add the own taken cards of `state` that the pool lacks, in pick order (see the module comment). */
+/**
+ * Remember the face-up cards of a sequenced public `packOpen` (salts included) so the pool can name them after they
+ * left the table. A sequenced action may still have been refused, so only cards that open the commitments of the pack
+ * of that id in the confirmed `state`, opened by the action's sender, are kept, and only once they cover the whole
+ * pack: a refused `packOpen` under another pack's id never takes its place.
+ */
+export function rememberPublicPack(host: DraftHost, state: TableState, a: { packId: PackId; by: string; cards?: readonly unknown[] }): void {
+  const pack = state.draft?.packs[a.packId];
+  if (pack === undefined || pack.opener !== a.by || !Array.isArray(a.cards)) return;
+  if (Object.hasOwn(draftSecretsOf(host.secrets()).held, a.packId)) return;
+  const verified = new Map<InstanceId, RevealedCard>();
+  for (const c of a.cards) if (isRevealedCard(c) && verifyReveal(pack.commitment, c)) verified.set(c.instanceId, c);
+  if (verified.size !== pack.commitment.instanceIds.length) return;
+  const cards = a.cards.filter((c): c is RevealedCard => isRevealedCard(c) && verified.get(c.instanceId) === c);
+  updateDraftSecrets(host, (ds) => ({ ...ds, held: { ...ds.held, [a.packId]: cards.map((c) => ({ instanceId: c.instanceId, ref: plainRef(c.ref), salt: c.salt })) } }));
+}
+
+/** Add the own taken cards of `state` that the pool lacks, in pick order, up to the first one with no known identity (see the module comment). */
 export function reconcilePool(host: DraftHost, state: TableState, identity: (id: InstanceId) => RevealedCard | null): void {
   const taken = state.draft?.taken?.[host.seat];
   if (taken === undefined || taken.length === 0) return;
@@ -166,7 +187,7 @@ export function reconcilePool(host: DraftHost, state: TableState, identity: (id:
   for (const id of taken) {
     if (have.has(id)) continue;
     const c = identity(id);
-    if (c === null) continue;
+    if (c === null) break;
     add.push({ instanceId: id, ref: plainRef(c.ref), salt: c.salt });
     have.add(id);
   }

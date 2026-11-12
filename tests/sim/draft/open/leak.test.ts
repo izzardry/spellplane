@@ -11,8 +11,9 @@
  * ids, salts, the instance-to-card mapping) and every pack-seed owner nonce must be absent from every message s1
  * received, from s1's shared state and from s1's secret store; and no state s1 ever held may tie a face-down card to
  * its pack (and so to the pack's set, or to what else the pack held). s0 receives no `draftCards` with cards at all.
- * The scenario runs once plainly and once with s1 lost twice while the dealer must show it a pile (the re-sends and
- * s1's requests must not show more).
+ * The scenario runs once plainly, once with s1 lost twice while the dealer must show it a pile, and once with s1
+ * reloaded while its pile is on the way (the re-sends, s1's requests and the dealer's answers from a fresh driver
+ * must not show more).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { winstonDealt } from '../../../../src/core/open';
@@ -98,6 +99,13 @@ describe('Winston leak scenario', () => {
   it('re-sends and requests after the other player was lost show nothing more', async () => {
     const run = await winstonDraft(8, 6, { outages: true, sets: ['M19', 'M20'] });
     expect(run.outages).toMatchObject({ inFlight: true, offline: true });
+    expectNoLeak(run);
+    close(run.t);
+  }, 120_000);
+
+  it('a reload of the other player while its pile is on the way shows nothing more', async () => {
+    const run = await winstonDraft(6, 3, { reloadLacking: true });
+    expect(run.outages.reloadedLacking).toBe(true);
     expectNoLeak(run);
     close(run.t);
   }, 120_000);

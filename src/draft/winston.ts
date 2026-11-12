@@ -59,10 +59,13 @@ export const createWinstonDriver: CreateDraftDriver = (host) => {
   let opening = false;
   let disposed = false;
   /**
-   * The last state sequenced here (null until the first one): disclosures and the pool follow sequenced states only,
-   * never an optimistic one whose own actions may still be refused.
+   * The last state sequenced here: disclosures, requests and the pool follow sequenced states only, never an optimistic
+   * one whose own actions may still be refused. Until the first action is sequenced it is the table at creation: the
+   * session creates the driver on load (a reload) or when the draft starts, before this browser has a Winston action
+   * of its own pending, so that table is confirmed. Without it a reloaded driver would neither ask for nor answer a
+   * missing pile until someone acts, and in Winston only the player waiting for that pile can act.
    */
-  let confirmed: TableState | null = null;
+  let confirmed: TableState = host.state();
   let lastCid = 'winston';
   /** Dealer: ids delivered to the other player in this browser session, and the last pile look delivered. */
   const shown = new Set<InstanceId>();
@@ -74,7 +77,7 @@ export const createWinstonDriver: CreateDraftDriver = (host) => {
   const identities = (): Map<InstanceId, RevealedCard> => heldIdentities(host.secrets());
 
   const reconcile = (): void => {
-    if (confirmed?.draft?.settings.format !== 'winston') return;
+    if (confirmed.draft?.settings.format !== 'winston') return;
     const known = identities();
     reconcilePool(host, confirmed, (id) => known.get(id) ?? null);
   };
@@ -84,7 +87,7 @@ export const createWinstonDriver: CreateDraftDriver = (host) => {
    * delivered yet, or everything it may see when `all` (its request). Marked as shown only once delivered.
    */
   const disclose = (all = false): void => {
-    const d = confirmed === null ? null : openDraftOf(confirmed, 'winston');
+    const d = openDraftOf(confirmed, 'winston');
     if (d === null || !winstonDealt(d.winston) || d.winston.dealer !== host.seat || host.sendCards === undefined) return;
     const other: SeatId = otherDrafter(d, host.seat);
     const may = mayKnow(d, other);
@@ -102,7 +105,7 @@ export const createWinstonDriver: CreateDraftDriver = (host) => {
 
   /** Other player: ask the dealer again when the confirmed state lets it see a card it has no identity for. */
   const askIfMissing = (): void => {
-    const d = confirmed === null ? null : openDraftOf(confirmed, 'winston');
+    const d = openDraftOf(confirmed, 'winston');
     if (d === null || !winstonDealt(d.winston) || d.winston.dealer === host.seat || host.sendCards === undefined) return;
     const may = mayKnow(d, host.seat);
     const known = identities();
@@ -110,7 +113,7 @@ export const createWinstonDriver: CreateDraftDriver = (host) => {
       askedAt = null;
       return;
     }
-    const seq = confirmed!.seq;
+    const seq = confirmed.seq;
     if (askedAt === seq && ++sinceAsked < NEED_REPEAT) return;
     if (!host.sendCards(d.winston.dealer, WINSTON_NEED, [])) return;
     askedAt = seq;
@@ -167,7 +170,7 @@ export const createWinstonDriver: CreateDraftDriver = (host) => {
 
   const offCards =
     host.onCards?.((about, cards, from) => {
-      const d = confirmed === null ? null : openDraftOf(confirmed, 'winston');
+      const d = openDraftOf(confirmed, 'winston');
       if (d?.winston?.dealer === host.seat) {
         // The other player's request: answer with everything it may see now.
         if (about === WINSTON_NEED && cards.length === 0 && d.drafters.includes(from) && from !== host.seat) disclose(true);
@@ -220,7 +223,7 @@ export const createWinstonDriver: CreateDraftDriver = (host) => {
       const packs = Object.keys(d.packs).length;
       // One pack at a time: the next pack-seed round starts once the last packOpen is sequenced, since a pack must name
       // the opener's latest round (core/reducer/open.ts).
-      const pending = confirmed !== null && Object.keys(confirmed.draft?.packs ?? {}).length !== packs;
+      const pending = Object.keys(confirmed.draft?.packs ?? {}).length !== packs;
       if (!opening && !pending && !winstonDealt(d.winston) && d.winston.dealer === host.seat && packs < total) void open();
     },
     view(): DraftPrivateView {
