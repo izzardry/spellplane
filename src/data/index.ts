@@ -7,4 +7,5 @@ export * from './decklist';
 export * from './source';
 export * from './faces';
 export * from './mtgjson';
+export * from './sets';
 export * from './packs';
