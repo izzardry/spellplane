@@ -128,11 +128,13 @@ test('a reload in each stage returns to that stage with the same pool, deck and 
     await expect.poll(() => pickOne(a), { timeout: 15_000 }).toBe(true);
     await expect.poll(() => pickOne(b), { timeout: 15_000 }).toBe(true);
   }
+  // A pick returns once it is proposed; Ben's pool grows when Anna's sequencer has applied it (decision M2-G), and only
+  // then is the pack in front of him the next one.
+  await expect.poll(async () => (await secrets(b)).pool?.length ?? 0, { timeout: 15_000 }).toBeGreaterThanOrEqual(4);
   await expect.poll(async () => (await view(b))?.pack?.cards.length ?? 0, { timeout: 15_000 }).toBeGreaterThan(1);
   const front = (await view(b))!.pack!.cards.map((c) => c.id);
   await b.evaluate((id) => window.__spellplane!.flow!.mark([id]), front[1]!);
   const poolBefore = (await secrets(b)).pool;
-  expect(poolBefore!.length).toBeGreaterThanOrEqual(4);
   await reloadKeeps(b, a, 'draft');
   const after = (await view(b))!;
   expect(after.pack!.cards.map((c) => c.id)).toEqual(front);

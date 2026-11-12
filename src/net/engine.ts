@@ -1433,7 +1433,11 @@ class Engine implements NetEngine {
       this.replica.receive(a);
     }
     if (adopting) this.requeueLost(() => true);
-    if (this.mode === 'claiming' && (asked.kind === 'overlap' || adopting)) this.claimChecked = from;
+    // The overlap read goes out as a snapshot request when the overlap would start at or after this replica's head
+    // (a claimant at seq 1): its answer checks the history the same way (the tail above compared every seq this
+    // replica holds), so it completes the check too. Before, a claimant at seq 1 whose peer stood at seq 1 as well
+    // asked for that snapshot again and again and never took over (CI, engine.spec on WebKit; decision M2-G).
+    if (this.mode === 'claiming' && (asked.kind !== 'tail' || adopting)) this.claimChecked = from;
     if (this.mode === 'claiming' && asked.kind === 'tail' && e.claimAck !== null && (m.tail.at(-1)?.seq ?? this.replica.seq()) < e.claimAck) {
       // A tail always runs to the answering peer's head: this peer went back below the seq it acknowledged (it
       // rewound to adopt another history meanwhile). Its claimAck is stale; ask it again rather than waiting for ever

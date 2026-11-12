@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Action } from '../../../src/core/actions';
-import { reduce } from '../../../src/core/reducer';
+import { createTable, reduce } from '../../../src/core/reducer';
 import type { Deadline, TableState } from '../../../src/core/types';
 import type { WireMessage } from '../../../src/net/messages';
 import { AWAY_AFTER_MS, HASH_EVERY, HEARTBEAT_MS } from '../../../src/net/types';
@@ -686,6 +686,27 @@ describe('meeting after acting alone, and reloads', () => {
     expect(a.engine.state().seats.s0!.life).toBe(17);
     expect(a.engine.state().seats.s1!.life).toBe(15);
     expect(a.engine.isSequencing()).toBe(true);
+  });
+
+  it.each([17, 29])('a lowest seat that catches up to seq 1 from a browser that acted alone then claims and takes over (seed %i)', async (seed) => {
+    // CI regression (engine.spec on WebKit, decision M2-G): on a fresh seq-0 table Ben's browser sequences his first
+    // action alone; Anna's browser meets it, follows it (it is further ahead), catches up to seq 1 and, now
+    // reconciled, claims from seq 1. Its fork-check read of Ben's history starts at seq 0, so it goes out as a
+    // snapshot request; its answer must complete the check, or the claim asks again for ever and nothing more is
+    // ever sequenced. These seeds reach exactly that schedule.
+    const fresh = createTable({ game: TEST_GAME, format: '1v1', seats: [0, 1].map((i) => ({ name: `P${i}`, colour: i, peer: `peer${i}` })) });
+    const sim = makeSim({ engines: 0, start: { seq: 0, state: fresh }, seed, delay: { min: 0, max: 40 }, ordered: true });
+    const b = sim.add(1);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(b.engine.propose(life(b, 'b-0'))).toBe(true);
+    expect(b.engine.seq()).toBe(1);
+    const a = sim.add(0);
+    await vi.advanceTimersByTimeAsync((seed * 7) % 30);
+    for (let i = 1; i < 3; i++) expect(b.engine.propose(life(b, `b-${i}`))).toBe(true);
+    await until(() => agreed(sim.peers), 10_000, 'agreement');
+    await expectConverged(sim.peers, 10_000);
+    expect(a.engine.isSequencing()).toBe(true);
+    expect(a.engine.state().seats.s1!.life).toBe(17);
   });
 
   it.each([
