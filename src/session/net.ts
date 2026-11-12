@@ -121,6 +121,15 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** The refusal counter an own contribution to a randomness round counts against (see NetTable.drive). */
+function roundKey(a: Action): string | null {
+  if (a.type === 'shuffleNonce') return `nonce:${a.sid}`;
+  if (a.type === 'shuffleDone') return `done:${a.sid}`;
+  if (a.type === 'rngCommit') return `commit:${a.rid}`;
+  if (a.type === 'rngReveal') return `reveal:${a.rid}`;
+  return null;
+}
+
 function withoutSeq(a: Action): Omit<Action, 'seq'> {
   const { seq: _seq, ...rest } = a;
   return rest;
@@ -406,7 +415,7 @@ class NetTable implements NetSession {
       this.notify();
       await this.until(
         () => this.engine.confirmedState().rng[rid]?.result != null,
-        () => this.refused.get(a.cid) ?? null,
+        () => this.refused.get(a.cid) ?? (this.gaveUp(`reveal:${rid}`) ? 'the roll could not be revealed' : null),
       );
       return this.engine.confirmedState().rng[rid]!.result!;
     });
@@ -683,7 +692,8 @@ class NetTable implements NetSession {
     this.notify();
     await this.until(
       () => this.engine.confirmedState().shuffles[sid]?.orderHash != null,
-      () => this.refused.get(a.cid) ?? (this.engine.confirmedState().shuffles[sid] === undefined && !this.pendingCid(a.cid) ? 'the shuffle was dropped' : null),
+      // Only a refusal ends the wait: an own action of a history the engine abandons is proposed again (M1-P1).
+      () => this.refused.get(a.cid) ?? (this.gaveUp(`done:${sid}`) ? 'the shuffle could not be finished' : null),
     );
   }
 
@@ -780,6 +790,8 @@ class NetTable implements NetSession {
       this.setSecrets({ ...this.sec, ...lists });
       this.saves.saveSecrets(this.sec);
     }
+    const key = roundKey(action);
+    if (key !== null) this.roundRefusals.set(key, (this.roundRefusals.get(key) ?? 0) + 1);
     this.warn(`${action.type} refused: ${reason}`);
     // Lost a chair to someone who sat down at the same moment: take the next free one (lobby only).
     if (action.type === 'seatTake' && !this.sitting && this.engine.seat() === null && this.engine.state().stage === 'lobby' && this.seatAttempts < SEAT_ATTEMPTS) {
@@ -800,13 +812,18 @@ class NetTable implements NetSession {
     });
   }
 
+  /** Whether this browser stopped contributing to a round after repeated refusals. */
+  private gaveUp(key: string): boolean {
+    return (this.roundRefusals.get(key) ?? 0) >= ROUND_ATTEMPTS;
+  }
+
   /** Whether an own pending action of `type` concerns round `id`. */
   private inFlight(type: string, id: string): boolean {
     return this.engine.pending().some((a) => a.type === type && ((a as { sid?: string }).sid === id || (a as { rid?: string }).rid === id));
   }
 
   private contribute(key: string, draft: ActionDraft): void {
-    if ((this.roundRefusals.get(key) ?? 0) >= ROUND_ATTEMPTS) return;
+    if (this.gaveUp(key)) return;
     const a = this.stamp(draft);
     if (draft.type !== 'shuffleDone') this.sentRandomness.set(a.cid, a);
     if (!this.propose(a, false)) {
@@ -834,7 +851,7 @@ class NetTable implements NetSession {
         }
         if (r.owner === me) {
           if (!shuffleReady(st, sid) || this.inFlight('shuffleDone', sid) || shuffleRecord(this.sec, sid) === null) continue;
-          if ((this.roundRefusals.get(`done:${sid}`) ?? 0) >= ROUND_ATTEMPTS) continue;
+          if (this.gaveUp(`done:${sid}`)) continue;
           let f: ReturnType<typeof finishShuffle>;
           try {
             f = finishShuffle(this.sec, st, sid, this.entropy, this.exposed);
