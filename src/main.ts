@@ -31,7 +31,10 @@ const harness = __SPELLPLANE_DEBUG__ ? new URLSearchParams(location.search).get(
 async function boot(el: HTMLElement): Promise<void> {
   // Browser tests inject recorded card data (tests/fixtures/) so they never touch the network; dev and test builds only.
   const fixtures = __SPELLPLANE_DEBUG__ ? (await import('./debug/fixture-cards')).injectedCardData() : null;
-  const fixtureSets = __SPELLPLANE_DEBUG__ ? (await import('./debug/fixture-sets')).injectedSets() : null;
+  // A test that injects card data but no set data (the M0/M1 gates) gets an empty set source, never MTGJSON.
+  const fixtureSets = __SPELLPLANE_DEBUG__
+    ? await import('./debug/fixture-sets').then((m) => m.injectedSets() ?? (fixtures ? m.fixtureSetSource([]) : null))
+    : null;
 
   let stores: LocalStores | null = null;
   try {
