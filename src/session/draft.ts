@@ -94,15 +94,22 @@ export function buildFromDeck(deck: DeckImport): DeckBuild {
   return { cards, main: deck.main.map((_, i) => `d${i + 1}`) };
 }
 
-/** `build` with the pool cards it lacks (picks that reached the pool after the build was made) added to the sideboard; the same object when none is missing. */
+const POOL_ID = new RegExp(`^${POOL_ID_PREFIX}([1-9][0-9]*)$`);
+
+/**
+ * `build` with the picks that reached the pool after it was made (pool cards past its highest pool card id) added to
+ * the sideboard; the same object when there are none. A build without any pool card id (a deck the player opened from
+ * the library instead) gets nothing added.
+ */
 export function withLatePicks(build: DeckBuild, pool: readonly CardRef[]): DeckBuild {
-  const have = new Set(build.cards.map((c) => c.id));
-  const add: PoolCard[] = [];
-  pool.forEach((ref, i) => {
-    const id = `${POOL_ID_PREFIX}${i + 1}`;
-    if (!have.has(id)) add.push({ id, ref: plainRef(ref) });
-  });
-  return add.length === 0 ? build : { ...build, cards: [...build.cards, ...add] };
+  let highest = 0;
+  for (const c of build.cards) {
+    const m = POOL_ID.exec(c.id);
+    if (m !== null) highest = Math.max(highest, Number(m[1]));
+  }
+  if (highest === 0 || highest >= pool.length) return build;
+  const add: PoolCard[] = pool.slice(highest).map((ref, i) => ({ id: `${POOL_ID_PREFIX}${highest + i + 1}`, ref: plainRef(ref) }));
+  return { ...build, cards: [...build.cards, ...add] };
 }
 
 /** The own picks with ids that the draft secrets hold (hidden-pack and open formats). */

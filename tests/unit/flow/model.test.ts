@@ -98,6 +98,14 @@ describe('the deck being built', () => {
     expect(withLatePicks(later, pool)).toBe(later);
   });
 
+  it('adds nothing to a deck the player opened from the library instead of the pool', () => {
+    const opened: DeckBuild = { cards: [{ id: 'list-add-1', ref: { sid: 'q' } }], main: ['list-add-1'] };
+    expect(withLatePicks(opened, pool)).toBe(opened);
+    // Nor does it bring back a pool card the build no longer has (only picks past its last one count as late).
+    const dropped: DeckBuild = { cards: [{ id: 'p2', ref: { sid: 'b', foil: true } }], main: [] };
+    expect(withLatePicks(dropped, pool).cards.map((c) => c.id)).toEqual(['p2', 'p3']);
+  });
+
   it('keeps a constructed deck as a build, so a rematch sideboards it like a drafted one', () => {
     const deck = { main: [{ sid: 'x' }, { sid: 'y' }], side: [{ sid: 'z' }] };
     const b = buildFromDeck(deck);

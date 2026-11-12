@@ -206,3 +206,90 @@ test('a reload in each stage returns to that stage with the same pool, deck and 
   await expect(a.getByTestId('start-draft')).toBeVisible();
   await context.close();
 });
+
+/** Two seated pages at a fresh table in the lobby; Anna (s0) hosts. */
+async function seatedPages(browser: Parameters<typeof twoPages>[0], info: TestInfo) {
+  const { context, a, b } = await twoPages(browser);
+  const room = freshRoom();
+  await openRoom(a, room, freshProfile(info, 'a'));
+  await inStage(a, 'lobby');
+  await openRoom(b, room, freshProfile(info, 'b'));
+  await inStage(b, 'lobby');
+  for (const p of [a, b]) await expect.poll(() => hook<string>(p, 'net.status'), { timeout: 15_000 }).toBe('connected');
+  await expect.poll(() => hook<string>(b, 'session.seat')).toBe('s1');
+  return { context, a, b };
+}
+
+test('sealed: the pools open for everyone at once; the builder searches the card data and a reload keeps the added card', async ({ browser }, info: TestInfo) => {
+  test.setTimeout(180_000);
+  const { context, a, b } = await seatedPages(browser, info);
+  await a.getByTestId('lobby-mode').selectOption('sealed');
+  await a.getByTestId('lobby-packs').fill('1');
+  await a.getByTestId('lobby-packs').blur();
+  await expect.poll(async () => (await state(b)).lobby?.draft).toEqual({ format: 'sealed', packs: 1 });
+  await expect(a.getByTestId('start-draft')).toHaveText('Open the sealed pools');
+  await a.getByTestId('start-draft').click();
+  await inStage(a, 'build');
+  await inStage(b, 'build');
+  for (const p of [a, b]) expect((await secrets(p)).pool).toHaveLength(15);
+
+  // Search-and-add in the list view, over the app's card data.
+  await b.getByTestId('view-list').click();
+  await expect(b.getByTestId('builder-list')).toBeVisible();
+  await b.getByTestId('list-search-query').fill('Shivan Dragon');
+  await b.getByTestId('list-search-go').click();
+  const result = b.getByTestId('list-search-result').first();
+  await expect(result).toContainText('Shivan Dragon');
+  const sid = await result.getAttribute('data-sid');
+  await result.getByTestId('list-search-add-deck').click();
+  await expect.poll(async () => {
+    const bd = await build(b);
+    return bd ? bd.main.map((id) => bd.cards.find((c) => c.id === id)?.ref.sid) : [];
+  }).toEqual([sid]);
+  await reloadKeeps(b, a, 'build');
+  const kept = (await build(b))!;
+  expect(kept.main.map((id) => kept.cards.find((c) => c.id === id)!.ref.sid)).toEqual([sid]);
+  expect(kept.cards).toHaveLength(16);
+  await context.close();
+});
+
+test('Winston: the piles reach only the player looking at them, through the session, until the builder', async ({ browser }, info: TestInfo) => {
+  test.setTimeout(180_000);
+  const { context, a, b } = await seatedPages(browser, info);
+  await a.getByTestId('lobby-mode').selectOption('winston');
+  await a.getByTestId('lobby-packs').fill('1');
+  await a.getByTestId('lobby-packs').blur();
+  await expect.poll(async () => (await state(b)).lobby?.draft).toEqual({ format: 'winston', packs: 1 });
+  // Winston has no pick timer to offer.
+  await expect(a.getByTestId('lobby-pick-timer')).toHaveCount(0);
+  await a.getByTestId('start-draft').click();
+  await inStage(a, 'draft');
+  await inStage(b, 'draft');
+  // Each takes the pile it looks at; Ben, who does not deal, sees a pile only on his turn.
+  let benSawAPile = false;
+  await expect
+    .poll(
+      async () => {
+        for (const p of [a, b]) {
+          const v = await view(p);
+          if (v?.pile && v.pile.length > 0) {
+            if (p === b) benSawAPile = true;
+            await p.evaluate(() => window.__spellplane!.flow!.pileLook(true));
+          }
+        }
+        return [(await state(a)).stage, (await state(b)).stage].join();
+      },
+      { timeout: 120_000, intervals: [200] },
+    )
+    .toBe('build,build');
+  expect(benSawAPile).toBe(true);
+  const st = await state(a);
+  for (const [p, seat] of [
+    [a, 's0'],
+    [b, 's1'],
+  ] as const) {
+    await expect.poll(async () => (await secrets(p)).pool?.length ?? 0, { timeout: 20_000 }).toBe(st.draft!.pools[seat]);
+  }
+  expect(st.draft!.pools.s0! + st.draft!.pools.s1!).toBe(15);
+  await context.close();
+});
