@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FAKE_SPEECH, SPEECH_ENGINES, createdEngines } from '../../../src/voice/speech/index';
-import { LocalWhisperEngine, SEGMENT_MAX_S, WebAudioCapture, WHISPER_MODEL, type AsrPipeline, type AudioCapture, type ProgressInfo, type TransformersLike } from '../../../src/voice/speech/local';
+import { downsampler, LocalWhisperEngine, SEGMENT_MAX_S, WebAudioCapture, WHISPER_MODEL, type AsrPipeline, type AudioCapture, type ProgressInfo, type TransformersLike } from '../../../src/voice/speech/local';
 import { MAX_FAILURES, RETRY_MS, WebSpeechEngine, recognitionCtor, type RecognitionEventLike, type RecognitionLike } from '../../../src/voice/speech/webspeech';
 
 // --- Web Speech ------------------------------------------------------------------------------------------------------
@@ -176,6 +176,44 @@ describe('Web Speech engine', () => {
     first.results = [{ isFinal: true, text: 'old' }];
     first.emit(0);
     expect(got).toEqual([]);
+  });
+
+  it('a start after a stop (the talk key pressed again) leaves the stopping session to deliver its final to its own listener', () => {
+    const got: string[] = [];
+    const e = new WebSpeechEngine(ScriptedRecognition);
+    e.start('en-US', (t, f) => got.push(`a:${t}:${f}`));
+    const first = ScriptedRecognition.all[0]!;
+    e.stop();
+    e.start('en-US', (t, f) => got.push(`b:${t}:${f}`));
+    const second = ScriptedRecognition.all[1]!;
+    expect(first.aborted).toBe(false);
+    expect(second.starts).toBe(1);
+    first.results = [{ isFinal: true, text: 'attack with both' }];
+    first.emit(0);
+    // The stopped session ends without restarting; the new one listens on.
+    first.onend?.();
+    expect(first.starts).toBe(1);
+    second.results = [{ isFinal: true, text: 'pass' }];
+    second.emit(0);
+    expect(got).toEqual(['a:attack with both:true', 'b:pass:true']);
+  });
+
+  it('where a browser runs one recognition at a time, the stopping session gives way to the new one', () => {
+    class OneAtATime extends ScriptedRecognition {
+      static live: OneAtATime | null = null;
+      override start(): void {
+        if (OneAtATime.live && OneAtATime.live !== this && !OneAtATime.live.aborted) throw new Error('InvalidStateError');
+        OneAtATime.live = this;
+        super.start();
+      }
+    }
+    const e = new WebSpeechEngine(OneAtATime);
+    e.start('en-US', () => undefined);
+    e.stop();
+    e.start('en-US', () => undefined);
+    const [first, second] = ScriptedRecognition.all;
+    expect(first?.aborted).toBe(true);
+    expect(second?.starts).toBe(1);
   });
 });
 
@@ -535,6 +573,64 @@ describe('Web Audio microphone capture', () => {
     expect(mic.tracks[0]?.enabled).toBe(false);
     e.dispose();
     expect(mic.tracks[0]?.stopped).toBe(true);
+  });
+
+  it('where the microphone cannot join a 16 kHz context (Firefox), records at the device rate and brings it down to 16 kHz', async () => {
+    const rates: (number | undefined)[] = [];
+    vi.stubGlobal(
+      'AudioContext',
+      class {
+        destination = {};
+        sampleRate: number;
+        constructor(opts?: { sampleRate?: number }) {
+          rates.push(opts?.sampleRate);
+          this.sampleRate = opts?.sampleRate ?? 48_000;
+        }
+        createMediaStreamSource() {
+          if (this.sampleRate !== 48_000) throw new DOMException('Connecting AudioNodes from AudioContexts with different sample-rate is currently not supported.', 'NotSupportedError');
+          return { connect: () => undefined };
+        }
+        createScriptProcessor() {
+          const node = { onaudioprocess: null, connect: () => undefined, disconnect: () => undefined };
+          nodes.push(node);
+          return node;
+        }
+        resume() {
+          return Promise.resolve();
+        }
+        close() {
+          return Promise.resolve();
+        }
+      },
+    );
+    const mic = prompt();
+    const cap = new WebAudioCapture(mic.media as never);
+    const begun = cap.begin();
+    mic.allow();
+    await begun;
+    expect(rates).toEqual([16_000, undefined]);
+    const second = { inputBuffer: { getChannelData: () => new Float32Array(48_000).fill(0.5) } };
+    nodes[0]?.onaudioprocess?.(second);
+    const got = cap.end();
+    expect(got.length).toBe(16_000);
+    expect(got[100]).toBeCloseTo(0.5);
+  });
+});
+
+describe('downsampler', () => {
+  it('averages each output sample over the input it stands for, across buffers', () => {
+    const down = downsampler(3);
+    expect([...down(Float32Array.from([0, 1, 2, 3, 4, 5, 6, 7, 8]))]).toEqual([1, 4, 7]);
+    // A buffer that does not divide evenly carries over into the next.
+    const odd = downsampler(48_000 / 16_000);
+    expect(odd(new Float32Array(4096)).length + odd(new Float32Array(4096)).length).toBe(Math.floor(8192 / 3));
+  });
+
+  it('brings 44.1 kHz down to 16 kHz without drift', () => {
+    const down = downsampler(44_100 / 16_000);
+    let n = 0;
+    for (let i = 0; i < 100; i++) n += down(new Float32Array(441)).length;
+    expect(Math.abs(n - 16_000)).toBeLessThanOrEqual(1);
   });
 });
 

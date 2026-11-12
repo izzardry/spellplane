@@ -40,7 +40,7 @@
   import TokenSearch from './TokenSearch.svelte';
   import TurnStrip from './TurnStrip.svelte';
   import Speech from './settings/Speech.svelte';
-  import { sceneCaptions } from './settings/captions';
+  import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption } from '../voice/types';
 
   let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
@@ -104,8 +104,6 @@
   /** Dictated captions (M3-P4, session.captions) and the speech settings panel. */
   let captionList = $state.raw<Caption[]>([]);
   let speechOpen = $state(false);
-  /** Note text before the words being dictated into the note field (DESIGN "Chat and voice", Notes by voice). */
-  let noteBase: string | null = null;
   let noteInput = $state<HTMLInputElement | undefined>();
   let drawInput = $state<HTMLInputElement | undefined>();
 
@@ -546,18 +544,15 @@
   });
   /** While the note field has focus, dictation goes into it (DESIGN "Chat and voice", Notes by voice). */
   function dictateNote(on: boolean): void {
-    noteBase = null;
     session.captions?.dictateInto(
       on
-        ? {
-            kind: 'field',
-            insert: (text, final) => {
-              if (!note) return;
-              noteBase ??= note.text;
-              note.text = (noteBase.trim() ? `${noteBase.trim()} ${text}` : text).slice(0, 80);
-              if (final) noteBase = null;
+        ? fieldDictation(
+            () => note?.text ?? null,
+            (text) => {
+              if (note) note.text = text;
             },
-          }
+            80,
+          )
         : null,
     );
   }

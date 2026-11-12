@@ -5,13 +5,15 @@
  * calls the layer from its `update` (ViewState.captions) and repositions the bubbles every frame.
  *
  * A bubble is DOM over the canvas, so it stays upright and sharp whatever the camera does. It is filled in the
- * speaker's seat colour (a neutral one for a spectator) with text in black or white, whichever reads better on it. It
- * grows as interim words arrive (interim text is set in italics), and when a caption leaves the list it fades out
+ * speaker's seat colour (a neutral one for a spectator) with text in black or white, whichever reads better on it, and
+ * leads with the seat's avatar glyph, so the speaker is told by shape as well as hue (DESIGN "Input and interaction
+ * design", Accessibility: "nothing depends on hue alone"); screen readers hear the speaker's name first. It grows as interim words arrive (interim text is set in italics), and when a caption leaves the list it fades out
  * (a cut with reduced motion).
  */
 import { SCREEN_LAYER } from '../core/geometry';
 import type { Anchor, SeatId, TableState } from '../core/types';
 import type { TableLayout } from '../games/types';
+import type { SeatColour, SeatGlyph } from '../themes/types';
 import { pileAnchor, seatLayoutOf, stackPose, viewerAngle } from './layout';
 import { rot2 } from './math';
 import type { DebugCaption, SceneCaption, TablePoint } from './types';
@@ -103,6 +105,37 @@ export function textOn(colour: string): '#000' | '#fff' {
   return (l + 0.05) / 0.05 >= 1.05 / (l + 0.05) ? '#000' : '#fff';
 }
 
+/** Who speaks in a caption bubble: the seat's avatar glyph (null for a spectator, who has none) and name. */
+export interface CaptionBadge {
+  glyph: SeatGlyph | null;
+  name: string;
+}
+
+/** The speaker of a caption as its bubble names it (a spectator by role: its caption has no seat). */
+export function captionBadge(state: TableState | null, seats: readonly SeatColour[], caption: Pick<SceneCaption, 'seat' | 'colour'>): CaptionBadge {
+  const seat = caption.seat && state ? state.seats[caption.seat] : undefined;
+  if (!seat) return { glyph: null, name: 'Spectator' };
+  return { glyph: seats[caption.colour ?? seat.colour]?.glyph ?? null, name: seat.name };
+}
+
+/** The CSS that draws a glyph in the bubble's text colour (the shapes of ui/Avatar.svelte). */
+export function glyphStyle(glyph: SeatGlyph): Partial<CSSStyleDeclaration> {
+  const clip: Partial<Record<SeatGlyph, string>> = {
+    triangle: 'polygon(50% 0, 100% 100%, 0 100%)',
+    diamond: 'polygon(50% 0, 100% 50%, 50% 100%, 0 50%)',
+    star: 'polygon(50% 0, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%)',
+    hexagon: 'polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%)',
+    cross: 'polygon(35% 0, 65% 0, 65% 35%, 100% 35%, 100% 65%, 65% 65%, 65% 100%, 35% 100%, 35% 65%, 0 65%, 0 35%, 35% 35%)',
+  };
+  const ring = glyph === 'ring';
+  return {
+    background: ring ? 'transparent' : 'currentColor',
+    border: ring ? '2.5px solid currentColor' : 'none',
+    borderRadius: glyph === 'circle' || ring ? '50%' : '0',
+    clipPath: clip[glyph] ?? 'none',
+  };
+}
+
 /** What the caption layer needs from its scene. */
 export interface CaptionLayerHost {
   /** The element the bubbles are placed in (the scene host, positioned). */
@@ -117,6 +150,8 @@ export interface CaptionLayerHost {
   point(caption: SceneCaption): { point: TablePoint; anchoredTo: Anchor | null } | null;
   /** Fill colour of a caption: its seat colour, or a neutral one. */
   fill(caption: SceneCaption): string;
+  /** The speaker's glyph and name (captionBadge). */
+  badge(caption: SceneCaption): CaptionBadge;
   reduced(): boolean;
 }
 
@@ -124,6 +159,8 @@ interface Bubble {
   caption: SceneCaption;
   el: HTMLDivElement;
   text: HTMLSpanElement;
+  glyph: HTMLElement;
+  speaker: HTMLSpanElement;
   anchoredTo: Anchor | null;
   /** Placed this frame (null while its anchor has no point). */
   rect: { x: number; y: number; w: number; h: number } | null;
@@ -167,6 +204,14 @@ export class CaptionLayer {
       b.el.style.background = fill;
       b.el.style.color = textOn(fill);
       b.el.style.setProperty('--tail', fill);
+      const badge = this.host.badge(c);
+      if (b.glyph.dataset.captionGlyph !== (badge.glyph ?? '')) {
+        b.glyph.dataset.captionGlyph = badge.glyph ?? '';
+        b.glyph.style.display = badge.glyph ? 'block' : 'none';
+        if (badge.glyph) Object.assign(b.glyph.style, glyphStyle(badge.glyph));
+      }
+      const said = `${badge.name}: `;
+      if (b.speaker.textContent !== said) b.speaker.textContent = said;
       b.el.style.opacity = String(Math.max(0, Math.min(1, c.opacity)));
     }
     for (const [id, b] of this.bubbles) {
@@ -235,13 +280,28 @@ export class CaptionLayer {
       visibility: 'hidden',
       transition: this.host.reduced() ? 'none' : `opacity ${CAPTION_FADE_MS}ms ease-out`,
       overflowWrap: 'anywhere',
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: '6px',
     } satisfies Partial<CSSStyleDeclaration>);
+    // The speaker's seat glyph, at the start of the first line, in the text's colour.
+    const glyph = document.createElement('i');
+    glyph.setAttribute('data-caption-glyph', '');
+    glyph.setAttribute('aria-hidden', 'true');
+    Object.assign(glyph.style, { flex: 'none', boxSizing: 'border-box', width: '10px', height: '10px', marginTop: `${(LINE_HEIGHT * 13 - 10) / 2}px`, display: 'none' } satisfies Partial<CSSStyleDeclaration>);
+    el.appendChild(glyph);
     // At most three lines; a longer caption shows its last three (it grows at the end), the earlier ones clipped.
     const box = document.createElement('div');
-    Object.assign(box.style, { display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', maxHeight: `${CAPTION_MAX_LINES * LINE_HEIGHT}em`, overflow: 'hidden' });
+    Object.assign(box.style, { display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', minWidth: '0', maxHeight: `${CAPTION_MAX_LINES * LINE_HEIGHT}em`, overflow: 'hidden' });
+    const line = document.createElement('span');
+    // The speaker's name, for screen readers only (the glyph and colour show it on screen).
+    const speaker = document.createElement('span');
+    speaker.setAttribute('data-caption-speaker', '');
+    Object.assign(speaker.style, { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap' } satisfies Partial<CSSStyleDeclaration>);
     const text = document.createElement('span');
     text.setAttribute('data-caption-text', '');
-    box.appendChild(text);
+    line.append(speaker, text);
+    box.appendChild(line);
     el.appendChild(box);
     const tail = document.createElement('i');
     Object.assign(tail.style, {
@@ -256,7 +316,7 @@ export class CaptionLayer {
     });
     el.appendChild(tail);
     this.root.appendChild(el);
-    return { caption: c, el, text, anchoredTo: null, rect: null, leaving: false };
+    return { caption: c, el, text, glyph, speaker, anchoredTo: null, rect: null, leaving: false };
   }
 
   private leave(id: string, b: Bubble): void {

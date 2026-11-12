@@ -7,8 +7,11 @@
  *   utterance, so nothing loads before the player dictates (and the local model only once it was chosen).
  * - **Own captions.** Interim words grow a local caption and go to the others on presence (`captionInterim`); the final
  *   text becomes a `caption` action carrying the anchor and `about`, the cid of the action the speaker last acted on.
- *   The anchor and `about` are chosen when the utterance starts; an anchored card that leaves the public zones
- *   meanwhile is no longer named. A final longer than CAPTION_MAX_CHARS goes out as several `caption` actions.
+ *   The anchor and `about` are chosen when the utterance starts (or, for words that only arrive after the talk key was
+ *   released, at the release); an anchored card that leaves the public zones meanwhile is no longer named. A final
+ *   longer than CAPTION_MAX_CHARS goes out as several `caption` actions.
+ * - **Quick presses.** Each press is its own run (ListenRun): a final still owed by the previous press (the on-device
+ *   model transcribes after the release) reaches that press's utterance when it comes, even after the next press.
  * - **Others' captions.** A peer's interim text comes from its presence; its final text from the `caption` action in
  *   the log, under the same caption id, so the bubble stays one bubble. A final caption lingers CAPTION_LINGER_MS.
  * - **Notes by voice.** While a note field has focus (`dictateInto`), the transcript goes into that field instead.
@@ -167,13 +170,33 @@ export function speechLang(stored: string | null | undefined, browser: string | 
 // The controller
 // ---------------------------------------------------------------------------------------------------------------------
 
-interface Utterance {
-  id: string;
-  route: 'caption' | 'field';
+/** Where an utterance goes: a note field, or a caption with its anchor and the action it is stored on. */
+interface Context {
   target: DictationTarget | null;
   anchor: Anchor | null;
   about: string | undefined;
+}
+
+interface Utterance extends Context {
+  id: string;
+  route: 'caption' | 'field';
   text: string;
+}
+
+/**
+ * One listening run: a press of the talk key, or one stretch of an open gate. A run outlives its stop by
+ * FINAL_GRACE_MS, so a final the engine still owes it (the on-device model transcribes after the key is released)
+ * reaches its own utterance even when the key was pressed again meanwhile.
+ */
+interface ListenRun {
+  n: number;
+  /** The utterance this run is in (an engine sends interim words, then one final, per utterance). */
+  utter: Utterance | null;
+  /** Once stopped: engine output is taken until this local time. Null while listening. */
+  until: number | null;
+  grace: ReturnType<typeof setTimeout> | null;
+  /** Taken at the stop: where an utterance that only begins after it (a final without interim words) goes. */
+  context: Context | null;
 }
 
 /** Text joined to an existing note with one space. */
@@ -194,13 +217,13 @@ class CaptionController implements CaptionControls {
   private target: DictationTarget | null = null;
   private hovered: Anchor | null = null;
   private listening = false;
-  /** Listening runs so far; output of an older run (before the latest start) is dropped. */
+  /** Listening runs so far (ListenRun.n). */
   private run = 0;
-  /** Engine output is taken while listening and, after a stop, until this local time (the final may come late). */
-  private acceptUntil = 0;
-  private graceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The latest run, listening or not. */
+  private current: ListenRun | null = null;
+  /** Runs that are listening or may still get their final, oldest first. */
+  private readonly runs = new Map<number, ListenRun>();
   private clearTimer: ReturnType<typeof setTimeout> | null = null;
-  private utter: Utterance | null = null;
   /** Own utterances so far (caption ids `<self>:<n>`). */
   private n = 0;
   private disposed = false;
@@ -321,12 +344,12 @@ class CaptionController implements CaptionControls {
     if (this.disposed) return;
     this.disposed = true;
     if (this.listening) this.stopListening();
-    if (this.utter?.route === 'caption') this.host.presence.captionInterim(null);
-    this.utter = null;
+    if ([...this.runs.values()].some((r) => r.utter?.route === 'caption')) this.host.presence.captionInterim(null);
+    for (const r of this.runs.values()) if (r.grace) clearTimeout(r.grace);
+    this.runs.clear();
     for (const u of this.unsubs.splice(0)) u();
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
-    if (this.graceTimer) clearTimeout(this.graceTimer);
     if (this.clearTimer) clearTimeout(this.clearTimer);
     if (this.engineInst) release(this.engineInst.engine);
     this.engineInst = null;
@@ -373,20 +396,15 @@ class CaptionController implements CaptionControls {
 
   private startListening(): void {
     this.listening = true;
-    if (this.graceTimer) {
-      clearTimeout(this.graceTimer);
-      this.graceTimer = null;
-    }
-    // A new press starts a new utterance; one still waiting for its final keeps the words it had.
-    if (this.utter) this.finishUtterance(this.utter.text);
-    const run = ++this.run;
+    // A new press is a new run: a previous one still waiting for its final keeps waiting for it (ListenRun).
+    const run: ListenRun = { n: ++this.run, utter: null, until: null, grace: null, context: null };
+    this.runs.set(run.n, run);
+    this.current = run;
     void this.ready
       .then(() => this.ensureEngine())
       .then((engine) => {
-        if (!this.listening || this.disposed || run !== this.run) return;
-        engine.start(this.language, (text, final) => {
-          if (run === this.run) this.onText(text, final);
-        });
+        if (!this.listening || this.disposed || run !== this.current) return;
+        engine.start(this.language, (text, final) => this.onText(run, text, final));
       })
       .catch((e: unknown) => {
         console.warn('Spellplane: dictation could not start', e);
@@ -395,48 +413,70 @@ class CaptionController implements CaptionControls {
 
   private stopListening(): void {
     this.listening = false;
-    this.acceptUntil = this.host.now() + FINAL_GRACE_MS;
     void this.engineInst?.engine.then((e) => e.stop()).catch(() => undefined);
-    if (this.graceTimer) clearTimeout(this.graceTimer);
+    const run = this.current;
+    if (!run || run.until !== null) return;
+    run.until = this.host.now() + FINAL_GRACE_MS;
+    // What was said is placed where the player was when the key was released, even if its words only come later.
+    if (!run.utter) run.context = this.context();
     // An engine that never sends the final text: the words the others already saw are what was said.
-    this.graceTimer = setTimeout(() => {
-      this.graceTimer = null;
-      if (this.utter && !this.listening) this.finishUtterance(this.utter.text);
+    run.grace = setTimeout(() => {
+      run.grace = null;
+      this.runs.delete(run.n);
+      if (run.utter) this.finishUtterance(run, run.utter.text);
     }, FINAL_GRACE_MS);
   }
 
   // --- Own utterances ----------------------------------------------------------------------------------------------
 
-  private onText(text: string, final: boolean): void {
-    if (this.disposed) return;
-    if (!this.listening && this.host.now() > this.acceptUntil) return;
+  private onText(run: ListenRun, text: string, final: boolean): void {
+    if (this.disposed || this.runs.get(run.n) !== run) return;
+    if (run.until !== null && this.host.now() > run.until) return;
     const t = text.replace(/\s+/g, ' ').trim();
     if (!final && !t) return;
-    if (!this.utter) {
+    if (!run.utter) {
       if (final && !t) return;
-      this.utter = this.beginUtterance();
+      run.utter = this.beginUtterance(run.until !== null ? (run.context ?? undefined) : undefined);
     }
-    if (final) this.finishUtterance(t);
-    else this.growUtterance(t);
+    if (final) this.finishUtterance(run, t);
+    else this.growUtterance(run.utter, t);
   }
 
-  private beginUtterance(): Utterance {
+  /** Where an utterance starting now goes: the focused note field, else a caption at the hovered or last-touched card. */
+  private context(): Context {
+    if (this.target) return { target: this.target, anchor: null, about: undefined };
     const self = this.host.self();
     const state = this.host.state();
-    const id = `${self}:${++this.n}`;
+    const seated = Object.hasOwn(state.seats, self);
+    const last = seated ? lastTouched(this.host.log(), self) : null;
+    const anchor = publicAnchor(state, this.hovered) ?? publicAnchor(state, last?.anchor);
+    return { target: null, anchor, about: last?.about };
+  }
+
+  private beginUtterance(ctx: Context = this.context()): Utterance {
+    const id = `${this.host.self()}:${++this.n}`;
     if (this.clearTimer) {
       clearTimeout(this.clearTimer);
       this.clearTimer = null;
     }
-    if (this.target) return { id, route: 'field', target: this.target, anchor: null, about: undefined, text: '' };
-    const seated = Object.hasOwn(state.seats, self);
-    const last = seated ? lastTouched(this.host.log(), self) : null;
-    const anchor = publicAnchor(state, this.hovered) ?? publicAnchor(state, last?.anchor);
-    return { id, route: 'caption', target: null, anchor, about: last?.about, text: '' };
+    return { id, route: ctx.target ? 'field' : 'caption', target: ctx.target, anchor: ctx.anchor, about: ctx.about, text: '' };
   }
 
-  private growUtterance(text: string): void {
-    const u = this.utter!;
+  /** The newest own caption utterance with words, of any run (the one the others see on presence). */
+  private shownUtterance(): Utterance | null {
+    let found: Utterance | null = null;
+    for (const r of this.runs.values()) if (r.utter?.route === 'caption' && r.utter.text) found = r.utter;
+    return found;
+  }
+
+  /** Presence shows the interim words of an utterance still in progress, else nothing. */
+  private refreshPresence(): void {
+    const u = this.shownUtterance();
+    if (u) this.host.presence.captionInterim(tail(u.text, CAPTION_MAX_CHARS), this.stillPublic(u));
+    else this.host.presence.captionInterim(null);
+  }
+
+  private growUtterance(u: Utterance, text: string): void {
     u.text = text;
     if (u.route === 'field') {
       if (u.target?.kind === 'field') u.target.insert(text, false);
@@ -448,10 +488,10 @@ class CaptionController implements CaptionControls {
     this.host.presence.captionInterim(tail(text, CAPTION_MAX_CHARS), anchor);
   }
 
-  private finishUtterance(text: string): void {
-    const u = this.utter;
+  private finishUtterance(run: ListenRun, text: string): void {
+    const u = run.utter;
     if (!u) return;
-    this.utter = null;
+    run.utter = null;
     if (u.route === 'field') {
       if (text) this.writeField(u.target, text);
       else if (u.target?.kind === 'field' && u.text) u.target.insert('', true);
@@ -459,7 +499,7 @@ class CaptionController implements CaptionControls {
     }
     if (!text) {
       this.removeOwn(u.id);
-      this.host.presence.captionInterim(null);
+      this.refreshPresence();
       return;
     }
     const anchor = this.stillPublic(u);
@@ -473,7 +513,7 @@ class CaptionController implements CaptionControls {
     if (this.clearTimer) clearTimeout(this.clearTimer);
     this.clearTimer = setTimeout(() => {
       this.clearTimer = null;
-      if (!this.utter) this.host.presence.captionInterim(null);
+      this.refreshPresence();
     }, INTERIM_CLEAR_MS);
   }
 

@@ -8,7 +8,8 @@
  * stretch of silence; while the engine is meant to listen it starts a new one. After an error (the speech service
  * unreachable, the session aborted) the restart waits, longer after each failure in a row, and listening ends after
  * MAX_FAILURES of them. After `stop` the browser still delivers the final result of words already spoken, and the
- * engine passes it on.
+ * engine passes it on to that session's listener, also when a new `start` (the next press of the talk key) came
+ * meanwhile: the stopping session is left to finish rather than aborted.
  */
 import type { SpeechEngine, SpeechListener } from '../types';
 
@@ -70,6 +71,17 @@ interface Run {
   retry: ReturnType<typeof setTimeout> | null;
 }
 
+/** Abort a session: what it had not transcribed yet is dropped. */
+function abortRun(run: Run): void {
+  run.wanted = false;
+  run.rec.onresult = null;
+  try {
+    run.rec.abort();
+  } catch {
+    /* already ended */
+  }
+}
+
 /** Web Speech engine (voice/types.ts SpeechEngine, id 'webspeech'). */
 export class WebSpeechEngine implements SpeechEngine {
   readonly id = 'webspeech' as const;
@@ -83,7 +95,11 @@ export class WebSpeechEngine implements SpeechEngine {
 
   start(lang: string, on: SpeechListener): void {
     if (!this.ctor) return;
-    this.halt(true);
+    // A session still listening is restarted (its pending words dropped); one already stopped finishes on its own.
+    const prev = this.run;
+    const lingering = prev && !prev.wanted ? prev : null;
+    if (lingering) this.run = null;
+    else this.halt(true);
     const rec = new this.ctor();
     rec.lang = lang;
     rec.continuous = true;
@@ -118,6 +134,16 @@ export class WebSpeechEngine implements SpeechEngine {
     try {
       rec.start();
     } catch {
+      // A browser that runs one recognition at a time: the one still finishing gives way.
+      if (lingering) {
+        abortRun(lingering);
+        try {
+          rec.start();
+          return;
+        } catch {
+          /* fall through */
+        }
+      }
       run.wanted = false;
     }
   }
@@ -135,12 +161,7 @@ export class WebSpeechEngine implements SpeechEngine {
     run.retry = null;
     if (abort) {
       this.run = null;
-      run.rec.onresult = null;
-      try {
-        run.rec.abort();
-      } catch {
-        /* already ended */
-      }
+      abortRun(run);
       return;
     }
     try {

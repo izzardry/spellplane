@@ -7,13 +7,13 @@
 import { describe, expect, it } from 'vitest';
 import type { TableState } from '../../../src/core/types';
 import { mtgLayout } from '../../../src/games/mtg/layout';
-import { captionPoint, textOn } from '../../../src/scene/captions';
+import { captionBadge, captionPoint, glyphStyle, textOn } from '../../../src/scene/captions';
 import { stackPose } from '../../../src/scene/layout';
 import { settingsDictation, talkSource } from '../../../src/session/captions';
 import { DEFAULT_TALK } from '../../../src/store/types';
 import { TALK_CLOSED, type TalkState, type VoiceControls } from '../../../src/voice/types';
 import { memorySettings } from './helpers';
-import { sceneCaptions } from '../../../src/ui/settings/captions';
+import { engineStatement, fieldDictation, sceneCaptions } from '../../../src/ui/settings/captions';
 import { P, act, ok, play, readyTable } from '../core/helpers';
 
 const layout = mtgLayout('1v1');
@@ -90,6 +90,80 @@ describe('caption bubbles', () => {
     expect(textOn('#111')).toBe('#fff');
     expect(textOn('#f2c200')).toBe('#000');
     expect(textOn('#1f4fd1')).toBe('#fff');
+  });
+});
+
+describe('who speaks in a bubble, by shape and name as well as hue (DESIGN "Input and interaction design", Accessibility)', () => {
+  const seats = (['circle', 'square', 'triangle', 'diamond', 'star', 'hexagon', 'cross', 'ring'] as const).map((glyph, index) => ({ index, colour: `#00000${index}`, pattern: 'solid' as const, glyph }));
+
+  it('a seat’s bubble carries its avatar glyph and name; a spectator’s is named by role', () => {
+    const s = board();
+    const c = s.seats.s1!.colour;
+    expect(captionBadge(s, seats, { seat: 's1', colour: c })).toEqual({ glyph: seats[c]!.glyph, name: s.seats.s1!.name });
+    expect(captionBadge(s, seats, { seat: null, colour: null })).toEqual({ glyph: null, name: 'Spectator' });
+    // Each seat colour's glyph is a different shape.
+    expect(new Set(seats.map((x) => JSON.stringify(glyphStyle(x.glyph)))).size).toBe(seats.length);
+  });
+});
+
+describe('dictating into the note field (DESIGN "Chat and voice", Notes by voice)', () => {
+  function field(init: string) {
+    const box = { text: init as string | null };
+    return { box, target: fieldDictation(() => box.text, (t) => (box.text = t), 80) };
+  }
+
+  it('interim words follow the note, the final replaces them', () => {
+    const { box, target } = field('flying');
+    target.insert('until', false);
+    expect(box.text).toBe('flying until');
+    target.insert('until end of turn', true);
+    expect(box.text).toBe('flying until end of turn');
+    target.insert('hexproof', true);
+    expect(box.text).toBe('flying until end of turn hexproof');
+  });
+
+  it('keeps what the player types while words are being dictated', () => {
+    const { box, target } = field('');
+    target.insert('two', false);
+    // The player types at the start of the field meanwhile.
+    box.text = '+1 two';
+    target.insert('two counters', false);
+    expect(box.text).toBe('+1 two counters');
+    box.text = '+1 two counters!';
+    target.insert('two counters', true);
+    expect(box.text).toBe('+1! two counters');
+  });
+
+  it('an empty final takes the interim words back out; a field gone takes nothing; the note stays within its length', () => {
+    const { box, target } = field('note');
+    target.insert('uh', false);
+    target.insert('', true);
+    expect(box.text).toBe('note');
+    target.insert('x'.repeat(100), true);
+    expect(box.text).toHaveLength(80);
+    box.text = null;
+    target.insert('more', true);
+    expect(box.text).toBeNull();
+  });
+});
+
+describe('the speech settings’ statement (DESIGN "Chat and voice", Engine)', () => {
+  const web = { id: 'webspeech' as const, label: 'Browser speech recognition', audio: 'vendor' as const, statement: 'Audio is processed by your browser vendor.' };
+  const local = { id: 'local' as const, label: 'On-device model (Whisper)', audio: 'device' as const, statement: 'Audio stays on this device.' };
+
+  it('names the active engine and where audio goes', () => {
+    expect(engineStatement(web, [{ info: web, available: true }])).toEqual({ available: true, text: 'Active engine: Browser speech recognition. Audio is processed by your browser vendor.' });
+  });
+
+  it('where the chosen engine does not run (Web Speech in Firefox), says dictation is unavailable rather than where audio goes', () => {
+    const st = engineStatement(web, [
+      { info: web, available: false },
+      { info: local, available: true },
+    ]);
+    expect(st.available).toBe(false);
+    expect(st.text).toMatch(/^Dictation is unavailable/);
+    expect(st.text).not.toMatch(/browser vendor/);
+    expect(st.text).toContain('On-device model (Whisper)');
   });
 });
 

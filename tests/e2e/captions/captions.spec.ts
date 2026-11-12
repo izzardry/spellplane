@@ -72,6 +72,10 @@ test.describe('captions with the fake engine', () => {
         await expectAbove(p, c, card);
         // One bubble: the final replaced the interim.
         expect((await drawn(p)).filter((x) => x.text.startsWith('two damage'))).toHaveLength(1);
+        // It shows Anna's seat glyph, so the speaker does not depend on hue alone.
+        const glyph = p.locator('[data-testid="caption"]', { hasText: 'two damage to your Elf' }).locator('[data-caption-glyph]');
+        await expect(glyph).not.toHaveAttribute('data-caption-glyph', '');
+        await expect(glyph).toBeVisible();
       }),
     );
     for (const p of [a, b]) {
@@ -198,7 +202,11 @@ test('the on-device model is not downloaded unless chosen; the settings say wher
   const statement = a.getByTestId('speech-statement');
   await expect(statement).toHaveAttribute('data-engine', 'webspeech');
   await expect(statement).toContainText('Browser speech recognition');
-  await expect(statement).toContainText('browser vendor');
+  // Where the browser has no speech recognition, the statement says dictation is unavailable instead of naming the vendor.
+  const recogniser = await a.evaluate(() => 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
+  await expect(statement).toHaveAttribute('data-available', String(recogniser));
+  if (recogniser) await expect(statement).toContainText('browser vendor');
+  else await expect(statement).toContainText('Dictation is unavailable');
   const local = panel.locator('[data-testid="speech-engine"][data-engine="local"]');
   await expect(local).toContainText('audio stays on this device');
   await expect(local).toContainText(/downloads about \d+ MB once/);

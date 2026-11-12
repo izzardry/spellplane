@@ -14,6 +14,7 @@ import type { LogEntry } from '../../../src/core/types';
 import { CAPTION_LINGER_MS, TALK_CLOSED, type CaptionControls, type LocalSpeechEngine, type SpeechEngine, type SpeechEngineFactory, type SpeechListener } from '../../../src/voice/types';
 import { CAPTION_MAX_CHARS, createCaptions, FINAL_GRACE_MS, INTERIM_STALE_MS, lastTouched, pieces, publicAnchor, speechLang, tail } from '../../../src/voice/captions';
 import { FakeSpeechEngine } from '../../../src/voice/fake';
+import { LocalWhisperEngine, type AsrPipeline, type AudioCapture, type TransformersLike } from '../../../src/voice/speech/local';
 import { P, play, readyTable } from '../core/helpers';
 import { act, countingFactory, memorySettings, OPEN, TestTable } from './helpers';
 
@@ -40,6 +41,34 @@ function fakeOf(t: TestTable): FakeSpeechEngine {
   const e = f.created.at(-1);
   if (!(e instanceof FakeSpeechEngine)) throw new Error('no fake engine was created');
   return e;
+}
+
+/** A microphone the test speaks into (16 kHz samples; 0.1 is speech). */
+class ScriptCapture implements AudioCapture {
+  buf: number[] = [];
+  recording = false;
+  async begin(): Promise<void> {
+    this.buf = [];
+    this.recording = true;
+  }
+  feed(seconds: number, level = 0.1): void {
+    if (this.recording) for (let i = 0; i < Math.round(seconds * 16000); i++) this.buf.push(level);
+  }
+  samples(): Float32Array {
+    return Float32Array.from(this.buf);
+  }
+  cut(): Float32Array {
+    const out = Float32Array.from(this.buf);
+    this.buf = [];
+    return out;
+  }
+  end(): Float32Array {
+    this.recording = false;
+    return this.cut();
+  }
+  close(): void {
+    this.recording = false;
+  }
 }
 
 let controls: CaptionControls | null = null;
@@ -295,6 +324,62 @@ describe('own captions with the fake engine (PLAN M3-P4)', () => {
     expect(t.captionsSent().map((a) => a.text)).toEqual(['first words here', 'second try']);
     listener!('too late', true);
     expect(t.captionsSent()).toHaveLength(2);
+  });
+
+  it('a final still owed by the previous press reaches its caption after the key was pressed again (quick presses)', async () => {
+    // An engine that, like the on-device model, delivers a press's final to that press's listener after the release.
+    const listeners: SpeechListener[] = [];
+    const late: SpeechEngine = { id: 'fake', available: async () => true, start: (_l, on) => void listeners.push(on), stop: () => undefined };
+    const t = new TestTable(table().state, 's0', memorySettings(), [countingFactory('fake', () => late)]);
+    const tap = t.apply(act('tap', { card: 'a00', tapped: true }));
+    const c = await start(t);
+    // Press, a short phrase without interim words, release.
+    t.setTalk(OPEN);
+    await flush();
+    t.setTalk(TALK_CLOSED);
+    await vi.advanceTimersByTimeAsync(200);
+    // Pressed again before the first press's final came; meanwhile the player acts on another card.
+    t.setTalk(OPEN);
+    await flush();
+    expect(listeners).toHaveLength(2);
+    t.apply(act('tap', { card: 'a01', tapped: true }));
+    listeners[1]!('and then', false);
+    listeners[0]!('attack with both', true);
+    // The first phrase is a caption and a log entry, placed where the player was when the key was released.
+    expect(t.captionsSent()).toHaveLength(1);
+    expect(t.captionsSent()[0]).toMatchObject({ text: 'attack with both', anchor: { kind: 'card', id: 'a00' }, about: tap.cid });
+    // The second press's utterance goes on in its own bubble, and presence returns to it once the first one's final had time to land.
+    expect(c.captions().map((x) => [x.text, x.final])).toEqual(
+      expect.arrayContaining([
+        ['attack with both', true],
+        ['and then', false],
+      ]),
+    );
+    expect(c.captions()).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(t.interims.at(-1)).toEqual({ text: 'and then', anchor: { kind: 'card', id: 'a01' } });
+    listeners[1]!('and then pass', true);
+    expect(t.captionsSent().map((a) => a.text)).toEqual(['attack with both', 'and then pass']);
+  });
+
+  it('with the on-device engine, a short phrase transcribed after the release survives the next press', async () => {
+    const cap = new ScriptCapture();
+    const pipe: AsrPipeline = async () => {
+      await new Promise((r) => setTimeout(r, 800));
+      return { text: ' attack with both ' };
+    };
+    const lib: TransformersLike = { pipeline: async () => pipe };
+    const t = new TestTable(table().state, 's0', memorySettings(), [countingFactory('local', () => new LocalWhisperEngine({ library: async () => lib, capture: () => cap, webgpu: false }))]);
+    t.apply(act('tap', { card: 'a00', tapped: true }));
+    await start(t);
+    t.setTalk(OPEN);
+    await flush();
+    cap.feed(0.6);
+    t.setTalk(TALK_CLOSED);
+    await vi.advanceTimersByTimeAsync(200);
+    t.setTalk(OPEN);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(t.captionsSent().map((a) => [a.text, a.anchor])).toEqual([['attack with both', { kind: 'card', id: 'a00' }]]);
   });
 
   it('an empty final drops the interim caption and clears it on presence', async () => {

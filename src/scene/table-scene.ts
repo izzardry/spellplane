@@ -30,7 +30,7 @@ import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, legibleScale, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion } from './motion';
-import { CaptionLayer, captionPoint } from './captions';
+import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { drawnPose, entryAt, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
 import { TextLayer, type TextSpec } from './text';
@@ -305,6 +305,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           })
         : null,
     fill: (c) => (c.colour === null ? theme.tokens.colours.muted : (theme.tokens.colours.seats[c.colour]?.colour ?? theme.tokens.colours.muted)),
+    badge: (c) => captionBadge(state, theme.tokens.colours.seats, c),
     reduced,
   });
   const seatAngleOf = (seat: SeatId): number => (state ? (seatLayoutOf(state, layout, seat)?.angle ?? 0) : 0);

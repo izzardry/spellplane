@@ -7,6 +7,7 @@
   import { onMount, untrack } from 'svelte';
   import type { SpeechSettingsProps } from '../types';
   import type { SpeechEngineId, SpeechEngineInfo } from '../../voice/types';
+  import { engineStatement } from './captions';
 
   let { captions, onclose }: SpeechSettingsProps & { onclose?: () => void } = $props();
 
@@ -51,6 +52,8 @@
     device: 'audio stays on this device',
     none: 'no audio is captured',
   };
+  // An engine this browser cannot run is not stated as active (Web Speech in Firefox).
+  const statement = $derived(engineStatement(active, engines));
   const localBytes = $derived(engines.find((e) => e.info.id === 'local')?.info.downloadBytes ?? 0);
   const mb = (bytes: number): string => `${Math.round(bytes / 1_000_000)} MB`;
 
@@ -99,9 +102,13 @@
     {#if onclose}<button type="button" class="x" onclick={onclose} aria-label="Close">×</button>{/if}
   </header>
 
-  <p class="statement" data-testid="speech-statement" data-engine={active.id} data-audio={active.audio}>
-    Active engine: <strong>{active.label}</strong>. {active.statement}
-  </p>
+  {#if statement.available}
+    <p class="statement" data-testid="speech-statement" data-engine={active.id} data-audio={active.audio} data-available="true">
+      Active engine: <strong>{active.label}</strong>. {active.statement}
+    </p>
+  {:else}
+    <p class="statement off" data-testid="speech-statement" data-engine={active.id} data-audio="none" data-available="false">{statement.text}</p>
+  {/if}
 
   <fieldset>
     <legend>Engine</legend>
@@ -182,6 +189,9 @@
     padding: 8px;
     border-left: 3px solid var(--sp-accent, #1f6fd1);
     background: color-mix(in srgb, var(--sp-surface, #fff) 92%, var(--sp-fg, #111));
+  }
+  .statement.off {
+    border-left-color: var(--sp-danger, #b00020);
   }
   fieldset {
     border: 1px solid var(--sp-border, #ccc);

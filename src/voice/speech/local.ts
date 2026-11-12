@@ -99,6 +99,29 @@ function joinChunks(chunks: readonly Float32Array[]): Float32Array {
   return out;
 }
 
+/**
+ * Brings audio down by `ratio` (device rate over 16 kHz, above 1), one buffer after another: each output sample is the
+ * mean of the input samples it stands for, which also keeps what lies above the new Nyquist rate from folding back.
+ */
+export function downsampler(ratio: number): (input: Float32Array) => Float32Array {
+  // Where the next output sample starts, in samples of the buffer being read (negative: in the previous one).
+  let pos = 0;
+  return (input) => {
+    const out = new Float32Array(Math.ceil(input.length / ratio) + 1);
+    let n = 0;
+    while (pos + ratio <= input.length) {
+      const a = Math.max(0, Math.floor(pos));
+      const b = Math.max(a + 1, Math.floor(pos + ratio));
+      let sum = 0;
+      for (let i = a; i < b; i++) sum += input[i]!;
+      out[n++] = sum / (b - a);
+      pos += ratio;
+    }
+    pos -= input.length;
+    return out.slice(0, n);
+  };
+}
+
 /** Microphone capture through Web Audio at Whisper's rate (echo cancellation, noise suppression and gain on). */
 export class WebAudioCapture implements AudioCapture {
   private stream: MediaStream | null = null;
@@ -139,15 +162,30 @@ export class WebAudioCapture implements AudioCapture {
     this.recording = true;
   }
 
-  /** Keep the microphone stream (disabled until a begin enables it) and record it through Web Audio. */
+  /**
+   * Keep the microphone stream (disabled until a begin enables it) and record it through Web Audio: in a context at
+   * Whisper's rate where the browser can connect the microphone to one, else (Firefox refuses a microphone in a
+   * context of another rate than the device's) at the device's rate, brought down to 16 kHz as it is recorded.
+   */
   private attach(stream: MediaStream): MediaStream {
     this.stream = stream;
     for (const t of stream.getAudioTracks()) t.enabled = false;
-    this.ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
-    const source = this.ctx.createMediaStreamSource(stream);
-    this.node = this.ctx.createScriptProcessor(4096, 1, 1);
+    let ctx: AudioContext | null = null;
+    let source: MediaStreamAudioSourceNode;
+    try {
+      ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      source = ctx.createMediaStreamSource(stream);
+    } catch {
+      void ctx?.close().catch(() => undefined);
+      ctx = new AudioContext();
+      source = ctx.createMediaStreamSource(stream);
+    }
+    this.ctx = ctx;
+    const rate = ctx.sampleRate || SAMPLE_RATE;
+    const convert = rate === SAMPLE_RATE ? (b: Float32Array) => new Float32Array(b) : downsampler(rate / SAMPLE_RATE);
+    this.node = ctx.createScriptProcessor(4096, 1, 1);
     this.node.onaudioprocess = (e) => {
-      if (this.recording) this.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      if (this.recording) this.chunks.push(convert(e.inputBuffer.getChannelData(0)));
     };
     source.connect(this.node);
     this.node.connect(this.ctx.destination);
