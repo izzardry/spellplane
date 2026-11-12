@@ -547,6 +547,13 @@ export interface WinstonState {
   pile: number;
   /** The seat whose browser dealt the stack and answers pile looks (M2-P3 decides the dealing; DECISIONS [M2-C]). */
   dealer: SeatId;
+  /**
+   * Added by M2-P3. The opaque ids of the face-down stack, top first, once every pack is opened and the stack is dealt
+   * (absent before). Ids only: their identities stay with the dealer (DECISIONS [M2-P3]).
+   */
+  stackIds?: InstanceId[];
+  /** Added by M2-P3. The opaque ids of piles 1 to 3 (index 0..2), oldest first; set with `stackIds`. */
+  pileIds?: InstanceId[][];
 }
 
 /** Grid draft (DESIGN "Specification: card data, packs and draft formats", Draft formats: 3×3 face up, row or column, first player alternates). M2-P3. */
@@ -580,6 +587,11 @@ export interface DraftState {
   queues: Record<DrafterId, PackId[]>;
   /** Cards each drafter has taken so far (contents stay with the drafter). */
   pools: Record<DrafterId, number>;
+  /**
+   * Added by M2-P3. The instance ids each drafter took in an open format (Rochester, Winston, Grid), in pick order;
+   * absent in the hidden-pack formats. Rochester and grid cards are public; Winston ids are opaque (DECISIONS [M2-P3]).
+   */
+  taken?: Record<DrafterId, InstanceId[]>;
   rochester?: RochesterState;
   winston?: WinstonState;
   grid?: GridState;

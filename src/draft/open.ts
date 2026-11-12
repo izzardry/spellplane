@@ -1,0 +1,186 @@
+/**
+ * What the open-format drivers share (draft/rochester.ts, draft/winston.ts, draft/grid.ts; DESIGN "Specification: card
+ * data, packs and draft formats", Draft formats; "Specification: network protocol and secrecy", Draft packs).
+ * Implementer: M2-P3.
+ *
+ * - Pack generation: every pack comes from a fresh pack seed (`DraftHost.packSeed`, the secret-shuffle seed protocol
+ *   with purpose 'pack'), whose byte stream drives `generatePack` and, for a grid, the shuffle that picks its nine
+ *   cards, so the audit can replay it from the PackRecord. Instance ids and salts come from the host's entropy, never
+ *   from the card identities.
+ * - The pool: shared state lists the ids each drafter took (`DraftState.taken`); the driver adds the matching
+ *   identities to the own `SecretStore.pool` in pick order, once each (tracked by id in `DraftSecrets.held[OPEN_POOL]`),
+ *   so a reload or a repeated call never adds a card twice.
+ */
+import { makeCommitments, type RevealedCard } from '../core/commit';
+import { ByteStream } from '../core/rng';
+import type { ActionDraft } from '../core/actions';
+import type { CardRef, DraftCard, DraftSecrets, DraftState, InstanceId, PackId, PackRecord, SecretStore, SetCode, TableState } from '../core/types';
+import type { DraftHost, DraftPrivateView, PackSeed } from './types';
+
+/** `DraftSecrets.held` key of the own picks of an open format (with ids, in pick order). */
+export const OPEN_POOL = 'open:pool';
+/** `DraftSecrets.held` key of the Winston identities the dealer showed this (non-dealer) browser. */
+export const WINSTON_SEEN = 'winston:seen';
+
+/** The own draft secrets, empty when there are none yet. */
+export function draftSecretsOf(s: SecretStore): DraftSecrets {
+  return s.draft ?? { held: {}, generated: [], marked: [] };
+}
+
+/** Replace the own draft secrets through `f`. */
+export function updateDraftSecrets(host: DraftHost, f: (ds: DraftSecrets, s: SecretStore) => DraftSecrets): void {
+  const s = host.secrets();
+  host.setSecrets({ ...s, draft: f(draftSecretsOf(s), s) });
+}
+
+function plainRef(r: CardRef): CardRef {
+  return r.foil === true ? { sid: r.sid, foil: true } : { sid: r.sid };
+}
+
+/** A generated pack: its seed, its cards in pack order with fresh ids and salts, and the seed's stream after generation. */
+export interface OwnPack {
+  packId: PackId;
+  seed: PackSeed;
+  set: SetCode;
+  cards: RevealedCard[];
+  stream: ByteStream;
+}
+
+/** Generate one pack of `set` from a fresh pack seed (see the module comment). Throws when the set has no booster data. */
+export async function generateOwnPack(host: DraftHost, set: SetCode): Promise<OwnPack> {
+  const data = host.sets.peek(set) ?? (await host.sets.get(set));
+  if (data === null) throw new Error(`no booster data for ${set}`);
+  const seed = await host.packSeed();
+  const stream = new ByteStream(seed.seed);
+  const generated = host.generatePack(data, stream);
+  const cards = generated.cards.map((c) => ({ instanceId: host.entropy.id(), ref: plainRef(c.ref), salt: host.entropy.salt() }));
+  return { packId: `pk-${seed.sid}`, seed, set, cards, stream };
+}
+
+/** Keep the audit record and the own copy of a generated pack (DraftSecrets.generated and held). */
+export function keepGenerated(host: DraftHost, pack: OwnPack, held: readonly RevealedCard[] = pack.cards): void {
+  const record: PackRecord = {
+    packId: pack.packId,
+    sid: pack.seed.sid,
+    ownerNonce: pack.seed.ownerNonce,
+    peerNonces: [...pack.seed.peerNonces],
+    set: pack.set,
+    cards: pack.cards.map((c) => ({ ...c })),
+  };
+  updateDraftSecrets(host, (ds) => ({
+    ...ds,
+    held: { ...ds.held, [pack.packId]: held.map((c) => ({ ...c })) },
+    generated: [...ds.generated.filter((g) => g.packId !== pack.packId), record],
+  }));
+}
+
+/** The `packOpen` of `cards` (commitments and ids sorted; face up with the cards when `face` is 'up'). */
+export function packOpenDraft(packId: PackId, cards: readonly RevealedCard[], seed: PackSeed, number: number, set: SetCode, face: 'up' | 'down'): ActionDraft {
+  return {
+    type: 'packOpen',
+    packId,
+    commits: makeCommitments(cards),
+    count: cards.length,
+    instanceIds: cards.map((c) => c.instanceId).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    sid: seed.sid,
+    number,
+    set,
+    ...(face === 'up' ? { public: true, cards: cards.map((c) => ({ ...c })) } : {}),
+  };
+}
+
+/** Shuffle `items` with the stream (Fisher–Yates from the last position down). */
+export function shuffleWith<T>(items: readonly T[], stream: ByteStream): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = stream.below(i + 1);
+    const t = out[i]!;
+    out[i] = out[j]!;
+    out[j] = t;
+  }
+  return out;
+}
+
+/** Every identity this browser holds for the draft: own and remembered packs (held), by instance id. */
+export function heldIdentities(s: SecretStore): Map<InstanceId, RevealedCard> {
+  const out = new Map<InstanceId, RevealedCard>();
+  for (const list of Object.values(draftSecretsOf(s).held)) for (const c of list) if (!out.has(c.instanceId)) out.set(c.instanceId, c);
+  return out;
+}
+
+/** Face-up cards of the shared state (Rochester packs, grid cells) as identities without a salt (only the ref is needed for the pool). */
+export function publicIdentities(state: TableState): Map<InstanceId, RevealedCard> {
+  const out = new Map<InstanceId, RevealedCard>();
+  const add = (c: DraftCard | null | undefined): void => {
+    if (c) out.set(c.id, { instanceId: c.id, ref: c.ref, salt: '' });
+  };
+  const d = state.draft;
+  if (!d) return out;
+  for (const p of Object.values(d.packs)) for (const c of p.cards ?? []) add(c);
+  for (const c of d.grid?.cells ?? []) add(c);
+  return out;
+}
+
+/** The identity of a card this browser saw face up: remembered packs first, then the table (Rochester, Grid). */
+export function faceUpIdentity(host: DraftHost, state: TableState): (id: InstanceId) => RevealedCard | null {
+  const held = heldIdentities(host.secrets());
+  const table = publicIdentities(state);
+  return (id) => held.get(id) ?? table.get(id) ?? null;
+}
+
+/** Remember the face-up cards of a public pack (salts included) so the pool can name them after they left the table. */
+export function rememberPublicPack(host: DraftHost, packId: PackId, cards: readonly RevealedCard[]): void {
+  if (Object.hasOwn(draftSecretsOf(host.secrets()).held, packId)) return;
+  updateDraftSecrets(host, (ds) => ({ ...ds, held: { ...ds.held, [packId]: cards.map((c) => ({ instanceId: c.instanceId, ref: plainRef(c.ref), salt: c.salt })) } }));
+}
+
+/** Add the own taken cards of `state` that the pool lacks, in pick order (see the module comment). */
+export function reconcilePool(host: DraftHost, state: TableState, identity: (id: InstanceId) => RevealedCard | null): void {
+  const taken = state.draft?.taken?.[host.seat];
+  if (taken === undefined || taken.length === 0) return;
+  const s = host.secrets();
+  const ds = draftSecretsOf(s);
+  const mine = ds.held[OPEN_POOL] ?? [];
+  const have = new Set(mine.map((c) => c.instanceId));
+  const add: RevealedCard[] = [];
+  for (const id of taken) {
+    if (have.has(id)) continue;
+    const c = identity(id);
+    if (c === null) continue;
+    add.push({ instanceId: id, ref: plainRef(c.ref), salt: c.salt });
+    have.add(id);
+  }
+  if (add.length === 0) return;
+  host.setSecrets({
+    ...s,
+    pool: [...(s.pool ?? []), ...add.map((c) => c.ref)],
+    draft: { ...ds, held: { ...ds.held, [OPEN_POOL]: [...mine, ...add] } },
+  });
+}
+
+/** The running draft of `format` in `state`, or null (another format, no draft, not the draft stage). */
+export function openDraftOf(state: TableState, format: 'rochester' | 'winston' | 'grid'): DraftState | null {
+  const d = state.draft;
+  if (!d || d.settings.format !== format || state.stage !== 'draft') return null;
+  return d;
+}
+
+/** The view fields every open format shares. */
+export function baseView(host: DraftHost, format: 'rochester' | 'winston' | 'grid', waitingOn: string[]): DraftPrivateView {
+  const s = host.secrets();
+  return {
+    format,
+    pack: null,
+    picks: 0,
+    marked: [...draftSecretsOf(s).marked],
+    queued: 0,
+    pool: [...(s.pool ?? [])],
+    timer: null,
+    waitingOn,
+  };
+}
+
+/** Set the own marked cards. */
+export function setMarked(host: DraftHost, cards: readonly InstanceId[]): void {
+  updateDraftSecrets(host, (ds) => ({ ...ds, marked: [...cards] }));
+}

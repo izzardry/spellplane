@@ -789,6 +789,7 @@ class Engine implements NetEngine {
         return this.onNack(e, msg.cid, msg.reason);
       case 'reveal':
       case 'pack':
+      case 'draftCards':
       case 'teamHand':
       case 'nonce':
       case 'lookReq':

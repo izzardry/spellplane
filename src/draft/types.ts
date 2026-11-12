@@ -153,6 +153,14 @@ export interface DraftHost {
   sendPack(to: SeatId, packId: PackId, cards: readonly RevealedCard[]): void;
   /** Packs handed to this browser, already verified against the pack's commitment in shared state. */
   onPack(listener: (packId: PackId, cards: RevealedCard[], from: SeatId) => void): () => void;
+  /**
+   * Added by M2-P3 (optional; the session wires it to net/draftcards.ts). Send draft card identities to `to` only, as
+   * the pair message `draftCards {about, cards}` (DESIGN "Pre-game", Hidden information column: Winston "pile contents
+   * visible to whoever looks"). `about` is the cid of the sequenced action the cards belong to.
+   */
+  sendCards?(to: SeatId, about: string, cards: readonly RevealedCard[]): void;
+  /** Added by M2-P3 (optional). `draftCards` received from `from`, shape-checked only: the driver verifies them against the pack commitments. */
+  onCards?(listener: (about: string, cards: RevealedCard[], from: SeatId) => void): () => void;
   /** Every action applied in order to the confirmed state, with that state. */
   onSequenced(listener: (action: Action, state: TableState) => void): () => void;
   /** MTGJSON set data (M2-P1). */
