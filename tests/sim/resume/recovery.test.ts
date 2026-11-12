@@ -218,6 +218,112 @@ describe('the lost-save recovery flow', () => {
     expect(s.secrets().hand).toHaveLength(7);
   });
 
+  /** The actions after the seat's recoverCommit in `s`'s log (none before it is sequenced). */
+  const afterCommit = (s: NetTable, seat: string): Action[] => {
+    const log = actions(s);
+    const at = log.findIndex((a) => a.type === 'recoverCommit' && a.by === seat);
+    return at < 0 ? [] : log.slice(at + 1);
+  };
+
+  it('a page that reloads after its recoverCommit is sequenced but before its shuffle is: the reopened page shuffles the new library, then draws the agreed hand', async () => {
+    const network = net({ seed: 96 });
+    const p = await playScript(network, browsers);
+    const pub = publicCards(p.a.engine.confirmedState(), 's1');
+    await loseSave(p.B);
+    // This page's shuffleCommit never reaches the sequencer (it reloads before it is sequenced).
+    const lossy = await open(network, p.B, { settleMs: 200 }, { transport: () => new LossyTransport(network.create(p.B.peerId), (a) => a.type === 'shuffleCommit') });
+    await waitConverged([lossy, p.a]);
+    const run = lossy.recover(await fixtureDeck(DECK.B), 7);
+    run.catch(() => undefined);
+    await until(() => p.a.engine.confirmedState().zones['library:s1']!.ids.length === 60 - pub, 60_000, 'the recoverCommit');
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(afterCommit(p.a, 's1').some((a) => a.type === 'shuffleCommit' && a.by === 's1')).toBe(false);
+    expect(p.a.engine.confirmedState().seats.s1!.recovering).toBeUndefined();
+    // The recovery is owed, not finished: the panel says so, and nothing is drawn from the unshuffled library.
+    expect(recoveryStatus(lossy.getState(), lossy.secrets(), 's1', lossy.recoveryOwed())).toMatchObject({ phase: 'committed', hand: 7 });
+    expect(await rejection(lossy.draw(1))).toMatch(/not shuffled yet/);
+    lossy.leave();
+
+    const s = await open(network, p.B, { settleMs: 200 });
+    // Nothing to press: the reopened page finishes the recovery by itself once it is in step with the table.
+    await until(() => p.a.engine.confirmedState().zones['hand:s1']!.ids.length === 7 && !s.recovering(), 60_000, 'the resumed recovery');
+    await waitConverged([s, p.a]);
+    for (const st of [s.engine.confirmedState(), p.a.engine.confirmedState()]) {
+      expect(st.zones['library:s1']!.ids).toHaveLength(60 - pub - 7);
+      expect(st.zones['hand:s1']!.ids).toHaveLength(7);
+      expect(publicCards(st, 's1')).toBe(pub);
+    }
+    expect(actions(p.a).some((a) => a.type === 'recoverCommit' && a.by === 's1')).toBe(true);
+    const rest = afterCommit(p.a, 's1');
+    const shuffleAt = rest.findIndex((a) => a.type === 'shuffleCommit' && a.by === 's1' && a.zone === 'library:s1');
+    const doneAt = rest.findIndex((a) => a.type === 'shuffleDone' && a.by === 's1');
+    const firstDraw = rest.findIndex((a) => a.type === 'draw' && a.by === 's1');
+    expect(shuffleAt).toBeGreaterThanOrEqual(0);
+    expect(doneAt).toBeGreaterThan(shuffleAt);
+    expect(firstDraw).toBeGreaterThan(doneAt);
+    expect(rest.filter((a) => a.type === 'draw' && a.by === 's1')).toHaveLength(7);
+    expect(actions(p.a).filter((a) => a.type === 'recover')).toHaveLength(1);
+    expect(s.secrets().hand).toHaveLength(7);
+    expect(s.recoveryOwed()).toBeNull();
+    expect(p.B.nonces.ids('recovery')).toEqual([]);
+    expect(recoveryStatus(s.getState(), s.secrets(), 's1', s.recoveryOwed()).phase).toBe('none');
+  });
+
+  it('a page that reloads after its shuffle is done but before the draws are: the reopened page draws the rest of the agreed hand, no second shuffle', async () => {
+    const network = net({ seed: 99 });
+    const p = await playScript(network, browsers);
+    const pub = publicCards(p.a.engine.confirmedState(), 's1');
+    await loseSave(p.B);
+    const lossy = await open(network, p.B, { settleMs: 200 }, { transport: () => new LossyTransport(network.create(p.B.peerId), (a) => a.type === 'draw') });
+    await waitConverged([lossy, p.a]);
+    const run = lossy.recover(await fixtureDeck(DECK.B), 6);
+    run.catch(() => undefined);
+    await until(() => afterCommit(p.a, 's1').some((a) => a.type === 'shuffleDone' && a.by === 's1'), 60_000, 'the shuffle of the new library');
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(p.a.engine.confirmedState().zones['hand:s1']!.ids).toHaveLength(0);
+    expect(p.a.engine.confirmedState().zones['library:s1']!.ids).toHaveLength(60 - pub);
+    lossy.leave();
+
+    const s = await open(network, p.B, { settleMs: 200 });
+    await until(() => p.a.engine.confirmedState().zones['hand:s1']!.ids.length === 6 && !s.recovering(), 60_000, 'the resumed draws');
+    await waitConverged([s, p.a]);
+    expect(p.a.engine.confirmedState().zones['library:s1']!.ids).toHaveLength(60 - pub - 6);
+    expect(afterCommit(p.a, 's1').filter((a) => a.type === 'shuffleCommit' && a.by === 's1')).toHaveLength(1);
+    expect(s.secrets().hand).toHaveLength(6);
+    for (const id of s.secrets().hand) expect(Object.hasOwn(s.secrets().identities, id)).toBe(true);
+    expect(s.recoveryOwed()).toBeNull();
+  });
+
+  it('a public card from before the lost save that goes back to the hand after the recovery is re-issued and turns up verified: no second recovery is offered', async () => {
+    const { s, other, seat } = await lose(91, 'B');
+    await settle(s.recover(await fixtureDeck(DECK.B), 7), 120_000, 'the recovery');
+    await waitConverged([s, other]);
+    // The recovered browser holds its public cards again: their reveals are in the log.
+    const st = s.engine.confirmedState();
+    const played = Object.values(st.cards).filter((c) => c.owner === seat && c.isToken !== true && c.identity !== undefined && c.zone === `battlefield:${seat}`);
+    expect(played.length).toBeGreaterThan(0);
+    for (const c of played) expect(s.secrets().identities[c.id]?.card.sid).toBe(c.identity!.sid);
+    const card = played[0]!;
+    const sid = card.identity!.sid;
+    s.dispatch({ type: 'toZone', card: card.id, to: `hand:${seat}`, position: 'any' });
+    await until(() => other.engine.confirmedState().cards[card.id] === undefined && s.engine.pending().length === 0, 20_000, 'the hand re-issue');
+    await waitConverged([s, other]);
+    // The hand got fresh ids: the bounced id is gone from every peer's view.
+    expect(other.engine.confirmedState().zones[`hand:${seat}`]!.ids).not.toContain(card.id);
+    expect(other.engine.confirmedState().zones[`hand:${seat}`]!.ids).toHaveLength(8);
+    const status = recoveryStatus(s.getState(), s.secrets(), seat, s.recoveryOwed());
+    expect(status).toMatchObject({ phase: 'none', lost: { hand: 0, library: 0 } });
+    // Played again, it turns up verified under its new id.
+    const back = s.secrets().hand.find((id) => s.secrets().identities[id]!.card.sid === sid)!;
+    expect(back).toBeDefined();
+    s.dispatch({ type: 'move', card: back, to: `battlefield:${seat}`, pose: { x: 200, y: 300, rot: 180 } });
+    await until(() => other.engine.confirmedState().cards[back]?.identity !== undefined, 20_000, 'the card to be turned up');
+    await waitConverged([s, other]);
+    expect(other.engine.confirmedState().cards[back]).toMatchObject({ face: 'up', identity: { sid } });
+    expect(other.engine.confirmedState().cards[back]!.suspect).toBeUndefined();
+    expect(warnings(other).filter((w) => /Integrity/.test(w))).toEqual([]);
+  });
+
   it('nothing is lost after a plain reload: the recovery is not offered', async () => {
     const network = net({ seed: 97 });
     const p = await playScript(network, browsers);

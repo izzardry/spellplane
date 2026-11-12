@@ -15,11 +15,12 @@
  *   draws for the agreed hand.
  */
 import type { Action } from '../core/actions';
+import { commitFor } from '../core/commit';
 import { zoneId } from '../core/ids';
 import { blockingHolder, hasPassed, participants, roundPassed, waitingOn } from '../core/reducer/confirm';
 import { explain, reduce } from '../core/reducer/index';
 import { ownDeckCards, recoveryLibrarySize, recoveryRemainder } from '../core/recovery';
-import type { CardRef, InstanceId, RoundId, SecretStore, SeatId, TableState } from '../core/types';
+import type { CardRef, InstanceId, RoundId, SecretIdentity, SecretStore, SeatId, ShuffleId, TableState } from '../core/types';
 import type { DeckImport, TableSession } from './types';
 
 /** The lost-save recovery a networked session runs (DESIGN "Multiplayer architecture", Resume and failure handling). */
@@ -33,14 +34,93 @@ export interface SessionRecovery {
    * or another round starts before the table agreed (propose again).
    */
   recover(deck: DeckImport, hand: number): Promise<void>;
-  /** Whether a `recover` call of this page is still running. */
+  /**
+   * Finish a recovery whose `recoverCommit` is sequenced but whose shuffle or draws are still owed (`recoveryOwed`),
+   * e.g. after a reload in between: the secret shuffle of the new library, then the draws up to the agreed hand.
+   * Resolves at once when nothing is owed; rejects when the draws stop short of the agreed hand.
+   */
+  finishRecovery(): Promise<void>;
+  /** The rest of an own recovery that `recoverCommit` started and this browser has not finished, or null. */
+  recoveryOwed(): RecoveryOwed | null;
+  /** Whether a `recover` or `finishRecovery` call of this page is still running. */
   recovering(): boolean;
+}
+
+/**
+ * What a recovery still owes after its `recoverCommit` (the reducer clears `Seat.recovering` there): kept in the
+ * page's local storage (session/nonces.ts, kind 'recovery') from just before the commit is proposed until the agreed
+ * hand is drawn, so a reload in between still shuffles the new library and draws the hand.
+ */
+export interface RecoveryOwed {
+  /** One id the own `recoverCommit` created: the commit is sequenced once the seat's commitment lists it. */
+  id: InstanceId;
+  /** The hand count the table agreed to. */
+  hand: number;
+  /** The recovery's secret shuffle of the new library, once proposed. */
+  shuffle: ShuffleId | null;
+}
+
+/** A RecoveryOwed from its stored text, or null when it is missing or malformed. */
+export function parseRecoveryOwed(text: string | null): RecoveryOwed | null {
+  if (text === null) return null;
+  try {
+    const v = JSON.parse(text) as Partial<RecoveryOwed> | null;
+    if (!v || typeof v.id !== 'string' || v.id === '' || !Number.isInteger(v.hand) || (v.hand as number) < 0) return null;
+    if (v.shuffle !== null && typeof v.shuffle !== 'string') return null;
+    return { id: v.id, hand: v.hand as number, shuffle: v.shuffle };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether `owed` is still owed on `state` for `seat`: its `recoverCommit` is sequenced (the seat's commitment lists the
+ * id), no newer recovery is open, and this browser holds every card of its library (otherwise the save is lost again
+ * and a new recovery replaces this one).
+ */
+export function owedOn(state: TableState, secrets: SecretStore, seat: SeatId, owed: RecoveryOwed | null): boolean {
+  if (!owed || !Object.hasOwn(state.seats, seat) || state.seats[seat]!.recovering) return false;
+  if (!(state.commitments[seat]?.instanceIds ?? []).includes(owed.id)) return false;
+  return lostHiddenCards(state, secrets, seat).library.length === 0;
+}
+
+/**
+ * Identities of own cards this browser does not hold, recovered from the sequenced log (DESIGN "Multiplayer
+ * architecture", Resume): every `reveal` and every `flip` with `ref` and `salt` of the seat published a card's identity
+ * and salt. Only cards still on the table under that id are taken, and only when the identity matches the seat's
+ * commitment, so a browser that lost its save holds its public cards again (a bounce re-issues the hand as usual).
+ * Reveals that a catch-up from a snapshot skipped cannot be recovered.
+ */
+export function identitiesFromLog(log: readonly Action[], state: TableState, seat: SeatId, known: Readonly<Record<InstanceId, SecretIdentity>>): Record<InstanceId, SecretIdentity> {
+  const commits = new Set(state.commitments[seat]?.commits ?? []);
+  const out: Record<InstanceId, SecretIdentity> = {};
+  if (commits.size === 0) return out;
+  for (const a of log) {
+    let id: InstanceId;
+    let ref: CardRef;
+    let salt: string;
+    if (a.type === 'reveal' && a.by === seat) {
+      id = a.instanceId;
+      ref = a.ref;
+      salt = a.salt;
+    } else if (a.type === 'flip' && a.by === seat && a.ref !== undefined && a.salt !== undefined) {
+      id = a.card;
+      ref = a.ref;
+      salt = a.salt;
+    } else continue;
+    if (Object.hasOwn(known, id) || Object.hasOwn(out, id) || !Object.hasOwn(state.cards, id)) continue;
+    const c = state.cards[id]!;
+    if (c.owner !== seat || c.isToken === true) continue;
+    if (!ref || typeof ref.sid !== 'string' || typeof salt !== 'string' || !commits.has(commitFor(id, ref, salt))) continue;
+    out[id] = { card: ref.foil === true ? { sid: ref.sid, foil: true } : { sid: ref.sid }, salt };
+  }
+  return out;
 }
 
 /** Whether `session` can run the lost-save recovery (the networked session can; the solo table has nobody to agree). */
 export function canRecover(session: TableSession): session is TableSession & SessionRecovery {
   const s = session as Partial<SessionRecovery>;
-  return typeof s.recover === 'function' && typeof s.recovering === 'function';
+  return typeof s.recover === 'function' && typeof s.recovering === 'function' && typeof s.finishRecovery === 'function' && typeof s.recoveryOwed === 'function';
 }
 
 /** The seat's cards in its hidden zones (hand, library) whose identity this browser does not hold: its lost save. */
@@ -56,12 +136,14 @@ export function lostHiddenCards(state: TableState, secrets: SecretStore, seat: S
 /** Where the own recovery stands, as the HUD shows it (ui/recovery). */
 export interface RecoveryStatus {
   /**
-   * 'none': nothing lost and no recovery open; 'lost': hidden cards of this seat whose identities this browser does
-   * not hold; 'proposed': `recover` is sequenced and its round waits for the table (or was replaced by another
-   * round); 'agreed': the table passed the round, `recoverCommit` may follow.
+   * 'none': nothing lost and no recovery open; 'lost': this browser lost its save of the seat's hidden zones (hidden
+   * cards whose identities it does not hold, and no card of the library it does hold); 'proposed': `recover` is
+   * sequenced and its round waits for the table (or was replaced by another round); 'agreed': the table passed the
+   * round, `recoverCommit` may follow; 'committed': `recoverCommit` is sequenced, the shuffle of the new library or
+   * the draws of the agreed hand are still owed (`SessionRecovery.finishRecovery`).
    */
-  phase: 'none' | 'lost' | 'proposed' | 'agreed';
-  /** Lost cards still on the table in the own hand and library (before `recover` discards them). */
+  phase: 'none' | 'lost' | 'proposed' | 'agreed' | 'committed';
+  /** Own cards in the hand and library whose identity this browser does not hold (before `recover` discards them). */
   lost: { hand: number; library: number };
   /** The deck size: the seat's non-token cards now, or as `recover` counted them. */
   deckSize: number;
@@ -69,7 +151,7 @@ export interface RecoveryStatus {
   publicCards: number;
   /** The largest fresh hand the deck allows (deck size minus public cards). */
   maxHand: number;
-  /** The proposed hand count, or the hand size the table last saw (a suggestion). */
+  /** The proposed or agreed hand count, or the hand size the table last saw (a suggestion). */
   hand: number;
   /** The library the recovery commits before the draws (`recoveryLibrarySize`), once proposed. */
   librarySize: number | null;
@@ -93,8 +175,13 @@ export interface RecoveryRound {
   agreed: boolean;
 }
 
-/** The own recovery as the HUD shows it (pure; `state` is the session's view). */
-export function recoveryStatus(state: TableState, secrets: SecretStore, seat: SeatId): RecoveryStatus {
+/**
+ * The own recovery as the HUD shows it (pure; `state` is the session's view, `owed` the session's `recoveryOwed()`).
+ * A hidden card this browser cannot name while it holds cards of its library (a public card back in the hand whose
+ * salt a catch-up from a snapshot skipped) is counted in `lost` but is not a lost save: no recovery is offered that
+ * would discard the hidden cards it holds.
+ */
+export function recoveryStatus(state: TableState, secrets: SecretStore, seat: SeatId, owed: RecoveryOwed | null = null): RecoveryStatus {
   const s = Object.hasOwn(state.seats, seat) ? state.seats[seat]! : undefined;
   const own = ownDeckCards(Object.values(state.cards), seat);
   const lost = lostHiddenCards(state, secrets, seat);
@@ -105,8 +192,13 @@ export function recoveryStatus(state: TableState, secrets: SecretStore, seat: Se
   if (!r) {
     const deckSize = own.length;
     const handNow = Object.hasOwn(state.zones, zoneId('hand', seat)) ? state.zones[zoneId('hand', seat)]!.ids.length : 0;
+    if (owedOn(state, secrets, seat, owed)) {
+      return { phase: 'committed', lost: lostCount, deckSize, publicCards, maxHand: Math.max(0, deckSize - publicCards), hand: owed!.hand, librarySize: null, round: null };
+    }
+    const library = Object.hasOwn(state.zones, zoneId('library', seat)) ? state.zones[zoneId('library', seat)]!.ids : [];
+    const holdsLibrary = library.length > lostCount.library;
     return {
-      phase: lostCount.hand + lostCount.library > 0 ? 'lost' : 'none',
+      phase: lostCount.hand + lostCount.library > 0 && !holdsLibrary ? 'lost' : 'none',
       lost: lostCount,
       deckSize,
       publicCards,
@@ -161,11 +253,10 @@ export function recoveryProblem(state: TableState, seat: SeatId, deck: readonly 
   if (!Number.isInteger(hand) || hand < 0) return 'The hand count must be a whole number of cards';
   if (!Array.isArray(deck) || deck.length === 0) return 'The re-imported deck has no main-deck cards';
   for (const c of deck) if (!c || typeof c.sid !== 'string' || c.sid === '') return 'Every card needs a Scryfall id';
+  const status = recoveryStatus(state, emptyFor(seat), seat);
+  if (hand > status.maxHand) return `A fresh hand can hold at most ${status.maxHand} cards (deck ${status.deckSize}, ${status.publicCards} on the table)`;
   const dry = dryRecover(state, seat, hand);
-  if (dry.refused !== null) {
-    const status = recoveryStatus(state, emptyFor(seat), seat);
-    return /hand/.test(dry.refused) ? `A fresh hand can hold at most ${status.maxHand} cards (deck ${status.deckSize}, ${status.publicCards} on the table)` : dry.refused;
-  }
+  if (dry.refused !== null) return dry.refused;
   const size = recoveryLibrarySize(dry.next, seat) ?? 0;
   if (recoveryRemainder(deck, dry.next, seat) !== null) return null;
   const key = (r: CardRef): string => `${r.sid}|${r.foil === true ? 'f' : 'n'}`;

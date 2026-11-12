@@ -5,7 +5,8 @@
   and the remainder is committed and shuffled as a new library with a fresh hand count agreed by the table").
 
   Shown only to the player whose browser lacks its own hidden cards, or whose recovery is open: the proposed hand count,
-  the deck re-import, and the confirmation round's state (who passed, who holds). The other players answer the round
+  the deck re-import, and the confirmation round's state (who passed, who holds); after the commit, while the shuffle
+  or the draws are still owed (a reload in between), the button that finishes them. The other players answer the round
   in the HUD's ordinary confirmation prompt ("new hand of 7?"). Not modal: the table stays live under it.
 -->
 <script lang="ts">
@@ -15,7 +16,7 @@
   import type { DeckImport as Deck, TableSession } from '../../session/types';
   import DeckImport from '../DeckImport.svelte';
   import type { ParseDecklist } from '../deck';
-  import { headline, libraryAfter, lostText, seatAnswers } from './model';
+  import { committedText, headline, libraryAfter, lostText, seatAnswers } from './model';
 
   let { session, cardData, parse }: { session: TableSession; cardData: CardDataSource; parse: ParseDecklist } = $props();
 
@@ -23,32 +24,37 @@
   let st = $state.raw(untrack(() => session.getState()));
   let secrets = $state.raw(untrack(() => session.secrets()));
   let running = $state(false);
+  /** A recovery of the session runs (also one the session resumed by itself after a reload). */
+  let busy = $state(untrack(() => canRecover(session) && session.recovering()));
+  let owed = $state.raw(untrack(() => (canRecover(session) ? session.recoveryOwed() : null)));
   let importing = $state(false);
   let failure = $state('');
   let done = $state<{ hand: number; library: number } | null>(null);
   let hand = $state<number | null>(null);
 
   onMount(() => {
-    const off = session.subscribe((s) => {
-      st = s;
-      secrets = session.secrets();
-    });
-    // A catch-up after a reload changes the state without an own action: follow the network status too.
-    const offNet = session.subscribeNet(() => {
+    const follow = (): void => {
       st = session.getState();
       secrets = session.secrets();
-    });
+      if (canRecover(session)) {
+        busy = session.recovering();
+        owed = session.recoveryOwed();
+      }
+    };
+    const off = session.subscribe(follow);
+    // A catch-up after a reload changes the state without an own action: follow the network status too.
+    const offNet = session.subscribeNet(follow);
     return () => {
       off();
       offNet();
     };
   });
 
-  const status: RecoveryStatus = $derived(recoveryStatus(st, secrets, session.seat));
-  const title = $derived(headline(status, running));
+  const status: RecoveryStatus = $derived(recoveryStatus(st, secrets, session.seat, owed));
+  const title = $derived(headline(status, running || busy));
   const answers = $derived(seatAnswers(status, st.seats));
   const count = $derived(hand ?? status.hand);
-  const canStart = $derived(!running && (status.phase === 'lost' || status.phase === 'agreed' || (status.phase === 'proposed' && status.round !== null && (!status.round.current || status.round.holder !== null || count !== status.hand))));
+  const canStart = $derived(!running && !busy && (status.phase === 'lost' || status.phase === 'agreed' || (status.phase === 'proposed' && status.round !== null && (!status.round.current || status.round.holder !== null || count !== status.hand))));
   const visible = $derived(recoverable && (title !== null || done !== null || failure !== ''));
 
   async function start(deck: Deck): Promise<void> {
@@ -77,6 +83,24 @@
     );
   }
 
+  function finish(): void {
+    if (!canRecover(session)) return;
+    failure = '';
+    done = null;
+    running = true;
+    session.finishRecovery().then(
+      () => {
+        running = false;
+        const s = session.getState();
+        done = { hand: s.zones[`hand:${session.seat}`]?.ids.length ?? 0, library: s.zones[`library:${session.seat}`]?.ids.length ?? 0 };
+      },
+      (e: unknown) => {
+        running = false;
+        failure = e instanceof Error ? e.message : String(e);
+      },
+    );
+  }
+
   function setHand(v: string): void {
     const n = Number(v);
     hand = Number.isInteger(n) ? Math.max(0, Math.min(status.maxHand, n)) : null;
@@ -84,7 +108,7 @@
 </script>
 
 {#if visible && !importing}
-  <aside class="recovery" data-testid="recovery" data-phase={status.phase} data-running={running} aria-live="polite">
+  <aside class="recovery" data-testid="recovery" data-phase={status.phase} data-running={running || busy} aria-live="polite">
     {#if title}<h2 data-testid="recovery-title">{title}</h2>{/if}
 
     {#if status.phase === 'lost' && !running}
@@ -124,6 +148,13 @@
         <button type="button" class="primary" data-testid="recovery-start" onclick={() => (importing = true)}>
           {status.phase === 'agreed' && count === status.hand ? 'Re-import deck and finish' : 'Re-import deck and propose'}
         </button>
+      </div>
+    {/if}
+
+    {#if status.phase === 'committed' && !running && !busy}
+      <p data-testid="recovery-committed">{committedText(status)}</p>
+      <div class="row">
+        <button type="button" class="primary" data-testid="recovery-finish" onclick={finish}>Finish recovery</button>
       </div>
     {/if}
 

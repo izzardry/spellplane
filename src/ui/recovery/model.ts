@@ -36,6 +36,8 @@ export function headline(status: RecoveryStatus, running: boolean): string | nul
       return status.round?.holder ? 'The table holds your recovery' : `Recovery: waiting for the table to agree to a new hand of ${status.hand}`;
     case 'agreed':
       return running ? 'The table agreed: committing your new library' : `The table agreed to a new hand of ${status.hand}: re-import your deck to finish`;
+    case 'committed':
+      return running ? 'Shuffling your new library and drawing your hand' : 'Your recovery is not finished';
     default:
       return running ? 'Shuffling your new library and drawing your hand' : null;
   }
@@ -48,6 +50,11 @@ export function lostText(status: RecoveryStatus): string {
     `Re-import the deck you played: the table keeps your ${plural(status.publicCards, 'card')} in play, the rest of the deck becomes a new shuffled library, ` +
     'and you draw a fresh hand once the table agrees. Everyone sees this in the log.'
   );
+}
+
+/** The explanation while the recovery's shuffle or draws are owed (the page reloaded after the commit). */
+export function committedText(status: RecoveryStatus): string {
+  return `Your new library is committed, but it is not shuffled yet or your hand of ${plural(status.hand, 'card')} is not drawn. Finish: the table shuffles it and you draw the rest of the hand.`;
 }
 
 /** The library size the recovery leaves after the draws (deck size − public cards − hand). */

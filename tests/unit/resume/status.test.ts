@@ -7,7 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { emptySecretStore } from '../../../src/core/secrets';
 import type { CardRef } from '../../../src/core/types';
 import type { TableSession } from '../../../src/session/types';
-import { canRecover, lostHiddenCards, recoveryProblem, recoveryStatus } from '../../../src/session/resume';
+import { recoveryLibrarySize } from '../../../src/core/recovery';
+import { canRecover, identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recoveryProblem, recoveryStatus, type RecoveryOwed } from '../../../src/session/resume';
 import { deckRefs, readySecretTable, type SecretTable } from '../secrecy/helpers';
 
 const DECK = 20;
@@ -42,6 +43,37 @@ describe('recoveryStatus', () => {
     const t = midGame(3, 4);
     expect(recoveryStatus(t.state, t.secrets.s0!, 's0')).toMatchObject({ phase: 'none', lost: { hand: 0, library: 0 }, deckSize: DECK, publicCards: 3, maxHand: DECK - 3, hand: 4, round: null });
     expect(recoveryStatus(t.state, emptySecretStore('s0'), 's0')).toMatchObject({ phase: 'lost', lost: { hand: 4, library: DECK - 7 }, deckSize: DECK, publicCards: 3, maxHand: DECK - 3, hand: 4, librarySize: null });
+  });
+
+  it('a hand card this browser cannot name while it holds its library is not a lost save: nothing is offered that would discard the cards it holds', () => {
+    const t = midGame(3, 4);
+    const sec = t.secrets.s0!;
+    const unknown = t.state.zones['hand:s0']!.ids[0]!;
+    const { [unknown]: _gone, ...identities } = sec.identities;
+    expect(recoveryStatus(t.state, { ...sec, identities }, 's0')).toMatchObject({ phase: 'none', lost: { hand: 1, library: 0 } });
+    // The library is empty and the hand unknown: that is a lost save.
+    const drawn = midGame(0, DECK);
+    expect(recoveryStatus(drawn.state, emptySecretStore('s0'), 's0')).toMatchObject({ phase: 'lost', lost: { hand: DECK, library: 0 } });
+  });
+
+  it('committed: the recoverCommit is sequenced and its shuffle or draws are owed (kept by the session across a reload)', () => {
+    const t = midGame(3, 4);
+    t.apply('s0', { type: 'recover', hand: 5, round: 'rec-1' });
+    t.apply('s1', { type: 'respond', round: 'rec-1', seat: 's1', response: 'ok' });
+    const n = recoveryLibrarySize(t.state, 's0')!;
+    const ids = Array.from({ length: n }, (_, i) => `rc-${String(i).padStart(2, '0')}`);
+    t.apply('s0', { type: 'recoverCommit', commits: ids.map((id) => `commit-${id}`), instanceIds: ids, zone: 'library:s0' });
+    const held = { ...emptySecretStore('s0'), identities: Object.fromEntries(ids.map((id) => [id, { card: { sid: 'x' }, salt: 's' }])) };
+    const owed: RecoveryOwed = { id: ids[0]!, hand: 5, shuffle: null };
+    expect(owedOn(t.state, held, 's0', owed)).toBe(true);
+    expect(recoveryStatus(t.state, held, 's0', owed)).toMatchObject({ phase: 'committed', hand: 5, publicCards: 3, round: null });
+    expect(recoveryStatus(t.state, held, 's0', null).phase).toBe('none');
+    // A record whose commit never was sequenced, or whose library this browser lost again, is not owed.
+    expect(recoveryStatus(t.state, held, 's0', { ...owed, id: 'never' }).phase).toBe('none');
+    expect(recoveryStatus(t.state, emptySecretStore('s0'), 's0', owed).phase).toBe('lost');
+    // A newer recovery replaces it.
+    t.apply('s0', { type: 'recover', hand: 2, round: 'rec-2' });
+    expect(recoveryStatus(t.state, held, 's0', owed).phase).toBe('proposed');
   });
 
   it('tokens are not part of the deck', () => {
@@ -124,6 +156,35 @@ describe('recoveryProblem (checked before anything is proposed)', () => {
 describe('canRecover', () => {
   it('only a session with the recovery driver', () => {
     expect(canRecover({} as TableSession)).toBe(false);
-    expect(canRecover({ recover: () => Promise.resolve(), recovering: () => false } as unknown as TableSession)).toBe(true);
+    expect(canRecover({ recover: () => Promise.resolve(), recovering: () => false } as unknown as TableSession)).toBe(false);
+    const driver = { recover: () => Promise.resolve(), recovering: () => false, finishRecovery: () => Promise.resolve(), recoveryOwed: () => null };
+    expect(canRecover(driver as unknown as TableSession)).toBe(true);
+  });
+});
+
+describe('parseRecoveryOwed', () => {
+  it('reads what the session stored and nothing malformed', () => {
+    expect(parseRecoveryOwed(JSON.stringify({ id: 'c1', hand: 7, shuffle: null }))).toEqual({ id: 'c1', hand: 7, shuffle: null });
+    expect(parseRecoveryOwed(JSON.stringify({ id: 'c1', hand: 7, shuffle: 'sh-1' }))).toEqual({ id: 'c1', hand: 7, shuffle: 'sh-1' });
+    for (const bad of [null, '', '{', 'null', JSON.stringify({ id: '', hand: 7, shuffle: null }), JSON.stringify({ id: 'c1', hand: -1, shuffle: null }), JSON.stringify({ id: 'c1', hand: 7, shuffle: 3 })]) {
+      expect(parseRecoveryOwed(bad)).toBeNull();
+    }
+  });
+});
+
+describe('identitiesFromLog', () => {
+  it('names the own cards still on the table that a reveal or a verified flip published, checked against the commitment', () => {
+    const t = midGame(3, 4);
+    const onTable = Object.values(t.state.cards).filter((c) => c.owner === 's0' && c.zone === 'battlefield:s0');
+    expect(onTable).toHaveLength(3);
+    const found = identitiesFromLog(t.log, t.state, 's0', {});
+    expect(Object.keys(found).sort()).toEqual(onTable.map((c) => c.id).sort());
+    for (const c of onTable) expect(found[c.id]).toEqual(t.secrets.s0!.identities[c.id]);
+    // Known identities are kept as they are; another seat's cards are never taken.
+    expect(identitiesFromLog(t.log, t.state, 's0', t.secrets.s0!.identities)).toEqual({});
+    expect(identitiesFromLog(t.log, t.state, 's1', {})).toEqual({});
+    // A salt that does not match the commitment is not taken.
+    const forged = t.log.map((a) => (a.type === 'reveal' ? { ...a, salt: 'forged' } : a));
+    expect(identitiesFromLog(forged, t.state, 's0', {})).toEqual({});
   });
 });

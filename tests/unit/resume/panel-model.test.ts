@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { emptySecretStore } from '../../../src/core/secrets';
 import { recoveryStatus } from '../../../src/session/resume';
-import { headline, libraryAfter, lostText, seatAnswers } from '../../../src/ui/recovery/model';
+import { committedText, headline, libraryAfter, lostText, seatAnswers } from '../../../src/ui/recovery/model';
 import { readySecretTable } from '../secrecy/helpers';
 
 describe('recovery panel text', () => {
@@ -40,5 +40,13 @@ describe('recovery panel text', () => {
     s = recoveryStatus(t.state, lost, 's0');
     expect(headline(s, false)).toMatch(/interrupted by another confirmation round/);
     expect(seatAnswers(s, t.state.seats)).toEqual([]);
+  });
+
+  it('committed: the recovery owes its shuffle or draws and says how to finish', () => {
+    const t = readySecretTable(['Anna', 'Ben'], 20);
+    const s = { ...recoveryStatus(t.state, t.secrets.s0!, 's0'), phase: 'committed' as const, hand: 7 };
+    expect(headline(s, false)).toBe('Your recovery is not finished');
+    expect(headline(s, true)).toBe('Shuffling your new library and drawing your hand');
+    expect(committedText(s)).toContain('hand of 7 cards');
   });
 });

@@ -56,7 +56,7 @@ import {
   shuffleRecord,
   type Entropy,
 } from '../core/secrets';
-import type { CardRef, Format, InstanceId, LogEntry, Pose, RngPurpose, SeatColourIndex, SecretStore, SeatId, TableState, ZoneId } from '../core/types';
+import type { CardRef, Format, InstanceId, LogEntry, Pose, RngPurpose, SeatColourIndex, SecretStore, SeatId, ShuffleId, TableState, ZoneId } from '../core/types';
 import { isUndoable, type UndoableAction } from '../core/actions';
 import { undoPlan, type UndoReveal } from '../core/undo';
 import type { CardData } from '../data/types';
@@ -71,7 +71,7 @@ import { DRY_CID, FACE_DOWN_KINDS, faceDownAllowed, placementOf, putBack, reReve
 import { localNonces, type NonceStore } from './nonces';
 import { TablePersistence } from './persist';
 import { randomId, randomSalt } from './secrecy';
-import { lostHiddenCards, recoveryProblem, type SessionRecovery } from './resume';
+import { identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recoveryProblem, type RecoveryOwed, type SessionRecovery } from './resume';
 import { reconcileSecrets, type LibraryPlacement } from './secrets';
 import type { CreateNetSession, DeckImport, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
 
@@ -96,6 +96,8 @@ export const NET_MULLIGAN_HAND = 7;
 const SEAT_ATTEMPTS = 4;
 /** A contribution to a randomness round that keeps being refused is given up after this many refusals. */
 const ROUND_ATTEMPTS = 3;
+/** The key under which an own recovery keeps what it still owes after its `recoverCommit` (session/nonces.ts 'recovery'). */
+const OWED = 'owed';
 /** Action types that leave a card where it lies and as it shows: a kept turn-up is still owed after them. */
 const IN_PLACE: ReadonlySet<string> = new Set(['tap', 'rotate', 'counter', 'note', 'attach', 'detach']);
 /** Seat colours a theme provides (DESIGN "Themes and rendering": eight seat colours). */
@@ -567,6 +569,11 @@ class NetTable implements NetSession, SessionRecovery {
 
   draw(n = 1): Promise<void> {
     return this.run(() => {
+      // A recovered library is drawn from only once it is jointly shuffled (DESIGN "Hidden information" 3).
+      const owed = this.recoveryOwed();
+      if (owed && (owed.shuffle === null || this.engine.confirmedState().shuffles[owed.shuffle]?.orderHash == null)) {
+        throw new Error('Finish the recovery first: your new library is not shuffled yet');
+      }
       this.drawNow(n);
       this.notify();
     });
@@ -599,29 +606,61 @@ class NetTable implements NetSession, SessionRecovery {
 
   // --- Lost-save recovery (PLAN M1-P7) --------------------------------------------------------------------
 
-  /** `recover` calls of this page still running. */
+  /** `recover` and `finishRecovery` calls of this page still running. */
   private recoveryRuns = 0;
+  /** Whether `drive` already started finishing an owed recovery in this page (once; the panel offers it again). */
+  private recoveryResumed = false;
 
   recovering(): boolean {
     return this.recoveryRuns > 0;
+  }
+
+  /** The stored rest of an own recovery, whether or not its `recoverCommit` is sequenced yet. */
+  private storedOwed(): RecoveryOwed | null {
+    return parseRecoveryOwed(this.nonces.get('recovery', OWED));
+  }
+
+  private storeOwed(owed: RecoveryOwed | null): void {
+    if (owed === null) this.nonces.delete('recovery', OWED);
+    else this.nonces.set('recovery', OWED, JSON.stringify(owed));
+  }
+
+  recoveryOwed(): RecoveryOwed | null {
+    const owed = this.storedOwed();
+    return owedOn(this.engine.confirmedState(), this.sec, this.seat, owed) ? owed : null;
   }
 
   /**
    * The lost-save recovery (DESIGN "Multiplayer architecture", Resume and failure handling; session/resume.ts
    * SessionRecovery): propose the fresh hand count in a confirmation round, wait for the table, then commit the
    * re-imported deck minus the seat's public cards as the new library, shuffle it with the other seats' nonces and
-   * draw the agreed hand. Re-running it after a reload picks up an open proposal of the same count.
+   * draw the agreed hand. Re-running it after a reload picks up an open proposal of the same count; once the commit is
+   * sequenced it finishes that recovery (`finishRecovery`, the agreed count) instead.
    */
   recover(deck: DeckImport, hand: number): Promise<void> {
+    return this.recoveryRun((seat) => {
+      if (!deck || !Array.isArray(deck.main) || !Array.isArray(deck.side)) throw new TypeError('A recovery needs the re-imported deck');
+      const owed = this.recoveryOwed();
+      return owed ? this.finishNow(seat, owed) : this.recoverNow(seat, deck, hand);
+    });
+  }
+
+  finishRecovery(): Promise<void> {
+    return this.recoveryRun((seat) => {
+      const owed = this.recoveryOwed();
+      return owed ? this.finishNow(seat, owed) : Promise.resolve();
+    });
+  }
+
+  private recoveryRun(fn: (seat: SeatId) => Promise<void>): Promise<void> {
     return this.run(async () => {
       const seat = this.engine.seat();
       if (!seat) throw new Error('Take a chair first.');
       if (this.recoveryRuns > 0) throw new Error('A recovery is already running in this page');
-      if (!deck || !Array.isArray(deck.main) || !Array.isArray(deck.side)) throw new TypeError('A recovery needs the re-imported deck');
       this.recoveryRuns++;
       this.netChanged();
       try {
-        await this.recoverNow(seat, deck, hand);
+        await fn(seat);
       } finally {
         this.recoveryRuns--;
         this.notify();
@@ -631,6 +670,9 @@ class NetTable implements NetSession, SessionRecovery {
   }
 
   private async recoverNow(seat: SeatId, deck: DeckImport, hand: number): Promise<void> {
+    // Own public cards whose identity this browser lost but the log still names (DESIGN "Multiplayer architecture",
+    // Resume): held again, a bounce of one of them later re-issues the hand as usual.
+    this.adoptLoggedIdentities();
     const view = this.engine.state();
     const open = view.seats[seat]?.recovering;
     let round: string;
@@ -662,33 +704,85 @@ class NetTable implements NetSession, SessionRecovery {
       },
     );
     const st = this.engine.confirmedState();
+    const agreed = st.seats[seat]!.recovering!.hand;
     const rest = recoveryRemainder(deck.main, st, seat);
     if (rest === null) throw new Error('The re-imported deck does not cover your cards on the table');
     // Fresh ids that the table has never seen for this seat (the reducer refuses an id committed before).
     const used = new Set<string>([...Object.keys(st.cards), ...(st.commitments[seat]?.instanceIds ?? []), ...Object.keys(this.sec.identities)]);
     const entropy: Entropy = {
       id: () => {
-        let id = this.entropy.id();
-        for (let i = 0; i < 100 && used.has(id); i++) id = this.entropy.id();
-        return id;
+        for (let i = 0; i < 100; i++) {
+          const id = this.entropy.id();
+          if (!used.has(id)) return id;
+        }
+        throw new Error('No fresh card id could be made for the recovered library');
       },
       salt: this.entropy.salt,
     };
     const c = commitDeck({ ...this.sec, seat, libraryOrder: [], hand: [] }, rest, entropy);
     const pool = deck.side.map((x): CardRef => (x.foil ? { sid: x.sid, foil: true } : { sid: x.sid }));
     const commit = this.stamp({ type: 'recoverCommit', commits: c.action.commits, instanceIds: c.action.instanceIds, zone: this.zone('library') });
-    if (!this.proposePrivate(commit, { ...c.secrets, pool })) throw new Error(`The recovered library was refused: ${this.lastWarning()}`);
+    // What the recovery owes after its commit is kept before the commit is proposed (the sequencer's own proposal is
+    // sequenced inside `propose`), so a reload at any point after it still shuffles and draws (`finishRecovery`).
+    const first = c.action.instanceIds[0];
+    const owed: RecoveryOwed | null = first === undefined ? null : { id: first, hand: agreed, shuffle: null };
+    this.storeOwed(owed);
+    if (!this.proposePrivate(commit, { ...c.secrets, pool })) {
+      this.storeOwed(null);
+      throw new Error(`The recovered library was refused: ${this.lastWarning()}`);
+    }
     this.prefetch([...deck.main, ...deck.side].map((x) => x.sid));
     this.notify();
     await this.sequenced(commit.cid);
-    await this.shuffleNow(this.zone('library'));
-    this.drawNow(hand);
+    // An empty library (every card of the deck is public) has nothing to shuffle and no hand to draw.
+    if (owed) await this.finishNow(seat, owed);
+  }
+
+  /**
+   * The steps a recovery owes after its `recoverCommit`: the secret shuffle of the new library (DESIGN "Hidden
+   * information" 3: the owner cannot choose the order, so nothing is drawn before it), then draws until the hand
+   * holds the agreed count. Each step is decided from the confirmed state, so it resumes after a reload.
+   */
+  private async finishNow(seat: SeatId, owed: RecoveryOwed): Promise<void> {
+    const library = this.zone('library');
+    const sid = owed.shuffle;
+    const started = (id: string): boolean =>
+      Object.hasOwn(this.engine.confirmedState().shuffles, id) || this.engine.pending().some((a) => a.type === 'shuffleCommit' && a.sid === id);
+    if (sid !== null && started(sid)) {
+      await this.shuffleSettled(sid, null);
+    } else {
+      // Not proposed yet, or lost with the page that proposed it: shuffle now.
+      const next = randomId('sh');
+      this.storeOwed({ ...owed, shuffle: next });
+      await this.shuffleNow(library, next);
+    }
+    const handNow = (): number => this.engine.state().zones[this.zone('hand')]?.ids.length ?? 0;
+    for (let attempt = 0; handNow() < owed.hand; attempt++) {
+      if (attempt >= ROUND_ATTEMPTS) throw new Error(`Only ${handNow()} of the agreed ${owed.hand} cards could be drawn: finish the recovery again`);
+      this.drawNow(owed.hand - handNow());
+      this.notify();
+      await this.until(
+        () => !this.engine.pending().some((a) => a.type === 'draw' && a.by === seat),
+        () => null,
+      );
+    }
+    this.storeOwed(null);
+    // Nothing before the recovery, and none of its draws, can be undone (as after a mulligan).
     this.undoStack = [];
     this.notify();
-    await this.until(
-      () => !this.engine.pending().some((a) => a.type === 'draw' && a.by === seat),
-      () => null,
+  }
+
+  /** Hold every own card whose identity this browser lacks but the sequenced log names (session/resume.ts identitiesFromLog). */
+  private adoptLoggedIdentities(): void {
+    const found = identitiesFromLog(
+      this.entries.flatMap((e) => (e.kind === 'action' ? [e.action] : [])),
+      this.engine.confirmedState(),
+      this.sec.seat,
+      this.sec.identities,
     );
+    if (Object.keys(found).length === 0) return;
+    this.setSecrets({ ...this.sec, identities: { ...this.sec.identities, ...found } });
+    this.saves.saveSecrets(this.sec);
   }
 
   undo(): boolean {
@@ -890,20 +984,24 @@ class NetTable implements NetSession, SessionRecovery {
   }
 
   /** The secret shuffle of an own hidden zone (DESIGN "Secret shuffle" 1; `drive` finishes it once the nonces are in). */
-  private async shuffleNow(zone: ZoneId): Promise<void> {
+  private async shuffleNow(zone: ZoneId, sid: ShuffleId = randomId('sh')): Promise<void> {
     this.privateList(zone);
     if (!this.engine.state().zones[zone]) throw new Error(`Unknown zone ${zone}`);
-    const sid = randomId('sh');
     const b = beginShuffle(this.sec, zone, sid, randomSalt());
     const a = this.stamp(b.action);
     if (!this.proposePrivate(a, b.secrets)) throw new Error(`The shuffle was refused: ${this.lastWarning()}`);
     // Shuffles cannot be undone, and nothing before a shuffle can be undone across it.
     this.undoStack = [];
     this.notify();
-    await this.until(
+    await this.shuffleSettled(sid, a.cid);
+  }
+
+  /** Resolve once own shuffle `sid` is done; reject when its `shuffleCommit` (`cid`, if known) is refused or it was given up. */
+  private shuffleSettled(sid: ShuffleId, cid: string | null): Promise<void> {
+    return this.until(
       () => this.engine.confirmedState().shuffles[sid]?.orderHash != null,
       // Only a refusal ends the wait: an own action of a history the engine abandons is proposed again (M1-P1).
-      () => this.refused.get(a.cid) ?? (this.gaveUp(`done:${sid}`) ? 'the shuffle could not be finished' : null),
+      () => (cid !== null ? this.refused.get(cid) : undefined) ?? (this.gaveUp(`done:${sid}`) ? 'the shuffle could not be finished' : null),
     );
   }
 
@@ -1014,7 +1112,9 @@ class NetTable implements NetSession, SessionRecovery {
     }
     const view = this.engine.state();
     const hand = zoneId('hand', this.seat);
-    // A hand this browser lost (its save is gone) cannot get fresh ids; the lost-save recovery replaces it (M1-P7).
+    // A card of the hand this browser cannot name: a public card it lost with its save comes back named by the log;
+    // a hand still lost (its save is gone) cannot get fresh ids, and the lost-save recovery replaces it (M1-P7).
+    if (lostHiddenCards(view, this.sec, this.seat).hand.length > 0) this.adoptLoggedIdentities();
     if (lostHiddenCards(view, this.sec, this.seat).hand.length > 0) {
       this.reissueOwed = false;
       return;
@@ -1173,8 +1273,20 @@ class NetTable implements NetSession, SessionRecovery {
       this.reRevealOwed(st, me);
       this.turnUpOwed(st, me);
       this.reissueHand();
+      this.resumeRecovery();
     }
     this.settleWaiters();
+  }
+
+  /**
+   * A recovery whose `recoverCommit` is sequenced but whose shuffle or draws this page never finished (it reloaded in
+   * between, or a step failed): finished once per page on a replica in step with the table; the recovery panel
+   * offers it again (`finishRecovery`).
+   */
+  private resumeRecovery(): void {
+    if (this.recoveryResumed || this.recoveryRuns > 0 || this.engine.status() !== 'connected' || this.recoveryOwed() === null) return;
+    this.recoveryResumed = true;
+    this.finishRecovery().catch((e: unknown) => this.warn(`The recovery could not be finished: ${errorText(e)}`));
   }
 
   /** Whether own card `id` is public without an identity in the confirmed state and in the view, and this browser holds it. */
