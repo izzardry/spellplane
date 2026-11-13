@@ -43,7 +43,7 @@
   import TurnStrip from './TurnStrip.svelte';
   import TalkIndicator from './voice/TalkIndicator.svelte';
   import VoicePanel from './voice/VoicePanel.svelte';
-  import { attachTalkInput, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
+  import { attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
   import Speech from './settings/Speech.svelte';
   import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption } from '../voice/types';
@@ -597,9 +597,14 @@
     );
   }
 
-  // A note field removed without a blur (Enter, Escape) hands dictation back to captions.
+  // A note field removed without a blur (Enter, Escape) hands dictation back to captions. WebKit fires no focusout for
+  // a removed field, so the talk state is told what has focus now (else it stays on the gone field and drops words).
   $effect(() => {
-    if (note === null) untrack(() => dictateNote(false));
+    if (note === null)
+      untrack(() => {
+        dictateNote(false);
+        if (typeof document !== 'undefined') liveVoice?.focus(focusKind(document.activeElement));
+      });
   });
 
   let seenLog = 0;
