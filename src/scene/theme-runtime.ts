@@ -84,24 +84,31 @@ export class ThemeRuntime {
   }
 
   /** Lighting, tone mapping, pixel ratio, shadow maps, post chain and anisotropy for the current theme and level. */
-  private applyRenderer(): void {
+  /** Tone mapping, exposure, background and fog of the theme (before its build, which may change the background). */
+  private applyLighting(): void {
     const t = this.theme;
     const lit = t.lighting.lit;
     this.renderer.toneMapping = lit ? TONE_MAPPING[t.lighting.toneMapping] : THREE.NoToneMapping;
     this.renderer.toneMappingExposure = lit ? t.lighting.exposure : 1;
     this.scene.background = new THREE.Color(t.lighting.background);
     this.scene.fog = lit && t.lighting.fog ? new THREE.Fog(t.lighting.fog.colour, t.lighting.fog.near, t.lighting.fog.far) : null;
+  }
+
+  /** What the quality level sets: pixel ratio, shadow maps, the post chain and anisotropy. */
+  private applyLevel(): void {
+    const t = this.theme;
     const before = this.renderer.getPixelRatio();
     applyQuality(this.renderer, this.level, t.shadows);
     if (this.sized && this.renderer.getPixelRatio() !== before) this.renderer.setSize(this.size.w, this.size.h, false);
+    this.post.setSize(this.size.w, this.size.h, this.renderer.getPixelRatio());
     const postLevel: QualityLevel = { ...this.level, post: this.opts.post && this.level.post };
     this.post.configure(this.opts.post ? t.post : { bloom: null, vignette: null }, postLevel);
-    this.post.setSize(this.size.w, this.size.h, this.renderer.getPixelRatio());
     this.materials.setAnisotropy(this.effective.anisotropy);
   }
 
   private build(): void {
-    this.applyRenderer();
+    this.applyLighting();
+    this.applyLevel();
     const t = this.theme;
     const p = this.placement;
     if (t.lighting.lit && t.lighting.lights.length) {
@@ -166,7 +173,7 @@ export class ThemeRuntime {
     this.effective = this.resolve();
     const shadowsChanged = prev.shadowMap !== this.effective.shadowMap || prev.shadowMapSize !== this.effective.shadowMapSize;
     if (this.instance?.setQuality) {
-      this.applyRenderer();
+      this.applyLevel();
       this.instance.setQuality(this.level);
       this.applyShadows();
     } else {

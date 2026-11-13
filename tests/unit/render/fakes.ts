@@ -9,6 +9,10 @@ export function fakeRenderer(opts: { maxAnisotropy?: number; maxSamples?: number
     setPixelRatio: (v: number) => (pixelRatio = v),
     getSize: (v: THREE.Vector2) => v.set(800, 600),
     getDrawingBufferSize: (v: THREE.Vector2) => v.set(800 * pixelRatio, 600 * pixelRatio),
+    setSize: () => undefined,
+    shadowMap: { enabled: false, type: 1, needsUpdate: false },
+    toneMapping: 0,
+    toneMappingExposure: 1,
   } as unknown as THREE.WebGLRenderer;
 }
 
