@@ -33,6 +33,7 @@ import { TableRig, lateralOf } from './camera/rig';
 import { CardBoxes, CardLayer, ContactShadows, boxShape, legibleOutlineMm, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
 import { FOIL_SHEEN, TABLE_FOIL, foilHue, foilSheenColour } from './foil';
+import { ambientDue } from './pacing';
 import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
 import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
@@ -810,6 +811,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** Lit themes animate (lights flicker, particles drift, shimmer): they draw every frame unless motion is reduced. */
   const animated = () => theme.lighting.lit && !reduced();
+  /** When the last frame was drawn (tick time), and whether the tick before this one drew it. */
+  let drewAt = -Infinity;
+  let drewLastTick = false;
+  /** What the last drawn frame cost: the time from the tick that drew it to the next animation frame, ms. */
+  let frameCost = 0;
 
   function tick(): void {
     if (disposed) return;
@@ -817,6 +823,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const now = performance.now();
     const dt = Math.min(100, now - lastTick);
     lastTick = now;
+    // The browser hands out the next animation frame once the last drawn one is done, GPU work included.
+    if (drewLastTick) frameCost = now - drewAt;
+    drewLastTick = false;
     let changed = rig.step(now, dt);
     if (pendingFollow.length && !holding()) {
       const reqs = pendingFollow;
@@ -846,14 +855,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (rc.motion.moving) changed = true;
     }
     if (faces.pump(frame)) changed = true;
-    if (pingsLive) changed = true;
-    if (!reduced() && entries.some((e) => e.pending)) changed = true;
-    if (animated()) changed = true;
+    // Ambient motion: what moves with nothing changing (ping fades, the pending pulse, a lit theme's light and
+    // particles, the foil sheen). On a slow renderer it waits a few frame costs between frames (scene/pacing.ts).
+    let ambient = pingsLive || (!reduced() && entries.some((e) => e.pending)) || animated();
     // The foil sheen drifts at a low frame rate while foils are drawn (not with reduced motion).
-    if (!changed && !dirty && foilsDrawn.size > 0 && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs) changed = true;
-    if (changed || dirty) {
+    if (foilsDrawn.size > 0 && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs) ambient = true;
+    if (ambient && !changed && !dirty && !ambientDue(frameCost, now - drewAt)) ambient = false;
+    if (changed || dirty || ambient) {
       if (foilsDrawn.size > 0) lastSheen = now;
-      draw(dt);
+      // Theme animation advances by the time since the last drawn frame (still at most 100 ms).
+      draw(Math.min(100, now - drewAt));
+      drewAt = now;
+      drewLastTick = true;
     }
     if (captionLayer.active) captionLayer.place();
   }
