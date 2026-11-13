@@ -156,9 +156,9 @@ describe('the pass driver and a history the room abandons (M2 gate follow-up)', 
     h.step(act('pick', { packId: id, count: 1 }, 's0'));
     h.step(act('packPass', { packId: id, to: 's1', count: 2 }, 's0'));
     // s1 picks its own pack, then s0's, and passes it on to s2.
-    let s = h.step(act('pick', { packId: draftOf(start).queues.s1![0]!, count: 1 }, 's1'));
-    s = h.step(act('pick', { packId: id, count: 1 }, 's1'));
-    s = h.step(act('packPass', { packId: id, to: 's2', count: 1 }, 's1'));
+    h.step(act('pick', { packId: draftOf(start).queues.s1![0]!, count: 1 }, 's1'));
+    h.step(act('pick', { packId: id, count: 1 }, 's1'));
+    const s = h.step(act('packPass', { packId: id, to: 's2', count: 1 }, 's1'));
     expect(draftOf(s).packs[id]!.holder).toBe('s2');
     expect(Object.hasOwn(h.held(), id)).toBe(false);
     expect(ids(h.held()[POOL_KEY]!)).toEqual([cards[0]!.instanceId]);
