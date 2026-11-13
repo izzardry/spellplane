@@ -1,6 +1,7 @@
 // Shared fixtures for the camera rig tests (M4-P1): table sizes and seat angles from DESIGN "Specification: geometry,
 // layout and motion", Tables and seats; a rig at rest in either camera.
-import { TableRig } from '../../../src/scene/camera/rig';
+import { TableRig, lateralOf } from '../../../src/scene/camera/rig';
+import { mtgLayout } from '../../../src/games/mtg/layout';
 import { projectPoint } from '../../../src/scene/camera/pose';
 import type { CameraPose, CameraRig, ScreenPoint, TablePoint } from '../../../src/scene/types';
 
@@ -11,6 +12,19 @@ export const TABLES = {
   ffa4: { w: 1800, d: 1800 },
   '2hg': { w: 2200, d: 1100 },
 } as const;
+/**
+ * Every viewer seat of every table format: the table, the seat angle and the ego seat's offset along the viewer's
+ * right axis (in front of their own territory, as the table scene places it).
+ */
+export const SEATS = (['1v1', 'ffa3', 'ffa4', '2hg'] as const).flatMap((format) => {
+  const layout = mtgLayout(format);
+  return layout.seats.map((s) => ({ format, seat: s.index, table: layout.table, angle: s.angle, lateral: lateralOf(s.territory, s.angle) }));
+});
+export type Seat = (typeof SEATS)[number];
+
+/** Whether a table point lies on the table (not over the surround). */
+export const onTable = (table: { w: number; d: number }, p: TablePoint): boolean => Math.abs(p.x) <= table.w / 2 && Math.abs(p.y) <= table.d / 2;
+
 /** The spec's blend duration (DESIGN "Specification: geometry, layout and motion", Camera rigs: 400 ms). */
 export const BLEND_MS = 400;
 

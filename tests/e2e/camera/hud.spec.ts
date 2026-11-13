@@ -17,6 +17,30 @@ test('the stored follow toggles are handed to the scene; both are off by default
   await expect.poll(() => ui<Call[]>(page, 'scene')).toContainEqual({ method: 'camera.setFollow', args: [{ stack: true, activePlayer: true }] });
 });
 
+test('a later change of the follow toggles reaches the scene, turning one off too', async ({ page }) => {
+  await openHud(page);
+  const follows = async () => (await ui<Call[]>(page, 'scene')).filter((c) => c.method === 'camera.setFollow');
+  // Changed elsewhere (another tab, a settings panel); the HUD picks it up when the window regains focus.
+  await page.evaluate(() => window.__uiHarness!.setSetting('followStack', true));
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect.poll(follows).toEqual([{ method: 'camera.setFollow', args: [{ stack: true, activePlayer: false }] }]);
+  await page.evaluate(() => window.__uiHarness!.setSetting('followStack', false));
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect.poll(follows).toEqual([
+    { method: 'camera.setFollow', args: [{ stack: true, activePlayer: false }] },
+    { method: 'camera.setFollow', args: [{ stack: false, activePlayer: false }] },
+  ]);
+  // Nothing changed: nothing is handed over again (the next change is the only new call; reads resolve in order).
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.evaluate(() => window.__uiHarness!.setSetting('followActive', true));
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect.poll(follows).toEqual([
+    { method: 'camera.setFollow', args: [{ stack: true, activePlayer: false }] },
+    { method: 'camera.setFollow', args: [{ stack: false, activePlayer: false }] },
+    { method: 'camera.setFollow', args: [{ stack: false, activePlayer: true }] },
+  ]);
+});
+
 test('the View button switches the camera rig, as P does', async ({ page }) => {
   await openHud(page);
   await page.getByTestId('perspective').click();

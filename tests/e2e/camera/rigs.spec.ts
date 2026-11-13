@@ -65,6 +65,40 @@ test.describe('M4-P1 acceptance', () => {
     }
   });
 
+  // The multi-seat tables: the ego seat stands in front of the viewer's own territory, beside the centre line in
+  // Two-Headed Giant, and the tables are wider than the 1v1 table. Cursors over the table near its side edge.
+  for (const { format, viewer, fx, fy } of [
+    { format: 'ffa4', viewer: 's0', fx: 0.25, fy: 0.75 },
+    { format: '2hg', viewer: 's1', fx: 0.85, fy: 0.65 },
+    { format: '2hg', viewer: 's0', fx: 0.1, fy: 0.6 },
+  ]) {
+    test(`during a blend the cursor's table point moves less than 2 px on ${format} (viewer ${viewer}, both ways)`, async ({ page }) => {
+      await page.clock.install();
+      const errors: string[] = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto(`./?${new URLSearchParams({ faces: 'placeholder', harness: 'scene', format, viewer }).toString()}`);
+      await expect.poll(() => page.evaluate(() => window.__sceneHarness?.ready() ?? false), { timeout: 30_000 }).toBe(true);
+      await settle(page);
+      await pauseClock(page);
+      const vp = page.viewportSize()!;
+      const cursor = { x: Math.round(vp.width * fx), y: Math.round(vp.height * fy) };
+      const table = (await layoutOf(page)).table;
+      await page.mouse.move(cursor.x, cursor.y);
+      const a = (await tableOf(page, cursor.x, cursor.y))!;
+      // Over the table, not the surround.
+      expect(Math.abs(a.x)).toBeLessThanOrEqual(table.w / 2);
+      expect(Math.abs(a.y)).toBeLessThanOrEqual(table.d / 2);
+      for (const to of ['ego', 'birdseye'] as const) {
+        await page.keyboard.press('p');
+        const samples = await sampleBlend(page, a);
+        expect(samples.filter((x) => x.t !== null && x.t > 0 && x.t < 1).length).toBeGreaterThan(10);
+        for (const x of samples) expect(dist(x.s!, cursor)).toBeLessThan(2);
+        expect(await rigOf(page)).toBe(to);
+      }
+      expect(errors).toEqual([]);
+    });
+  }
+
   test('the blend reports its anchor, both rigs and the 400 ms duration', async ({ page }) => {
     await page.clock.install();
     await openScene(page, { scenario: 'demo' });
@@ -123,7 +157,8 @@ test.describe('M4-P1 acceptance', () => {
       expect(p.position[1], what).toBeGreaterThanOrEqual(seatY - 1e-6);
       expect(p.pitchDeg, what).toBeGreaterThanOrEqual(25 - 1e-9);
       expect(p.pitchDeg, what).toBeLessThanOrEqual(60 + 1e-9);
-      expect(Math.abs(p.position[0]), what).toBeLessThanOrEqual(400 + 1e-6);
+      // The lean reaches the table's side edge, no further (DECISIONS [M4-P1]).
+      expect(Math.abs(p.position[0]), what).toBeLessThanOrEqual(table.w / 2 + 1e-6);
       return p;
     };
     await check('at rest');
@@ -354,5 +389,24 @@ test.describe('follow toggles', () => {
     await settle(page);
     expect(await pose(page)).not.toEqual(held);
     expect(await centreOf(0)).toBeLessThan(await centreOf(1));
+    // A press not yet past the drag threshold waits as well (it may become a drag).
+    await page.mouse.move(720, 450);
+    await page.mouse.down();
+    const pressed = await pose(page);
+    await dispatch(page, { type: 'turnPass', by: 's0', cid: 'tp5', to: 's1' });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    expect(await pose(page)).toEqual(pressed);
+    await page.mouse.up();
+    await settle(page);
+    expect(await centreOf(1)).toBeLessThan(2);
+    // So does a pointer pressed outside the table (a hand-fan drag still in the HUD), until it is released.
+    const outside = await pose(page);
+    await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 41 })));
+    await dispatch(page, { type: 'turnPass', by: 's1', cid: 'tp6', to: 's0' });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    expect(await pose(page)).toEqual(outside);
+    await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 41 })));
+    await settle(page);
+    expect(await centreOf(0)).toBeLessThan(2);
   });
 });

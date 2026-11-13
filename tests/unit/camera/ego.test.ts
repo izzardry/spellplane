@@ -6,7 +6,7 @@
 // (DECISIONS [M4-C]).
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
-import { clampEgoNav, defaultEgoNav, egoPose, egoSeat, halfDepth, maxDollyAt } from '../../../src/scene/camera/ego';
+import { clampEgoNav, defaultEgoNav, egoLimitsFor, egoPose, egoSeat, halfDepth, halfWidth, maxDollyAt } from '../../../src/scene/camera/ego';
 import { basis, dot, sub } from '../../../src/scene/camera/pose';
 import type { TableRig } from '../../../src/scene/camera/rig';
 import { forward } from '../../../src/scene/math';
@@ -148,7 +148,8 @@ describe('ego limits', () => {
             expect(aheadOfSeat(pose, angle, table)).toBeGreaterThanOrEqual(-1e-6);
             expect(pose.pitchDeg).toBeGreaterThanOrEqual(25 - 1e-9);
             expect(pose.pitchDeg).toBeLessThanOrEqual(60 + 1e-9);
-            expect(Math.abs(rig.nav.lean)).toBeLessThanOrEqual(400 + 1e-9);
+            // The lean reaches the table's far side edge from the seat (DECISIONS [M4-P1]), never further.
+            expect(Math.abs(rig.nav.lean)).toBeLessThanOrEqual(Math.max(P.leanMm, halfWidth(table, angle)) + 1e-9);
           }
         }
       }),
@@ -179,6 +180,26 @@ describe('ego limits', () => {
   });
 });
 
+describe('ego lean limit', () => {
+  it('reaches the table\'s far side edge from the seat, on every table and seat angle', () => {
+    expect(egoLimitsFor(P, TABLES['1v1'], 0).leanMm).toBe(700);
+    expect(egoLimitsFor(P, TABLES['1v1'], 90).leanMm).toBe(550);
+    expect(egoLimitsFor(P, TABLES.ffa3, 0, 0).leanMm).toBe(1000);
+    expect(egoLimitsFor(P, TABLES.ffa3, 180, 500).leanMm).toBe(1500);
+    expect(egoLimitsFor(P, TABLES['2hg'], 0, -550).leanMm).toBe(1650);
+    // A theme's wider lean is kept; everything else is the theme's.
+    expect(egoLimitsFor({ ...P, leanMm: 2000 }, TABLES['1v1'], 0)).toEqual({ ...P, leanMm: 2000 });
+  });
+
+  it('the rig uses it, and a new seat offset widens it', () => {
+    const rig = makeRig({ rig: 'ego', table: TABLES['2hg'], lateral: 550 });
+    expect(rig.ego.leanMm).toBe(1650);
+    expect(rig.egoParams.leanMm).toBe(400);
+    rig.panBy(1e6, 0);
+    expect(rig.nav.lean).toBe(-1650);
+  });
+});
+
 describe('ego navigation gestures', () => {
   it('pan leans sideways and dollies toward the table, both clamped', () => {
     const rig = makeRig({ rig: 'ego' });
@@ -187,7 +208,8 @@ describe('ego navigation gestures', () => {
     // Dragging the table left moves the camera right.
     expect(rig.pose().position[0]).toBeGreaterThan(x0);
     rig.panBy(-1e6, 0);
-    expect(rig.nav.lean).toBe(400);
+    // Leaning stops over the table's side edge: half the 1v1 table's 1400 mm width.
+    expect(rig.nav.lean).toBe(700);
     const d0 = rig.nav.dolly;
     rig.panBy(0, 100);
     expect(rig.nav.dolly).toBeGreaterThan(d0);

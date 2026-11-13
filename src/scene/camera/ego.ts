@@ -35,6 +35,23 @@ export function halfDepth(table: TableSize, angleDeg: number): number {
   return (Math.abs(f.x) * table.w + Math.abs(f.y) * table.d) / 2;
 }
 
+/** Half the table's extent along the viewer's right axis. */
+export function halfWidth(table: TableSize, angleDeg: number): number {
+  const f = forward(angleDeg);
+  return (Math.abs(f.y) * table.w + Math.abs(f.x) * table.d) / 2;
+}
+
+/**
+ * The rig's parameters for one table and seat, with the lean limit widened to reach the far side edge of the table
+ * from the seat (half the table's width along the viewer's right axis plus the seat's own offset), so that a switch
+ * from bird's-eye can keep any table point under the cursor (DESIGN "Camera and navigation", Switching; DECISIONS
+ * [M4-P1]). A theme's larger lean is kept.
+ */
+export function egoLimitsFor(params: EgoRigParams, table: TableSize, angleDeg: number, lateral = 0): EgoRigParams {
+  const reach = halfWidth(table, angleDeg) + Math.abs(lateral);
+  return { ...params, leanMm: Math.max(Math.abs(params.leanMm), reach) };
+}
+
 /** The seat's eye point: `behindEdge` behind the viewer's edge, `lateral` mm to the viewer's right, `height` up. */
 export function egoSeat(params: EgoRigParams, table: TableSize, angleDeg: number, lateral = 0): Vec3 {
   const f = forward(angleDeg);

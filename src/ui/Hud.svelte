@@ -624,6 +624,25 @@
     seenLog = log.length;
   }
 
+  /** The follow toggles the scene has; it starts with both off (the default). */
+  let followHanded = { stack: false, activePlayer: false };
+  /**
+   * Hand the stored follow toggles to the scene whenever they differ from what it has: on mount, and when the window
+   * regains focus or becomes visible (another tab or a settings panel may have changed them; SettingsStore has no
+   * change events). Both values go over, so turning one off reaches the scene too.
+   */
+  function syncFollow(): void {
+    void settings
+      ?.all()
+      .then((s) => {
+        const next = { stack: s.followStack, activePlayer: s.followActive };
+        if (!scene || (next.stack === followHanded.stack && next.activePlayer === followHanded.activePlayer)) return;
+        followHanded = next;
+        scene.camera.setFollow({ ...next });
+      })
+      .catch(() => {});
+  }
+
   onMount(() => {
     seenLog = entries.length;
     watch.start(entries);
@@ -676,13 +695,7 @@
       });
       sceneReady = true;
       // The viewer's follow toggles (DESIGN "Camera and navigation", Follow options; Settings.followStack, followActive).
-      void settings
-        ?.all()
-        .then((s) => {
-          // The scene starts with both off (the default): only a toggle that is on needs handing over.
-          if (s.followStack || s.followActive) scene?.camera.setFollow({ stack: s.followStack, activePlayer: s.followActive });
-        })
-        .catch(() => {});
+      syncFollow();
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
       presence = attachPresence(sceneHost!, scene, session.presence, {
         selfSeat: me,
@@ -721,6 +734,7 @@
   {onfocusin}
   {onclick}
   onblur={() => engine.blur()}
+  onfocus={() => syncFollow()}
   onpointermove={(e) => {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
@@ -728,6 +742,7 @@
     syncCaptionHover(hovered);
   }}
 />
+<svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncFollow()} />
 
 <div class="root" style={cssVars} data-testid="hud">
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>

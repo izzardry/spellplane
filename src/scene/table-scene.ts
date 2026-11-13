@@ -272,6 +272,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let order: RCard[] = [];
   let drag: DragState | null = null;
   let gesture: Gesture | null = null;
+  /** Pointers pressed anywhere on the page (the follow options wait for their release). */
+  const pressedPointers = new Set<number>();
   const touches = new Map<number, { x: number; y: number }>();
   let pinch: { d: number; cx: number; cy: number } | null = null;
   let dirty = true;
@@ -1499,7 +1501,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return { ...stats };
     },
     lastDrop: () => lastDrop,
-    idle: () => !drag && !rig.moving && ![...rcards.values()].some((rc) => rc.motion.moving),
+    idle: () => !drag && !rig.moving && pendingFollow.length === 0 && ![...rcards.values()].some((rc) => rc.motion.moving),
     pendingTextures: () => faces.pending,
     captions: () => captionLayer.debug(),
   };
@@ -1628,8 +1630,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (first?.team !== undefined) return layout.teams?.[first.team]?.territory ?? first.territory;
     return first?.territory ?? null;
   }
-  /** Whether a gesture holds the camera or a card: follow moves wait until it ends (DESIGN: never while dragging). */
-  const holding = () => drag !== null || itemDrag !== null || (gesture !== null && gesture.kind !== 'press');
+  /**
+   * Whether the player may be dragging: follow moves wait until it ends (DESIGN: "nothing ever moves the camera while
+   * the player is dragging"). Any pointer pressed anywhere on the page counts, a press on the table not yet past the
+   * drag threshold and a hand-fan drag still in the HUD included.
+   */
+  const holding = () => drag !== null || itemDrag !== null || gesture !== null || pressedPointers.size > 0;
   let pendingFollow: FollowRequest[] = [];
   /** Ease to what the follow toggles ask for (DESIGN "Camera and navigation", Follow options). */
   function applyFollow(reqs: FollowRequest[]): void {
@@ -1851,6 +1857,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       removeEventListener('pointercancel', onWindowUp);
       removeEventListener('keydown', onKey);
       removeEventListener('pointerdown', trackPointer, true);
+      removeEventListener('pointerup', releasePointer, true);
+      removeEventListener('pointercancel', releasePointer, true);
+      removeEventListener('blur', releaseAllPointers);
       themeInstance.dispose();
       faces.dispose();
       cards.dispose();
@@ -1877,8 +1886,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let activePointer: number | null = null;
   function trackPointer(e: PointerEvent): void {
     activePointer = e.pointerId;
+    pressedPointers.add(e.pointerId);
+  }
+  function releasePointer(e: PointerEvent): void {
+    pressedPointers.delete(e.pointerId);
+  }
+  function releaseAllPointers(): void {
+    pressedPointers.clear();
   }
   addEventListener('pointerdown', trackPointer, true);
+  addEventListener('pointerup', releasePointer, true);
+  addEventListener('pointercancel', releasePointer, true);
+  addEventListener('blur', releaseAllPointers);
   // The HUD's hover keys reach a marker through this (scene/stack.ts hoveredStackItem).
   registerStackHover(sceneApi, () => hoverItem);
 

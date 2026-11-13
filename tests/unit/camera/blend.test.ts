@@ -11,7 +11,7 @@ import { blendPose, easeBlend } from '../../../src/scene/camera/blend';
 import { poseAt, poseDist, unprojectToTable } from '../../../src/scene/camera/pose';
 import { egoPose, defaultEgoNav } from '../../../src/scene/camera/ego';
 import { DEFAULT_EGO_RIG } from '../../../src/scene/types';
-import { BLEND_MS, TABLES, VP, makeRig, px, runSwitch, screenOf } from './helpers';
+import { BLEND_MS, SEATS, TABLES, VP, makeRig, onTable, px, runSwitch, screenOf } from './helpers';
 
 describe('blendPose', () => {
   const bird = poseAt({ x: 0, y: 0 }, 13000, 90, 6, 0);
@@ -38,7 +38,7 @@ describe('blendPose', () => {
     }
   });
 
-  it('keeps the anchor table point under the anchor screen point at every step (property)', () => {
+  it('when the two ends show the anchor at different places, it moves on a straight line between them, never jumping (property)', () => {
     fc.assert(
       fc.property(fc.double({ min: 20, max: VP.w - 20, noNaN: true }), fc.double({ min: 20, max: VP.h - 20, noNaN: true }), fc.double({ min: 0, max: 1, noNaN: true }), (x, y, t) => {
         // Anchor taken from the bird's-eye view; the ego end is then solved through the rig (below); here both ends
@@ -67,81 +67,123 @@ describe('blendPose', () => {
 describe('rig switch (P)', () => {
   const anchors = fc.record({ x: fc.double({ min: 10, max: VP.w - 10, noNaN: true }), y: fc.double({ min: 10, max: VP.h - 10, noNaN: true }) });
 
+  // Every cursor over the table, on every table format and every viewer seat (the ego seat sits in front of the
+  // viewer's own territory, beside the centre line on three-player and Two-Headed Giant tables). Cursors over the
+  // surround are left out on purpose: no ego pose within the limits need show a point beyond the table's edge at the
+  // cursor, and the bird's-eye view keeps its centre on the table; there the point moves on a straight line between
+  // where the two rigs show it (the blendPose property above).
+  const seats = fc.constantFrom(...SEATS);
+
   it('bird\'s-eye to ego: the table point under the cursor moves less than 2 px during the whole blend (property)', () => {
+    let checked = 0;
     fc.assert(
-      fc.property(anchors, fc.constantFrom(0, 90, 180, 270), fc.constantFrom(...Object.values(TABLES)), fc.double({ min: 1, max: 4, noNaN: true }), (s, angle, table, zoom) => {
-        const rig = makeRig({ angle, table });
+      fc.property(anchors, seats, fc.double({ min: 1, max: 4, noNaN: true }), (s, seat, zoom) => {
+        const rig = makeRig(seat);
         rig.zoomAt(s.x, s.y, zoom);
         const a = rig.screenToTable(s.x, s.y);
-        const before = rig.tableToScreen(a);
-        expect(px(before, s)).toBeLessThan(1e-6);
+        expect(px(rig.tableToScreen(a), s)).toBeLessThan(1e-6);
+        if (!onTable(seat.table, a)) return;
+        checked++;
         const { poses, blending } = runSwitch(rig, 'ego', s);
-        // The ego destination holds it too unless the rig's limits cannot (checked separately).
-        const end = screenOf(poses.at(-1)!, angle, a);
-        if (px(end, s) < 0.5) {
-          for (const p of poses) expect(px(screenOf(p, angle, a), s)).toBeLessThan(2);
-        }
+        for (const p of poses) expect(px(screenOf(p, seat.angle, a), s), `${seat.format} seat ${seat.seat}`).toBeLessThan(2);
         expect(blending.some(Boolean)).toBe(true);
         expect(rig.rig()).toBe('ego');
         expect(rig.blendState()).toBeNull();
         expect(poses.at(-1)!.fovDeg).toBe(45);
       }),
-      { numRuns: 200 },
+      { numRuns: 300 },
     );
+    // fast-check favours the screen's edges, often over the surround; the grids below cover the table evenly.
+    expect(checked).toBeGreaterThan(30);
   });
 
-  it('bird\'s-eye to ego holds the cursor point exactly for cursors over the middle of a fitted table', () => {
-    const rig = makeRig();
-    // A grid over the middle of the screen: the table where players look when they press P.
-    for (const fx of [0.3, 0.5, 0.7]) {
-      for (const fy of [0.3, 0.5, 0.7]) {
-        const r = makeRig();
-        const s = { x: VP.w * fx, y: VP.h * fy };
-        const a = r.screenToTable(s.x, s.y);
-        const { poses } = runSwitch(r, 'ego', s);
-        const worst = Math.max(...poses.map((p) => px(screenOf(p, 0, a), s)));
-        expect(worst, `cursor at ${fx}, ${fy}`).toBeLessThan(2);
+  it('bird\'s-eye to ego holds the cursor point for every cursor over a fitted table, on every format and seat', () => {
+    for (const seat of SEATS) {
+      let checked = 0;
+      for (let fx = 0.025; fx < 1; fx += 0.05) {
+        for (let fy = 0.025; fy < 1; fy += 0.05) {
+          const rig = makeRig(seat);
+          const s = { x: VP.w * fx, y: VP.h * fy };
+          const a = rig.screenToTable(s.x, s.y);
+          if (!onTable(seat.table, a)) continue;
+          const { poses } = runSwitch(rig, 'ego', s, 20);
+          const worst = Math.max(...poses.map((p) => px(screenOf(p, seat.angle, a), s)));
+          expect(worst, `${seat.format} seat ${seat.seat}, cursor at ${s.x}, ${s.y}`).toBeLessThan(2);
+          checked++;
+        }
       }
+      expect(checked, `${seat.format} seat ${seat.seat}`).toBeGreaterThan(200);
     }
-    expect(rig.rig()).toBe('birdseye');
+  });
+
+  it('the reviewer\'s cases: four players and Two-Headed Giant, cursor near the table\'s side edge', () => {
+    const cases = [
+      { seat: SEATS.find((x) => x.format === 'ffa4' && x.seat === 0)!, s: { x: 360, y: 675 } },
+      { seat: { ...SEATS.find((x) => x.format === '2hg')!, lateral: -550 }, s: { x: 1224, y: 585 } },
+    ];
+    for (const { seat, s } of cases) {
+      const rig = makeRig(seat);
+      const a = rig.screenToTable(s.x, s.y);
+      expect(onTable(seat.table, a)).toBe(true);
+      const { poses } = runSwitch(rig, 'ego', s);
+      for (const p of poses) expect(px(screenOf(p, seat.angle, a), s), seat.format).toBeLessThan(2);
+    }
   });
 
   it('ego to bird\'s-eye: the table point under the cursor moves less than 2 px (property)', () => {
+    let checked = 0;
     fc.assert(
-      fc.property(anchors, fc.constantFrom(0, 90, 180, 270), fc.constantFrom(...Object.values(TABLES)), (s, angle, table) => {
-        const rig = makeRig({ rig: 'ego', angle, table });
+      fc.property(anchors, seats, fc.double({ min: 1, max: 3, noNaN: true }), (s, seat, zoom) => {
+        const rig = makeRig({ ...seat, rig: 'ego' });
+        rig.zoomAt(s.x, s.y, zoom);
         const a = rig.screenToTableOrNull(s.x, s.y);
-        if (!a) return;
+        if (!a || !onTable(seat.table, a)) return;
+        checked++;
         const { poses } = runSwitch(rig, 'birdseye', s);
-        const end = screenOf(poses.at(-1)!, angle, a);
-        if (px(end, s) < 0.5) {
-          for (const p of poses) expect(px(screenOf(p, angle, a), s)).toBeLessThan(2);
-        }
+        for (const p of poses) expect(px(screenOf(p, seat.angle, a), s), `${seat.format} seat ${seat.seat}`).toBeLessThan(2);
         expect(poses.at(-1)!.fovDeg).toBe(6);
         expect(poses.at(-1)!.pitchDeg).toBeCloseTo(90, 9);
       }),
-      { numRuns: 200 },
+      { numRuns: 300 },
     );
+    expect(checked).toBeGreaterThan(50);
   });
 
-  it('ego to bird\'s-eye holds the point for every cursor over the table seen in ego', () => {
-    const rig = makeRig({ rig: 'ego' });
-    let checked = 0;
-    for (let fx = 0.1; fx < 0.95; fx += 0.2) {
-      for (let fy = 0.3; fy < 0.95; fy += 0.2) {
-        const r = makeRig({ rig: 'ego' });
-        const s = { x: VP.w * fx, y: VP.h * fy };
-        const a = r.screenToTableOrNull(s.x, s.y)!;
-        // Only table points: the bird's-eye view is clamped to keep its centre on the table.
-        if (Math.abs(a.x) > 700 || Math.abs(a.y) > 550) continue;
-        const { poses } = runSwitch(r, 'birdseye', s);
-        const worst = Math.max(...poses.map((p) => px(screenOf(p, 0, a), s)));
-        expect(worst, `cursor at ${fx.toFixed(1)}, ${fy.toFixed(1)}`).toBeLessThan(2);
-        checked++;
+  it('ego to bird\'s-eye holds the point for every cursor over the table seen in ego, on every format and seat', () => {
+    for (const seat of SEATS) {
+      let checked = 0;
+      for (let fx = 0.025; fx < 1; fx += 0.05) {
+        for (let fy = 0.025; fy < 1; fy += 0.05) {
+          const r = makeRig({ ...seat, rig: 'ego' });
+          const s = { x: VP.w * fx, y: VP.h * fy };
+          const a = r.screenToTableOrNull(s.x, s.y);
+          if (!a || !onTable(seat.table, a)) continue;
+          const { poses } = runSwitch(r, 'birdseye', s, 20);
+          const worst = Math.max(...poses.map((p) => px(screenOf(p, seat.angle, a), s)));
+          expect(worst, `${seat.format} seat ${seat.seat}, cursor at ${s.x}, ${s.y}`).toBeLessThan(2);
+          checked++;
+        }
       }
+      expect(checked, `${seat.format} seat ${seat.seat}`).toBeGreaterThan(150);
     }
-    expect(checked).toBeGreaterThan(8);
-    expect(rig.rig()).toBe('ego');
+  });
+
+  it('ego to bird\'s-eye zooms in only when the zoom the viewer left cannot hold the point', () => {
+    // Three players, seat 1: the ego seat stands 500 mm beside the centre line, so a point near the centre shows at the
+    // screen's left edge; the fitted bird's-eye would need its centre beyond the table to keep it there.
+    const seat = SEATS.find((x) => x.format === 'ffa3' && x.seat === 1)!;
+    const rig = makeRig({ ...seat, rig: 'ego' });
+    const fitted = rig.bird.view.dist;
+    const s = { x: 20, y: 738 };
+    const a = rig.screenToTableOrNull(s.x, s.y)!;
+    expect(onTable(seat.table, a)).toBe(true);
+    const { poses } = runSwitch(rig, 'birdseye', s);
+    for (const p of poses) expect(px(screenOf(p, seat.angle, a), s)).toBeLessThan(2);
+    expect(rig.bird.view.dist).toBeLessThan(fitted);
+    // A point near the view centre needs no zoom.
+    const r2 = makeRig({ ...seat, rig: 'ego' });
+    runSwitch(r2, 'birdseye', { x: VP.w / 2, y: VP.h / 2 });
+    expect(r2.bird.view.dist).toBeCloseTo(fitted, 6);
   });
 
   it('without a cursor the viewport centre is the anchor', () => {
