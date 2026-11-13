@@ -850,8 +850,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         rc.lift.step(dt, theme.motion);
         changed = true;
       }
-      if (rc.motion.moving && rc.motion.step(now, dt, theme.motion)) changed = true;
-      else if (rc.motion.moving === false && rc.shownKey !== rc.place.key && rc.motion.flipSwapped) changed = true;
+      // The step that brings a card to rest still needs its frame (the rest pose; a held card's tilt back to flat).
+      if (rc.motion.moving) {
+        rc.motion.step(now, dt, theme.motion);
+        changed = true;
+      } else if (rc.shownKey !== rc.place.key && rc.motion.flipSwapped) changed = true;
       if (rc.expect && now > rc.expect.until) {
         rc.expect = null;
         if (!samePose(rc.motion.target, rc.place.rest)) rc.motion.moveTo(rc.place.rest, 'spring', now, theme.motion, reduced());
