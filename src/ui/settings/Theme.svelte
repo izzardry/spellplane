@@ -1,7 +1,8 @@
 <!--
   The theme picker (PLAN M4-P6; DESIGN "Themes and rendering": themes are chosen per viewer, loaded on demand as
   separate chunks and switchable mid-game without reloading; two players at the same table can use different themes).
-  A radio group over the four themes; picking one loads its chunk if needed and switches this page only. While a chunk
+  With `view`, it also holds the quality level and the two follow toggles (DESIGN "Themes and rendering", Renderer;
+  "Camera and navigation", Follow options), which belong to this browser like the theme. A radio group over the four themes; picking one loads its chunk if needed and switches this page only. While a chunk
   loads the group says so; a chunk that cannot be loaded leaves the current theme and says why. Nothing here is modal.
 -->
 <script lang="ts">
@@ -9,8 +10,19 @@
   import { THEME_IDS, THEME_LABELS, type ThemeId } from '../../themes/index';
   import { SOUND_MODES, type SoundMode } from '../sound';
   import { THEME_BLURBS, type ThemeChoice, type ThemeChoiceState } from './theme';
+  import { QUALITY_OPTIONS, qualityIdOf, type ViewPrefs } from './view';
 
-  let { choice, onclose, sound }: { choice: ThemeChoice; onclose?: () => void; sound?: { mode: SoundMode; set(mode: SoundMode): void } } = $props();
+  let {
+    choice,
+    onclose,
+    sound,
+    view,
+  }: {
+    choice: ThemeChoice;
+    onclose?: () => void;
+    sound?: { mode: SoundMode; set(mode: SoundMode): void };
+    view?: { prefs: ViewPrefs; set<K extends keyof ViewPrefs>(name: K, value: ViewPrefs[K]): void };
+  } = $props();
 
   let st = $state.raw<ThemeChoiceState>(untrack(() => choice.state()));
   /** The radio the viewer picked last, shown checked while its chunk loads. */
@@ -67,6 +79,26 @@
         {#each SOUND_MODES as m (m.id)}<option value={m.id}>{m.label}</option>{/each}
       </select>
     </label>
+  {/if}
+  {#if view}
+    <label class="sound">
+      Quality
+      <select data-testid="theme-quality" aria-describedby="sp-quality-hint" value={view.prefs.quality} onchange={(e) => view.set('quality', qualityIdOf((e.currentTarget as HTMLSelectElement).value))}>
+        {#each QUALITY_OPTIONS as q (q.id)}<option value={q.id}>{q.label}</option>{/each}
+      </select>
+    </label>
+    <p class="hint" id="sp-quality-hint">Lower levels drop shadows first, then effects such as glow.</p>
+    <fieldset data-testid="theme-follow">
+      <legend>Camera</legend>
+      <label class="check">
+        <input type="checkbox" data-testid="follow-stack" checked={view.prefs.followStack} onchange={(e) => view.set('followStack', (e.currentTarget as HTMLInputElement).checked)} />
+        Follow the stack
+      </label>
+      <label class="check">
+        <input type="checkbox" data-testid="follow-active" checked={view.prefs.followActive} onchange={(e) => view.set('followActive', (e.currentTarget as HTMLInputElement).checked)} />
+        Follow the active player
+      </label>
+    </fieldset>
   {/if}
   {#if st.loading}<p class="status" role="status" data-testid="theme-loading">Loading {THEME_LABELS[st.loading]}…</p>{/if}
   {#if st.error}<p class="error" role="alert" data-testid="theme-error">{st.error}</p>{/if}
@@ -136,6 +168,17 @@
   }
   .sound select {
     font: inherit;
+  }
+  .hint {
+    margin: 2px 0 0;
+    color: var(--sp-muted, #5f5f5f);
+  }
+  .check {
+    display: flex;
+    gap: 6px;
+    align-items: baseline;
+    padding: 3px 0;
+    cursor: pointer;
   }
   .error {
     margin: 8px 0 0;

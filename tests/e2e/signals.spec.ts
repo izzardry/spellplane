@@ -688,7 +688,7 @@ test.describe('theme switcher', () => {
     await page.getByTestId('open-theme-settings').click();
     await expect(picker).toBeVisible();
     // A press inside it leaves it open.
-    await picker.locator('legend').click();
+    await picker.getByTestId('theme-picker').locator('legend').click();
     await expect(picker).toBeVisible();
     const vp = page.viewportSize()!;
     await page.mouse.click(vp.width / 2, vp.height / 2);

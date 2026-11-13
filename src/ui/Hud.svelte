@@ -47,6 +47,7 @@
   import Speech from './settings/Speech.svelte';
   import ThemePicker from './settings/Theme.svelte';
   import { themeContext } from './settings/theme';
+  import { ViewSettings, type ViewPrefs } from './settings/view';
   import { cuesFor, soundModeOf, soundOn, ThemeSoundPlayer, type SoundMode } from './sound';
   import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption } from '../voice/types';
@@ -679,29 +680,24 @@
     seenLog = log.length;
   }
 
-  /** The follow toggles the scene has; it starts with both off (the default). */
-  let followHanded = { stack: false, activePlayer: false };
   /**
-   * Hand the stored follow toggles to the scene whenever they differ from what it has: on mount, and when the window
-   * regains focus or becomes visible (another tab or a settings panel may have changed them; SettingsStore has no
-   * change events). Both values go over, so turning one off reaches the scene too.
+   * The viewer's quality level and follow toggles (DESIGN "Themes and rendering", Renderer; "Camera and navigation",
+   * Follow options), handed to the scene whenever they differ from what it has: on mount, when the picker changes them,
+   * and when the window regains focus or becomes visible (another tab may have changed them; SettingsStore has no change
+   * events). The scene keeps the quality choice across theme switches.
    */
-  function syncFollow(): void {
-    void settings
-      ?.all()
-      .then((s) => {
-        const next = { stack: s.followStack, activePlayer: s.followActive };
-        if (!scene || (next.stack === followHanded.stack && next.activePlayer === followHanded.activePlayer)) return;
-        followHanded = next;
-        scene.camera.setFollow({ ...next });
-      })
-      .catch(() => {});
+  const view = new ViewSettings(untrack(() => settings));
+  let viewPrefs = $state.raw<ViewPrefs>(view.state());
+  function syncView(): void {
+    void view.refresh();
   }
 
   onMount(() => {
     seenLog = entries.length;
     watch.start(entries);
     followTeam();
+    const unsubView = view.subscribe((p) => (viewPrefs = p));
+    syncView();
     const unsub = session.subscribe((s) => {
       followTeam();
       const log = session.log();
@@ -754,8 +750,8 @@
       });
       sceneTheme = theme;
       sceneReady = true;
-      // The viewer's follow toggles (DESIGN "Camera and navigation", Follow options; Settings.followStack, followActive).
-      syncFollow();
+      // The viewer's quality and follow toggles (Settings.quality, followStack, followActive).
+      view.attach(scene);
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
       presence = attachPresence(sceneHost!, scene, session.presence, {
         selfSeat: me,
@@ -769,6 +765,8 @@
     }
     return () => {
       unsub();
+      unsubView();
+      view.dispose();
       voiceOff?.();
       speakOff?.();
       teamUnsub?.();
@@ -795,7 +793,7 @@
   {onfocusin}
   {onclick}
   onblur={() => engine.blur()}
-  onfocus={() => syncFollow()}
+  onfocus={() => syncView()}
   onpointermove={(e) => {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
@@ -803,7 +801,7 @@
     syncCaptionHover(hovered);
   }}
 />
-<svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncFollow()} />
+<svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncView()} />
 
 <div class="root" style={cssVars} data-testid="hud" data-sound={soundState}>
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
@@ -829,7 +827,7 @@
         {#if themeChoice}
           <span class="theme-anchor" bind:this={themeAnchor}>
             <button type="button" data-testid="open-theme-settings" aria-pressed={themeOpen} aria-expanded={themeOpen} aria-label="Theme" title="Theme" onclick={() => (themeOpen = !themeOpen)}>◐</button>
-            {#if themeOpen}<div class="theme-pop"><ThemePicker choice={themeChoice} sound={{ mode: soundMode ?? 'theme', set: setSoundMode }} onclose={() => (themeOpen = false)} /></div>{/if}
+            {#if themeOpen}<div class="theme-pop"><ThemePicker choice={themeChoice} sound={{ mode: soundMode ?? 'theme', set: setSoundMode }} view={{ prefs: viewPrefs, set: (name, value) => void view.set(name, value).catch(() => {}) }} onclose={() => (themeOpen = false)} /></div>{/if}
           </span>
         {/if}
         {#if !liveVoice}
