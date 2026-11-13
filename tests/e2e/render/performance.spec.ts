@@ -21,6 +21,9 @@ const BUDGET: { theme: HarnessThemeId; drawCalls: number }[] = [
 
 for (const { theme, drawCalls } of BUDGET) {
   test(`300 cards in ${theme}: at most ${drawCalls} draw calls, texture memory under 400 MB; frame work reported`, async ({ page }, info) => {
+    // CI renders WebGL in software (SwiftShader): 300 lit cards with shadows and bloom take seconds per frame there, so
+    // the budget triples on CI. Nothing here asserts on time.
+    test.slow(!!process.env.CI && theme !== 'paper', 'software GL on CI');
     await openRender(page, { theme, scenario: 'bench' });
     await settle(page);
     const drawn = (await rh<unknown[]>(page, 'cards')).length;
