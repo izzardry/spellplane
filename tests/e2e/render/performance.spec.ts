@@ -47,6 +47,8 @@ for (const { theme, drawCalls } of BUDGET) {
     const ms = samples.map((s) => s.frameMs).sort((a, b) => a - b);
     const median = ms[Math.floor(ms.length / 2)]!;
     expect(Number.isFinite(median)).toBe(true);
-    info.annotations.push({ type: 'frame-cpu-ms', description: `${theme}/${info.project.name}: median ${median.toFixed(2)} ms, max ${ms.at(-1)!.toFixed(2)} ms over ${ms.length} frames; draw calls ≤ ${maxCalls}; texture memory ${(maxBytes / 2 ** 20).toFixed(1)} MB` });
+    const report = `${theme}/${info.project.name}: frame CPU median ${median.toFixed(2)} ms, max ${ms.at(-1)!.toFixed(2)} ms over ${ms.length} frames; draw calls ≤ ${maxCalls}; texture memory ${(maxBytes / 2 ** 20).toFixed(1)} MB`;
+    info.annotations.push({ type: 'frame-cpu-ms', description: report });
+    console.log(`[perf] ${report}`);
   });
 }

@@ -3,7 +3,7 @@
  * harness table (scene/harness-fixture.ts) with any theme, including the test-only lit theme (themes/test-lit.ts), so
  * the pipeline can be tested before Dusk, Wyrm and Stonetable land (PLAN M4-P2). Added by M4-P2.
  *
- * URL: `?harness=render&faces=placeholder&scenario=empty|demo|bench&theme=paper|dusk|wyrm|stonetable|lit&quality=high|medium|low`.
+ * URL: `?harness=render&faces=placeholder&scenario=empty|demo|bench&theme=paper|dusk|wyrm|stonetable|lit&quality=high|medium|low&viewer=s0|s1`.
  * Test API: window.__renderHarness (below) and window.__spellplane (state, dispatch, render, cards, frameStats).
  */
 import type { Action, ActionDraft } from '../core/actions';
@@ -31,6 +31,12 @@ export interface RenderHarnessApi {
   stats(): RenderStats;
   pipeline(): ReturnType<SceneDebug['pipeline']>;
   frames(): number;
+  /** Draw a fresh frame and wait until it is on screen (two more animation frames), before a screenshot. */
+  redraw(): Promise<void>;
+  /** MSAA samples of the post chain (0 with post off). */
+  samples(): number;
+  /** What the pipeline handed the lit test theme (themes/test-lit.ts litProbe); null before it was loaded. */
+  litProbe(): unknown;
   /** Hash of the shared state (core/hash.ts stateHash). */
   hash(): Promise<string>;
   /** Drafts the scene dispatched. */
@@ -52,8 +58,13 @@ declare global {
   }
 }
 
+let litModule: { litTestTheme: () => Theme; litProbe: unknown } | null = null;
+
 async function themeFor(id: HarnessThemeId): Promise<Theme> {
-  if (id === 'lit') return (await import('../themes/test-lit')).litTestTheme();
+  if (id === 'lit') {
+    litModule ??= await import('../themes/test-lit');
+    return litModule.litTestTheme();
+  }
   return loadTheme(id);
 }
 
@@ -65,6 +76,7 @@ export async function mount(target: HTMLElement): Promise<void> {
   const themeParam = params.get('theme');
   let themeId: HarnessThemeId = isTheme(themeParam) ? themeParam : 'paper';
   const quality = (['high', 'medium', 'low'] as const).find((q) => q === params.get('quality')) ?? 'high';
+  const viewer = params.get('viewer') === 's1' ? 's1' : 's0';
 
   target.textContent = '';
   const host = document.createElement('div');
@@ -84,13 +96,13 @@ export async function mount(target: HTMLElement): Promise<void> {
   const scene = createTableScene(host, {
     game: harnessGame,
     layout,
-    viewerSeat: 's0',
+    viewerSeat: viewer,
     theme,
     faces: harnessFaces,
     quality,
     dispatch(draft) {
       actions.push(draft);
-      apply({ ...draft, by: 's0', cid: `r${++cid}` } as Action);
+      apply({ ...draft, by: viewer, cid: `r${++cid}` } as Action);
     },
     events: {
       hover: (card) => setView({ hovered: card }),
@@ -137,6 +149,13 @@ export async function mount(target: HTMLElement): Promise<void> {
       scene.setQuality(id);
       await nextFrame();
     },
+    async redraw() {
+      setView({});
+      await nextFrame();
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    },
+    samples: () => debug.pipeline().samples,
+    litProbe: () => litModule?.litProbe ?? null,
     stats: () => scene.renderStats(),
     pipeline: () => debug.pipeline(),
     frames: () => debug.frames(),

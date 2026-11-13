@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { Pass } from 'three/examples/jsm/postprocessing/Pass.js';
 import { describe, expect, it, vi } from 'vitest';
-import { createPostPipeline } from '../../../src/scene/post';
+import { createPostPipeline, POST_TARGET_BUDGET, postBytes, postSamples } from '../../../src/scene/post';
 import type { PostSettings, QualityLevel } from '../../../src/themes/types';
 import { fakeRenderer } from './fakes';
 
@@ -107,5 +107,29 @@ describe('PostPipeline', () => {
     expect(passes[1]).toMatchObject({ strength: 1.4, radius: 0.7, threshold: 0.1 });
     expect(passes[2]!.uniforms!.darkness!.value).toBe(1.6);
     expect(passes[2]!.uniforms!.offset!.value).toBe(1.1);
+  });
+});
+
+describe('post chain memory (PLAN M4 Performance: texture memory under 400 MB)', () => {
+  it('keeps the MSAA samples a level asks for while both targets fit the budget', () => {
+    expect(postSamples(4, 1440, 900, 8)).toBe(4);
+    expect(postSamples(4, 1440, 900, 2)).toBe(2);
+    expect(postSamples(0, 1440, 900, 8)).toBe(0);
+  });
+
+  it('drops MSAA on a high-density or very large screen, and stays inside the budget', () => {
+    expect(postSamples(4, 2880, 1800, 8)).toBe(0);
+    expect(postSamples(4, 3840, 2160, 8)).toBe(0);
+    for (const [w, h] of [[1280, 720], [1440, 900], [1920, 1080], [2560, 1440], [2880, 1800]] as const) {
+      const s = postSamples(8, w, h, 8);
+      expect(postBytes(w, h, s, false), `${w}x${h}`).toBeLessThanOrEqual(POST_TARGET_BUDGET);
+    }
+  });
+
+  it('counts both targets with their sample buffers and the bloom chain', () => {
+    const base = 100 * 100 * 8;
+    expect(postBytes(100, 100, 0, false)).toBe(2 * base);
+    expect(postBytes(100, 100, 4, false)).toBe(10 * base);
+    expect(postBytes(100, 100, 0, true)).toBe(Math.round(2 * base + base / 4 + (2 * base) / 3));
   });
 });

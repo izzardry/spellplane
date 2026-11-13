@@ -25,6 +25,33 @@ import type { PostPipeline } from './types';
 /** Order of the built-in passes among theme passes (PostPipeline.addPass). */
 export const PASS_ORDER = { bloom: 100, theme: 500, vignette: 900 } as const;
 
+/**
+ * GPU memory the chain's two ping-pong targets may take, bytes (PLAN M4 Performance: texture memory under 400 MB,
+ * shared with the 400 MB-capped face cache that holds far less with 300 cards on screen). MSAA samples are lowered
+ * until both targets fit: on a high-density or very large screen the chain runs without MSAA, where the pixel density
+ * already smooths the edges (the card faces and lines drawn over it keep the canvas's own antialiasing).
+ */
+export const POST_TARGET_BUDGET = 160 * 1024 * 1024;
+
+/** Bytes per pixel of the chain's half-float RGBA targets. */
+const BYTES_PER_PIXEL = 8;
+
+/** MSAA samples for a chain of `width` × `height` device pixels: the level's, lowered to fit POST_TARGET_BUDGET. */
+export function postSamples(wanted: number, width: number, height: number, maxSamples: number): number {
+  const base = Math.max(1, width * height * BYTES_PER_PIXEL);
+  // Two targets, each a resolved texture plus `samples` multisampled buffers.
+  const fit = Math.floor(POST_TARGET_BUDGET / (2 * base)) - 1;
+  const n = Math.min(Math.floor(wanted), maxSamples, fit);
+  // A single sample is no antialiasing, only cost.
+  return n >= 2 ? n : 0;
+}
+
+/** Approximate GPU bytes of the chain: two targets with their MSAA buffers, and the bloom's half-size bright target and mip chain. */
+export function postBytes(width: number, height: number, samples: number, bloom: boolean): number {
+  const base = width * height * BYTES_PER_PIXEL;
+  return Math.round(2 * (1 + samples) * base + (bloom ? base / 4 + (2 * base) / 3 : 0));
+}
+
 export interface PostPipelineOptions {
   /** Drawn after the chain straight to the canvas, never post-processed or tone-mapped (card faces, text, lines over cards). */
   overlay?: THREE.Object3D;
@@ -79,7 +106,13 @@ export function createPostPipeline(renderer: THREE.WebGLRenderer, scene: THREE.S
   let vignette: ShaderPass | null = null;
   let output: OutputPass | null = null;
   let ids: string[] = [];
+  let samples = 0;
   const size = { w: 1, h: 1, pr: 1 };
+  const device = () => ({ w: Math.max(1, Math.round(size.w * size.pr)), h: Math.max(1, Math.round(size.h * size.pr)) });
+  const wantedSamples = () => {
+    const d = device();
+    return postSamples(level?.msaa ?? 0, d.w, d.h, renderer.capabilities.maxSamples);
+  };
 
   const wanted = (): boolean => !!level?.post && (settings.bloom !== null || settings.vignette !== null || themePasses.size > 0);
 
@@ -98,8 +131,9 @@ export function createPostPipeline(renderer: THREE.WebGLRenderer, scene: THREE.S
   function build(): void {
     teardown();
     if (!wanted() || !level) return;
-    const samples = Math.max(0, Math.min(Math.floor(level.msaa ?? 0), renderer.capabilities.maxSamples));
-    const rt = new THREE.WebGLRenderTarget(Math.max(1, size.w * size.pr), Math.max(1, size.h * size.pr), { type: THREE.HalfFloatType, samples });
+    samples = wantedSamples();
+    const d = device();
+    const rt = new THREE.WebGLRenderTarget(d.w, d.h, { type: THREE.HalfFloatType, samples });
     rt.texture.name = 'post.rt';
     composer = new EffectComposer(renderer, rt);
     composer.setPixelRatio(size.pr);
@@ -182,7 +216,9 @@ export function createPostPipeline(renderer: THREE.WebGLRenderer, scene: THREE.S
       size.w = Math.max(1, Math.round(width));
       size.h = Math.max(1, Math.round(height));
       size.pr = pixelRatio > 0 ? pixelRatio : 1;
-      if (composer) {
+      // A size that changes how many MSAA samples fit rebuilds the targets.
+      if (composer && wantedSamples() !== samples) build();
+      else if (composer) {
         composer.setPixelRatio(size.pr);
         composer.setSize(size.w, size.h);
       }
@@ -200,12 +236,8 @@ export function createPostPipeline(renderer: THREE.WebGLRenderer, scene: THREE.S
     },
     textureBytes() {
       if (!composer) return 0;
-      const base = size.w * size.pr * size.h * size.pr * 8;
-      const samples = level?.msaa ?? 0;
-      let bytes = 2 * base + (samples > 0 ? samples * base : 0);
-      // UnrealBloomPass: a half-size bright target and two targets per mip (half size and down).
-      if (bloom) bytes += base / 4 + (2 * (base / 4)) * (4 / 3);
-      return Math.round(bytes);
+      const d = device();
+      return postBytes(d.w, d.h, samples, bloom !== null);
     },
     dispose() {
       teardown();

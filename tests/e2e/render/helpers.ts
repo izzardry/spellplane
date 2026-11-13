@@ -7,13 +7,13 @@ export type { HarnessThemeId };
 export const ALL_THEMES: HarnessThemeId[] = ['lit', 'paper', 'dusk', 'wyrm', 'stonetable'];
 
 /** Open the render harness and wait for the first frame with every face uploaded. Page errors fail the test. */
-export async function openRender(page: Page, opts: { theme?: HarnessThemeId; scenario?: 'empty' | 'demo' | 'bench'; quality?: 'high' | 'medium' | 'low' } = {}): Promise<string[]> {
+export async function openRender(page: Page, opts: { theme?: HarnessThemeId; scenario?: 'empty' | 'demo' | 'bench'; quality?: 'high' | 'medium' | 'low'; viewer?: 's0' | 's1' } = {}): Promise<string[]> {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('console', (m) => {
     if (m.type() === 'error') errors.push(m.text());
   });
-  const q = new URLSearchParams({ harness: 'render', faces: 'placeholder', scenario: opts.scenario ?? 'empty', theme: opts.theme ?? 'paper', quality: opts.quality ?? 'high' });
+  const q = new URLSearchParams({ harness: 'render', faces: 'placeholder', scenario: opts.scenario ?? 'empty', theme: opts.theme ?? 'paper', quality: opts.quality ?? 'high', viewer: opts.viewer ?? 's0' });
   await page.goto(`./?${q.toString()}`);
   await ready(page);
   return errors;
@@ -26,7 +26,14 @@ export async function ready(page: Page): Promise<void> {
 
 /** Wait until nothing animates and textures are in. */
 export async function settle(page: Page): Promise<void> {
-  await expect.poll(() => page.evaluate(() => (window.__renderHarness?.idle() ?? false) && (window.__renderHarness?.ready() ?? false)), { timeout: 15_000 }).toBe(true);
+  // A scene that draws on demand may not have drawn the last camera change yet, and a frame may ask for a bigger
+  // texture tier: draw a fresh frame and let it reach the screen until one asks for nothing more.
+  for (let i = 0; i < 5; i++) {
+    await expect.poll(() => page.evaluate(() => (window.__renderHarness?.idle() ?? false) && (window.__renderHarness?.ready() ?? false)), { timeout: 15_000 }).toBe(true);
+    await page.evaluate(() => window.__renderHarness!.redraw());
+    if (await page.evaluate(() => window.__renderHarness!.idle() && window.__renderHarness!.ready())) return;
+  }
+  throw new Error('the render harness never settled');
 }
 
 /** Call a __renderHarness function (awaiting promises) and return its JSON result. */

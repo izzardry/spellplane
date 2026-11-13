@@ -37,7 +37,19 @@ const FELT: MaterialSpec = {
   },
 };
 
+/** What the pipeline handed the lit test theme, for the render harness's tests. */
+export const litProbe = {
+  builds: 0,
+  disposes: 0,
+  /** The last build's context: viewer angle, quality level id, reduced motion, and whether post and materials came. */
+  last: null as { viewerAngle: number | undefined; quality: string; reducedMotion: boolean; post: boolean; materials: boolean; table: { w: number; d: number } } | null,
+  stackFocus: null as { x: number; y: number } | null,
+  stackFocusCalls: 0,
+};
+
 function buildLit(ctx: SceneContext): ThemeInstance {
+  litProbe.builds++;
+  litProbe.last = { viewerAngle: ctx.viewerAngle, quality: ctx.quality.id, reducedMotion: ctx.reducedMotion, post: !!ctx.post, materials: !!ctx.materials, table: { ...ctx.table } };
   const geometry = new THREE.PlaneGeometry(ctx.table.w, ctx.table.d);
   // UVs in mm, so the map repeats every tileMm (scene/materials.ts).
   const uv = geometry.getAttribute('uv') as THREE.BufferAttribute;
@@ -54,7 +66,12 @@ function buildLit(ctx: SceneContext): ThemeInstance {
     update() {
       // Static table; the pipeline animates the spot's flicker.
     },
+    setStackFocus(at) {
+      litProbe.stackFocus = at ? { ...at } : null;
+      litProbe.stackFocusCalls++;
+    },
     dispose() {
+      litProbe.disposes++;
       ctx.scene.remove(plane);
       geometry.dispose();
       if (ctx.materials) ctx.materials.release(material);

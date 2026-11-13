@@ -120,6 +120,8 @@ export interface SceneDebug extends SceneDebugParts {
     anisotropy: number;
     maxAnisotropy: number;
     pixelRatio: number;
+    /** MSAA samples of the post chain's targets (0 with post off). */
+    samples: number;
   };
 }
 
@@ -402,6 +404,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (!state) return;
     const places = placeCards(state, view, { game: opts.game, layout, viewerSeat });
     entries = stackEntries(state, layout.stackLane, viewerAngle(state, layout, viewerSeat));
+    syncStackFocus();
     if (hoverItem && !state.stack.some((i) => i.id === hoverItem)) hoverItem = null;
     for (const id of [...rcards.keys()]) if (!places.has(id) && !drag?.ids.includes(id)) rcards.delete(id);
     // Cards a settle sends home move together with the settle timing, staggered, their attachments riding along
@@ -1553,6 +1556,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         anisotropy: faces.arrays.small.texture.anisotropy,
         maxAnisotropy: renderer.capabilities.getMaxAnisotropy(),
         pixelRatio: renderer.getPixelRatio(),
+        samples: runtime.post.composer?.renderTarget1.samples ?? 0,
       };
     },
     captions: () => captionLayer.debug(),
@@ -1733,10 +1737,20 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
   }
 
+  /** The stack lane's centre while the stack holds items (Wyrm's heat shimmer follows it), told to the theme on change. */
+  let stackFocus: TablePoint | null = null;
+  function syncStackFocus(force = false): void {
+    const next = state && state.stack.length > 0 ? { x: layout.stackLane.x, y: layout.stackLane.y } : null;
+    if (!force && next?.x === stackFocus?.x && next?.y === stackFocus?.y) return;
+    stackFocus = next;
+    runtime.setStackFocus(next);
+  }
+
   /** Rebuild the theme for a new placement (table size, viewer seat, reduced motion). */
   function rebuildTheme(next: ThemePlacement): void {
     built = next;
     runtime.rebuild(next);
+    syncStackFocus(true);
     cards.setShade(clampShade(theme.cardDressing.faceShade), runtime.keyLight);
     dirty = true;
   }
@@ -1775,6 +1789,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       theme = next;
       built = placement();
       runtime.setTheme(next, built);
+      syncStackFocus(true);
       applyDressing();
       if (backOf(next) !== oldBack) {
         faces.dispose();
@@ -1800,6 +1815,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       // Without reload (DESIGN "Themes and rendering", Renderer): a lower level drops shadows and post first.
       releaseDressing();
       runtime.setQuality(id);
+      syncStackFocus(true);
       applyDressing();
       resize();
       dirty = true;
