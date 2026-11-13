@@ -54,6 +54,8 @@ export interface CommandHost {
   ui: UiHooks;
   newId(prefix: string): string;
   now(): number;
+  /** Where the pointer is (client CSS px), or null before it moved: P keeps the table point under it fixed (M4-P1). */
+  pointer?(): { x: number; y: number } | null;
 }
 
 type Phase = 'start' | 'end';
@@ -479,9 +481,12 @@ export class Commands {
         this.host.ui.focusChat();
         return;
       // --- View
-      case 'perspective':
-        scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye');
+      case 'perspective': {
+        // The table point under the cursor stays under it through the blend (DESIGN "Camera and navigation", Switching).
+        const at = this.host.pointer?.() ?? null;
+        scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye', at ? { anchor: at } : undefined);
         return;
+      }
       case 'fitTable':
         scene?.camera.fit(true);
         return;

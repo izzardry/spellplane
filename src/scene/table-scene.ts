@@ -17,10 +17,13 @@ import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
 import { CAMERA, GEOMETRY } from '../core/geometry';
 import type { CardInstance, InstanceId, Pose, SeatId, StackItemId, TableState, ZoneId } from '../core/types';
-import type { TableLayout } from '../games/types';
+import type { Rect, TableLayout } from '../games/types';
 import { qualityLevel, type QualityId, type ThemeInstance } from '../themes/types';
 import { registerDebug } from '../util/debug';
-import { BirdseyeRig, NO_INSETS, type Insets } from './camera';
+import { NO_INSETS, type Insets } from './camera';
+import { followRequests, type FollowRequest } from './camera/follow';
+import { basis } from './camera/pose';
+import { TableRig, lateralOf } from './camera/rig';
 import { CardLayer, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
 import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
@@ -28,7 +31,7 @@ import { LAYER, compareSort, displayedRot, dropTargets, fitFrame, markings, plac
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
-import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, legibleScale, pointInCard, pointInRect, rot2 } from './math';
+import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, legibleScale, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion } from './motion';
 import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { drawnPose, entryAt, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
@@ -48,6 +51,7 @@ import type {
   FrameStats,
   SceneDebugParts,
   ScreenPoint,
+  SetRigOptions,
   TablePoint,
   TablePoint3,
   TableScene,
@@ -142,7 +146,9 @@ type Gesture =
   | { kind: 'marquee'; pointerId: number; x0: number; y0: number; x1: number; y1: number; base: InstanceId[] }
   | { kind: 'line'; pointerId: number }
   | { kind: 'drag' }
-  | { kind: 'pinch' };
+  | { kind: 'pinch' }
+  /** Right-drag on empty table in the ego rig: pitch (DESIGN "Camera and navigation", Navigation gestures). */
+  | { kind: 'pitch'; pointerId: number; last: { x: number; y: number } };
 
 const DRAG_THRESHOLD_PX = 4;
 /** Counter badge type size on the table (mm), its place on the card (over the art box) and its far-zoom floor. */
@@ -165,6 +171,10 @@ const MARKER_WIDTH_PX = 2;
 /** After a right-drag drew a line, the context menu that some platforms fire on release is ignored this long, ms. */
 const MENU_SUPPRESS_MS = 400;
 const TOUCH_THRESHOLD_PX = 8;
+/** Right-drag pitch in the ego rig: degrees per CSS px dragged (down looks further down). */
+const PITCH_DEG_PER_PX = 0.2;
+/** A followed stack item counts as on screen when its centre is at least this far inside the viewport, CSS px. */
+const FOLLOW_MARGIN_PX = 40;
 /** How long a dropped card waits for the state to confirm its new pose before returning. */
 const EXPECT_MS = 1500;
 
@@ -197,7 +207,23 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(CAMERA.birdseye.fovDeg, 1, 10, 100000);
   const viewport = () => ({ w: Math.max(1, host.clientWidth || innerWidth), h: Math.max(1, host.clientHeight || innerHeight) });
-  const rig = new BirdseyeRig(layout.table, viewport(), viewerAngle(null, layout, viewerSeat), theme.motion.panInertiaMs);
+  // Both camera rigs and the blend between them (scene/camera/rig.ts, M4-P1).
+  const rig = new TableRig({
+    table: layout.table,
+    viewport: viewport(),
+    angle: viewerAngle(null, layout, viewerSeat),
+    inertiaMs: theme.motion.panInertiaMs,
+    rig: opts.rig ?? theme.camera.defaultRig,
+    ego: theme.camera.ego,
+    tiltDeg: theme.camera.birdseyeTiltDeg,
+  });
+  /** Whether the viewer chose a rig (P); until then a theme switch brings the new theme's default rig. */
+  let rigChosen = opts.rig !== undefined;
+  /** The ego seat sits in front of the viewer's own territory (Three players, Two-Headed Giant share an edge). */
+  const viewerLateral = (st: TableState | null): number => {
+    const sl = st ? seatLayoutOf(st, layout, viewerSeat) : null;
+    return sl ? lateralOf(sl.territory, sl.angle) : 0;
+  };
   // The HUD tells the scene which screen edges its screen-anchored layer covers through the host's
   // `data-fit-insets="top right bottom left"` (CSS px); fitting the table keeps the table clear of them.
   const readInsets = (): Insets => {
@@ -205,8 +231,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (v.length !== 4 || v.some((n) => !Number.isFinite(n) || n < 0)) return NO_INSETS;
     return { top: v[0]!, right: v[1]!, bottom: v[2]!, left: v[3]! };
   };
-  rig.insets = readInsets();
-  rig.view = rig.fitView();
+  rig.bird.insets = readInsets();
+  rig.bird.view = rig.bird.fitView();
   const insetObserver = new MutationObserver(() => {
     rig.setInsets(readInsets());
     dirty = true;
@@ -393,17 +419,25 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   // --- Rendering ----------------------------------------------------------------------------------------------------
+  const camBasis = new THREE.Matrix4();
+  const camAxes = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()] as const;
+  /** Copy the rig's pose onto the camera (table x, y, z up → three's x, z, -y). */
   function syncCamera(): void {
-    const v = rig.view;
+    const pose = rig.pose();
     const vp = rig.viewport;
-    const f = forward(v.angle);
-    camera.fov = rig.fovDeg;
+    const b = basis(rig.angle, pose.pitchDeg);
+    const depth = rig.depthRange(pose);
+    camera.fov = pose.fovDeg;
     camera.aspect = vp.w / vp.h;
-    camera.near = Math.max(1, v.dist - 400);
-    camera.far = v.dist + 400;
-    camera.position.set(v.cx, v.dist, -v.cy);
-    camera.up.set(f.x, 0, -f.y);
-    camera.lookAt(v.cx, 0, -v.cy);
+    camera.near = Math.max(1, Math.min(depth.min - 400, depth.min / 2));
+    // A tilted view sees past the table: keep what a theme draws beyond it.
+    camera.far = pose.pitchDeg < 89.999 ? Math.max(depth.max + 400, depth.max * 4) : depth.max + 400;
+    const p = pose.position;
+    camera.position.set(p[0], p[2], -p[1]);
+    camAxes[0].set(b.r[0], b.r[2], -b.r[1]);
+    camAxes[1].set(b.u[0], b.u[2], -b.u[1]);
+    camAxes[2].set(-b.d[0], -b.d[2], b.d[1]);
+    camera.quaternion.setFromRotationMatrix(camBasis.makeBasis(camAxes[0], camAxes[1], camAxes[2]));
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld();
   }
@@ -651,6 +685,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const dt = Math.min(100, now - lastTick);
     lastTick = now;
     let changed = rig.step(now, dt);
+    if (pendingFollow.length && !holding()) {
+      const reqs = pendingFollow;
+      pendingFollow = [];
+      applyFollow(reqs);
+      changed = true;
+    }
     if (drag) {
       followDrag();
       changed = true;
@@ -683,6 +723,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return rig.screenToTable(c.x, c.y);
   }
   function worldToScreen(p: TablePoint3): ScreenPoint | null {
+    if (!(rig.depthOf(p, p.z) > 0)) return null;
     syncCamera();
     const v = new THREE.Vector3(p.x, p.z, -p.y).project(camera);
     if (!Number.isFinite(v.x) || !Number.isFinite(v.y)) return null;
@@ -1008,8 +1049,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
     if (e.button === 1) e.preventDefault();
     const rc = pick(e.clientX, e.clientY);
-    // Right button: a press on a public card may become a line (right-drag); elsewhere it is the context menu alone.
-    if (e.button === 2 && (!rc || !lineSource(rc))) return;
+    // Right button: a press on a public card may become a line (right-drag); on empty table in the ego rig a
+    // right-drag pitches; elsewhere it is the context menu alone.
+    if (e.button === 2 && (!rc || !lineSource(rc)) && (rc || rig.rig() !== 'ego')) return;
     menuPending = null;
     const pileGrab = !!rc && rc.inst.pile?.kind === 'squared' && onPileBadge(rc, e.clientX, e.clientY);
     const item = rc ? null : (markerAt(screenToTable(e.clientX, e.clientY))?.item.id ?? null);
@@ -1103,6 +1145,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const moved = Math.hypot(e.clientX - g.x0, e.clientY - g.y0);
       if (moved < (e.pointerType === 'touch' ? TOUCH_THRESHOLD_PX : DRAG_THRESHOLD_PX)) return;
       const rc = g.card ? rcards.get(g.card) : null;
+      if (g.button === 2 && !rc && rig.rig() === 'ego') {
+        menuPending = null;
+        gesture = { kind: 'pitch', pointerId: g.pointerId, last: { x: e.clientX, y: e.clientY } };
+        rig.pitchBy((e.clientY - g.y0) * PITCH_DEG_PER_PX);
+        setHover(null);
+        dirty = true;
+        return;
+      }
       if (g.button === 2) {
         const source = rc ? lineSource(rc) : null;
         menuPending = null;
@@ -1133,7 +1183,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       rig.stop();
       gesture = { kind: 'pan', pointerId: g.pointerId, last: { x: g.x0, y: g.y0 }, samples: [{ x: g.x0, y: g.y0, t: performance.now() }] };
     }
-    if (gesture.kind === 'pan') {
+    if (gesture.kind === 'pitch') {
+      rig.pitchBy((e.clientY - gesture.last.y) * PITCH_DEG_PER_PX);
+      gesture.last = { x: e.clientX, y: e.clientY };
+      dirty = true;
+    } else if (gesture.kind === 'pan') {
       const g = gesture;
       rig.panBy(e.clientX - g.last.x, e.clientY - g.last.y);
       g.last = { x: e.clientX, y: e.clientY };
@@ -1186,6 +1240,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (!g || ('pointerId' in g && g.pointerId !== e.pointerId)) return;
     gesture = null;
     release(e);
+    if (g.kind === 'pitch') {
+      // The context menu some platforms fire on release does not open after a pitch.
+      menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
+      return;
+    }
     if (g.kind === 'line') {
       menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
       const dr = lineView.draft;
@@ -1430,8 +1489,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       });
     },
     camera(): DebugCamera {
-      const v = rig.view;
-      return { rig: 'birdseye', fov: rig.fovDeg, position: [v.cx, v.cy, v.dist], pitch: 90 };
+      const p = rig.pose();
+      return { rig: rig.rig(), fov: p.fovDeg, position: [...p.position], pitch: p.pitchDeg };
     },
     lines: () => lineView.debugLines(),
     drawnLines: () => lineView.debugDrawn(),
@@ -1497,11 +1556,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       theme: theme.id,
     };
   }
-  /** The camera's pose in table space (three's world: x = table x, y = height, z = -table y). */
+  /** The camera's pose in table space (scene/camera/rig.ts). */
   function cameraPose(): CameraPose {
-    const p = camera.position;
-    const v = rig.view;
-    return { position: [p.x, -p.z, p.y], target: [v.cx, v.cy, 0], fovDeg: camera.fov, pitchDeg: 90 };
+    const p = rig.pose();
+    return { position: [...p.position], target: [...p.target], fovDeg: p.fovDeg, pitchDeg: p.pitchDeg };
   }
   const renderDebug: RenderDebug = {
     stats: () => renderStats(),
@@ -1536,7 +1594,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   function tableViewDebug(): DebugTableView | null {
     if (!state) return null;
     const st = state;
-    const v = rig.view;
+    const v = rig.centre();
     const seats = Object.values(st.seats)
       .sort((a, b) => a.index - b.index)
       .flatMap((seat): DebugSeatView[] => {
@@ -1548,14 +1606,55 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         const a = worldToScreen({ ...avatar, z: 0 });
         return [{ seat: seat.id, index: seat.index, angle: sl.angle, territory, avatar, screen: t && a ? { territory: t, avatar: a } : null }];
       });
-    return { format: layout.format, table: { ...layout.table }, viewerAngle: viewerAngle(st, layout, viewerSeat), camera: { x: v.cx, y: v.cy, dist: v.dist }, seats };
+    return { format: layout.format, table: { ...layout.table }, viewerAngle: viewerAngle(st, layout, viewerSeat), camera: { x: v.x, y: v.y, dist: v.dist }, seats };
   }
 
-  // --- Camera controls ------------------------------------------------------------------------------------------------
+  // --- Camera controls (scene/camera/rig.ts; M4-P1) ------------------------------------------------------------------
   const blend = (animate = true) => (animate && !reduced() ? theme.motion.cameraBlendMs : 0);
+  /** A client point inside the canvas as canvas px, or null outside it. */
+  function canvasPoint(p: ScreenPoint | undefined): ScreenPoint | null {
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
+    const c = toCanvas(p.x, p.y);
+    const vp = rig.viewport;
+    return c.x >= 0 && c.y >= 0 && c.x <= vp.w && c.y <= vp.h ? c : null;
+  }
+  /** The table rect a seat or a team (Two-Headed Giant's shared turn) occupies. */
+  function territoryOf(who: string): Rect | null {
+    if (!state) return null;
+    const seat = seatLayoutOf(state, layout, who);
+    if (seat) return seat.territory;
+    const team = state.teams[who];
+    const first = team ? seatLayoutOf(state, layout, team.seats[0]) : null;
+    if (first?.team !== undefined) return layout.teams?.[first.team]?.territory ?? first.territory;
+    return first?.territory ?? null;
+  }
+  /** Whether a gesture holds the camera or a card: follow moves wait until it ends (DESIGN: never while dragging). */
+  const holding = () => drag !== null || itemDrag !== null || (gesture !== null && gesture.kind !== 'press');
+  let pendingFollow: FollowRequest[] = [];
+  /** Ease to what the follow toggles ask for (DESIGN "Camera and navigation", Follow options). */
+  function applyFollow(reqs: FollowRequest[]): void {
+    for (const r of reqs) {
+      if (r.kind === 'active') {
+        const rect = territoryOf(r.who);
+        if (rect) rig.goToRect(rect, performance.now(), blend());
+      } else {
+        const e = entries.find((x) => x.item.id === r.item);
+        if (!e) continue;
+        const p = entryPose(e);
+        // Only when it is off screen: the camera brings it in, keeping the zoom.
+        if (!rig.shows(p, FOLLOW_MARGIN_PX)) rig.focus(p, 'keep', performance.now(), blend());
+      }
+      dirty = true;
+    }
+  }
+  function requestFollow(reqs: FollowRequest[]): void {
+    if (!reqs.length) return;
+    if (holding()) pendingFollow = [...pendingFollow.filter((p) => !reqs.some((r) => r.kind === p.kind)), ...reqs];
+    else applyFollow(reqs);
+  }
   const controls: TableCameraControls = {
     fit(animate = true) {
-      rig.animateTo(rig.fitView(), performance.now(), blend(animate));
+      rig.fit(performance.now(), blend(animate));
       dirty = true;
     },
     zoomAt(x, y, factor) {
@@ -1571,7 +1670,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (!state || drag) return;
       const sl = seatLayoutOf(state, layout, seat);
       if (!sl) return;
-      rig.animateTo(rig.rectView(sl.territory), performance.now(), blend());
+      rig.goToRect(sl.territory, performance.now(), blend());
       dirty = true;
     },
     zoomTo(target) {
@@ -1590,22 +1689,33 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         }
       }
       if (!p) return;
-      rig.animateTo({ cx: p.x, cy: p.y, dist: rig.minDist(), angle: rig.view.angle }, performance.now(), blend());
+      rig.focus(p, 'close', performance.now(), blend());
       dirty = true;
     },
-    setRig(_rig: CameraRig) {
-      // M0 ships the bird's-eye rig only; the ego rig and the blend arrive with M4-P1.
+    setRig(next: CameraRig, o?: SetRigOptions) {
+      if (next !== 'birdseye' && next !== 'ego') return;
+      rigChosen = true;
+      rig.setRig(next, performance.now(), blend(o?.animate ?? true), canvasPoint(o?.anchor));
+      dirty = true;
     },
-    rig: () => 'birdseye',
-    pitchBy(_deg: number) {
-      // Ego rig only (M4-P1); a no-op in bird's-eye.
+    rig: () => rig.rig(),
+    pitchBy(deg: number) {
+      if (!Number.isFinite(deg)) return;
+      rig.pitchBy(deg);
+      dirty = true;
     },
     follow: () => ({ ...follow }),
     setFollow(next) {
-      // M4-P1 acts on the toggles (follow the stack, follow the active player); stored only until then.
-      follow = { ...follow, ...next };
+      follow = { stack: next.stack ?? follow.stack, activePlayer: next.activePlayer ?? follow.activePlayer };
+      if (!follow.stack) pendingFollow = pendingFollow.filter((r) => r.kind !== 'stackItem');
+      if (!follow.activePlayer) pendingFollow = pendingFollow.filter((r) => r.kind !== 'active');
     },
-    blend: () => null,
+    blend() {
+      const b = rig.blendState();
+      if (!b?.anchor) return b;
+      const r = canvasRect();
+      return { ...b, anchor: { table: b.anchor.table, screen: { x: b.anchor.screen.x + r.left, y: b.anchor.screen.y + r.top } } };
+    },
     pose: () => cameraPose(),
   };
 
@@ -1637,7 +1747,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         themeInstance = theme.build({ renderer, scene, camera, table: layout.table, quality: theme.quality[0]!, reducedMotion: reduced() });
       }
       if (formatLayout || prevState === null || Object.keys(prevState.seats).length !== Object.keys(next.seats).length) {
-        rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat));
+        rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
         rebuildMarkings();
       } else if (prevState.seats !== next.seats) {
         // A chair taken or left changes which hand rows the fitted view must show, and the names at the avatar spots.
@@ -1645,6 +1755,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         if (Object.values(next.seats).some((s) => prevState.seats[s.id]?.name !== s.name)) rebuildMarkings();
       }
       if (prevState !== next || openChanged) relayout(performance.now());
+      if (prevState !== next && !formatLayout) requestFollow(followRequests(prevState, next, follow));
       if (viewChanged) dirty = true;
       if (nextView.captions || captionLayer.active) captionLayer.set(nextView.captions ?? []);
     },
@@ -1656,6 +1767,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       markMaterial.color.set(theme.tokens.colours.border);
       ghostLayer.setOpacity(theme.cardDressing.ghost.opacity);
       rig.inertiaMs = theme.motion.panInertiaMs;
+      // The theme's camera defaults: its ego parameters and bird's-eye tilt, and its preferred rig unless the viewer chose one.
+      rig.setTheme(theme.camera.ego, theme.camera.birdseyeTiltDeg);
+      if (!rigChosen && rig.rig() !== theme.camera.defaultRig) rig.setRig(theme.camera.defaultRig, performance.now(), blend(), null);
       dirty = true;
     },
     setLayout(nextLayout: TableLayout, seat: SeatId | null) {
@@ -1663,7 +1777,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       viewerSeat = seat;
       themeInstance.dispose();
       themeInstance = theme.build({ renderer, scene, camera, table: layout.table, quality: theme.quality[0]!, reducedMotion: reduced() });
-      rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat));
+      rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
       rebuildMarkings();
       relayout(performance.now());
     },

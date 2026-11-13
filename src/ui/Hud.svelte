@@ -83,6 +83,8 @@
   let vw = $state(typeof window === 'undefined' ? 1440 : window.innerWidth);
   let vh = $state(typeof window === 'undefined' ? 900 : window.innerHeight);
   const pointer = { x: 0, y: 0 };
+  /** Whether the pointer moved over the page yet (the P key's anchor, M4-P1). */
+  let pointerSeen = false;
   let forcedHover: InstanceId | null = null;
   let sceneHost = $state<HTMLElement | undefined>();
   let scene: TableScene | null = null;
@@ -245,6 +247,7 @@
     ui: hooks,
     newId: makeId,
     now: () => Date.now(),
+    pointer: () => (pointerSeen ? { x: pointer.x, y: pointer.y } : null),
   });
   const engine = new KeyEngine(
     untrack(() => game.keymap),
@@ -672,6 +675,11 @@
         },
       });
       sceneReady = true;
+      // The viewer's follow toggles (DESIGN "Camera and navigation", Follow options; Settings.followStack, followActive).
+      void settings
+        ?.all()
+        .then((s) => scene?.camera.setFollow({ stack: s.followStack, activePlayer: s.followActive }))
+        .catch(() => {});
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
       presence = attachPresence(sceneHost!, scene, session.presence, {
         selfSeat: me,
@@ -713,6 +721,7 @@
   onpointermove={(e) => {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
+    pointerSeen = true;
     syncCaptionHover(hovered);
   }}
 />
@@ -736,6 +745,7 @@
         <button type="button" data-testid="open-deck-import" onclick={() => (deckOpen = !deckOpen)}>Import deck</button>
         <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
+        <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye')}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
         {#if !liveVoice}
           {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}

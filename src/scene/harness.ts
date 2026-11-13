@@ -6,7 +6,8 @@
  * URL: `?harness=scene&scenario=demo|bench|empty&viewer=s0|s1|none`. `bench` renders 300 cards.
  * Multi-seat tables (M3-P1): `&format=ffa3|ffa4|2hg&viewer=s0..s3` lays out the Magic table of that format with every
  * chair taken (scenario ignored).
- * Keys: 0 fit, Home or 1 own side, 2, 3, 4 the seats clockwise from the viewer, Escape closes an opened pile.
+ * Keys: 0 fit, Home or 1 own side, 2, 3, 4 the seats clockwise from the viewer, P switches the camera rig (M4-P1),
+ * Escape closes an opened pile.
  * Test API: window.__spellplane (state, dispatch, cards, camera, lines, frameStats) and window.__sceneHarness.
  */
 import type { Action, ActionDraft } from '../core/actions';
@@ -133,8 +134,12 @@ export function mount(target: HTMLElement): void {
   scene.update(state, view);
   motionQuery.addEventListener('change', () => setView({ reducedMotion: motionQuery.matches }));
 
+  // The P key keeps the table point under the mouse fixed through the blend (M4-P1), as the HUD's does.
+  let mouse: ScreenPoint | null = null;
+  addEventListener('pointermove', (e) => (mouse = { x: e.clientX, y: e.clientY }));
   addEventListener('keydown', (e) => {
-    if (e.key === '0') scene.camera.fit();
+    if (e.key === 'p' || e.key === 'P') scene.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye', mouse ? { anchor: mouse } : undefined);
+    else if (e.key === '0') scene.camera.fit();
     else if (e.key === 'Home' || e.key === '1') scene.camera.goToSeat(viewerSeat ?? 's0');
     else if (e.key === '2' || e.key === '3' || e.key === '4') {
       // Clockwise from the viewer: seat indices run clockwise (games/mtg/layout.ts).
