@@ -210,6 +210,28 @@ describe('rig switch from anywhere the viewer can navigate (M4-P1 review)', () =
     expect(landedOutside).toBeGreaterThan(20);
   });
 
+  it('a cursor over the surround (outside the guarantee) never lands the ego view beyond its limits (property)', () => {
+    let checked = 0;
+    fc.assert(
+      fc.property(setup, ({ seat, vp, tilt, insets, gestures, cursor }) => {
+        const r = rigAt(seat, vp, 'birdseye', tilt, insets);
+        for (const g of gestures) apply(r, g);
+        const s = { x: cursor.x * vp.w, y: cursor.y * vp.h };
+        const a = r.screenToTableOrNull(s.x, s.y);
+        if (!a || onTable(seat.table, a)) return;
+        checked++;
+        r.setRig('ego', 0, 0, s);
+        const P = r.ego;
+        expect(r.nav.pitchDeg).toBeGreaterThanOrEqual(P.minPitchDeg);
+        expect(r.nav.pitchDeg).toBeLessThanOrEqual(P.maxPitchDeg);
+        expect(Math.abs(r.nav.lean)).toBeLessThanOrEqual(P.leanMm);
+        expect(r.nav.dolly).toBeLessThanOrEqual(P.maxDollyMm);
+      }),
+      { numRuns: 600, seed: 4107 },
+    );
+    expect(checked).toBeGreaterThan(50);
+  });
+
   // A bird's-eye centre a switch left beyond the table edge: the wheel still zooms about the cursor. Re-clamping the
   // centre there pivoted the zoom on the frozen centre instead, and one wheel tick moved the cursor's point by up to
   // about 100 px (at a table edge, the bird's-eye's own clamp moves it by under 20).

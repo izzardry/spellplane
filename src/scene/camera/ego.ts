@@ -262,11 +262,14 @@ export function egoNavForAnchor(params: EgoRigParams, table: TableSize, angleDeg
  * allow it (egoNavForAnchor). From the seat they cannot show every table point everywhere on screen: within 25°..60°
  * the viewer's own near cards never show at the top of the screen, nor the far side at the bottom, and a point near
  * one side edge never at the opposite screen edge. Then the landing pose reaches beyond the limits (SWITCH_REACH):
- * steeper or flatter, further aside, further forward, never below the minimum height or behind the seat. The rig keeps
- * such a navigation until gestures bring it back (egoLimitsWith; DECISIONS [M4-P1 review]).
+ * steeper or flatter, further aside, further forward, never below the minimum height or behind the seat; for table
+ * points only (a cursor over the surround is outside the guarantee). The rig keeps such a navigation until gestures
+ * bring it back (egoLimitsWith; DECISIONS [M4-P1 review]).
  */
 export function egoSwitchNav(params: EgoRigParams, table: TableSize, angleDeg: number, lateral: number, vp: Viewport, a: TablePoint, s: ScreenPoint): { nav: EgoNav; err: number } {
   let best = egoNavForAnchor(params, table, angleDeg, lateral, vp, a, s, 0);
+  // A point over the surround stays outside the guarantee (DECISIONS [M4-P1]): no landing beyond the limits for it.
+  if (Math.abs(a.x) > table.w / 2 || Math.abs(a.y) > table.d / 2) return best;
   for (const reach of SWITCH_REACH) {
     if (best.err <= ANCHOR_TOL_PX) break;
     const wide: EgoRigParams = {
