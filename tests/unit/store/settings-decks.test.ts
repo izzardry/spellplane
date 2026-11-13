@@ -33,6 +33,7 @@ const CHANGED: Settings = {
   talk: { gate: 'turn', voice: true, dictation: true, muted: false, mouseButton: 3 },
   micDevice: 'mic-2',
   peerAudio: { '0123456789abcdef': { volume: 0.5, muted: true } },
+  sound: 'off',
 };
 
 describe('settings', () => {

@@ -7,7 +7,10 @@ import type { ActionDraft } from '../core/actions';
 import type { Anchor, CardRef, DeckBuild, DraftCard, InstanceId, Line, PackId, PileId, Pose, SeatColourIndex, SeatId, TableState, ZoneId } from '../core/types';
 import type { CardData, FaceSource } from '../data/types';
 import type { GameDefinition, TableLayout } from '../games/types';
-import type { Theme } from '../themes/types';
+import type { CardDressing, MaterialSpec, PostSettings, QualityId, QualityLevel, Theme, ThemeId } from '../themes/types';
+import type { Material, Texture } from 'three';
+import type { Pass } from 'three/examples/jsm/postprocessing/Pass.js';
+import { CAMERA } from '../core/geometry';
 
 /** A point in CSS pixels relative to the viewport (DESIGN "Camera and navigation"). */
 export interface ScreenPoint {
@@ -102,6 +105,12 @@ export interface TableSceneOptions {
   /** Shared-state changes (moves, taps, piles...); the session stamps by, cid and seq. */
   dispatch(action: ActionDraft): void;
   events: Partial<SceneEvents>;
+  /** v2 (M4-C): the viewer's quality setting (Settings.quality); absent means 'high'. Resolved per theme with qualityLevel (themes/types.ts). */
+  quality?: QualityId;
+  /** v2 (M4-C): the viewer's follow toggles (Settings.followStack, followActive); absent means both off. */
+  follow?: FollowOptions;
+  /** v2 (M4-C): the rig to start in; absent means the theme's camera.defaultRig. */
+  rig?: CameraRig;
 }
 
 /** Camera rig name (DESIGN "Camera and navigation"). */
@@ -119,8 +128,172 @@ export interface CameraControls {
   /** Zoom to a card or pile (key Z). */
   zoomTo(target: InstanceId | PileId | ZoneId): void;
   /** Switch rig (key P); M0 has bird's-eye only, the ego rig arrives in M4-P1. */
-  setRig(rig: CameraRig): void;
+  setRig(rig: CameraRig, opts?: SetRigOptions): void;
   rig(): CameraRig;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Camera rigs, materials, post-processing and quality (DESIGN "Camera and navigation", "Themes and rendering",
+// "Specification: geometry, layout and motion", Camera rigs). Added by M4-C. Rigs and blending are M4-P1's
+// (scene/camera/*); materials, post-processing and quality are M4-P2's (scene/materials.ts, post.ts, quality.ts).
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * Ego rig parameters (DESIGN "Specification: geometry, layout and motion", Camera rigs: field of view 45°, 260 behind
+ * the viewer's table edge, 620 above the table, pitched 35°, pitch 25°–60°; "Camera and navigation", Ego perspective:
+ * lean, dolly and pitch within limits, never below the table edge or behind the seat). mm and degrees. Added by M4-C.
+ */
+export interface EgoRigParams {
+  fovDeg: number;
+  /** Seat position behind the viewer's table edge. */
+  behindEdge: number;
+  /** Seat eye height above the table. */
+  height: number;
+  /** Default pitch below horizontal. */
+  pitchDeg: number;
+  minPitchDeg: number;
+  maxPitchDeg: number;
+  /** Largest sideways lean (pan) from the seat's centre line, each way. */
+  leanMm: number;
+  /** Dolly along the view ray toward the table: 0 at the seat, at most `maxDollyMm` forward; the camera never moves behind the seat. */
+  maxDollyMm: number;
+  /** Lowest camera height above the table plane; the camera never passes below the table edge. */
+  minHeight: number;
+}
+
+/** Ego rig defaults from the geometry spec (DESIGN "Specification: geometry, layout and motion", Camera rigs); lean, dolly and minimum height are M4-C's choice (docs/DECISIONS.md). */
+export const DEFAULT_EGO_RIG: EgoRigParams = {
+  fovDeg: CAMERA.ego.fovDeg,
+  behindEdge: CAMERA.ego.behindEdge,
+  height: CAMERA.ego.height,
+  pitchDeg: CAMERA.ego.pitchDeg,
+  minPitchDeg: CAMERA.ego.minPitchDeg,
+  maxPitchDeg: CAMERA.ego.maxPitchDeg,
+  leanMm: 400,
+  maxDollyMm: 700,
+  minHeight: 120,
+};
+
+/**
+ * A camera pose in table space (DESIGN "Camera and navigation", Switching: "interpolating position, tilt and field of
+ * view"): position and look-at target as [x, y, z] mm (table x, y in the canonical frame, z up), field of view and pitch
+ * below horizontal in degrees (90 = straight down). Both rigs reduce to one; the blend interpolates two. Added by M4-C.
+ */
+export interface CameraPose {
+  position: Vec3;
+  target: Vec3;
+  fovDeg: number;
+  pitchDeg: number;
+}
+
+/** Options of a rig switch (DESIGN "Camera and navigation", Switching: the point under the cursor stays under the cursor; reduced motion cuts). Added by M4-C. */
+export interface SetRigOptions {
+  /** false cuts instead of blending (reduced motion always cuts). */
+  animate?: boolean;
+  /** Screen point whose table point stays fixed during the blend; absent means the viewport centre. */
+  anchor?: ScreenPoint;
+}
+
+/** A blend in progress (DESIGN "Camera and navigation", Switching: about 400 ms, continuous). Added by M4-C. */
+export interface CameraBlendState {
+  from: CameraRig;
+  to: CameraRig;
+  /** Progress 0..1, after easing. */
+  t: number;
+  durationMs: number;
+  /** The fixed table point and the screen point it is held under, or null. */
+  anchor: { table: TablePoint; screen: ScreenPoint } | null;
+}
+
+/** The two follow toggles (DESIGN "Camera and navigation", Follow options: both off by default; never while dragging). Added by M4-C. */
+export interface FollowOptions {
+  /** Ease to include a new stack item when it is off screen. */
+  stack: boolean;
+  /** Ease to the active player's territory on turn change. */
+  activePlayer: boolean;
+}
+
+/** The table scene's camera controls, a superset of the surfaces' (DESIGN "Camera and navigation"). Added by M4-C; the additions are M4-P1's. */
+export interface TableCameraControls extends CameraControls {
+  /** Pitch the ego rig by `deg` (right-drag; positive looks further down), clamped to the rig's limits; no-op in bird's-eye. */
+  pitchBy(deg: number): void;
+  follow(): FollowOptions;
+  setFollow(next: Partial<FollowOptions>): void;
+  /** The blend in progress, or null. */
+  blend(): CameraBlendState | null;
+  /** The camera's current pose. */
+  pose(): CameraPose;
+}
+
+/**
+ * Shared three.js materials built from theme specs (DESIGN "Themes and rendering": card faces near-unlit, tables and
+ * sleeves lit; "Card faces are never restyled"). Implemented by M4-P2 (scene/materials.ts). Added by M4-C.
+ */
+export interface MaterialLibrary {
+  /** One shared material per distinct spec (by canonical JSON); `release` when no longer used. */
+  get(spec: MaterialSpec): Material;
+  /** The card-face material for `map`: near-unlit, shaded at most by `shade` (≤ CARD_FACE_MAX_SHADE), never tinted. */
+  cardFace(map: Texture, shade: number): Material;
+  /** Sleeve and edge materials of a card box for this dressing. */
+  cardSides(dressing: CardDressing): { sleeve: Material; edge: Material };
+  release(material: Material): void;
+  /** Live materials and the textures they own, for the leak check (PLAN M4-P2: no GPU textures leak after ten theme switches). */
+  stats(): { materials: number; textures: number };
+  dispose(): void;
+}
+
+/**
+ * The post-processing chain (DESIGN "Themes and rendering", Lighting and post-processing: bloom, vignette, tone
+ * mapping), built from three's examples/jsm passes. With post off (quality or settings) `render` is a plain
+ * renderer.render. Implemented by M4-P2 (scene/post.ts). Added by M4-C.
+ */
+export interface PostPipeline {
+  /** True while any pass besides the render and output passes runs. */
+  readonly active: boolean;
+  /** Apply the theme's bloom and vignette within what the quality level allows. */
+  configure(settings: PostSettings, quality: QualityLevel): void;
+  /** A theme-specific pass (Wyrm's heat shimmer), inserted before the output pass in ascending `order`; a theme removes its passes on dispose. */
+  addPass(id: string, pass: Pass, order?: number): void;
+  removePass(id: string): void;
+  setSize(width: number, height: number, pixelRatio: number): void;
+  render(dt: number): void;
+  /** Pass ids in render order (the debug hook's RenderStats.passes). */
+  passes(): string[];
+  dispose(): void;
+}
+
+/** Render statistics for the debug hook (DESIGN "Specification: code interfaces", frameStats; PLAN M4 Performance: draw calls, texture memory, main-thread frame work). Added by M4-C. */
+export interface RenderStats extends FrameStats {
+  /** renderer.info.render.triangles of the last frame. */
+  triangles: number;
+  /** renderer.info.memory.textures and .geometries: live GPU objects. */
+  textures: number;
+  geometries: number;
+  /** Compiled shader programs. */
+  programs: number;
+  /** Post passes in render order, [] with post off. */
+  passes: string[];
+  shadows: boolean;
+  quality: QualityId;
+  theme: ThemeId;
+}
+
+/** The render part of the debug hook (`window.__spellplane.render`): stats and quality. Registered by the table scene; quality is M4-P2's. Added by M4-C. */
+export interface RenderDebug {
+  stats(): RenderStats;
+  quality(): QualityId;
+  /** Apply a quality level at once (no reload). */
+  setQuality(id: QualityId): void;
+}
+
+/** The rig part of the debug hook (`window.__spellplane.rig`): camera rig, blend and follow toggles. Registered by the table scene; M4-P1's. Added by M4-C. */
+export interface RigDebug {
+  rig(): CameraRig;
+  setRig(rig: CameraRig, opts?: SetRigOptions): void;
+  blend(): CameraBlendState | null;
+  follow(): FollowOptions;
+  setFollow(next: Partial<FollowOptions>): void;
+  pose(): CameraPose;
 }
 
 /** One card as the debug hook reports it (DESIGN "Specification: code interfaces", SpellplaneDebug.cards). */
@@ -164,7 +337,13 @@ export interface TableScene {
   setTheme(theme: Theme): void;
   /** Change layout or viewer seat (lobby, format change). */
   setLayout(layout: TableLayout, viewerSeat: SeatId | null): void;
-  readonly camera: CameraControls;
+  /** v2 (M4-C): apply the viewer's quality setting without reload (DESIGN "Themes and rendering", Renderer); M4-P2. */
+  setQuality(id: QualityId): void;
+  /** v2 (M4-C): the quality level in use for the current theme; M4-P2. */
+  quality(): QualityLevel;
+  /** v2 (M4-C): render statistics of the last frame (the debug hook's `render.stats`). */
+  renderStats(): RenderStats;
+  readonly camera: TableCameraControls;
   /** Topmost card under a screen point, or null. */
   cardAt(x: number, y: number): InstanceId | null;
   /** Zone pile, stack lane or avatar under a screen point (drop targets), or null. */

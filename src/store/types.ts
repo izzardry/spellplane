@@ -85,6 +85,11 @@ export interface Settings {
   micDevice: string | null;
   /** Added by M3-C. Per-player volume and mute by identity peer id (DESIGN "Chat and voice", Live voice). */
   peerAudio: Record<string, PeerAudioSetting>;
+  /**
+   * Added by M4-C. The theme's sound set (DESIGN "Themes and rendering", Sound: optional, off by default in Paper):
+   * 'theme' follows the theme's SoundSet.onByDefault, 'on' and 'off' override it for every theme.
+   */
+  sound: 'theme' | 'on' | 'off';
 }
 
 /** Talk defaults (DESIGN "Decision log": push-to-talk; hold V). Added by M3-C. */
@@ -103,6 +108,7 @@ export const DEFAULT_SETTINGS: Settings = {
   talk: DEFAULT_TALK,
   micDevice: null,
   peerAudio: {},
+  sound: 'theme',
 };
 
 /** `settings` store record, keyed by name (DESIGN "Local persistence"). */

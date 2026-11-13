@@ -72,6 +72,7 @@ function lineStyle(kind: LineKind, seat: SeatColour): LineStyle {
 /** The Paper theme (DESIGN "Themes and rendering"). */
 export const paper: Theme = {
   id: 'paper',
+  label: 'Paper',
   tokens: {
     colours: {
       bg: '#ffffff',
@@ -89,6 +90,7 @@ export const paper: Theme = {
     type: { family: "system-ui, -apple-system, 'Segoe UI', sans-serif", mono: 'ui-monospace, monospace', size: 14, small: 12, large: 18, weight: 400, weightBold: 600 },
     radii: { sm: 2, md: 4, lg: 8 },
     spacing: { xs: 2, sm: 4, md: 8, lg: 16, xl: 24 },
+    hud: { scheme: 'light', panel: '#ffffff', panelBorder: '#8c8c8c', shadow: 'none', blur: 0, overlay: 'rgba(255, 255, 255, 0.92)' },
   },
   camera: { defaultRig: 'birdseye' },
   build: buildPaper,
@@ -103,8 +105,18 @@ export const paper: Theme = {
     ghost: { colour: '#111111', opacity: 0.25, dashed: true },
     faceDownOwnerOpacity: 0.5,
     foilSheen: true,
+    // v2 (M4-C): flat and unlit, so no sleeve material, no visible edge, no shading of the face, no tilt or shadow when held.
+    sleeveMaterial: null,
+    edge: '#ffffff',
+    faceShade: 0,
+    held: { lift: 12, tiltDeg: 0, shadow: false },
+    pending: { colour: '#8a5a00', width: 1.2, lift: 0 },
   },
   lineStyle,
   motion: DEFAULT_MOTION,
-  quality: [{ id: 'high', shadows: false, post: false, particles: false, pixelRatio: 2 }],
+  quality: [{ id: 'high', shadows: false, post: false, particles: false, pixelRatio: 2, anisotropy: 4, msaa: 0 }],
+  // v2 (M4-C): "Flat white plane, no lighting, no shadows" (DESIGN theme table).
+  lighting: { lit: false, lights: [], toneMapping: 'none', exposure: 1, background: PAPER_SURROUND, fog: null },
+  shadows: { enabled: false, map: null, contact: null },
+  post: { bloom: null, vignette: null },
 };

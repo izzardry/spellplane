@@ -18,7 +18,7 @@ import type { ActionDraft } from '../core/actions';
 import { CAMERA, GEOMETRY } from '../core/geometry';
 import type { CardInstance, InstanceId, Pose, SeatId, StackItemId, TableState, ZoneId } from '../core/types';
 import type { TableLayout } from '../games/types';
-import type { ThemeInstance } from '../themes/types';
+import { qualityLevel, type QualityId, type ThemeInstance } from '../themes/types';
 import { registerDebug } from '../util/debug';
 import { BirdseyeRig, NO_INSETS, type Insets } from './camera';
 import { CardLayer, type CardDraw } from './cards';
@@ -36,8 +36,13 @@ import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard 
 import { TextLayer, type TextSpec } from './text';
 import { tierForScreenHeight } from './textures';
 import type {
-  CameraControls,
+  CameraPose,
   CameraRig,
+  FollowOptions,
+  RenderDebug,
+  RenderStats,
+  RigDebug,
+  TableCameraControls,
   DebugCamera,
   DebugCard,
   FrameStats,
@@ -1475,7 +1480,46 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       };
     });
   }
+  // --- Render and rig parts of the debug hook (M4-C seams; M4-P2 fills quality and stats, M4-P1 the rig) ------------
+  let qualityId: QualityId = opts.quality ?? 'high';
+  let follow: FollowOptions = { stack: opts.follow?.stack ?? false, activePlayer: opts.follow?.activePlayer ?? false };
+  function renderStats(): RenderStats {
+    const info = renderer.info;
+    return {
+      ...stats,
+      triangles: info.render.triangles,
+      textures: info.memory.textures,
+      geometries: info.memory.geometries,
+      programs: info.programs?.length ?? 0,
+      passes: [],
+      shadows: renderer.shadowMap.enabled,
+      quality: qualityId,
+      theme: theme.id,
+    };
+  }
+  /** The camera's pose in table space (three's world: x = table x, y = height, z = -table y). */
+  function cameraPose(): CameraPose {
+    const p = camera.position;
+    const v = rig.view;
+    return { position: [p.x, -p.z, p.y], target: [v.cx, v.cy, 0], fovDeg: camera.fov, pitchDeg: 90 };
+  }
+  const renderDebug: RenderDebug = {
+    stats: () => renderStats(),
+    quality: () => qualityId,
+    setQuality: (id) => sceneApi.setQuality(id),
+  };
+  const rigDebug: RigDebug = {
+    rig: () => controls.rig(),
+    setRig: (r, o) => controls.setRig(r, o),
+    blend: () => controls.blend(),
+    follow: () => controls.follow(),
+    setFollow: (next) => controls.setFollow(next),
+    pose: () => controls.pose(),
+  };
+
   const debugParts = {
+    render: renderDebug,
+    rig: rigDebug,
     cards: () => debug.cards(),
     camera: () => debug.camera(),
     lines: () => debug.lines(),
@@ -1509,7 +1553,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   // --- Camera controls ------------------------------------------------------------------------------------------------
   const blend = (animate = true) => (animate && !reduced() ? theme.motion.cameraBlendMs : 0);
-  const controls: CameraControls = {
+  const controls: TableCameraControls = {
     fit(animate = true) {
       rig.animateTo(rig.fitView(), performance.now(), blend(animate));
       dirty = true;
@@ -1550,9 +1594,19 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       dirty = true;
     },
     setRig(_rig: CameraRig) {
-      // M0 ships the bird's-eye rig only; the ego rig arrives with M4-P1.
+      // M0 ships the bird's-eye rig only; the ego rig and the blend arrive with M4-P1.
     },
     rig: () => 'birdseye',
+    pitchBy(_deg: number) {
+      // Ego rig only (M4-P1); a no-op in bird's-eye.
+    },
+    follow: () => ({ ...follow }),
+    setFollow(next) {
+      // M4-P1 acts on the toggles (follow the stack, follow the active player); stored only until then.
+      follow = { ...follow, ...next };
+    },
+    blend: () => null,
+    pose: () => cameraPose(),
   };
 
   raf = requestAnimationFrame(tick);
@@ -1613,6 +1667,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       rebuildMarkings();
       relayout(performance.now());
     },
+    setQuality(id) {
+      // M4-P2 applies the level (shadows, post-processing, pixel ratio); stored only until then.
+      qualityId = id;
+    },
+    quality: () => qualityLevel(theme, qualityId),
+    renderStats: () => renderStats(),
     camera: controls,
     cardAt(x, y) {
       return pick(x, y)?.id ?? null;
