@@ -367,6 +367,14 @@ export class Replica implements SyncEngine {
     return gone;
   }
 
+  /**
+   * How much this replica holds, for the long-session soak test (PLAN M5-P6: bounded memory): each count stays under
+   * a limit that does not grow with the length of the game (RETAIN_ACTIONS, BUFFER_LIMIT, REMEMBER_CIDS, REWIND_KEEP).
+   */
+  retained(): { log: number; buffer: number; cids: number; marks: number; pending: number } {
+    return { log: this.log.length, buffer: this.buffer.size, cids: this.cids.size, marks: this.marks.length, pending: this.own.length };
+  }
+
   /** Put actions back at the front of the pending queue (own actions lost in an abandoned history). */
   requeue(actions: readonly Action[]): void {
     const fresh = actions.filter((a) => this.cids.get(a.cid) === undefined && !this.own.some((p) => p.cid === a.cid));

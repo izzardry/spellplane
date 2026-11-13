@@ -35,7 +35,7 @@ import {
 } from './messages';
 import { PresenceChannel } from './presence';
 import { roleProblem, spectatorNameProblem, spectatorRoute } from './roles';
-import { createSequencer, electSequencer, Replica, RETAIN_ACTIONS, seatOfPeer, senderSeat } from './sequencer';
+import { BUFFER_LIMIT, createSequencer, electSequencer, REMEMBER_CIDS, Replica, RETAIN_ACTIONS, REWIND_KEEP, seatOfPeer, senderSeat } from './sequencer';
 import { CHANNELS, type Channel, type PeerId } from './transport';
 import {
   AWAY_AFTER_MS,
@@ -460,6 +460,32 @@ class Engine implements NetEngine {
 
   onPrivate(l: (msg: PrivateMessage, from: { seat: SeatId | null; peerId: string }) => void): Unsubscribe {
     return this.privateEv.add(l);
+  }
+
+  /**
+   * How much this engine holds, by structure (PLAN M5-P6 long-session soak: bounded memory). Every count stays under
+   * a limit that does not grow with the length of the game; `messages` is the debug ring (dev and test builds only).
+   */
+  retained(): EngineRetained {
+    let held = 0;
+    for (const list of this.held.values()) held += list.length;
+    return {
+      ...this.replica.retained(),
+      messages: this.log.length,
+      ownCids: this.ownCids.size,
+      sentAt: this.sentAt.size,
+      nacked: this.nacked.size,
+      held,
+      queued: this.queued.length,
+      asks: this.asks.length,
+      deferred: [...this.deferredSync.values()].reduce((n, l) => n + l.length, 0),
+      lostOwn: this.lostOwn.length,
+      hashes: this.myHashes.size + this.seqrHashes.size,
+      applyAt: this.applyAt.size,
+      emitted: this.emitted.size,
+      deadlines: this.deadlineTimers.size + this.firedDeadlines.size,
+      peers: this.peerMap.size,
+    };
   }
 
   /** Every message sent and received since join, oldest first (the latest MESSAGE_LOG_LIMIT; empty in production builds). */
@@ -1789,5 +1815,53 @@ class Engine implements NetEngine {
 /** Create a NetEngine over a transport (net/types.ts). */
 export const createNetEngine: CreateNetEngine = (opts) => new Engine(opts);
 
-/** The concrete engine type, for tests and the debug hook (net/types.ts NetEngine plus `isSequencing`). */
-export type NetEngineImpl = NetEngine & { isSequencing(): boolean };
+/** What one engine holds in memory (Engine.retained), for the long-session soak test (PLAN M5-P6). */
+export interface EngineRetained {
+  /** Replica: retained sequenced actions (≤ RETAIN_ACTIONS), buffered out-of-order seqs, remembered cids, rewind states, own pending actions. */
+  log: number;
+  buffer: number;
+  cids: number;
+  marks: number;
+  pending: number;
+  /** The debug ring of wire messages (≤ MESSAGE_LOG_LIMIT; empty in production builds). */
+  messages: number;
+  ownCids: number;
+  sentAt: number;
+  nacked: number;
+  held: number;
+  queued: number;
+  asks: number;
+  deferred: number;
+  lostOwn: number;
+  hashes: number;
+  applyAt: number;
+  emitted: number;
+  deadlines: number;
+  peers: number;
+}
+
+/** The limits `EngineRetained` stays under, none of which grows with the number of actions (PLAN M5-P6). */
+export const ENGINE_RETAIN_LIMITS: Readonly<Record<keyof EngineRetained, number>> = {
+  log: RETAIN_ACTIONS,
+  buffer: BUFFER_LIMIT,
+  cids: REMEMBER_CIDS,
+  marks: REWIND_KEEP + 1,
+  pending: QUEUE_LIMIT,
+  messages: MESSAGE_LOG_LIMIT,
+  ownCids: KEEP_OWN_CIDS,
+  sentAt: QUEUE_LIMIT,
+  nacked: KEEP_NACKS,
+  held: QUEUE_LIMIT,
+  queued: QUEUE_LIMIT,
+  asks: KEEP_ASKS,
+  deferred: KEEP_DEFERRED * 16,
+  lostOwn: KEEP_OWN_CIDS,
+  hashes: 2 * KEEP_HASHES,
+  applyAt: KEEP_APPLY_TIMES,
+  emitted: KEEP_EMITTED,
+  deadlines: 64,
+  peers: 64,
+};
+
+/** The concrete engine type, for tests and the debug hook (net/types.ts NetEngine plus `isSequencing`, `retained`). */
+export type NetEngineImpl = NetEngine & { isSequencing(): boolean; retained(): EngineRetained };
