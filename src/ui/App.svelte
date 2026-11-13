@@ -16,6 +16,10 @@
   import RoomRoute from './lobby/RoomRoute.svelte';
   import StartRoute from './lobby/StartRoute.svelte';
   import { parseRoute, type Route } from './routes';
+  import About from './about/About.svelte';
+  import Hint from './hints/Hint.svelte';
+  import { HintController } from './hints/hints';
+  import SettingsPage from './settings/SettingsPage.svelte';
 
   let props: Partial<AppProps> = $props();
 
@@ -28,6 +32,9 @@
   setThemeContext(choice);
   let theme = $state.raw<Theme>(choice.current());
   let ready = $state(false);
+  /** The welcome hint on the start page (M5-P5 first-run hints). */
+  const startHints = new HintController(untrack(() => props.settings), { where: 'start', touch: false, voice: false });
+  void startHints.load();
   const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
   onMount(() => {
     registerThemeDebug(choice);
@@ -71,7 +78,13 @@
 {:else}
   <main class="sp-page" style={cssVars} data-testid="route-{route.name === 'diagJoin' ? 'diag' : route.name}">
     {#if route.name === 'lobby'}
+      <Hint hints={startHints} placement="inline" />
       <StartRoute start={props.start} />
+      <p class="links"><a href="#/settings" data-testid="link-settings">Settings</a> · <a href="#/about" data-testid="link-about">About Spellplane</a></p>
+    {:else if route.name === 'settings'}
+      <SettingsPage settings={props.settings} keymap={props.game?.keymap ?? []} />
+    {:else if route.name === 'about'}
+      <About />
     {:else if route.name === 'diag' || route.name === 'diagJoin'}
       <DiagRoute diag={props.diag} room={route.name === 'diagJoin' ? { roomId: route.room, roomKey: route.key } : null} />
     {:else}

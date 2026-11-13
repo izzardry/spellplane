@@ -4,12 +4,15 @@
 -->
 <script lang="ts">
   import type { CardData, CardDataSource } from '../data/types';
+  import EmptyState from './empty/EmptyState.svelte';
 
   let { cardData, near, onpick, onclose }: { cardData: CardDataSource; near: CardData | null; onpick: (token: CardData) => void; onclose: () => void } = $props();
 
   let query = $state('');
   let related = $state<CardData[]>([]);
   let results = $state<CardData[]>([]);
+  /** The search for the current query: running, done, or failed (Scryfall unreachable; M5-P5 empty and error states). */
+  let searching = $state<'idle' | 'running' | 'done' | 'failed'>('idle');
   let input = $state<HTMLInputElement | undefined>();
   let seq = 0;
 
@@ -36,17 +39,23 @@
     const q = query.trim();
     if (!q) {
       results = [];
+      searching = 'idle';
       return;
     }
     const my = ++seq;
+    searching = 'running';
     const timer = setTimeout(() => {
       cardData
         .searchTokens(q)
         .then((r) => {
-          if (my === seq) results = r;
+          if (my !== seq) return;
+          results = r;
+          searching = 'done';
         })
         .catch(() => {
-          if (my === seq) results = [];
+          if (my !== seq) return;
+          results = [];
+          searching = 'failed';
         });
     }, 200);
     return () => {
@@ -88,7 +97,13 @@
       {/each}
     </ul>
   {:else if query.trim() && !shownRelated.length}
-    <p class="muted">No tokens found.</p>
+    {#if searching === 'failed'}
+      <EmptyState id="searchUnreachable" compact />
+    {:else if searching === 'done'}
+      <EmptyState id="noCardsFound" text="No token matches “{query.trim()}”. Check the spelling, or try part of the name." compact />
+    {:else}
+      <p class="muted" role="status">Searching…</p>
+    {/if}
   {/if}
 </section>
 

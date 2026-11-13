@@ -28,6 +28,8 @@
   } = $props();
 
   let image = $state<FaceImage | null>(null);
+  /** The face could not be loaded (M5-P5 failed image): the card's name is shown in its frame instead. */
+  let failed = $state(false);
   let canvas = $state<HTMLCanvasElement | undefined>();
 
   $effect(() => {
@@ -35,6 +37,7 @@
     const fi = faceIndex;
     const t = tier;
     image = null;
+    failed = false;
     if (!ref) return;
     let live = true;
     faces
@@ -42,7 +45,9 @@
       .then((f) => {
         if (live) image = f;
       })
-      .catch(() => {});
+      .catch(() => {
+        if (live) failed = true;
+      });
     return () => {
       live = false;
     };
@@ -77,8 +82,13 @@
 </script>
 
 <div class="face" class:dim role="img" aria-label={alt || (cardRef ? 'Card' : 'Card back')} data-face={cardRef ? 'up' : 'back'}>
-  {#if image?.kind === 'url'}
-    <img src={image.url} alt="" draggable="false" />
+  {#if failed && cardRef}
+    <div class="failed" data-testid="face-failed" title="This card image could not be loaded">
+      <span class="name">{alt || 'Card'}</span>
+      <span class="why">Image unavailable</span>
+    </div>
+  {:else if image?.kind === 'url'}
+    <img src={image.url} alt="" draggable="false" onerror={() => (failed = true)} />
   {:else}
     <canvas bind:this={canvas}></canvas>
   {/if}
@@ -94,6 +104,26 @@
   }
   .face.dim {
     opacity: 0.55;
+  }
+  .failed {
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 8%;
+    border: 2px solid var(--sp-border, #8c8c8c);
+    border-radius: inherit;
+    color: var(--sp-fg, #111);
+    font: var(--sp-font-size-small, 12px) / 1.3 var(--sp-font, system-ui);
+  }
+  .failed .name {
+    font-weight: var(--sp-font-weight-bold, 600);
+    overflow-wrap: anywhere;
+  }
+  .failed .why {
+    color: var(--sp-muted, #5f5f5f);
   }
   img,
   canvas {

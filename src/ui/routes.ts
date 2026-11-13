@@ -10,6 +10,9 @@ export type Route =
    */
   | { name: 'room'; room: string; key: string; watch?: true }
   | { name: 'lobby' }
+  /** `#/settings` and `#/about`: the settings panel and the About panel as pages (PLAN M5-P5). */
+  | { name: 'settings' }
+  | { name: 'about' }
   | { name: 'diag' }
   /** `#/diag/<room>/<key>`: the connection check joining a diagnostics room another machine started (M1-P5). */
   | { name: 'diagJoin'; room: string; key: string }
@@ -33,6 +36,8 @@ export function parseRoute(hash: string): Route {
   if (parts[0] === 't' && parts.length === 4 && parts[1] && parts[2] && parts[3] === WATCH) return { name: 'room', room: parts[1], key: parts[2], watch: true };
   if (parts.length === 1 && parts[0] === 'lobby') return { name: 'lobby' };
   if (parts.length === 1 && parts[0] === 'diag') return { name: 'diag' };
+  if (parts.length === 1 && parts[0] === 'settings') return { name: 'settings' };
+  if (parts.length === 1 && parts[0] === 'about') return { name: 'about' };
   if (parts[0] === 'diag' && parts.length === 3 && parts[1] && parts[2]) return { name: 'diagJoin', room: parts[1], key: parts[2] };
   return { name: 'notFound', hash };
 }
@@ -48,6 +53,10 @@ export function routeHash(route: Route): string {
       return '#/lobby';
     case 'diag':
       return '#/diag';
+    case 'settings':
+      return '#/settings';
+    case 'about':
+      return '#/about';
     case 'diagJoin':
       return `#/diag/${encodeURIComponent(route.room)}/${encodeURIComponent(route.key)}`;
     case 'notFound':
