@@ -38,14 +38,15 @@ import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
 import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
 import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
-import { LAYER, cameraTable, compareSort, displayedRot, dropTargets, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
+import { LAYER, cameraTable, compareSort, displayedRot, dropTargets, faceOf, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, legibleScale, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion, HeldLift, heldTilt } from './motion';
 import { CaptionLayer, captionBadge, captionPoint } from './captions';
-import { drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
+import { badgeItems, drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackCollapsed, stackEntries, stackSlotPose, type DebugStackEntry, type StackEntry } from './stack';
+import { StackBadgeView } from './stack-badge';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
 import { TextLayer, type TextSpec } from './text';
 import { TEXTURE_CAP_BYTES, tierForScreenHeight } from './textures';
@@ -246,6 +247,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   marqueeEl.setAttribute('data-scene', 'marquee');
   Object.assign(marqueeEl.style, { position: 'absolute', display: 'none', pointerEvents: 'none', border: `1px dashed ${theme.tokens.colours.focus}`, background: 'rgba(31,111,209,0.06)' });
   host.appendChild(marqueeEl);
+
+  // The far-zoom stack badge (scene/stack-badge.ts; DESIGN "The effect stack", Reading it; M5-P7).
+  const stackBadge = new StackBadgeView(host, {
+    faces: opts.faces,
+    colours: () => {
+      const c = theme.tokens.colours;
+      return { fg: c.fg, surface: theme.tokens.hud?.panel ?? c.surface, border: theme.tokens.hud?.panelBorder ?? c.border, pending: theme.cardDressing.pending.colour, font: theme.tokens.type.family };
+    },
+    onChange: () => (dirty = true),
+  });
+  /** The lane is drawn as the badge this frame (far zoom; scene/stack.ts stackCollapsed). */
+  let stackFolded = false;
 
   /** The lit, post-processed world (theme, card boxes, markings) and the overlay drawn after post (faces, text, lines). */
   const scene = new THREE.Scene();
@@ -593,8 +606,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
     }
     // Stack lane: each item's number and kind beside its title strip, its note on the other side, in the controller's
-    // seat colour (DESIGN "The effect stack", Reading it; Note).
-    for (const e of entries) {
+    // seat colour (DESIGN "The effect stack", Reading it; Note). A collapsed lane shows its badge instead.
+    for (const e of stackFolded ? [] : entries) {
       const pose = entryPose(e);
       const colour = seatColour(e.item.controller);
       const lp = labelPoint(pose, entryScale(e));
@@ -712,6 +725,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     // Each card's texture tier from its own on-screen height: in the ego rig near cards show larger than far ones, and a
     // card lying flat shows shorter than it would face on (its projected height, not its scale times its height).
     const cardPxAt = (p: { x: number; y: number; rot: number }, k = 1, z = 0) => rig.cardScreenHeight(p, z, k, cam);
+    // Far zoom: the lane collapses to its count badge while a card in it would be too small to read (M5-P7).
+    const laneAngle = viewerAngle(state, layout, viewerSeat);
+    stackFolded = stackCollapsed(state?.stack.length ?? 0, cardPxAt(stackSlotPose(layout.stackLane, 0, laneAngle)));
+    syncStackBadge(cam);
     const selection = new Set(view.selection);
     const dressing = theme.cardDressing;
     const vp = rig.viewport;
@@ -721,6 +738,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const foilPhase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
     foilsDrawn.clear();
     for (const rc of order) {
+      // A collapsed lane draws none of its cards (one being dragged out still follows the pointer).
+      if (stackFolded && rc.place.kind === 'stack' && !(drag?.ids.includes(rc.id) ?? false)) {
+        rc.tierDrawn = null;
+        continue;
+      }
       const pose = rc.motion.pose;
       if (rc.motion.flipSwapped) {
         rc.shownKey = rc.place.key;
@@ -767,7 +789,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     // Ability, trigger and copy markers take their slots in the lane, between the spells (scene/stack.ts).
     for (const e of entries) {
-      if (!e.marker) continue;
+      if (!e.marker || (stackFolded && itemDrag?.item !== e.item.id)) continue;
       const src = e.face ? rcards.get(e.face) : undefined;
       const k = entryScale(e);
       const pose = drawnPose(entryPose(e), k);
@@ -924,6 +946,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     for (let i = order.length - 1; i >= 0; i--) {
       const rc = order[i]!;
       if (exclude?.has(rc.id)) continue;
+      // A collapsed lane draws its badge, not its cards (M5-P7).
+      if (stackFolded && rc.place.kind === 'stack') continue;
       const z = drawnZ(rc);
       let q = atZ.get(z);
       if (q === undefined) atZ.set(z, (q = screenToCardPlane(x, y, z)));
@@ -937,6 +961,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** The topmost stack entry at a table point when it is a marker (markers are not cards). */
   function markerAt(p: TablePoint): StackEntry | null {
+    if (stackFolded) return null;
     const e = entryAt(
       entries.map((x) => ({ ...x, pose: entryPose(x) })),
       p,
@@ -948,6 +973,20 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   function itemAt(x: number, y: number, rc: RCard | null): string | null {
     if (rc) return rc.place.kind === 'stack' ? (entries.find((e) => e.item.card === rc.id)?.item.id ?? null) : null;
     return markerAt(screenToTable(x, y))?.item.id ?? null;
+  }
+
+  /** Show, move or hide the far-zoom badge at the lane's centre for this frame (scene/stack-badge.ts; M5-P7). */
+  function syncStackBadge(cam: ReturnType<typeof rig.pose>): void {
+    const st = state;
+    const at = rig.tableToScreen({ x: layout.stackLane.x, y: layout.stackLane.y }, 0, cam);
+    const onScreen = rig.depthOf({ x: layout.stackLane.x, y: layout.stackLane.y }, 0, cam) > 0 && Number.isFinite(at.x) && Number.isFinite(at.y);
+    const items = stackFolded && st ? badgeItems(entries, (id) => {
+      const c = st.cards[id];
+      if (!c) return { ref: null, faceIndex: 0 };
+      const f = faceOf(c, view);
+      return { ref: f.ref, faceIndex: f.faceIndex };
+    }, seatColour) : [];
+    stackBadge.update({ collapsed: stackFolded, count: st?.stack.length ?? 0, at: onScreen ? at : null, items });
   }
 
   function setHoverItem(item: string | null): void {
@@ -1657,7 +1696,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const sel = new Set(view.selection);
       return order.map((rc, i) => {
         const screen = screenRect(rc);
-        const visible = screen.right > r.left && screen.left < r.right && screen.bottom > r.top && screen.top < r.bottom;
+        // A card in a collapsed stack lane is not drawn: the far-zoom badge stands for it (M5-P7).
+        const folded = stackFolded && rc.place.kind === 'stack' && !(drag?.ids.includes(rc.id) ?? false);
+        const visible = !folded && screen.right > r.left && screen.left < r.right && screen.bottom > r.top && screen.top < r.bottom;
         return {
           id: rc.id,
           pose: rc.motion.pose,
@@ -1797,6 +1838,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     stack: () => stackDebug(),
     tableView: () => tableViewDebug(),
     captions: () => captionLayer.debug(),
+    // The far-zoom stack badge (M5-P7).
+    stackBadge: () => stackBadge.state(),
   };
   registerDebug(debugParts);
 
@@ -2126,6 +2169,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const hook = typeof window === 'undefined' ? undefined : (window.__spellplane as Record<string, unknown> | undefined);
       if (hook) for (const [k, fn] of Object.entries(debugParts)) if (hook[k] === fn) delete hook[k];
       marqueeEl.remove();
+      stackBadge.dispose();
     },
   };
 
