@@ -61,7 +61,9 @@ describe('theme interface v2', () => {
       expect(t.tokens.colours.seats).toHaveLength(8);
       expect(t.quality.length).toBeGreaterThan(0);
       expect(t.cardDressing.faceShade).toBeLessThanOrEqual(CARD_FACE_MAX_SHADE);
-      expect((t as { stub?: string }).stub).toBe(stubs[id]);
+      // A theme package replaces its stub (Dusk: M4-P3); a theme still stubbed names the package that replaces it.
+      const stub = (t as { stub?: string }).stub;
+      if (stub !== undefined) expect(stub).toBe(stubs[id]);
     }
     expect((await loadTheme('stonetable')).camera.defaultRig).toBe('ego');
     expect((await loadTheme('wyrm')).camera.defaultRig).toBe('ego');
