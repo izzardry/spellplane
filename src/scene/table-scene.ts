@@ -428,12 +428,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const pose = rig.pose();
     const vp = rig.viewport;
     const b = basis(rig.angle, pose.pitchDeg);
-    const depth = rig.depthRange(pose);
+    const clip = rig.clipPlanes(pose);
     camera.fov = pose.fovDeg;
     camera.aspect = vp.w / vp.h;
-    camera.near = Math.max(1, Math.min(depth.min - 400, depth.min / 2));
-    // A tilted view sees past the table: keep what a theme draws beyond it.
-    camera.far = pose.pitchDeg < 89.999 ? Math.max(depth.max + 400, depth.max * 4) : depth.max + 400;
+    camera.near = clip.near;
+    camera.far = clip.far;
     const p = pose.position;
     camera.position.set(p[0], p[2], -p[1]);
     camAxes[0].set(b.r[0], b.r[2], -b.r[1]);
@@ -614,8 +613,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     frame++;
     syncCamera();
     const cam = rig.pose();
-    // Each card's texture tier from its own on-screen height: in the ego rig near cards show larger than far ones.
-    const cardPxAt = (p: { x: number; y: number }, k = 1) => CARD_H * k * rig.pxPerMmAt(p, 0, cam);
+    // Each card's texture tier from its own on-screen height: in the ego rig near cards show larger than far ones, and a
+    // card lying flat shows shorter than it would face on (its projected height, not its scale times its height).
+    const cardPxAt = (p: { x: number; y: number; rot: number }, k = 1, z = 0) => rig.cardScreenHeight(p, z, k, cam);
     const selection = new Set(view.selection);
     const dressing = theme.cardDressing;
     const vp = rig.viewport;
@@ -629,7 +629,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         rc.shownDim = rc.place.dimmed;
       }
       const s = rig.tableToScreen(pose, 0, cam);
-      const cardPx = cardPxAt(pose);
+      const cardPx = cardPxAt(pose, 1, rc.place.z);
       const onScreen = cardPx > 0 && s.x > -cardPx && s.y > -cardPx && s.x < vp.w + cardPx && s.y < vp.h + cardPx;
       const uv = faces.use(rc.shownKey, onScreen ? tierForScreenHeight(cardPx) : 'small', frame);
       rc.tierDrawn = uv ? (['small', 'normal', 'large'] as const)[uv.tier]! : null;
@@ -736,14 +736,34 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
   }
 
+  /** The height a card is drawn at: its place in a pile, lifted while dragged. */
+  function drawnZ(rc: RCard): number {
+    return rc.place.z + (drag?.ids.includes(rc.id) ? GEOMETRY.dragLift : 0);
+  }
+
+  /**
+   * Where the ray through a viewport point crosses the plane a card is drawn at (its top face): in the ego rig a card on
+   * a tall pile or lifted shows well away from its footprint on the table, and every gesture works the same in both
+   * rigs (DESIGN "Camera and navigation").
+   */
+  function screenToCardPlane(x: number, y: number, z: number): TablePoint | null {
+    if (z === 0) return screenToTable(x, y);
+    const c = toCanvas(x, y);
+    return rig.screenToPlane(c.x, c.y, z + GEOMETRY.card.thickness);
+  }
+
   /** Topmost drawn card under a viewport point; null when a stack marker covers that point. */
   function pick(x: number, y: number, exclude?: ReadonlySet<InstanceId>): RCard | null {
     const p = screenToTable(x, y);
     const marker = markerAt(p);
+    const atZ = new Map<number, TablePoint | null>([[0, p]]);
     for (let i = order.length - 1; i >= 0; i--) {
       const rc = order[i]!;
       if (exclude?.has(rc.id)) continue;
-      if (!pointInCard(p, rc.motion.pose)) continue;
+      const z = drawnZ(rc);
+      let q = atZ.get(z);
+      if (q === undefined) atZ.set(z, (q = screenToCardPlane(x, y, z)));
+      if (!q || !pointInCard(q, rc.motion.pose)) continue;
       // A marker covers what lies under it: older items of the lane and anything on the table below the lane.
       if (marker && (rc.place.kind === 'stack' ? (entries.find((e) => e.item.card === rc.id)?.index ?? -1) < marker.index : rc.place.sort[0] < LAYER.stack)) return null;
       return rc;
@@ -1093,7 +1113,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   function onPileBadge(rc: RCard, x: number, y: number): boolean {
-    const p = screenToTable(x, y);
+    const p = screenToCardPlane(x, y, drawnZ(rc));
+    if (!p) return false;
     const pose = rc.motion.pose;
     const [bx, by] = rot2(-CARD_W / 2 + 8, CARD_H / 2 - 8, pose.rot);
     return Math.hypot(p.x - (pose.x + bx), p.y - (pose.y + by)) <= 8;
@@ -1704,7 +1725,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     },
     setRig(next: CameraRig, o?: SetRigOptions) {
       if (next !== 'birdseye' && next !== 'ego') return;
-      rigChosen = true;
+      // Only a real switch is the viewer's choice: asking for the rig already shown keeps the theme's default in charge.
+      if (next !== rig.rig()) rigChosen = true;
       rig.setRig(next, performance.now(), blend(o?.animate ?? true), canvasPoint(o?.anchor));
       dirty = true;
     },
@@ -1862,6 +1884,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       removeEventListener('pointerdown', trackPointer, true);
       removeEventListener('pointerup', releasePointer, true);
       removeEventListener('pointercancel', releasePointer, true);
+      removeEventListener('pointermove', releaseIdlePointer, true);
       removeEventListener('blur', releaseAllPointers);
       themeInstance.dispose();
       faces.dispose();
@@ -1897,9 +1920,15 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   function releaseAllPointers(): void {
     pressedPointers.clear();
   }
+  // A release the page never saw (the button let go outside the window, a native context menu that swallowed the
+  // pointerup): the pointer's next move with no button down ends its press, so follow moves do not wait forever.
+  function releaseIdlePointer(e: PointerEvent): void {
+    if (e.buttons === 0 && pressedPointers.has(e.pointerId)) pressedPointers.delete(e.pointerId);
+  }
   addEventListener('pointerdown', trackPointer, true);
   addEventListener('pointerup', releasePointer, true);
   addEventListener('pointercancel', releasePointer, true);
+  addEventListener('pointermove', releaseIdlePointer, true);
   addEventListener('blur', releaseAllPointers);
   // The HUD's hover keys reach a marker through this (scene/stack.ts hoveredStackItem).
   registerStackHover(sceneApi, () => hoverItem);

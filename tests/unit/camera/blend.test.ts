@@ -72,7 +72,7 @@ describe('rig switch (P)', () => {
   // Every cursor over the table, on every table format and every viewer seat (the ego seat sits in front of the
   // viewer's own territory, beside the centre line on three-player and Two-Headed Giant tables). Cursors over the
   // surround are left out on purpose: no ego pose within the limits need show a point beyond the table's edge at the
-  // cursor, and the bird's-eye view keeps its centre on the table; there the point moves on a straight line between
+  // cursor, and the bird's-eye view clamps its centre to the table for them; there the point moves on a straight line between
   // where the two rigs show it (the blendPose property above).
   const seats = fc.constantFrom(...SEATS);
 
@@ -239,6 +239,101 @@ describe('rig switch (P)', () => {
     const r2 = makeRig({ ...seat, rig: 'ego' });
     runSwitch(r2, 'birdseye', { x: VP.w / 2, y: VP.h / 2 });
     expect(r2.bird.view.dist).toBeCloseTo(fitted, 6);
+  });
+
+  // The ego rig may lean beyond the table's side edge (its lean reaches the far side edge from a seat beside the centre
+  // line), and then shows table points near that edge on the opposite side of the screen. No bird's-eye centre on the
+  // table can put such a point under the cursor; the switch leaves the centre beyond the edge instead.
+  const leanedEgo = (seat: (typeof SEATS)[number], u: { lean: number; dolly: number; pitch: number }) => {
+    const rig = makeRig({ ...seat, rig: 'ego' });
+    const P = rig.ego;
+    rig.nav = clampEgoNav(P, { lean: u.lean * P.leanMm, dolly: u.dolly * P.maxDollyMm, pitchDeg: P.minPitchDeg + u.pitch * (P.maxPitchDeg - P.minPitchDeg) });
+    return rig;
+  };
+
+  it('ego leaned, dollied and pitched anywhere within the limits to bird\'s-eye: every cursor over the table holds its point (property)', () => {
+    let checked = 0;
+    fc.assert(
+      fc.property(
+        anchors,
+        seats,
+        fc.record({ lean: fc.oneof(fc.constantFrom(-1, 1), fc.double({ min: -1, max: 1, noNaN: true })), dolly: fc.double({ min: 0, max: 1, noNaN: true }), pitch: fc.double({ min: 0, max: 1, noNaN: true }) }),
+        fc.constantFrom(0, 10),
+        (s, seat, u, tiltDeg) => {
+          const rig = leanedEgo(seat, u);
+          if (tiltDeg) rig.setTheme(undefined, tiltDeg);
+          const a = rig.screenToTableOrNull(s.x, s.y);
+          if (!a || !onTable(seat.table, a)) return;
+          checked++;
+          const { poses } = runSwitch(rig, 'birdseye', s, 10);
+          for (const p of poses) expect(px(screenOf(p, seat.angle, a), s), `${seat.format} seat ${seat.seat} ${JSON.stringify(u)}`).toBeLessThan(2);
+          expect(rig.rig()).toBe('birdseye');
+          expect(poses.at(-1)!.fovDeg).toBe(6);
+        },
+      ),
+      { numRuns: 1500 },
+    );
+    // Leaned far out, much of the screen shows the surround: about a sixth of the draws put the cursor over the table.
+    expect(checked).toBeGreaterThan(150);
+  });
+
+  it('ego leaned to either limit to bird\'s-eye holds every cursor over the table, on every format and seat', () => {
+    let checked = 0;
+    for (const seat of SEATS) {
+      for (const lean of [-1, 1]) {
+        for (let fx = 0.025; fx < 1; fx += 0.05) {
+          for (let fy = 0.025; fy < 1; fy += 0.05) {
+            const r = leanedEgo(seat, { lean, dolly: 0, pitch: (DEFAULT_EGO_RIG.pitchDeg - DEFAULT_EGO_RIG.minPitchDeg) / (DEFAULT_EGO_RIG.maxPitchDeg - DEFAULT_EGO_RIG.minPitchDeg) });
+            const s = { x: VP.w * fx, y: VP.h * fy };
+            const a = r.screenToTableOrNull(s.x, s.y);
+            if (!a || !onTable(seat.table, a)) continue;
+            const { poses } = runSwitch(r, 'birdseye', s, 20);
+            const worst = Math.max(...poses.map((p) => px(screenOf(p, seat.angle, a), s)));
+            expect(worst, `${seat.format} seat ${seat.seat} lean ${lean}, cursor at ${s.x}, ${s.y}`).toBeLessThan(2);
+            checked++;
+          }
+        }
+      }
+    }
+    // Leaned all the way out beside the centre line (three players, Two-Headed Giant) little or none of the table shows.
+    expect(checked).toBeGreaterThan(2500);
+  });
+
+  it('the reviewer\'s cases: ego leaned beyond the side edge on three-player, four-player and Two-Headed Giant tables', () => {
+    const seatOf = (format: string, seat: number) => SEATS.find((x) => x.format === format && x.seat === seat)!;
+    const cases = [
+      { seat: seatOf('ffa3', 1), pan: -1500, s: { x: 36, y: 202 } },
+      { seat: seatOf('ffa4', 0), pan: -1500, s: { x: 396, y: 833 } },
+      { seat: seatOf('2hg', 0), pan: -800, s: { x: 252, y: 878 } },
+      { seat: seatOf('2hg', 1), pan: 800, s: { x: 972, y: 382 } },
+    ];
+    for (const c of cases) {
+      const rig = makeRig({ ...c.seat, rig: 'ego' });
+      for (let i = 0; i < 20; i++) rig.panBy(c.pan / 20, 0);
+      const a = rig.screenToTableOrNull(c.s.x, c.s.y)!;
+      expect(onTable(c.seat.table, a), c.seat.format).toBe(true);
+      const { poses } = runSwitch(rig, 'birdseye', c.s, 10);
+      for (const p of poses) expect(px(screenOf(p, c.seat.angle, a), c.s), `${c.seat.format} seat ${c.seat.seat}`).toBeLessThan(2);
+      // The bird's-eye centre stays beyond the table edge to hold the point; the next pan never jumps and only brings
+      // the view back toward the table.
+      const v = rig.bird.view;
+      expect(onTable(c.seat.table, { x: v.cx, y: v.cy }), c.seat.format).toBe(false);
+      // A pan moves the table by at most the drag, never more (no jump); outward it stops, inward it follows the drag.
+      const moved = (dx: number) => {
+        const before = rig.tableToScreen(a);
+        rig.panBy(dx, 0);
+        const after = rig.tableToScreen(a);
+        expect(Math.abs(after.y - before.y), c.seat.format).toBeLessThan(1e-6);
+        return after.x - before.x;
+      };
+      const out = moved(c.pan > 0 ? 1 : -1);
+      expect(Math.abs(out), c.seat.format).toBeLessThan(1e-6);
+      expect(moved(c.pan > 0 ? -1 : 1), c.seat.format).toBeCloseTo(c.pan > 0 ? -1 : 1, 6);
+      for (let i = 0; i < 400; i++) rig.panBy(c.pan > 0 ? -5 : 5, 0);
+      for (let i = 0; i < 400; i++) rig.panBy(c.pan > 0 ? 5 : -5, 0);
+      const w = rig.bird.view;
+      expect(onTable(c.seat.table, { x: w.cx, y: w.cy }), c.seat.format).toBe(true);
+    }
   });
 
   it('without a cursor the viewport centre is the anchor', () => {

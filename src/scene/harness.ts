@@ -22,7 +22,7 @@ import { mtgLayout } from '../games/mtg/layout';
 import { buildFormatState, buildHarnessState, harnessFaces, harnessGame, harnessLayout, harnessPrivateFaces, harnessReduce, type HarnessScenario } from './harness-fixture';
 import type { DropResult } from './snap';
 import { createTableScene, type SceneDebugCard } from './table-scene';
-import type { ScreenPoint, TablePoint, TableScene, ViewState } from './types';
+import type { CameraRig, ScreenPoint, TablePoint, TableScene, ViewState } from './types';
 
 export interface SceneHarnessApi {
   /** First frame drawn and every requested texture uploaded. */
@@ -47,6 +47,8 @@ export interface SceneHarnessApi {
   faceRequests(): { key: string; tier: ImageTier }[];
   /** While on, the scene's drafts are recorded but not applied (an asynchronous confirmation); off applies them. */
   hold(on: boolean): void;
+  /** Switch to Paper with this preferred camera rig (a theme switch: its default rig applies until the viewer chose one). */
+  themeWithRig(rig: CameraRig): void;
   /** Dispose the scene (leak checks). */
   dispose(): void;
 }
@@ -180,6 +182,7 @@ export function mount(target: HTMLElement): void {
         for (const a of queued) apply(a);
       }
     },
+    themeWithRig: (rig) => scene.setTheme({ ...paper, camera: { ...paper.camera, defaultRig: rig } }),
     dispose: () => scene.dispose(),
   };
 }

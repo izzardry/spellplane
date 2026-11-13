@@ -78,11 +78,14 @@ export function rayDir(pose: CameraPose, angleDeg: number, vp: Viewport, x: numb
   return add(add(b.d, b.r, nx), b.u, ny);
 }
 
-/** Table point (z = 0) under a screen point, or null when the ray misses the table plane (above the horizon). */
-export function unprojectToTable(pose: CameraPose, angleDeg: number, vp: Viewport, x: number, y: number): TablePoint | null {
+/**
+ * Table point under a screen point on the plane at height `z` (default the table, z = 0), or null when the ray misses
+ * that plane (above the horizon, or the plane is not below the camera).
+ */
+export function unprojectToTable(pose: CameraPose, angleDeg: number, vp: Viewport, x: number, y: number, z = 0): TablePoint | null {
   const dir = rayDir(pose, angleDeg, vp, x, y);
   if (!(dir[2] < -1e-9)) return null;
-  const k = -pose.position[2] / dir[2];
+  const k = (z - pose.position[2]) / dir[2];
   if (!(k > 0)) return null;
   return { x: pose.position[0] + dir[0] * k, y: pose.position[1] + dir[1] * k };
 }

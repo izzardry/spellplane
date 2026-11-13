@@ -152,9 +152,21 @@ export class BirdseyeRig {
     return { w: c * w + s * d, d: s * w + c * d };
   }
 
-  clampView(v: CameraView): CameraView {
+  /**
+   * Clamp a view to the zoom limits with its centre on the table. With `keep`, the centre may also stay as far beyond
+   * the table as `keep`'s centre is (the box grows to include it): a view whose centre a rig switch left beyond the
+   * table edge (to hold the cursor's table point) never jumps on the next pan, zoom or resize; panning only brings it
+   * back toward the table.
+   */
+  clampView(v: CameraView, keep?: { cx: number; cy: number }): CameraView {
     const dist = clamp(v.dist, this.minDist(), this.maxDist());
-    return { cx: clamp(v.cx, -this.table.w / 2, this.table.w / 2), cy: clamp(v.cy, -this.table.d / 2, this.table.d / 2), dist, angle: v.angle };
+    const hw = this.table.w / 2;
+    const hd = this.table.d / 2;
+    const x0 = keep ? Math.min(-hw, keep.cx) : -hw;
+    const x1 = keep ? Math.max(hw, keep.cx) : hw;
+    const y0 = keep ? Math.min(-hd, keep.cy) : -hd;
+    const y1 = keep ? Math.max(hd, keep.cy) : hd;
+    return { cx: clamp(v.cx, x0, x1), cy: clamp(v.cy, y0, y1), dist, angle: v.angle };
   }
 
   fitView(): CameraView {
@@ -179,7 +191,7 @@ export class BirdseyeRig {
     if (i.top === this.insets.top && i.right === this.insets.right && i.bottom === this.insets.bottom && i.left === this.insets.left) return;
     const wasFit = !this.anim && this.atFit();
     this.insets = i;
-    this.view = wasFit ? this.fitView() : this.clampView(this.view);
+    this.view = wasFit ? this.fitView() : this.clampView(this.view, this.view);
   }
 
   /** Table point under a canvas point (on the table plane). */
@@ -213,14 +225,14 @@ export class BirdseyeRig {
     const hw = this.table.w / 2;
     const hd = this.table.d / 2;
     if (Math.abs(v.cx) > hw || Math.abs(v.cy) > hd) v = around({ x: clamp(q.x, -hw, hw), y: clamp(q.y, -hd, hd) });
-    this.view = this.clampView(v);
+    this.view = this.clampView(v, this.view);
   }
 
   /** Move the table by (dx, dy) CSS px on screen, as if dragging it. */
   panBy(dx: number, dy: number): void {
     const k = this.pxPerMm();
     const [tx, ty] = rot2(-dx / k, dy / k, this.view.angle);
-    this.view = this.clampView({ ...this.view, cx: this.view.cx + tx, cy: this.view.cy + ty });
+    this.view = this.clampView({ ...this.view, cx: this.view.cx + tx, cy: this.view.cy + ty }, this.view);
   }
 
   /** Start release inertia with a screen velocity in CSS px per ms (pan release). */
@@ -273,7 +285,7 @@ export class BirdseyeRig {
     const decay = Math.exp(-dtMs / tau);
     const travel = tau * (1 - decay);
     const before = this.view;
-    this.view = this.clampView({ ...before, cx: before.cx + this.velocity.x * travel, cy: before.cy + this.velocity.y * travel });
+    this.view = this.clampView({ ...before, cx: before.cx + this.velocity.x * travel, cy: before.cy + this.velocity.y * travel }, before);
     this.velocity = { x: this.velocity.x * decay, y: this.velocity.y * decay };
     const speedPx = Math.hypot(this.velocity.x, this.velocity.y) * this.pxPerMm();
     // Stop at the table edge or when slow.
@@ -285,7 +297,7 @@ export class BirdseyeRig {
   resize(vp: Viewport): void {
     const wasFit = !this.anim && this.atFit();
     this.viewport = vp;
-    this.view = wasFit ? this.fitView() : this.clampView(this.view);
+    this.view = wasFit ? this.fitView() : this.clampView(this.view, this.view);
   }
 
   /** Change what the fitted view frames; a view that was fitted stays fitted. */
@@ -294,7 +306,7 @@ export class BirdseyeRig {
     if (f.x === frame.x && f.y === frame.y && f.w === frame.w && f.d === frame.d) return;
     const wasFit = !this.anim && this.atFit();
     this.frame = frame;
-    this.view = wasFit ? this.fitView() : this.clampView(this.view);
+    this.view = wasFit ? this.fitView() : this.clampView(this.view, this.view);
   }
 
   setTable(table: { w: number; d: number }, angle: number, frame: FrameBox = { x: 0, y: 0, w: table.w, d: table.d }): void {

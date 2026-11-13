@@ -36,6 +36,10 @@ import { basis, dot, poseAt, poseDist, posePxPerMm, projectPoint, rayDir, sub, t
 export const MAX_BIRDSEYE_TILT_DEG = 30;
 /** Pan inertia below this many CSS px per ms stops. */
 const INERTIA_STOP_PX_PER_MS = 0.005;
+/** Height of the highest thing the clip planes keep in view near the camera, mm (a lifted card on a tall pile). */
+const CLIP_TOP_MM = GEOMETRY.dragLift * 4;
+/** The near clip plane never comes closer than this, mm (the ego camera stays at least 120 mm above the table). */
+const MIN_NEAR_MM = 1;
 /** A screen point far outside any viewport: where points behind the camera "project". */
 const OFF_SCREEN = -1e9;
 
@@ -176,6 +180,33 @@ export class TableRig {
     return unprojectToTable(pose, this.angle, this.viewport, x, y);
   }
 
+  /**
+   * The (x, y) where the ray through a canvas point crosses the plane at height `z` (a card lying on a pile or lifted),
+   * or null when it does not cross it in front of the camera. In the ego rig a raised card's top shows well away from
+   * its footprint on the table, so picking tests each card at its own height.
+   */
+  screenToPlane(x: number, y: number, z: number, pose: CameraPose = this.pose()): TablePoint | null {
+    return unprojectToTable(pose, this.angle, this.viewport, x, y, z);
+  }
+
+  /**
+   * A card's on-screen height in CSS px (DESIGN "Specification", Texture tiers): the projected length of its long
+   * axis, between the midpoints of its near and far short edges, at height `z`, the card drawn at scale `k`. Straight
+   * down this is the card's height times the scale; in the ego rig it includes the foreshortening of a card lying flat.
+   * 0 when the card is behind the camera; when it straddles the camera plane, the scale at its centre.
+   */
+  cardScreenHeight(p: { x: number; y: number; rot: number }, z = 0, k = 1, pose: CameraPose = this.pose()): number {
+    const half = (GEOMETRY.card.h * k) / 2;
+    const r = p.rot * DEG;
+    // The card's own up axis in table space (rot is clockwise: rot2(0, 1, rot)).
+    const ux = Math.sin(r) * half;
+    const uy = Math.cos(r) * half;
+    const a = projectPoint(pose, this.angle, this.viewport, [p.x + ux, p.y + uy, z]);
+    const b = projectPoint(pose, this.angle, this.viewport, [p.x - ux, p.y - uy, z]);
+    if (!(a.depth > 1e-6) || !(b.depth > 1e-6)) return GEOMETRY.card.h * k * this.pxPerMmAt(p, z, pose);
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
   /** Table point under a canvas point; above the horizon, a point far away in that direction (nothing is there). */
   screenToTable(x: number, y: number, pose: CameraPose = this.pose()): TablePoint {
     const hit = this.screenToTableOrNull(x, y, pose);
@@ -196,7 +227,7 @@ export class TableRig {
     let max = -Infinity;
     for (const x of [x0, x1]) {
       for (const y of [y0, y1]) {
-        for (const z of [0, GEOMETRY.dragLift * 4]) {
+        for (const z of [0, CLIP_TOP_MM]) {
           const d = this.depthOf({ x, y }, z, pose);
           min = Math.min(min, d);
           max = Math.max(max, d);
@@ -204,6 +235,32 @@ export class TableRig {
       }
     }
     return { min, max };
+  }
+
+  /**
+   * The nearest depth at which anything at or below CLIP_TOP_MM can show inside the view: where the view's lowest row
+   * of rays (the bottom screen edge, the steepest) crosses that height. Infinity when no ray reaches it.
+   */
+  nearestVisibleDepth(pose: CameraPose = this.pose()): number {
+    const dir = rayDir(pose, this.angle, this.viewport, this.viewport.w / 2, this.viewport.h);
+    const drop = pose.position[2] - CLIP_TOP_MM;
+    if (!(dir[2] < -1e-9) || !(drop > 0)) return drop > 0 ? Infinity : 0;
+    return drop / -dir[2];
+  }
+
+  /**
+   * The camera's clip planes: near just in front of the nearest thing that can show (the table's nearest corner, or
+   * where the view's steepest ray reaches the height cards are drawn at when the camera is over the table), far behind
+   * the table's farthest corner (a tilted view sees past the table: what a theme draws beyond it is kept). Near never
+   * drops to a millimetre while far stays in metres: depth precision near the table stays fine (lit themes' thin card
+   * boxes and decals).
+   */
+  clipPlanes(pose: CameraPose = this.pose()): { near: number; far: number } {
+    const depth = this.depthRange(pose);
+    const nearest = Math.max(depth.min, Math.min(this.nearestVisibleDepth(pose), depth.max));
+    const near = Math.max(MIN_NEAR_MM, nearest / 2);
+    const far = pose.pitchDeg < 89.999 ? Math.max(depth.max + 400, depth.max * 4) : depth.max + 400;
+    return { near, far };
   }
 
   /** The view centre and its distance (the debug hook's table view). */
@@ -279,7 +336,7 @@ export class TableRig {
     // Tilted bird's-eye: the table point that was at (centre - d) comes to the centre.
     const vp = this.viewport;
     const p = this.screenToTable(vp.w / 2 - dx, vp.h / 2 - dy);
-    this.bird.view = this.bird.clampView({ ...this.bird.view, cx: p.x, cy: p.y });
+    this.bird.view = this.bird.clampView({ ...this.bird.view, cx: p.x, cy: p.y }, this.bird.view);
   }
 
   /** Zoom by `factor` (> 1 zooms in) keeping the table point under (x, y) fixed (ego: dolly toward it). */
@@ -307,7 +364,7 @@ export class TableRig {
       const q = { x: clamp(a.x, -hw, hw), y: clamp(a.y, -hd, hd) };
       t = solve(q, this.tableToScreen(q));
     }
-    b.view = b.clampView({ cx: t?.x ?? b.view.cx, cy: t?.y ?? b.view.cy, dist, angle: b.view.angle });
+    b.view = b.clampView({ cx: t?.x ?? b.view.cx, cy: t?.y ?? b.view.cy, dist, angle: b.view.angle }, b.view);
   }
 
   /** Start release inertia with a screen velocity in CSS px per ms (pan release). */
@@ -354,15 +411,19 @@ export class TableRig {
     } else if (table) {
       // Back to the bird's-eye zoom the viewer left, centred so the anchor stays put.
       // When that centre would leave the table (a table point the ego view shows near a screen edge, from a seat
-      // beside the table's centre line), zoom in just enough that it stays on the table (DECISIONS [M4-P1]).
+      // beside the table's centre line), zoom in just enough that it stays on the table. When no zoom can keep it on
+      // the table (the viewer leaned beyond the table's side edge), the centre stays beyond the edge at the zoom the
+      // viewer left: a table point the ego view shows is always held. The next pan or zoom only brings the centre back
+      // toward the table (BirdseyeRig.clampView with `keep`) (DECISIONS [M4-P1]).
       const b = this.bird;
       const hw = this.table.w / 2;
       const hd = this.table.d / 2;
       const at = (dist: number) => targetFor(this.birdPitch(), dist, b.fovDeg, this.angle, vp, table, screen);
       const onTable = (t: TablePoint | null) => t !== null && Math.abs(t.x) <= hw + 1e-6 && Math.abs(t.y) <= hd + 1e-6;
+      const pointOnTable = Math.abs(table.x) <= hw && Math.abs(table.y) <= hd;
       let dist = clamp(b.view.dist, b.minDist(), b.maxDist());
       let t = at(dist);
-      if (!onTable(t) && Math.abs(table.x) <= hw && Math.abs(table.y) <= hd && onTable(at(b.minDist()))) {
+      if (!onTable(t) && pointOnTable && onTable(at(b.minDist()))) {
         let lo = b.minDist();
         let hi = dist;
         for (let i = 0; i < 40; i++) {
@@ -373,7 +434,10 @@ export class TableRig {
         dist = lo;
         t = at(dist);
       }
-      if (t) b.view = b.clampView({ cx: t.x, cy: t.y, dist, angle: b.view.angle });
+      if (t) {
+        const v = { cx: t.x, cy: t.y, dist, angle: b.view.angle };
+        b.view = pointOnTable ? b.clampView(v, v) : b.clampView(v);
+      }
     }
     this.active = rig;
     this.sw = dur > 0 ? { from, fromRig, toRig: rig, start: now, dur, t: 0, anchor: table ? { table, screen } : null } : null;

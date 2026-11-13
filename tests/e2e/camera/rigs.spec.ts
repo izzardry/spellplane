@@ -14,7 +14,7 @@ import { addCard, dispatch, dist, harness, openScene, screenOf, settle, state, t
 const pose = (page: Page) => hook<CameraPose>(page, 'rig.pose');
 const blendOf = (page: Page) => hook<CameraBlendState | null>(page, 'rig.blend');
 const rigOf = (page: Page) => hook<string>(page, 'rig.rig');
-const toScreen = (page: Page, p: TablePoint) => harness(page, 'toScreen', p.x, p.y) as Promise<ScreenPoint | null>;
+const toScreen = (page: Page, p: TablePoint, z = 0) => harness(page, 'toScreen', p.x, p.y, z) as Promise<ScreenPoint | null>;
 const layoutOf = (page: Page) => harness(page, 'layout') as Promise<TableLayout>;
 const MIN_HEIGHT = 120;
 
@@ -366,6 +366,40 @@ test.describe('navigation in the ego rig', () => {
   });
 });
 
+test.describe('picking and theme defaults in the ego rig', () => {
+  test('a press on the top of a pile picks it where its top shows, not where its footprint lies on the table', async ({ page }) => {
+    // DESIGN "Camera and navigation": every gesture works the same in both rigs. In ego a card on a pile shows its top
+    // well beyond its footprint on the table.
+    await openScene(page, { scenario: 'demo' });
+    await page.evaluate(() => window.__spellplane!.rig!.setRig('ego', { animate: false }));
+    await page.evaluate(() => window.__sceneHarness!.camera.zoomTo('s0-l32'));
+    await settle(page);
+    const top = ((await harness(page, 'cards')) as { id: string; pose: { x: number; y: number; rot: number } }[]).find((c) => c.id === 's0-l32')!;
+    expect(top.pose.rot).toBe(0);
+    // The top of a 33-card library: 32 steps of 0.4 mm, plus the card's thickness.
+    const z = 32 * 0.4 + 0.6;
+    const inside = (await toScreen(page, { x: top.pose.x, y: top.pose.y + 88 / 2 - 3 }, z))!;
+    expect(await harness(page, 'cardAt', inside.x, inside.y)).toBe('s0-l32');
+    const beyond = (await toScreen(page, { x: top.pose.x, y: top.pose.y + 88 / 2 + 3 }, z))!;
+    expect(await harness(page, 'cardAt', beyond.x, beyond.y)).not.toMatch(/^s0-l/);
+  });
+
+  test('asking for the rig already shown is no choice: a later theme switch still applies its preferred rig', async ({ page }) => {
+    // DESIGN "Themes and rendering", Defaults: preferred camera rig.
+    await openScene(page);
+    expect(await rigOf(page)).toBe('birdseye');
+    await page.evaluate(() => window.__spellplane!.rig!.setRig('birdseye', { animate: false }));
+    await page.evaluate(() => window.__sceneHarness!.themeWithRig('ego'));
+    await settle(page);
+    expect(await rigOf(page)).toBe('ego');
+    // A real switch is a choice: the next theme's preference no longer applies.
+    await page.evaluate(() => window.__spellplane!.rig!.setRig('birdseye', { animate: false }));
+    await page.evaluate(() => window.__sceneHarness!.themeWithRig('ego'));
+    await settle(page);
+    expect(await rigOf(page)).toBe('birdseye');
+  });
+});
+
 test.describe('follow toggles', () => {
   test('follow the stack brings a new off-screen stack item into view; off, the camera stays', async ({ page }) => {
     await openScene(page);
@@ -446,5 +480,15 @@ test.describe('follow toggles', () => {
     await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 41 })));
     await settle(page);
     expect(await centreOf(0)).toBeLessThan(2);
+    // A release the page never saw (let go outside the window, a native context menu): the pointer's next move with
+    // no button down ends the press, and the waiting move runs.
+    const stale = await pose(page);
+    await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 42, buttons: 2 })));
+    await dispatch(page, { type: 'turnPass', by: 's0', cid: 'tp7', to: 's1' });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    expect(await pose(page)).toEqual(stale);
+    await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 42, buttons: 0 })));
+    await settle(page);
+    expect(await centreOf(1)).toBeLessThan(2);
   });
 });
