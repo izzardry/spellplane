@@ -33,7 +33,7 @@ import { TableRig, lateralOf } from './camera/rig';
 import { CardBoxes, CardLayer, ContactShadows, boxShape, legibleOutlineMm, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
 import { FOIL_SHEEN, TABLE_FOIL, foilHue, foilSheenColour } from './foil';
-import { ambientDue } from './pacing';
+import { ambientDue, uploadScale } from './pacing';
 import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
 import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
@@ -816,6 +816,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let drewLastTick = false;
   /** What the last drawn frame cost: the time from the tick that drew it to the next animation frame, ms. */
   let frameCost = 0;
+  /** The pointer position of the card drag the last tick followed. */
+  let dragDrawn: { x: number; y: number } | null = null;
 
   function tick(): void {
     if (disposed) return;
@@ -835,8 +837,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     if (drag) {
       followDrag();
-      changed = true;
-    }
+      // A held card redraws when the pointer moved (its springs keep it drawing while it catches up and tilts); a
+      // pointer held still over a card at rest needs no frames.
+      if (drag.last !== dragDrawn) changed = true;
+      dragDrawn = drag.last;
+    } else dragDrawn = null;
     const held = theme.cardDressing.held.lift;
     for (const rc of rcards.values()) {
       const lift = drag?.ids.includes(rc.id) ? held : 0;
@@ -854,7 +859,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
       if (rc.motion.moving) changed = true;
     }
-    if (faces.pump(frame)) changed = true;
+    if (faces.pump(frame, uploadScale(frameCost))) changed = true;
     // Ambient motion: what moves with nothing changing (ping fades, the pending pulse, a lit theme's light and
     // particles, the foil sheen). On a slow renderer it waits a few frame costs between frames (scene/pacing.ts).
     let ambient = pingsLive || (!reduced() && entries.some((e) => e.pending)) || animated();

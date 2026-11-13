@@ -545,7 +545,8 @@ test('text the HUD draws on a seat colour (the "asks" tag, the attribution flash
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openSolo(page, freshProfile(info));
   await expect(page.getByTestId('hud')).toBeVisible();
-  // Every flash name the page shows, read one frame after it appears (a flash lasts the ping fade time only).
+  // Every flash name the page shows, read as it appears (a flash lasts the ping fade time only; on a slow renderer the
+  // next animation frame can come after it is gone, so the computed style is read in the observer itself).
   await page.evaluate(() => {
     const w = window as unknown as { __whoSeen: { colour: string; background: string }[] };
     w.__whoSeen = [];
@@ -553,11 +554,11 @@ test('text the HUD draws on a seat colour (the "asks" tag, the attribution flash
       for (const r of records)
         for (const n of r.addedNodes) {
           if (!(n instanceof HTMLElement)) continue;
-          for (const who of [n, ...n.querySelectorAll<HTMLElement>('*')].filter((e) => e.classList.contains('who') && e.closest('[data-testid="attribution-flash"]')))
-            requestAnimationFrame(() => {
-              const cs = getComputedStyle(who);
-              w.__whoSeen.push({ colour: cs.color, background: cs.backgroundColor });
-            });
+          for (const who of [n, ...n.querySelectorAll<HTMLElement>('*')].filter((e) => e.classList.contains('who') && e.closest('[data-testid="attribution-flash"]'))) {
+            if (!who.isConnected) continue;
+            const cs = getComputedStyle(who);
+            w.__whoSeen.push({ colour: cs.color, background: cs.backgroundColor });
+          }
         }
     }).observe(document.body, { childList: true, subtree: true });
   });

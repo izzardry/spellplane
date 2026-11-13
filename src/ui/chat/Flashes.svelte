@@ -44,21 +44,28 @@
     return table.cards[f.card] ? (drawn[f.card] ?? null) : null;
   }
 
-  function frame() {
-    raf = 0;
-    if (active.length === 0) return;
+  /** Place every active flash over its card as the scene drew it last. */
+  function measure() {
     const drawn: Record<string, Box> = {};
     for (const c of scene()?.debug.cards() ?? []) if (c.visible) drawn[c.id] = { left: c.screen.x, top: c.screen.y, width: c.screen.width, height: c.screen.height };
     const next: Record<string, Box | null> = {};
     for (const f of active) next[f.id] = boxOf(f, drawn);
     boxes = next;
+  }
+
+  function frame() {
+    raf = 0;
+    if (active.length === 0) return;
+    measure();
     // Follow the camera and the card while the flash lasts.
     if (typeof requestAnimationFrame === 'function') raf = requestAnimationFrame(frame);
   }
 
   function start(f: Flash) {
     active = [...active, f];
-    if (!raf) frame();
+    // Shown at once: on a slow renderer the next animation frame can be seconds away, longer than the flash lasts.
+    if (raf) measure();
+    else frame();
     const t = setTimeout(() => {
       timers = timers.filter((x) => x !== t);
       active = active.filter((x) => x.id !== f.id);
