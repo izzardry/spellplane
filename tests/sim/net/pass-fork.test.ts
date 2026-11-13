@@ -40,6 +40,7 @@ function driverOver(start: TableState, secrets: SecretStore) {
   let state = start;
   let store = secrets;
   const sent: { to: string; packId: string; cards: string[] }[] = [];
+  const refused: { to: string; packId: string; cards: string[] }[] = [];
   const dispatched: ActionDraft[] = [];
   const listeners: ((a: Action, s: TableState) => void)[] = [];
   const host: DraftHost = {
@@ -57,7 +58,12 @@ function driverOver(start: TableState, secrets: SecretStore) {
     packSeed: () => Promise.reject(new Error('not in this test')),
     sendPack: (to, packId, cards) => {
       // The receiver's pair channel accepts exactly the pack as its visit starts in the confirmed state (net/private.ts).
-      if (cards.length > 0 && packHandOver(state, packId, cards, 's0', to) !== 'ok') throw new Error('refused');
+      // Hidden information (CLAUDE.md, shared leak rule): a pack's cards go only to the holder of its current visit, so
+      // every hand-over the driver attempts must be one the receiver's channel accepts.
+      if (cards.length > 0 && packHandOver(state, packId, cards, 's0', to) !== 'ok') {
+        refused.push({ to, packId, cards: cards.map((c) => c.instanceId) });
+        throw new Error('refused');
+      }
       sent.push({ to, packId, cards: cards.map((c) => c.instanceId) });
     },
     onPack: () => () => undefined,
@@ -75,6 +81,7 @@ function driverOver(start: TableState, secrets: SecretStore) {
   return {
     driver,
     sent,
+    refused,
     dispatched,
     secrets: () => store,
     held: () => store.draft!.held,
@@ -128,6 +135,7 @@ describe('the pass driver and a history the room abandons (M2 gate follow-up)', 
     ]);
     // And the copy for a re-send is kept, so s1's request is answered if the hand-over is lost.
     expect(ids(h.held()[SENT_PREFIX + id]!)).toEqual(ids(cards.slice(0, 2)));
+    expect(h.refused, 'no hand-over to a seat that does not hold the visit').toEqual([]);
     h.driver.dispose();
   });
 
@@ -147,6 +155,7 @@ describe('the pass driver and a history the room abandons (M2 gate follow-up)', 
     expect(h.dispatched.filter((d) => d.type === 'packPass').length).toBe(passes + 1);
     h.step(act('packPass', { packId: id, to: 's1', count: 2 }, 's0'));
     expect(h.sent.at(-1)).toEqual({ to: 's1', packId: id, cards: [cards[0]!.instanceId, cards[2]!.instanceId] });
+    expect(h.refused, 'no hand-over to a seat that does not hold the visit').toEqual([]);
     h.driver.dispose();
   });
 
@@ -163,6 +172,7 @@ describe('the pass driver and a history the room abandons (M2 gate follow-up)', 
     expect(Object.hasOwn(h.held(), id)).toBe(false);
     expect(ids(h.held()[POOL_KEY]!)).toEqual([cards[0]!.instanceId]);
     expect(h.sent).toHaveLength(1);
+    expect(h.refused, 'no hand-over to a seat that does not hold the visit').toEqual([]);
     h.driver.dispose();
   });
 
@@ -181,6 +191,7 @@ describe('the pass driver and a history the room abandons (M2 gate follow-up)', 
     h.step(act('pick', { packId: id, count: 1 }, 's0'));
     h.step(act('packPass', { packId: id, to: 's1', count: 3 }, 's0'));
     expect(h.sent.at(-1)).toEqual({ to: 's1', packId: id, cards: ids(cards.slice(0, 3)) });
+    expect(h.refused, 'no hand-over to a seat that does not hold the visit').toEqual([]);
     h.driver.dispose();
   });
 });
