@@ -4,9 +4,6 @@ import { describe, expect, it } from 'vitest';
 import { CAMERA } from '../../../src/core/geometry';
 import { blendPose } from '../../../src/scene/camera/blend';
 import { egoPose } from '../../../src/scene/camera/ego';
-import { createMaterialLibrary } from '../../../src/scene/materials';
-import { createPostPipeline } from '../../../src/scene/post';
-import { applyQuality } from '../../../src/scene/quality';
 import { DEFAULT_EGO_RIG, type CameraPose } from '../../../src/scene/types';
 import {
   CARD_FACE_MAX_SHADE,
@@ -121,9 +118,6 @@ describe('stubs name their package', () => {
   it.each([
     ['M4-P1', () => egoPose(DEFAULT_EGO_RIG, { w: 1400, d: 1100 }, 0, { lean: 0, dolly: 0, pitchDeg: 35 })],
     ['M4-P1', () => blendPose(pose, pose, 0.5, { w: 800, h: 600 }, null)],
-    ['M4-P2', () => createMaterialLibrary({} as never)],
-    ['M4-P2', () => createPostPipeline({} as never, {} as never, {} as never)],
-    ['M4-P2', () => applyQuality({} as never, paper.quality[0]!, paper.shadows)],
   ])('%s', (pkg, fn) => {
     expect(fn).toThrow(`not implemented: ${pkg}`);
   });

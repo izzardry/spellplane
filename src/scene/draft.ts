@@ -18,7 +18,8 @@ import { CAMERA, GEOMETRY } from '../core/geometry';
 import { seatsInOrder } from '../core/selectors';
 import type { CardRef, DraftCard, InstanceId, PackId, Pose, SeatId, TableState } from '../core/types';
 import type { CardData } from '../data/types';
-import type { Theme, ThemeInstance } from '../themes/types';
+import type { Theme } from '../themes/types';
+import { ThemeRuntime } from './theme-runtime';
 import { BirdseyeRig, NO_INSETS, type FrameBox, type Insets } from './camera';
 import { CardLayer, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures, faceKey } from './faces';
@@ -410,7 +411,8 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
 
   // The theme instance is built with the reduced-motion setting it runs under, and rebuilt when that setting changes.
   let builtReduced = opts.reducedMotion ?? false;
-  let themeInstance: ThemeInstance = theme.build({ renderer, scene, camera, table: geometry.table, quality: theme.quality[0]!, reducedMotion: builtReduced });
+  // The theme's lights, tone mapping and materials (M4-P2, scene/theme-runtime.ts); pre-game surfaces skip post-processing.
+  const themes = new ThemeRuntime(renderer, scene, camera, { post: false }, theme, { table: geometry.table, viewerAngle: 0, reducedMotion: builtReduced });
   const backOf = (t: Theme) => t.cardDressing.back ?? opts.game.cardBack;
   let back = backOf(theme);
   let faces = new FaceTextures(renderer, opts.faces, back);
@@ -441,9 +443,8 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   let lastSheen = 0;
   const reduced = () => view?.reducedMotion ?? opts.reducedMotion ?? false;
   function rebuildTheme(): void {
-    themeInstance.dispose();
     builtReduced = reduced();
-    themeInstance = theme.build({ renderer, scene, camera, table: geometry.table, quality: theme.quality[0]!, reducedMotion: builtReduced });
+    themes.setTheme(theme, { table: geometry.table, viewerAngle: 0, reducedMotion: builtReduced });
     dirty = true;
   }
 
@@ -594,6 +595,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   function resize(): void {
     const vp = viewport();
     renderer.setSize(vp.w, vp.h, false);
+    themes.setSize(vp.w, vp.h);
     rig.resize(vp);
     dirty = true;
   }
@@ -646,8 +648,8 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     }
     cards.setTextures(faces.textures());
     cards.write(draws);
-    themeInstance.update(0);
-    renderer.render(scene, camera);
+    themes.update(0);
+    themes.render(0);
     syncOverlay();
     dirty = false;
   }
@@ -1197,7 +1199,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('contextmenu', onContextMenu);
       removeEventListener('keydown', onKey);
-      themeInstance.dispose();
+      themes.dispose();
       faces.dispose();
       cards.dispose();
       outlineGeometry.dispose();

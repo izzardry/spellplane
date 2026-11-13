@@ -445,7 +445,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M3-G Gate (owner playtest pending)
 - [x] M4-C Contracts
 - [ ] M4-P1 Camera rigs
-- [ ] M4-P2 Lit pipeline
+- [x] M4-P2 Lit pipeline
 - [ ] M4-P3 Dusk
 - [ ] M4-P4 Wyrm
 - [ ] M4-P5 Stonetable
