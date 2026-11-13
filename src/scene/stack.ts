@@ -22,9 +22,24 @@ import { GEOMETRY } from '../core/geometry';
 import { pendingAbout } from '../core/reducer/confirm';
 import type { InstanceId, Pose, StackItem, StackItemId, TableState } from '../core/types';
 import type { Rect } from '../games/types';
+import type { CardDressing } from '../themes/types';
 import type { DebugParts } from '../util/debug';
 import { CARD_H, CARD_W, pointInCard, rot2 } from './math';
 import type { TablePoint } from './types';
+
+/** Outline width of a stack entry whose round is not waiting, mm. */
+export const ENTRY_OUTLINE_MM = 0.8;
+
+/**
+ * Outline of a stack entry: its controller's seat colour; while its confirmation round waits, the theme's pending
+ * treatment (`cardDressing.pending`, themes/signals.ts styles pendingConfirmation by it) pulsing in width, `pulse` 0..1
+ * (1 = steady under reduced motion). The colour change makes the signal readable on any table surface, also where a
+ * thin seat-coloured ring sits close to the table's own tone (Stonetable).
+ */
+export function entryOutline(pending: boolean, seatColour: string, dressing: Pick<CardDressing, 'pending'>, pulse: number): { colour: string; width: number } {
+  if (!pending) return { colour: seatColour, width: ENTRY_OUTLINE_MM };
+  return { colour: dressing.pending.colour, width: ENTRY_OUTLINE_MM + 1.4 * pulse };
+}
 
 /** Distance between consecutive items of the cascade, mm. */
 export const STACK_STEP = GEOMETRY.stackLane.cascadeOffset;
