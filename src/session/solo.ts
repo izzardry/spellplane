@@ -35,6 +35,7 @@ import {
   type UndoReveal,
   type ZoneId,
   undoPlan,
+  undoStackFromLog,
 } from '../core/index';
 import type { CardData } from '../data/types';
 import { SOLO_ROOM_ID } from '../store/tables';
@@ -138,6 +139,20 @@ class Solo implements SoloSession {
       snapshotSeq: init.snapshotSeq,
       lastSeq: init.state.seq,
     });
+    // After a reload Ctrl+Z goes on taking back the own most recent actions, from the stored snapshot on (M5-P6,
+    // core/undo.ts undoStackFromLog). A draw goes back on top of the library; another card returns to the hand's end.
+    const log = this.entries.flatMap((e) => (e.kind === 'action' && e.seq > init.snapshotSeq ? [{ ...e.action, seq: e.seq } as Action] : []));
+    if (log.length > 0) {
+      const base = init.snapshot.seq === init.snapshotSeq ? init.snapshot : { ...init.snapshot, seq: init.snapshotSeq };
+      this.undoStack = undoStackFromLog(base, log, this.seat).stack.map((e) => ({
+        cid: e.cid,
+        ...(e.group !== undefined ? { group: e.group } : {}),
+        inverse: e.inverse,
+        reveals: e.reveals,
+        hand: [],
+        library: e.drew !== undefined ? [e.drew] : [],
+      }));
+    }
   }
 
   // --- Reading -------------------------------------------------------------------------------------

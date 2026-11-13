@@ -58,7 +58,7 @@ import {
 } from '../core/secrets';
 import type { CardRef, Format, InstanceId, LogEntry, PackId, Pose, RngPurpose, SeatColourIndex, SecretStore, SeatId, ShuffleId, TableState, ZoneId } from '../core/types';
 import { isUndoable, type UndoableAction } from '../core/actions';
-import { undoPlan, type UndoReveal } from '../core/undo';
+import { builtOn, changedObjects, undoPlan, undoStackFromLog, type OthersChange, type UndoReveal } from '../core/undo';
 import type { CardData } from '../data/types';
 import type { PackSeed } from '../draft/types';
 import { draftCardsOver } from '../net/draftcards';
@@ -167,7 +167,12 @@ interface UndoEntry {
   reveals: UndoReveal[];
   hand: InstanceId[];
   library: InstanceId[];
+  /** What the action changed on the table (core/undo.ts changedObjects): another seat that changed it since built on it. */
+  changed: string[];
 }
+
+/** Other seats' changes kept for the built-on check (M5-P6), at most this many (older ones are long past any undo). */
+const KEEP_OTHERS = 2000;
 
 type PrivateLists = Pick<SecretStore, 'identities' | 'libraryOrder' | 'hand' | 'audit'>;
 
@@ -245,6 +250,8 @@ class NetTable implements NetSession, SessionRecovery {
   private readonly listeners = new Set<SessionListener>();
   private readonly netListeners = new Set<NetStatusListener>();
   private undoStack: UndoEntry[] = [];
+  /** Other seats' sequenced actions and what they changed, oldest first (core/undo.ts builtOn; M5-P6). */
+  private othersChanged: OthersChange[] = [];
   /** Own ids whose identity someone other than the owner saw since they were issued (core/secrets.ts disclosedBy). */
   private readonly exposed: Set<InstanceId>;
   /** Own randomness proposals by cid, for the integrity check when they come back sequenced. */
@@ -329,6 +336,7 @@ class NetTable implements NetSession, SessionRecovery {
       this.sec.seat,
     );
     this.saves = this.persistence(init.snapshot, init.snapshotSeq, init.lastSeq);
+    this.restoreUndo(init.snapshot, init.snapshotSeq);
     this.attach(engine);
     this.eveningImpl = new Evening(this.draftPort());
   }
@@ -924,6 +932,17 @@ class NetTable implements NetSession, SessionRecovery {
     let k = 1;
     if (top.group !== undefined) while (k < this.undoStack.length && this.undoStack[this.undoStack.length - 1 - k]!.group === top.group) k++;
     const batch = this.undoStack.slice(this.undoStack.length - k).reverse();
+    // Another player acted on what this step changed since: undoing it would take their change back too (DESIGN "Turn
+    // flow and confirmation": personal undo, no table-wide rewind). The step stays on the stack, refused (M5-P6).
+    for (const e of batch) {
+      const seq = this.seqOfOwn(e.cid);
+      const other = builtOn({ seq, changed: e.changed }, this.othersChanged);
+      if (other !== null) {
+        this.warn(`Cannot undo: ${this.seatName(other.by)} has acted on ${this.objectName(other.object)} since`);
+        this.notify();
+        return false;
+      }
+    }
     const group = batch.length > 1 ? randomId('g') : undefined;
     const undos = batch.map((e): ActionDraft => ({ type: 'undo', of: e.cid, inverse: e.inverse, ...(group ? { group } : {}) }));
     // Dry run on the view first: a group is undone completely or not at all.
@@ -961,6 +980,69 @@ class NetTable implements NetSession, SessionRecovery {
     });
     this.notify();
     return true;
+  }
+
+  // --- Undo hardening (M5-P6) -------------------------------------------------------------------------------
+
+  /**
+   * After a reload: the undo stack the stored log leaves (core/undo.ts undoStackFromLog), from the stored snapshot on,
+   * so Ctrl+Z goes on taking back this player's own most recent actions (DESIGN "Turn flow and confirmation", Undo).
+   * Actions inside the snapshot are past undoing. A draw goes back on top of the library; another card returns to the
+   * hand at its end (the hand's order before it is not in the log).
+   */
+  private restoreUndo(snapshot: TableState, snapshotSeq: number): void {
+    const log = this.entries.flatMap((e) => (e.kind === 'action' && e.seq > snapshotSeq ? [{ ...e.action, seq: e.seq } as Action] : []));
+    if (log.length === 0) return;
+    const base = snapshot.seq === snapshotSeq ? snapshot : { ...snapshot, seq: snapshotSeq };
+    const { stack, others } = undoStackFromLog(base, log, this.sec.seat);
+    this.othersChanged = others.slice(-KEEP_OTHERS);
+    this.undoStack = stack.map((e) => ({
+      cid: e.cid,
+      ...(e.group !== undefined ? { group: e.group } : {}),
+      inverse: e.inverse,
+      reveals: e.reveals,
+      hand: [],
+      library: e.drew !== undefined ? [e.drew] : [],
+      changed: e.changed,
+    }));
+  }
+
+  /** Keep what another seat's sequenced action changed (builtOn); a rewound or skipped stretch drops what it replaced. */
+  private noteOthers(action: SequencedAction, prior: TableState, next: TableState, exact: boolean): void {
+    if (!exact) {
+      this.othersChanged = this.othersChanged.filter((o) => o.seq < action.seq);
+      return;
+    }
+    if (action.by === this.seat || next === prior) return;
+    const changed = changedObjects(prior, next);
+    if (changed.length === 0) return;
+    this.othersChanged.push({ seq: action.seq, by: action.by, changed });
+    if (this.othersChanged.length > KEEP_OTHERS) this.othersChanged.splice(0, this.othersChanged.length - KEEP_OTHERS);
+  }
+
+  /** The seq an own action was sequenced at (latest), or undefined while it is pending. */
+  private seqOfOwn(cid: string): number | undefined {
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const e = this.entries[i]!;
+      if (e.kind === 'action' && e.action.cid === cid) return e.seq;
+    }
+    return undefined;
+  }
+
+  private seatName(seat: string): string {
+    const s = this.engine.confirmedState().seats[seat];
+    return s?.name ? s.name : seat;
+  }
+
+  /** How the undo refusal names an object (core/undo.ts changedObjects keys). */
+  private objectName(key: string): string {
+    if (key === 'turn') return 'the turn';
+    if (key.startsWith('line:')) return 'a line';
+    if (key.startsWith('item:')) return 'the stack';
+    const id = key.slice('card:'.length);
+    const ref = this.engine.confirmedState().cards[id]?.identity;
+    const name = ref ? this.cardData(ref)?.name : undefined;
+    return name ? name : 'that card';
   }
 
   // --- Internals: proposing ----------------------------------------------------------------------------------
@@ -1031,6 +1113,7 @@ class NetTable implements NetSession, SessionRecovery {
         reveals: plan.reveals,
         hand: [...handBefore],
         library: [...libraryBefore],
+        changed: changedObjects(before, reduce(before, { ...action, seq: before.seq + 1 } as Action)),
       });
     }
     this.followView(this.engine.state(), placementOf(action));
@@ -1175,6 +1258,7 @@ class NetTable implements NetSession, SessionRecovery {
       next = this.engine.confirmedState();
     }
     this.fold = next;
+    this.noteOthers(action, prior, next, exact);
     if (exact) for (const id of disclosedBy(this.sec, prior, action, next)) this.exposed.add(id);
     else if (next !== prior) {
       // A catch-up from a snapshot or a rewound history skipped the actions in between, and with them any reveal, look
@@ -1719,6 +1803,7 @@ class NetTable implements NetSession, SessionRecovery {
     this.sec = emptySecretStore(this.sec.seat);
     this.entries = this.entries.filter((e) => e.kind === 'system');
     this.undoStack = [];
+    this.othersChanged = [];
     this.exposed.clear();
     for (const m of [this.sentRandomness, this.privateBefore, this.turnUpAfter, this.turnUpDue, this.turnUpRefusals, this.reRevealAfter, this.revealsDue, this.refused, this.roundRefusals]) m.clear();
     this.reRevealDue = [];

@@ -358,3 +358,177 @@ function diff(before: TableState, got: TableState): { patch: RestorePatch; revea
   if (!same(before.teams, got.teams)) return null;
   return { patch, reveals };
 }
+
+// --- M5-P6: undo hardening ----------------------------------------------------------------------------------------
+
+/**
+ * What an action changed on the table, as object keys: `card:<id>` for every card whose record changed, `line:<id>`
+ * for every line added, removed or changed (and `card:<id>` for the cards it is anchored on), `item:<id>` for every
+ * stack item pushed, removed or changed (and its card and source), and `turn` when the turn marker moved. Zone orders,
+ * life totals, player counters and the confirmation round are left out: a change of their order or a delta on them
+ * composes with an undo and builds on nothing (M5-P6). Pure.
+ */
+export function changedObjects(before: TableState, after: TableState): string[] {
+  if (before === after) return [];
+  const out = new Set<string>();
+  const keys = (a: object, b: object): string[] => [...new Set([...Object.keys(a), ...Object.keys(b)])];
+  const anchored = (x: { from: { kind: string; id: string }; to: { kind: string; id: string } } | undefined): void => {
+    if (!x) return;
+    for (const end of [x.from, x.to]) if (end.kind === 'card') out.add(`card:${end.id}`);
+  };
+  if (before.cards !== after.cards) {
+    for (const id of keys(before.cards, after.cards)) {
+      const b = Object.hasOwn(before.cards, id) ? before.cards[id] : undefined;
+      const a = Object.hasOwn(after.cards, id) ? after.cards[id] : undefined;
+      if (b !== a && !same(b, a)) out.add(`card:${id}`);
+    }
+  }
+  if (before.lines !== after.lines) {
+    for (const id of keys(before.lines, after.lines)) {
+      const b = Object.hasOwn(before.lines, id) ? before.lines[id] : undefined;
+      const a = Object.hasOwn(after.lines, id) ? after.lines[id] : undefined;
+      if (b === a || same(b, a)) continue;
+      out.add(`line:${id}`);
+      anchored(b);
+      anchored(a);
+    }
+  }
+  if (before.stack !== after.stack) {
+    const was = new Map(before.stack.map((i) => [i.id, i] as const));
+    const now = new Map(after.stack.map((i) => [i.id, i] as const));
+    for (const id of new Set([...was.keys(), ...now.keys()])) {
+      const b = was.get(id);
+      const a = now.get(id);
+      if (same(b, a) && before.stack.indexOf(b!) === after.stack.indexOf(a!)) continue;
+      out.add(`item:${id}`);
+      for (const it of [b, a]) {
+        if (it?.card !== undefined) out.add(`card:${it.card}`);
+        if (it?.source !== undefined) out.add(`card:${it.source}`);
+      }
+    }
+  }
+  if (before.turn.active !== after.turn.active || before.turn.phase !== after.turn.phase || before.turn.number !== after.turn.number) out.add('turn');
+  return [...out].sort();
+}
+
+/** Another seat's sequenced action and what it changed (`changedObjects`), for `builtOn`. */
+export interface OthersChange {
+  seq: number;
+  by: string;
+  changed: readonly string[];
+}
+
+/**
+ * The first action of another seat, sequenced after `entry` (at `entry.seq`), that changed something `entry` changed:
+ * it built on the action, and undoing it would silently take that player's change back too (DESIGN "Turn flow and
+ * confirmation": personal undo, no table-wide rewind). Null when nothing did, or when `entry` is not sequenced yet
+ * (nobody can have built on it then). Pure.
+ */
+export function builtOn(entry: { seq?: number | undefined; changed: readonly string[] }, others: readonly OthersChange[]): (OthersChange & { object: string }) | null {
+  if (entry.seq === undefined || entry.changed.length === 0) return null;
+  const mine = new Set(entry.changed);
+  for (const o of others) {
+    if (o.seq <= entry.seq) continue;
+    const object = o.changed.find((k) => mine.has(k));
+    if (object !== undefined) return { ...o, object };
+  }
+  return null;
+}
+
+/** One undo step rebuilt from a stored log (`undoStackFromLog`). */
+export interface LoggedUndo {
+  cid: string;
+  group?: string;
+  seq: number;
+  inverse: UndoableAction;
+  reveals: UndoReveal[];
+  /** What the action changed (`changedObjects`). */
+  changed: string[];
+  /** A draw: the card drawn, which its undo puts back on top of the library. */
+  drew?: InstanceId;
+}
+
+/**
+ * Own actions after which nothing before them can be undone (DESIGN "Turn flow and confirmation", Undo: shuffles cannot
+ * be undone; session/net.ts and session/solo.ts clear their undo stack at the same points): Ready, a shuffle, a
+ * mulligan (it contains a shuffle) and a lost-save recovery. A private reorder of a whole zone (the solo table's
+ * shuffle) is one too (`undoStackFromLog`).
+ */
+const UNDO_BARRIERS: ReadonlySet<string> = new Set(['ready', 'shuffleCommit', 'mulligan', 'recover', 'recoverCommit']);
+
+/**
+ * The undo stack of `seat` as the stored log leaves it (M5-P6: undo after a reload), and every other seat's change
+ * since `start` (for `builtOn`). `start` is the stored snapshot and `log` the sequenced actions after it, in order
+ * (gap-free; replay stops at the first that does not follow). The stack holds the seat's undoable actions since its
+ * last barrier, minus those it already undid, each with the inverse planned on the state right before it; the draws of
+ * a mulligan or a recovery are part of it and stay off the stack, and steps that name ids a re-issue retired are
+ * dropped, as the live session does. Pure.
+ */
+export function undoStackFromLog(start: TableState, log: readonly Action[], seat: string): { stack: LoggedUndo[]; others: OthersChange[] } {
+  let stack: LoggedUndo[] = [];
+  const others: OthersChange[] = [];
+  let s = start;
+  /**
+   * The draws a mulligan or a recovery makes belong to it (session/net.ts clears the stack after them): undefined when
+   * none are owed, null while owed and not started, else the group of those draws ('' for a single draw).
+   */
+  let owed: string | null | undefined;
+  for (const a of log) {
+    if (a.seq !== s.seq + 1) break;
+    const before = s;
+    const next = reduce(before, a);
+    s = next.seq === a.seq ? next : { ...next, seq: a.seq };
+    if (a.by !== seat) {
+      if (s !== before) others.push({ seq: a.seq, by: a.by, changed: changedObjects(before, s) });
+      continue;
+    }
+    if (UNDO_BARRIERS.has(a.type)) {
+      stack = [];
+      if (a.type === 'mulligan' || a.type === 'recoverCommit') owed = null;
+      continue;
+    }
+    if (a.type === 'draw' && owed !== undefined) {
+      // The first draw after it starts them: a group of draws, or one draw alone.
+      if (owed === null) {
+        owed = a.group ?? '';
+        if (owed === '') owed = undefined;
+        continue;
+      }
+      if (a.group === owed) continue;
+      owed = undefined;
+    } else if (a.type !== 'shuffleDone' && a.type !== 'reorder') {
+      owed = undefined;
+    }
+    if (a.type === 'undo') {
+      stack = stack.filter((e) => e.cid !== a.of);
+      continue;
+    }
+    // The solo table's shuffle is a private reorder of the whole zone (session/solo.ts shuffleNow): a barrier too.
+    if (a.type === 'reorder' && a.reissue === undefined && a.count > 1 && a.count === (before.zones[a.zone]?.ids.length ?? -1)) {
+      stack = [];
+      continue;
+    }
+    if (a.type === 'reorder' && a.reissue !== undefined) {
+      const retired = before.zones[a.zone]?.ids ?? [];
+      stack = stack.filter((e) => {
+        const text = canonicalJson(e.inverse);
+        return !retired.some((id) => text.includes(id));
+      });
+      continue;
+    }
+    if (!isUndoable(a)) continue;
+    const { seq: _seq, ...unsequenced } = a;
+    const plan = undoPlan(before, unsequenced as Action);
+    if (!plan) continue;
+    stack.push({
+      cid: a.cid,
+      ...(a.group !== undefined ? { group: a.group } : {}),
+      seq: a.seq,
+      inverse: plan.inverse,
+      reveals: plan.reveals,
+      changed: changedObjects(before, s),
+      ...(a.type === 'draw' ? { drew: a.instanceId } : {}),
+    });
+  }
+  return { stack, others };
+}
