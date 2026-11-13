@@ -29,6 +29,9 @@ const GRID: Record<ImageTier, { cols: number; rows: number }> = {
 /** Slots per atlas page of a tier. */
 export const slotsPerLayer = (tier: ImageTier): number => GRID[tier].cols * GRID[tier].rows;
 
+/** Bytes of one atlas page of a tier (level 0), as TierArray.layerBytes; for the texture budget checks (M5-P6). */
+export const layerBytesOf = (tier: ImageTier): number => GRID[tier].cols * (IMAGE_TIERS[tier].width + 2 * SLOT_PAD) * GRID[tier].rows * (IMAGE_TIERS[tier].height + 2 * SLOT_PAD) * 4;
+
 export const TIER_INDEX: Record<ImageTier, number> = { small: 0, normal: 1, large: 2 };
 
 function makeArray(w: number, h: number, depth: number, anisotropy: number): THREE.DataArrayTexture {

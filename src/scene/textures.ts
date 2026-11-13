@@ -9,6 +9,11 @@
 import { IMAGE_TIERS, type ImageTier } from '../data/types';
 
 export const TEXTURE_CAP_BYTES = 400 * 1024 * 1024;
+/**
+ * Room kept free under the texture cap for render targets that come and go (a resize, a quality change), bytes: the
+ * face arrays may take the cap less the theme's own textures less this (scene/table-scene.ts faceBudget).
+ */
+export const FACE_BUDGET_HEADROOM = 16 * 1024 * 1024;
 export const TIERS: readonly ImageTier[] = ['small', 'normal', 'large'];
 
 /** GPU bytes per byte of level 0 with a full mip chain (the face arrays are mip-mapped). */
@@ -47,10 +52,25 @@ export interface CacheEntry {
   slot: number;
 }
 
+/**
+ * The decoded-texture cache: at most `cap` bytes, the least recently drawn texture evicted first, thumbnails pinned.
+ *
+ * Performance (M5-P6): every drawn card touches its texture once per frame, and an upload under the cap may evict
+ * several textures, so neither may scan the whole cache. Each tier keeps its evictable entries in a Map in order of
+ * their last draw (a touch moves an entry to the end), and pinned entries apart: the least recently drawn entry of a
+ * tier is the first of its Map, and the overall victim is the oldest of the three tiers' first entries. `examined`
+ * counts the entries looked at to find victims (the soak and unit tests check it stays independent of the cache size).
+ */
 export class TextureLru {
   readonly cap: number;
   bytes = 0;
+  /** Entries looked at while choosing victims, since construction (performance check). */
+  examined = 0;
   private entries = new Map<string, CacheEntry>();
+  /** Evictable entries per tier, oldest draw first. */
+  private readonly order: Record<ImageTier, Map<string, CacheEntry>> = { small: new Map(), normal: new Map(), large: new Map() };
+  /** The latest draw in each tier's order (an upper bound once its entry is gone). */
+  private readonly newest: Record<ImageTier, number> = { small: -Infinity, normal: -Infinity, large: -Infinity };
 
   constructor(cap = TEXTURE_CAP_BYTES) {
     this.cap = cap;
@@ -73,28 +93,62 @@ export class TextureLru {
   }
 
   touch(e: CacheEntry, frame: number): void {
-    if (frame > e.lastDrawn) e.lastDrawn = frame;
+    if (frame <= e.lastDrawn) return;
+    e.lastDrawn = frame;
+    if (e.pinned) return;
+    const id = this.id(e.key, e.tier);
+    if (this.order[e.tier].get(id) !== e) return;
+    // Drawn now: to the end of its tier's order.
+    this.order[e.tier].delete(id);
+    this.enqueue(id, e);
+  }
+
+  /** Append `e` to its tier's order; one drawn before the newest there (only tests do that) re-sorts the order. */
+  private enqueue(id: string, e: CacheEntry): void {
+    const q = this.order[e.tier];
+    q.set(id, e);
+    if (e.lastDrawn >= this.newest[e.tier]) {
+      this.newest[e.tier] = e.lastDrawn;
+      return;
+    }
+    const sorted = [...q.entries()].sort((a, b) => a[1].lastDrawn - b[1].lastDrawn);
+    q.clear();
+    for (const [k, v] of sorted) q.set(k, v);
   }
 
   add(e: CacheEntry): void {
     const id = this.id(e.key, e.tier);
     const old = this.entries.get(id);
-    if (old) this.bytes -= old.bytes;
+    if (old) this.remove(old);
     this.entries.set(id, e);
     this.bytes += e.bytes;
+    if (!e.pinned) this.enqueue(id, e);
   }
 
   remove(e: CacheEntry): void {
-    if (this.entries.delete(this.id(e.key, e.tier))) this.bytes -= e.bytes;
+    const id = this.id(e.key, e.tier);
+    if (this.entries.get(id) !== e) return;
+    this.entries.delete(id);
+    this.order[e.tier].delete(id);
+    this.bytes -= e.bytes;
+  }
+
+  /** The least recently drawn evictable entry of `tier` (not pinned, not drawn in `frame`). */
+  private oldest(frame: number, tier: ImageTier): CacheEntry | null {
+    const first = this.order[tier].values().next();
+    if (first.done === true) return null;
+    this.examined++;
+    // In draw order: if the oldest was drawn this frame, so were all the others.
+    return first.value.lastDrawn >= frame ? null : first.value;
   }
 
   /** Least recently drawn evictable entry (not pinned, not drawn in `frame`), optionally of one tier. */
   private victim(frame: number, tier?: ImageTier): CacheEntry | null {
+    if (tier) return this.oldest(frame, tier);
     let best: CacheEntry | null = null;
-    for (const e of this.entries.values()) {
-      if (e.pinned || e.lastDrawn >= frame) continue;
-      if (tier && e.tier !== tier) continue;
-      if (!best || e.lastDrawn < best.lastDrawn) best = e;
+    for (const t of TIERS) {
+      const e = this.oldest(frame, t);
+      if (e && (!best || e.lastDrawn < best.lastDrawn)) best = e;
     }
     return best;
   }
