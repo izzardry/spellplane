@@ -244,6 +244,38 @@ test('a long-press on empty table opens the table menu when the finger lifts; no
   expect(await radial(page)).toBeNull();
 });
 
+test('a second finger after a long-press makes it a camera gesture: the radial menu closes, the table menu never opens', async ({ page }, info) => {
+  const { bf } = await tableWithCards(page, info);
+  const id = bf[1]!;
+  const before = (await state(page)).cards[id]!.pose;
+  const a = centre(await card(page, id));
+  // Long-press on a card (the radial menu opens), then a second finger lands and the two pinch.
+  await holdDown(page, a);
+  expect(await radial(page)).not.toBeNull();
+  // Clear of the radial menu's slots, on the table.
+  const b = { x: a.x + 200, y: a.y };
+  await fingers(page, [{ type: 'down', id: 2, ...b }]);
+  await expect.poll(() => radial(page)).toBeNull();
+  const steps = [];
+  for (let i = 1; i <= 8; i++) steps.push({ type: 'move' as const, id: 1, x: a.x - i * 10, y: a.y, wait: 0 }, { type: 'move' as const, id: 2, x: b.x + i * 10, y: b.y });
+  await fingers(page, [...steps, { type: 'up', id: 1, x: a.x - 80, y: a.y, wait: 0 }, { type: 'up', id: 2, x: b.x + 80, y: b.y }]);
+  expect((await gestures(page)).some((g) => g.kind === 'twoFinger')).toBe(true);
+  await settled(page);
+  expect(await radial(page)).toBeNull();
+  expect((await state(page)).cards[id]!.pose).toEqual(before);
+
+  // Long-press on empty table, then a two-finger tap without moving: the fingers lift and no table menu opens.
+  const empty = await emptyTable(page, bf);
+  await holdDown(page, empty);
+  await fingers(page, [{ type: 'down', id: 2, x: empty.x + 80, y: empty.y, wait: 30 }, { type: 'up', id: 1, ...empty, wait: 0 }, { type: 'up', id: 2, x: empty.x + 80, y: empty.y }]);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await expect(page.getByTestId('context-menu')).toHaveCount(0);
+  // A plain long-press there still opens it (the fingers above were really seen as lifted).
+  await holdDown(page, empty);
+  await fingers(page, [{ type: 'up', id: 1, ...empty }]);
+  await expect(page.getByTestId('context-menu')).toBeVisible();
+});
+
 test('long-press then drag draws a line from the card to the card under the finger; the radial menu closes', async ({ page }, info) => {
   const { bf } = await tableWithCards(page, info);
   const a = centre(await card(page, bf[0]!));

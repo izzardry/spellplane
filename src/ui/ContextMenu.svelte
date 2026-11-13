@@ -4,6 +4,8 @@
 -->
 <script lang="ts">
   import type { MenuEntry } from './menu';
+  import { safeAreaInsets } from './touch/device';
+  import { clampMenu } from './touch/fan';
 
   let { title, entries, x, y, onclose }: { title: string; entries: MenuEntry[]; x: number; y: number; onclose: () => void } = $props();
 
@@ -13,7 +15,8 @@
   $effect(() => {
     const w = el?.offsetWidth ?? 220;
     const h = el?.offsetHeight ?? 300;
-    pos = { left: Math.max(4, Math.min(x, window.innerWidth - w - 4)), top: Math.max(4, Math.min(y, window.innerHeight - h - 4)) };
+    // Inside the screen and clear of the iPad's safe-area insets (zero elsewhere; M5-P1).
+    pos = clampMenu(x, y, w, h, window.innerWidth, window.innerHeight, safeAreaInsets());
   });
 
   function outside(e: PointerEvent) {

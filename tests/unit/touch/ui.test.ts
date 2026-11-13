@@ -4,10 +4,10 @@
 // cards; the device check that brings the thumb bar.
 import { describe, expect, it } from 'vitest';
 import type { ActionId } from '../../../src/games/types';
-import { fanLayout } from '../../../src/ui/hand';
+import { fanLayout, fitInsets } from '../../../src/ui/hand';
 import { RADIAL_SLOTS, TOUCH_TARGET_PX } from '../../../src/ui/touch/actions';
 import { blockPageGestures, touchDevice } from '../../../src/ui/touch/device';
-import { fanIndexAt, TOUCH_FAN_MARGIN_PX, touchFanLayout } from '../../../src/ui/touch/fan';
+import { clampMenu, fanIndexAt, THUMB_BAR_SPACE_PX, TOUCH_FAN_MARGIN_PX, touchFanLayout } from '../../../src/ui/touch/fan';
 import { RADIAL_RADIUS_PX, RADIAL_SLOT_PX, radialLayout, slotAction } from '../../../src/ui/touch/radial';
 
 describe('radial menu', () => {
@@ -99,6 +99,32 @@ describe('hand fan on a touch screen', () => {
     }
   });
 
+  it('keeps clear of the safe-area insets at the sides (PLAN M5 owner decisions: safe-area insets respected)', () => {
+    const insets = { left: 44, right: 30 };
+    for (const n of [5, 30]) {
+      for (const scroll of [0, 1e9]) {
+        for (const lifted of [null, 0, n - 1]) {
+          const t = touchFanLayout(n, vw, vh, lifted, scroll, insets);
+          // The resting cards stay inside the band between the insets (the scrolling fan's ends at its margin).
+          const ends = [t.boxes[0]!, t.boxes[n - 1]!];
+          if (scroll === 0 || t.maxScroll === 0) expect(ends[0]!.left).toBeGreaterThanOrEqual(insets.left - 1e-6);
+          if (scroll > 0 || t.maxScroll === 0) expect(ends[1]!.left + ends[1]!.width).toBeLessThanOrEqual(vw - insets.right + 1e-6);
+          if (lifted !== null) {
+            const b = t.boxes[lifted]!;
+            expect(b.left).toBeGreaterThanOrEqual(insets.left - 1e-6);
+            expect(b.left + b.width).toBeLessThanOrEqual(vw - insets.right + 1e-6);
+          }
+        }
+      }
+    }
+    const big = touchFanLayout(30, vw, vh, null, 0, insets);
+    expect(big.boxes[0]!.left).toBeCloseTo(insets.left + TOUCH_FAN_MARGIN_PX, 6);
+    // Less room, so further to scroll than without insets.
+    expect(big.maxScroll).toBeCloseTo(touchFanLayout(30, vw, vh, null, 0).maxScroll + insets.left + insets.right, 6);
+    // Zero insets change nothing.
+    expect(touchFanLayout(7, vw, vh, 2, 0, { left: 0, right: 0 })).toEqual(touchFanLayout(7, vw, vh, 2, 0));
+  });
+
   it('finds the card under a finger: the topmost covering box, else the nearest', () => {
     const boxes = touchFanLayout(30, vw, vh, null, 0).boxes;
     // Over card 3's uncovered strip.
@@ -107,6 +133,35 @@ describe('hand fan on a touch screen', () => {
     expect(fanIndexAt(boxes, 5000)).toBe(29);
     expect(fanIndexAt(boxes, -100)).toBe(0);
     expect(fanIndexAt([], 10)).toBe(-1);
+  });
+});
+
+describe('safe-area insets (PLAN M5 owner decisions: safe-area insets respected)', () => {
+  const safe = { top: 24, right: 10, bottom: 20, left: 12 };
+
+  it('the context menu stays inside the screen and clear of the insets', () => {
+    const w = 220;
+    const h = 300;
+    for (const [x, y] of [
+      [0, 0],
+      [1194, 834],
+      [600, 400],
+      [1100, 10],
+    ] as const) {
+      const p = clampMenu(x, y, w, h, 1194, 834, safe);
+      expect(p.left).toBeGreaterThanOrEqual(safe.left + 4);
+      expect(p.top).toBeGreaterThanOrEqual(safe.top + 4);
+      expect(p.left + w).toBeLessThanOrEqual(1194 - safe.right - 4);
+      expect(p.top + h).toBeLessThanOrEqual(834 - safe.bottom - 4);
+    }
+    // Without insets it is the old clamp: 4 px from each edge, opening at the point when it fits.
+    expect(clampMenu(600, 400, w, h, 1194, 834)).toEqual({ left: 600, top: 400 });
+    expect(clampMenu(1194, 834, w, h, 1194, 834)).toEqual({ left: 1194 - w - 4, top: 834 - h - 4 });
+  });
+
+  it('the fitted table keeps clear of the insets as well as of the screen layer inside them', () => {
+    expect(fitInsets(834, false, false, THUMB_BAR_SPACE_PX, safe)).toBe(`${74 + 24} ${0 + 10} ${Math.round(834 * 0.22) + 8 + THUMB_BAR_SPACE_PX + 20} ${190 + 12}`);
+    expect(fitInsets(834, true, false, 0, { top: 0, right: 0, bottom: 0, left: 0 })).toBe(fitInsets(834, true));
   });
 });
 

@@ -215,7 +215,13 @@
   const teamFanShown = $derived(!!session.team && Object.keys(st.teams).length > 0);
   /** The thumb action bar above the hand (touch screens; spectators act on nothing). */
   const thumbShown = $derived(touchUi && untrack(() => session.role) !== 'spectator');
-  const fitInsets = $derived(fitInsetsFor(vh, logOpen, teamFanShown, thumbShown ? THUMB_BAR_SPACE_PX : 0));
+  /** The device's safe-area insets (the iPad's home indicator and rounded corners; zeros elsewhere), read again on resize. */
+  const safeInsets = $derived.by(() => {
+    void vw;
+    void vh;
+    return safeAreaInsets();
+  });
+  const fitInsets = $derived(fitInsetsFor(vh, logOpen, teamFanShown, thumbShown ? THUMB_BAR_SPACE_PX : 0, safeInsets));
   /** Bottom of the block above the hand (toast, offer, prompt): above the teammate's fan and the thumb bar when shown. */
   const aboveHandBottom = $derived.by(() => {
     const thumb = thumbShown ? THUMB_BAR_SPACE_PX : 0;
@@ -664,7 +670,7 @@
     thumbBar: () => (thumbShown ? [...THUMB_BAR] : []),
   };
   /** Safe-area insets the radial menu keeps clear of (read when it opens). */
-  const radialInsets = $derived(radial ? safeAreaInsets() : { top: 0, right: 0, bottom: 0, left: 0 });
+  const radialInsets = $derived(safeInsets);
 
   // --- Scene ------------------------------------------------------------------------------------------------------
   $effect(() => {
@@ -1064,6 +1070,7 @@
       ondragout={(id, x, y) => dragOut(id, x, y)}
       onselect={(id) => (selection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id])}
       touch={touchUi}
+      insets={safeInsets}
       onradial={(id, x, y) => {
         menu = null;
         radial = id && !spectating ? { card: id, at: { x, y } } : null;

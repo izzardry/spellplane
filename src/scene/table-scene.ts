@@ -1224,6 +1224,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   // --- Pointer input ------------------------------------------------------------------------------------------------
   function onPointerDown(e: PointerEvent): void {
     if (touchInput.take(e)) {
+      if (touchInput.recognizer.fingers() > 1) touchSecondFinger({ x: e.clientX, y: e.clientY });
       try {
         canvas.setPointerCapture(e.pointerId);
       } catch {
@@ -1658,6 +1659,21 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       else marqueeEl.style.display = 'none';
     }
     dirty = true;
+  }
+
+  /**
+   * Another finger landed. Unless a captured drag ignores it, the touch is now a camera gesture (DESIGN "Input and
+   * interaction design", Touch: two-finger gestures always drive the camera): the radial menu a long-press opened
+   * closes, and the table menu a long-press on empty table would open when the fingers lift is dropped, even when the
+   * fingers then lift without moving.
+   */
+  function touchSecondFinger(at: ScreenPoint): void {
+    if (touchHold !== null && touchHold.kind !== 'pan') return;
+    touchTableMenu = null;
+    if (touchRadial) {
+      touchRadial = false;
+      opts.events.radialMenu?.(null, at);
+    }
   }
 
   /** After a finger lifted or was cancelled: a long-press on empty table opens the table menu once every finger is up. */

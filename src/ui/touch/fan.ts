@@ -10,6 +10,7 @@
 import { SCREEN_LAYER } from '../../core/geometry';
 import { CARD_ASPECT, fanLayout, type FanBox } from '../hand';
 import { TOUCH_TARGET_PX } from './actions';
+import { NO_EDGE_INSETS, type EdgeInsets } from './radial';
 
 /** Space kept at either screen edge by a scrolling fan, CSS px. */
 export const TOUCH_FAN_MARGIN_PX = 8;
@@ -22,17 +23,23 @@ export interface TouchFan {
   scroll: number;
 }
 
-export function touchFanLayout(n: number, vw: number, vh: number, lifted: number | null, scroll: number): TouchFan {
-  const desktop = fanLayout(n, vw, vh, null);
+/**
+ * `insets` are the device's left and right safe-area insets (PLAN Milestone 5, owner decisions: safe-area insets
+ * respected): the fan is laid out in the width between them, offsets still measured from the screen's left edge.
+ */
+export function touchFanLayout(n: number, vw: number, vh: number, lifted: number | null, scroll: number, insets: Pick<EdgeInsets, 'left' | 'right'> = NO_EDGE_INSETS): TouchFan {
+  const inL = Math.max(0, insets.left);
+  const iw = Math.max(0, vw - inL - Math.max(0, insets.right));
+  const desktop = fanLayout(n, iw, vh, null);
   const step = n > 1 ? desktop[1]!.left - desktop[0]!.left : Infinity;
-  if (step >= TOUCH_TARGET_PX) return { boxes: fanLayout(n, vw, vh, lifted), maxScroll: 0, scroll: 0 };
+  if (step >= TOUCH_TARGET_PX) return { boxes: fanLayout(n, iw, vh, lifted).map((b) => ({ ...b, left: b.left + inL })), maxScroll: 0, scroll: 0 };
   const h = vh * SCREEN_LAYER.handCardViewportFraction;
   const w = h * CARD_ASPECT;
   const total = w + (n - 1) * TOUCH_TARGET_PX;
-  const band = Math.max(w, vw - 2 * TOUCH_FAN_MARGIN_PX);
+  const band = Math.max(w, iw - 2 * TOUCH_FAN_MARGIN_PX);
   const maxScroll = Math.max(0, total - band);
   const s = Math.min(Math.max(0, Number.isFinite(scroll) ? scroll : 0), maxScroll);
-  const left0 = maxScroll > 0 ? TOUCH_FAN_MARGIN_PX - s : (vw - total) / 2;
+  const left0 = inL + (maxScroll > 0 ? TOUCH_FAN_MARGIN_PX - s : (iw - total) / 2);
   const boxes: FanBox[] = [];
   for (let i = 0; i < n; i++) {
     const left = left0 + i * TOUCH_TARGET_PX;
@@ -40,7 +47,7 @@ export function touchFanLayout(n: number, vw: number, vh: number, lifted: number
       const hh = vh * SCREEN_LAYER.handHoverViewportFraction;
       const hw = hh * CARD_ASPECT;
       const centred = left + w / 2 - hw / 2;
-      boxes.push({ left: Math.min(Math.max(0, centred), Math.max(0, vw - hw)), bottom: 0, width: hw, height: hh, z: n + 1 });
+      boxes.push({ left: inL + Math.min(Math.max(0, centred - inL), Math.max(0, iw - hw)), bottom: 0, width: hw, height: hh, z: n + 1 });
     } else boxes.push({ left, bottom: 0, width: w, height: h, z: i + 1 });
   }
   return { boxes, maxScroll, scroll: s };
@@ -70,3 +77,15 @@ export function fanIndexAt(boxes: readonly FanBox[], x: number): number {
  * border, 8 px clear of the fan), CSS px: the HUD's prompts above the hand and the table fit move up by it.
  */
 export const THUMB_BAR_SPACE_PX = 64;
+
+/**
+ * A menu of `w` × `h` CSS px opened at (x, y), moved in so it stays `margin` px inside the screen and clear of the
+ * safe-area insets (the context menu; PLAN Milestone 5, owner decisions: safe-area insets respected).
+ */
+export function clampMenu(x: number, y: number, w: number, h: number, vw: number, vh: number, insets: EdgeInsets = NO_EDGE_INSETS, margin = 4): { left: number; top: number } {
+  const lo = (inset: number) => Math.max(0, inset) + margin;
+  return {
+    left: Math.max(lo(insets.left), Math.min(x, vw - Math.max(0, insets.right) - margin - w)),
+    top: Math.max(lo(insets.top), Math.min(y, vh - Math.max(0, insets.bottom) - margin - h)),
+  };
+}

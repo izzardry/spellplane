@@ -16,6 +16,7 @@
   import CardFace from './CardFace.svelte';
   import { fanLayout } from './hand';
   import { fanIndexAt, touchFanLayout } from './touch/fan';
+  import { NO_EDGE_INSETS, type EdgeInsets } from './touch/radial';
 
   let {
     ids,
@@ -34,6 +35,7 @@
     onselect,
     touch = false,
     onradial,
+    insets = NO_EDGE_INSETS,
   }: {
     ids: InstanceId[];
     refOf: (id: InstanceId) => CardRef | null;
@@ -53,15 +55,17 @@
     touch?: boolean;
     /** A long-press on a card (touch): open the radial menu for it at (x, y); null closes it. */
     onradial?: (id: InstanceId | null, x: number, y: number) => void;
+    /** The device's safe-area insets, CSS px (the fan sits above the bottom one and between the side ones). */
+    insets?: EdgeInsets;
   } = $props();
 
   const hoveredIndex = $derived(hovered ? ids.indexOf(hovered) : -1);
   /** Sideways scroll of a touch fan, CSS px (clamped by the layout). */
   let scroll = $state(0);
-  const touchFan = $derived(touch ? touchFanLayout(ids.length, vw, vh, hoveredIndex >= 0 ? hoveredIndex : null, scroll) : null);
+  const touchFan = $derived(touch ? touchFanLayout(ids.length, vw, vh, hoveredIndex >= 0 ? hoveredIndex : null, scroll, insets) : null);
   const boxes = $derived(touchFan ? touchFan.boxes : fanLayout(ids.length, vw, vh, hoveredIndex >= 0 ? hoveredIndex : null));
-  /** Top edge of the resting fan; a drag that rises above it leaves the hand. */
-  const fanTop = $derived(vh - vh * 0.22);
+  /** Top edge of the resting fan (raised by the bottom safe-area inset); a drag that rises above it leaves the hand. */
+  const fanTop = $derived(vh - Math.max(0, insets.bottom) - vh * 0.22);
 
   let drag: { id: InstanceId; x: number; y: number; pointer: number } | null = null;
   let dragging = $state<InstanceId | null>(null);
@@ -104,7 +108,7 @@
     longPressTimer = null;
   }
   /** The fan's boxes without a lifted card (where the cards are, for the card under a finger). */
-  const flatBoxes = () => (touch ? touchFanLayout(ids.length, vw, vh, null, scroll).boxes : fanLayout(ids.length, vw, vh, null));
+  const flatBoxes = () => (touch ? touchFanLayout(ids.length, vw, vh, null, scroll, insets).boxes : fanLayout(ids.length, vw, vh, null));
 
   function onFanGesture(g: TouchGesture) {
     const f = finger;
