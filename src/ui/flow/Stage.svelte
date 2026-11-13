@@ -78,7 +78,7 @@
   {/if}
   {#if props.session.audit}
     <!-- The post-game audit (M5-P2): opens by itself when a game ends, in whatever stage follows. -->
-    <AuditPanel audit={props.session.audit} />
+    <AuditPanel audit={props.session.audit} playing={stage === 'match'} />
   {/if}
 </div>
 

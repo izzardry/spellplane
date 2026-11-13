@@ -5,14 +5,15 @@
   neutrally). One row per player of the finished game: verified (shuffles and draws checked), mismatch (every finding:
   which shuffle, reorder or draw, expected against found), could not be checked, or waiting for the player's records.
   It opens by itself when a game ends, can be closed, and reopened from its button; earlier games of the evening are
-  one click away. Not modal. Implementer: M5-P2.
+  one click away; it steps aside while a match is played. Not modal. Implementer: M5-P2.
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { AUDIT_STATUS_TEXT } from '../../core/audit';
   import type { AuditControls, AuditGameView, AuditSeatView } from '../../net/audit';
 
-  let { audit }: { audit: AuditControls } = $props();
+  /** `playing`: a match is on; the panel and its button step aside (the verdicts stay in the log). */
+  let { audit, playing = false }: { audit: AuditControls; playing?: boolean } = $props();
 
   let games = $state.raw<AuditGameView[]>(untrack(() => audit.games()));
   // A game that ended before this page opened (a reload) does not pop the panel up again.
@@ -32,6 +33,11 @@
     }),
   );
 
+  // A new match closes the panel: the table needs the room, and the next game's audit opens it again.
+  $effect(() => {
+    if (playing) open = false;
+  });
+
   const shown = $derived(picked === null ? games.at(-1) : games.find((g) => g.game.game === picked));
 
   function status(s: AuditSeatView): string {
@@ -43,7 +49,7 @@
   }
 </script>
 
-{#if shown}
+{#if shown && !playing}
   {#if open}
     <section class="audit" aria-label="Audit" data-testid="audit-panel" data-game={shown.game.game}>
       <header>
