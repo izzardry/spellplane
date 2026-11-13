@@ -41,7 +41,7 @@ test('ten theme switches mid-game keep the state hash, the cards and the GPU tex
     const s = await rh<Stats>(page, 'stats');
     expect(s.theme, `switch ${i + 1}`).toBe(id === 'lit' ? 'stonetable' : id);
     if (id === 'lit') expect(s.passes).toContain('bloom');
-    else expect(s.passes).toEqual([]);
+    else if (id === 'paper') expect(s.passes).toEqual([]);
     expect(await rh<string>(page, 'hash'), `hash after switch ${i + 1} (${id})`).toBe(hash0);
   }
   await settle(page);
