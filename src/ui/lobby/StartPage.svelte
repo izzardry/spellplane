@@ -26,7 +26,9 @@
     void identity
       .get()
       .then((me) => {
-        nickname = me.nickname;
+        // A nickname the player typed before the identity finished loading is kept (M3 gate: a fresh profile's empty
+        // stored nickname used to wipe it, leaving Join and Create disabled).
+        if (nickname === '') nickname = me.nickname;
         saved = me.nickname;
       })
       .catch((e: unknown) => (failure = `Your identity could not be loaded: ${e instanceof Error ? e.message : String(e)}`))

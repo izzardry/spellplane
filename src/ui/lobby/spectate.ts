@@ -5,7 +5,7 @@
  * the Svelte components stay thin and the rules are unit-tested.
  */
 import type { ActionDraft } from '../../core/actions';
-import { isSpectatorId, type SpectatorId } from '../../core/teams';
+import { isSpectatorId, TABLE_FORMAT_SEATS, type SpectatorId } from '../../core/teams';
 import type { CardRef, InstanceId, SeatId, SecretStore, Stage, TableState } from '../../core/types';
 import { spectatorsOf, type SpectatorInfo } from '../../net/roles';
 import type { PeerInfo } from '../../net/types';
@@ -93,6 +93,14 @@ export function seatedPlayers(state: TableState): { seat: SeatId; name: string; 
     .filter((s) => s.peer !== undefined || s.name.trim() !== '')
     .sort((a, b) => a.index - b.index)
     .map((s) => ({ seat: s.id, name: s.name || s.id, ready: s.ready === true, away: s.away === true }));
+}
+
+/**
+ * Whether the table has a chair nobody holds, so "Take a chair" can lead somewhere: fewer seated players than the
+ * format seats (DESIGN "Players, seats and formats", Spectators; M3 gate: no "Take a chair" at a full table).
+ */
+export function hasFreeChair(state: TableState): boolean {
+  return seatedPlayers(state).length < TABLE_FORMAT_SEATS[state.format];
 }
 
 /**

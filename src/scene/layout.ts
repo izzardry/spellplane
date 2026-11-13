@@ -303,22 +303,22 @@ const rectSegments = (r: Rect, out: number[], margin = 0) => {
 export const PILE_LABEL_GAP = 4;
 
 /**
- * Where a pile's label goes: beside the pile on the side that faces the seat's battlefield, reading away from it, when
- * the viewer reads along that side (the own seat and the one opposite); the 12 mm gap between two piles is too narrow
- * for type that stays legible at the fitted view (gate M1 finding). Seats the viewer sees sideways keep the label in
- * the gap below the pile.
+ * Where a pile's label goes: beside the pile on the side that faces the seat's battlefield, reading away from it; the
+ * 12 mm gap between two piles is too narrow for type that stays legible at the fitted view (gate M1 finding). The
+ * viewer reads it upright where that side runs along the viewer's reading direction (the own seat and the one
+ * opposite). A seat the viewer sees sideways (the side seats of a four-player table) has its piles in a row across the
+ * screen, where upright labels would run into each other (gate M3 finding): its labels turn a quarter to read away
+ * from the pile, like a book's spine.
  */
 export function pileLabelPlace(sl: SeatLayout, a: Pose, angle: number): { x: number; y: number; rot: number; anchorX: 'left' | 'center' | 'right'; anchorY: 'middle' } {
   const [localX] = rot2(a.x - sl.territory.x, a.y - sl.territory.y, -sl.angle);
   const [dx, dy] = rot2(localX > 0 ? -1 : 1, 0, sl.angle);
   const [vx, vy] = rot2(1, 0, angle);
   const along = dx * vx + dy * vy;
-  if (Math.abs(along) > 0.7) {
-    const off = CARD_W / 2 + PILE_LABEL_GAP;
-    return { x: a.x + dx * off, y: a.y + dy * off, rot: angle, anchorX: along < 0 ? 'right' : 'left', anchorY: 'middle' };
-  }
-  const [lx, ly] = rot2(0, CARD_H / 2 + 6, sl.angle);
-  return { x: a.x + lx, y: a.y + ly, rot: angle, anchorX: 'center', anchorY: 'middle' };
+  const off = CARD_W / 2 + PILE_LABEL_GAP;
+  if (Math.abs(along) > 0.7) return { x: a.x + dx * off, y: a.y + dy * off, rot: angle, anchorX: along < 0 ? 'right' : 'left', anchorY: 'middle' };
+  const [qx, qy] = rot2(1, 0, angle + 90);
+  return { x: a.x + dx * off, y: a.y + dy * off, rot: qx * dx + qy * dy > 0 ? angle + 90 : angle - 90, anchorX: 'left', anchorY: 'middle' };
 }
 
 /**

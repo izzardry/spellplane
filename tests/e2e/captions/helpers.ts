@@ -1,8 +1,9 @@
 /**
  * Browser-test helpers for dictation and captions (PLAN M3-P4): two pages at one table on the local transport, each
  * with its own profile, optionally with the fake speech engine (`?speech=fake`) and a stored talk mode that dictates
- * without a talk key (DESIGN "Chat and voice", Talk modes: dictation with an open gate). Card data comes from the
- * fixtures, faces are placeholders, nothing touches the network.
+ * while the talk key (V) or the talk mouse button (back) is held, without live audio (DESIGN "Chat and voice", Talk
+ * modes: "Dictation … while the talk key is held"). Card data comes from the fixtures, faces are placeholders, nothing
+ * touches the network.
  */
 import { expect, type Browser, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
 import type { InstanceId, LogEntry, SecretStore, TableState } from '../../../src/core/types';
@@ -19,10 +20,24 @@ export const log = (page: Page) => hook<LogEntry[]>(page, 'session.log');
 export const cards = (page: Page) => hook<SceneDebugCard[]>(page, 'cards');
 export const drawn = (page: Page) => hook<DebugCaption[]>(page, 'speech.drawn');
 export const held = (page: Page) => hook<Caption[]>(page, 'speech.captions');
-export const say = (page: Page, text: string, final = true) => hook<boolean>(page, 'speech.say', text, final);
+/**
+ * Push `text` through the fake engine once it listens (the engine starts a moment after the talk key went down);
+ * true once delivered. A call while nothing listens delivers nothing, so polling it is safe.
+ */
+export async function say(page: Page, text: string, final = true): Promise<boolean> {
+  await expect.poll(() => hook<boolean>(page, 'speech.say', text, final), { timeout: 15_000 }).toBe(true);
+  return true;
+}
 
-/** Talk mode that dictates without a key: open gate, dictation only. */
-export const DICTATE_OPEN: TalkSettings = { gate: 'open', voice: false, dictation: true, muted: false, mouseButton: null };
+/** Talk mode for the tests: push-to-talk with dictation and no live audio; the back mouse button (3) is a talk button too. */
+export const DICTATE_KEY: TalkSettings = { gate: 'ptt', voice: false, dictation: true, muted: false, mouseButton: 3 };
+
+/** Hold the talk key (V) on `page`, outside any text field, so dictation listens. */
+export async function holdTalk(page: Page): Promise<void> {
+  await page.bringToFront();
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.());
+  await page.keyboard.down('v');
+}
 
 /** Store a setting in the profile's IndexedDB (as the settings panel would), before the table opens. */
 async function storeSetting(page: Page, profile: string, name: string, value: unknown): Promise<void> {
@@ -67,7 +82,7 @@ export interface Table {
 
 /**
  * Anna (s0) and Ben (s1) at one table, game started, both shuffled and holding seven. With `speech`, both pages run
- * the fake engine and dictate with an open gate.
+ * the fake engine and dictate while the talk key is held (`holdTalk`).
  */
 export async function startTable(browser: Browser, info: TestInfo, opts: { speech: boolean }): Promise<Table> {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -80,7 +95,7 @@ export async function startTable(browser: Browser, info: TestInfo, opts: { speec
     // The start page creates the profile's database; the talk mode is stored before the table opens.
     await page.goto(url(profile, opts.speech));
     await expect.poll(() => page.evaluate(() => typeof window.__spellplane === 'object')).toBe(true);
-    if (opts.speech) await storeSetting(page, profile, 'talk', DICTATE_OPEN);
+    if (opts.speech) await storeSetting(page, profile, 'talk', DICTATE_KEY);
     await page.goto(url(profile, opts.speech, `/t/${room.roomId}/${room.roomKey}`));
     await expect(page.getByTestId('lobby')).toBeVisible({ timeout: 15_000 });
     pages.push(page);

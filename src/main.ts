@@ -110,14 +110,13 @@ async function boot(el: HTMLElement): Promise<void> {
         generatePack,
       };
       // `#/t/<room>/<key>/watch`: a spectator without a chair, keeping nothing in the local store (M3-P5).
+      // Live voice (M3-P3): the microphone is acquired only when the player clicks "Join voice". Dictation (M3-P4): the
+      // fake engine replaces the others with `?speech=fake`. A spectator only shows the players' captions.
+      const voice = { media: pageMedia(), settings: stores.settings, engines: flags().speech === 'fake' ? [FAKE_SPEECH] : Object.values(SPEECH_ENGINES) };
       session = as.watch
-        ? await openSpectatorSession({ ...options, role: 'spectator' }, joining.signal)
+        ? await openSpectatorSession({ ...options, role: 'spectator', voice }, joining.signal)
         : await openNetSession(
-            {
-              ...options,
-              // Live voice (M3-P3): the microphone is acquired only when the player clicks "Join voice".
-              voice: { media: pageMedia(), settings: stores.settings, engines: flags().speech === 'fake' ? [FAKE_SPEECH] : Object.values(SPEECH_ENGINES) },
-            },
+            { ...options, voice },
             // BroadcastChannel peers connect at once; over Trystero they come up seconds after the join.
             { createdHere: createdHere(link.roomId), loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS },
             joining.signal,

@@ -34,6 +34,8 @@ import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
 import { roleProblem, spectatorChatName, spectatorRevealsOver, SPECTATOR_DEFAULT_NAME } from '../net/roles';
 import type { NetEngine, Presence, Unsubscribe } from '../net/types';
+import type { CaptionControls } from '../voice/types';
+import { watchCaptions } from './captions';
 import { freshNetTable } from './net';
 import { randomId } from './secrecy';
 import type { DeckImport, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
@@ -75,6 +77,8 @@ export class SpectatorTable implements NetSession {
   private held: SeatId | null = null;
   /** The nickname the engine announced in the handshake, which the sequencer checks a chat's `name` against. */
   private readonly name: string;
+  /** The players' captions, shown and never dictated (session/captions.ts watchCaptions); set once joined with voice options. */
+  captions?: CaptionControls;
 
   constructor(
     readonly engine: NetEngine,
@@ -171,6 +175,7 @@ export class SpectatorTable implements NetSession {
   leave(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.captions?.dispose();
     for (const u of this.unsubs.splice(0)) u();
     this.engine.leave();
     this.notifyNet();
@@ -382,5 +387,6 @@ export async function openSpectatorSession(opts: NetSessionOptions, signal?: Abo
     session.leave();
     throw e;
   }
+  if (opts.voice) session.captions = watchCaptions(session, opts.voice.settings, opts.now);
   return session;
 }

@@ -13,7 +13,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { DebugStackEntry } from '../../../src/scene/stack';
 import type { DebugCaption } from '../../../src/scene/types';
-import { centreOf, drawn, held, lastAction, log, playCard, say, startTable, state, type Table } from './helpers';
+import { centreOf, drawn, held, holdTalk, lastAction, log, playCard, say, startTable, state, type Table } from './helpers';
 
 let table: Table | null = null;
 test.afterEach(async () => {
@@ -53,7 +53,8 @@ test.describe('captions with the fake engine', () => {
     // Moving away: the caption follows the last touched card, not a hovered one.
     await a.mouse.move(720, 120);
 
-    expect(await engineOf(a)).toBe('fake');
+    await holdTalk(a);
+    await expect.poll(() => engineOf(a)).toBe('fake');
     // Interim words: one growing bubble at the card on both pages, nothing in the log yet.
     expect(await say(a, 'two damage', false)).toBe(true);
     for (const p of [a, b]) {
@@ -99,6 +100,7 @@ test.describe('captions with the fake engine', () => {
     await a.evaluate(() => window.__spellplane!.dispatch!({ type: 'turnPass', to: 's1' } as never));
     await expect.poll(async () => (await state(b)).turn.active, { timeout: 15_000 }).toBe('s1');
 
+    await holdTalk(a);
     expect(await say(a, 'your go', true)).toBe(true);
     const vh = 900;
     await Promise.all(
@@ -145,6 +147,7 @@ test.describe('captions with the fake engine', () => {
     await a.mouse.move(m.x + m.width / 2 - 4, m.y + m.height / 2 - 4);
     await a.mouse.move(m.x + m.width / 2, m.y + m.height / 2, { steps: 3 });
 
+    await holdTalk(a);
     expect(await say(a, 'that trigger', true)).toBe(true);
     for (const p of [a, b]) {
       const c = await bubble(p, 'that trigger');
@@ -159,12 +162,16 @@ test.describe('captions with the fake engine', () => {
     table = await startTable(browser, info, { speech: true });
     const { a, b } = table;
     const card = await playCard(table);
+    await a.bringToFront();
     const at = await centreOf(a, card);
     await a.mouse.move(at.x, at.y, { steps: 3 });
     await a.keyboard.press('n');
     const input = a.getByTestId('note-input');
     await expect(input).toBeFocused();
     await input.fill('kicked');
+    // In a text field the talk key types; the talk mouse button (here the back button, which Playwright's mouse cannot
+    // press, so the event is dispatched) held over the field dictates into it.
+    await input.dispatchEvent('mousedown', { button: 3, bubbles: true });
     expect(await say(a, 'gets plus two', false)).toBe(true);
     await expect(input).toHaveValue('kicked gets plus two');
     expect(await say(a, 'gets plus two until end of turn', true)).toBe(true);
@@ -178,6 +185,7 @@ test.describe('captions with the fake engine', () => {
     // With the field closed, dictation is a caption again.
     expect(await say(a, 'and a caption', true)).toBe(true);
     await bubble(b, 'and a caption');
+    await a.dispatchEvent('body', 'mouseup', { button: 3, bubbles: true });
   });
 });
 

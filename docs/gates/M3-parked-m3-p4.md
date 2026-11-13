@@ -1,5 +1,7 @@
 # M3-P4 Dictation and captions: parked
 
+> **Update (M3 gate fix round):** merged into `m3` (`merge(m3): M3-P4 Dictation and captions`). The six conflicts were resolved as step 1 below describes; `pnpm check` and the captions browser specs pass on the merged branch. Step 3 (a review round on `7bcb393` plus the merge) and step 4 (measuring FINAL_GRACE_MS from the owed transcription) have not run. See DECISIONS `[M3-G]`.
+
 - **Status:** parked, not merged into `m3`. The pipeline stopped after three review rounds without a clean review. The last review (of the round-2 code) left one blocking finding, quoted below. The implementer's round-3 commit targets exactly that finding, but no review round checked that commit.
 - **Branch:** `m3-p4` (worktree `spellplane-wt/m3-p4`), head `7bcb393 fix(m3-p4): review round 3 — quick presses keep owed finals, seat glyph on captions, unavailable engine statement`. Four commits on top of `f36ef9a feat(m3-c): contracts`. The branch has no remote copy (`origin/m3-p4` does not exist). The working tree is clean.
 - **Behind `m3`:** M3-P1, M3-P5, M3-P3 and M3-P2 were merged into `m3` after the branch was cut. `git merge-tree m3 m3-p4` reports conflicts in six files: `docs/DECISIONS.md`, `src/main.ts`, `src/scene/table-scene.ts`, `src/session/net.ts`, `src/ui/Hud.svelte` and `tests/unit/core/m3-contracts.test.ts`. Most of them come from M3-P3 (Voice), which also mounts in `openNetSession` and wires the talk key in the HUD.

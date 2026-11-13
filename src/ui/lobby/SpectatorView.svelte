@@ -19,7 +19,7 @@
   import { tokensToCssVars } from '../../themes/index';
   import Hud from '../Hud.svelte';
   import type { LobbyProps } from '../types';
-  import { heldChairOf, playHash, seatedPlayers, shownToMe, stageText, watchers } from './spectate';
+  import { hasFreeChair, heldChairOf, playHash, seatedPlayers, shownToMe, stageText, watchers } from './spectate';
 
   let props: LobbyProps & { createScene: CreateTableScene; faces: FaceSource; cardData: CardDataSource; settings?: SettingsStore | undefined; sets?: SetDataSource | undefined } = $props();
 
@@ -97,7 +97,7 @@
           {#each g.cards as c, i (c.id)}<span class="card" data-testid="spectator-shown-card" data-card={c.id}>{nameOf(c.ref.sid)}</span>{i < g.cards.length - 1 ? ', ' : ''}{/each}
         </span>
       {/each}
-      {#if stage === 'match'}<a href={playHash(props.link)} class="play">Take a chair</a>{/if}
+      {#if stage === 'match' && hasFreeChair(st)}<a href={playHash(props.link)} class="play" data-testid="take-chair">Take a chair</a>{/if}
     </aside>
   {/if}
 </div>

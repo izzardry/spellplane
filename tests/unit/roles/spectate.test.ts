@@ -10,7 +10,7 @@ import { emptySecretStore, receiveIdentity } from '../../../src/core/secrets';
 import { spectatorIdOf } from '../../../src/core/teams';
 import type { TableState } from '../../../src/core/types';
 import { logLines } from '../../../src/ui/describe';
-import { handOf, isWatchLink, playHash, revealHandDrafts, seatedPlayers, shownToMe, stageText, watchers, watchUrl } from '../../../src/ui/lobby/spectate';
+import { handOf, hasFreeChair, isWatchLink, playHash, revealHandDrafts, seatedPlayers, shownToMe, stageText, watchers, watchUrl } from '../../../src/ui/lobby/spectate';
 import { parseRoute, routeHash } from '../../../src/ui/routes';
 import { baseTable, libraryIds } from '../../sim/net/sim';
 
@@ -107,6 +107,13 @@ describe('what a spectator sees', () => {
       ['s0', 'P0'],
       ['s1', 'P1'],
     ]);
+  });
+
+  it('offers "Take a chair" only while the format has a chair nobody holds', () => {
+    expect(hasFreeChair(baseTable(2).state)).toBe(false);
+    expect(hasFreeChair(baseTable(4).state)).toBe(false);
+    expect(hasFreeChair(baseTable(3, { format: 'ffa4' }).state)).toBe(true);
+    expect(hasFreeChair(baseTable(1, { format: '1v1' }).state)).toBe(true);
   });
 
   it('names a spectator’s chat line by its nickname, never by its id', () => {

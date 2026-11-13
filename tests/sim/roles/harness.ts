@@ -19,7 +19,7 @@ export interface Watcher {
 let n = 0;
 
 /** Open a spectator's page on `network` for the harness room and wait until it joined. */
-export async function watch(network: LoopbackNetwork, name: string, peerId: string, nickname = name): Promise<Watcher> {
+export async function watch(network: LoopbackNetwork, name: string, peerId: string, nickname = name, opts: { captions?: boolean } = {}): Promise<Watcher> {
   const stores = await openStores(`watch-${name}-${++n}-${Math.random().toString(36).slice(2, 8)}`);
   const session = await settle(
     openSpectatorSession({
@@ -31,6 +31,8 @@ export async function watch(network: LoopbackNetwork, name: string, peerId: stri
       identity: { keyPair: {} as CryptoKeyPair, peerId, nickname, seatColour: 0 },
       store: stores.tables,
       role: 'spectator',
+      // Captions are shown only (session/captions.ts watchCaptions): no engine, no microphone.
+      ...(opts.captions ? { voice: { media: {} as never, settings: stores.settings, engines: [] } } : {}),
     }),
     30_000,
     `${name} to join as a spectator`,

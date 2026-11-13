@@ -172,7 +172,49 @@ describe('log lines (DESIGN "Turn flow and confirmation", Action log)', () => {
       ],
       (s) => (s.seats.s0!.life = 18),
     );
-    expect(ls.map(text)).toEqual(['Anna Anna: 20 → 14', 'Anna Anna: 14 → 18']);
+    expect(ls.map(text)).toEqual(['Anna 20 → 14', 'Anna 14 → 18']);
+    // Rendered "Anna: 20 → 14": the actor's own life joins actor and text with a colon.
+    expect(ls.map((l) => l.joined)).toEqual([true, true]);
+  });
+
+  it('says "takes a seat" once per chair: a colour change, a rename and a chair move read as such (M3 gate)', () => {
+    const ls = lines([
+      entry(1, 0, { type: 'seatTake', by: 's0', seat: 's0', name: 'Anna', colour: 0, peer: 'pa' }),
+      entry(2, 0, { type: 'seatTake', by: 's1', seat: 's1', name: 'Ben', colour: 1, peer: 'pb' }),
+      entry(3, 0, { type: 'seatTake', by: 's1', seat: 's1', name: 'Ben', colour: 1, peer: 'pb' }),
+      entry(4, 0, { type: 'seatTake', by: 's0', seat: 's0', name: 'Anna', colour: 3, peer: 'pa' }),
+      entry(5, 0, { type: 'seatTake', by: 's0', seat: 's0', name: 'Anna', colour: 3, peer: 'pa' }),
+    ]);
+    expect(ls.map(text)).toEqual(['Anna takes a seat', 'Ben takes a seat', 'Anna changes their seat colour']);
+    const renamed = lines([
+      entry(1, 0, { type: 'seatTake', by: 's1', seat: 's1', name: 'Player', colour: 1, peer: 'pb' }),
+      // The first nickname over the placeholder is no rename.
+      entry(2, 0, { type: 'seatTake', by: 's1', seat: 's1', name: 'Benny', colour: 1, peer: 'pb' }),
+      entry(3, 0, { type: 'seatTake', by: 's1', seat: 's1', name: 'Ben', colour: 1, peer: 'pb' }),
+      entry(4, 0, { type: 'seatTake', by: 's0', seat: 's0', name: 'Ben', colour: 1, peer: 'pb', group: 'g1' }),
+      entry(5, 0, { type: 'seatLeave', by: 's1', seat: 's1', group: 'g1' }),
+    ]);
+    expect(renamed.map(text)).toEqual(['Ben takes a seat', 'Ben changes their name from Benny', 'Anna moves to another chair']);
+  });
+
+  it('names a team life change once and uses "an" before a vowel (M3 gate)', () => {
+    const ls = lines([entry(1, 0, { type: 'lineAdd', by: 's0', line: 'l1', kind: 'attack', from: { kind: 'card', id: 'bf1' }, to: { kind: 'seat', id: 's1' } })]);
+    expect(ls.map(text)).toEqual(['Anna draws an attack line']);
+    const team = lines(
+      [entry(1, 0, { type: 'life', by: 's1', seat: 's1', delta: -2 }), entry(2, 5000, { type: 'life', by: 's1', seat: 's0', delta: -1 })],
+      (s) => {
+        s.teams = { t0: { id: 't0', seats: ['s0', 's1'], life: 27, counters: {} } };
+        s.seats.s0!.team = 't0';
+        s.seats.s1!.team = 't0';
+      },
+    );
+    expect(team.map(text)).toEqual(['Ben team 30 → 28', 'Ben team 28 → 27']);
+    expect(team.map((l) => l.joined)).toEqual([true, true]);
+    const opponent = lines([entry(1, 0, { type: 'life', by: 's1', seat: 's0', delta: -2 })], (s) => {
+      s.teams = { t0: { id: 't0', seats: ['s0'], life: 28, counters: {} } };
+      s.seats.s0!.team = 't0';
+    });
+    expect(opponent.map(text)).toEqual(['Ben changes life of Anna: 30 → 28']);
   });
 
   it('does not merge changes by different players or to different seats', () => {
@@ -187,7 +229,8 @@ describe('log lines (DESIGN "Turn flow and confirmation", Action log)', () => {
         s.seats.s0!.life = 19;
       },
     );
-    expect(ls.map(text)).toEqual(['Anna Ben: 20 → 18', 'Ben Ben: 18 → 17', 'Ben Anna: 20 → 19']);
+    expect(ls.map(text)).toEqual(['Anna changes life of Ben: 20 → 18', 'Ben 18 → 17', 'Ben changes life of Anna: 20 → 19']);
+    expect(ls.map((l) => l.joined)).toEqual([undefined, true, undefined]);
   });
 
   it('shows every undo, and an undone draw says the card went back on top of the library', () => {
@@ -412,6 +455,8 @@ describe('screen-anchored layer and seats (gate M0 findings)', () => {
   it('the scene fit keeps clear of the toolbar row, the open log, the hand fan and the avatar column', () => {
     expect(fitInsets(900, true)).toBe('74 316 206 190');
     expect(fitInsets(900, false)).toBe('74 0 206 190');
+    // Two-Headed Giant: the teammate's fan above the own one is kept clear too (12 gap + 126 cards + 22 label).
+    expect(fitInsets(900, true, true)).toBe('74 316 366 190');
   });
 
   it('an untaken seat without cards is an empty chair (no avatar); a named, taken or occupied seat is not', () => {

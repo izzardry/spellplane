@@ -145,7 +145,9 @@
    * with the row above it, and the avatar column. Fitting the table keeps it clear of them, so the own piles are never
    * under the log or the hand at the fitted view.
    */
-  const fitInsets = $derived(fitInsetsFor(vh, logOpen));
+  /** Two-Headed Giant: the teammate's fan sits above the own one (TeamHands below), and the table fit keeps it clear. */
+  const teamFanShown = $derived(!!session.team && Object.keys(st.teams).length > 0);
+  const fitInsets = $derived(fitInsetsFor(vh, logOpen, teamFanShown));
 
   // --- Card identity as this browser may know it ----------------------------------------------------------------
   /** The face this viewer may see: public identity, else own hand or own face-down identity, else a targeted reveal. Never a library face. */
@@ -429,6 +431,11 @@
   // --- Derived HUD data -------------------------------------------------------------------------------------------
   const hand = $derived(handOrder(st, secrets, me));
   const seats = $derived(Object.values(st.seats).sort((a, b) => a.index - b.index));
+  /** The other players' avatars in the left column; at a four-seat table they are compact so the column fits the screen. */
+  const others = $derived(seats.filter((s) => s.id !== me && !isEmptyChair(st, s.id)));
+  const otherAvatars = $derived(others.length);
+  /** A spectator's HUD (M3-P5): life and counters without controls. */
+  const spectating = untrack(() => session.role === 'spectator');
   const lifeOf = (seat: string) => {
     const s = st.seats[seat];
     const team = s?.team ? st.teams[s.team] : undefined;
@@ -728,17 +735,20 @@
           {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
         {/if}
       </nav>
-      {#if liveVoice}
-        <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'V'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
-        {#if voicePanel}<VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} />{/if}
-      {/if}
-      {#if session.captions}
-        <!-- The speech settings (M3-P4) on a row of their own, so the shared toolbar keeps its layout. -->
-        <div class="toolbar" role="group" aria-label="Dictation">
-          <button type="button" data-testid="open-speech-settings" aria-pressed={speechOpen} onclick={() => (speechOpen = !speechOpen)}>Dictation</button>
+      {#if liveVoice || (session.captions && !spectating)}
+        <!-- The voice row: the talk-mode indicator (M3-P3) and the speech settings (M3-P4), so the shared toolbar keeps
+             its layout and the avatar column below stays short. A spectator only sees captions. -->
+        <div class="toolbar voice-row">
+          {#if liveVoice}
+            <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'V'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
+          {/if}
+          {#if session.captions && !spectating}
+            <button type="button" data-testid="open-speech-settings" aria-pressed={speechOpen} onclick={() => (speechOpen = !speechOpen)}>Dictation</button>
+          {/if}
         </div>
       {/if}
-      {#each seats.filter((s) => s.id !== me && !isEmptyChair(st, s.id)) as seat (seat.id)}
+      {#if liveVoice && voicePanel}<VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} />{/if}
+      {#each others as seat (seat.id)}
         <Avatar
           {seat}
           life={lifeOf(seat.id)}
@@ -753,6 +763,8 @@
           oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: seat.id, kind, delta })}
           onopenzone={openViewer}
           ongoto={() => scene?.camera.goToSeat(seat.id)}
+          readonly={spectating}
+          compact={otherAvatars >= 3}
         />
       {/each}
     </div>
@@ -819,6 +831,7 @@
           oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: me, kind, delta })}
           onopenzone={openViewer}
           ongoto={() => scene?.camera.goToSeat(me)}
+          readonly={spectating}
         />
       </div>
     {/if}
@@ -870,7 +883,7 @@
       ondragout={(id, x, y) => dragOut(id, x, y)}
       onselect={(id) => (selection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id])}
     />
-    {#if session.team && Object.keys(st.teams).length > 0}
+    {#if session.team && teamFanShown}
       <!-- Two-Headed Giant: the teammate's hand above the own fan (M3-P2, ui/hand/*). -->
       <TeamHands team={session.team} state={st} {faces} {vw} {vh} oninspect={(id, ref) => ((inspectId = id), (inspectRef = ref))} />
     {/if}

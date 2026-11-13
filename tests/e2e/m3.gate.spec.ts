@@ -49,6 +49,7 @@ import type { LogEntry, SecretStore, TableState } from '../../src/core/types';
 import type { NetMessageRecord } from '../../src/net/types';
 import type { DebugTableView } from '../../src/scene/lines';
 import type { DebugStackEntry } from '../../src/scene/stack';
+import type { DebugCaption } from '../../src/scene/types';
 import type { SceneDebugCard } from '../../src/scene/table-scene';
 import type { TalkIndicatorState, TalkState, VoiceTrackState } from '../../src/voice/types';
 import { scan } from '../leak/scan';
@@ -295,8 +296,13 @@ async function ownSeatAtBottom(page: Page, me: string): Promise<void> {
   await cameraIdle(page);
   const v = (await tableView(page))!;
   const own = v.seats.find((s) => s.seat === me)!;
-  const host = (await page.getByTestId('scene-host').boundingBox({ timeout: 5000 }))!;
-  expect(own.screen!.territory.y, `${me}'s own territory below the middle of its screen`).toBeGreaterThan(host.y + host.height / 2);
+  const hostEl = page.getByTestId('scene-host');
+  const host = (await hostEl.boundingBox({ timeout: 5000 }))!;
+  // The middle of the area the table is fitted into: the HUD's screen layer (toolbar, hand fan, at a Two-Headed Giant
+  // table the teammate's fan too) is kept clear of it (data-fit-insets "top right bottom left").
+  const [top = 0, , bottom = 0] = ((await hostEl.getAttribute('data-fit-insets')) ?? '').split(/\s+/).map(Number);
+  const middle = host.y + top + (host.height - top - bottom) / 2;
+  expect(own.screen!.territory.y, `${me}'s own territory below the middle of the table area of its screen`).toBeGreaterThan(middle);
   for (const o of v.seats) if (o.seat !== me) expect(o.screen!.territory.y, `${o.seat} as ${me} sees it`).toBeLessThanOrEqual(own.screen!.territory.y + 0.5);
 }
 
@@ -869,7 +875,7 @@ test.describe('M3 gate @gate', () => {
     // Captions (fake engine): Anna dictates while holding the talk key; the caption hangs at her last-touched card.
     await step('2HG turn 3: captions: Anna dictates (fake engine); the caption is anchored to her attacker on every page and stored on that action in the log', async () => {
       const ready = await A.page.evaluate(() => typeof (window.__spellplane as { speech?: { say?: unknown } } | undefined)?.speech?.say === 'function');
-      if (!ready) throw new Error('window.__spellplane.speech is not registered: dictation and captions (M3-P4) are not on this branch (parked, docs/gates/M3-parked-m3-p4.md)');
+      if (!ready) throw new Error('window.__spellplane.speech is not registered: dictation and captions (M3-P4) are missing from this build');
       const attacker = creature.s0!;
       await focus(A.page);
       await A.page.getByTestId('voice-settings').click();
@@ -885,15 +891,21 @@ test.describe('M3 gate @gate', () => {
       await expect.poll(() => hook<boolean>(A.page, 'speech.say', 'swinging at', false)).toBe(true);
       await hook(A.page, 'speech.say', text, true);
       await A.page.keyboard.up('v');
+      // Every page at once: the final bubble fades a few seconds after the final result (scene/types.ts DebugCaption).
+      await Promise.all(
+        everyone().map((q) =>
+          expect
+            .poll(async () => (await hook<DebugCaption[]>(q, 'speech.drawn')).some((c) => c.text.includes(text) && c.anchoredTo?.kind === 'card' && c.anchoredTo.id === attacker))
+            .toBe(true),
+        ),
+      );
+      // Evidence while the bubble still shows.
+      await Promise.all([A, C].map((p) => shot(p.page, 'M3', `captions-on-cards-seat${p === A ? 1 : 3}`, project)));
       for (const q of everyone()) {
         await expect
-          .poll(async () => (await hook<{ text: string; anchor: { kind: string; id: string } | null }[]>(q, 'speech.drawn')).some((c) => c.text.includes(text) && c.anchor?.kind === 'card' && c.anchor.id === attacker))
-          .toBe(true);
-        await expect
-          .poll(async () => (await log(q)).some((e) => e.kind === 'action' && e.action.type === 'caption' && JSON.stringify(e.action).includes(text)))
+          .poll(async () => (await log(q)).some((e) => e.kind === 'action' && e.action.type === 'caption' && e.action.text.includes(text) && e.action.anchor?.kind === 'card' && e.action.anchor.id === attacker))
           .toBe(true);
       }
-      for (const p of [A, C]) await shot(p.page, 'M3', `captions-on-cards-seat${p === A ? 1 : 3}`, project);
     });
 
     await step('2HG turn 3: the attack lands: Dan takes 3 more on the team total (− three times); Anna settles (B)', async () => {

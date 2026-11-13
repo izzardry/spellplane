@@ -176,7 +176,27 @@ export function talkSource(session: Pick<TableSession, 'getState' | 'subscribe' 
  */
 export function mountCaptions(session: TableSession, voice: Pick<VoiceSessionOptions, 'settings' | 'engines'>, now: () => number = () => Date.now()): CaptionControls {
   const talk = talkSource(session, voice.settings);
-  const host: CaptionHost = {
+  const controls = createCaptions(captionHost(session, voice, now, talk));
+  const dispose = controls.dispose.bind(controls);
+  return Object.assign(controls, {
+    dispose: () => {
+      dispose();
+      talk.dispose();
+    },
+  });
+}
+
+/**
+ * Captions for a spectator's page (DESIGN "Players, seats and formats", Spectators: a spectator sees the public table;
+ * "Chat and voice", Placement: captions are visible to everyone at the table). It shows the players' interim captions
+ * from presence and their final captions from the log, and never listens: no talk source, no engine.
+ */
+export function watchCaptions(session: TableSession, settings: SettingsStore, now: () => number = () => Date.now()): CaptionControls {
+  return createCaptions(captionHost(session, { settings, engines: [] }, now, undefined));
+}
+
+function captionHost(session: TableSession, voice: Pick<VoiceSessionOptions, 'settings' | 'engines'>, now: () => number, talk: Talk | undefined): CaptionHost {
+  return {
     self: () => session.seat,
     state: () => session.getState(),
     log: () => session.log(),
@@ -194,17 +214,9 @@ export function mountCaptions(session: TableSession, voice: Pick<VoiceSessionOpt
       peers: () => session.presence.peers(),
       subscribe: (listener) => session.presence.subscribe(listener),
     },
-    talk,
+    ...(talk ? { talk } : {}),
     engines: voice.engines,
     settings: voice.settings,
     now,
   };
-  const controls = createCaptions(host);
-  const dispose = controls.dispose.bind(controls);
-  return Object.assign(controls, {
-    dispose: () => {
-      dispose();
-      talk.dispose();
-    },
-  });
 }

@@ -87,6 +87,26 @@ describe('fit frame (gate M1 finding: the opponent\'s hand row of backs must not
 });
 
 describe('pile labels (gate M1 finding: labels crossed the pile outlines)', () => {
+  it('at a four-player table every label reads away from its pile toward the battlefield, also at the side seats (gate M3)', () => {
+    const ffa4 = mtgLayout('ffa4');
+    for (const viewer of ffa4.seats) {
+      for (const sl of ffa4.seats) {
+        for (const kind of piles) {
+          const a = pileAnchor(sl, kind)!;
+          const p = pileLabelPlace(sl, a, viewer.angle);
+          expect(Math.hypot(p.x - a.x, p.y - a.y)).toBeCloseTo(CARD_W / 2 + PILE_LABEL_GAP, 6);
+          expect(Math.abs(p.x - sl.territory.x) + Math.abs(p.y - sl.territory.y)).toBeLessThan(Math.abs(a.x - sl.territory.x) + Math.abs(a.y - sl.territory.y));
+          // The text's reading direction points away from the pile (from the anchor at its start), never along the row
+          // of piles, where it would run into the neighbouring label.
+          const [tx, ty] = rot2(1, 0, p.rot);
+          const away = ((p.x - a.x) * tx + (p.y - a.y) * ty) / (CARD_W / 2 + PILE_LABEL_GAP);
+          if (p.anchorX === 'left') expect(away).toBeCloseTo(1, 6);
+          else expect(away).toBeCloseTo(-1, 6);
+        }
+      }
+    }
+  });
+
   const layout = mtgLayout('1v1');
   const piles = ['library', 'graveyard', 'exile'] as const;
 

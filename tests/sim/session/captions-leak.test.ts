@@ -12,15 +12,19 @@ import { FakeSpeechEngine } from '../../../src/voice/fake';
 import { createdEngines, FAKE_SPEECH } from '../../../src/voice/speech/index';
 import { forbiddenFor, leakScan } from '../../leak/leak';
 import { scan } from '../../leak/scan';
+import { closeWatchers, observedByWatcher, watch, type Watcher } from '../roles/harness';
 import { browser, closeAll, FAKE_TIMERS, fixtureDeck, net, observedBy, open, settle, trackDisclosures, until, waitConverged, type Browser } from './harness';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
 let browsers: Browser[] = [];
+let watchers: Watcher[] = [];
 beforeEach(() => {
   vi.useFakeTimers(FAKE_TIMERS);
 });
 afterEach(() => {
+  closeWatchers(watchers);
+  watchers = [];
   closeAll(browsers);
   browsers = [];
   vi.useRealTimers();
@@ -58,6 +62,10 @@ describe('shared leak test: dictated captions', () => {
     const a = await open(network, A, {}, { voice: { media: {} as never, settings: A.stores.settings, engines: [FAKE_SPEECH] } });
     const b = await open(network, B);
     await waitConverged([a, b], 'both seated');
+    // A spectator shows the players' captions too (M3 gate: captions on every page) and never listens.
+    const v = await watch(network, 'viv', 'peer-v', 'Viv', { captions: true });
+    watchers.push(v);
+    expect(v.session.captions).toBeDefined();
     const shownToB = trackDisclosures(a, 's1');
     await settle(a.importDeck(await fixtureDeck('gw-m19-60.txt')), 30_000, 'A ready');
     await settle(b.importDeck(await fixtureDeck('ur-m19-60.mtga.txt')), 30_000, 'B ready');
@@ -79,6 +87,7 @@ describe('shared leak test: dictated captions', () => {
     const first = b.log().flatMap((e) => (e.kind === 'action' && e.action.type === 'caption' ? [e.action] : []))[0]!;
     expect(first.text).toBe('I need a land');
     expect(first.anchor).toBeUndefined();
+    await until(() => (v.session.captions?.captions() ?? []).some((c) => c.final && c.text === 'I need a land' && c.speaker === 's0'), 10_000, 'the spectator to show the caption');
 
     // A plays a card face down and talks about it: the public instance id is the anchor, the identity stays with A.
     const faceDown = a.secrets().hand[1]!;
@@ -127,5 +136,12 @@ describe('shared leak test: dictated captions', () => {
     const report = leakScan(input);
     expect(report.tokens).toEqual([]);
     expect(report.pairs).toEqual([]);
+
+    // The spectator received the captions and no hidden identity of A's.
+    const watched = await observedByWatcher(network, v);
+    expect(scan(captionsIn(watched), hidden)).toEqual([]);
+    const watchReport = leakScan({ observed: watched, owner: { state, secrets: a.secrets() }, disclosed: [] });
+    expect(watchReport.tokens).toEqual([]);
+    expect(createdEngines().filter((e) => e instanceof FakeSpeechEngine).length).toBe(1);
   });
 });

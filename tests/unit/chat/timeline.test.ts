@@ -120,7 +120,7 @@ describe('filterTimeline (DESIGN "Chat and voice": filterable to chat only or ac
     const lines = logLines(mergeTimeline(es), { state, cardName: () => 'X', phaseLabel: (p) => p });
     expect(lines.map((l) => l.kind)).toEqual(['action', 'chat', 'action', 'system']);
     expect(filterTimeline(lines, 'chat').map((l) => l.kind)).toEqual(['chat']);
-    expect(filterTimeline(lines, 'actions').map((l) => l.segs.map((s) => ('card' in s ? s.name : s.text)).join(''))).toEqual(['taps X and X', 'Ben: 20 → 18', 'State hash mismatch']);
+    expect(filterTimeline(lines, 'actions').map((l) => l.segs.map((s) => ('card' in s ? s.name : s.text)).join(''))).toEqual(['taps X and X', 'changes life of Ben: 20 → 18', 'State hash mismatch']);
   });
 });
 

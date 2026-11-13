@@ -5,6 +5,7 @@
  */
 import type { InstanceId, SecretStore, TableState } from '../core/types';
 import { GEOMETRY, SCREEN_LAYER } from '../core/geometry';
+import { TEAM_FAN_HEIGHT } from './types';
 
 /** Card aspect: width / height = 63 / 88 (DESIGN "Specification: geometry, layout and motion"). */
 export const CARD_ASPECT = GEOMETRY.card.w / GEOMETRY.card.h;
@@ -64,8 +65,18 @@ export function handOrder(state: TableState, secrets: SecretStore, seat: string)
  */
 export const FIT_INSET = { top: 74, log: 316, handGap: 8, avatars: 190 } as const;
 
-/** The scene host's `data-fit-insets` value, "top right bottom left" in CSS px. */
-export function fitInsets(vh: number, logOpen: boolean): string {
-  const bottom = Math.round(vh * SCREEN_LAYER.handCardViewportFraction) + FIT_INSET.handGap;
+/**
+ * The teammate's fan above the own one at a Two-Headed Giant table (ui/hand/team.ts: a 12 px gap, cards at
+ * TEAM_FAN_HEIGHT of the viewport height, and its name label of about 22 px above them).
+ */
+export const TEAM_FAN_INSET = { gap: 12, label: 22 } as const;
+
+/**
+ * The scene host's `data-fit-insets` value, "top right bottom left" in CSS px. With `teamFan` the teammate's fan is
+ * kept clear as well, so the fitted table (the own avatar spots and the lines aimed at them) sits above it (M3 gate).
+ */
+export function fitInsets(vh: number, logOpen: boolean, teamFan = false): string {
+  const team = teamFan ? TEAM_FAN_INSET.gap + Math.round(vh * TEAM_FAN_HEIGHT) + TEAM_FAN_INSET.label : 0;
+  const bottom = Math.round(vh * SCREEN_LAYER.handCardViewportFraction) + FIT_INSET.handGap + team;
   return `${FIT_INSET.top} ${logOpen ? FIT_INSET.log : 0} ${bottom} ${FIT_INSET.avatars}`;
 }

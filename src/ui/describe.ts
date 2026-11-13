@@ -42,6 +42,8 @@ export interface LogLine {
   level?: 'info' | 'warn';
   /** The chat tab of a chat line (M1-P6); absent for action and system lines. */
   channel?: ChatTab;
+  /** The actor and the text are joined by a colon, as in "Anna: 20 → 14" (a change to the actor's own life). */
+  joined?: true;
 }
 
 /** What the describer needs besides the entries. */
@@ -142,6 +144,10 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     if (a.type === 'undo' && a.inverse.type === 'life') return { key: lifeKey(a.inverse.seat), delta: a.inverse.delta };
     return null;
   };
+  // "Anna: 20 → 14" for the actor's own life, "Cleo: team 30 → 28" for the own team's, else "Anna changes life of Ben: 20 → 18".
+  const ownLife = (by: SeatId, key: string): boolean => key === by || key === st.seats[by]?.team;
+  const lifeText = (by: SeatId, key: string, from: number, to: number): string =>
+    key === by ? `${from} → ${to}` : ownLife(by, key) ? `team ${from} → ${to}` : `changes life of ${seatName(key)}: ${from} → ${to}`;
   const running = new Map<string, number>();
   for (const e of entries) {
     if (e.kind !== 'action') continue;
@@ -153,6 +159,8 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
   const byCid = new Map<string, Action>();
   const lines: LogLine[] = [];
   let lastLife: { line: LogLine; key: string; by: SeatId; at: number; from: number } | null = null;
+  // Who holds which chair so far in these entries: a chair taken again by its holder is a rename or a colour change.
+  const chairs: Chairs = { held: new Map(), moves: new Set() };
   // A line that later actions of the same gesture (same type, actor, group and destination) fold into.
   let merge: { line: LogLine; sig: string; a: Action; cards: Seg[] } | null = null;
 
@@ -173,12 +181,12 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
       const after = before + life.delta;
       running.set(life.key, after);
       if (a.type === 'life' && lastLife && lastLife.key === life.key && lastLife.by === a.by && e.at - lastLife.at <= LIFE_MERGE_MS) {
-        lastLife.line.segs = [t(`${seatName(life.key)}: ${lastLife.from} → ${after}`)];
+        lastLife.line.segs = [t(lifeText(a.by, life.key, lastLife.from, after))];
         lastLife.at = e.at;
         continue;
       }
       if (a.type === 'life') {
-        const line: LogLine = { key: entryKey, kind: 'action', seat: a.by, colour: st.seats[a.by]?.colour ?? null, actor: seatName(a.by), segs: [t(`${seatName(life.key)}: ${before} → ${after}`)], at: e.at };
+        const line: LogLine = { key: entryKey, kind: 'action', seat: a.by, colour: st.seats[a.by]?.colour ?? null, actor: seatName(a.by), segs: [t(lifeText(a.by, life.key, before, after))], at: e.at, ...(ownLife(a.by, life.key) ? { joined: true as const } : {}) };
         lines.push(line);
         lastLife = { line, key: life.key, by: a.by, at: e.at, from: before };
         continue;
@@ -200,7 +208,9 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
       merge.line.at = e.at;
       continue;
     }
-    const segs = describe(a, d);
+    const chair = chairLine(a, chairs);
+    if (chair === 'skip') continue;
+    const segs = chair ?? describe(a, d);
     if (!segs) continue;
     // An answer is the answering seat's line, also when the sequencer's clock sent it for that seat (a timeout).
     const who = a.type === 'respond' ? a.seat : a.by;
@@ -212,6 +222,38 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     merge = sig === null ? null : { line, sig, a, cards: [a.type === 'draw' ? t('a card') : card(cardOf(a)!)] };
   }
   return lines;
+}
+
+/** The name a chair carries before its player saved a nickname (session/net.ts DEFAULT_NICKNAME). */
+const PLACEHOLDER_NAME = 'Player';
+
+interface Chairs {
+  held: Map<SeatId, { name: string; colour: number; peer: string | undefined }>;
+  /** Groups of chair moves (take the new chair, leave the old one): the leave gets no line of its own. */
+  moves: Set<string>;
+}
+
+/**
+ * The line of a chair action, or 'skip', or null for the ordinary text. A holder taking its own chair again (the lobby
+ * does so to change the colour or the name) says what changed instead of "takes a seat" a second time; leaving the old
+ * chair of a move says nothing (the take says it).
+ */
+function chairLine(a: Action, chairs: Chairs): Seg[] | 'skip' | null {
+  if (a.type === 'seatTake') {
+    const prev = chairs.held.get(a.seat);
+    chairs.held.set(a.seat, { name: a.name, colour: a.colour, peer: a.peer });
+    if (a.group !== undefined) chairs.moves.add(a.group);
+    if (!prev || prev.peer !== a.peer) return a.group !== undefined ? [t('moves to another chair')] : null;
+    // A first nickname over the placeholder a chair is taken with before the lobby saved one (session/net.ts
+    // DEFAULT_NICKNAME) is no rename worth a line.
+    if (prev.name !== a.name) return prev.name === '' || prev.name === PLACEHOLDER_NAME ? 'skip' : [t(`changes their name from ${prev.name}`)];
+    return prev.colour !== a.colour ? [t('changes their seat colour')] : 'skip';
+  }
+  if (a.type === 'seatLeave') {
+    chairs.held.delete(a.seat);
+    return a.group !== undefined && chairs.moves.has(a.group) ? 'skip' : null;
+  }
+  return null;
 }
 
 /** What makes two actions one gesture's line: draws, moves and taps of one actor sharing a group. Null: never merged. */
@@ -324,7 +366,7 @@ export function describe(a: Action, d: Describers): Seg[] | null {
     case 'stackReorder':
       return [t('reorders the stack')];
     case 'lineAdd':
-      return [t(`draws ${a.kind === 'mark' ? 'a mark' : `a ${a.kind} line`}`), ...(a.label ? [t(` “${a.label}”`)] : [])];
+      return [t(`draws ${a.kind === 'mark' ? 'a mark' : `${/^[aeiou]/.test(a.kind) ? 'an' : 'a'} ${a.kind} line`}`), ...(a.label ? [t(` “${a.label}”`)] : [])];
     case 'lineRemove':
       return [t('removes a line')];
     case 'ping':
