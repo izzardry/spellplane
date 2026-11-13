@@ -43,17 +43,52 @@ export interface KeymapOverride {
   chord: { key: string; ctrl?: boolean; shift?: boolean; alt?: boolean };
 }
 
+/**
+ * How a player talks (DESIGN "Chat and voice", Talk modes: push-to-talk, turn mic, open mic, dictation; "Voice and
+ * dictation can run together"). `gate` says when the mic opens: 'ptt' while the talk key is held, 'turn' for the whole
+ * own turn (push-to-talk outside it), 'open' always. `voice` sends live audio, `dictation` sends captions; at least one
+ * is on. `muted` is the open-mic mute toggle (M) and closes every gate. `mouseButton` is an extra talk button
+ * (MouseEvent.button), null for none; the talk key itself is the keymap's 'talk' binding. Added by M3-C; voice/types.ts
+ * builds on it (M3-P3, M3-P4).
+ */
+export interface TalkSettings {
+  gate: 'ptt' | 'turn' | 'open';
+  voice: boolean;
+  dictation: boolean;
+  muted: boolean;
+  mouseButton: number | null;
+}
+
+/** A player's own volume and mute for one other player's voice (DESIGN "Chat and voice", Live voice: "a personal volume and mute control per other player"). Added by M3-C. */
+export interface PeerAudioSetting {
+  /** 0..1. */
+  volume: number;
+  muted: boolean;
+}
+
 /** Per-browser settings by name (DESIGN "Local persistence": theme, keymap, talk mode, speech engine, quality, follow toggles). */
 export interface Settings {
   theme: string;
   keymap: KeymapOverride[];
+  /** Superseded by `talk` (M3-C); kept so older saves load. M3-P3 maps a stored value onto `talk` once ('dictation' → ptt gate, dictation only). */
   talkMode: 'ptt' | 'turn' | 'open' | 'dictation';
+  /** 'local' is the in-browser Whisper-class model loaded on demand (DESIGN "Chat and voice", Dictation and captions: Engine). */
   speechEngine: 'webspeech' | 'local';
+  /** BCP 47 tag; DESIGN says the default follows the browser locale, English for the run (DESIGN "Chat and voice": Language). */
   speechLang: string;
   quality: 'high' | 'medium' | 'low';
   followStack: boolean;
   followActive: boolean;
+  /** Added by M3-C. The talk mode (DESIGN "Chat and voice", Talk modes). */
+  talk: TalkSettings;
+  /** Added by M3-C. The chosen microphone (MediaDeviceInfo.deviceId), null for the default (PLAN M3-P3 device picker). */
+  micDevice: string | null;
+  /** Added by M3-C. Per-player volume and mute by identity peer id (DESIGN "Chat and voice", Live voice). */
+  peerAudio: Record<string, PeerAudioSetting>;
 }
+
+/** Talk defaults (DESIGN "Decision log": push-to-talk; hold V). Added by M3-C. */
+export const DEFAULT_TALK: TalkSettings = { gate: 'ptt', voice: true, dictation: false, muted: false, mouseButton: null };
 
 /** Defaults for every setting (DESIGN "Decision log": Paper, push-to-talk, follow toggles off). */
 export const DEFAULT_SETTINGS: Settings = {
@@ -65,6 +100,9 @@ export const DEFAULT_SETTINGS: Settings = {
   quality: 'high',
   followStack: false,
   followActive: false,
+  talk: DEFAULT_TALK,
+  micDevice: null,
+  peerAudio: {},
 };
 
 /** `settings` store record, keyed by name (DESIGN "Local persistence"). */

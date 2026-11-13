@@ -163,8 +163,8 @@ export const FORMAT_SEATS: Readonly<Record<DraftFormat, { min: number; max: numb
   teamSealed: { min: 4, max: 4 },
 };
 
-/** Formats whose client side exists (draft/index.ts DRAFT_DRIVERS); the Two-Headed Giant drafts are M3-P2's. */
-const PLAYABLE_FORMATS: ReadonlySet<DraftFormat> = new Set<DraftFormat>(['pass', 'sealed', 'rochester', 'winston', 'grid']);
+/** Formats whose client side exists (draft/index.ts DRAFT_DRIVERS); the Two-Headed Giant drafts are M3-P2's (draft/team.ts). */
+const PLAYABLE_FORMATS: ReadonlySet<DraftFormat> = new Set<DraftFormat>(['pass', 'sealed', 'rochester', 'winston', 'grid', 'teamDraft', 'teamSealed']);
 
 /**
  * How a new game starts (DESIGN "Players, seats and formats": 20 life each, 30 per team in Two-Headed Giant; "Turn
@@ -209,7 +209,8 @@ export function formatSeatProblem(state: TableState, settings: DraftFormatSettin
     return `this mode is for ${want} players, and ${n} ${n === 1 ? 'is' : 'are'} seated`;
   }
   if (settings.format === 'teamDraft' || settings.format === 'teamSealed') {
-    if (seatedInOrder(state).some((id) => state.seats[id]!.team === undefined)) return 'a Two-Headed Giant draft needs two teams';
+    const seatedIds = seatedInOrder(state);
+    if (seatedIds.some((id) => state.seats[id]!.team === undefined) || new Set(seatedIds.map((id) => state.seats[id]!.team)).size < 2) return 'a Two-Headed Giant draft needs two teams';
   }
   return null;
 }

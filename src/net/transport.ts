@@ -26,6 +26,9 @@ export interface Transport {
   send(channel: Channel, msg: Message, to?: PeerId): void;
   on(channel: Channel, handler: MessageHandler): void;
   onPeer(handler: PeerHandler): void;
+  /** Send audio to every peer, or to `to` only (DESIGN "Chat and voice", Live voice: audio tracks on the same peer connections). */
   addStream?(stream: MediaStream, to?: PeerId): void;
+  /** Stop sending a stream added with `addStream` (to every peer, or to `to` only). Added by M3-C for M3-P3 (Trystero `removeStream`). */
+  removeStream?(stream: MediaStream, to?: PeerId): void;
   onStream?(handler: (stream: MediaStream, from: PeerId) => void): void;
 }

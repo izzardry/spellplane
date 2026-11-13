@@ -4,6 +4,7 @@
  * action. Shuffles (shuffleCommit, shuffleNonce, shuffleDone) and commitment verification belong to M1-P2.
  */
 import type { ActionOf } from '../actions';
+import { isSpectatorId } from '../teams';
 import type { Draft } from './draft';
 import { ZONE_KIND, isHidden, relocate } from './place';
 import { checkId, checkInt, checkRef, checkString, reject } from './util';
@@ -38,9 +39,24 @@ export function reveal(d: Draft, a: ActionOf<'reveal'>): void {
   d.cards.w(c.id).identity = ref;
 }
 
+/** Most spectators one `revealTo` names (a table has any number of spectators; this only bounds a malformed action). */
+const MAX_REVEAL_SPECTATORS = 64;
+
+/**
+ * The public record of a targeted reveal (DESIGN "Multiplayer architecture", Targeted reveal). It names seats of the
+ * table and, from M3, spectators (`spectators`, spectator ids `v:<peerId>`; DESIGN "Players, seats and formats",
+ * Spectators: "A player may reveal their hand to a named spectator"; M3-P5). Spectators are not in the shared state,
+ * so a spectator id is checked for its form only; at least one seat or spectator is named.
+ */
 export function revealTo(d: Draft, a: ActionOf<'revealTo'>): void {
   d.cards.need(checkId(a.instanceId, 'card'));
-  if (!Array.isArray(a.seats) || a.seats.length === 0) reject('revealTo needs at least one seat');
+  if (!Array.isArray(a.seats)) reject('revealTo needs a list of seats');
+  const spectators: unknown = a.spectators;
+  if (spectators !== undefined) {
+    if (!Array.isArray(spectators) || spectators.length > MAX_REVEAL_SPECTATORS) reject('revealTo spectators must be a short list of spectator ids');
+    for (const v of spectators as unknown[]) if (!isSpectatorId(checkId(v, 'spectator'))) reject(`${String(v)} is not a spectator id`);
+  }
+  if (a.seats.length === 0 && (spectators === undefined || (spectators as unknown[]).length === 0)) reject('revealTo needs at least one seat or spectator');
   for (const s of a.seats) d.seats.need(checkId(s, 'seat'));
 }
 

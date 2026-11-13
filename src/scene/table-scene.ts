@@ -27,9 +27,10 @@ import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestu
 import { LAYER, compareSort, displayedRot, dropTargets, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
-import { LineLayer, LineView, lineSourceOf, type DebugPing, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
+import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, legibleScale, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion } from './motion';
+import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { drawnPose, entryAt, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
 import { TextLayer, type TextSpec } from './text';
@@ -283,6 +284,30 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   });
   scene.add(lineView.lines.object);
   scene.add(lineView.pingRings);
+  // Caption bubbles over the canvas (DESIGN "Chat and voice", Placement; scene/captions.ts, M3-P4).
+  const captionLayer = new CaptionLayer({
+    container: host,
+    toScreen: (p) => rig.tableToScreen(p),
+    viewport: () => rig.viewport,
+    canvasRect: () => canvas.getBoundingClientRect(),
+    point: (c) =>
+      state
+        ? captionPoint(state, layout, c, {
+            viewer: viewerSeat,
+            drawn: (a) => {
+              if (a.kind === 'card') {
+                const rc = rcards.get(a.id);
+                return rc && rc.place.kind !== 'hand' ? rc.motion.pose : null;
+              }
+              const e = a.kind === 'stackItem' ? entries.find((x) => x.item.id === a.id) : undefined;
+              return e ? itemAnchor(entryPose(e)) : null;
+            },
+          })
+        : null,
+    fill: (c) => (c.colour === null ? theme.tokens.colours.muted : (theme.tokens.colours.seats[c.colour]?.colour ?? theme.tokens.colours.muted)),
+    badge: (c) => captionBadge(state, theme.tokens.colours.seats, c),
+    reduced,
+  });
   const seatAngleOf = (seat: SeatId): number => (state ? (seatLayoutOf(state, layout, seat)?.angle ?? 0) : 0);
   const combatCtx: CombatContext = { angleOf: seatAngleOf, newId };
 
@@ -293,7 +318,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   // --- Layout and markings ----------------------------------------------------------------------------------------
   function rebuildMarkings(): void {
     const angle = viewerAngle(state, layout, viewerSeat);
-    const m = markings(layout, opts.game, angle, state ? Object.keys(state.seats).length : layout.seats.length);
+    const names: string[] = [];
+    if (state) for (const seat of Object.values(state.seats)) names[seat.index] = seat.name;
+    const m = markings(layout, opts.game, angle, state ? Object.keys(state.seats).length : layout.seats.length, names);
     const pos: number[] = [];
     for (let i = 0; i < m.segments.length; i += 4) pos.push(m.segments[i]!, 0.05, -m.segments[i + 1]!, m.segments[i + 2]!, 0.05, -m.segments[i + 3]!);
     markGeometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -637,6 +664,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (pingsLive) changed = true;
     if (!reduced() && entries.some((e) => e.pending)) changed = true;
     if (changed || dirty) draw();
+    if (captionLayer.active) captionLayer.place();
   }
 
   // --- Coordinates --------------------------------------------------------------------------------------------------
@@ -1175,7 +1203,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (g.card) {
         if (g.shift) setSelection(view.selection.includes(g.card) ? view.selection.filter((id) => id !== g.card) : [...view.selection, g.card]);
         else if (!view.selection.includes(g.card) || view.selection.length > 1) setSelection([g.card]);
-      } else if (!g.shift && view.selection.length) setSelection([]);
+      } else {
+        if (!g.shift && view.selection.length) setSelection([]);
+        // A tap on a seat's avatar spot goes to that seat (DESIGN "Camera and navigation": go to another seat, tap an avatar).
+        const seat = g.item ? null : lineView.avatarAt(screenToTable(e.clientX, e.clientY));
+        if (seat?.kind === 'seat') controls.goToSeat(seat.id);
+      }
     } else if (g.kind === 'pan') {
       const s = g.samples;
       const first = s[0]!;
@@ -1404,6 +1437,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     lastDrop: () => lastDrop,
     idle: () => !drag && !rig.moving && ![...rcards.values()].some((rc) => rc.motion.moving),
     pendingTextures: () => faces.pending,
+    captions: () => captionLayer.debug(),
   };
   /** The stack lane as drawn (scene/stack.ts DebugStackEntry). */
   function stackDebug(): DebugStackEntry[] {
@@ -1449,8 +1483,29 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     drawnLines: () => debug.drawnLines(),
     pings: () => debug.pings(),
     stack: () => stackDebug(),
+    tableView: () => tableViewDebug(),
+    captions: () => captionLayer.debug(),
   };
   registerDebug(debugParts);
+
+  /** The table's seats as this viewer sees them (M3-P1): canonical territory and avatar spot, and where they are on screen. */
+  function tableViewDebug(): DebugTableView | null {
+    if (!state) return null;
+    const st = state;
+    const v = rig.view;
+    const seats = Object.values(st.seats)
+      .sort((a, b) => a.index - b.index)
+      .flatMap((seat): DebugSeatView[] => {
+        const sl = seatLayoutOf(st, layout, seat.id);
+        if (!sl) return [];
+        const territory = { x: sl.territory.x, y: sl.territory.y };
+        const avatar = { x: sl.zones.avatar.x, y: sl.zones.avatar.y };
+        const t = worldToScreen({ ...territory, z: 0 });
+        const a = worldToScreen({ ...avatar, z: 0 });
+        return [{ seat: seat.id, index: seat.index, angle: sl.angle, territory, avatar, screen: t && a ? { territory: t, avatar: a } : null }];
+      });
+    return { format: layout.format, table: { ...layout.table }, viewerAngle: viewerAngle(st, layout, viewerSeat), camera: { x: v.cx, y: v.cy, dist: v.dist }, seats };
+  }
 
   // --- Camera controls ------------------------------------------------------------------------------------------------
   const blend = (animate = true) => (animate && !reduced() ? theme.motion.cameraBlendMs : 0);
@@ -1502,6 +1557,16 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   raf = requestAnimationFrame(tick);
 
+  /** The game's layout for a table format, or null when the game has none for it (the scene keeps its own). */
+  function layoutFor(format: TableState['format']): TableLayout | null {
+    try {
+      const l = opts.game.layout(format);
+      return l.format === format ? l : null;
+    } catch {
+      return null;
+    }
+  }
+
   const sceneApi: SceneHandle = {
     update(next, nextView) {
       const prevState = state;
@@ -1509,15 +1574,25 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       state = next;
       const openChanged = nextView.openPile !== view.openPile || nextView.privateFaces !== view.privateFaces;
       view = nextView;
-      if (prevState === null || Object.keys(prevState.seats).length !== Object.keys(next.seats).length) {
+      // The table's format picks the layout (DESIGN "Players, seats and formats"; M3-P1): a format changed in the lobby
+      // brings its own table size, territories and seat angles.
+      const formatLayout = next.format !== layout.format ? layoutFor(next.format) : null;
+      if (formatLayout) {
+        layout = formatLayout;
+        themeInstance.dispose();
+        themeInstance = theme.build({ renderer, scene, camera, table: layout.table, quality: theme.quality[0]!, reducedMotion: reduced() });
+      }
+      if (formatLayout || prevState === null || Object.keys(prevState.seats).length !== Object.keys(next.seats).length) {
         rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat));
         rebuildMarkings();
       } else if (prevState.seats !== next.seats) {
-        // A chair taken or left changes which hand rows the fitted view must show.
+        // A chair taken or left changes which hand rows the fitted view must show, and the names at the avatar spots.
         rig.setFrame(fitFrame(state, layout, viewerSeat));
+        if (Object.values(next.seats).some((s) => prevState.seats[s.id]?.name !== s.name)) rebuildMarkings();
       }
       if (prevState !== next || openChanged) relayout(performance.now());
       if (viewChanged) dirty = true;
+      if (nextView.captions || captionLayer.active) captionLayer.set(nextView.captions ?? []);
     },
     setTheme(next) {
       themeInstance.dispose();
@@ -1609,6 +1684,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       lineView.dispose();
       ghostLayer.dispose();
       markerLayer.dispose();
+      captionLayer.dispose();
       markGeometry.dispose();
       markMaterial.dispose();
       renderer.dispose();

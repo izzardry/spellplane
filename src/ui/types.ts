@@ -2,7 +2,7 @@
  * Props of the app shell src/ui/App.svelte (PLAN M0-P4 HUD, M0-P7 wiring in main.ts; DESIGN "Technology stack and
  * project structure": Svelte draws the HUD around the imperative scene).
  */
-import type { CardRef, DeckBuild, TableState } from '../core/types';
+import type { CardRef, DeckBuild, SeatId, TableState } from '../core/types';
 import type { CardData, CardDataSource, FaceSource, ParseResult, SetDataSource } from '../data/types';
 import type { DraftControls } from '../draft/types';
 import type { GameDefinition } from '../games/types';
@@ -10,8 +10,9 @@ import type { createTableScene } from '../scene/index';
 import type { BuilderSort, CreateBuilderSurface, CreateDraftSurface } from '../scene/types';
 import type { Theme } from '../themes/types';
 import type { Transport } from '../net/transport';
-import type { EveningControls, TableSession } from '../session/types';
+import type { EveningControls, TableSession, TeammateHandCard } from '../session/types';
 import type { DeckStore, IdentityStore, SettingsStore, TableRecord } from '../store/types';
+import type { CaptionControls, VoiceControls } from '../voice/types';
 
 /** What main.ts hands the app shell (PLAN M0-P4, M0-P7). */
 export interface AppProps {
@@ -184,4 +185,45 @@ export interface FlowProps {
   session: TableSession;
   evening: EveningControls;
   state: TableState;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Four seats and voice (DESIGN "Players, seats and formats", "Chat and voice"). Added by M3-C. Owners: M3-P2
+// (ui/hand/TeamHand.svelte), M3-P3 (ui/voice/*: talk indicator, voice panel), M3-P4 (ui/settings/Speech.svelte),
+// M3-P5 (spectator parts of ui/lobby/*).
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * Height of the teammate's hand fan as a fraction of viewport height (DESIGN "Players, seats and formats", Two-Headed
+ * Giant: "a second, smaller fan above the player's own"; the own fan is 22% per "Specification: geometry, layout and
+ * motion", Screen layer). DECISIONS [M3-C].
+ */
+export const TEAM_FAN_HEIGHT = 0.14;
+
+/** Props of the teammate's hand fan (DESIGN "Players, seats and formats", Two-Headed Giant). Implementer: M3-P2 (ui/hand/TeamHand.svelte). */
+export interface TeamHandProps {
+  /** The teammate's seat (its name and seat colour label the fan). */
+  seat: SeatId;
+  state: TableState;
+  /** The teammate's hand in its order (TeamControls.hand). */
+  cards: TeammateHandCard[];
+  faces: FaceSource;
+  /** Inspect a card (the HUD's inspect view). */
+  inspect?(ref: CardRef): void;
+}
+
+/** Props of the talk-mode indicator (PLAN M3-G: talk-mode indicator states; DESIGN "Chat and voice", Talk modes). Implementer: M3-P3 (ui/voice/*). */
+export interface TalkIndicatorProps {
+  voice: VoiceControls;
+}
+
+/** Props of the voice panel: talk mode, device picker, per-player volume and mute (DESIGN "Chat and voice", Live voice; PLAN M3-P3). Implementer: M3-P3 (ui/voice/*). */
+export interface VoicePanelProps {
+  voice: VoiceControls;
+  session: TableSession;
+}
+
+/** Props of the speech settings: engine and language with a plain statement of where audio goes (DESIGN "Chat and voice", Engine, Language; PLAN M3-P4). Implementer: M3-P4 (ui/settings/Speech.svelte). */
+export interface SpeechSettingsProps {
+  captions: CaptionControls;
 }

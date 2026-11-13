@@ -3,13 +3,23 @@
  * formats"; "Table model"; "The effect stack"). All positions are in the canonical frame: origin at the table centre,
  * x to the right and y away from seat 0, rot in degrees clockwise. Use games/frame.ts to rotate into a viewer's frame.
  *
- * 1v1 (and solo goldfish, which is seat 0 of the 1v1 table) is final. Three- and four-player and Two-Headed Giant
- * layouts are PROVISIONAL until M3-P1: they follow the spec table so nothing crashes, but are not tuned.
+ * Every format seats its players clockwise in seat-index order as seen from above (seat 0 at the bottom), so turn
+ * order, the seat keys 2–4 ("clockwise from you") and the draft's pass to the left all follow the seat index
+ * (DECISIONS [M3-P1]):
+ * - 1v1: near and far halves (solo goldfish is seat 0 of this table).
+ * - Three players: seat 0 on the near edge at full width; seat 1 top-left, seat 2 top-right.
+ * - Four players: one 1100 × 440 territory per side, bottom, left, top, right. The spec's 1100-wide territories centred
+ *   on 1800-wide sides would overlap 90 × 90 at every corner, so each is shifted 90 toward its owner's right (a
+ *   pinwheel): no overlap, the 920 × 920 centre stays free, and each corner keeps a 440 × 260 unused patch.
+ * - Two-Headed Giant: teammates side by side with no gap, team t0 (seats 0 and 1) on the near edge, t1 across. Seat 0
+ *   sits at the near right and seat 1 at the near left, seat 2 at the far left and seat 3 at the far right, which is
+ *   clockwise; the team's shared avatar (life total and turn marker) sits outside its near edge, centred.
  */
 import type { Format } from '../../core/types';
 import { GEOMETRY } from '../../core/geometry';
+import { TABLE_FORMAT_TEAMS } from '../../core/teams';
 import { normDeg, seatLocalToTable } from '../frame';
-import type { Rect, SeatLayout, SeatZoneAnchors, TableLayout } from '../types';
+import type { Rect, SeatLayout, SeatZoneAnchors, TableLayout, TeamLayout } from '../types';
 
 /** Within-territory placement constants in mm (the spec fixes the column gap; the rest are M0-P6 choices). */
 export const MTG_LAYOUT = {
@@ -28,12 +38,14 @@ export const MTG_LAYOUT = {
   avatarOffset: 40,
   /** Half-width of the avatar's footprint, kept clear of the hand row beside it. */
   avatarRadius: 34,
+  /** Four players: how far each 1100-wide territory is shifted toward its owner's right so the corners do not overlap. */
+  ffa4Shift: 90,
 } as const;
 
-/** Formats whose layout is provisional until M3-P1. */
-export const PROVISIONAL_FORMATS: readonly Format[] = ['ffa3', 'ffa4', '2hg'];
+/** Formats whose layout is provisional. Empty since M3-P1 settled the three-, four-seat and Two-Headed Giant tables. */
+export const PROVISIONAL_FORMATS: readonly Format[] = [];
 
-/** True for the provisional three-, four-seat and Two-Headed Giant layouts (M3-P1 replaces them). */
+/** True for a provisional layout; no format is provisional since M3-P1. */
 export function isProvisionalLayout(layout: TableLayout): boolean {
   return PROVISIONAL_FORMATS.includes(layout.format);
 }
@@ -48,7 +60,7 @@ interface TerritorySpec {
 
 const TERRITORY_DEPTH = 440;
 
-/** The spec table: table size and one territory per seat in seat-index order. */
+/** The spec table: table size and one territory per seat in seat-index order (clockwise from seat 0). */
 function tableSpec(format: Format): { table: { w: number; d: number }; centreBand: number; territories: TerritorySpec[] } {
   const d = TERRITORY_DEPTH;
   switch (format) {
@@ -65,8 +77,8 @@ function tableSpec(format: Format): { table: { w: number; d: number }; centreBan
       };
     }
     case 'ffa3': {
-      // PROVISIONAL (M3-P1). Seat 0 on the near edge at full width; seats 1 and 2 share the far edge, 1000 wide each,
-      // seat 1 top-left and seat 2 top-right as seen by seat 0 (clockwise order).
+      // Seat 0 on the near edge at full width; seats 1 and 2 share the far edge, 1000 wide each, seat 1 top-left and
+      // seat 2 top-right as seen by seat 0 (clockwise order). Centre band 1300 - 2 x 440 = 420.
       const y = 1300 / 2 - d / 2;
       return {
         table: { w: 2000, d: 1300 },
@@ -79,33 +91,28 @@ function tableSpec(format: Format): { table: { w: number; d: number }; centreBan
       };
     }
     case 'ffa4': {
-      // PROVISIONAL (M3-P1). One 1100 x 440 territory per side, seats clockwise: bottom, left, top, right.
-      // The spec's numbers overlap 90 x 90 at each corner (1100 + 2 x 440 > 1800) although it calls the corners
-      // unused; kept as specified until M3-P1 settles it (docs/DECISIONS.md).
+      // One 1100 x 440 territory per side, seats clockwise: bottom, left, top, right; each shifted toward its owner's
+      // right (a pinwheel) so no two overlap at a corner. Centre 1800 - 2 x 440 = 920 square.
       const o = 1800 / 2 - d / 2;
+      const shift = MTG_LAYOUT.ffa4Shift;
       return {
         table: { w: 1800, d: 1800 },
         centreBand: 1800 - 2 * d,
-        territories: [
-          { x: 0, y: -o, angle: 0, w: 1100, d },
-          { x: -o, y: 0, angle: 90, w: 1100, d },
-          { x: 0, y: o, angle: 180, w: 1100, d },
-          { x: o, y: 0, angle: 270, w: 1100, d },
-        ],
+        territories: [0, 90, 180, 270].map((angle) => ({ ...seatLocalToTable({ x: 0, y: 0 }, angle, shift, -o), angle, w: 1100, d })),
       };
     }
     case '2hg': {
-      // PROVISIONAL (M3-P1). Teammates side by side, 1100 x 440 each, no gap; team of seats 0 and 1 on the near edge.
-      // Each seat is on its team's left in its own orientation.
+      // Teammates side by side, 1100 x 440 each, no gap; team t0 (seats 0 and 1) on the near edge, t1 across. Seats run
+      // clockwise: near right, near left, far left, far right.
       const y = 1100 / 2 - d / 2;
       return {
         table: { w: 2200, d: 1100 },
         centreBand: 1100 - 2 * d,
         territories: [
-          { x: -550, y: -y, angle: 0, w: 1100, d },
           { x: 550, y: -y, angle: 0, w: 1100, d },
-          { x: 550, y, angle: 180, w: 1100, d },
+          { x: -550, y: -y, angle: 0, w: 1100, d },
           { x: -550, y, angle: 180, w: 1100, d },
+          { x: 550, y, angle: 180, w: 1100, d },
         ],
       };
     }
@@ -144,13 +151,53 @@ function seatZones(t: TerritorySpec): SeatZoneAnchors {
 /** The Magic table layout for a format (DESIGN "Specification: code interfaces": table size, seat angles, territories, zone anchors). Returns a fresh object. */
 export function mtgLayout(format: Format): TableLayout {
   const spec = tableSpec(format);
+  const teamSpec = TABLE_FORMAT_TEAMS[format];
+  const teamOfSeat = (index: number): number => (teamSpec ?? []).findIndex((t) => t.includes(index));
   const seats: SeatLayout[] = spec.territories.map((t, index) => ({
     index,
     angle: normDeg(t.angle),
     territory: { x: t.x, y: t.y, w: t.w, d: t.d, rot: normDeg(t.angle) },
     zones: seatZones(t),
+    ...(teamSpec ? { team: teamOfSeat(index) } : {}),
   }));
-  return { format, table: { ...spec.table }, seats, stackLane: stackLane(spec.centreBand) };
+  const layout: TableLayout = {
+    format,
+    table: { ...spec.table },
+    seats,
+    stackLane: stackLane(spec.centreBand),
+    // Clockwise from seat 0: seat indices run clockwise in every format (DESIGN "Players, seats and formats", Turn
+    // marker: per player, clockwise; per team in Two-Headed Giant, where team t0 of seat 0 goes first).
+    turnOrder: seats.map((s) => s.index),
+  };
+  if (teamSpec) layout.teams = teamSpec.map((members, index) => teamLayout(index, members, spec.territories));
+  return layout;
+}
+
+/**
+ * A team's territory and shared avatar (DESIGN "Players, seats and formats", Two-Headed Giant): the teammates'
+ * territories side by side along their common edge, the avatar (shared life total and turn marker) outside its near
+ * edge, centred. Members are listed left to right in the team's orientation.
+ */
+function teamLayout(index: number, members: readonly number[], territories: readonly TerritorySpec[]): TeamLayout {
+  const ts = members.map((i) => territories[i]!);
+  const angle = ts[0]!.angle;
+  const x = ts.reduce((a, t) => a + t.x, 0) / ts.length;
+  const y = ts.reduce((a, t) => a + t.y, 0) / ts.length;
+  const w = ts.reduce((a, t) => a + t.w, 0);
+  const d = ts[0]!.d;
+  const left = [...members].sort((a, b) => seatU(territories[a]!, angle) - seatU(territories[b]!, angle));
+  return {
+    index,
+    seats: left,
+    territory: { x, y, w, d, rot: normDeg(angle) },
+    avatar: { ...seatLocalToTable({ x, y }, angle, 0, -d / 2 - MTG_LAYOUT.avatarOffset), rot: normDeg(angle) },
+  };
+}
+
+/** A territory centre's coordinate along the owner's right-hand axis for a seat at `angle`. */
+function seatU(t: TerritorySpec, angle: number): number {
+  const a = (normDeg(angle) * Math.PI) / 180;
+  return t.x * Math.cos(a) - t.y * Math.sin(a);
 }
 
 /**
@@ -166,5 +213,5 @@ function stackLane(centreBand: number): Rect {
 /** Solo goldfish: the 1v1 table with seat 0 only (PLAN M0). */
 export function soloLayout(): TableLayout {
   const l = mtgLayout('1v1');
-  return { ...l, seats: l.seats.slice(0, 1) };
+  return { ...l, seats: l.seats.slice(0, 1), turnOrder: [0] };
 }

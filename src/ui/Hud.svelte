@@ -7,11 +7,12 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { mergeTimeline, type ChatTab } from '../core/log';
-  import type { CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
+  import type { Anchor, CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import type { ActivePing, TableScene, ViewState } from '../scene/types';
   import { attachPresence, type PresenceHandle } from '../scene/presence';
+  import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
   import { tokensToCssVars } from '../themes/index';
@@ -33,11 +34,19 @@
   import ContextMenu from './ContextMenu.svelte';
   import DeckImport from './DeckImport.svelte';
   import HandFan from './HandFan.svelte';
+  import TeamHands from './hand/TeamHands.svelte';
+  import { teamFanTop, teamRevealChoices } from './hand/team';
   import Inspect from './Inspect.svelte';
   import LogPanel from './LogPanel.svelte';
   import PileViewer from './PileViewer.svelte';
   import TokenSearch from './TokenSearch.svelte';
   import TurnStrip from './TurnStrip.svelte';
+  import TalkIndicator from './voice/TalkIndicator.svelte';
+  import VoicePanel from './voice/VoicePanel.svelte';
+  import { attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
+  import Speech from './settings/Speech.svelte';
+  import { fieldDictation, sceneCaptions } from './settings/captions';
+  import type { Caption } from '../voice/types';
 
   let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
 
@@ -49,6 +58,18 @@
   /** Own chat lines not in the session log yet, and what the HUD notices as the log grows (ui/chat/watch.ts, M1-P6). */
   let pendingChat = $state.raw<readonly LogEntry[]>([]);
   const watch = new LogWatch();
+  /**
+   * Two-Headed Giant team chat this browser sent or received (session.team chatLog, M3-P2): team lines never enter the
+   * shared log (DESIGN "A team channel carries voice and text only between teammates"), so the timeline merges them in.
+   */
+  let teamChat = $state.raw<readonly LogEntry[]>([]);
+  let teamUnsub: (() => void) | null = null;
+  function followTeam(): void {
+    const team = session.team;
+    if (!team || teamUnsub) return;
+    teamUnsub = team.subscribe(() => (teamChat = team.chatLog()));
+    teamChat = team.chatLog();
+  }
 
   // --- Local view state (never shared) -------------------------------------------------------------------------
   let sceneHover = $state<InstanceId | null>(null);
@@ -96,7 +117,19 @@
   let logOpen = $state(true);
   let preview = $state<{ card: InstanceId; x: number; y: number } | null>(null);
   let voice = $state<{ talking: 'talk' | 'teamTalk' | null; muted: boolean }>({ talking: null, muted: false });
+  /** Live voice of a networked table (M3-P3); the solo table and the harness have none. */
+  const liveVoice = untrack(() => session.voice);
+  let voicePanel = $state(false);
+  /** Who speaks now, by identity peer id (the avatars' speaking rings). */
+  let speaking = $state.raw<Record<string, boolean>>({});
+  const speaks = (seat: string): boolean => {
+    const peer = st.seats[seat]?.peer;
+    return !!peer && speaking[peer] === true;
+  };
   let logPanel = $state<LogPanel | undefined>();
+  /** Dictated captions (M3-P4, session.captions) and the speech settings panel. */
+  let captionList = $state.raw<Caption[]>([]);
+  let speechOpen = $state(false);
   let noteInput = $state<HTMLInputElement | undefined>();
   let drawInput = $state<HTMLInputElement | undefined>();
 
@@ -112,7 +145,9 @@
    * with the row above it, and the avatar column. Fitting the table keeps it clear of them, so the own piles are never
    * under the log or the hand at the fitted view.
    */
-  const fitInsets = $derived(fitInsetsFor(vh, logOpen));
+  /** Two-Headed Giant: the teammate's fan sits above the own one (TeamHands below), and the table fit keeps it clear. */
+  const teamFanShown = $derived(!!session.team && Object.keys(st.teams).length > 0);
+  const fitInsets = $derived(fitInsetsFor(vh, logOpen, teamFanShown));
 
   // --- Card identity as this browser may know it ----------------------------------------------------------------
   /** The face this viewer may see: public identity, else own hand or own face-down identity, else a targeted reveal. Never a library face. */
@@ -194,6 +229,7 @@
     },
     voice(action, phase) {
       onVoice?.(action, phase);
+      if (liveVoice) runTalkAction(liveVoice, action, phase);
       if (action === 'mute') voice = { ...voice, muted: !voice.muted };
       else voice = { ...voice, talking: phase === 'start' ? action : null };
     },
@@ -395,6 +431,11 @@
   // --- Derived HUD data -------------------------------------------------------------------------------------------
   const hand = $derived(handOrder(st, secrets, me));
   const seats = $derived(Object.values(st.seats).sort((a, b) => a.index - b.index));
+  /** The other players' avatars in the left column; at a four-seat table they are compact so the column fits the screen. */
+  const others = $derived(seats.filter((s) => s.id !== me && !isEmptyChair(st, s.id)));
+  const otherAvatars = $derived(others.length);
+  /** A spectator's HUD (M3-P5): life and counters without controls. */
+  const spectating = untrack(() => session.role === 'spectator');
   const lifeOf = (seat: string) => {
     const s = st.seats[seat];
     const team = s?.team ? st.teams[s.team] : undefined;
@@ -447,7 +488,7 @@
    * earlier hidden move); the watch fills in the names this browser could see just before each action (M1-P6).
    */
   const lines = $derived(
-    logLines(mergeTimeline(entries, pendingChat), {
+    logLines(mergeTimeline(entries, teamChat, pendingChat), {
       state: st,
       cardName: logName,
       phaseLabel: (id) => game.phases.find((p) => p.id === id)?.label ?? id,
@@ -458,7 +499,11 @@
   const chatTabs = $derived<ChatTab[]>(st.seats[me]?.team ? ['table', 'team'] : ['table']);
   function sendChat(text: string, channel: ChatTab) {
     const a = session.chat(text, channel);
-    pendingChat = addPending(pendingChat, a, session.log(), Date.now());
+    followTeam();
+    const team = session.team;
+    // A team line stays out of the shared log: the team view holds it (and the teammate's), not the pending list.
+    if (channel === 'team' && team) teamChat = team.chatLog();
+    else pendingChat = addPending(pendingChat, a, session.log(), Date.now());
   }
   const inspectCard = $derived<CardInstance | null>(inspectId ? (st.cards[inspectId] ?? null) : null);
   const keyOf = (a: ActionId, ctx: KeyContext = 'table') => keyLabel(keymap, a, ctx);
@@ -515,8 +560,51 @@
   // --- Scene ------------------------------------------------------------------------------------------------------
   $effect(() => {
     if (!sceneReady || !scene) return;
-    const view: ViewState = { selection: [...selection], hovered, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile };
+    const view: ViewState = { selection: [...selection], hovered, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile, captions: sceneCaptions(captionList, st) };
     scene.update(st, view);
+  });
+
+  // The hovered card or stack item is a caption's anchor (DESIGN "Chat and voice", Placement: "last acted on or is
+  // hovering"). A stack marker (an ability or trigger) has no card: the scene reports it on its own.
+  let captionHover = '';
+  function syncCaptionHover(card: InstanceId | null): void {
+    if (!session.captions) return;
+    const item = card ? null : hoveredStackItem(scene);
+    const anchor: Anchor | null = card ? { kind: 'card', id: card } : item ? { kind: 'stackItem', id: item } : null;
+    const key = anchor ? `${anchor.kind}:${anchor.id}` : '';
+    if (key === captionHover) return;
+    captionHover = key;
+    session.captions.hover(anchor);
+  }
+  $effect(() => {
+    const h = hovered;
+    untrack(() => syncCaptionHover(h));
+  });
+  /** While the note field has focus, dictation goes into it (DESIGN "Chat and voice", Notes by voice). */
+  function dictateNote(on: boolean): void {
+    // The note open at focus: a late final is written only while that note is still the one open (never another card's).
+    const open = on ? note : null;
+    session.captions?.dictateInto(
+      open
+        ? fieldDictation(
+            () => (note === open ? open.text : null),
+            (text) => {
+              if (note === open) open.text = text;
+            },
+            80,
+          )
+        : null,
+    );
+  }
+
+  // A note field removed without a blur (Enter, Escape) hands dictation back to captions. WebKit fires no focusout for
+  // a removed field, so the talk state is told what has focus now (else it stays on the gone field and drops words).
+  $effect(() => {
+    if (note === null)
+      untrack(() => {
+        dictateNote(false);
+        if (typeof document !== 'undefined') liveVoice?.focus(focusKind(document.activeElement));
+      });
   });
 
   let seenLog = 0;
@@ -536,7 +624,9 @@
   onMount(() => {
     seenLog = entries.length;
     watch.start(entries);
+    followTeam();
     const unsub = session.subscribe((s) => {
+      followTeam();
       const log = session.log();
       // Before the HUD moves on: names this browser could see and other players' cards touched (M1-P6).
       watch.observe(log, st, s, logName);
@@ -546,6 +636,11 @@
       entries = log;
       pendingChat = prunePending(pendingChat, log);
     });
+    // The talk key's focus rules and the talk mouse button (M3-P3), and the speaking rings.
+    const voiceOff = liveVoice ? attachTalkInput(liveVoice) : null;
+    const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
+    captionList = session.captions?.captions() ?? [];
+    const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
     void settings
       ?.get('keymap')
       .then((o) => {
@@ -590,6 +685,12 @@
     }
     return () => {
       unsub();
+      voiceOff?.();
+      speakOff?.();
+      teamUnsub?.();
+      teamUnsub = null;
+      unsubCaptions?.();
+      session.captions?.dictateInto(null);
       for (const t of timers) clearTimeout(t);
       timers = [];
       engine.blur();
@@ -612,6 +713,7 @@
   onpointermove={(e) => {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
+    syncCaptionHover(hovered);
   }}
 />
 
@@ -635,15 +737,34 @@
         <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
-        {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
-        {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
+        {#if !liveVoice}
+          {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
+          {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
+        {/if}
       </nav>
-      {#each seats.filter((s) => s.id !== me && !isEmptyChair(st, s.id)) as seat (seat.id)}
+      {#if liveVoice || (session.captions && !spectating)}
+        <!-- The voice row: the talk-mode indicator (M3-P3) and the speech settings (M3-P4), so the shared toolbar keeps
+             its layout and the avatar column below stays short. A spectator only sees captions. -->
+        <div class="toolbar voice-row">
+          {#if liveVoice}
+            <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'V'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
+          {/if}
+          {#if session.captions && !spectating}
+            <button type="button" data-testid="open-speech-settings" aria-pressed={speechOpen} onclick={() => (speechOpen = !speechOpen)}>Dictation</button>
+          {/if}
+          {#if liveVoice && voicePanel}
+            <!-- Drops down over the avatar column instead of pushing it into the own avatar (M3-G). -->
+            <div class="voice-pop"><VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} /></div>
+          {/if}
+        </div>
+      {/if}
+      {#each others as seat (seat.id)}
         <Avatar
           {seat}
           life={lifeOf(seat.id)}
           me={false}
           active={st.turn.active === seat.id || st.turn.active === seat.team}
+          speaking={speaks(seat.id)}
           responding={st.confirm?.holder === seat.id}
           asking={asking(seat.id)}
           glyph={glyphOf(seat.colour)}
@@ -651,6 +772,9 @@
           onlife={(delta) => session.dispatch({ type: 'life', seat: seat.id, delta })}
           oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: seat.id, kind, delta })}
           onopenzone={openViewer}
+          ongoto={() => scene?.camera.goToSeat(seat.id)}
+          readonly={spectating}
+          compact={otherAvatars >= 3}
         />
       {/each}
     </div>
@@ -708,6 +832,7 @@
           life={lifeOf(me)}
           me={true}
           active={st.turn.active === me || st.turn.active === st.seats[me].team}
+          speaking={speaks(me)}
           responding={st.confirm?.holder === me}
           asking={asking(me)}
           glyph={glyphOf(st.seats[me].colour)}
@@ -715,11 +840,14 @@
           onlife={(delta) => session.dispatch({ type: 'life', seat: me, delta })}
           oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: me, kind, delta })}
           onopenzone={openViewer}
+          ongoto={() => scene?.camera.goToSeat(me)}
+          readonly={spectating}
         />
       </div>
     {/if}
 
-    <div class="above-hand">
+    <!-- Above the hand, centred (DESIGN "Specification: geometry, layout and motion", Screen layer); with a teammate's fan shown, above that fan too. -->
+    <div class="above-hand" data-testid="above-hand" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
       {#if toast}<p class="toast" role="status" data-testid="toast">{toast.text}</p>{/if}
       {#if untapOffer}
         <div class="offer" data-testid="untap-offer">
@@ -766,6 +894,10 @@
       ondragout={(id, x, y) => dragOut(id, x, y)}
       onselect={(id) => (selection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id])}
     />
+    {#if session.team && teamFanShown}
+      <!-- Two-Headed Giant: the teammate's hand above the own fan (M3-P2, ui/hand/*). -->
+      <TeamHands team={session.team} state={st} {faces} {vw} {vh} oninspect={(id, ref) => ((inspectId = id), (inspectRef = ref))} />
+    {/if}
   </div>
 
   {#if viewer}
@@ -806,6 +938,7 @@
         bind:this={noteInput}
         bind:value={note.text}
         data-testid="note-input"
+        {...{ [NOTE_FIELD_ATTR]: '' }}
         maxlength="80"
         placeholder="Note (Enter to save, empty clears)"
         aria-label="Note"
@@ -813,7 +946,11 @@
           if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) submitNote();
           else if (e.key === 'Escape') note = null;
         }}
-        onblur={() => (note = null)}
+        onfocus={() => dictateNote(true)}
+        onblur={() => {
+          dictateNote(false);
+          note = null;
+        }}
       />
     </div>
   {/if}
@@ -857,6 +994,7 @@
         {#each otherSeats as s (s.id)}
           <button type="button" data-seat={s.id} onclick={() => doRevealTo([s.id])}>{s.name}</button>
         {/each}
+        {#each teamRevealChoices(st, me) as c (c.id)}<button type="button" data-seat={c.id} onclick={() => doRevealTo(c.seats)}>{c.label}</button>{/each}
         {#if otherSeats.length > 1}<button type="button" data-seat="all" onclick={() => doRevealTo(otherSeats.map((s) => s.id))}>Everyone</button>{/if}
       {/if}
       <button type="button" class="x" onclick={() => (revealTo = null)}>Cancel</button>
@@ -887,6 +1025,10 @@
       }}
       onclose={() => (deckOpen = false)}
     />
+  {/if}
+
+  {#if speechOpen && session.captions}
+    <Speech captions={session.captions} onclose={() => (speechOpen = false)} />
   {/if}
 
   {#if cheatOpen}
@@ -969,6 +1111,17 @@
     padding: 2px 8px;
     cursor: pointer;
   }
+  .voice-row {
+    position: relative;
+  }
+  .voice-pop {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 30;
+    max-height: calc(100vh - 96px);
+    overflow-y: auto;
+  }
   kbd {
     font-family: var(--sp-font-mono, monospace);
     opacity: 0.7;
@@ -1033,6 +1186,8 @@
   }
   .above-hand {
     position: absolute;
+    /* Above the teammate's fan (z-index 19), so a hovered teammate card never covers OK and Hold. */
+    z-index: 20;
     left: 50%;
     bottom: calc(22vh + 16px);
     transform: translateX(-50%);

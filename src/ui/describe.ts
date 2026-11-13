@@ -17,9 +17,11 @@
  * (DESIGN "Chat and voice", Text chat; core/log.ts parseChatText).
  */
 import type { Action, UndoableAction } from '../core/actions';
-import type { ActionLogEntry, InstanceId, LogEntry, SeatId, TableState, ZoneId } from '../core/types';
+import type { ActionLogEntry, Format, InstanceId, LogEntry, SeatId, TableState, ZoneId } from '../core/types';
 import { parseZoneId } from '../core/ids';
 import { parseChatText, type ChatTab } from '../core/log';
+import { isSpectatorId } from '../core/teams';
+import { spectatorLabel } from '../net/roles';
 
 /**
  * A piece of a log line: text, a table card that previews on hover, or (chat, M1-P6) a card named in double brackets
@@ -40,6 +42,13 @@ export interface LogLine {
   level?: 'info' | 'warn';
   /** The chat tab of a chat line (M1-P6); absent for action and system lines. */
   channel?: ChatTab;
+  /** The actor and the text are joined by a colon, as in "Anna: 20 → 14" (a change to the actor's own life). */
+  joined?: true;
+  /**
+   * A caption told with the action it is attached to, as in "Anna casts Shock: 'two damage to your Elf'": the actor
+   * starts the action's text, no colon after the name (DESIGN "Chat and voice", Record).
+   */
+  told?: true;
 }
 
 /** What the describer needs besides the entries. */
@@ -67,6 +76,11 @@ export const LIFE_MERGE_MS = 2000;
 const SILENT = new Set<Action['type']>(['rngCommit', 'shuffleNonce', 'shuffleDone', 'snapshotHash', 'sequencerClaim']);
 
 const t = (text: string): Seg => ({ text });
+/** The spectators a targeted reveal names, as the log says it (M3-P5). */
+const spectatorsText = (n: number): string[] => (n === 0 ? [] : [n === 1 ? 'a spectator' : `${n} spectators`]);
+
+/** Table formats as the log names them (DESIGN "Players, seats and formats"). Added by M3-C. */
+const FORMAT_LABEL: Readonly<Record<Format, string>> = { '1v1': '1v1', ffa3: 'three-player free-for-all', ffa4: 'four-player free-for-all', '2hg': 'Two-Headed Giant' };
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
@@ -135,6 +149,10 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     if (a.type === 'undo' && a.inverse.type === 'life') return { key: lifeKey(a.inverse.seat), delta: a.inverse.delta };
     return null;
   };
+  // "Anna: 20 → 14" for the actor's own life, "Cleo: team 30 → 28" for the own team's, else "Anna changes life of Ben: 20 → 18".
+  const ownLife = (by: SeatId, key: string): boolean => key === by || key === st.seats[by]?.team;
+  const lifeText = (by: SeatId, key: string, from: number, to: number): string =>
+    key === by ? `${from} → ${to}` : ownLife(by, key) ? `team ${from} → ${to}` : `changes life of ${seatName(key)}: ${from} → ${to}`;
   const running = new Map<string, number>();
   for (const e of entries) {
     if (e.kind !== 'action') continue;
@@ -146,6 +164,8 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
   const byCid = new Map<string, Action>();
   const lines: LogLine[] = [];
   let lastLife: { line: LogLine; key: string; by: SeatId; at: number; from: number } | null = null;
+  // Who holds which chair so far in these entries: a chair taken again by its holder is a rename or a colour change.
+  const chairs: Chairs = { held: new Map(), moves: new Set() };
   // A line that later actions of the same gesture (same type, actor, group and destination) fold into.
   let merge: { line: LogLine; sig: string; a: Action; cards: Seg[] } | null = null;
 
@@ -166,12 +186,12 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
       const after = before + life.delta;
       running.set(life.key, after);
       if (a.type === 'life' && lastLife && lastLife.key === life.key && lastLife.by === a.by && e.at - lastLife.at <= LIFE_MERGE_MS) {
-        lastLife.line.segs = [t(`${seatName(life.key)}: ${lastLife.from} → ${after}`)];
+        lastLife.line.segs = [t(lifeText(a.by, life.key, lastLife.from, after))];
         lastLife.at = e.at;
         continue;
       }
       if (a.type === 'life') {
-        const line: LogLine = { key: entryKey, kind: 'action', seat: a.by, colour: st.seats[a.by]?.colour ?? null, actor: seatName(a.by), segs: [t(`${seatName(life.key)}: ${before} → ${after}`)], at: e.at };
+        const line: LogLine = { key: entryKey, kind: 'action', seat: a.by, colour: st.seats[a.by]?.colour ?? null, actor: seatName(a.by), segs: [t(lifeText(a.by, life.key, before, after))], at: e.at, ...(ownLife(a.by, life.key) ? { joined: true as const } : {}) };
         lines.push(line);
         lastLife = { line, key: life.key, by: a.by, at: e.at, from: before };
         continue;
@@ -193,16 +213,68 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
       merge.line.at = e.at;
       continue;
     }
-    const segs = describe(a, d);
+    const chair = chairLine(a, chairs);
+    if (chair === 'skip') continue;
+    const told = toldWith(a, d);
+    const segs = chair ?? told ?? describe(a, d);
     if (!segs) continue;
     // An answer is the answering seat's line, also when the sequencer's clock sent it for that seat (a timeout).
     const who = a.type === 'respond' ? a.seat : a.by;
-    const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: who, colour: st.seats[who]?.colour ?? null, actor: seatName(who), segs, at: e.at };
+    // A spectator's line names it by the nickname its chat carries, never by its raw id (M3-P5, net/roles.ts).
+    const actor = isSpectatorId(who) ? spectatorLabel(a.type === 'chat' ? a.name : undefined) : seatName(who);
+    const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: who, colour: st.seats[who]?.colour ?? null, actor, segs, at: e.at };
     if (a.type === 'chat') line.channel = a.channel;
+    if (told) line.told = true;
     lines.push(line);
     merge = sig === null ? null : { line, sig, a, cards: [a.type === 'draw' ? t('a card') : card(cardOf(a)!)] };
   }
   return lines;
+}
+
+/**
+ * A caption's line with the action it is attached to (`about`), as in "Anna casts Shock: 'two damage to your Elf'"
+ * (DESIGN "Chat and voice", Record), or null for the plain "Anna: …": no `about`, an action not in these entries, one
+ * by another seat (the speaker starts the line) or one without a line of its own.
+ */
+function toldWith(a: Action, d: Describers): Seg[] | null {
+  if (a.type !== 'caption' || a.about === undefined) return null;
+  const about = d.original(a.about);
+  if (!about || about.by !== a.by || about.type === 'caption' || about.type === 'chat') return null;
+  const action = describe(about, d);
+  const words = describe(a, d);
+  return action && words ? [...action, t(": '"), ...words, t("'")] : null;
+}
+
+/** The name a chair carries before its player saved a nickname (session/net.ts DEFAULT_NICKNAME). */
+const PLACEHOLDER_NAME = 'Player';
+
+interface Chairs {
+  held: Map<SeatId, { name: string; colour: number; peer: string | undefined }>;
+  /** Groups of chair moves (take the new chair, leave the old one): the leave gets no line of its own. */
+  moves: Set<string>;
+}
+
+/**
+ * The line of a chair action, or 'skip', or null for the ordinary text. A holder taking its own chair again (the lobby
+ * does so to change the colour or the name) says what changed instead of "takes a seat" a second time; leaving the old
+ * chair of a move says nothing (the take says it).
+ */
+function chairLine(a: Action, chairs: Chairs): Seg[] | 'skip' | null {
+  if (a.type === 'seatTake') {
+    const prev = chairs.held.get(a.seat);
+    chairs.held.set(a.seat, { name: a.name, colour: a.colour, peer: a.peer });
+    if (a.group !== undefined) chairs.moves.add(a.group);
+    if (!prev || prev.peer !== a.peer) return a.group !== undefined ? [t('moves to another chair')] : null;
+    // A first nickname over the placeholder a chair is taken with before the lobby saved one (session/net.ts
+    // DEFAULT_NICKNAME) is no rename worth a line.
+    if (prev.name !== a.name) return prev.name === '' || prev.name === PLACEHOLDER_NAME ? 'skip' : [t(`changes their name from ${prev.name}`)];
+    return prev.colour !== a.colour ? [t('changes their seat colour')] : 'skip';
+  }
+  if (a.type === 'seatLeave') {
+    chairs.held.delete(a.seat);
+    return a.group !== undefined && chairs.moves.has(a.group) ? 'skip' : null;
+  }
+  return null;
 }
 
 /** What makes two actions one gesture's line: draws, moves and taps of one actor sharing a group. Null: never merged. */
@@ -280,7 +352,8 @@ export function describe(a: Action, d: Describers): Seg[] | null {
     case 'reveal':
       return [t('reveals '), card(a.instanceId)];
     case 'revealTo':
-      return [t('reveals '), card(a.instanceId), t(` to ${a.seats.map(seatName).join(', ') || 'nobody'}`)];
+      // Spectators are not in the shared state, so a reveal to them names how many (M3-P5).
+      return [t('reveals '), card(a.instanceId), t(` to ${[...a.seats.map(seatName), ...spectatorsText(a.spectators?.length ?? 0)].join(', ') || 'nobody'}`)];
     case 'hide':
       return [t('hides '), card(a.card)];
     case 'shuffleCommit':
@@ -314,7 +387,7 @@ export function describe(a: Action, d: Describers): Seg[] | null {
     case 'stackReorder':
       return [t('reorders the stack')];
     case 'lineAdd':
-      return [t(`draws ${a.kind === 'mark' ? 'a mark' : `a ${a.kind} line`}`), ...(a.label ? [t(` “${a.label}”`)] : [])];
+      return [t(`draws ${a.kind === 'mark' ? 'a mark' : `${/^[aeiou]/.test(a.kind) ? 'an' : 'a'} ${a.kind} line`}`), ...(a.label ? [t(` “${a.label}”`)] : [])];
     case 'lineRemove':
       return [t('removes a line')];
     case 'ping':
@@ -366,6 +439,8 @@ export function describe(a: Action, d: Describers): Seg[] | null {
       return [t('calls time on a pick')];
     case 'lobbySet':
       return [t('changes the lobby settings')];
+    case 'formatSet':
+      return [t(`sets the table to ${FORMAT_LABEL[a.format] ?? String(a.format)}`)];
     case 'chat':
     case 'caption':
       return parseChatText(a.text).map((p): Seg => ('card' in p ? (p.set ? { text: p.card, named: p.card, set: p.set } : { text: p.card, named: p.card }) : t(p.text)));

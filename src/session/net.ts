@@ -66,6 +66,7 @@ import { createNetEngine, NACK_DUPLICATE } from '../net/engine';
 import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
 import { createPrivateChannel } from '../net/private';
+import { spectatorRevealSender } from '../net/roles';
 import { applySequenced, seatOfPeer } from '../net/sequencer';
 import type { NetEngine, PrivateChannel, ResumePoint, Unsubscribe } from '../net/types';
 import type { LogRecord, TableStore } from '../store/types';
@@ -76,8 +77,15 @@ import { randomId, randomSalt } from './secrecy';
 import { identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recoveryProblem, type RecoveryOwed, type SessionRecovery } from './resume';
 import { reconcileSecrets, type LibraryPlacement } from './secrets';
 import { buildFromDeck, Evening, type DraftPort } from './draft';
+import { TeamView } from './team';
+import { MAX_TEAM_CHAT } from '../net/team';
+import { formatTeamSeats, isTeamFormat, teamIdOf } from '../core/teams';
+import { mountCaptions } from './captions';
+import type { CaptionControls } from '../voice/types';
 import type { DraftControls } from '../draft/types';
-import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
+import { createSessionVoice, latestTransport } from './voice';
+import type { VoiceControls } from '../voice/types';
+import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus, TeamControls } from './types';
 
 /** How long a browser without a seat listens for a table already in the room before it takes a chair (decision M1-P8). */
 export const SETTLE_MS = 1500;
@@ -136,7 +144,16 @@ export interface NetSessionInternals {
 
 /** The seq-0 table of a room nobody saved (DESIGN "Players, seats and formats", Seats: every chair free). */
 export function freshNetTable(game: NetSessionOptions['game'], format: Format = '1v1'): TableState {
-  return createTable({ game, format, seats: Array.from({ length: SEATS_OF[format] }, (_, i) => ({ name: '', colour: i as SeatColourIndex })) });
+  // Two-Headed Giant chairs belong to their team from the start (core/teams.ts TABLE_FORMAT_TEAMS; M3-P2).
+  const teamOf = new Map(formatTeamSeats(format).flatMap((seats, t) => seats.map((s) => [s, teamIdOf(t)] as const)));
+  return createTable({
+    game,
+    format,
+    seats: Array.from({ length: SEATS_OF[format] }, (_, i) => {
+      const team = teamOf.get(`s${i}`);
+      return { name: '', colour: i as SeatColourIndex, ...(team !== undefined ? { team } : {}) };
+    }),
+  });
 }
 
 const DEFAULT_ENTROPY: Entropy = { id: () => randomId('c'), salt: randomSalt };
@@ -278,6 +295,12 @@ class NetTable implements NetSession, SessionRecovery {
   /** Own pack-seed rounds run one after another. */
   private packChain: Promise<unknown> = Promise.resolve();
   private eveningImpl: Evening | null = null;
+  /** Live voice (M3-P3, session/voice.ts); set by openNetSession when the options ask for it. */
+  voiceImpl: VoiceControls | null = null;
+  /** The Two-Headed Giant team view (M3-P2, session/team.ts). */
+  private readonly teamView = new TeamView({ seat: () => this.seat, confirmedState: () => this.engine.confirmedState(), secrets: () => this.sec, now: () => this.now() });
+  /** Dictation and captions (session/captions.ts, M3-P4); set once joined when the session has voice options. */
+  captions?: CaptionControls;
 
   constructor(
     engine: NetEngine,
@@ -313,9 +336,19 @@ class NetTable implements NetSession, SessionRecovery {
     return this.eveningImpl?.draft;
   }
 
+  /** The Two-Headed Giant team view (M3-P2); absent outside a team format. */
+  get team(): TeamControls | undefined {
+    return isTeamFormat(this.engine.confirmedState().format) ? this.teamView : undefined;
+  }
+
   /** The evening's stage flow (M2-P7). */
   get evening(): EveningControls | undefined {
     return this.eveningImpl?.evening;
+  }
+
+  /** Live voice and talk modes (M3-P3); absent without voice options. */
+  get voice(): VoiceControls | undefined {
+    return this.voiceImpl ?? undefined;
   }
 
   /** The own draft view for the debug hook, null outside a draft. */
@@ -351,14 +384,18 @@ class NetTable implements NetSession, SessionRecovery {
         // A replica now in step decides the turn-ups kept from before a reload (`keptTurnUp`).
         this.queueDrive();
       }),
+      ...this.teamView.attach(engine),
       engine.onPeers(() => {
         for (const l of [...this.peerListeners]) l();
+        this.teamView.sync(true);
         this.netChanged();
         // A peer that (re)connected may be the one a randomness round waits for, or this browser may owe it a nonce.
         this.queueDrive();
         if (this.collision()) queueMicrotask(() => void this.rejoin());
       }),
       engine.onSequencerChange(() => this.netChanged()),
+      // A reveal to named spectators (M3-P5, net/roles.ts).
+      spectatorRevealSender(engine, () => this.sec),
       this.channel.onIdentity((card, from, verified) => {
         if (!verified) {
           this.system('warn', `Integrity warning: ${from} showed this browser card ${card.instanceId}, and it does not match ${from}'s deck commitment`);
@@ -447,6 +484,9 @@ class NetTable implements NetSession, SessionRecovery {
     if (this.disposed) return;
     this.disposed = true;
     this.eveningImpl?.dispose();
+    this.voiceImpl?.dispose();
+    this.teamView.dispose();
+    this.captions?.dispose();
     for (const u of this.unsubs.splice(0)) u();
     this.engine.leave();
     for (const w of this.waiters.splice(0)) {
@@ -541,6 +581,13 @@ class NetTable implements NetSession, SessionRecovery {
   }
 
   chat(text: string, channel: ChatChannel = 'table'): Action {
+    if (channel === 'team') {
+      // Team lines go to the teammate on the pair channel only, never into the shared log (M3-P2, session/team.ts).
+      // A line longer than the channel carries is cut to it, so the own timeline shows what the teammate gets.
+      const line = this.stamp({ type: 'chat', text: text.slice(0, MAX_TEAM_CHAT), channel });
+      if (!this.disposed) this.teamView.say(line);
+      return line;
+    }
     return this.dispatch({ type: 'chat', text, channel });
   }
 
@@ -1718,6 +1765,7 @@ class NetTable implements NetSession, SessionRecovery {
   private notify(): void {
     if (this.disposed) return;
     this.settleWaiters();
+    this.teamView.sync();
     for (const l of [...this.changeListeners]) {
       try {
         l();
@@ -1922,15 +1970,18 @@ async function loadSaved(store: TableStore | undefined, roomId: string): Promise
  * Aborting `signal` before that leaves the room (engine and transport) and rejects.
  */
 export async function openNetSession(opts: NetSessionOptions, internals: NetSessionInternals = {}, signal?: AbortSignal): Promise<NetTable> {
+  // A spectator takes no chair: session/spectator.ts openSpectatorSession (M3-P5).
+  if (opts.role === 'spectator') throw new Error('a spectator joins with openSpectatorSession (session/spectator.ts)');
   const saved = await loadSaved(opts.store, opts.roomId).catch(() => null);
   if (signal?.aborted) throw cancelled();
   const fresh = freshNetTable(opts.game, opts.format ?? '1v1');
   const start: ResumePoint = saved?.start ?? { snapshot: { seq: 0, state: fresh }, tail: [] };
   const identity = await createNetIdentity(opts.identity.keyPair, opts.identity.peerId, opts.identity.nickname);
   if (signal?.aborted) throw cancelled();
+  const transports = latestTransport(opts.transport);
   const makeEngine = (from: ResumePoint): NetEngine =>
     createNetEngine({
-      transport: opts.transport(),
+      transport: transports.make(),
       roomId: opts.roomId,
       roomKey: opts.roomKey,
       identity,
@@ -1948,11 +1999,16 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
     snapshotSeq: start.snapshot.seq,
     lastSeq: engine.confirmedState().seq,
   });
+  if (opts.voice) {
+    const port = { engine: () => session.engine, transport: transports.current, state: () => session.getState(), subscribe: session.subscribe.bind(session) };
+    session.voiceImpl = createSessionVoice({ ...port, subscribeNet: (l) => session.subscribeNet(() => l()) }, opts.voice);
+  }
   try {
     await abortable(engine.join(), signal);
     if (!saved) session.saveBase();
     session.prefetch(session.knownSids());
     await abortable(session.sitDown(internals.settleMs ?? SETTLE_MS, internals.seatTimeoutMs ?? SEAT_TIMEOUT_MS), signal);
+    if (opts.voice) session.captions = mountCaptions(session, opts.voice, opts.now);
   } catch (e) {
     session.leave();
     throw e;

@@ -16,7 +16,8 @@
   import type { LobbyProps } from '../types';
   import { ConnectivityCheck, type ConnectivityReport } from './connectivity';
   import { pastedDeckId, readyVerdict } from './ready';
-  import { chairChoice, chairs, colourClash, colourTakenBy, hostSeat, nicknameProblem, normaliseNickname, pickColour, readiness, seatOf, startProblem, SEAT_COLOURS } from './seats';
+  import SpectatorPanel from './SpectatorPanel.svelte';
+  import { chairChoice, chairs, colourClash, colourTakenBy, hostSeat, nicknameProblem, normaliseNickname, pickColour, readiness, seatOf, startProblem, SEAT_COLOURS, teamGroups } from './seats';
 
   let { session, game, link, identity, decks, cardData, parseDecklist }: LobbyProps = $props();
 
@@ -47,6 +48,8 @@
   const mySeat = $derived(selfPeer ? seatOf(st, selfPeer) : null);
   const me = $derived(mySeat ? st.seats[mySeat] : undefined);
   const list = $derived(chairs(st, selfPeer));
+  /** Two-Headed Giant: the chairs by team; sitting down joins a team (M3-P2, ui/lobby/seats.ts). */
+  const teams = $derived(teamGroups(st, selfPeer));
   const ready = $derived(readiness(st));
   const report: ConnectivityReport = $derived(selfPeer ? check.observe(net, st, selfPeer, now) : { overall: 'checking', pairs: [], problems: [] });
   const present = (seat: SeatId): boolean => {
@@ -76,6 +79,16 @@
       const w = turned ? s.territory.d : s.territory.w;
       const d = turned ? s.territory.w : s.territory.d;
       return { index: s.index, x: r.x - w / 2, y: -r.y - d / 2, w, d };
+    }),
+  );
+  /** The teams' joint territories (games/types.ts TeamLayout; M3-P2). */
+  const teamAreas = $derived(
+    (layout.teams ?? []).map((t) => {
+      const r = toViewerFrame({ x: t.territory.x, y: t.territory.y, rot: t.territory.rot }, viewerAngle);
+      const turned = Math.round(r.rot / 90) % 2 === 1;
+      const w = turned ? t.territory.d : t.territory.w;
+      const d = turned ? t.territory.w : t.territory.d;
+      return { index: t.index, x: r.x - w / 2, y: -r.y - d / 2, w, d };
     }),
   );
 
@@ -241,6 +254,8 @@
     </div>
   </section>
 
+  <SpectatorPanel {session} {link} inline />
+
   {#if report.problems.length}
     <section class="problems" role="alert" data-testid="connectivity-problem">
       {#each report.problems as p (p.kind + (p.peer ?? ''))}
@@ -257,6 +272,9 @@
       <div class="table-box" style="aspect-ratio: {outer.w} / {outer.d}">
         <svg viewBox="{-outer.w / 2} {-outer.d / 2} {outer.w} {outer.d}" aria-hidden="true">
           <rect class="table" x={-box.w / 2} y={-box.d / 2} width={box.w} height={box.d} rx="18" />
+          {#each teamAreas as t (t.index)}
+            <rect class="team-area" x={t.x - 10} y={t.y - 10} width={t.w + 20} height={t.d + 20} rx="14" />
+          {/each}
           {#each territories as t (t.index)}
             {@const seat = Object.values(st.seats).find((s) => s.index === t.index)}
             <rect class="territory" x={t.x} y={t.y} width={t.w} height={t.d} rx="8" style={seat && list.find((c) => c.seat === seat.id)?.occupied ? `stroke: ${seatColours[seat.colour]?.colour}` : ''} />
@@ -278,6 +296,7 @@
             data-mine={c.mine}
             data-ready={c.ready}
             data-colour={c.occupied ? c.colour : ''}
+            data-team={c.team ?? ''}
             aria-pressed={c.mine}
             disabled={!c.occupied ? !chairChoice(st, c.seat, selfPeer).ok : false}
             onclick={() => takeChair(c.seat)}
@@ -290,9 +309,22 @@
               <span class="name">Free chair</span>
               <span class="state">{mySeat ? 'Move here' : 'Sit here'}</span>
             {/if}
+            {#if c.team !== null}
+              <span class="team" data-testid="chair-team">{teams.find((g) => g.team === c.team)?.label ?? ''}</span>
+            {/if}
           </button>
         {/each}
       </div>
+      {#if teams.length > 0}
+        <ul class="teams" data-testid="lobby-teams" aria-label="Teams">
+          {#each teams as g (g.team)}
+            <li data-team={g.team} data-mine={g.mine} data-full={g.full}>
+              <strong>{g.label}{g.mine ? ' (your team)' : ''}</strong>: {g.chairs.map((c) => (c.occupied ? c.name : 'free chair')).join(' & ')}
+            </li>
+          {/each}
+        </ul>
+        <p class="muted" data-testid="lobby-teams-hint">Two-Headed Giant: sit in a chair to join its team, or move to a free chair of the other team to switch. Teammates share one life total, one turn and see each other's hand.</p>
+      {/if}
     </section>
 
     <section class="block you" aria-label="You">
@@ -443,6 +475,22 @@
     fill: var(--sp-bg, #fff);
     stroke: var(--sp-fg, #111);
     stroke-width: 4;
+  }
+  .team-area {
+    fill: color-mix(in srgb, var(--sp-fg, #111) 4%, transparent);
+    stroke: var(--sp-muted, #555);
+    stroke-width: 3;
+  }
+  .chair .team {
+    font-size: 0.75em;
+    color: var(--sp-muted, #555);
+  }
+  .teams {
+    margin: 8px 0 0;
+    padding-left: 18px;
+  }
+  .teams li[data-mine='true'] {
+    font-weight: var(--sp-font-weight-bold, 600);
   }
   .territory {
     fill: none;

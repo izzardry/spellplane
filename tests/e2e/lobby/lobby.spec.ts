@@ -8,7 +8,7 @@
 import { expect, test } from '@playwright/test';
 import type { SecretStore, TableState } from '../../../src/core/types';
 import { hook } from '../helpers/app';
-import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname, twoPages } from './helpers';
+import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname, startPageLoaded, twoPages } from './helpers';
 
 const KEY_RE = /^[A-Za-z0-9_-]{22}$/;
 
@@ -20,6 +20,7 @@ test('the start page renders and creates a table link with the room id and key i
   await expect(page.getByRole('heading', { name: 'Play with friends' })).toBeVisible();
   // A nickname is required before creating.
   await expect(page.getByTestId('create-table')).toBeDisabled();
+  await startPageLoaded(page);
   await page.getByTestId('nickname').fill('  Ann   Lee ');
   await page.getByTestId('create-table').click();
 
@@ -36,8 +37,24 @@ test('the start page renders and creates a table link with the room id and key i
   expect(errors).toEqual([]);
 });
 
+test('a nickname typed while the identity is still loading is kept (M3 gate)', async ({ page }, info) => {
+  // A fresh profile generates its key pair on the start page; hold that back so the player types first.
+  await page.addInitScript(() => {
+    const subtle = crypto.subtle;
+    const generate = subtle.generateKey.bind(subtle) as (...args: unknown[]) => Promise<unknown>;
+    (subtle as unknown as { generateKey: (...args: unknown[]) => Promise<unknown> }).generateKey = (...args) => new Promise((r) => setTimeout(r, 2_000)).then(() => generate(...args));
+  });
+  await open(page, '/lobby', { profile: freshProfile(info, 'typed-early'), transport: 'local' });
+  await page.getByTestId('nickname').fill('Ann');
+  await expect(page.getByTestId('create-table')).toBeDisabled();
+  // Once the (empty) stored nickname arrives, the typed one stays and Create opens.
+  await expect(page.getByTestId('create-table')).toBeEnabled({ timeout: 15_000 });
+  await expect(page.getByTestId('nickname')).toHaveValue('Ann');
+});
+
 test('the start page refuses a pasted text that is not a table link and joins one that is', async ({ page }, info) => {
   await open(page, '/lobby', { profile: freshProfile(info, 'join'), transport: 'local' });
+  await startPageLoaded(page);
   await page.getByTestId('nickname').fill('Ben');
   await page.getByTestId('join-link').fill('https://example.test/spellplane/#/t/room-only');
   await page.getByTestId('join-table').click();

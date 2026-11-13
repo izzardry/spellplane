@@ -15,12 +15,14 @@ import type { Action, ActionDraft } from '../core/actions';
 import { canonicalJson } from '../core/hash';
 import { sha256Sync } from '../core/sha256';
 import type { SeatId, TableState } from '../core/types';
+import { isSpectatorId } from '../core/teams';
 import { foreignVersion, helloMatchesKey, makeBye, makeHello, makeWelcome, newNonce, welcomeIsValid } from './hello';
 import {
   asWireMessage,
   PROTOCOL_VERSION,
   toMessage,
   type HelloMessage,
+  type PeerRole,
   type PresenceMessage,
   type PrivateMessage,
   type ProposeMessage,
@@ -32,6 +34,7 @@ import {
   type WireOf,
 } from './messages';
 import { PresenceChannel } from './presence';
+import { roleProblem, spectatorNameProblem, spectatorRoute } from './roles';
 import { createSequencer, electSequencer, Replica, RETAIN_ACTIONS, seatOfPeer, senderSeat } from './sequencer';
 import { CHANNELS, type Channel, type PeerId } from './transport';
 import {
@@ -362,6 +365,9 @@ class Engine implements NetEngine {
   }
 
   seat(): SeatId | null {
+    // A spectator holds no chair, even when its key pair also holds one at this table (M3-P5): its page never acts,
+    // answers looks or receives hidden cards for that chair.
+    if (this.role === 'spectator') return null;
     return seatOfPeer(this.replica.view(), this.identity.peerId);
   }
 
@@ -424,8 +430,18 @@ class Engine implements NetEngine {
   sendPrivate(seat: SeatId, msg: PrivateMessage): boolean {
     if (this.closed) return false;
     const state = this.replica.confirmed();
+    // A spectator id (M3-P5): only a targeted reveal, only to that spectator's own connection (net/roles.ts).
+    if (isSpectatorId(seat)) {
+      for (const [t, e] of this.peerMap) {
+        if (!this.verified(e) || !spectatorRoute(seat, e.info, seatOfPeer(state, e.info.peerId) !== null, msg)) continue;
+        this.send('prv', msg, t);
+        return true;
+      }
+      return false;
+    }
     for (const [t, e] of this.peerMap) {
-      if (!this.verified(e)) continue;
+      // A seat's messages never go to a page that joined as a spectator (M3-P5).
+      if (!this.verified(e) || e.info.role === 'spectator') continue;
       if (seatOfPeer(state, e.info.peerId) === seat) {
         this.send('prv', msg, t);
         return true;
@@ -652,7 +668,7 @@ class Engine implements NetEngine {
     e.info.peerId = hello.peerId;
     e.info.status = 'connected';
     e.info.lastSeq = Math.max(hello.lastSeq, w.seq);
-    e.info.seat = seatOfPeer(this.replica.confirmed(), hello.peerId) ?? hello.seat;
+    e.info.seat = hello.role === 'spectator' ? null : (seatOfPeer(this.replica.confirmed(), hello.peerId) ?? hello.seat);
     e.lastHeard = this.now();
     this.noteNamed(e, w.sequencer);
     this.seen.add(hello.peerId);
@@ -699,7 +715,8 @@ class Engine implements NetEngine {
     for (const [t, e] of this.peerMap) {
       if (!e.info.peerId) continue;
       const seat = seatOfPeer(state, e.info.peerId);
-      if (seat !== null) e.info.seat = seat;
+      if (e.info.role === 'spectator') e.info.seat = null;
+      else if (seat !== null) e.info.seat = seat;
       this.presence.relabel(t, e.info.peerId, e.info.seat);
     }
     this.peersEv.emit(this.peers());
@@ -791,17 +808,19 @@ class Engine implements NetEngine {
       case 'pack':
       case 'draftCards':
       case 'teamHand':
+      case 'teamChat':
       case 'nonce':
       case 'lookReq':
       case 'look':
-        this.privateEv.emit(msg, { seat: seatOfPeer(this.replica.confirmed(), e.info.peerId), peerId: e.info.peerId });
+        // A spectator's page speaks for no seat (M3-P5), even when its key pair holds a chair here.
+        this.privateEv.emit(msg, { seat: e.info.role === 'spectator' ? null : seatOfPeer(this.replica.confirmed(), e.info.peerId), peerId: e.info.peerId });
         return;
       case 'cursor':
       case 'drag':
       case 'speaking':
       case 'typing':
       case 'captionInterim':
-        this.presence.receive(from, { peerId: e.info.peerId, seat: seatOfPeer(this.replica.confirmed(), e.info.peerId) }, msg as PresenceMessage);
+        this.presence.receive(from, { peerId: e.info.peerId, seat: e.info.role === 'spectator' ? null : seatOfPeer(this.replica.confirmed(), e.info.peerId) }, msg as PresenceMessage);
         return;
     }
   }
@@ -1099,8 +1118,11 @@ class Engine implements NetEngine {
     for (const a of [...this.replica.pending()]) this.sendProposal(a);
   }
 
-  private senderPeerCheck(action: Action, peerId: string): string | null {
-    if (action.type === 'seatTake' && action.peer !== peerId) return 'a seat is taken with the taker’s own peer id';
+  private senderPeerCheck(state: TableState, action: Action, sender: { peerId: string; role: PeerRole; nickname: string }): string | null {
+    if (action.type === 'seatTake' && action.peer !== sender.peerId) return 'a seat is taken with the taker’s own peer id';
+    // A spectator acts as its own spectator id and chats under the nickname it joined with (net/roles.ts; M3-P5); the
+    // sequencer's own check (net/sequencer.ts) covers the action type and never-for-a-seat.
+    if (sender.role === 'spectator') return roleProblem(state, action, { role: sender.role, peerId: sender.peerId, seat: null }) ?? spectatorNameProblem(action, sender.nickname);
     return null;
   }
 
@@ -1108,7 +1130,7 @@ class Engine implements NetEngine {
     if (!this.seqr) return;
     const state = this.replica.confirmed();
     const me = this.identity.peerId;
-    const bad = this.senderPeerCheck(action, me);
+    const bad = this.senderPeerCheck(state, action, { peerId: me, role: this.role, nickname: this.identity.nickname });
     const r = bad !== null ? { ok: false as const, reason: bad } : this.seqr.sequence(state, action, { seat: senderSeat(state, action, me), role: this.role, self: true });
     if (r.ok) {
       this.broadcastSeq(r.action);
@@ -1152,7 +1174,7 @@ class Engine implements NetEngine {
     this.unhold(cid);
     const state = this.replica.confirmed();
     const peerId = e.info.peerId;
-    const bad = this.senderPeerCheck(msg.action, peerId);
+    const bad = this.senderPeerCheck(state, msg.action, { peerId, role: e.info.role, nickname: e.info.nickname });
     const r = bad !== null ? { ok: false as const, reason: bad } : this.seqr.sequence(state, msg.action, { seat: senderSeat(state, msg.action, peerId), role: e.info.role, self: false });
     if (r.ok) {
       this.broadcastSeq(r.action);
@@ -1664,7 +1686,8 @@ class Engine implements NetEngine {
       for (const seat of Object.values(state.seats)) {
         const peer = seat.peer;
         if (peer === undefined) continue;
-        const present = peer === me || [...this.peerMap.values()].some((e) => e.info.peerId === peer && e.info.status === 'connected');
+        // A page watching as a spectator does not sit at the chair its key pair holds (M3-P5).
+        const present = peer === me || [...this.peerMap.values()].some((e) => e.info.peerId === peer && e.info.status === 'connected' && e.info.role !== 'spectator');
         const away = seat.away === true;
         if (!present && !away && this.seen.has(peer)) this.proposeAsSelf({ type: 'away', seat: seat.id, away: true });
         else if (present && away) this.proposeAsSelf({ type: 'away', seat: seat.id, away: false });

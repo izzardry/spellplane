@@ -4,7 +4,7 @@
  * card data, packs and draft formats", Evening stages: the host advances from the lobby). Pure functions over the
  * shared TableState, so every browser draws the same chairs. Implementer: M1-P5.
  */
-import type { SeatColourIndex, SeatId, TableState } from '../../core/types';
+import type { SeatColourIndex, SeatId, TableState, TeamId } from '../../core/types';
 
 /** Seat colours a theme provides (DESIGN "Themes and rendering": eight seat colours). */
 export const SEAT_COLOURS = 8;
@@ -25,6 +25,8 @@ export interface Chair {
   away: boolean;
   /** Identity peer id of the holder, if any. */
   peer: string | null;
+  /** The Two-Headed Giant team the chair belongs to, or null without teams (M3-P2). */
+  team: TeamId | null;
 }
 
 /** A seat somebody has taken: it has a holder's peer id or a name (DESIGN "Players, seats and formats"). */
@@ -49,6 +51,7 @@ export function chairs(state: TableState, selfPeer: string): Chair[] {
         ready: occupied && s.ready,
         away: occupied && !!s.away,
         peer: s.peer ?? null,
+        team: s.team ?? null,
       };
     });
 }
@@ -180,4 +183,40 @@ export function startProblem(state: TableState, seat: SeatId | null, host: SeatI
 export function viewRotation(viewerAngle: number | null): number {
   if (viewerAngle === null) return 0;
   return (((-viewerAngle % 360) + 360) % 360);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Teams (M3-P2; DESIGN "Players, seats and formats": Two-Headed Giant "2 + 2", teammates side by side on one long edge).
+// A team is made by sitting down: every chair of a Two-Headed Giant table belongs to a team (core/teams.ts
+// TABLE_FORMAT_TEAMS), so taking a chair joins its team and moving to a free chair of the other side changes team.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** One team as the lobby shows it. */
+export interface TeamGroup {
+  team: TeamId;
+  /** "Team 1", "Team 2" in the order of the teams' first chairs. */
+  label: string;
+  /** The team's chairs in seat-index order. */
+  chairs: Chair[];
+  /** This browser sits on the team. */
+  mine: boolean;
+  /** Every chair of the team is taken. */
+  full: boolean;
+}
+
+/** The teams of a table with their chairs, in the order of their first chair; [] without teams. */
+export function teamGroups(state: TableState, selfPeer: string): TeamGroup[] {
+  const list = chairs(state, selfPeer);
+  const order: TeamId[] = [];
+  for (const c of list) if (c.team !== null && !order.includes(c.team)) order.push(c.team);
+  return order.map((team, i) => {
+    const members = list.filter((c) => c.team === team);
+    return { team, label: `Team ${i + 1}`, chairs: members, mine: members.some((c) => c.mine), full: members.every((c) => c.occupied) };
+  });
+}
+
+/** How a chair reads with its team: "Team 1" (teammates named when seated), or null without teams. */
+export function teamLabel(state: TableState, seat: SeatId, selfPeer: string): string | null {
+  const group = teamGroups(state, selfPeer).find((g) => g.chairs.some((c) => c.seat === seat));
+  return group?.label ?? null;
 }

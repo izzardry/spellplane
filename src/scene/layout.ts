@@ -275,7 +275,7 @@ export function dropTargets(state: TableState, layout: TableLayout, angle: numbe
       if (a && state.zones[id]) out.push({ zone: id, rect: { x: a.x, y: a.y, w: CARD_W, d: CARD_H, rot: a.rot } });
     }
     const hand = game.zones.find((z) => z.presentation === 'fan');
-    if (hand && state.zones[`${hand.id}:${seat.id}`]) out.push({ zone: `${hand.id}:${seat.id}`, circle: { x: sl.zones.avatar.x, y: sl.zones.avatar.y, r: 30 } });
+    if (hand && state.zones[`${hand.id}:${seat.id}`]) out.push({ zone: `${hand.id}:${seat.id}`, circle: { x: sl.zones.avatar.x, y: sl.zones.avatar.y, r: AVATAR_SPOT_R } });
   }
   const stack = game.zones.find((z) => z.presentation === 'cascade-lane');
   if (stack && state.zones[stack.id]) out.push({ zone: stack.id, rect: { ...layout.stackLane, rot: layout.stackLane.rot + angle } });
@@ -303,32 +303,59 @@ const rectSegments = (r: Rect, out: number[], margin = 0) => {
 export const PILE_LABEL_GAP = 4;
 
 /**
- * Where a pile's label goes: beside the pile on the side that faces the seat's battlefield, reading away from it, when
- * the viewer reads along that side (the own seat and the one opposite); the 12 mm gap between two piles is too narrow
- * for type that stays legible at the fitted view (gate M1 finding). Seats the viewer sees sideways keep the label in
- * the gap below the pile.
+ * Where a pile's label goes: beside the pile on the side that faces the seat's battlefield, reading away from it; the
+ * 12 mm gap between two piles is too narrow for type that stays legible at the fitted view (gate M1 finding). The
+ * viewer reads it upright where that side runs along the viewer's reading direction (the own seat and the one
+ * opposite). A seat the viewer sees sideways (the side seats of a four-player table) has its piles in a row across the
+ * screen, where upright labels would run into each other (gate M3 finding): its labels turn a quarter to read away
+ * from the pile, like a book's spine.
  */
 export function pileLabelPlace(sl: SeatLayout, a: Pose, angle: number): { x: number; y: number; rot: number; anchorX: 'left' | 'center' | 'right'; anchorY: 'middle' } {
   const [localX] = rot2(a.x - sl.territory.x, a.y - sl.territory.y, -sl.angle);
   const [dx, dy] = rot2(localX > 0 ? -1 : 1, 0, sl.angle);
   const [vx, vy] = rot2(1, 0, angle);
   const along = dx * vx + dy * vy;
-  if (Math.abs(along) > 0.7) {
-    const off = CARD_W / 2 + PILE_LABEL_GAP;
-    return { x: a.x + dx * off, y: a.y + dy * off, rot: angle, anchorX: along < 0 ? 'right' : 'left', anchorY: 'middle' };
-  }
-  const [lx, ly] = rot2(0, CARD_H / 2 + 6, sl.angle);
-  return { x: a.x + lx, y: a.y + ly, rot: angle, anchorX: 'center', anchorY: 'middle' };
+  const off = CARD_W / 2 + PILE_LABEL_GAP;
+  if (Math.abs(along) > 0.7) return { x: a.x + dx * off, y: a.y + dy * off, rot: angle, anchorX: along < 0 ? 'right' : 'left', anchorY: 'middle' };
+  const [qx, qy] = rot2(1, 0, angle + 90);
+  return { x: a.x + dx * off, y: a.y + dy * off, rot: qx * dx + qy * dy > 0 ? angle + 90 : angle - 90, anchorX: 'left', anchorY: 'middle' };
 }
 
-/** Hairline zone outlines and their labels (Paper: "zones are hairline outlines with small caps labels"). */
-export function markings(layout: TableLayout, game: GameDefinition, angle: number, seatsInUse: number): Marking {
+/**
+ * Radius of a seat's avatar spot on the table, mm: outside its territory's near edge, centred (DESIGN "Specification:
+ * geometry, layout and motion", Tables and seats). Attack and target lines to a player end there, a tap on it goes to
+ * that seat, and a card dropped on it goes to that player's hand.
+ */
+export const AVATAR_SPOT_R = 30;
+
+/** A circle as segments of `out` ([x1, y1, x2, y2] in mm). */
+const circleSegments = (c: { x: number; y: number }, r: number, out: number[], n = 40) => {
+  for (let i = 0; i < n; i++) {
+    const a0 = (i / n) * Math.PI * 2;
+    const a1 = ((i + 1) / n) * Math.PI * 2;
+    out.push(c.x + Math.cos(a0) * r, c.y + Math.sin(a0) * r, c.x + Math.cos(a1) * r, c.y + Math.sin(a1) * r);
+  }
+};
+
+/**
+ * Hairline zone outlines and their labels (Paper: "zones are hairline outlines with small caps labels"), plus each
+ * taken seat's avatar spot as a ring with the player's name in it, upright for the viewer (M3-P1: with three or four
+ * seats a line to a player needs a visible end). `names` are by seat index; an empty chair draws no ring.
+ */
+export function markings(layout: TableLayout, game: GameDefinition, angle: number, seatsInUse: number, names: readonly string[] = []): Marking {
   const segments: number[] = [];
   const labels: Marking['labels'] = [];
   rectSegments({ x: 0, y: 0, w: layout.table.w, d: layout.table.d, rot: 0 }, segments);
   const label = (s: string) => s.toUpperCase();
   layout.seats.slice(0, Math.max(1, seatsInUse)).forEach((sl, i) => {
     rectSegments(sl.territory, segments);
+    const av = sl.zones.avatar;
+    const name = (names[sl.index] ?? '').trim();
+    if (name) {
+      // A ring at the spot, the name inside it, upright for the viewer. An empty chair (the solo table's far seat) has none.
+      circleSegments(av, AVATAR_SPOT_R, segments);
+      labels.push({ key: `av:${sl.index}`, text: name.slice(0, 12), x: av.x, y: av.y, rot: angle, anchorX: 'center', anchorY: 'middle' });
+    }
     for (const z of game.zones) {
       if (z.scope !== 'seat' || z.presentation !== 'squared') continue;
       const a = pileAnchor(sl, z.id);

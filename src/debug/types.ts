@@ -8,7 +8,8 @@ import type { DeckBuild, InstanceId, Line, Pose, SecretStore, TableState } from 
 import type { DraftPrivateView } from '../draft/types';
 import type { PeerId } from '../net/transport';
 import type { ConnectionStatus, NetMessageRecord, PeerInfo } from '../net/types';
-import type { Vec3 } from '../scene/types';
+import type { DebugCaption, Vec3 } from '../scene/types';
+import type { Caption, SpeechEngineId, TalkIndicatorState, TalkState, VoiceTrackState } from '../voice/types';
 
 /**
  * The network part of the debug hook (DESIGN "Specification: code interfaces", SpellplaneDebug.net; PLAN M1-P2 leak
@@ -47,6 +48,32 @@ export interface DraftDebug {
   build(): DeckBuild | null;
 }
 
+/**
+ * The voice part of the debug hook (DESIGN "Chat and voice", Talk modes; PLAN M3-P3: push-to-talk, turn mic and team talk asserted on track state; M3-G
+ * talk-mode indicator). Added by M3-C; registered by M3-P3's session wiring.
+ */
+export interface VoiceDebug {
+  talk(): TalkState;
+  indicator(): TalkIndicatorState;
+  /** Outgoing track state per connection. */
+  tracks(): VoiceTrackState[];
+}
+
+/**
+ * The speech part of the debug hook (DESIGN "Chat and voice", Dictation and captions; CLAUDE.md `?speech=fake`; PLAN M3-P4 fake engine, M3-G fake-engine captions).
+ * Added by M3-C; registered by M3-P4's session wiring.
+ */
+export interface SpeechDebug {
+  /** The active engine, null before one was created. */
+  engine(): SpeechEngineId | null;
+  /** Deliver a transcript through the fake engine if it is listening; false when it is not (no-op outside `?speech=fake`). */
+  say(text: string, final?: boolean): boolean;
+  /** Captions the caption controller holds now. */
+  captions(): Caption[];
+  /** Captions drawn by the scene, with their anchors and screen rectangles. */
+  drawn(): DebugCaption[];
+}
+
 /** The full debug hook (DESIGN "Specification: code interfaces"). */
 export interface SpellplaneDebug {
   state(): TableState;
@@ -59,6 +86,10 @@ export interface SpellplaneDebug {
   frameStats(): { drawCalls: number; textureBytes: number; frameMs: number };
   /** Added by M2-C. */
   draft: DraftDebug;
+  /** Added by M3-C. */
+  voice: VoiceDebug;
+  /** Added by M3-C. */
+  speech: SpeechDebug;
 }
 
 // Types registerDebug (util/debug.ts) against SpellplaneDebug without util/ importing debug/.

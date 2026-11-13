@@ -28,12 +28,29 @@
  * Sealed: each drafter opens `packs` packs in order (`number` 0, 1, …); their cards go straight to the opener's pool
  * (the pack is left with `count: 0`, no holder). Done when every drafter opened all of its packs.
  *
+ * Two-Headed Giant (M3-P2; DESIGN "Specification: card data, packs and draft formats", Draft formats: "A team shares
+ * each pack and pool; the team picks 2 cards per pass; passing goes team to team, alternating direction per round"):
+ * the drafters are the teams. Every member opens packs for its team (core/teams.ts `opensInRound`,
+ * `teamSealedNumbers`, over the frozen `draftMembers`), each of the set of its team pack index (the lobby's set list is
+ * per team pack: in the draft member j of m opens team pack round · m + j); a pack's opener is the seat, its holder the
+ * team. In the draft either teammate picks for the
+ * team: the pick names the opaque ids it takes (`cards`), because both teammates' browsers must add the same cards to
+ * the shared pool; the ids are recorded in `DraftState.taken[team]` in pick order. Opaque ids say nothing about the
+ * cards, and the team the pack goes to learns which ids are gone from the cards it receives anyway. A pick hands the
+ * rest of the pack on to the next team at once (no `packPass`: the cards travel on the pair channel, draft/team.ts),
+ * so a pack never waits for one teammate's browser. When the pick timer runs out, the team's browsers pick the marked
+ * cards, or else the first cards in pack order, with an ordinary `pick` (draft/team.ts); the sequencer's `draftTimeout`
+ * comes only TEAM_PICK_GRACE_MS later (core/drafting.ts) as the fallback for a team with no browser that can, and takes
+ * the first remaining ids in sorted order (the sequencer knows neither marks nor pack order). In sealed the team's
+ * packs go straight to the team pool. DECISIONS [M3-P2].
+ *
  * Pure and total like the rest of the reducer.
  */
 import type { ActionOf } from '../actions';
 import { passDirection, passTarget, setForPack } from '../drafting';
 import { shuffleReady } from '../rng';
-import type { DrafterId, DraftPack, DraftState, InstanceId, PackId, PassDraftSettings, SealedSettings, SeatId } from '../types';
+import { draftMembers, opensInRound, packsInRound, teamDraftPackIndex, teamSealedNumbers } from '../teams';
+import type { DrafterId, DraftPack, DraftState, InstanceId, PackId, PassDraftSettings, SealedSettings, SeatId, TeamDraftSettings, TeamSealedSettings } from '../types';
 import type { Draft } from './draft';
 import { checkId, checkInt, checkString, own, reject } from './util';
 
@@ -48,7 +65,7 @@ function seqOf(d: Draft, a: { seq?: number }): number {
 }
 
 /** The running draft, writable, when it is of format `format`; refuses outside the draft stage, after the end, or in another format. */
-function running(d: Draft, format: 'pass' | 'sealed'): DraftState {
+function running(d: Draft, format: 'pass' | 'sealed' | 'teamDraft' | 'teamSealed'): DraftState {
   const cur = d.draft;
   if (cur === null) reject('no draft is in progress');
   if (d.base.stage !== 'draft') reject('the table is not in the draft stage');
@@ -63,11 +80,10 @@ function checkDrafter(draft: DraftState, by: unknown): SeatId {
   return seat;
 }
 
-/** Refuse the Two-Headed Giant formats (M3-P2) and say which format a draft is. */
+/** Which format a draft is. */
 function formatOf(d: Draft): string {
   const f = d.draft?.settings.format;
   if (f === undefined) reject('no draft is in progress');
-  if (f === 'teamDraft' || f === 'teamSealed') reject(`the Two-Headed Giant formats are not implemented yet (M3-P2)`);
   return f;
 }
 
@@ -83,9 +99,10 @@ interface HiddenPack {
 /**
  * Check a face-down `packOpen` of `by`: a new pack id; 1 to MAX_PACK_CARDS cards with as many sorted commitments and
  * sorted, unused opaque ids; no identities; generated from a pack-seed round of `by` that is sealed, its latest, and
- * newer than its previous pack; the set of the pack number.
+ * newer than its previous pack; the set of the pack number (or of `setIndex`: the team pack index in the Two-Headed
+ * Giant draft, whose `number` is the round).
  */
-function checkHiddenOpen(d: Draft, draft: DraftState, by: SeatId, a: ActionOf<'packOpen'>): HiddenPack {
+function checkHiddenOpen(d: Draft, draft: DraftState, by: SeatId, a: ActionOf<'packOpen'>, setIndex?: number): HiddenPack {
   const packId = checkId(a.packId, 'pack');
   if (own(draft.packs, packId)) reject(`pack ${packId} is already open`);
   if (a.public === true || a.cards !== undefined) reject('this pack stays hidden: only its holder sees its cards');
@@ -118,7 +135,8 @@ function checkHiddenOpen(d: Draft, draft: DraftState, by: SeatId, a: ActionOf<'p
   }
   const number = checkInt(a.number, 'pack number', 0, 1000);
   const set = checkString(a.set, 'set code', 16);
-  if (set !== setForPack(draft.sets, number)) reject(`pack ${number + 1} is of set ${setForPack(draft.sets, number)}`);
+  const want = setForPack(draft.sets, setIndex ?? number);
+  if (set !== want) reject(`${setIndex === undefined ? `pack ${number + 1}` : `team pack ${setIndex + 1}`} is of set ${want}`);
   return { packId, ids, commits, number, set };
 }
 
@@ -150,6 +168,8 @@ function enqueue(draft: DraftState, drafter: SeatId, pack: DraftPack, seq: numbe
 export function packOpen(d: Draft, a: ActionOf<'packOpen'>): void {
   const f = formatOf(d);
   if (f === 'sealed') return sealedOpen(d, a);
+  if (f === 'teamDraft') return teamDraftOpen(d, a);
+  if (f === 'teamSealed') return teamSealedOpen(d, a);
   if (f !== 'pass') reject(`packOpen of a hidden pack does not apply to a ${f} draft`);
   const draft = running(d, 'pass');
   const by = checkDrafter(draft, a.by);
@@ -258,7 +278,8 @@ function frontPack(draft: DraftState, drafter: SeatId, packId: PackId): DraftPac
 /** `pick` from the pack at the front of the picker's queue: `count` equals the picks per pass, or the rest of the pack. */
 export function pick(d: Draft, a: ActionOf<'pick'>): void {
   const f = formatOf(d);
-  if (f === 'sealed') reject('sealed has no picks: every pool is opened whole');
+  if (f === 'sealed' || f === 'teamSealed') reject('sealed has no picks: every pool is opened whole');
+  if (f === 'teamDraft') return teamPick(d, a);
   const draft = running(d, 'pass');
   const by = checkDrafter(draft, a.by);
   const pack = frontPack(draft, by, checkId(a.packId, 'pack'));
@@ -273,6 +294,7 @@ export function pick(d: Draft, a: ActionOf<'pick'>): void {
 /** `packPass` to the next drafter in the round's direction; ends a round when every pack of it is empty. */
 export function packPass(d: Draft, a: ActionOf<'packPass'>): void {
   const f = formatOf(d);
+  if (f === 'teamDraft') reject('a Two-Headed Giant pick hands the pack on to the next team by itself');
   if (f !== 'pass') reject(`packs are not passed in a ${f} draft`);
   const draft = running(d, 'pass');
   const by = checkDrafter(draft, a.by);
@@ -293,6 +315,7 @@ export function packPass(d: Draft, a: ActionOf<'packPass'>): void {
 /** `draftTimeout` from the sequencer: the pick timer of the front pack ran out; its pick is taken for the holder (see the module comment). */
 export function draftTimeout(d: Draft, a: ActionOf<'draftTimeout'>): void {
   const f = formatOf(d);
+  if (f === 'teamDraft') return teamTimeout(d, a);
   if (f !== 'pass') reject(`a ${f} draft has no pick timer`);
   const draft = running(d, 'pass');
   checkId(a.by, 'seat');
@@ -305,4 +328,141 @@ export function draftTimeout(d: Draft, a: ActionOf<'draftTimeout'>): void {
   const picks = checkInt(a.picks, 'pick number', 0, MAX_PACK_CARDS);
   if (picks !== pack.picks) reject(`the timer of pick ${picks + 1} of pack ${packId} is over`);
   takePick(draft, holder, pack, seqOf(d, a));
+}
+
+// --- Two-Headed Giant (M3-P2) -----------------------------------------------------------------------------------------
+
+/** The seat `by` and the team it drafts for: a seated member of a drafting team. */
+function checkTeamDrafter(d: Draft, draft: DraftState, by: unknown): { seat: SeatId; team: DrafterId } {
+  const seat = checkId(by, 'seat');
+  const s = own(d.base.seats, seat);
+  if (!s || s.name.trim() === '') reject(`${seat} is not seated`);
+  const team = s.team;
+  if (team === undefined || !draft.drafters.includes(team)) reject(`${seat} drafts for no team`);
+  return { seat, team };
+}
+
+/** Member counts of the drafting teams (core/teams.ts `draftMembers`), in drafter order. */
+function memberCounts(d: Draft, draft: DraftState): number[] {
+  return draft.drafters.map((t) => draftMembers(d.base, draft, t).length);
+}
+
+/** Every id some drafter took (`DraftState.taken`). */
+function takenIds(draft: DraftState): Set<InstanceId> {
+  const out = new Set<InstanceId>();
+  for (const ids of Object.values(draft.taken ?? {})) for (const id of ids) out.add(id);
+  return out;
+}
+
+/** The ids still in `pack` of a Two-Headed Giant draft: its committed ids less every id a team took, sorted. */
+export function packRemaining(draft: DraftState, pack: DraftPack): InstanceId[] {
+  const gone = takenIds(draft);
+  return pack.commitment.instanceIds.filter((id) => !gone.has(id));
+}
+
+/** `DraftState.taken[team]`, created for every drafter on first use. */
+function takenOf(draft: DraftState, team: DrafterId): InstanceId[] {
+  draft.taken ??= {};
+  for (const t of draft.drafters) draft.taken[t] ??= [];
+  return draft.taken[team]!;
+}
+
+/**
+ * `packOpen` of a Two-Headed Giant draft: a member opens its pack of the round (`number` = the round), of the set of
+ * its team pack index (core/teams.ts `teamDraftPackIndex`); it joins the back of its team's queue.
+ */
+function teamDraftOpen(d: Draft, a: ActionOf<'packOpen'>): void {
+  const draft = running(d, 'teamDraft');
+  const { seat, team } = checkTeamDrafter(d, draft, a.by);
+  const members = draftMembers(d.base, draft, team);
+  const j = members.indexOf(seat);
+  const p = checkHiddenOpen(d, draft, seat, a, teamDraftPackIndex(members.length, j, draft.round));
+  if (p.number !== draft.round) reject(`round ${draft.round + 1} opens pack ${draft.round + 1}`);
+  const packs = (draft.settings as TeamDraftSettings).packs;
+  if (!opensInRound(packs, members.length, j, draft.round)) reject(`${seat} opens no pack in round ${draft.round + 1}: the team has opened its ${packs} packs`);
+  if (Object.values(draft.packs).some((x) => x.opener === seat && x.number === p.number)) reject(`${seat} already opened pack ${p.number + 1}`);
+  takenOf(draft, team);
+  const seq = seqOf(d, a);
+  const pack = recordPack(draft, seat, p, seq, team, p.ids.length);
+  enqueue(draft, team, pack, seq);
+}
+
+/** `packOpen` of Two-Headed Giant sealed: a member opens the team's next pack of its share; the cards go to the team pool. */
+function teamSealedOpen(d: Draft, a: ActionOf<'packOpen'>): void {
+  const draft = running(d, 'teamSealed');
+  const { seat, team } = checkTeamDrafter(d, draft, a.by);
+  const total = (draft.settings as TeamSealedSettings).packs;
+  const members = draftMembers(d.base, draft, team);
+  const mine = teamSealedNumbers(total, members.length, members.indexOf(seat));
+  const opened = Object.values(draft.packs).filter((x) => x.opener === seat).length;
+  if (opened >= mine.length) reject(`${seat} opened all of its ${mine.length} packs for the team`);
+  const p = checkHiddenOpen(d, draft, seat, a);
+  if (p.number !== mine[opened]) reject(`the next pack of ${seat} is team pack ${mine[opened]! + 1}`);
+  recordPack(draft, seat, p, seqOf(d, a), null, 0);
+  draft.pools[team] = (draft.pools[team] ?? 0) + p.ids.length;
+  const openedBy = (t: DrafterId): number => Object.values(draft.packs).filter((x) => own(d.base.seats, x.opener)?.team === t).length;
+  if (draft.drafters.every((t) => openedBy(t) >= total)) draft.done = true;
+}
+
+/** Take `ids` from the front pack of `team` for the team, hand the rest on to the next team, and end the round when every pack of it is empty. */
+function takeTeamPick(d: Draft, draft: DraftState, team: DrafterId, pack: DraftPack, ids: readonly InstanceId[], seq: number): void {
+  pack.count -= ids.length;
+  pack.picks += 1;
+  draft.pools[team] = (draft.pools[team] ?? 0) + ids.length;
+  takenOf(draft, team).push(...ids);
+  const queue = draft.queues[team]!;
+  queue.shift();
+  const front = queue[0];
+  if (front !== undefined) draft.packs[front]!.sinceSeq = seq;
+  if (pack.count > 0) {
+    enqueue(draft, passTarget(draft.drafters, team, pack.number), pack, seq);
+    return;
+  }
+  pack.holder = null;
+  const ofRound = Object.values(draft.packs).filter((p) => p.number === draft.round);
+  const packs = (draft.settings as TeamDraftSettings).packs;
+  if (ofRound.length < packsInRound(packs, memberCounts(d, draft), draft.round) || ofRound.some((p) => p.count > 0)) return;
+  if (draft.round + 1 < teamRoundsOf(d, draft)) draft.round += 1;
+  else draft.done = true;
+}
+
+/** Rounds of the running Two-Headed Giant draft: until the largest team has opened all of its packs. */
+function teamRoundsOf(d: Draft, draft: DraftState): number {
+  const packs = (draft.settings as TeamDraftSettings).packs;
+  let rounds = 0;
+  for (const m of memberCounts(d, draft)) rounds = Math.max(rounds, m <= 0 ? 0 : Math.ceil(packs / m));
+  return rounds;
+}
+
+/** `pick` of a Two-Headed Giant draft: a teammate takes `count` named cards of the front pack of the team's queue. */
+function teamPick(d: Draft, a: ActionOf<'pick'>): void {
+  const draft = running(d, 'teamDraft');
+  const { team } = checkTeamDrafter(d, draft, a.by);
+  const pack = frontPack(draft, team, checkId(a.packId, 'pack'));
+  const need = Math.min(Math.max(1, (draft.settings as TeamDraftSettings).picks), pack.count);
+  checkInt(a.count, 'pick count', 1, MAX_PACK_CARDS);
+  if (a.count !== need) reject(`a pick from this pack takes ${need} card${need === 1 ? '' : 's'}`);
+  if (!Array.isArray(a.cards)) reject('a team pick names the cards it takes, so both teammates add the same ones to the team pool');
+  const ids = (a.cards as unknown[]).map((id) => checkId(id, 'card'));
+  if (ids.length !== need) reject(`a pick from this pack takes ${need} card${need === 1 ? '' : 's'}`);
+  if (new Set(ids).size !== ids.length) reject('a card is named twice');
+  const left = new Set(packRemaining(draft, pack));
+  for (const id of ids) if (!left.has(id)) reject(`card ${id} is not in pack ${pack.id}`);
+  takeTeamPick(d, draft, team, pack, ids, seqOf(d, a));
+}
+
+/** `draftTimeout` of a Two-Headed Giant draft (the fallback, see the module comment): the front pack's pick, the first remaining ids in sorted order. */
+function teamTimeout(d: Draft, a: ActionOf<'draftTimeout'>): void {
+  const draft = running(d, 'teamDraft');
+  checkId(a.by, 'seat');
+  if (!draft.pickTimer) reject('the pick timer is off');
+  const packId = checkId(a.packId, 'pack');
+  const pack = own(draft.packs, packId);
+  if (!pack) reject(`unknown pack ${packId}`);
+  const holder = pack.holder;
+  if (holder === null || draft.queues[holder]?.[0] !== packId) reject(`pack ${packId} is not waiting for a pick`);
+  const picks = checkInt(a.picks, 'pick number', 0, MAX_PACK_CARDS);
+  if (picks !== pack.picks) reject(`the timer of pick ${picks + 1} of pack ${packId} is over`);
+  const need = Math.min(Math.max(1, (draft.settings as TeamDraftSettings).picks), pack.count);
+  takeTeamPick(d, draft, holder, pack, packRemaining(draft, pack).slice(0, need), seqOf(d, a));
 }

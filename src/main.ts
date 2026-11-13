@@ -2,23 +2,26 @@ import { mount } from 'svelte';
 import { createFaceSource, createSetDataSource, generatePack, parseDecklist, ScryfallCardDataSource, type CardDataSource, type SetDataSource } from './data/index';
 import { mtg } from './games/index';
 import { createTableScene } from './scene/index';
-import { createSoloSession, LONE_WAIT_MS, openNetSession, type NetSession, type TableSession } from './session/index';
+import { createSoloSession, LONE_WAIT_MS, openNetSession, openSpectatorSession, type NetSession, type TableSession } from './session/index';
 import { liveIdentity } from './session/live-identity';
 import { createPageTransport, KillableTransport, pageTransportKind } from './session/transports';
 import { createSetCache, openStores, SOLO_ROOM_ID, type LocalStores } from './store/index';
 import App from './ui/App.svelte';
 import { startProps } from './ui/lobby/start';
 import { parseRoute } from './ui/routes';
+import { flags } from './util/flags';
+import { FAKE_SPEECH, SPEECH_ENGINES, type MediaDevicesLike } from './voice/index';
 import type { AppProps, RoomLink, StartPageProps } from './ui/types';
 
 const target = document.getElementById('app');
 if (!target) throw new Error('#app missing');
 
-/** Module test pages (dev and test builds only): `?harness=scene`, `?harness=ui` or `?harness=confirm` mounts that module's harness instead of the app. */
+/** Module test pages (dev and test builds only): `?harness=scene`, `?harness=ui`, `?harness=confirm` or `?harness=voice` mounts that module's harness instead of the app. */
 const HARNESSES = {
   scene: () => import('./scene/harness'),
   ui: () => import('./ui/harness'),
   confirm: () => import('./ui/confirm/harness'),
+  voice: () => import('./ui/voice/harness'),
 } as const;
 
 const harness = __SPELLPLANE_DEBUG__ ? new URLSearchParams(location.search).get('harness') : null;
@@ -54,6 +57,7 @@ async function boot(el: HTMLElement): Promise<void> {
   const registerSession = (session: TableSession): void => {
     debug?.registerSessionDebug(session, { cardData, parseDecklist });
     debug?.registerDraftDebug(session);
+    debug?.registerSpeechDebug(session);
   };
   registerSession(solo);
 
@@ -83,33 +87,40 @@ async function boot(el: HTMLElement): Promise<void> {
    * Join a table link with the networked session (the table route leaves it when the route goes away). A join still
    * under way when the page leaves that link's route is cancelled, so its engine and transport do not live on.
    */
-  async function openRoom(link: RoomLink): Promise<NetSession> {
+  async function openRoom(link: RoomLink, as: { watch?: boolean } = {}): Promise<NetSession> {
     if (!stores || !identity) throw new Error('this browser blocks local storage, which a table needs for your identity and your hidden cards');
     let transport: KillableTransport | null = null;
     const joining = new AbortController();
     const onHash = (): void => {
       const r = parseRoute(location.hash);
-      if (r.name !== 'room' || r.room !== link.roomId || r.key !== link.roomKey) joining.abort();
+      if (r.name !== 'room' || r.room !== link.roomId || r.key !== link.roomKey || (r.watch === true) !== (as.watch === true)) joining.abort();
     };
     window.addEventListener('hashchange', onHash);
     let session: NetSession;
     try {
-      session = await openNetSession(
-        {
-          game: mtg,
-          cardData,
-          roomId: link.roomId,
-          roomKey: link.roomKey,
-          transport: () => (transport = new KillableTransport(createPageTransport())),
-          identity: await identity.identity(),
-          store: stores.tables,
-          sets,
-          generatePack,
-        },
-        // BroadcastChannel peers connect at once; over Trystero they come up seconds after the join.
-        { createdHere: createdHere(link.roomId), loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS },
-        joining.signal,
-      );
+      const options = {
+        game: mtg,
+        cardData,
+        roomId: link.roomId,
+        roomKey: link.roomKey,
+        transport: () => (transport = new KillableTransport(createPageTransport())),
+        identity: await identity.identity(),
+        store: stores.tables,
+        sets,
+        generatePack,
+      };
+      // `#/t/<room>/<key>/watch`: a spectator without a chair, keeping nothing in the local store (M3-P5).
+      // Live voice (M3-P3): the microphone is acquired only when the player clicks "Join voice". Dictation (M3-P4): the
+      // fake engine replaces the others with `?speech=fake`. A spectator only shows the players' captions.
+      const voice = { media: pageMedia(), settings: stores.settings, engines: flags().speech === 'fake' ? [FAKE_SPEECH] : Object.values(SPEECH_ENGINES) };
+      session = as.watch
+        ? await openSpectatorSession({ ...options, role: 'spectator', voice }, joining.signal)
+        : await openNetSession(
+            { ...options, voice },
+            // BroadcastChannel peers connect at once; over Trystero they come up seconds after the join.
+            { createdHere: createdHere(link.roomId), loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS },
+            joining.signal,
+          );
     } finally {
       window.removeEventListener('hashchange', onHash);
     }
@@ -142,6 +153,13 @@ async function boot(el: HTMLElement): Promise<void> {
     ...(stores && identity ? { settings: stores.settings, identity: identity.store, decks: stores.decks, start: createdRooms(startProps({ identity: identity.store, tables: stores.tables }), markCreated) } : {}),
   };
   mount(App, { target: el, props });
+}
+
+/** The page's media devices; without them (an insecure page) joining voice says so instead of failing silently. */
+function pageMedia(): MediaDevicesLike {
+  if (typeof navigator !== 'undefined' && navigator.mediaDevices) return navigator.mediaDevices;
+  const missing = (): Promise<never> => Promise.reject(Object.assign(new Error('this page has no microphone access'), { name: 'NotFoundError' }));
+  return { getUserMedia: missing, enumerateDevices: () => Promise.resolve([]) };
 }
 
 /** Start-page props whose new rooms are recorded as created by this tab. */

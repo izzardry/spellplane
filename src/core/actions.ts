@@ -14,6 +14,7 @@ import type {
   CardInstance,
   CardRef,
   ConfirmResponse,
+  Format,
   InstanceId,
   Line,
   LobbySettings,
@@ -38,6 +39,7 @@ import type {
   ZoneId,
 } from './types';
 import type { RevealedCard } from './commit';
+import type { SpectatorId } from './teams';
 
 /** Fields every action carries (DESIGN "Data model and protocol", Action families). */
 export interface ActionBase {
@@ -145,8 +147,14 @@ export type ToZoneAction = A<'toZone', { card: InstanceId; to: ZoneId; position:
 export type DrawAction = A<'draw', { instanceId: InstanceId; to?: ZoneId }>;
 /** Publish a card's identity with its salt; peers verify against the commitment (DESIGN "Specification: network protocol and secrecy", Commitments). */
 export type RevealAction = A<'reveal', { instanceId: InstanceId; ref: CardRef; salt: string }>;
-/** Public record of a targeted reveal; the identity travels on the pair's `prv` channel only (DESIGN "Multiplayer architecture", Targeted reveal). */
-export type RevealToAction = A<'revealTo', { instanceId: InstanceId; seats: SeatId[] }>;
+/**
+ * Public record of a targeted reveal; the identity travels on the pair's `prv` channel only (DESIGN "Multiplayer
+ * architecture", Targeted reveal). `spectators` (added by M3-C) names spectators (core/teams.ts SpectatorId) the card
+ * is shown to (DESIGN "Players, seats and formats", Spectators: "A player may reveal their hand to a named spectator");
+ * with it `seats` may be empty. A team reveal lists the team's seats (core/teams.ts revealRecipients). Reducer for
+ * `spectators`: M3-P5.
+ */
+export type RevealToAction = A<'revealTo', { instanceId: InstanceId; seats: SeatId[]; spectators?: SpectatorId[] }>;
 /** Drop a public card's identity from shared state (face-down exile, morph) (DESIGN "Table model", Face-down). */
 export type HideAction = A<'hide', { card: InstanceId }>;
 /** Start a secret shuffle: `h = SHA-256(ownerNonce)` (DESIGN "Specification: network protocol and secrecy", Secret shuffle 1). */
@@ -304,8 +312,13 @@ export type DraftTimeoutAction = A<'draftTimeout', { packId: PackId; picks: numb
 
 // --- Social (DESIGN "Chat and voice") ----------------------------------------------------------------
 
-/** A chat line on a tab (DESIGN "Chat and voice", Text chat). */
-export type ChatAction = A<'chat', { text: string; channel: 'table' | 'team' | 'spectator' }>;
+/**
+ * A chat line on a tab (DESIGN "Chat and voice", Text chat). Team lines never enter the shared log: they travel on the
+ * pair channel to the teammate only (net/messages.ts `teamChat`; DESIGN "Players, seats and formats": "A team channel
+ * carries voice and text only between teammates"), and the reducer refuses `channel: 'team'` (M3-C). `name` (added by
+ * M3-C) is the sender's nickname when `by` is a spectator id (core/teams.ts), which no seat names (M3-P5).
+ */
+export type ChatAction = A<'chat', { text: string; channel: 'table' | 'team' | 'spectator'; name?: string }>;
 /** A final dictated caption anchored to a card, stack item or avatar, attached to action `about` (a cid) (DESIGN "Chat and voice", Dictation and captions). */
 export type CaptionAction = A<'caption', { text: string; anchor?: Anchor; about?: string }>;
 
@@ -331,6 +344,15 @@ export type StageSetAction = A<'stageSet', { stage: Stage; round?: RoundId }>;
  * core/stage.ts `lobbyProblem`).
  */
 export type LobbySetAction = A<'lobbySet', { lobby: LobbySettings }>;
+
+/**
+ * The host sets the table format while the table is in the lobby (DESIGN "Pre-game: draft, sealed and deck building",
+ * Lobby settings: "Format (1v1, free-for-all, Two-Headed Giant)"; "Players, seats and formats"). Added by M3-C;
+ * reducer: M3-P1 (core/reducer/format.ts). The table gets `TABLE_FORMAT_SEATS[format]` seats (core/teams.ts) with every seat
+ * zone, the teams of `TABLE_FORMAT_TEAMS[format]` with ids `teamIdOf(i)`, and `life` as every seat's and team's life total
+ * (the client takes it from `GameDefinition.startingLife(format)`, since the reducer holds no game definition).
+ */
+export type FormatSetAction = A<'formatSet', { format: Format; life: number }>;
 
 /** Every shared action (DESIGN "Data model and protocol"). */
 export type Action =
@@ -397,6 +419,7 @@ export type Action =
   | SettingsAction
   | StageSetAction
   | LobbySetAction
+  | FormatSetAction
   | RecoverAction
   | RecoverCommitAction;
 
@@ -480,6 +503,7 @@ export const ACTION_FAMILIES: Readonly<Record<ActionType, ActionFamily>> = {
   settings: 'meta',
   stageSet: 'meta',
   lobbySet: 'meta',
+  formatSet: 'meta',
   recover: 'zone',
   recoverCommit: 'zone',
 };

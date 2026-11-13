@@ -100,4 +100,16 @@ export class KillableTransport implements Transport {
       if (!this.dead) handler(ev, p);
     });
   }
+  /** Audio on the inner transport's connections (M3-P3 voice); a no-op on a transport without media. */
+  addStream(stream: MediaStream, to?: PeerId): void {
+    this.inner.addStream?.(stream, to);
+  }
+  removeStream(stream: MediaStream, to?: PeerId): void {
+    this.inner.removeStream?.(stream, to);
+  }
+  onStream(handler: (stream: MediaStream, from: PeerId) => void): void {
+    this.inner.onStream?.((stream, from) => {
+      if (!this.dead) handler(stream, from);
+    });
+  }
 }

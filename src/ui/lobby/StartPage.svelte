@@ -8,6 +8,8 @@
   import type { TableRecord } from '../../store/types';
   import type { StartPageProps } from '../types';
   import { nicknameProblem, normaliseNickname } from './seats';
+  import { isWatchLink } from './spectate';
+  import { WATCH } from '../routes';
 
   let { identity, newRoom, parseLink, savedTables, open }: StartPageProps = $props();
 
@@ -24,7 +26,9 @@
     void identity
       .get()
       .then((me) => {
-        nickname = me.nickname;
+        // A nickname the player typed before the identity finished loading is kept (M3 gate: a fresh profile's empty
+        // stored nickname used to wipe it, leaving Join and Create disabled).
+        if (nickname === '') nickname = me.nickname;
         saved = me.nickname;
       })
       .catch((e: unknown) => (failure = `Your identity could not be loaded: ${e instanceof Error ? e.message : String(e)}`))
@@ -58,7 +62,8 @@
     }
     linkProblem = '';
     if (!(await saveNickname())) return;
-    open(link);
+    // A spectator's link (`…/watch`, M3-P5) opens the same table to watch without a chair.
+    open(isWatchLink(pasted) ? { ...link, url: `${link.url}/${WATCH}` } : link);
   }
 </script>
 

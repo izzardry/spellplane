@@ -387,3 +387,55 @@ export function harnessReduce(state: TableState, a: Action): TableState {
   s.seq = state.seq + 1;
   return s;
 }
+
+// ---------------------------------------------------------------------------
+// Multi-seat tables (M3-P1): `?harness=scene&format=ffa3|ffa4|2hg&viewer=s0..s3`
+// ---------------------------------------------------------------------------
+
+const MULTI_NAMES = ['Ada', 'Bo', 'Cy', 'Di'];
+
+/**
+ * A table of `format` laid out by `layout` (the Magic layout of that format): every chair taken, Two-Headed Giant teams
+ * t0 (s0, s1) and t1 (s2, s3) with one shared life total, and per seat a small library, one graveyard card and two
+ * creatures in its battlefield's front row (`<seat>-c0`, `<seat>-c1`), upright for their owner.
+ */
+export function buildFormatState(format: TableState['format'], layout: TableLayout, seats: number): TableState {
+  const s = emptyState();
+  s.format = format;
+  s.seats = {};
+  s.zones = { stack: s.zones.stack! };
+  const team = (i: number) => (format === '2hg' ? `t${i < 2 ? 0 : 1}` : undefined);
+  for (let index = 0; index < seats; index++) {
+    const id = `s${index}`;
+    const t = team(index);
+    s.seats[id] = { id, index, name: MULTI_NAMES[index]!, colour: index, life: format === '2hg' ? 30 : 20, counters: {}, ready: true, autoPass: false, ...(t ? { team: t } : {}) };
+    if (t) {
+      const tm = (s.teams[t] ??= { id: t, seats: [], life: 30, counters: {} });
+      tm.seats.push(id);
+    }
+    for (const z of ZONES) {
+      if (z.scope !== 'seat') continue;
+      const zid2 = zid(z.id, id);
+      s.zones[zid2] =
+        z.visibility === 'public'
+          ? ({ id: zid2, kind: z.id, owner: id, visibility: 'public', ids: [] } satisfies PublicZone)
+          : ({ id: zid2, kind: z.id, owner: id, visibility: z.visibility, count: 0, ids: [] } satisfies HiddenZone);
+    }
+  }
+  s.turn = { number: 1, active: format === '2hg' ? 't0' : 's0', phase: 'main1' };
+  let n = 0;
+  for (const seat of Object.values(s.seats)) {
+    const sl = layout.seats[seat.index]!;
+    const local = (lx: number, ly: number): Pose => {
+      const [x, y] = rot2(lx, ly, sl.territory.rot);
+      return { x: sl.territory.x + x, y: sl.territory.y + y, rot: sl.angle };
+    };
+    for (let i = 0; i < 5; i++) addCard(s, { id: `${seat.id}-l${i}`, owner: seat.id, controller: seat.id, zone: zid('library', seat.id), face: 'down', pose: sl.zones.library });
+    addCard(s, { id: `${seat.id}-g0`, owner: seat.id, controller: seat.id, zone: zid('graveyard', seat.id), identity: { sid: `fx-${++n}` }, pose: sl.zones.graveyard });
+    // Front row (toward the table centre), a little left of centre: clear of the pile column and the command area.
+    for (let i = 0; i < 2; i++) {
+      addCard(s, { id: `${seat.id}-c${i}`, owner: seat.id, controller: seat.id, zone: zid('battlefield', seat.id), identity: { sid: `fx-${100 + seat.index * 2 + i}` }, pose: local(-120 + i * 90, sl.territory.d / 2 - 70) });
+    }
+  }
+  return s;
+}

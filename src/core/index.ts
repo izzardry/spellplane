@@ -16,4 +16,5 @@ export * from './deadlines';
 export * from './recovery';
 export * from './drafting';
 export * from './stage';
+export * from './teams';
 export { ASK_LABEL_MAX, blockingHolder, confirmDeadlines, hasPassed, participants, pendingAbout, roundPassed, silentSeats, timerStartSeq, waitingOn, type RoundState } from './reducer/confirm';
