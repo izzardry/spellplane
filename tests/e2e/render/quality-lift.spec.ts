@@ -11,6 +11,9 @@ type Stats = { textures: number; passes: string[]; shadows: boolean; quality: st
 type Pipeline = { boxes: boolean; contactShadows: boolean; anisotropy: number; maxAnisotropy: number; pixelRatio: number; faceLift: number };
 type Card = { id: string; lift: number; tilt: number; dragging: boolean; pose: { x: number; y: number } };
 
+/** Viewport of the drag specs (behaviour from the debug hook only). */
+const DRAG_VIEWPORT = { width: 960, height: 600 };
+
 test('lower quality levels drop shadows first, then post-processing, without a reload', async ({ page }) => {
   await openRender(page, { theme: 'lit', scenario: 'demo', quality: 'high' });
   await settle(page);
@@ -65,6 +68,9 @@ test('a quality setting a theme lacks falls back to its best level not better th
 
 for (const theme of ['lit', 'paper'] as const) {
   test(`a held card lifts by the dressing's lift and tilts toward the drag only in lit themes (${theme})`, async ({ page }) => {
+    // Lift and tilt are read from the debug hook, not from pixels: a smaller viewport keeps the high level's frames cheap
+    // where WebGL is software-rendered (CI), and a drag draws a frame per pointer move.
+    await page.setViewportSize(DRAG_VIEWPORT);
     await openRender(page, { theme, scenario: 'demo' });
     await settle(page);
     const p = await rh<Pipeline>(page, 'pipeline');
