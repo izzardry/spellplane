@@ -96,6 +96,7 @@
       style:width="{b.width + 8}px"
       style:height="{b.height + 8}px"
       style:--seat={seatColour(f.by) === null ? 'var(--sp-fg, #111)' : `var(--sp-seat-${seatColour(f.by)})`}
+      style:--seat-ink={seatColour(f.by) === null ? 'var(--sp-bg, #fff)' : `var(--sp-seat-${seatColour(f.by)}-ink, #fff)`}
       style:animation-duration="{fadeMs}ms"
       aria-hidden="true"
     >
@@ -125,7 +126,7 @@
     margin-bottom: 2px;
     padding: 0 4px;
     background: var(--seat);
-    color: var(--sp-surface, #fff);
+    color: var(--seat-ink);
     font: 600 11px / 1.4 var(--sp-font, system-ui);
     border-radius: 2px;
     white-space: nowrap;

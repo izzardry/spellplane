@@ -52,13 +52,22 @@ describe('Dusk ships no files', () => {
     for (const s of specs) for (const m of Object.values(s.maps ?? {})) expect(m.kind).toBe('procedural');
   });
 
-  it('lists its procedural modules in docs/ASSETS.md under Dusk, with no placeholder left', () => {
+  it('lists its procedural modules in docs/ASSETS.md under Dusk in the manifest format', () => {
+    // The format itself is checked by tests/unit/themes/conformance/assets.test.ts; this pins Dusk's rows.
     const manifest = fs.readFileSync(path.join('docs', 'ASSETS.md'), 'utf8');
-    const section = manifest.split(/^## /m).find((s) => s.startsWith('Dusk'))!;
+    const section = manifest.split(/^## /m).find((s) => s.startsWith('Dusk\n'))!;
     expect(section).toBeDefined();
-    expect(section).not.toContain('To be filled');
-    for (const mod of ['src/themes/dusk/textures.ts', 'src/themes/dusk/sounds.ts', 'src/themes/dusk/table.ts']) expect(section).toContain(mod);
-    expect(section).toContain('procedural');
+    const duskRows = section
+      .split('\n')
+      .filter((l) => l.startsWith('| `'))
+      .map((l) => l.replace(/^\||\|$/g, '').split('|').map((c) => c.trim()))
+      .map(([asset, , kind, source, licence, notes]) => ({ asset, kind, source, licence, notes: notes ?? '' }));
+    expect(duskRows.map((r) => [r.asset, r.kind, r.source, r.licence])).toEqual([
+      ['`src/themes/dusk/textures.ts`', 'texture', 'procedural', 'MIT (this repository)'],
+      ['`src/themes/dusk/sounds.ts`', 'sound', 'procedural', 'MIT (this repository)'],
+    ]);
+    const notes = duskRows.map((r) => r.notes).join(' ');
+    for (const name of ['FELT_ALBEDO', 'FELT_NORMAL', 'DUSK_BACK', 'DUSK_SOUNDS']) expect(notes).toContain(name);
   });
 });
 
