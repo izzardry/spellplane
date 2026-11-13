@@ -678,7 +678,10 @@ test.describe('theme switcher', () => {
     const t = await twoAtATable(browser, info);
     const { a, b } = t;
     try {
-      const sentActs = async (p: Page) => (await hook<{ dir: string; channel: string }[]>(p, 'net.messages')).filter((m) => m.dir === 'out' && m.channel !== 'pres').length;
+      const sent = async (p: Page) => (await hook<{ dir: string; channel: string; msg: unknown }[]>(p, 'net.messages')).filter((m) => m.dir === 'out');
+      // Heartbeats and presence keep flowing; actions and private messages are what a switch must not cause.
+      const sentActs = async (p: Page) => (await sent(p)).filter((m) => m.channel === 'act' || m.channel === 'prv').length;
+      const outBefore = (await sent(a)).length;
       const actsBefore = await sentActs(a);
       const hashBefore = await hash(a);
       await a.getByTestId('open-theme-settings').click();
@@ -690,6 +693,8 @@ test.describe('theme switcher', () => {
       expect(await loadedThemes(b)).toEqual(['paper']);
       // Nothing but presence went out for the switch, and the table is the same in both browsers.
       expect(await sentActs(a)).toBe(actsBefore);
+      // No message this page sent since names the theme.
+      expect(JSON.stringify((await sent(a)).slice(outBefore))).not.toMatch(/"dusk"|theme/i);
       expect(await hash(a)).toBe(hashBefore);
       await expect.poll(() => hash(b)).toBe(hashBefore);
 
