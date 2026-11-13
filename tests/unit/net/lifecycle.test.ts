@@ -9,6 +9,7 @@ import { TrysteroTransport } from '../../../src/net/trystero';
 import { fakeNetIdentity } from '../../sim/net/fake-identity';
 import { baseTable } from '../../sim/net/sim';
 import { TEST_GAME } from '../core/helpers';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 const joinRoom = vi.fn();
 vi.mock('trystero/nostr', () => ({ selfId: 'self-x', joinRoom: (...args: unknown[]) => joinRoom(...args) }));
@@ -118,9 +119,9 @@ describe('join and leave', () => {
     t.on('ctl', (_m, from) => got.push(from));
     await t.join('amber-fox-93', 'k');
     room.onPeerJoin!('ben');
-    actions[0]!.onMessage!({ v: 1, t: 'hb' }, { peerId: 'ben' });
+    actions[0]!.onMessage!({ v: PROTOCOL_VERSION, t: 'hb' }, { peerId: 'ben' });
     room.onPeerLeave!('ben');
-    actions[0]!.onMessage!({ v: 1, t: 'hb' }, { peerId: 'ben' }); // delivered after the leave
+    actions[0]!.onMessage!({ v: PROTOCOL_VERSION, t: 'hb' }, { peerId: 'ben' }); // delivered after the leave
     expect(t.peers()).toEqual([]);
     expect(events).toEqual(['join ben', 'leave ben']);
     expect(got).toEqual(['ben']);

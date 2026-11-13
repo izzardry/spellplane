@@ -18,6 +18,7 @@ import { createPrivateChannel } from '../../../src/net/private';
 import { forbiddenFor, leakScan } from '../../leak/leak';
 import { browser, closeAll, FAKE_TIMERS, fixtureDeck, lateTransport, LossyTransport, net, observedBy, open, settle, until, waitConverged, type Browser } from './harness';
 import { isLand, playScript } from './script';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
@@ -251,7 +252,7 @@ describe('shared leak test: the networked session', () => {
     const hidden = a.secrets().libraryOrder[3]!;
     const id = a.secrets().identities[hidden]!;
     // A buggy client puts a library card into a pair-channel message B never asked for.
-    a.engine.sendPrivate('s1', { v: 1, t: 'look', lookId: 'bogus', cards: [{ instanceId: hidden, ref: id.card, salt: id.salt }] });
+    a.engine.sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'look', lookId: 'bogus', cards: [{ instanceId: hidden, ref: id.card, salt: id.salt }] });
     await settle(new Promise((r) => setTimeout(r, 500)));
     const report = leakScan({ observed: await observedBy(network, p.B), owner: { state: a.engine.confirmedState(), secrets: a.secrets() }, disclosed: p.shownToB });
     expect(report.tokens.map((h) => h.token)).toEqual(expect.arrayContaining([id.salt]));

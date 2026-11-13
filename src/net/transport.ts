@@ -6,9 +6,9 @@ export type PeerId = string;
 export type Channel = 'ctl' | 'act' | 'prv' | 'pres';
 export const CHANNELS: readonly Channel[] = ['ctl', 'act', 'prv', 'pres'];
 
-/** Every wire message is a JSON object `{v: 1, t: <type>, ...}`. */
+/** Every wire message is a JSON object `{v: <protocol version>, t: <type>, ...}` (net/messages.ts PROTOCOL_VERSION). */
 export interface Message {
-  v: 1;
+  v: number;
   t: string;
   [key: string]: unknown;
 }

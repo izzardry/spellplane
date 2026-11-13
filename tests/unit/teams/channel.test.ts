@@ -13,6 +13,7 @@ import { asTeamHand, teamChannelOver, type TeamChannelHost } from '../../../src/
 import type { PrivateMessage } from '../../../src/net/messages';
 import { ownHandPayload, TeamView } from '../../../src/session/team';
 import { teamTable } from './helpers';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 type Listener = (msg: PrivateMessage, from: { seat: string | null; peerId: string }) => void;
 
@@ -81,7 +82,7 @@ describe('net/team.ts: the teammate hand on the pair channel', () => {
     expect(sent).toEqual([]);
     const got: unknown[] = [];
     teamChannelOver(engine('s1')).onHand(() => got.push(1));
-    engine('s0').sendPrivate('s1', { v: 1, t: 'teamHand', cards: hand, order: [] });
+    engine('s0').sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'teamHand', cards: hand, order: [] });
     expect(got).toEqual([]);
   });
 
@@ -91,16 +92,16 @@ describe('net/team.ts: the teammate hand on the pair channel', () => {
     const got: { from: string; verified: boolean[] }[] = [];
     teamChannelOver(engine('s1')).onHand((from, _c, _o, verified) => got.push({ from, verified }));
     // An opponent pushing its hand to Ben is ignored.
-    engine('s2').sendPrivate('s1', { v: 1, t: 'teamHand', cards: [card('c1')], order: ['c1'] });
+    engine('s2').sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'teamHand', cards: [card('c1')], order: ['c1'] });
     expect(got).toEqual([]);
     // A forged identity is flagged.
-    engine('s0').sendPrivate('s1', { v: 1, t: 'teamHand', cards: [card('h1'), card('h2', 'sid-forged')], order: ['h1', 'h2'] });
+    engine('s0').sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'teamHand', cards: [card('h1'), card('h2', 'sid-forged')], order: ['h1', 'h2'] });
     expect(got).toEqual([{ from: 's0', verified: [true, false] }]);
     // Malformed: an order naming a card not sent, a duplicate card.
     expect(asTeamHand({ t: 'teamHand', cards: [card('h1')], order: ['h9'] })).toBeNull();
     expect(asTeamHand({ t: 'teamHand', cards: [card('h1'), card('h1')], order: [] })).toBeNull();
     expect(asTeamHand({ t: 'teamHand', cards: [{ instanceId: 'h1', ref: { sid: 1 }, salt: 's' }], order: [] })).toBeNull();
-    engine('s0').sendPrivate('s1', { v: 1, t: 'teamHand', cards: [card('h1')], order: ['h9'] });
+    engine('s0').sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'teamHand', cards: [card('h1')], order: ['h9'] });
     expect(got).toHaveLength(1);
   });
 
@@ -113,7 +114,7 @@ describe('net/team.ts: the teammate hand on the pair channel', () => {
     anna.sendChat('s1', 'c1', 'hold the trick', 3);
     anna.sendChat('s2', 'c2', 'not for you', 3);
     expect(sent.map((x) => x.to)).toEqual(['s1']);
-    engine('s3').sendPrivate('s1', { v: 1, t: 'teamChat', cid: 'c3', text: 'spy', atSeq: 3 });
+    engine('s3').sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'teamChat', cid: 'c3', text: 'spy', atSeq: 3 });
     expect(lines).toEqual(['s0:hold the trick']);
   });
 });
@@ -172,7 +173,7 @@ describe('session/team.ts: the team view', () => {
     const state = { current: withHand(teamTable(), 's0', [card('h1'), card('h2')]) };
     const { engine } = wire(state);
     const ben = view(state, 's1', emptySecretStore('s1'), engine('s1'));
-    const push = (ids: string[]): void => void engine('s0').sendPrivate('s1', { v: 1, t: 'teamHand', cards: ids.map((id) => card(id)), order: ids });
+    const push = (ids: string[]): void => void engine('s0').sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'teamHand', cards: ids.map((id) => card(id)), order: ids });
     // A newer copy (after a draw the confirmed state does not show here yet) arrives before an older one.
     push(['h1', 'h2', 'h3']);
     push(['h2', 'h1']);
@@ -195,7 +196,7 @@ describe('session/team.ts: the team view', () => {
     let changes = 0;
     ben.subscribe(() => changes++);
     anna.say({ type: 'chat', text: 'go', channel: 'team', by: 's0', cid: 'k1' });
-    engine('s0').sendPrivate('s1', { v: 1, t: 'teamChat', cid: 'k1', text: 'go', atSeq: 0 });
+    engine('s0').sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'teamChat', cid: 'k1', text: 'go', atSeq: 0 });
     expect(sent.filter((x) => x.msg.t === 'teamChat').map((x) => x.to)).toEqual(['s1', 's1']);
     expect(anna.chatLog()).toHaveLength(1);
     expect(ben.chatLog()).toEqual([{ kind: 'action', seq: 0, at: 0, action: { type: 'chat', text: 'go', channel: 'team', by: 's0', cid: 'k1', seq: 0 } }]);

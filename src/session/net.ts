@@ -67,7 +67,9 @@ import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
 import { createPrivateChannel } from '../net/private';
 import { spectatorRevealSender } from '../net/roles';
+import { PROTOCOL_VERSION } from '../net/messages';
 import { applySequenced, seatOfPeer } from '../net/sequencer';
+import { roomVersionNotice, versionNotice } from '../net/version';
 import type { NetEngine, PrivateChannel, ResumePoint, Unsubscribe } from '../net/types';
 import type { LogRecord, TableStore } from '../store/types';
 import { DRY_CID, FACE_DOWN_KINDS, faceDownAllowed, placementOf, putBack, reRevealDraft, referencedCard, sameOrder, SESSION_ONLY, turnsPublic, turnsUpOnMove, withProof } from './effects';
@@ -1638,6 +1640,10 @@ class NetTable implements NetSession, SessionRecovery {
       await this.until(() => this.peerConnected(), () => null, lone, 'a peer').catch(() => undefined);
       if (this.disposed) throw new Error('The session is closed');
     }
+    // The only browsers in the room run another protocol version: say so (both versions and what to do) instead of
+    // sitting down at a table of its own that nobody else can join (PLAN Milestone 5, owner decisions, Version mismatch).
+    const mismatch = this.engine.versionMismatch?.() ?? null;
+    if (!this.createdHere && mismatch !== null && !this.peerConnected()) throw new Error(versionNotice(mismatch));
     await this.until(
       () => {
         const st = this.engine.status();
@@ -1939,7 +1945,7 @@ class NetTable implements NetSession, SessionRecovery {
 }
 
 /** The stored copy of the room, if any (DESIGN "Multiplayer architecture", Resume: the own save is the starting point). */
-async function loadSaved(store: TableStore | undefined, roomId: string): Promise<{ start: ResumePoint; secrets: SecretStore | null; entries: LogEntry[]; snapshotSeq: number } | null> {
+async function loadSaved(store: TableStore | undefined, roomId: string): Promise<{ start: ResumePoint; secrets: SecretStore | null; entries: LogEntry[]; snapshotSeq: number; protocol: number | undefined } | null> {
   if (!store) return null;
   const loaded = await store.loadTable(roomId);
   if (!loaded || !loaded.table.snapshot || loaded.table.roomKey === '') return null;
@@ -1961,7 +1967,7 @@ async function loadSaved(store: TableStore | undefined, roomId: string): Promise
     log = loaded.log;
   }
   const entries: LogEntry[] = log.filter((r) => r.seq <= seq).map((r) => ({ kind: 'action', seq: r.seq, at: r.at, action: r.action }));
-  return { start: { snapshot: { seq: table.snapshotSeq, state: snapshot }, tail }, secrets: loaded.secrets, entries, snapshotSeq: table.snapshotSeq };
+  return { start: { snapshot: { seq: table.snapshotSeq, state: snapshot }, tail }, secrets: loaded.secrets, entries, snapshotSeq: table.snapshotSeq, protocol: table.protocol };
 }
 
 /**
@@ -1992,9 +1998,12 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
     });
   const engine = makeEngine(start);
   const seat0 = seatOfPeer(engine.confirmedState(), opts.identity.peerId) ?? 's0';
+  // A save that a newer Spellplane wrote may hold actions this page cannot apply: say so (net/version.ts).
+  const newer = saved ? roomVersionNotice({ ...(saved.protocol !== undefined ? { protocol: saved.protocol } : {}) }, PROTOCOL_VERSION) : null;
+  const entries: LogEntry[] = [...(saved?.entries ?? []), ...(newer !== null ? [{ kind: 'system' as const, seq: engine.confirmedState().seq, at: (opts.now ?? Date.now)(), level: 'warn' as const, text: newer }] : [])];
   const session = new NetTable(engine, makeEngine, opts, internals, {
     secrets: saved?.secrets ?? emptySecretStore(seat0),
-    entries: saved?.entries ?? [],
+    entries,
     snapshot: start.snapshot.state,
     snapshotSeq: start.snapshot.seq,
     lastSeq: engine.confirmedState().seq,

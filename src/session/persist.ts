@@ -12,6 +12,7 @@
  */
 import type { Action } from '../core/actions';
 import type { SecretStore, SeatId, TableState } from '../core/types';
+import { PROTOCOL_VERSION } from '../net/messages';
 import type { LogRecord, TableRecord, TableStore } from '../store/types';
 
 /** A snapshot of the table goes into the table record every this many actions (DESIGN "Specification: network protocol and secrecy", Sync). */
@@ -151,6 +152,9 @@ export class TablePersistence {
       seat: this.o.seat(),
       stage: state.stage,
       updatedAt: at,
+      // The room records the protocol version this browser plays it with (PLAN Milestone 5, owner decisions, Version
+      // mismatch; net/version.ts roomProtocol, roomVersionNotice).
+      protocol: PROTOCOL_VERSION,
     };
   }
 }

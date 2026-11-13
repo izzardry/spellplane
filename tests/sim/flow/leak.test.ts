@@ -39,6 +39,7 @@ import { allowedFrom } from '../draft/open/winston-run';
 import { visitsOf } from '../draft/pass/net';
 import { browser, closeAll, FAKE_TIMERS, net, observedBy, open, settle, until, waitConverged, type Browser, type NetTable } from '../session/harness';
 import { both, deckOfFirst, EVENING_OPTS, openFormatBot, pickWherePossible, reload, seatedPair, stageIs, startDraft, type Evening } from './evening';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
@@ -259,7 +260,7 @@ describe('shared leak test: hidden packs through the networked session', () => {
     const seen = new Set(all.filter((v) => v.holder === 's1').flatMap((v) => v.before));
     const leaked = generated.get('s0')!.find((c) => !seen.has(c.instanceId))!;
     expect(leaked).toBeDefined();
-    expect(anna.session!.engine.sendPrivate('s1', { v: 1, t: 'pack', packId: 'control', cards: [leaked] })).toBe(true);
+    expect(anna.session!.engine.sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'pack', packId: 'control', cards: [leaked] })).toBe(true);
     await vi.advanceTimersByTimeAsync(1_000);
     const report = packLeakScan({ observed: await observedAcross(network, ben), others: [leaked], nonces: [], allowed: new Set(), known: [] });
     expect(report.tokens.length).toBeGreaterThan(0);
@@ -322,7 +323,7 @@ describe('shared leak test: hidden packs through the networked session', () => {
 
     // Negative control: one card Ben may not know, sent to him on the pair channel by Anna's engine, is caught.
     const leaked = stack.find((c) => !allowed.has(c.instanceId))!;
-    expect(host.engine.sendPrivate('s1', { v: 1, t: 'draftCards', about: 'control', cards: [leaked] })).toBe(true);
+    expect(host.engine.sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'draftCards', about: 'control', cards: [leaked] })).toBe(true);
     await vi.advanceTimersByTimeAsync(1_000);
     const control = packLeakScan({ observed: await observedAcross(network, e.B), others: [leaked], nonces: [], allowed: new Set(), known: [] });
     expect(control.tokens.length).toBeGreaterThan(0);

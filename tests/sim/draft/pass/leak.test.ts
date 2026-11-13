@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RevealedCard } from '../../../../src/core/commit';
 import { packLeakScan } from '../../../leak/draft';
 import { close, passNet, randomBot, runAwayAtLastVisit, runDraft, visits, type PassNet, type PassSeat } from './net';
+import { PROTOCOL_VERSION } from '../../../../src/net/messages';
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
@@ -91,7 +92,7 @@ describe('hidden packs leak scenario', () => {
     const seen = new Set(visits(t).filter((v) => v.holder === 's1').flatMap((v) => v.before));
     const leaked = generatedBy(a).find((x) => !seen.has(x.instanceId))!;
     expect(leaked).toBeDefined();
-    a.peer.sendPrivate('s1', { v: 1, t: 'pack', packId: 'control', cards: [leaked] });
+    a.peer.sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'pack', packId: 'control', cards: [leaked] });
     await vi.advanceTimersByTimeAsync(500);
     const report = packLeakScan({ observed: [b.peer.received], others: [leaked], nonces: [], allowed: new Set(), known: [] });
     expect(report.tokens.length).toBeGreaterThan(0);

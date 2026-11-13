@@ -8,6 +8,7 @@ import type { Transport } from '../../../src/net/transport';
 import { DIAG_TIMEOUT_MS, NO_PEER, RELAYS_FAILED, newDiagRoom, runDiag, type DiagRun } from '../../../src/ui/diag/diag';
 import { SilentTransport, UnreachableTransport } from '../../../src/session/transports';
 import { ROOM_KEY_RE } from '../../../src/ui/lobby/room';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 const runs: DiagRun[] = [];
 beforeEach(() => vi.useFakeTimers());
@@ -156,8 +157,8 @@ describe('runDiag', () => {
     const rogue = net.create('tr');
     await rogue.join('r', 'k');
     await vi.advanceTimersByTimeAsync(5);
-    rogue.send('ctl', { v: 1, t: 'diagPong', id: 999, at: 0 }, 'ta');
-    rogue.send('ctl', { v: 1, t: 'diagPing', id: 'x', at: 'y' }, 'ta');
+    rogue.send('ctl', { v: PROTOCOL_VERSION, t: 'diagPong', id: 999, at: 0 }, 'ta');
+    rogue.send('ctl', { v: PROTOCOL_VERSION, t: 'diagPing', id: 'x', at: 'y' }, 'ta');
     await vi.advanceTimersByTimeAsync(5);
     expect(a.report().peers[0]).toMatchObject({ peer: 'tr', rttMs: null });
   });

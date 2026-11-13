@@ -1,6 +1,6 @@
 /**
  * Payload checks for received wire messages (DESIGN "Specification: network protocol and secrecy": every message is
- * `{v: 1, t, ...}`; net/messages.ts asWireMessage checks the envelope only). A message from another browser is
+ * `{v, t, ...}`; net/messages.ts asWireMessage checks the envelope only). A message from another browser is
  * untrusted input: the engine acts on it only after the fields it reads have the declared types. Implementer: M1-P1.
  */
 import type { WireMessage } from './messages';

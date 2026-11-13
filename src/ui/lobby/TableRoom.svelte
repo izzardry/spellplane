@@ -16,6 +16,7 @@
   import type { LobbyProps } from '../types';
   import SpectatorPanel from './SpectatorPanel.svelte';
   import SpectatorView from './SpectatorView.svelte';
+  import VersionNotice from '../version/VersionNotice.svelte';
 
   let props: LobbyProps & { createScene: CreateTableScene; faces: FaceSource; cardData: CardDataSource; settings?: SettingsStore | undefined; sets?: SetDataSource | undefined } = $props();
   let stage = $state(untrack(() => props.session.getState().stage));
@@ -31,3 +32,5 @@
 
   {#if stage !== 'lobby'}<SpectatorPanel session={props.session} />{/if}
 {/if}
+
+<VersionNotice session={props.session} />

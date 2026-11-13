@@ -17,6 +17,7 @@ import { SNAPSHOT_EVERY, TablePersistence } from '../../../src/session/persist';
 import { KillableTransport, SilentTransport, UnreachableTransport } from '../../../src/session/transports';
 import type { IdentityRecord, IdentityStore } from '../../../src/store/types';
 import { closeStores, stores } from './helpers';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 afterEach(() => {
   closeStores();
@@ -215,13 +216,13 @@ describe('session/transports.ts', () => {
     await b.join('r', 'k');
     await vi.advanceTimersByTimeAsync(5);
     a.kill();
-    a.send('ctl', { v: 1, t: 'one' });
-    b.send('ctl', { v: 1, t: 'two' });
+    a.send('ctl', { v: PROTOCOL_VERSION, t: 'one' });
+    b.send('ctl', { v: PROTOCOL_VERSION, t: 'two' });
     await vi.advanceTimersByTimeAsync(5);
     expect([heardByA, heardByB]).toEqual([[], []]);
     a.revive();
-    a.send('ctl', { v: 1, t: 'three' });
-    b.send('ctl', { v: 1, t: 'four' });
+    a.send('ctl', { v: PROTOCOL_VERSION, t: 'three' });
+    b.send('ctl', { v: PROTOCOL_VERSION, t: 'four' });
     await vi.advanceTimersByTimeAsync(5);
     expect([heardByA, heardByB]).toEqual([['four'], ['three']]);
   });

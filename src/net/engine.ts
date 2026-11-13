@@ -53,6 +53,7 @@ import {
   type Unsubscribe,
 } from './types';
 import { validPayload } from './validate';
+import { versionNotice, type VersionMismatch } from './version';
 
 /** How often the engine checks liveness and resends what is unanswered. */
 export const TICK_MS = 250;
@@ -179,8 +180,11 @@ class Engine implements NetEngine {
   private statusValue: ConnectionStatus = 'idle';
   private joined = false;
   private closed = false;
-  private versionNotice: number | null = null;
-  private readonly warnedVersion = new Set<PeerId>();
+  /**
+   * Peers on another protocol version, by transport id, oldest first (net/version.ts; PLAN Milestone 5, owner
+   * decisions, Version mismatch). A peer's entry goes when its connection does.
+   */
+  private readonly mismatches = new Map<PeerId, VersionMismatch>();
 
   private sequencer: string | null = null;
   private mode: 'idle' | 'claiming' | 'active' = 'idle';
@@ -303,7 +307,11 @@ class Engine implements NetEngine {
     opts.transport.onPeer((ev, peer) => {
       if (this.closed || !this.joined) return;
       if (ev === 'join') this.onTransportJoin(peer);
-      else this.removePeer(peer);
+      else {
+        // A peer of another version that leaves (closed, or reloaded into this version) no longer stands in the way.
+        if (this.mismatches.delete(peer)) this.updateStatus();
+        this.removePeer(peer);
+      }
     });
   }
 
@@ -688,7 +696,7 @@ class Engine implements NetEngine {
 
   private onBye(from: PeerId, e: PeerEntry, m: WireOf<'bye'>): void {
     if (m.reason === 'version') {
-      this.onForeignVersion(from, m.version, false);
+      this.onForeignVersion(from, m.version, false, m);
       return;
     }
     if (m.reason === 'seatTaken') this.system('warn', 'This browser identity is already at the table in another page.');
@@ -696,14 +704,31 @@ class Engine implements NetEngine {
     this.removePeer(from);
   }
 
-  private onForeignVersion(from: PeerId, version: number, answer: boolean): void {
+  /**
+   * A peer speaks another protocol version (its hello, or its `bye {reason: 'version'}`): answer a hello with our own
+   * version notice, remember the mismatch with both versions and the peer's name where its hello gave one, and say
+   * it once per connection in the log (net/version.ts versionNotice: both versions and what to do).
+   */
+  private onForeignVersion(from: PeerId, version: number, answer: boolean, raw: unknown): void {
     if (answer) this.send('ctl', makeBye('version'), from);
-    this.versionNotice = version;
-    if (!this.warnedVersion.has(from)) {
-      this.warnedVersion.add(from);
-      this.system('warn', `A peer runs Spellplane protocol version ${version}; this page runs version ${PROTOCOL_VERSION}. Both need the same version: reload the page.`);
-    }
+    const said = typeof raw === 'object' && raw !== null ? (raw as { peerId?: unknown; nickname?: unknown }) : {};
+    const known = this.mismatches.get(from);
+    const m: VersionMismatch = {
+      mine: PROTOCOL_VERSION,
+      theirs: version,
+      peerId: typeof said.peerId === 'string' ? said.peerId.slice(0, 128) : (known?.peerId ?? ''),
+      nickname: typeof said.nickname === 'string' ? said.nickname.slice(0, 64) : (known?.nickname ?? ''),
+    };
+    this.mismatches.delete(from);
+    this.mismatches.set(from, m);
+    if (!known || known.theirs !== m.theirs) this.system('warn', versionNotice(m));
     this.updateStatus();
+  }
+
+  versionMismatch(): VersionMismatch | null {
+    let last: VersionMismatch | null = null;
+    for (const m of this.mismatches.values()) last = m;
+    return last === null ? null : { ...last };
   }
 
   private peerInfos(): PeerInfo[] {
@@ -736,7 +761,7 @@ class Engine implements NetEngine {
     const foreign = foreignVersion(raw);
     if (foreign !== null) {
       const isHello = typeof raw === 'object' && raw !== null && (raw as { t?: unknown }).t === 'hello';
-      this.onForeignVersion(from, foreign, isHello);
+      this.onForeignVersion(from, foreign, isHello, raw);
       return;
     }
     const msg = asWireMessage(channel, raw);
@@ -1754,7 +1779,7 @@ class Engine implements NetEngine {
     if (this.closed) return this.setStatus('closed');
     if (!this.joined) return;
     const verified = [...this.peerMap.values()].some((e) => this.verified(e));
-    if (!verified) return this.setStatus(this.versionNotice !== null ? 'versionMismatch' : 'alone');
+    if (!verified) return this.setStatus(this.mismatches.size > 0 ? 'versionMismatch' : 'alone');
     const me = this.identity.peerId;
     const syncing = this.sync !== null || this.replica.gap() !== null || this.mode === 'claiming' || (this.sequencer !== me && !this.initialSynced);
     this.setStatus(syncing ? 'syncing' : 'connected');

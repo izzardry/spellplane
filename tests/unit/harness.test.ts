@@ -3,6 +3,7 @@ import { LoopbackNetwork } from '../../src/net/loopback';
 import type { Message } from '../../src/net/transport';
 import { parseFlags } from '../../src/util/flags';
 import { dbName } from '../../src/store/profile';
+import { PROTOCOL_VERSION } from '../../src/net/messages';
 
 describe('flags', () => {
   it('parses the harness flags', () => {
@@ -17,7 +18,7 @@ describe('flags', () => {
 });
 
 describe('loopback transport', () => {
-  const msg = (n: number): Message => ({ v: 1, t: 'test', n });
+  const msg = (n: number): Message => ({ v: PROTOCOL_VERSION, t: 'test', n });
 
   it('delivers broadcast and addressed messages and reports peers', async () => {
     vi.useFakeTimers();
