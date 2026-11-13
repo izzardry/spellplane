@@ -1019,3 +1019,15 @@ One line per decision the design did not fix. Format: `- [package] decision — 
 - [M4-G fix] One stored quality choice (`Settings.quality`) serves every theme; each theme resolves it to its own level with `qualityLevel` (Paper's one level, Dusk's three), so what the choice drops is per theme — reason: DESIGN "a per-theme quality setting" read as the theme's levels; storing a choice per theme would need a new `Settings` key (store/settings.ts accepts only keys of DEFAULT_SETTINGS in store/types.ts, a contract file). The scene keeps the choice across theme hot-swaps (scene/theme-runtime.ts).
 - [M4-G fix] The quality select (High / Medium / Low) and the "Follow the stack" / "Follow the active player" checkboxes live in the HUD's theme popover (ui/settings/Theme.svelte), not in the lobby's picker; ui/settings/view.ts `ViewSettings` reads them from the settings store on mount, focus and visibility, writes a change at once and hands the scene only what differs from what it has; a change on the page wins over a read that started before it — reason: these settings act on the table scene, which only the HUD has; it replaces the HUD's follow-only sync.
 - [M4-G] Gate green after the main session merged three fix branches (render pacing and Dusk bloom, M4-P1 review, net reload fork) and the settings gap fix; M4-P1 counts as done after its independent review — see docs/gates/M4.md.
+
+## M5 Polish
+
+- [M5 owner] The owner answered the open gate questions on 13 Nov 2026, and M5 builds those answers. They are recorded in docs/PLAN.md, Milestone 5, "Owner decisions for M5":
+  - iPad Safari as the tablet;
+  - opponents top-left and top-right in three-player games from every seat;
+  - spectators listen;
+  - Ctrl as the talk key;
+  - ego reframed to show your own piles;
+  - updates only between games;
+  - installable on iPad.
+- [M5 main] Where the owner did not answer, the main session took its own recommendations. The audit runs automatically at game end. Missing audit records read as "could not be checked", not as a mismatch. The talk mic opens only after Ctrl has been held alone for about 200 ms, so shortcut chords never send audio. The radial menu holds tap, flip, inspect, +1/+1 counter, to hand, to graveyard, exile, and to stack. — reason: the owner asked to implement M5 in one go after these were explained.
