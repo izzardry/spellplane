@@ -9,6 +9,8 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import type { Action } from '../../../src/core/actions';
+import { loadTheme } from '../../../src/themes/index';
+import { litTestTheme } from '../../../src/themes/test-lit';
 import { openRender, ready, rh, setTheme, settle, stableTextures, type HarnessThemeId } from './helpers';
 
 type Stats = { textures: number; geometries: number; passes: string[]; theme: string; drawCalls: number };
@@ -40,7 +42,9 @@ test('ten theme switches mid-game keep the state hash, the cards and the GPU tex
     await setTheme(page, id);
     const s = await rh<Stats>(page, 'stats');
     expect(s.theme, `switch ${i + 1}`).toBe(id === 'lit' ? 'stonetable' : id);
-    if (id === 'lit') expect(s.passes).toContain('bloom');
+    // A theme with bloom runs the post chain (the lit test theme, and each real theme once it replaced its stub).
+    const theme = id === 'lit' ? litTestTheme() : await loadTheme(id);
+    if (theme.post.bloom) expect(s.passes).toContain('bloom');
     else expect(s.passes).toEqual([]);
     expect(await rh<string>(page, 'hash'), `hash after switch ${i + 1} (${id})`).toBe(hash0);
   }
