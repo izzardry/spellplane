@@ -38,7 +38,7 @@ import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
 import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
 import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
-import { LAYER, compareSort, displayedRot, dropTargets, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
+import { LAYER, cameraTable, compareSort, displayedRot, dropTargets, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
@@ -255,7 +255,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const viewport = () => ({ w: Math.max(1, host.clientWidth || innerWidth), h: Math.max(1, host.clientHeight || innerHeight) });
   // Both camera rigs and the blend between them (scene/camera/rig.ts, M4-P1).
   const rig = new TableRig({
-    table: layout.table,
+    // The camera's table: turned to the viewer where seats sit at 120° (scene/layout.ts cameraTable; M5-P7).
+    table: cameraTable(layout, viewerAngle(null, layout, viewerSeat)),
     viewport: viewport(),
     angle: viewerAngle(null, layout, viewerSeat),
     inertiaMs: theme.motion.panInertiaMs,
@@ -1979,7 +1980,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const want = placement();
       if (want.table !== built.table || want.viewerAngle !== built.viewerAngle || want.reducedMotion !== built.reducedMotion) rebuildTheme(want);
       if (formatLayout || prevState === null || Object.keys(prevState.seats).length !== Object.keys(next.seats).length) {
-        rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
+        rig.setTable(cameraTable(layout, viewerAngle(state, layout, viewerSeat)), viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
         rebuildMarkings();
       } else if (prevState.seats !== next.seats) {
         // A chair taken or left changes which hand rows the fitted view must show, and the names at the avatar spots.
@@ -2020,7 +2021,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       layout = nextLayout;
       viewerSeat = seat;
       rebuildTheme(placement());
-      rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
+      rig.setTable(cameraTable(layout, viewerAngle(state, layout, viewerSeat)), viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
       rebuildMarkings();
       relayout(performance.now());
     },

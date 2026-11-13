@@ -10,15 +10,26 @@ import type { Format } from '../../../src/core/types';
 import { rectToViewerFrame, stackLaneForViewer, toViewerFrame, viewerAngle } from '../../../src/games/frame';
 import { isProvisionalLayout, mtg, soloLayout } from '../../../src/games/mtg/index';
 import type { SeatLayout, TableLayout } from '../../../src/games/types';
-import { avatarRect, box, cardRect, type Box, inside, insideTable, overlaps, polar, seen, zonePieces } from './geometry';
+import { avatarRect, box, cardRect, inside, insideTable, overlaps, polar, seen, zonePieces } from './geometry';
 
 const FORMATS: Format[] = ['1v1', 'ffa3', 'ffa4', '2hg'];
+
+/**
+ * How far a seat's near territory edge lies from the table centre, along its forward axis: on the table edge behind the
+ * owner, except at the three-player table, whose seats sit round the table at 120° (PLAN Milestone 5, owner decisions;
+ * M5-P7): 600 + 220 from the centre for every seat, inside the table.
+ */
+function nearEdgeOf(l: TableLayout, s: SeatLayout): number {
+  if (l.format === 'ffa3') return 820;
+  return s.angle % 180 === 0 ? l.table.d / 2 : l.table.w / 2;
+}
 const LAYOUTS: { name: string; layout: () => TableLayout }[] = [...FORMATS.map((f) => ({ name: f, layout: () => mtg.layout(f) })), { name: 'solo', layout: () => soloLayout() }];
 
 describe('the spec table of tables and seats', () => {
   const cases: { format: Format; table: { w: number; d: number }; angles: number[]; widths: number[] }[] = [
     { format: '1v1', table: { w: 1400, d: 1100 }, angles: [0, 180], widths: [1400, 1400] },
-    { format: 'ffa3', table: { w: 2000, d: 1300 }, angles: [0, 180, 180], widths: [2000, 1000, 1000] },
+    // Owner decision for M5 (M5-P7): opponents top-left and top-right from every seat, so the seats sit at 120°.
+    { format: 'ffa3', table: { w: 2000, d: 1800 }, angles: [0, 120, 240], widths: [1100, 1100, 1100] },
     { format: 'ffa4', table: { w: 1800, d: 1800 }, angles: [0, 90, 180, 270], widths: [1100, 1100, 1100, 1100] },
     { format: '2hg', table: { w: 2200, d: 1100 }, angles: [0, 0, 180, 180], widths: [1100, 1100, 1100, 1100] },
   ];
@@ -32,23 +43,44 @@ describe('the spec table of tables and seats', () => {
     expect(l.seats.map((s) => s.territory.w)).toEqual(widths);
     for (const s of l.seats) {
       expect(s.territory.d).toBe(440);
-      // Each territory is turned to its owner and its near edge lies on the table edge behind the owner.
+      // Each territory is turned to its owner and its near edge lies on the table edge behind the owner (three players:
+      // the same distance from the centre for every seat).
       expect(s.territory.rot).toBe(s.angle);
       const near = seen({ x: s.territory.x, y: s.territory.y }, s.angle).y - s.territory.d / 2;
-      const edge = s.angle % 180 === 0 ? l.table.d / 2 : l.table.w / 2;
-      expect(near).toBeCloseTo(-edge, 6);
+      expect(near).toBeCloseTo(-nearEdgeOf(l, s), 6);
     }
     expect(isProvisionalLayout(l)).toBe(false);
   });
 
-  it('three players: seat 0 spans the whole near edge; seats 1 and 2 share the far edge, top-left and top-right', () => {
-    const [s0, s1, s2] = mtg.layout('ffa3').seats as [SeatLayout, SeatLayout, SeatLayout];
-    const near = (b: Box, want: Partial<Box>) => {
-      for (const [k, v] of Object.entries(want)) expect(b[k as keyof Box], k).toBeCloseTo(v, 6);
-    };
-    near(box(s0.territory), { minX: -1000, maxX: 1000, minY: -650 });
-    near(box(s1.territory), { minX: -1000, maxX: 0, maxY: 650 });
-    near(box(s2.territory), { minX: 0, maxX: 1000, maxY: 650 });
+  it('three players: the seats sit round the table at 120°, each territory the one before turned a third of the way', () => {
+    const l = mtg.layout('ffa3');
+    const [s0, s1, s2] = l.seats as [SeatLayout, SeatLayout, SeatLayout];
+    // Seat 0 sees seat 1 at the top-left and seat 2 at the top-right (clockwise order).
+    expect(s1.territory.x).toBeLessThan(0);
+    expect(s1.territory.y).toBeGreaterThan(s0.territory.y);
+    expect(s2.territory.x).toBeGreaterThan(0);
+    expect(s2.territory.y).toBeGreaterThan(s0.territory.y);
+    // Seat k is seat 0 turned by k x 120° about the table centre: territory, piles, command area, avatar and hand row.
+    for (const [k, s] of [s1, s2].entries()) {
+      const a = (k + 1) * 120;
+      const turn = (p: { x: number; y: number }) => seen(p, -a);
+      for (const [mine, base] of [
+        [s.territory, s0.territory],
+        [s.zones.library, s0.zones.library],
+        [s.zones.graveyard, s0.zones.graveyard],
+        [s.zones.exile, s0.zones.exile],
+        [s.zones.command, s0.zones.command],
+        [s.zones.avatar, s0.zones.avatar],
+        [s.zones.handRow, s0.zones.handRow],
+      ] as const) {
+        const want = turn(base);
+        expect(mine.x).toBeCloseTo(want.x, 6);
+        expect(mine.y).toBeCloseTo(want.y, 6);
+        expect(mine.rot).toBeCloseTo((base.rot + a) % 360, 6);
+      }
+    }
+    // Neighbouring territories keep a gap; the centre circle inside them is free for the stack lane.
+    for (const s of l.seats) expect(seen(s.territory, s.angle).y + s.territory.d / 2).toBeCloseTo(-380, 6);
   });
 
   it('four players: one territory per side (bottom, left, top, right) and the 920 x 920 centre is free', () => {
@@ -151,8 +183,9 @@ describe.each(LAYOUTS)('$name: territories and zone piles lie inside the table a
     for (const a of outside) for (const b of outside) if (a !== b) expect(overlaps(a.rect, b.rect), `${a.name} vs ${b.name}`).toBe(false);
     for (const s of l.seats) {
       const near = seen(s.zones.avatar, s.angle).y;
-      const edge = s.angle % 180 === 0 ? l.table.d / 2 : l.table.w / 2;
-      expect(near).toBeLessThan(-edge);
+      expect(near).toBeLessThan(-nearEdgeOf(l, s));
+      // Three players: the avatars lie on the table, outside the own territory (M5-P7).
+      if (l.format === 'ffa3') expect(insideTable(l, avatarRect(s))).toBe(true);
     }
   });
 
@@ -199,8 +232,7 @@ describe.each(LAYOUTS)('$name: each viewer sees their own seat at the bottom', (
     // Upright, below the centre, centred on the table's near edge.
     expect(t.rot).toBe(0);
     expect(t.y).toBeLessThan(0);
-    const turned = angle % 180 !== 0;
-    const nearEdge = (turned ? l.table.w : l.table.d) / 2;
+    const nearEdge = nearEdgeOf(l, own);
     expect(t.y - t.d / 2).toBeCloseTo(-nearEdge, 6);
     // No other seat reaches below the own seat: it sits further up, or beside it on the same near edge (a teammate in
     // Two-Headed Giant, the other far-edge seat of the three-player table).
@@ -236,19 +268,34 @@ describe('opponents as each viewer sees them (DESIGN "Players, seats and formats
     expect(b.x).toBeGreaterThan(0);
   });
 
-  it('three players: seats 1 and 2 (which share the far edge, per the spec table) each see themselves at the bottom, seat 0 across', () => {
+  it('three players: from every seat the next seat clockwise is at the top-left and the last at the top-right, the same shape (M5-P7)', () => {
     const l = mtg.layout('ffa3');
-    for (const index of [1, 2]) {
-      const angle = viewerAngle(l, index);
-      const mine = seen(l.seats[index]!.territory, angle);
-      const other = seen(l.seats[3 - index]!.territory, angle);
-      const zero = seen(l.seats[0]!.territory, angle);
-      expect(mine.y).toBeLessThan(0);
-      expect(zero.y).toBeGreaterThan(0);
-      expect(other.y).toBeCloseTo(mine.y);
-      // Clockwise from the viewer: seat 1 has seat 2 on its left (next), seat 2 has seat 0 next and seat 1 on its right.
-      if (index === 1) expect(other.x).toBeLessThan(mine.x);
-      else expect(other.x).toBeGreaterThan(mine.x);
+    const shape = (viewer: number) =>
+      [0, 1, 2].map((k) => {
+        const s = l.seats[(viewer + k) % 3]!;
+        const angle = viewerAngle(l, viewer);
+        const t = toViewerFrame({ x: s.territory.x, y: s.territory.y, rot: s.territory.rot }, angle);
+        const lib = toViewerFrame(s.zones.library, angle);
+        const av = toViewerFrame({ ...s.zones.avatar }, angle);
+        return { t, lib, av };
+      });
+    const from0 = shape(0);
+    for (const viewer of [0, 1, 2]) {
+      const [me, left, right] = shape(viewer);
+      expect(me!.t.y).toBeLessThan(0);
+      expect(me!.t.x).toBeCloseTo(0, 6);
+      expect(left!.t.x).toBeLessThan(-300);
+      expect(left!.t.y).toBeGreaterThan(0);
+      expect(right!.t.x).toBeGreaterThan(300);
+      expect(right!.t.y).toBeGreaterThan(0);
+      // Every viewer sees exactly the same arrangement as seat 0 does (positions and turns, piles and avatars too).
+      shape(viewer).forEach((p, k) => {
+        for (const key of ['t', 'lib', 'av'] as const) {
+          expect(p[key].x, `viewer ${viewer} seat +${k} ${key}`).toBeCloseTo(from0[k]![key].x, 6);
+          expect(p[key].y, `viewer ${viewer} seat +${k} ${key}`).toBeCloseTo(from0[k]![key].y, 6);
+          expect(p[key].rot, `viewer ${viewer} seat +${k} ${key}`).toBeCloseTo(from0[k]![key].rot, 6);
+        }
+      });
     }
   });
 

@@ -182,7 +182,9 @@ export const DEFAULT_EGO_RIG: EgoRigParams = {
   minPitchDeg: CAMERA.ego.minPitchDeg,
   maxPitchDeg: CAMERA.ego.maxPitchDeg,
   leanMm: 400,
-  maxDollyMm: 700,
+  // From the raised seat (M5-P7) a dolly of 1200 along the 35° view ray still comes down to about 170 mm, as close as
+  // the spec's seat came with 700.
+  maxDollyMm: 1200,
   minHeight: 120,
 };
 
