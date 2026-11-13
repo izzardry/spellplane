@@ -8,6 +8,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { TableLayout } from '../../../src/games/types';
 import type { CameraBlendState, CameraPose, DebugCamera, ScreenPoint, TablePoint } from '../../../src/scene/types';
+import { CAMERA } from '../../../src/core/geometry';
 import { hook } from '../helpers/app';
 import { addCard, dispatch, dist, harness, openScene, screenOf, settle, state, tableOf } from '../scene/helpers';
 
@@ -149,7 +150,8 @@ test.describe('M4-P1 acceptance', () => {
     await openScene(page);
     await page.evaluate(() => window.__spellplane!.rig!.setRig('ego', { animate: false }));
     const table = (await layoutOf(page)).table;
-    const seatY = -table.d / 2 - 260;
+    // The seat: CAMERA.ego.behindEdge behind the near edge (900 since M5-P7's ego framing; the spec's 260 before).
+    const seatY = -table.d / 2 - CAMERA.ego.behindEdge;
     const check = async (what: string) => {
       await settle(page);
       const p = await pose(page);
@@ -376,11 +378,13 @@ test.describe('picking and theme defaults in the ego rig', () => {
     await settle(page);
     const top = ((await harness(page, 'cards')) as { id: string; pose: { x: number; y: number; rot: number } }[]).find((c) => c.id === 's0-l32')!;
     expect(top.pose.rot).toBe(0);
-    // The top of a 33-card library: 32 steps of 0.4 mm, plus the card's thickness.
+    // The top of a 33-card library: 32 steps of 0.4 mm, plus the card's thickness. Probed at its outer side edge (the
+    // pile column's edge of the territory): since M5-P7's raised ego seat looks at the pile from further back, the
+    // graveyard pile beyond the library's far edge is drawn over that edge's strip, so the far edge is no probe.
     const z = 32 * 0.4 + 0.6;
-    const inside = (await toScreen(page, { x: top.pose.x, y: top.pose.y + 88 / 2 - 3 }, z))!;
+    const inside = (await toScreen(page, { x: top.pose.x + 63 / 2 - 3, y: top.pose.y }, z))!;
     expect(await harness(page, 'cardAt', inside.x, inside.y)).toBe('s0-l32');
-    const beyond = (await toScreen(page, { x: top.pose.x, y: top.pose.y + 88 / 2 + 3 }, z))!;
+    const beyond = (await toScreen(page, { x: top.pose.x + 63 / 2 + 3, y: top.pose.y }, z))!;
     expect(await harness(page, 'cardAt', beyond.x, beyond.y)).not.toMatch(/^s0-l/);
   });
 

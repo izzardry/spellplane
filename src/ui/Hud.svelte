@@ -43,7 +43,7 @@
   import TurnStrip from './TurnStrip.svelte';
   import TalkIndicator from './voice/TalkIndicator.svelte';
   import VoicePanel from './voice/VoicePanel.svelte';
-  import { attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
+  import { attachModifierTalk, attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
   import Speech from './settings/Speech.svelte';
   import ThemePicker from './settings/Theme.svelte';
   import { themeContext } from './settings/theme';
@@ -710,8 +710,21 @@
       pendingChat = prunePending(pendingChat, log);
     });
     // The talk key's focus rules and the talk mouse button (M3-P3), and the speaking rings.
-    // The Ctrl talk key under the hold-alone rule (M5-P7) reads the talk binding with the player's remappings.
-    const voiceOff = liveVoice ? attachTalkInput(liveVoice, window, { talkChord: () => keymap.find((b) => b.action === 'talk' && b.context === 'table')?.chord ?? null }) : null;
+    const voiceOff = liveVoice ? attachTalkInput(liveVoice, window, { modifier: false }) : null;
+    // The Ctrl talk key under the hold-alone rule (M5-P7), on the talk binding with the player's remappings: it runs the
+    // talk actions like any talk key once it counts (the KeyEngine never matches a bare modifier).
+    let modifierTalk: 'talk' | 'teamTalk' = 'talk';
+    const modifierOff = attachModifierTalk(
+      window,
+      {
+        start: (team) => {
+          modifierTalk = team ? 'teamTalk' : 'talk';
+          hooks.voice(modifierTalk, 'start');
+        },
+        end: () => hooks.voice(modifierTalk, 'end'),
+      },
+      { talkChord: () => keymap.find((b) => b.action === 'talk' && b.context === 'table')?.chord ?? null },
+    );
     const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
     captionList = session.captions?.captions() ?? [];
     const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
@@ -769,6 +782,7 @@
       unsubView();
       view.dispose();
       voiceOff?.();
+      modifierOff();
       speakOff?.();
       teamUnsub?.();
       teamUnsub = null;

@@ -79,16 +79,22 @@ export interface TalkInputOptions {
   onHold?: (state: HoldAloneState) => void;
 }
 
-/**
- * Follow window focus, text and note field focus, page visibility, the talk mouse button and a modifier talk key (Ctrl
- * by default) for `voice`. Returns the function that stops it.
- */
-export function attachTalkInput(voice: VoiceControls, win: Window = window, opts: TalkInputOptions = {}): () => void {
-  const doc = win.document;
-  const fromFocus = (el: unknown): void => voice.focus(focusKind(el));
-  fromFocus(doc.activeElement);
+/** What a held modifier talk key does once it counts (attachModifierTalk). */
+export interface ModifierTalkHandlers {
+  /** Held alone for the hold time: talk starts; `team` when Shift was held first. */
+  start(team: boolean): void;
+  /** Released (or let go by blur, a hidden page, a text field taking focus) after it had started. */
+  end(): void;
+}
 
-  // --- The modifier talk key under the hold-alone rule (M5-P7) ---------------------------------------------------
+/**
+ * The modifier talk key (Ctrl by default) under the hold-alone rule (voice/hold.ts; PLAN Milestone 5, owner decisions,
+ * Talk key; M5-P7): `start` once the modifier was held alone for the hold time, `end` on its release; a key, pointer
+ * press or wheel turn first makes it a shortcut that never starts. Window blur, a hidden page and a chat or search field
+ * taking focus let it go. Returns the function that stops it (ending a started talk).
+ */
+export function attachModifierTalk(win: Window, handlers: ModifierTalkHandlers, opts: TalkInputOptions = {}): () => void {
+  const doc = win.document;
   const holdMs = opts.holdMs ?? TALK_HOLD_ALONE_MS;
   const gate = createHoldAloneGate(holdMs);
   const now = opts.now ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()));
@@ -104,10 +110,10 @@ export function attachTalkInput(voice: VoiceControls, win: Window = window, opts
   let timer: unknown = null;
   let reported: HoldAloneState = 'idle';
   const report = (): void => {
-    const s = gate.state();
-    if (s === reported) return;
-    reported = s;
-    opts.onHold?.(s);
+    const st = gate.state();
+    if (st === reported) return;
+    reported = st;
+    opts.onHold?.(st);
   };
   const stopTimer = (): void => {
     if (timer !== null) clearTimer(timer);
@@ -118,30 +124,26 @@ export function attachTalkInput(voice: VoiceControls, win: Window = window, opts
     const c = talkChord();
     return c && isModifierChord(c) ? c.key : null;
   };
-  /** Leave the hold: a talking key closes the mic; a pending or shortcut one just ends. */
+  /** Leave the hold: a talking key ends; a pending or shortcut one just stops. */
   const release = (): void => {
     stopTimer();
     const was = gate.state();
     gate.up(now());
     heldKeys.clear();
     heldMod = null;
-    if (was === 'talking') voice.keyUp();
+    if (was === 'talking') handlers.end();
     report();
   };
   const onTick = (): void => {
     timer = null;
-    if (gate.tick(now()) === 'talking') {
-      // What has focus decides between a caption, a note field and nothing (a chat field), as for any talk key.
-      fromFocus(doc.activeElement);
-      voice.keyDown(gate.team());
-    }
+    if (gate.tick(now()) === 'talking') handlers.start(gate.team());
     report();
   };
   /** Another key, a click or a wheel turn while the modifier is held. */
   const other = (): void => {
     if (gate.state() !== 'pending') return;
-    const s = gate.other(now());
-    if (s === 'talking') onTick();
+    const st = gate.other(now());
+    if (st === 'talking') onTick();
     else stopTimer();
     report();
   };
@@ -176,28 +178,81 @@ export function attachTalkInput(voice: VoiceControls, win: Window = window, opts
     pointers.delete(e.pointerId ?? 0);
   };
   const onWheel = (): void => other();
-
   const onBlur = (e: Event): void => {
     if (e.target !== win) return;
     pointers.clear();
     release();
-    voice.focus({ window: false });
   };
-  const onFocus = (e: Event): void => {
-    if (e.target === win) voice.focus({ window: true });
-  };
+  // A chat or search field took focus: the held modifier is let go without talking (the note field keeps it).
   const onFocusIn = (e: FocusEvent): void => {
-    // A chat or search field took focus: the held modifier is let go without talking (the note field keeps it).
     if (focusKind(e.target).text) release();
-    fromFocus(e.target);
   };
-  // Focus leaving for nothing (relatedTarget null) or for another element: what gets it next decides.
-  const onFocusOut = (e: FocusEvent): void => fromFocus(e.relatedTarget);
   const onVisibility = (): void => {
     if (doc.visibilityState !== 'hidden') return;
     pointers.clear();
     release();
-    voice.focus({ window: false });
+  };
+  win.addEventListener('keydown', onKeyDown, CAPTURE);
+  win.addEventListener('keyup', onKeyUp, CAPTURE);
+  win.addEventListener('pointerdown', onPointerDown, CAPTURE);
+  win.addEventListener('pointerup', onPointerUp, CAPTURE);
+  win.addEventListener('pointercancel', onPointerUp, CAPTURE);
+  win.addEventListener('wheel', onWheel, CAPTURE);
+  win.addEventListener('blur', onBlur);
+  win.addEventListener('focusin', onFocusIn);
+  doc.addEventListener('visibilitychange', onVisibility);
+  return () => {
+    win.removeEventListener('keydown', onKeyDown, CAPTURE);
+    win.removeEventListener('keyup', onKeyUp, CAPTURE);
+    win.removeEventListener('pointerdown', onPointerDown, CAPTURE);
+    win.removeEventListener('pointerup', onPointerUp, CAPTURE);
+    win.removeEventListener('pointercancel', onPointerUp, CAPTURE);
+    win.removeEventListener('wheel', onWheel, CAPTURE);
+    win.removeEventListener('blur', onBlur);
+    win.removeEventListener('focusin', onFocusIn);
+    doc.removeEventListener('visibilitychange', onVisibility);
+    release();
+  };
+}
+
+/**
+ * Follow window focus, text and note field focus, page visibility, the talk mouse button and (unless `modifier` is
+ * false: the HUD wires it through its own talk actions) a modifier talk key (Ctrl by default) for `voice`. Returns the
+ * function that stops it.
+ */
+export function attachTalkInput(voice: VoiceControls, win: Window = window, opts: TalkInputOptions & { modifier?: boolean } = {}): () => void {
+  const doc = win.document;
+  const fromFocus = (el: unknown): void => voice.focus(focusKind(el));
+  fromFocus(doc.activeElement);
+
+  // The modifier talk key under the hold-alone rule (M5-P7): what has focus decides between a caption, a note field
+  // and nothing (a chat field), as for any talk key.
+  const offModifier =
+    opts.modifier === false
+      ? null
+      : attachModifierTalk(
+          win,
+          {
+            start: (team) => {
+              fromFocus(doc.activeElement);
+              voice.keyDown(team);
+            },
+            end: () => voice.keyUp(),
+          },
+          opts,
+        );
+
+  const onBlur = (e: Event): void => {
+    if (e.target === win) voice.focus({ window: false });
+  };
+  const onFocus = (e: Event): void => {
+    if (e.target === win) voice.focus({ window: true });
+  };
+  const onFocusIn = (e: FocusEvent): void => fromFocus(e.target);
+  // Focus leaving for nothing (relatedTarget null) or for another element: what gets it next decides.
+  const onFocusOut = (e: FocusEvent): void => fromFocus(e.relatedTarget);
+  const onVisibility = (): void => {
+    if (doc.visibilityState === 'hidden') voice.focus({ window: false });
   };
   let buttonHeld = false;
   const onMouseDown = (e: MouseEvent): void => {
@@ -222,12 +277,6 @@ export function attachTalkInput(voice: VoiceControls, win: Window = window, opts
     if (b !== null && e.button === b) e.preventDefault();
   };
 
-  win.addEventListener('keydown', onKeyDown, CAPTURE);
-  win.addEventListener('keyup', onKeyUp, CAPTURE);
-  win.addEventListener('pointerdown', onPointerDown, CAPTURE);
-  win.addEventListener('pointerup', onPointerUp, CAPTURE);
-  win.addEventListener('pointercancel', onPointerUp, CAPTURE);
-  win.addEventListener('wheel', onWheel, CAPTURE);
   win.addEventListener('blur', onBlur);
   win.addEventListener('focus', onFocus);
   win.addEventListener('focusin', onFocusIn);
@@ -237,13 +286,7 @@ export function attachTalkInput(voice: VoiceControls, win: Window = window, opts
   win.addEventListener('auxclick', onAux, CAPTURE);
   doc.addEventListener('visibilitychange', onVisibility);
   return () => {
-    win.removeEventListener('keydown', onKeyDown, CAPTURE);
-    win.removeEventListener('keyup', onKeyUp, CAPTURE);
-    win.removeEventListener('pointerdown', onPointerDown, CAPTURE);
-    win.removeEventListener('pointerup', onPointerUp, CAPTURE);
-    win.removeEventListener('pointercancel', onPointerUp, CAPTURE);
-    win.removeEventListener('wheel', onWheel, CAPTURE);
-    release();
+    offModifier?.();
     win.removeEventListener('blur', onBlur);
     win.removeEventListener('focus', onFocus);
     win.removeEventListener('focusin', onFocusIn);
