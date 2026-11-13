@@ -307,3 +307,21 @@ describe('ego navigation gestures', () => {
     expect(dot([1, 0, 0], [1, 0, 0])).toBe(1);
   });
 });
+
+describe('per-point scale (texture tiers by on-screen height)', () => {
+  it('straight down every table point shows at the view centre\'s scale; in ego near points show larger than far ones', () => {
+    const bird = makeRig();
+    for (const p of [{ x: 0, y: 0 }, { x: -600, y: 500 }, { x: 650, y: -500 }]) expect(bird.pxPerMmAt(p)).toBeCloseTo(bird.pxPerMm(), 9);
+    const ego = makeRig({ rig: 'ego' });
+    const centre = ego.pose().target;
+    expect(ego.pxPerMmAt({ x: centre[0], y: centre[1] })).toBeCloseTo(ego.pxPerMm(), 9);
+    const near = ego.pxPerMmAt({ x: 0, y: -200 });
+    const far = ego.pxPerMmAt({ x: 0, y: 420 });
+    expect(near).toBeGreaterThan(ego.pxPerMm());
+    expect(far).toBeLessThan(ego.pxPerMm());
+    // A card's size on screen scales with 1 / depth.
+    expect(near / far).toBeCloseTo(ego.depthOf({ x: 0, y: 420 }) / ego.depthOf({ x: 0, y: -200 }), 9);
+    // Behind the camera: no size.
+    expect(ego.pxPerMmAt({ x: 0, y: -2000 })).toBe(0);
+  });
+});

@@ -151,6 +151,15 @@ export class TableRig {
     return posePxPerMm(this.pose(), this.viewport);
   }
 
+  /**
+   * CSS px per mm at a world point (perspective: in the ego rig near cards show larger than far ones; straight down
+   * every table point shows at the view centre's scale); 0 at or behind the camera.
+   */
+  pxPerMmAt(p: TablePoint, z = 0, pose: CameraPose = this.pose()): number {
+    const depth = this.depthOf(p, z, pose);
+    return depth > 1e-6 ? this.viewport.h / 2 / (depth * Math.tan((pose.fovDeg / 2) * DEG)) : 0;
+  }
+
   /** Canvas point of a table point at height z; far off screen when it lies behind the camera. */
   tableToScreen(p: TablePoint, z = 0, pose: CameraPose = this.pose()): ScreenPoint {
     const s = projectPoint(pose, this.angle, this.viewport, [p.x, p.y, z]);
@@ -416,9 +425,10 @@ export class TableRig {
 
   private toView(v: CameraView, now: number, dur: number): void {
     if (this.sw || dur <= 0) {
-      // Mid-blend the blend carries the motion to the new destination.
+      const from = this.sw ? this.pose() : null;
       this.bird.stop();
       this.bird.view = this.bird.clampView({ ...v, angle: this.bird.view.angle });
+      if (from) this.retarget(from, now, dur);
       return;
     }
     this.bird.animateTo(v, now, dur);
@@ -428,11 +438,24 @@ export class TableRig {
     this.egoVel = { lean: 0, dolly: 0 };
     const to = clampEgoNav(this.ego, nav);
     if (this.sw || dur <= 0) {
+      const from = this.sw ? this.pose() : null;
       this.egoAnim = null;
       this.nav = to;
+      if (from) this.retarget(from, now, dur);
       return;
     }
     this.egoAnim = { from: { ...this.nav }, to, start: now, dur };
+  }
+
+  /**
+   * A move (fit, seat key, avatar tap, zoom to a card, follow) arrived mid-blend and changed the blend's destination:
+   * the blend starts over from where the camera is, so the camera never jumps. The cursor no longer anchors it: the
+   * viewer asked to look somewhere else. With reduced motion (0 ms) the move cuts and ends the blend.
+   */
+  private retarget(from: CameraPose, now: number, dur: number): void {
+    const sw = this.sw;
+    if (!sw) return;
+    this.sw = dur > 0 ? { ...sw, from, start: now, dur, t: 0, anchor: null } : null;
   }
 
   // --- Viewport, table and theme ----------------------------------------------------------------------------------

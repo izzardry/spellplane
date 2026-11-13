@@ -613,8 +613,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const t0 = performance.now();
     frame++;
     syncCamera();
-    const cardPx = CARD_H * rig.pxPerMm();
-    const want = tierForScreenHeight(cardPx);
+    const cam = rig.pose();
+    // Each card's texture tier from its own on-screen height: in the ego rig near cards show larger than far ones.
+    const cardPxAt = (p: { x: number; y: number }, k = 1) => CARD_H * k * rig.pxPerMmAt(p, 0, cam);
     const selection = new Set(view.selection);
     const dressing = theme.cardDressing;
     const vp = rig.viewport;
@@ -627,9 +628,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         rc.shownKey = rc.place.key;
         rc.shownDim = rc.place.dimmed;
       }
-      const s = rig.tableToScreen(pose);
-      const onScreen = s.x > -cardPx && s.y > -cardPx && s.x < vp.w + cardPx && s.y < vp.h + cardPx;
-      const uv = faces.use(rc.shownKey, onScreen ? want : 'small', frame);
+      const s = rig.tableToScreen(pose, 0, cam);
+      const cardPx = cardPxAt(pose);
+      const onScreen = cardPx > 0 && s.x > -cardPx && s.y > -cardPx && s.x < vp.w + cardPx && s.y < vp.h + cardPx;
+      const uv = faces.use(rc.shownKey, onScreen ? tierForScreenHeight(cardPx) : 'small', frame);
       rc.tierDrawn = uv ? (['small', 'normal', 'large'] as const)[uv.tier]! : null;
       const dragging = drag?.ids.includes(rc.id) ?? false;
       const sel = selection.has(rc.id);
@@ -653,9 +655,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const src = e.face ? rcards.get(e.face) : undefined;
       const k = entryScale(e);
       const pose = drawnPose(entryPose(e), k);
-      const s = rig.tableToScreen(pose);
-      const onScreen = s.x > -cardPx && s.y > -cardPx && s.x < vp.w + cardPx && s.y < vp.h + cardPx;
-      const uv = faces.use(src ? src.shownKey : BACK_KEY, onScreen ? want : 'small', frame);
+      const s = rig.tableToScreen(pose, 0, cam);
+      const cardPx = cardPxAt(pose, k);
+      const onScreen = cardPx > 0 && s.x > -cardPx && s.y > -cardPx && s.x < vp.w + cardPx && s.y < vp.h + cardPx;
+      const uv = faces.use(src ? src.shownKey : BACK_KEY, onScreen ? tierForScreenHeight(cardPx) : 'small', frame);
       const held = itemDrag?.item === e.item.id;
       const hov = hoverItem === e.item.id || held;
       sorted.push({

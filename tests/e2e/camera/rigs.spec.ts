@@ -299,6 +299,44 @@ test.describe('navigation in the ego rig', () => {
     expect(dist((await toScreen(page, (await state(page)).cards.a!.pose))!, { x: 720, y: 450 })).toBeLessThan(2);
   });
 
+  test('in the ego rig each card\'s texture tier follows its own on-screen size: near cards sharper than far ones', async ({ page }) => {
+    // DESIGN "Specification", Texture tiers (by on-screen height); "Camera and navigation", Level of detail.
+    await openScene(page);
+    await addCard(page, 'near', { x: 0, y: -200, rot: 0 });
+    await addCard(page, 'far', { x: 0, y: 420, rot: 0 }, 'battlefield:s1');
+    await page.evaluate(() => window.__spellplane!.rig!.setRig('ego', { animate: false }));
+    await settle(page);
+    const tiers = async () => {
+      const all = (await harness(page, 'cards')) as { id: string; tier: string | null; visible: boolean }[];
+      return { near: all.find((c) => c.id === 'near')!, far: all.find((c) => c.id === 'far')! };
+    };
+    const loaded = async () => {
+      const x = await tiers();
+      return x.near.tier !== null && x.far.tier !== null;
+    };
+    await expect.poll(loaded).toBe(true);
+    let t = await tiers();
+    // From the seat both show below 160 px: the same, smallest tier.
+    expect(t.near.tier).toBe('small');
+    // Dolly toward the table between the two cards until the near one crosses into the larger tier.
+    for (let i = 0; i < 16 && t.near.tier !== 'normal'; i++) {
+      const a = (await toScreen(page, { x: 0, y: -200 }))!;
+      const b = (await toScreen(page, { x: 0, y: 420 }))!;
+      await page.mouse.move((a.x + b.x) / 2, (a.y + b.y) / 2);
+      await page.mouse.wheel(0, -100);
+      await settle(page);
+      await expect.poll(loaded).toBe(true);
+      t = await tiers();
+    }
+    // Both on screen: the near card in the larger tier, the far one still in the smallest.
+    await expect
+      .poll(async () => {
+        const x = await tiers();
+        return [x.near.visible, x.far.visible, x.near.tier, x.far.tier];
+      })
+      .toEqual([true, true, 'normal', 'small']);
+  });
+
   test('right-drag on empty table pitches in ego only; it opens no context menu', async ({ page }) => {
     await openScene(page);
     await settle(page);

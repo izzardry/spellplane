@@ -8,9 +8,11 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { blendPose, easeBlend } from '../../../src/scene/camera/blend';
-import { poseAt, poseDist, unprojectToTable } from '../../../src/scene/camera/pose';
-import { egoPose, defaultEgoNav } from '../../../src/scene/camera/ego';
-import { DEFAULT_EGO_RIG } from '../../../src/scene/types';
+import { poseAt, poseDist, targetFor, unprojectToTable } from '../../../src/scene/camera/pose';
+import { clampEgoNav, egoPose, defaultEgoNav } from '../../../src/scene/camera/ego';
+import { mtgLayout } from '../../../src/games/mtg/layout';
+import type { TableRig } from '../../../src/scene/camera/rig';
+import { DEFAULT_EGO_RIG, type CameraRig } from '../../../src/scene/types';
 import { BLEND_MS, SEATS, TABLES, VP, makeRig, onTable, px, runSwitch, screenOf } from './helpers';
 
 describe('blendPose', () => {
@@ -130,6 +132,59 @@ describe('rig switch (P)', () => {
     }
   });
 
+  // A bird's-eye view panned or zoomed anywhere (not only at the cursor): whenever some ego navigation within the
+  // limits shows the cursor's table point at the cursor, the switch must find one (lean, dolly and pitch together) and
+  // hold the point. The cases are built from such a navigation, so a solution exists by construction.
+  it('bird\'s-eye panned and zoomed anywhere to ego: whenever an ego pose within the limits holds the point, the switch holds it (property)', () => {
+    let checked = 0;
+    fc.assert(
+      fc.property(
+        anchors,
+        seats,
+        // Leaning far out and dollied forward is where a solve from the seat alone falls short.
+        fc.record({ lean: fc.oneof(fc.constantFrom(-1, 1), fc.double({ min: -1, max: 1, noNaN: true })), dolly: fc.double({ min: 0, max: 1, noNaN: true }), pitch: fc.double({ min: 0, max: 1, noNaN: true }) }),
+        fc.double({ min: 0, max: 1, noNaN: true }),
+        (s, seat, u, z) => {
+          const rig = makeRig(seat);
+          const P = rig.ego;
+          const nav = clampEgoNav(P, { lean: u.lean * P.leanMm, dolly: u.dolly * P.maxDollyMm, pitchDeg: P.minPitchDeg + u.pitch * (P.maxPitchDeg - P.minPitchDeg) });
+          const a = unprojectToTable(rig.egoPoseOf(nav), seat.angle, VP, s.x, s.y);
+          if (!a || !onTable(seat.table, a)) return;
+          // A bird's-eye view at any zoom that shows `a` under the cursor, if the view's limits allow one.
+          const b = rig.bird;
+          const dist = b.minDist() * Math.pow(b.maxDist() / b.minDist(), z);
+          const t = targetFor(rig.birdPitch(), dist, b.fovDeg, seat.angle, VP, a, s);
+          if (!t) return;
+          b.view = b.clampView({ cx: t.x, cy: t.y, dist, angle: b.view.angle });
+          if (px(rig.tableToScreen(a), s) > 1e-6) return;
+          checked++;
+          const { poses } = runSwitch(rig, 'ego', s);
+          for (const p of poses) expect(px(screenOf(p, seat.angle, a), s), `${seat.format} seat ${seat.seat}`).toBeLessThan(2);
+        },
+      ),
+      { numRuns: 1200 },
+    );
+    // About a sixth of the draws give a cursor over the table that a bird's-eye view can show there.
+    expect(checked).toBeGreaterThan(100);
+  });
+
+  it('the reviewer\'s cases: a bird\'s-eye view zoomed away from the cursor needs the ego rig to dolly forward', () => {
+    for (const c of [
+      { div: 3, s: { x: 300, y: 200 } },
+      { div: 3, s: { x: 100, y: 450 } },
+      { div: 5, s: { x: 100, y: 450 } },
+    ]) {
+      const rig = makeRig();
+      const fitted = rig.bird.view.dist;
+      rig.bird.view = rig.bird.clampView({ cx: 400, cy: 300, dist: fitted / c.div, angle: 0 });
+      const a = rig.screenToTable(c.s.x, c.s.y);
+      expect(onTable(TABLES['1v1'], a)).toBe(true);
+      const { poses } = runSwitch(rig, 'ego', c.s);
+      for (const p of poses) expect(px(screenOf(p, 0, a), c.s), JSON.stringify(c)).toBeLessThan(2);
+      expect(rig.nav.dolly).toBeGreaterThan(0);
+    }
+  });
+
   it('ego to bird\'s-eye: the table point under the cursor moves less than 2 px (property)', () => {
     let checked = 0;
     fc.assert(
@@ -223,6 +278,48 @@ describe('rig switch (P)', () => {
       expect(px(rig.tableToScreen(a), s)).toBeLessThan(2);
     }
     expect(rig.rig()).toBe('birdseye');
+  });
+
+  it('a move that arrives mid-blend (seat key, fit, zoom to a card, follow) restarts the blend from where the camera is, without a jump', () => {
+    const opponent = mtgLayout('1v1').seats[1]!.territory;
+    const moves: { name: string; to: CameraRig; run: (rig: TableRig, now: number) => void }[] = [
+      { name: 'seat key in ego', to: 'ego', run: (rig, now) => rig.goToRect(opponent, now, BLEND_MS) },
+      { name: 'fit in ego', to: 'ego', run: (rig, now) => rig.fit(now, BLEND_MS) },
+      { name: 'zoom to a card in ego', to: 'ego', run: (rig, now) => rig.focus({ x: -400, y: 300 }, 'close', now, BLEND_MS) },
+      { name: 'seat key in bird\'s-eye', to: 'birdseye', run: (rig, now) => rig.goToRect(opponent, now, BLEND_MS) },
+      { name: 'follow in bird\'s-eye', to: 'birdseye', run: (rig, now) => rig.focus({ x: 500, y: 400 }, 'keep', now, BLEND_MS) },
+    ];
+    for (const m of moves) {
+      const rig = makeRig({ rig: m.to === 'ego' ? 'birdseye' : 'ego' });
+      rig.setRig(m.to, 0, BLEND_MS, { x: 1200, y: 200 });
+      rig.step(200, 200);
+      const mid = rig.pose();
+      m.run(rig, 200);
+      // No jump at the moment the move arrives, nor on any frame after it.
+      expect(rig.pose(), m.name).toEqual(mid);
+      expect(rig.blendState(), m.name).toMatchObject({ to: m.to, t: 0 });
+      let prev = mid;
+      for (let t = 205; t <= 200 + BLEND_MS + 5; t += 5) {
+        rig.step(t, 5);
+        const p = rig.pose();
+        const step = Math.hypot(p.position[0] - prev.position[0], p.position[1] - prev.position[1], p.position[2] - prev.position[2]);
+        expect(step, `${m.name} at ${t} ms`).toBeLessThan(0.08 * Math.max(poseDist(p), poseDist(prev)));
+        expect(Math.abs(p.pitchDeg - prev.pitchDeg), `${m.name} at ${t} ms`).toBeLessThan(2);
+        prev = p;
+      }
+      // It ends at the move's destination.
+      expect(rig.blendState(), m.name).toBeNull();
+      expect(rig.pose(), m.name).toEqual(rig.restPose(m.to));
+    }
+  });
+
+  it('with reduced motion a move mid-blend cuts to its destination', () => {
+    const rig = makeRig();
+    rig.setRig('ego', 0, BLEND_MS, { x: 1200, y: 200 });
+    rig.step(200, 200);
+    rig.fit(200, 0);
+    expect(rig.blendState()).toBeNull();
+    expect(rig.pose()).toEqual(rig.restPose('ego'));
   });
 
   it('with reduced motion (duration 0) the switch is a cut', () => {

@@ -168,24 +168,54 @@ function solveNav(params: EgoRigParams, table: TableSize, angleDeg: number, late
   return best;
 }
 
+/** An anchor solve within this many px counts as holding the point (the blend's guarantee is 2 px). */
+const ANCHOR_TOL_PX = 0.05;
+/** Dolly samples of the anchor solve's search between the seat and the rig's dolly limit. */
+const ANCHOR_DOLLY_STEPS = 28;
+
 /**
  * The ego navigation that shows table point `a` at screen point `s` (switching rigs: "the point under the cursor
- * stays under the cursor"): lean and pitch from the seat first, then lean and dolly at a pitch limit. When the limits
- * allow no exact solution the closest is returned and the blend carries the difference (scene/camera/blend.ts).
+ * stays under the cursor"). Two equations, three unknowns (lean, dolly, pitch): the solve prefers the seat and moves
+ * forward only as far as it must. At each dolly from the seat (`dolly`, normally 0) up to the rig's limit it solves
+ * lean and pitch, then lean and dolly at the pitch reached (for solutions with the pitch at a limit), and stops at the
+ * first that holds the point. When the limits allow no exact solution the closest is returned and the blend carries
+ * the difference (scene/camera/blend.ts; DECISIONS [M4-P1]).
  */
 export function egoNavForAnchor(params: EgoRigParams, table: TableSize, angleDeg: number, lateral: number, vp: Viewport, a: TablePoint, s: ScreenPoint, dolly = 0): { nav: EgoNav; err: number } {
-  // Starting guess: the pitch that puts `a` on the view row of `s` from the seat.
+  // Starting guess at a dolly: lean straight at `a`, and the pitch that puts `a` on the view row of `s` from there.
   const seat = egoSeat(params, table, angleDeg, lateral);
   const f = forward(angleDeg);
   const ahead = (a.x - seat[0]) * f.x + (a.y - seat[1]) * f.y;
   const side = (a.x - seat[0]) * f.y - (a.y - seat[1]) * f.x;
   const tanH = Math.tan((params.fovDeg / 2) * DEG);
-  const rowUp = (1 - (2 * s.y) / Math.max(1, vp.h)) * tanH;
-  const guess = clampEgoNav(params, { lean: side, dolly, pitchDeg: Math.atan2(params.height, Math.max(1, ahead)) / DEG + Math.atan(rowUp) / DEG });
-  let best = solveNav(params, table, angleDeg, lateral, vp, a, s, guess, 'leanPitch');
-  if (best.err > 0.05) {
-    const alt = solveNav(params, table, angleDeg, lateral, vp, a, s, best.nav, 'leanDolly');
-    if (alt.err < best.err) best = alt;
+  const rowUp = Math.atan((1 - (2 * s.y) / Math.max(1, vp.h)) * tanH) / DEG;
+  const guess = (d: number): EgoNav => {
+    // The dolly moves the eye along the view ray (roughly at the default pitch): forward and down.
+    const p0 = params.pitchDeg * DEG;
+    const h = Math.max(1, params.height - d * Math.sin(p0));
+    const fwd = Math.max(1, ahead - d * Math.cos(p0));
+    return clampEgoNav(params, { lean: side, dolly: d, pitchDeg: Math.atan2(h, fwd) / DEG + rowUp });
+  };
+  const solve = (start: EgoNav, unknowns: Unknowns) => solveNav(params, table, angleDeg, lateral, vp, a, s, start, unknowns);
+  let best: { nav: EgoNav; err: number } = { nav: guess(dolly), err: Infinity };
+  const consider = (r: { nav: EgoNav; err: number }) => {
+    if (r.err < best.err) best = r;
+  };
+  const lo = clamp(dolly, 0, params.maxDollyMm);
+  let warm: EgoNav | null = null;
+  for (let k = 0; k <= ANCHOR_DOLLY_STEPS; k++) {
+    const d = lo + ((params.maxDollyMm - lo) * k) / ANCHOR_DOLLY_STEPS;
+    // From the guess, and from the previous dolly's solution (the solutions move smoothly with the dolly).
+    const starts = warm ? [guess(d), clampEgoNav(params, { ...warm, dolly: d })] : [guess(d)];
+    let here: { nav: EgoNav; err: number } | null = null;
+    for (const start of starts) {
+      const lp = solve(start, 'leanPitch');
+      consider(lp);
+      if (lp.err > ANCHOR_TOL_PX) consider(solve(lp.nav, 'leanDolly'));
+      if (best.err <= ANCHOR_TOL_PX) return best;
+      if (!here || lp.err < here.err) here = lp;
+    }
+    warm = here ? here.nav : warm;
   }
   return best;
 }
