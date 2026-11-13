@@ -74,9 +74,10 @@ export const TEAM_FAN_INSET = { gap: 12, label: 22 } as const;
 /**
  * The scene host's `data-fit-insets` value, "top right bottom left" in CSS px. With `teamFan` the teammate's fan is
  * kept clear as well, so the fitted table (the own avatar spots and the lines aimed at them) sits above it (M3 gate).
+ * `extraBottom` is room taken above the fan by more of the screen layer (the thumb action bar on touch screens, M5-P1).
  */
-export function fitInsets(vh: number, logOpen: boolean, teamFan = false): string {
+export function fitInsets(vh: number, logOpen: boolean, teamFan = false, extraBottom = 0): string {
   const team = teamFan ? TEAM_FAN_INSET.gap + Math.round(vh * TEAM_FAN_HEIGHT) + TEAM_FAN_INSET.label : 0;
-  const bottom = Math.round(vh * SCREEN_LAYER.handCardViewportFraction) + FIT_INSET.handGap + team;
+  const bottom = Math.round(vh * SCREEN_LAYER.handCardViewportFraction) + FIT_INSET.handGap + team + Math.max(0, Math.round(extraBottom));
   return `${FIT_INSET.top} ${logOpen ? FIT_INSET.log : 0} ${bottom} ${FIT_INSET.avatars}`;
 }

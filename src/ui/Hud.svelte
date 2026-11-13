@@ -51,6 +51,14 @@
   import { cuesFor, soundModeOf, soundOn, ThemeSoundPlayer, type SoundMode } from './sound';
   import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption } from '../voice/types';
+  import { registerDebug } from '../util/debug';
+  import { recentGestures } from '../scene/input/pointers';
+  import RadialMenu from './touch/RadialMenu.svelte';
+  import ThumbBar from './touch/ThumbBar.svelte';
+  import { RADIAL_SLOTS, THUMB_BAR, type RadialMenuState } from './touch/actions';
+  import { blockPageGestures, safeAreaInsets, touchDevice } from './touch/device';
+  import { THUMB_BAR_SPACE_PX } from './touch/fan';
+  import { slotAction } from './touch/radial';
 
   let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
 
@@ -119,6 +127,10 @@
   let tokenNear = $state<{ near: InstanceId | null } | null>(null);
   let deckOpen = $state(false);
   let toast = $state<{ text: string; id: number } | null>(null);
+  /** The long-press radial menu (M5-P1; DESIGN "Input and interaction design", Touch). */
+  let radial = $state<{ card: InstanceId; at: { x: number; y: number } } | null>(null);
+  /** A touch screen (or a finger touched the page): the thumb bar shows and the hand fan scrolls (ui/touch/device.ts). */
+  let touchUi = $state(touchDevice());
   let untapOffer = $state(false);
   let logOpen = $state(true);
   let preview = $state<{ card: InstanceId; x: number; y: number } | null>(null);
@@ -201,7 +213,15 @@
    */
   /** Two-Headed Giant: the teammate's fan sits above the own one (TeamHands below), and the table fit keeps it clear. */
   const teamFanShown = $derived(!!session.team && Object.keys(st.teams).length > 0);
-  const fitInsets = $derived(fitInsetsFor(vh, logOpen, teamFanShown));
+  /** The thumb action bar above the hand (touch screens; spectators act on nothing). */
+  const thumbShown = $derived(touchUi && untrack(() => session.role) !== 'spectator');
+  const fitInsets = $derived(fitInsetsFor(vh, logOpen, teamFanShown, thumbShown ? THUMB_BAR_SPACE_PX : 0));
+  /** Bottom of the block above the hand (toast, offer, prompt): above the teammate's fan and the thumb bar when shown. */
+  const aboveHandBottom = $derived.by(() => {
+    const thumb = thumbShown ? THUMB_BAR_SPACE_PX : 0;
+    if (teamFanShown) return `${teamFanTop(vh) + 8 + thumb}px`;
+    return thumb ? `calc(22vh + ${16 + thumb}px)` : null;
+  });
 
   // --- Card identity as this browser may know it ----------------------------------------------------------------
   /** The face this viewer may see: public identity, else own hand or own face-down identity, else a targeted reveal. Never a library face. */
@@ -326,7 +346,8 @@
    * dialog stay.
    */
   function closeTop(promptUp: boolean): boolean {
-    if (menu) menu = null;
+    if (radial) radial = null;
+    else if (menu) menu = null;
     else if (themeOpen) themeOpen = false;
     else if (revealTo) revealTo = null;
     else if (tokenNear) tokenNear = null;
@@ -614,6 +635,37 @@
     if (live.length !== selection.length) selection = live;
   });
 
+  // --- Touch (M5-P1; DESIGN "Input and interaction design", Touch) ------------------------------------------------------
+  /** Whether a radial action applies to the menu's card (Commands.applies, as the context menu decides). */
+  function radialApplies(card: InstanceId, action: ActionId): boolean {
+    const c = st.cards[card];
+    return !!c && commands.applies(action, c);
+  }
+  // The menu closes when its card leaves the table.
+  $effect(() => {
+    if (radial && !st.cards[radial.card]) radial = null;
+  });
+  /** The debug hook's touch part (debug/types.ts TouchDebug). */
+  const touchDebug = {
+    gestures: () => recentGestures(),
+    radial: (): RadialMenuState | null => {
+      const r = radial;
+      if (!r) return null;
+      return {
+        card: r.card,
+        at: { ...r.at },
+        slots: RADIAL_SLOTS.map((slot) => ({
+          id: slot.id,
+          enabled: slotAction(slot, (a) => radialApplies(r.card, a)) !== null,
+          screen: document.querySelector(`[data-testid="radial-${slot.id}"]`)?.getBoundingClientRect() ?? new DOMRect(),
+        })),
+      };
+    },
+    thumbBar: () => (thumbShown ? [...THUMB_BAR] : []),
+  };
+  /** Safe-area insets the radial menu keeps clear of (read when it opens). */
+  const radialInsets = $derived(radial ? safeAreaInsets() : { top: 0, right: 0, bottom: 0, left: 0 });
+
   // --- Scene ------------------------------------------------------------------------------------------------------
   $effect(() => {
     if (!sceneReady || !scene) return;
@@ -746,10 +798,15 @@
             else openPile = openPile === id ? null : id;
           },
           selectionChange: (ids) => (selection = [...ids]),
+          radialMenu: (id, at) => {
+            menu = null;
+            radial = id && !spectating && st.cards[id] ? { card: id, at: { x: at.x, y: at.y } } : null;
+          },
         },
       });
       sceneTheme = theme;
       sceneReady = true;
+      registerDebug({ touch: touchDebug });
       // The viewer's quality and follow toggles (Settings.quality, followStack, followActive).
       view.attach(scene);
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
@@ -763,7 +820,11 @@
     } catch (e) {
       sceneError = e instanceof Error ? e.message : String(e);
     }
+    const unblock = blockPageGestures();
     return () => {
+      unblock();
+      const hook = window.__spellplane as Record<string, unknown> | undefined;
+      if (hook?.touch === touchDebug) delete hook.touch;
       unsub();
       unsubView();
       view.dispose();
@@ -794,6 +855,9 @@
   {onclick}
   onblur={() => engine.blur()}
   onfocus={() => syncView()}
+  onpointerdowncapture={(e) => {
+    if (e.pointerType === 'touch') touchUi = true;
+  }}
   onpointermove={(e) => {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
@@ -948,7 +1012,12 @@
     {/if}
 
     <!-- Above the hand, centred (DESIGN "Specification: geometry, layout and motion", Screen layer); with a teammate's fan shown, above that fan too. -->
-    <div class="above-hand" data-testid="above-hand" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
+    {#if thumbShown}
+      <div class="thumbs" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
+        <ThumbBar run={(a, phase) => commands.run(a, phase)} keyOf={(a) => keyOf(a)} talking={voice.talking === 'talk'} {resolveLit} />
+      </div>
+    {/if}
+    <div class="above-hand" data-testid="above-hand" style:bottom={aboveHandBottom}>
       {#if toast}<p class="toast" role="status" data-testid="toast">{toast.text}</p>{/if}
       {#if untapOffer}
         <div class="offer" data-testid="untap-offer">
@@ -994,6 +1063,11 @@
       oninspect={(id) => hooks.inspect(id)}
       ondragout={(id, x, y) => dragOut(id, x, y)}
       onselect={(id) => (selection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id])}
+      touch={touchUi}
+      onradial={(id, x, y) => {
+        menu = null;
+        radial = id && !spectating ? { card: id, at: { x, y } } : null;
+      }}
     />
     {#if session.team && teamFanShown}
       <!-- Two-Headed Giant: the teammate's hand above the own fan (M3-P2, ui/hand/*). -->
@@ -1027,6 +1101,21 @@
         onclose={closeViewer}
       />
     {/if}
+  {/if}
+
+  {#if radial}
+    <RadialMenu
+      card={radial.card}
+      title={nameOf(radial.card)}
+      at={radial.at}
+      {vw}
+      {vh}
+      insets={radialInsets}
+      applies={(a) => !!radial && radialApplies(radial.card, a)}
+      onrun={(card, a) => runOn(card, a)}
+      onmore={(card, x, y) => openMenu(card, x, y)}
+      onclose={() => (radial = null)}
+    />
   {/if}
 
   {#if menu}
@@ -1076,6 +1165,18 @@
           }}
           onblur={() => (askField = null)}
         /></label
+      >
+      <!-- Asks without a key (touch): the press keeps the field's focus, so its blur does not close it first. -->
+      <button
+        type="button"
+        data-testid="ask-submit"
+        onmousedown={(e) => e.preventDefault()}
+        onpointerdown={(e) => e.preventDefault()}
+        onclick={() => {
+          const text = askField?.text ?? '';
+          askField = null;
+          commands.ask(text);
+        }}>Ask</button
       >
     </div>
   {/if}
@@ -1161,6 +1262,11 @@
   .root {
     position: fixed;
     inset: 0;
+    /* iPad Safari (PLAN Milestone 5, owner decisions): no text-selection callout or magnifier on a long press at the
+       table; text fields keep selection. */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
     color-scheme: var(--sp-hud-scheme, light);
     background: var(--sp-bg, #fff);
     color: var(--sp-fg, #111);
@@ -1177,9 +1283,17 @@
     text-align: center;
     color: var(--sp-muted, #5f5f5f);
   }
+  .root :global(input),
+  .root :global(textarea),
+  .root :global([contenteditable]) {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
   .layer {
     position: absolute;
-    inset: 0;
+    /* Inside the iPad's safe area (rounded corners, home indicator); zero elsewhere. */
+    inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
     pointer-events: none;
     font-size: var(--sp-font-size-small, 12px);
   }
@@ -1310,6 +1424,13 @@
     flex-direction: column;
     align-items: center;
     gap: 6px;
+  }
+  .thumbs {
+    position: absolute;
+    z-index: 21;
+    left: 50%;
+    bottom: calc(22vh + 8px);
+    transform: translateX(-50%);
   }
   .toast {
     margin: 0;

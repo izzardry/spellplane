@@ -88,4 +88,11 @@
     color: inherit;
     opacity: 0.75;
   }
+  /* Thumb-sized entries on a touch screen (DESIGN "Input and interaction design", Touch; M5-P1). */
+  @media (any-pointer: coarse) {
+    button {
+      min-height: 44px;
+      align-items: center;
+    }
+  }
 </style>
