@@ -23,7 +23,12 @@ No bundled assets: a flat white plane drawn by `src/themes/paper/index.ts`.
 
 ## Dusk
 
-To be filled by M4-P3.
+No bundled files: everything is drawn or synthesised in code (nothing under `public/themes/dusk/`).
+
+| Asset | Used by | Kind | Source | Licence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/themes/dusk/textures.ts` | Dusk table felt and neutral card back | texture | procedural | MIT (this repository) | `FELT_ALBEDO`, `FELT_NORMAL`: 256 × 256 tileable nap from seeded value noise and fibres, grey albedo and normal map, repeated every 180 mm (used by the felt and rail materials in `src/themes/dusk/table.ts`); `DUSK_BACK`: 488 × 680, geometric only (frame, lozenges, eight-pointed star), not the official back |
+| `src/themes/dusk/sounds.ts` | Dusk sound set and room tone | sound | procedural | MIT (this repository) | `DUSK_SOUNDS`: Web Audio synthesis from filtered seeded noise and sine partials; no audio files |
 
 ## Wyrm
 

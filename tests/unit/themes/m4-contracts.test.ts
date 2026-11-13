@@ -53,7 +53,8 @@ describe('functional signals', () => {
 
 describe('theme interface v2', () => {
   it('loads every theme lazily under its own id, the stubs naming their package', async () => {
-    const stubs: Record<string, string> = { dusk: 'M4-P3' };
+    // Every theme package has landed (Dusk: M4-P3, Wyrm: M4-P4, Stonetable: M4-P5); no stub remains.
+    const stubs: Record<string, string> = {};
     for (const id of THEME_IDS) {
       const t = await loadTheme(id);
       expect(t.id).toBe(id);
@@ -61,7 +62,16 @@ describe('theme interface v2', () => {
       expect(t.tokens.colours.seats).toHaveLength(8);
       expect(t.quality.length).toBeGreaterThan(0);
       expect(t.cardDressing.faceShade).toBeLessThanOrEqual(CARD_FACE_MAX_SHADE);
-      expect((t as { stub?: string }).stub).toBe(stubs[id]);
+      // A theme package replaces its stub (Dusk: M4-P3); a theme still stubbed names the package that replaces it.
+      const stub = (t as { stub?: string }).stub;
+      if (stub !== undefined) expect(stub).toBe(stubs[id]);
+      // A theme without the marker is a real one, not Paper under another id (a stub that lost its marker).
+      else if (id !== 'paper') {
+        // Compared by value, so a copy of Paper's lighting (`{ ...paper.lighting }`) does not pass as a real theme's.
+        expect(t.build, `${id} builds its own table`).not.toBe(paper.build);
+        expect(t.lighting.lit, `${id} is lit`).toBe(true);
+        expect(t.lighting, `${id} has its own lighting`).not.toEqual(paper.lighting);
+      }
     }
     expect((await loadTheme('stonetable')).camera.defaultRig).toBe('ego');
     expect((await loadTheme('wyrm')).camera.defaultRig).toBe('ego');
