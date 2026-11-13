@@ -63,3 +63,13 @@ export async function twoPages(browser: Browser): Promise<{ context: BrowserCont
   const b = await context.newPage();
   return { context, a, b };
 }
+
+/**
+ * Wait until the start page has loaded the identity: until then a nickname typed into the field is overwritten by the
+ * stored one when it arrives (empty for a fresh profile), which left "Join" disabled on slow machines (CI WebKit).
+ * Loaded means the field holds the stored nickname, or is flagged invalid because a fresh profile has none.
+ */
+export async function startPageLoaded(page: Page): Promise<void> {
+  const input = page.getByTestId('nickname');
+  await expect.poll(async () => (await input.getAttribute('aria-invalid')) === 'true' || (await input.inputValue()) !== '', { timeout: 15_000 }).toBe(true);
+}

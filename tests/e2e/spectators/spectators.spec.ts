@@ -9,11 +9,12 @@ import { expect, test, type Page } from '@playwright/test';
 import type { LogEntry, SecretStore, TableState } from '../../../src/core/types';
 import type { NetMessageRecord } from '../../../src/net/types';
 import { hook, shot } from '../helpers/app';
-import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname } from '../lobby/helpers';
+import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname, startPageLoaded } from '../lobby/helpers';
 
 /** Join a table as a spectator from the start page: nickname, then the pasted watch link. */
 async function watchFromStart(page: Page, profile: string, nickname: string, watchLink: string): Promise<void> {
   await open(page, '/lobby', { profile, transport: 'local' });
+  await startPageLoaded(page);
   await page.getByTestId('nickname').fill(nickname);
   await page.getByTestId('join-link').fill(watchLink);
   await page.getByTestId('join-table').click();

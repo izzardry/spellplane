@@ -8,7 +8,7 @@
 import { expect, test } from '@playwright/test';
 import type { SecretStore, TableState } from '../../../src/core/types';
 import { hook } from '../helpers/app';
-import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname, twoPages } from './helpers';
+import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname, startPageLoaded, twoPages } from './helpers';
 
 const KEY_RE = /^[A-Za-z0-9_-]{22}$/;
 
@@ -20,6 +20,7 @@ test('the start page renders and creates a table link with the room id and key i
   await expect(page.getByRole('heading', { name: 'Play with friends' })).toBeVisible();
   // A nickname is required before creating.
   await expect(page.getByTestId('create-table')).toBeDisabled();
+  await startPageLoaded(page);
   await page.getByTestId('nickname').fill('  Ann   Lee ');
   await page.getByTestId('create-table').click();
 
@@ -38,6 +39,7 @@ test('the start page renders and creates a table link with the room id and key i
 
 test('the start page refuses a pasted text that is not a table link and joins one that is', async ({ page }, info) => {
   await open(page, '/lobby', { profile: freshProfile(info, 'join'), transport: 'local' });
+  await startPageLoaded(page);
   await page.getByTestId('nickname').fill('Ben');
   await page.getByTestId('join-link').fill('https://example.test/spellplane/#/t/room-only');
   await page.getByTestId('join-table').click();

@@ -14,4 +14,6 @@ if (!fs.existsSync(spec)) {
   console.error(`gate spec ${spec} does not exist yet`);
   process.exit(1);
 }
-await runPlaywright(['test', spec, ...args], { SPELLPLANE_GATE: milestone, SPELLPLANE_SHOTS: process.env.SPELLPLANE_SHOTS ?? '1' });
+// From M3 on a gate test drives five pages at once: keep the gate to one worker unless the caller says otherwise.
+const workers = process.env.SPELLPLANE_PW_WORKERS ?? (Number(milestone.slice(1)) >= 3 ? '1' : undefined);
+await runPlaywright(['test', spec, ...args], { SPELLPLANE_GATE: milestone, SPELLPLANE_SHOTS: process.env.SPELLPLANE_SHOTS ?? '1', ...(workers ? { SPELLPLANE_PW_WORKERS: workers } : {}) });
