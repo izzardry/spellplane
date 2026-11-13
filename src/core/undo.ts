@@ -451,8 +451,8 @@ export interface LoggedUndo {
 /**
  * Own actions after which nothing before them can be undone (DESIGN "Turn flow and confirmation", Undo: shuffles cannot
  * be undone; session/net.ts and session/solo.ts clear their undo stack at the same points): Ready, a shuffle, a
- * mulligan (it contains a shuffle) and a lost-save recovery. A private reorder of a whole zone (the solo table's
- * shuffle) is one too (`undoStackFromLog`).
+ * mulligan (it contains a shuffle) and a lost-save recovery. On the solo table a private reorder of a whole zone (its
+ * shuffle) is one too (`undoStackFromLog` with `soloShuffles`).
  */
 const UNDO_BARRIERS: ReadonlySet<string> = new Set(['ready', 'shuffleCommit', 'mulligan', 'recover', 'recoverCommit']);
 
@@ -462,17 +462,26 @@ const UNDO_BARRIERS: ReadonlySet<string> = new Set(['ready', 'shuffleCommit', 'm
  * (gap-free; replay stops at the first that does not follow). The stack holds the seat's undoable actions since its
  * last barrier, minus those it already undid, each with the inverse planned on the state right before it; the draws of
  * a mulligan or a recovery are part of it and stay off the stack, and steps that name ids a re-issue retired are
- * dropped, as the live session does. Pure.
+ * dropped, as the live session does. `soloShuffles`: the log is a solo table's, whose shuffle is a private reorder of
+ * the whole zone (session/solo.ts shuffleNow); in a networked log the same shape is a scry or a reorder of a whole
+ * small zone, which the live session does not clear its stack for. Pure.
  */
-export function undoStackFromLog(start: TableState, log: readonly Action[], seat: string): { stack: LoggedUndo[]; others: OthersChange[] } {
+export function undoStackFromLog(start: TableState, log: readonly Action[], seat: string, opts: { soloShuffles?: boolean } = {}): { stack: LoggedUndo[]; others: OthersChange[] } {
   let stack: LoggedUndo[] = [];
   const others: OthersChange[] = [];
   let s = start;
   /**
-   * The draws a mulligan or a recovery makes belong to it (session/net.ts clears the stack after them): undefined when
-   * none are owed, null while owed and not started, else the group of those draws ('' for a single draw).
+   * The draws a mulligan makes belong to it (the sessions clear the stack after them): undefined when none are owed,
+   * null while owed and not started, else the group of those draws ('' for a single draw).
    */
   let owed: string | null | undefined;
+  /** The hand count of the own `recover` last seen (its `recoverCommit` owes that many draws). */
+  let recoverHand = 0;
+  /**
+   * The draws a recovery still owes (session/net.ts finishNow draws until the agreed hand, in as many groups as its
+   * retries take, and clears the stack once the hand is full): undefined when none are owed.
+   */
+  let recoveryLeft: number | undefined;
   for (const a of log) {
     if (a.seq !== s.seq + 1) break;
     const before = s;
@@ -482,10 +491,29 @@ export function undoStackFromLog(start: TableState, log: readonly Action[], seat
       if (s !== before) others.push({ seq: a.seq, by: a.by, changed: changedObjects(before, s) });
       continue;
     }
+    if (a.type === 'recover') recoverHand = a.hand;
     if (UNDO_BARRIERS.has(a.type)) {
       stack = [];
-      if (a.type === 'mulligan' || a.type === 'recoverCommit') owed = null;
+      if (a.type === 'mulligan') owed = null;
+      if (a.type === 'recoverCommit') {
+        owed = undefined;
+        recoveryLeft = recoverHand > 0 ? recoverHand : undefined;
+      }
       continue;
+    }
+    if (recoveryLeft !== undefined) {
+      if (a.type === 'draw') {
+        recoveryLeft--;
+        if (recoveryLeft <= 0) {
+          // The hand is full: the recovery is over, and the live session clears its stack (none of its draws, nor
+          // anything made meanwhile, can be undone).
+          recoveryLeft = undefined;
+          stack = [];
+        }
+        continue;
+      }
+      // Any other own step but the recovery's shuffle ends it (a recovery that fell short, finished by hand).
+      if (a.type !== 'shuffleDone' && a.type !== 'shuffleNonce' && a.type !== 'reorder') recoveryLeft = undefined;
     }
     if (a.type === 'draw' && owed !== undefined) {
       // The first draw after it starts them: a group of draws, or one draw alone.
@@ -504,7 +532,7 @@ export function undoStackFromLog(start: TableState, log: readonly Action[], seat
       continue;
     }
     // The solo table's shuffle is a private reorder of the whole zone (session/solo.ts shuffleNow): a barrier too.
-    if (a.type === 'reorder' && a.reissue === undefined && a.count > 1 && a.count === (before.zones[a.zone]?.ids.length ?? -1)) {
+    if (opts.soloShuffles === true && a.type === 'reorder' && a.reissue === undefined && a.count > 1 && a.count === (before.zones[a.zone]?.ids.length ?? -1)) {
       stack = [];
       continue;
     }

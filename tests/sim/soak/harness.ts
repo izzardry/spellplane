@@ -64,6 +64,8 @@ export interface SoakDetail {
   engines: EngineRetained[];
   /** Per peer, the same at the half-way probe (when the table first passed half of `actions`). */
   half: EngineRetained[];
+  /** Per peer, its seq at the half-way probe. */
+  halfSeqs: number[];
   /**
    * Canonical JSON length of the confirmed state per table object (card, line, stack item, seat) at the half-way probe
    * and at the end: the state grows with what is on the table (random play creates more tokens than it removes), never
@@ -111,12 +113,14 @@ export async function runSoakDetailed(opts: SoakOptions): Promise<SoakDetail> {
   let churns = 0;
   let half: EngineRetained[] | null = null;
   let halfBytes = 0;
+  let halfSeqs: number[] = sim.peers.map(() => start.seq);
   let tries = 0;
   while (head() < target || down !== null) {
     const h = head();
     if (half === null && h >= start.seq + actions / 2) {
       half = sim.peers.map((p) => engine(p).retained());
       halfBytes = bytesPerObject(sim.peers[0]!.engine.confirmedState());
+      halfSeqs = sim.peers.map((p) => p.engine.seq());
     }
     if (down !== null && h >= down.reviveAt) {
       sim.net.revive(down.peer.transport.selfId);
@@ -158,6 +162,7 @@ export async function runSoakDetailed(opts: SoakOptions): Promise<SoakDetail> {
     report,
     engines: sim.peers.map((p) => engine(p).retained()),
     half: half ?? sim.peers.map((p) => engine(p).retained()),
+    halfSeqs,
     stateBytes: { half: halfBytes, end: bytesPerObject(sim.peers[0]!.engine.confirmedState()) },
     startSeq: start.seq,
     sim,

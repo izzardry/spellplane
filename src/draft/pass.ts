@@ -31,7 +31,7 @@ import { passTarget, pickTimerMs, setForPack } from '../core/drafting';
 import { packCountAt, packVisit, packVisitor } from '../core/reducer/pass';
 import type { DraftPack, DraftState, InstanceId, PackId, PassDraftSettings, SeatId, TableState } from '../core/types';
 import { draftSecretsOf } from './open';
-import { addToPool, isPackKey, openHiddenPack, plainCard, poolCards, SENT_PREFIX, updateSecrets } from './secret';
+import { addToPool, isPackKey, openHiddenPack, plainCard, poolCards, SENT_PREFIX, unopenedGenerated, updateSecrets } from './secret';
 import type { CreateDraftDriver, DraftDriver, DraftPrivateView } from './types';
 
 /** How often a drafter asks again for a pack it holds without its cards (ms). */
@@ -99,8 +99,13 @@ export const createPassDriver: CreateDraftDriver = (host) => {
   const me = host.seat;
   let disposed = false;
   let opening = false;
-  /** Whether a remembered unopened pack was already offered once by this driver (a refused one is not offered again). */
-  let reused = false;
+  /**
+   * The remembered unopened packs this driver offered (draft/secret.ts unopenedGenerated): each once, so a refused one is
+   * not offered again. A pack whose `packOpen` is in a stretch of history the room abandoned is offered again (M5-P6):
+   * opening a new one instead would make its seed round the latest and the pack the engine proposes again unopenable,
+   * with its pick already in the pool.
+   */
+  const offered = new Set<PackId>();
   /** When each missing pack was first missed or last asked for (local clock). */
   const asked = new Map<PackId, number>();
   let retry: ReturnType<typeof setTimeout> | null = null;
@@ -149,10 +154,9 @@ export const createPassDriver: CreateDraftDriver = (host) => {
       if (!key.startsWith(SENT_PREFIX)) continue;
       const packId = key.slice(SENT_PREFIX.length);
       const pack = packOf(d, packId);
-      if (pack === null) {
-        dropHeld(key);
-        continue;
-      }
+      // Not in the room's history (yet): its `packOpen` may be part of an abandoned stretch the engine proposes again,
+      // so the copy is kept while the draft runs (a finished draft drops it below).
+      if (pack === null) continue;
       const from = sentVisit(d, pack, cards.length);
       const cur = packVisit(d, pack);
       // The pass is not in the room's history (any more): the pack is back with this drafter, or before it.
@@ -287,8 +291,9 @@ export const createPassDriver: CreateDraftDriver = (host) => {
 
   const open = async (round: number, set: string): Promise<void> => {
     opening = true;
-    const reuse = !reused;
-    reused = true;
+    const remembered = unopenedGenerated(host, host.confirmedState?.() ?? host.state(), set);
+    const reuse = remembered === null || !offered.has(remembered.packId);
+    if (remembered !== null) offered.add(remembered.packId);
     try {
       const still = (): boolean => {
         const d = passDraftOf(host.state());
@@ -343,6 +348,17 @@ export const createPassDriver: CreateDraftDriver = (host) => {
       if (c === null || v === null || v.done) return;
       // Open the own pack of the round (once the round has started in the confirmed state).
       if (!opening && c.round === v.round && !c.done && !Object.values(v.packs).some((p) => p.opener === me && p.number === v.round)) void open(v.round, setForPack(v.sets, v.round));
+      // A pick resolved on a history the room abandoned whose new proposal the room refused (another pack was ahead of
+      // it in this drafter's queue there): the pack came back resolved, and once it is at the front of the queue the
+      // pick is proposed again. It takes nothing more (its cards are in the pool already); the pass follows as usual.
+      const front = packOf(c, (c.queues[me] ?? [])[0] ?? '');
+      const resolved = front === null || !isPackKey(front.id) ? undefined : held()[front.id];
+      if (front !== null && resolved !== undefined && (v.queues[me] ?? [])[0] === front.id) {
+        const cur = packVisit(c, front);
+        if (cur !== null && cur.holder === me && !cur.picked && resolved.length < front.count && resolved.length === packCountAt(front, picksOf(c), cur.k + 1)) {
+          host.dispatch({ type: 'pick', packId: front.id, count: picksFor(c, front.count) });
+        }
+      }
       // Pass every resolved pack this drafter picked from (confirmed), unless the pass is already proposed.
       for (const pack of Object.values(c.packs)) {
         const cards = held()[pack.id];

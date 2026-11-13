@@ -173,6 +173,8 @@ interface UndoEntry {
 
 /** Other seats' changes kept for the built-on check (M5-P6), at most this many (older ones are long past any undo). */
 const KEEP_OTHERS = 2000;
+/** The author of a change a catch-up from a snapshot skipped unseen (noteOthers): another seat, unknown which. */
+const UNKNOWN_SEAT = '';
 
 type PrivateLists = Pick<SecretStore, 'identities' | 'libraryOrder' | 'hand' | 'audit'>;
 
@@ -933,12 +935,15 @@ class NetTable implements NetSession, SessionRecovery {
     if (top.group !== undefined) while (k < this.undoStack.length && this.undoStack[this.undoStack.length - 1 - k]!.group === top.group) k++;
     const batch = this.undoStack.slice(this.undoStack.length - k).reverse();
     // Another player acted on what this step changed since: undoing it would take their change back too (DESIGN "Turn
-    // flow and confirmation": personal undo, no table-wide rewind). The step stays on the stack, refused (M5-P6).
+    // flow and confirmation": personal undo, no table-wide rewind). The step is refused and leaves the stack, so the
+    // next Ctrl+Z goes on with the player's older actions (M5-P6).
+    const others = this.othersChanged.filter((o) => o.by !== this.seat);
     for (const e of batch) {
       const seq = this.seqOfOwn(e.cid);
-      const other = builtOn({ seq, changed: e.changed }, this.othersChanged);
+      const other = builtOn({ seq, changed: e.changed }, others);
       if (other !== null) {
-        this.warn(`Cannot undo: ${this.seatName(other.by)} has acted on ${this.objectName(other.object)} since`);
+        this.undoStack = this.undoStack.slice(0, this.undoStack.length - k);
+        this.warn(`Cannot undo: ${other.by === UNKNOWN_SEAT ? 'another player' : this.seatName(other.by)} has acted on ${this.objectName(other.object)} since`);
         this.notify();
         return false;
       }
@@ -1007,10 +1012,29 @@ class NetTable implements NetSession, SessionRecovery {
     }));
   }
 
-  /** Keep what another seat's sequenced action changed (builtOn); a rewound or skipped stretch drops what it replaced. */
+  /**
+   * Keep what another seat's sequenced action changed (builtOn). A rewound or skipped stretch (a catch-up from a
+   * snapshot, or another history adopted) drops what it replaced and counts as one change of everything it changed, at
+   * its first seq: by the first other seat among the actions it reports (they follow at once, unfolded), or by an
+   * unknown other seat when a snapshot skipped them unseen. A stretch of own actions only is no other's change.
+   */
   private noteOthers(action: SequencedAction, prior: TableState, next: TableState, exact: boolean): void {
     if (!exact) {
+      const replayed = next === prior && action.seq <= prior.seq;
+      const lump = this.othersChanged.at(-1);
+      if (replayed && lump !== undefined && lump.seq < action.seq && lump.by === this.seat && action.by !== this.seat) {
+        // Another seat's action inside the stretch (own entries in othersChanged are such stretches only).
+        this.othersChanged[this.othersChanged.length - 1] = { ...lump, by: action.by };
+      }
       this.othersChanged = this.othersChanged.filter((o) => o.seq < action.seq);
+      if (next === prior) return;
+      const changed = changedObjects(prior, next);
+      if (changed.length === 0) return;
+      const seq = Math.min(action.seq, prior.seq + 1);
+      const skipped = action.seq > prior.seq + 1;
+      const by = action.by !== this.seat ? action.by : skipped ? UNKNOWN_SEAT : this.seat;
+      this.othersChanged = this.othersChanged.filter((o) => o.seq < seq);
+      this.othersChanged.push({ seq, by, changed });
       return;
     }
     if (action.by === this.seat || next === prior) return;

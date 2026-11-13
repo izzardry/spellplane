@@ -144,7 +144,7 @@ class Solo implements SoloSession {
     const log = this.entries.flatMap((e) => (e.kind === 'action' && e.seq > init.snapshotSeq ? [{ ...e.action, seq: e.seq } as Action] : []));
     if (log.length > 0) {
       const base = init.snapshot.seq === init.snapshotSeq ? init.snapshot : { ...init.snapshot, seq: init.snapshotSeq };
-      this.undoStack = undoStackFromLog(base, log, this.seat).stack.map((e) => ({
+      this.undoStack = undoStackFromLog(base, log, this.seat, { soloShuffles: true }).stack.map((e) => ({
         cid: e.cid,
         ...(e.group !== undefined ? { group: e.group } : {}),
         inverse: e.inverse,

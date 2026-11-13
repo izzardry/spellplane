@@ -14,6 +14,7 @@ import type { Action } from '../../../src/core/actions';
 import type { InstanceId } from '../../../src/core/types';
 import { browser, closeAll, FAKE_TIMERS, fixtureDeck, net, open, settle, until, waitConverged, type Browser, type NetTable } from '../session/harness';
 import { isLand } from '../session/script';
+import { SYNC_TAIL_LIMIT } from '../../../src/net/types';
 
 vi.mock('../../../src/net/identity', async () => (await import('./fake-identity')).fakeIdentityModule);
 
@@ -141,10 +142,10 @@ describe('undo of a grouped gesture', () => {
 });
 
 describe('undo of an action another player already built on', () => {
-  it('is refused with a log line naming the player, and their change stays', async () => {
+  it('is refused with a log line naming the player, and their change stays; the next Ctrl+Z goes on with older own actions', async () => {
     const t = await table(2, 5);
     const [a, b] = t.s as [NetTable, NetTable];
-    const [land] = await lands(t, a, 1);
+    const [older, land] = await lands(t, a, 2);
     // Ben taps Anna's land, then Anna tries to take her play back.
     b.dispatch({ type: 'tap', card: land!, tapped: true });
     await waitConverged(t.s);
@@ -153,9 +154,36 @@ describe('undo of an action another player already built on', () => {
     await waitConverged(t.s);
     expect(b.engine.confirmedState().cards[land!]).toMatchObject({ zone: 'battlefield:s0', tapped: true });
     expect(undos(b)).toEqual([]);
-    // The step stays where it is: Ctrl+Z keeps saying so instead of skipping to an older action.
+    // The refused step leaves the stack: Ctrl+Z is not stuck on it, and takes back Anna's older play, which nobody
+    // built on (DESIGN "Turn flow and confirmation": Ctrl+Z reverts the player's own most recent actions).
     expect(a.canUndo()).toBe(true);
-    expect(a.undo()).toBe(false);
+    expect(a.undo()).toBe(true);
+    await until(() => a.engine.pending().length === 0 && b.engine.confirmedState().cards[older!]?.zone !== 'battlefield:s0', 20_000, 'the older land back in the hand');
+    await waitConverged(t.s);
+    expect(b.engine.confirmedState().cards[land!]).toMatchObject({ zone: 'battlefield:s0', tapped: true });
+    expect(undos(b)).toHaveLength(1);
+  });
+
+  it('a change this page only received inside a catch-up from a snapshot still counts', async () => {
+    const t = await table(2, 11);
+    const [a, b] = t.s as [NetTable, NetTable];
+    expect(a.engine.isSequencer()).toBe(true);
+    const [land] = await lands(t, b, 1);
+    // Ben's page is cut off for a moment; meanwhile Anna taps his land and plays on far past what a tail catch-up
+    // carries (net/types.ts SYNC_TAIL_LIMIT), so his page comes back through a snapshot that skips her tap unseen.
+    t.network.kill(t.B[1]!.peerId);
+    await vi.advanceTimersByTimeAsync(200);
+    a.dispatch({ type: 'tap', card: land!, tapped: true });
+    for (let i = 0; i < SYNC_TAIL_LIMIT + 20; i++) a.dispatch({ type: 'life', seat: 's0', delta: i % 2 === 0 ? -1 : 1 });
+    await vi.advanceTimersByTimeAsync(200);
+    t.network.revive(t.B[1]!.peerId);
+    await waitConverged(t.s, 'the catch-up');
+    expect(b.engine.confirmedState().cards[land!]!.tapped).toBe(true);
+    expect(b.undo()).toBe(false);
+    expect(warnings(b).at(-1)).toMatch(/^Cannot undo: Anna has acted on .+ since$/);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(a.engine.confirmedState().cards[land!]).toMatchObject({ zone: 'battlefield:s1', tapped: true });
+    expect(undos(a)).toEqual([]);
   });
 
   it('another player acting elsewhere does not block the undo', async () => {

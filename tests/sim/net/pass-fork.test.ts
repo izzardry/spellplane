@@ -21,7 +21,7 @@ import { POOL_KEY, SENT_PREFIX } from '../../../src/draft/secret';
 import type { DraftHost } from '../../../src/draft/types';
 import { packHandOver } from '../../../src/net/private';
 import { testEntropy } from '../../leak/fixtures';
-import { act, draftOf, draftTable, ok, openPack, packCards } from '../../unit/draft/open/helpers';
+import { act, draftOf, draftTable, ok, openPack, packCards, packOpenFields, sealPackSeed } from '../../unit/draft/open/helpers';
 
 /** Three seats in round 1 (left), packs of `size` cards; s0 holds its own pack `cards`. */
 function table(size: number, pickTimer = false): { s: TableState; cards: RevealedCard[]; id: string } {
@@ -155,6 +155,54 @@ describe('the pass driver and a history the room abandons (M2 gate follow-up)', 
     expect(h.dispatched.filter((d) => d.type === 'packPass').length).toBe(passes + 1);
     h.step(act('packPass', { packId: id, to: 's1', count: 2 }, 's0'));
     expect(h.sent.at(-1)).toEqual({ to: 's1', packId: id, cards: [cards[0]!.instanceId, cards[2]!.instanceId] });
+    expect(h.refused, 'no hand-over to a seat that does not hold the visit').toEqual([]);
+    h.driver.dispose();
+  });
+
+  it('the own packOpen abandoned too, and another pack ahead in the room’s queue: the copy waits, comes back, and the pick is proposed again at the front', () => {
+    // The room's history: s1's and s2's packs, and the seed round of s0's pack, but not its packOpen.
+    let base = draftTable(3, { format: 'pass', packs: 3, picks: 1 });
+    base = openPack(base, 's1', packCards(3), 0, 'down');
+    base = openPack(base, 's2', packCards(3), 0, 'down');
+    const sealed = sealPackSeed(base, 's0');
+    const cards = packCards(3);
+    const opening = { ...act('packOpen', packOpenFields(`pack-${sealed.sid}`, cards, sealed.sid, 0, 'M19', 'down'), 's0') };
+    const id = opening.packId;
+    // The abandoned history: s0 opened its pack, picked and passed it on (sequenced by s0's page alone).
+    const mine = ok(sealed.state, { ...opening, seq: sealed.state.seq + 1 } as Action);
+    const h = driverOver(mine, { ...emptySecretStore('s0'), draft: { held: { [id]: cards }, generated: [], marked: [cards[2]!.instanceId] } });
+    h.step(act('pick', { packId: id, count: 1 }, 's0'));
+    h.step(act('packPass', { packId: id, to: 's1', count: 2 }, 's0'));
+    expect(ids(h.held()[SENT_PREFIX + id]!)).toEqual(ids(cards.slice(0, 2)));
+
+    // The room meanwhile: s2 picked its pack and passed it to s0. Adopting it, the pack is unknown: the copy is kept.
+    const theirs = draftOf(base).queues.s2![0]!;
+    let room = ok(sealed.state, { ...act('pick', { packId: theirs, count: 1 }, 's2'), seq: sealed.state.seq + 1 } as Action);
+    room = ok(room, { ...act('packPass', { packId: theirs, to: 's0', count: 2 }, 's2'), seq: room.seq + 1 } as Action);
+    h.fork(room);
+    expect(ids(h.held()[SENT_PREFIX + id]!)).toEqual(ids(cards.slice(0, 2)));
+    expect(h.sent).toHaveLength(1);
+    // The packOpen proposed again is sequenced behind s2's pack in s0's queue; the copy is back, already resolved.
+    room = ok(room, { ...opening, seq: room.seq + 1 } as Action);
+    h.fork(room);
+    expect(draftOf(room).queues.s0).toEqual([theirs, id]);
+    expect(ids(h.held()[id]!)).toEqual(ids(cards.slice(0, 2)));
+    expect(ids(h.held()[POOL_KEY]!)).toEqual([cards[2]!.instanceId]);
+    // The pick proposed again was refused (s2's pack is ahead). Nothing is proposed for the own pack before it is at
+    // the front.
+    const picksBefore = h.dispatched.filter((d) => d.type === 'pick' && 'packId' in d && d.packId === id).length;
+    h.driver.drive();
+    expect(h.dispatched.filter((d) => d.type === 'pick' && 'packId' in d && d.packId === id)).toHaveLength(picksBefore);
+    // s0 picks s2's pack and passes it on; now its own pack is at the front, and the driver proposes the pick again.
+    h.step(act('pick', { packId: theirs, count: 1 }, 's0'));
+    h.step(act('packPass', { packId: theirs, to: 's1', count: 1 }, 's0'));
+    expect(h.dispatched.at(-1)).toMatchObject({ type: 'pick', packId: id, count: 1 });
+    // Sequenced, it takes nothing more; the pass follows and hands on the same two cards.
+    h.step(act('pick', { packId: id, count: 1 }, 's0'));
+    expect(ids(h.held()[POOL_KEY]!)).toEqual([cards[2]!.instanceId]);
+    expect(h.dispatched.at(-1)).toMatchObject({ type: 'packPass', packId: id, to: 's1', count: 2 });
+    h.step(act('packPass', { packId: id, to: 's1', count: 2 }, 's0'));
+    expect(h.sent.at(-1)).toEqual({ to: 's1', packId: id, cards: ids(cards.slice(0, 2)) });
     expect(h.refused, 'no hand-over to a seat that does not hold the visit').toEqual([]);
     h.driver.dispose();
   });

@@ -124,6 +124,33 @@ describe('undoStackFromLog: the undo stack after a reload', () => {
     expect(undoStackFromLog(start, l2, 's0').stack.map((e) => e.cid)).toEqual([d3.cid]);
   });
 
+  it('a whole-zone private reorder clears the stack on the solo table only (its shuffle); in a networked log it is a scry', () => {
+    const start = base();
+    const tap = act('tap', { card: 'a00', tapped: true });
+    const all = act('reorder', { zone: 'library:s0', count: start.zones['library:s0']!.ids.length, orderHash: 'h' });
+    const log = stamped(start, [tap, all]);
+    expect(undoStackFromLog(start, log, 's0').stack.map((e) => e.cid)).toEqual([tap.cid]);
+    expect(undoStackFromLog(start, log, 's0', { soloShuffles: true }).stack).toEqual([]);
+  });
+
+  it('a recovery’s draws stay off the stack however many groups its retries took, until the agreed hand is drawn', () => {
+    const start = base();
+    const lib = start.zones['library:s0']!.ids;
+    const tap = act('tap', { card: 'a00', tapped: true });
+    // The recovery's own actions only need to be in the log (a reload replays the stored log; their validity is the
+    // live session's business): the agreed hand of three comes as a group of two and a single retry draw.
+    const recover = act('recover', { hand: 3, round: '' });
+    const commit = act('recoverCommit', { commits: [], instanceIds: [], zone: 'library:s0' });
+    const d1 = act('draw', { instanceId: lib[0]!, group: 'g1' });
+    const d2 = act('draw', { instanceId: lib[1]!, group: 'g1' });
+    const d3 = act('draw', { instanceId: lib[2]! });
+    const after = act('draw', { instanceId: lib[3]! });
+    const log = stamped(start, [tap, recover, commit, d1, d2, d3, after]);
+    expect(undoStackFromLog(start, log, 's0').stack.map((e) => e.cid)).toEqual([after.cid]);
+    // Before the hand is full, nothing of the recovery is undoable either.
+    expect(undoStackFromLog(start, log.slice(0, 5), 's0').stack).toEqual([]);
+  });
+
   it('stops at a gap in the log and never throws on actions the reducer refuses', () => {
     const start = base();
     const t1 = act('tap', { card: 'a00', tapped: true });
@@ -142,6 +169,11 @@ describe('undoStackFromLog: the undo stack after a reload', () => {
     expect(undoStackFromLog(start, log, 's0').stack.map((e) => e.group)).toEqual(['g', 'g']);
   });
 });
+
+/** `actions` with consecutive seqs after `start`, applied or not (undoStackFromLog replays what the reducer takes). */
+function stamped(start: TableState, actions: readonly Action[]): Action[] {
+  return actions.map((a, i) => ({ ...a, seq: start.seq + 1 + i }) as Action);
+}
 
 function end0(s: TableState): string {
   return s.zones['library:s0']!.ids[0]!;

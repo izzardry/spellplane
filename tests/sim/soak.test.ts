@@ -26,6 +26,38 @@ afterEach(() => {
 /** The acceptance faults: delay up to 250 ms (hence reordering) and 3% drop on every channel. */
 const FAULTS = { delay: { min: 0, max: 250 }, drop: 0.03 };
 
+/**
+ * Remembered ids whose caps (REMEMBER_CIDS, KEEP_OWN_CIDS, KEEP_NACKS) lie above what a 5,000-action soak reaches: they
+ * grow with the actions up to their caps, by at most one per sequenced action.
+ */
+const UNDER_CAP: (keyof EngineRetained)[] = ['cids', 'ownCids', 'nacked'];
+
+/**
+ * How much a structure may hold at the end beyond what it held half-way: a peer was away at the half-way probe (one
+ * more peer entry and its catch-up asks), and the hash windows (both sides' last KEEP_HASHES hashes) were still filling.
+ */
+const SLACK: Record<keyof EngineRetained, number> = {
+  log: 0,
+  buffer: 0,
+  cids: 0,
+  marks: 0,
+  pending: 0,
+  messages: 0,
+  ownCids: 0,
+  sentAt: 0,
+  nacked: 0,
+  held: 0,
+  queued: 0,
+  asks: 8,
+  deferred: 0,
+  lostOwn: 0,
+  hashes: 32,
+  applyAt: 0,
+  emitted: 0,
+  deadlines: 0,
+  peers: 1,
+};
+
 /** Structures that hold nothing once every peer is back and the table is quiet (no cache, no window). */
 const DRAINED: (keyof EngineRetained)[] = ['pending', 'buffer', 'sentAt', 'held', 'queued', 'deferred', 'lostOwn'];
 
@@ -56,12 +88,17 @@ describe('M5-P6 acceptance: long-session soak', () => {
       expect(r.log, `peer${i} retained actions`).toBe(RETAIN_ACTIONS);
       expect(report.retained[i]).toEqual({ messages: r.messages, pending: 0, buffered: 0, history: RETAIN_ACTIONS });
     }
-    // From half-way to the end the windows did not grow: twice the actions, the same retained tail and rewind states.
+    // From half-way to the end nothing grew with the actions (twice the actions, the same retained tail, rewind states,
+    // apply times and the rest), which the caps alone cannot show: a structure that grew under its cap would pass them.
+    // Left out: the remembered ids whose caps lie above what this soak reaches, which grow with the actions up to their
+    // caps (each sequenced action adds at most one), and the debug ring of wire messages (dev and test builds only).
     for (const [i, r] of engines.entries()) {
       const h = half[i]!;
-      expect(r.log, `peer${i} log`).toBeLessThanOrEqual(h.log);
-      expect(r.marks, `peer${i} rewind states`).toBeLessThanOrEqual(h.marks);
-      expect(r.applyAt, `peer${i} apply times`).toBeLessThanOrEqual(ENGINE_RETAIN_LIMITS.applyAt);
+      for (const k of Object.keys(ENGINE_RETAIN_LIMITS) as (keyof EngineRetained)[]) {
+        if (UNDER_CAP.includes(k) || k === 'messages') continue;
+        expect(r[k], `peer${i} ${k}: ${h[k]} half-way`).toBeLessThanOrEqual(h[k] + SLACK[k]);
+      }
+      for (const k of UNDER_CAP) expect(r[k] - h[k], `peer${i} ${k} added in the second half`).toBeLessThanOrEqual(report.seq - run.halfSeqs[i]!);
     }
     // The shared state keeps no history of its own: it grows with what lies on the table (random play leaves tokens
     // behind), and its size per table object stays where it was half-way.

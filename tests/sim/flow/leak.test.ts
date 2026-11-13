@@ -168,6 +168,7 @@ const PASS: LobbySettings = { draft: { format: 'pass', packs: 3, picks: 1 }, set
 const WINSTON: LobbySettings = { draft: { format: 'winston', packs: 6 }, sets: ['M19'], pickTimer: false };
 const ALL_FAULTY: LoopbackOptions = { delay: { min: 0, max: 300 }, drop: 0.05 };
 const FOUR = { format: 'ffa4' as const, ...EVENING_OPTS };
+const THREE = { format: 'ffa3' as const, ...EVENING_OPTS };
 
 describe('shared leak test: hidden packs through the networked session', () => {
   it('a four-seat pass draft shows each seat only the packs it held, at its turn, with a reload and an outage', async () => {
@@ -265,6 +266,122 @@ describe('shared leak test: hidden packs through the networked session', () => {
     const report = packLeakScan({ observed: await observedAcross(network, ben), others: [leaked], nonces: [], allowed: new Set(), known: [] });
     expect(report.tokens.length).toBeGreaterThan(0);
     expect(report.pairs.length).toBeGreaterThan(0);
+  }, 600_000);
+
+  // M5-P6 (M2 gate follow-up): the pass driver keeps every handed-on copy of a pack, moves it back to the held packs
+  // when the room adopts another history, and hands it on again (draft/pass.ts reconcile). Cleo is cut off with her
+  // own pack in front of her; alone, her page sequences her pick and her pass to Anna itself. The room's sequencer is
+  // Anna's page (the lowest seat), so when Cleo comes back her page adopts the room's history, which holds neither
+  // (nor, depending on timing, her packOpen): the engine proposes them again, the copy her page kept comes back to her
+  // held packs, the pick is proposed again once her pack is at the front of her queue in the room's history (Ben's
+  // packs may be ahead of it there), and the pack goes to Anna once more. Without the M5-P6 fixes the draft stalls or
+  // Cleo's pool keeps a card of a pack that is never opened. Every seat's messages and stores are scanned as above.
+  it.each([19, 2])('a pass draft whose history splits: the side that picked and passed alone adopts the room’s history and hands the pack on again (seed %i)', async (seed) => {
+    const network = net({ seed, ...ALL_FAULTY });
+    const seated: Browser[] = [];
+    for (const [i, name] of ['anna', 'ben', 'cleo'].entries()) {
+      const b = await browser(name, `peer-${name}`, name, i * 2);
+      browsers.push(b);
+      seated.push(b);
+      await open(network, b, {}, THREE);
+    }
+    const tables = (): NetTable[] => seated.map((b) => b.session!);
+    await waitConverged(tables(), 'three seated');
+    expect(tables().map((s) => s.seat)).toEqual(['s0', 's1', 's2']);
+    const host = tables()[0]!;
+    host.evening!.setLobby({ ...PASS, draft: { format: 'pass', packs: 1, picks: 1 } });
+    await waitConverged(tables(), 'the lobby settings');
+    const start = host.engine.confirmedState();
+    host.evening!.start();
+    await until(() => tables().every((s) => s.engine.confirmedState().stage === 'draft'), 60_000, 'the draft stage');
+
+    const [anna, ben, cleo] = seated as [Browser, Browser, Browser];
+    const c = cleo.session!;
+    const room = (): NetTable[] => [anna.session!, ben.session!];
+    await until(() => c.draft!.view().pack !== null, 60_000, 'Cleo’s own pack');
+    const own = c.draft!.view().pack!.packId;
+    network.kill(cleo.peerId);
+    // The room plays on without her: Anna and Ben pick and pass while Cleo's page notices it is alone.
+    for (let ms = 0; !c.engine.isSequencer(); ms += 20) {
+      if (ms > 60_000) throw new Error('Cleo’s page never sequenced alone');
+      pickWherePossible(room());
+      await vi.advanceTimersByTimeAsync(20);
+    }
+    // Alone, Cleo picks from her pack and her page passes it on to Anna, all sequenced by itself.
+    const passedAlone = (): SequencedAction | undefined => actionsAfter(c, start.seq).find((a) => a.type === 'packPass' && a.by === 's2' && a.packId === own);
+    for (let ms = 0; passedAlone() === undefined; ms += 20) {
+      if (ms > 60_000) throw new Error('Cleo’s pass was not sequenced alone');
+      pickWherePossible([c]);
+      pickWherePossible(room());
+      await vi.advanceTimersByTimeAsync(20);
+    }
+    const alone = passedAlone()!;
+    network.revive(cleo.peerId);
+    for (let ms = 0; !tables().every((s) => s.engine.confirmedState().stage !== 'draft'); ms += 20) {
+      if (ms > 900_000) throw new Error('the draft did not finish');
+      pickWherePossible(tables());
+      await vi.advanceTimersByTimeAsync(20);
+    }
+    await until(() => tables().every((s) => s.engine.confirmedState().stage === 'build'), 60_000, 'the build stage');
+    const d = host.engine.confirmedState().draft!;
+    for (const s of tables()) await until(() => ownPicks(s).length === d.pools[s.seat], 60_000, `${s.seat}'s pool`);
+    await until(() => tables().every((s) => s.engine.pending().length === 0), 30_000, 'quiet');
+    await waitConverged(tables(), 'the end of the draft');
+    await settle(Promise.all(tables().map((s) => s.whenSaved())));
+
+    const log = actionsAfter(host, start.seq);
+    replayMatches(start, log, host);
+    // The split happened: Cleo's page took over the room's history, which does not hold the pass her page sequenced
+    // alone at its seq; her pack was passed on to Anna once in the room's history, after her single pick.
+    expect(c.log().some((e) => e.kind === 'system' && /history diverged/.test(e.text))).toBe(true);
+    expect(log.find((a) => a.seq === alone.seq)?.cid).not.toBe(alone.cid);
+    const passes = log.filter((a) => a.type === 'packPass' && a.packId === own);
+    expect(passes[0]).toMatchObject({ by: 's2', to: 's0', count: 14 });
+    // And the pack went to Anna after Cleo's page came back, with the cards it held after her (single) pick.
+    expect(pairMessages(network, anna, 'pack').some((m) => m.packId === own && m.cards.length > 0)).toBe(true);
+
+    const generated = new Map(tables().map((s) => [s.seat, (s.secrets().draft?.generated ?? []).flatMap((g) => g.cards)] as const));
+    const packs = new Map(tables().flatMap((s) => (s.secrets().draft?.generated ?? []).map((g) => [g.packId, g] as const)));
+    // Cleo's page may have generated a second pack while its first `packOpen` waited to be proposed again (the room's
+    // history had none of hers then); only one of them is opened, and the other one's cards are hers alone too.
+    expect(Object.keys(d.packs)).toHaveLength(3);
+    for (const id of Object.keys(d.packs)) expect(packs.has(id)).toBe(true);
+    const all = visitsOf(start, log, packs, new Map(tables().map((s) => [s.seat, ownPicks(s)])));
+    expect(all).toHaveLength(3 * 15);
+    const everything = new Map([...generated.values()].flat().map((x) => [x.instanceId, x]));
+    for (const b of seated) {
+      const s = b.session!;
+      const others = tables().filter((x) => x.seat !== s.seat);
+      const mine = all.filter((v) => v.holder === s.seat);
+      const allowed = new Set([...generated.get(s.seat)!.map((x) => x.instanceId), ...mine.flatMap((v) => v.before)]);
+      const report = packLeakScan({
+        observed: [...(await observedAcross(network, b)), s.draftView()],
+        others: others.flatMap((x) => generated.get(x.seat)!),
+        nonces: others.flatMap((x) => (x.secrets().draft?.generated ?? []).map((g) => g.ownerNonce)),
+        allowed,
+        known: [...allowed].map((id) => everything.get(id)!),
+      });
+      // A seat never sees the picks taken from another seat's pack before it came round (1 + 2 cards), nor a pack
+      // generated and never opened.
+      const unopened = others.flatMap((x) => (x.secrets().draft?.generated ?? []).filter((g) => !Object.hasOwn(d.packs, g.packId)).flatMap((g) => g.cards));
+      expect(report.forbidden).toBe(3 + unopened.length);
+      expect(report.tokens).toEqual([]);
+      expect(report.pairs).toEqual([]);
+      for (const m of pairMessages(network, b, 'pack').filter((x) => x.cards.length > 0)) {
+        const ids = m.cards.map((x) => x.instanceId).sort().join();
+        expect(mine.some((v) => v.packId === m.packId && [...v.before].sort().join() === ids)).toBe(true);
+      }
+    }
+
+    // Negative control: a card of Cleo's pack that Ben never held, sent to him by Cleo's engine, is caught.
+    const seen = new Set(all.filter((v) => v.holder === 's1').flatMap((v) => v.before));
+    const leaked = generated.get('s2')!.find((x) => !seen.has(x.instanceId))!;
+    expect(leaked).toBeDefined();
+    expect(c.engine.sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'pack', packId: 'control', cards: [leaked] })).toBe(true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const control = packLeakScan({ observed: await observedAcross(network, ben), others: [leaked], nonces: [], allowed: new Set(), known: [] });
+    expect(control.tokens.length).toBeGreaterThan(0);
+    expect(control.pairs.length).toBeGreaterThan(0);
   }, 600_000);
 
   it('a Winston draft shows the other player only the piles it looked at and the cards it took, with a reload', async () => {

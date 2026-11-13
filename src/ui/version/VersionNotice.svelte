@@ -4,12 +4,13 @@
   for the table to update), never a silent failure"; DESIGN "Specification: network protocol and secrecy": "peers with a
   different `v` are refused with a visible version-mismatch notice"). Shown over every stage of a networked table while
   the engine knows a connected peer of another protocol version (NetEngine.versionMismatch); the same text is in the
-  log. It can be hidden for this mismatch; a new one (another peer or version) shows again.
+  log. It can be hidden for this mismatch; a new one (another peer or version) shows again (./dismiss.ts).
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
   import { versionAdvice, versionNotice, type VersionMismatch } from '../../net/version';
   import type { TableSession } from '../../session/types';
+  import { hide, isHidden, learnPeer, type HiddenMismatch } from './dismiss';
 
   let { session }: { session: TableSession } = $props();
 
@@ -17,12 +18,15 @@
   const POLL_MS = 1000;
 
   let mismatch = $state.raw<VersionMismatch | null>(null);
-  let hidden = $state('');
+  let hidden = $state.raw<HiddenMismatch | null>(null);
   const key = (m: VersionMismatch): string => `${m.peerId}|${m.theirs}`;
 
   function read(): void {
+    // TableSession has no typed version API yet (session/types.ts is a contract file): the networked session's engine
+    // is read where it has one.
     const engine = (session as Partial<{ engine: { versionMismatch?(): VersionMismatch | null } }>).engine;
     const next = engine?.versionMismatch?.() ?? null;
+    hidden = learnPeer(hidden, next);
     if (next === null ? mismatch !== null : mismatch === null || key(next) !== key(mismatch) || next.nickname !== mismatch.nickname) mismatch = next;
   }
 
@@ -37,10 +41,10 @@
   });
 </script>
 
-{#if mismatch && hidden !== key(mismatch)}
+{#if mismatch && !isHidden(hidden, mismatch)}
   <section class="version" role="alert" data-testid="version-mismatch" data-advice={versionAdvice(mismatch)} data-mine={mismatch.mine} data-theirs={mismatch.theirs}>
     <p>{versionNotice(mismatch)}</p>
-    <button type="button" data-testid="version-mismatch-hide" onclick={() => mismatch && (hidden = key(mismatch))}>Hide</button>
+    <button type="button" data-testid="version-mismatch-hide" onclick={() => mismatch && (hidden = hide(mismatch))}>Hide</button>
   </section>
 {/if}
 

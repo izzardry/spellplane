@@ -9,14 +9,14 @@
  * card is turned up only once the move is sequenced, so the refusal publishes nothing), another seat moving a face-down
  * card into a graveyard (the owner turns it up), a face-up play lost in a crash before it was sequenced and the same
  * card then played face down after the reload while the peers come up late (it stays face down), and a negative
- * control that shows the scan is not vacuous.
+ * control that shows the scan is not vacuous. M5-P6: undo after a reload, through the stack rebuilt from the saved log.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RevealedCard } from '../../../src/core/commit';
 import type { LoopbackOptions } from '../../../src/net/loopback';
 import { createPrivateChannel } from '../../../src/net/private';
 import { forbiddenFor, leakScan } from '../../leak/leak';
-import { browser, closeAll, FAKE_TIMERS, fixtureDeck, lateTransport, LossyTransport, net, observedBy, open, settle, until, waitConverged, type Browser } from './harness';
+import { browser, closeAll, FAKE_TIMERS, fixtureDeck, lateTransport, LossyTransport, net, observedBy, open, settle, trackDisclosures, until, waitConverged, type Browser } from './harness';
 import { isLand, playScript } from './script';
 import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
@@ -108,6 +108,63 @@ describe('shared leak test: the networked session', () => {
     const report = leakScan({ observed: await observedBy(network, p.B), owner: { state: a.engine.confirmedState(), secrets: a.secrets() }, disclosed: p.shownToB });
     expect(report.tokens).toEqual([]);
     expect(report.pairs).toEqual([]);
+  });
+
+  // M5-P6: undo after a reload rebuilds the stack from the saved log (core/undo.ts undoStackFromLog); its steps' re-reveals
+  // drive the owner's verified re-reveal and its draws a private library reorder. A public card moved to the hand (its
+  // hand re-issued, so its steps are dropped), a land played from the hand, a draw and the land put on top of the
+  // library, then a reload and Ctrl+Z through the restored stack: the land comes back up (re-revealed), the drawn card
+  // goes back on top of the library, the land goes back to the hand. Nothing but the land's identity reaches B.
+  it.each([12, 33])('undo after a reload: the rebuilt stack re-reveals and reorders through the owner only (seed %i)', async (seed) => {
+    const network = net({ seed, ...FAULTS });
+    const p = await playScript(network, browsers);
+    const { a, b } = p;
+    const sidOf = (id: string): string => a.secrets().identities[id]!.card.sid;
+    const lands = (): string[] => a.secrets().hand.filter((id) => isLand(sidOf(id)));
+    for (let i = 0; i < 30 && lands().length < 2; i++) await settle(a.draw(1));
+    expect(lands().length).toBeGreaterThanOrEqual(2);
+    // A public card moved to the hand: the hand gets fresh ids (decision M1-P2), which retires the steps naming them.
+    const l2 = lands()[1]!;
+    a.dispatch({ type: 'move', card: l2, to: 'battlefield:s0', pose: { x: 210, y: -200, rot: 0 } });
+    await until(() => b.engine.confirmedState().cards[l2]?.identity !== undefined, 20_000, 'the second land turned up');
+    a.dispatch({ type: 'toZone', card: l2, to: 'hand:s0', position: 'any' });
+    await until(() => a.engine.confirmedState().cards[l2] === undefined && a.engine.pending().length === 0, 20_000, 'the re-issue of the hand');
+    // A land played from the hand, a draw, and the land put on top of the library.
+    const l1 = lands()[0]!;
+    a.dispatch({ type: 'move', card: l1, to: 'battlefield:s0', pose: { x: 140, y: -200, rot: 0 } });
+    await until(() => b.engine.confirmedState().cards[l1]?.identity !== undefined, 20_000, 'the land turned up');
+    const top = a.secrets().libraryOrder[0]!;
+    await settle(a.draw(1));
+    a.dispatch({ type: 'toZone', card: l1, to: 'library:s0', position: 'top' });
+    await waitConverged([a, b], 'before the reload');
+    expect(b.engine.confirmedState().cards[l1]!.identity).toBeUndefined();
+
+    await settle(a.whenSaved());
+    a.leave();
+    const a2 = await open(network, p.A, { settleMs: 200 });
+    const shownAfter = trackDisclosures(a2, 's1');
+    await waitConverged([a2, b], 'after the reload');
+    // Ctrl+Z through the restored stack.
+    expect(a2.undo()).toBe(true);
+    await until(() => b.engine.confirmedState().cards[l1]?.identity !== undefined && a2.engine.pending().length === 0, 20_000, 'the land re-revealed');
+    expect(b.engine.confirmedState().cards[l1]).toMatchObject({ zone: 'battlefield:s0', face: 'up', identity: a2.secrets().identities[l1]!.card });
+    expect(b.engine.confirmedState().cards[l1]!.suspect).toBeUndefined();
+    expect(a2.undo()).toBe(true);
+    await waitConverged([a2, b], 'the draw undone');
+    expect(a2.secrets().libraryOrder[0]).toBe(top);
+    expect(a2.undo()).toBe(true);
+    await until(() => a2.engine.pending().length === 0 && b.engine.confirmedState().cards[l1]?.zone !== 'battlefield:s0', 20_000, 'the land back in the hand');
+    await waitConverged([a2, b], 'the end');
+    await settle(Promise.all([a2.whenSaved(), b.whenSaved()]));
+
+    const input = { observed: await observedBy(network, p.B), owner: { state: a2.engine.confirmedState(), secrets: a2.secrets() }, disclosed: [...p.shownToB, ...shownAfter] };
+    expect(forbiddenFor(input).tokens.length).toBeGreaterThan(40);
+    const report = leakScan(input);
+    expect(report.tokens).toEqual([]);
+    expect(report.pairs).toEqual([]);
+    const back = leakScan({ observed: await observedBy(network, p.A), owner: { state: b.engine.confirmedState(), secrets: b.secrets() }, disclosed: [] });
+    expect(back.tokens).toEqual([]);
+    expect(back.pairs).toEqual([]);
   });
 
   it('a seat that controls another owner’s face-down card may peek at it; the owner answers that seat only', async () => {
