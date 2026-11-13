@@ -67,7 +67,7 @@ const SEATS: SeatColour[] = [
 function lineStyle(kind: LineKind, seat: SeatColour): LineStyle {
   return {
     colour: seat.colour,
-    // 3 px: the bloom samples the image at half resolution, so a thinner stroke would fall under its threshold.
+    // 3 px over the table; the bloom draws its glow copy at least 4 device px wide (scene/post.ts GLOW_MIN_DEVICE_PX).
     widthPx: 3,
     dash: kind === 'mark' ? (PATTERN_DASH[seat.pattern] ?? [6, 4]) : PATTERN_DASH[seat.pattern],
     geometry: 'stroke',

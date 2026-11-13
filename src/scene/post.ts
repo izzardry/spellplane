@@ -19,6 +19,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { VignetteShader } from 'three/examples/jsm/shaders/VignetteShader.js';
+import type { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import type { PostSettings, QualityLevel } from '../themes/types';
 import type { PostPipeline } from './types';
 
@@ -67,8 +68,30 @@ export interface PostPipelineImpl extends PostPipeline {
   readonly composer: EffectComposer | null;
 }
 
-/** Draws objects into the read buffer without clearing (glow sources for the bloom). */
+/**
+ * Least width of a glow source stroke in the chain's device pixels. The bloom finds bright areas in a half-resolution
+ * copy of the image, one bilinear sample per 2 × 2 pixels: a thinner antialiased stroke can fall between two sample
+ * rows, average under the threshold and not glow at all, depending only on its sub-pixel position (a 3 px Dusk line
+ * glowed straight down and vanished from the bloom under Dusk's 10° tilt with MSAA). From 4 px a stroke always covers
+ * one sample's 2 × 2 pixels fully, wherever it falls.
+ */
+export const GLOW_MIN_DEVICE_PX = 4;
+
+/** The glow copy's width of a stroke `widthPx` CSS px wide at device pixel ratio `pixelRatio`, CSS px. */
+export function glowWidthPx(widthPx: number, pixelRatio: number): number {
+  return Math.max(widthPx, GLOW_MIN_DEVICE_PX / (pixelRatio > 0 ? pixelRatio : 1));
+}
+
+const viewportTmp = new THREE.Vector4();
+const isLineMaterial = (m: unknown): m is LineMaterial => (m as { isLineMaterial?: boolean } | null)?.isLineMaterial === true;
+
+/**
+ * Draws objects into the read buffer without clearing (glow sources for the bloom). Screen-space strokes (fat lines)
+ * are drawn at least glowWidthPx wide there; the crisp stroke over the table keeps its own width (the overlay).
+ */
 class ObjectsPass extends Pass {
+  private widened: { material: LineMaterial; width: number }[] = [];
+
   constructor(
     private objects: () => THREE.Object3D[],
     private camera: THREE.Camera,
@@ -81,7 +104,22 @@ class ObjectsPass extends Pass {
     const autoClear = renderer.autoClear;
     renderer.autoClear = false;
     renderer.setRenderTarget(read);
-    for (const o of this.objects()) if (o.visible) renderer.render(o, this.camera);
+    // Fat lines take their width in the viewport's CSS px (LineSegments2 sets its resolution from it); the target is larger by this.
+    const pr = read.width / Math.max(1, renderer.getViewport(viewportTmp).z);
+    for (const o of this.objects()) {
+      if (!o.visible) continue;
+      o.traverseVisible((x) => {
+        const m = (x as THREE.Mesh).material;
+        if (!isLineMaterial(m)) return;
+        const width = glowWidthPx(m.linewidth, pr);
+        if (width === m.linewidth) return;
+        this.widened.push({ material: m, width: m.linewidth });
+        m.linewidth = width;
+      });
+      renderer.render(o, this.camera);
+      for (const w of this.widened) w.material.linewidth = w.width;
+      this.widened.length = 0;
+    }
     renderer.autoClear = autoClear;
   }
 }

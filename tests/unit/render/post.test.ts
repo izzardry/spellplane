@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { Pass } from 'three/examples/jsm/postprocessing/Pass.js';
 import { describe, expect, it, vi } from 'vitest';
-import { createPostPipeline, POST_TARGET_BUDGET, postBytes, postSamples } from '../../../src/scene/post';
+import { createPostPipeline, GLOW_MIN_DEVICE_PX, glowWidthPx, POST_TARGET_BUDGET, postBytes, postSamples } from '../../../src/scene/post';
 import type { PostSettings, QualityLevel } from '../../../src/themes/types';
 import { fakeRenderer } from './fakes';
 
@@ -131,5 +131,15 @@ describe('post chain memory (PLAN M4 Performance: texture memory under 400 MB)',
     expect(postBytes(100, 100, 0, false)).toBe(2 * base);
     expect(postBytes(100, 100, 4, false)).toBe(10 * base);
     expect(postBytes(100, 100, 0, true)).toBe(Math.round(2 * base + base / 4 + (2 * base) / 3));
+  });
+
+  it('draws a glow copy at least 4 device px wide, whatever the pixel ratio, and never thinner than the stroke', () => {
+    // The bloom's bright pass samples every 2 × 2 pixels once: a 3 px stroke can fall between two sample rows.
+    expect(GLOW_MIN_DEVICE_PX).toBe(4);
+    expect(glowWidthPx(3, 1)).toBe(4);
+    expect(glowWidthPx(1.5, 2)).toBe(2);
+    expect(glowWidthPx(3, 2)).toBe(3);
+    expect(glowWidthPx(6, 1)).toBe(6);
+    expect(glowWidthPx(2, 0)).toBe(4);
   });
 });
