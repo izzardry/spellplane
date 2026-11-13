@@ -28,6 +28,13 @@ import { DUSK_BACK } from './textures';
  */
 export const DUSK_SURFACE = '#1d3520';
 
+/**
+ * Pending confirmation (CardDressing.pending): a warm near-white. Every seat colour is a pastel with at least one
+ * channel at or below 0xa8, so it stays at least 0.36 (colourDistance) from all eight, and at least 0.2 from the hover,
+ * selection and ghost colours; a waiting entry changes colour whichever seat controls it.
+ */
+export const DUSK_PENDING = '#fffaf0';
+
 /** The room around the table. */
 export const DUSK_BACKGROUND = '#09080c';
 
@@ -122,7 +129,9 @@ export const dusk: Theme = {
     edge: '#25222c',
     faceShade: 0.02,
     held: { lift: 12, tiltDeg: 4, shadow: true },
-    pending: { colour: '#ffb35c', width: 1.4, lift: 0, glow: 0.6 },
+    // A waiting stack entry is outlined in this colour instead of its controller's seat colour (scene/stack.ts
+    // entryOutline): the lamp's warm white, apart from all eight seat colours, so the change reads for every seat.
+    pending: { colour: DUSK_PENDING, width: 1.4, lift: 0, glow: 0.6 },
   },
   lineStyle,
   motion: DEFAULT_MOTION,

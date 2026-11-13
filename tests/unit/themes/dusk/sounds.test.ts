@@ -71,10 +71,15 @@ class Param {
 
 class Node {
   out: (Node | Param)[] = [];
+  disconnected = false;
   constructor(public type: string) {}
   connect(n: Node | Param) {
     this.out.push(n);
     return n;
+  }
+  disconnect() {
+    this.out = [];
+    this.disconnected = true;
   }
 }
 class Gain extends Node {
@@ -88,6 +93,7 @@ class Source extends Node {
   stopped: number | null = null;
   loop = false;
   buffer: unknown = null;
+  onended: (() => void) | null = null;
   frequency = new Param(440);
   oscType = 'sine';
   start(t = 0) {
@@ -214,6 +220,24 @@ describe('Dusk cues', () => {
     }
   });
 
+  for (const name of CUES) {
+    it(`${name}: lets go of the speakers when its last source has ended`, () => {
+      const { ctx, nodes, destination } = fakeContext();
+      DUSK_SOUNDS[name]!.play(ctx, 0.5);
+      const master = nodes.find((n): n is Gain => n instanceof Gain && n.out.includes(destination))!;
+      const src = sources(nodes);
+      const lastEnd = Math.max(...src.map((s) => s.stopped!));
+      // Sources ending earlier do not cut the cue short.
+      for (const s of src) if (s.stopped! < lastEnd) s.onended?.();
+      expect(master.disconnected).toBe(false);
+      const last = src.filter((s) => s.stopped === lastEnd);
+      expect(last.some((s) => s.onended !== null)).toBe(true);
+      for (const s of last) s.onended?.();
+      expect(master.disconnected).toBe(true);
+      expect(master.out).not.toContain(destination);
+    });
+  }
+
   it('use the same noise every time (deterministic)', () => {
     const a = fakeContext();
     const b = fakeContext();
@@ -257,6 +281,27 @@ describe('Dusk room tone', () => {
     raw.currentTime = 30;
     handle.stop();
     expect(loop.stopped).toBe(stoppedAt);
+  });
+
+  it('builds nothing at gain 0 or with a broken gain, and stops as a no-op', () => {
+    for (const g of [0, -1, Number.NaN]) {
+      const { ctx, nodes } = fakeContext();
+      const handle = DUSK_SOUNDS.ambience!.start(ctx, g);
+      expect(nodes).toEqual([]);
+      expect(() => handle.stop()).not.toThrow();
+    }
+  });
+
+  it('lets go of the speakers once its noise has ended after a stop', () => {
+    const { ctx, nodes, destination, raw } = fakeContext(5);
+    const handle = DUSK_SOUNDS.ambience!.start(ctx, 1);
+    const out = nodes.find((n): n is Gain => n instanceof Gain && n.out.includes(destination))!;
+    const loop = sources(nodes).find((s) => s.type === 'buffer')!;
+    raw.currentTime = 9;
+    handle.stop();
+    expect(out.disconnected).toBe(false);
+    loop.onended?.();
+    expect(out.disconnected).toBe(true);
   });
 
   it('stopped during its fade-in, fades out from where it is, without a jump', () => {

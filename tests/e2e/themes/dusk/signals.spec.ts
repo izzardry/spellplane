@@ -1,8 +1,8 @@
 /**
  * PLAN M4-P3 acceptance: "Each theme renders the twelve gate states without console errors" — Dusk's own evidence for
  * the ten scene signals. The gate and the official measure for all twelve, in the real app, are M4-P6's
- * tests/e2e/signals.spec.ts, which runs Dusk too; speaking, away and pending confirmation are measured only there
- * (they were duplicated here with an easier setup, which hid a Chromium failure of the pending pair). DESIGN "Themes
+ * tests/e2e/signals.spec.ts, which runs Dusk too; speaking, away and pending confirmation are measured only there,
+ * in the real app with a real confirmation round (Dusk's pending colour is unit-tested against its seats). DESIGN "Themes
  * and rendering": "Functional signals … every theme must render all of them distinguishably". Each state is put on
  * screen in Dusk through the real reducer and the real table scene, as a controlled pair with everything else
  * unchanged and reduced motion on, and must

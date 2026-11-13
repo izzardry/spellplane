@@ -6,7 +6,8 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_MOTION } from '../../../../src/core/geometry';
 import { mtgLayout, soloLayout } from '../../../../src/games/mtg/layout';
 import { effectiveQuality, qualityLadderProblems } from '../../../../src/scene/quality';
-import { DUSK_BLOOM_THRESHOLD, DUSK_SURFACE, dusk } from '../../../../src/themes/dusk/index';
+import { entryOutline } from '../../../../src/scene/stack';
+import { DUSK_BLOOM_THRESHOLD, DUSK_PENDING, DUSK_SURFACE, dusk } from '../../../../src/themes/dusk/index';
 import { FELT, FELT_COLOUR, RAIL } from '../../../../src/themes/dusk/table';
 import { PATTERN_DASH, paper } from '../../../../src/themes/paper/index';
 import {
@@ -226,6 +227,16 @@ describe('card dressing', () => {
     expect(contrastRatio(d.selected.colour, DUSK_SURFACE)).toBeGreaterThanOrEqual(3);
     expect(contrastRatio(d.pending.colour, DUSK_SURFACE)).toBeGreaterThanOrEqual(3);
     expect(contrastRatio(d.ghost.colour, DUSK_SURFACE)).toBeGreaterThanOrEqual(3);
+  });
+
+  it('outlines a waiting stack entry in a colour apart from every seat colour and every other outline', () => {
+    // scene/stack.ts entryOutline swaps the controller's seat colour for this one while the round waits, so the
+    // pending-confirmation signal must change colour whichever seat controls the entry (review round 2: the earlier
+    // amber sat 0.07 from seat 4's).
+    expect(d.pending.colour).toBe(DUSK_PENDING);
+    for (const s of dusk.tokens.colours.seats) expect(colourDistance(d.pending.colour, s.colour), `seat ${s.index}`).toBeGreaterThanOrEqual(SEAT_CONTRAST.pairwise);
+    for (const other of [d.hover.colour, d.selected.colour, d.ghost.colour]) expect(colourDistance(d.pending.colour, other), other).toBeGreaterThanOrEqual(SEAT_CONTRAST.pairwise);
+    expect(entryOutline(true, dusk.tokens.colours.seats[4]!.colour, d, 1)).toEqual({ colour: DUSK_PENDING, width: 2.2 });
   });
 });
 
