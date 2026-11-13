@@ -2,9 +2,7 @@
 // packages (PLAN Milestone 4; DESIGN "Themes and rendering", "Camera and navigation", "Specification: code interfaces").
 import { describe, expect, it } from 'vitest';
 import { CAMERA } from '../../../src/core/geometry';
-import { blendPose } from '../../../src/scene/camera/blend';
-import { egoPose } from '../../../src/scene/camera/ego';
-import { DEFAULT_EGO_RIG, type CameraPose } from '../../../src/scene/types';
+import { DEFAULT_EGO_RIG } from '../../../src/scene/types';
 import {
   CARD_FACE_MAX_SHADE,
   SEAT_CONTRAST,
@@ -120,15 +118,5 @@ describe('camera rig contracts', () => {
   it('ego defaults follow the geometry spec', () => {
     expect(DEFAULT_EGO_RIG).toMatchObject({ fovDeg: 45, behindEdge: 260, height: 620, pitchDeg: 35, minPitchDeg: 25, maxPitchDeg: 60 });
     expect(DEFAULT_EGO_RIG.fovDeg).toBe(CAMERA.ego.fovDeg);
-  });
-});
-
-describe('stubs name their package', () => {
-  const pose: CameraPose = { position: [0, 0, 1000], target: [0, 0, 0], fovDeg: 6, pitchDeg: 90 };
-  it.each([
-    ['M4-P1', () => egoPose(DEFAULT_EGO_RIG, { w: 1400, d: 1100 }, 0, { lean: 0, dolly: 0, pitchDeg: 35 })],
-    ['M4-P1', () => blendPose(pose, pose, 0.5, { w: 800, h: 600 }, null)],
-  ])('%s', (pkg, fn) => {
-    expect(fn).toThrow(`not implemented: ${pkg}`);
   });
 });

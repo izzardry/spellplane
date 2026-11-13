@@ -375,6 +375,10 @@ export function harnessReduce(state: TableState, a: Action): TableState {
       }
       s.stack.push({ id: a.item, kind: a.kind, controller: a.controller ?? a.by, ...(a.card ? { card: a.card } : {}) });
       break;
+    case 'turnPass':
+      // The next turn (M4-P1's follow-the-active-player tests): the turn number counts up, the phase is kept.
+      s.turn = { ...s.turn, number: s.turn.number + 1, active: a.to };
+      break;
     case 'lineAdd':
       s.lines[a.line] = { id: a.line, kind: a.kind, from: a.from, to: a.to, by: a.by, ...(a.label ? { label: a.label } : {}) };
       break;

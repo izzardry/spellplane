@@ -85,6 +85,8 @@
   let vw = $state(typeof window === 'undefined' ? 1440 : window.innerWidth);
   let vh = $state(typeof window === 'undefined' ? 900 : window.innerHeight);
   const pointer = { x: 0, y: 0 };
+  /** Whether the pointer moved over the page yet (the P key's anchor, M4-P1). */
+  let pointerSeen = false;
   let forcedHover: InstanceId | null = null;
   let sceneHost = $state<HTMLElement | undefined>();
   let scene: TableScene | null = null;
@@ -264,6 +266,7 @@
     ui: hooks,
     newId: makeId,
     now: () => Date.now(),
+    pointer: () => (pointerSeen ? { x: pointer.x, y: pointer.y } : null),
   });
   const engine = new KeyEngine(
     untrack(() => game.keymap),
@@ -642,6 +645,25 @@
     seenLog = log.length;
   }
 
+  /** The follow toggles the scene has; it starts with both off (the default). */
+  let followHanded = { stack: false, activePlayer: false };
+  /**
+   * Hand the stored follow toggles to the scene whenever they differ from what it has: on mount, and when the window
+   * regains focus or becomes visible (another tab or a settings panel may have changed them; SettingsStore has no
+   * change events). Both values go over, so turning one off reaches the scene too.
+   */
+  function syncFollow(): void {
+    void settings
+      ?.all()
+      .then((s) => {
+        const next = { stack: s.followStack, activePlayer: s.followActive };
+        if (!scene || (next.stack === followHanded.stack && next.activePlayer === followHanded.activePlayer)) return;
+        followHanded = next;
+        scene.camera.setFollow({ ...next });
+      })
+      .catch(() => {});
+  }
+
   onMount(() => {
     seenLog = entries.length;
     watch.start(entries);
@@ -694,6 +716,8 @@
       });
       sceneTheme = theme;
       sceneReady = true;
+      // The viewer's follow toggles (DESIGN "Camera and navigation", Follow options; Settings.followStack, followActive).
+      syncFollow();
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
       presence = attachPresence(sceneHost!, scene, session.presence, {
         selfSeat: me,
@@ -732,12 +756,15 @@
   {onfocusin}
   {onclick}
   onblur={() => engine.blur()}
+  onfocus={() => syncFollow()}
   onpointermove={(e) => {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
+    pointerSeen = true;
     syncCaptionHover(hovered);
   }}
 />
+<svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncFollow()} />
 
 <div class="root" style={cssVars} data-testid="hud">
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
@@ -758,6 +785,7 @@
         <button type="button" data-testid="open-deck-import" onclick={() => (deckOpen = !deckOpen)}>Import deck</button>
         <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
+        <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye')}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
         {#if themeChoice}
           <span class="theme-anchor" bind:this={themeAnchor}>
