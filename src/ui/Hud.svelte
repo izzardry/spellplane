@@ -582,12 +582,14 @@
   });
   /** While the note field has focus, dictation goes into it (DESIGN "Chat and voice", Notes by voice). */
   function dictateNote(on: boolean): void {
+    // The note open at focus: a late final is written only while that note is still the one open (never another card's).
+    const open = on ? note : null;
     session.captions?.dictateInto(
-      on
+      open
         ? fieldDictation(
-            () => note?.text ?? null,
+            () => (note === open ? open.text : null),
             (text) => {
-              if (note) note.text = text;
+              if (note === open) open.text = text;
             },
             80,
           )

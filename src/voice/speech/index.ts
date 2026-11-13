@@ -11,6 +11,15 @@ import { recognitionCtor, WebSpeechEngine } from './webspeech';
 export const LOCAL_MODEL_DOWNLOAD_BYTES = 80_000_000;
 
 /**
+ * Where the on-device model's download comes from, as the settings state it next to its size (DESIGN "Chat and voice",
+ * Engine: a plain statement of what is downloaded): transformers.js (voice/speech/local.ts TRANSFORMERS_URL) and the
+ * ONNX runtime it loads from jsDelivr, the Whisper weights (WHISPER_MODEL) from Hugging Face. Kept here so the settings
+ * need not load that module.
+ */
+export const LOCAL_MODEL_SOURCES =
+  'It is fetched from jsDelivr (cdn.jsdelivr.net: the transformers.js library and its ONNX runtime) and from Hugging Face (huggingface.co: the Whisper speech model).';
+
+/**
  * A factory that can say whether its engine runs in this browser without creating it, so the settings can list the
  * local model without loading its code (voice/captions.ts `engines()` asks it when the method is there). Local to
  * M3-P4: the contract's SpeechEngineFactory is unchanged.

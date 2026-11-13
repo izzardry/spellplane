@@ -1,12 +1,13 @@
 <!--
   Speech settings (PLAN M3-P4; DESIGN "Chat and voice", Dictation and captions): the dictation engine and language,
   with a plain statement of which engine is active and where audio goes. The on-device model is downloaded only after
-  the player asks for it here, with its size stated first; nothing about it loads before (PLAN M3-P4 acceptance).
+  the player asks for it here, with its size and where it comes from stated first; nothing about it loads before (PLAN M3-P4 acceptance).
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { SpeechSettingsProps } from '../types';
   import type { SpeechEngineId, SpeechEngineInfo } from '../../voice/types';
+  import { LOCAL_MODEL_SOURCES } from '../../voice/speech/index';
   import { engineStatement } from './captions';
 
   let { captions, onclose }: SpeechSettingsProps & { onclose?: () => void } = $props();
@@ -135,6 +136,7 @@
   {#if confirmDownload && progress === null}
     <p class="confirm" data-testid="speech-download-confirm">
       The on-device model is downloaded once{#if localBytes}&nbsp;(about {mb(localBytes)}){/if} and then kept in this browser.
+      <span data-testid="speech-download-sources">{LOCAL_MODEL_SOURCES}</span>
       <button type="button" data-testid="speech-download" onclick={() => use('local')}>Download and use it</button>
       <button type="button" onclick={() => (confirmDownload = false)}>Cancel</button>
     </p>

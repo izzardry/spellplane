@@ -185,6 +185,12 @@ export interface SpeechEngine {
   available(): Promise<boolean>;
   start(lang: string, on: SpeechListener): void;
   stop(): void;
+  /**
+   * Optional (added by M3-G): resolves once the engine owes `on` nothing more — it was stopped and every transcript of
+   * what was said while it listened has been passed on (the on-device model transcribes after the release, one phrase
+   * after another). Without it the caller waits a fixed grace period after `stop` (voice/captions.ts FINAL_GRACE_MS).
+   */
+  settled?(on: SpeechListener): Promise<void>;
 }
 
 /**

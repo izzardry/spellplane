@@ -223,6 +223,9 @@ test('the on-device model is not downloaded unless chosen; the settings say wher
   // Picking it asks first; nothing is fetched until the player confirms.
   await local.locator('input').check();
   await expect(a.getByTestId('speech-download-confirm')).toContainText(/about \d+ MB/);
+  // …and where it comes from.
+  await expect(a.getByTestId('speech-download-sources')).toContainText('jsDelivr');
+  await expect(a.getByTestId('speech-download-sources')).toContainText('Hugging Face');
   expect(modelRequests()).toEqual([]);
   expect(await loadedSincePageOpened()).toEqual([]);
 
