@@ -13,9 +13,9 @@ import type { LibraryPlacement } from './secrets';
 
 /**
  * Action types that need the owner's secrets and therefore run only through the session's own methods
- * (importDeck, shuffle, mulligan, undo, a toZone within the own library), never through `dispatch`.
+ * (importDeck, shuffle, mulligan, undo, a toZone within the own library, the audit at game end), never through `dispatch`.
  */
-export const SESSION_ONLY: ReadonlySet<string> = new Set(['ready', 'shuffleCommit', 'shuffleNonce', 'shuffleDone', 'reorder', 'mulligan', 'undo']);
+export const SESSION_ONLY: ReadonlySet<string> = new Set(['ready', 'shuffleCommit', 'shuffleNonce', 'shuffleDone', 'reorder', 'mulligan', 'undo', 'auditPublish']);
 
 /**
  * Public zone kinds that may hold a face-down card (DESIGN "Table model": face-down on the battlefield, face-down
