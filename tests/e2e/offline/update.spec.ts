@@ -23,35 +23,31 @@ test('a new version waits mid-game with the notice, and applies at the lobby, re
   await waitForSession(page);
   await waitForWorker(page);
   expect(await updateStatus(page)).toBe('current');
+  const firstScript = await page.evaluate(() => navigator.serviceWorker.controller!.scriptURL);
 
-  // The server now has a new version: the worker script changed.
-  let served = 0;
-  await context.route('**/sw.js', async (route) => {
-    const res = await route.fetch();
-    served++;
-    await route.fulfill({ response: res, body: `${await res.text()}\n// next version\n` });
-  });
-  await page.evaluate(async () => {
-    const reg = await navigator.serviceWorker.getRegistration();
-    await reg!.update();
-  });
+  // The server has a new version: the page (reloaded mid-game) registers a worker script the browser has not seen
+  // (`?swv=2`, test builds only), which installs in the background behind the running one.
+  await page.goto(appUrl({ profile, sw: true, swv: '2' }));
+  await waitForSession(page);
   await expect.poll(() => updateStatus(page), { timeout: 30_000 }).toBe('available');
-  expect(served).toBeGreaterThan(0);
+  expect(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting)).toBe(true);
 
-  // Mid-game (the solo table is a game): the notice, no reload.
+  // Mid-game (the solo table is a game): the notice, the old version keeps control, no reload.
   await expect(page.getByTestId('update-notice')).toHaveText(UPDATE_NOTICE);
   const marker = await page.evaluate(() => ((window as unknown as { __marker: number }).__marker = Math.random()));
   await page.waitForTimeout(500);
   expect(await page.evaluate(() => (window as unknown as { __marker?: number }).__marker)).toBe(marker);
-  expect(await page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
-  const waitingBefore = await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting);
-  expect(waitingBefore).toBe(true);
+  expect(await page.evaluate(() => navigator.serviceWorker.controller!.scriptURL)).toBe(firstScript);
+  await page.evaluate(() => window.__spellplane!.session!.shuffle());
+  expect(await updateStatus(page)).toBe('available');
 
   // At the start page the update applies: the new worker takes over and the page reloads (the marker is gone).
+  const reloaded = page.waitForEvent('load', { timeout: 30_000 });
   await page.evaluate(() => (location.hash = '#/lobby'));
-  await expect.poll(() => page.evaluate(() => (window as unknown as { __marker?: number }).__marker ?? null), { timeout: 30_000 }).toBeNull();
+  await reloaded;
   await expect(page.getByTestId('start-page')).toBeVisible();
-  await expect.poll(() => page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting), { timeout: 15_000 }).toBe(false);
+  expect(await page.evaluate(() => (window as unknown as { __marker?: number }).__marker ?? null)).toBeNull();
+  await expect.poll(() => page.evaluate(() => navigator.serviceWorker.controller?.scriptURL ?? ''), { timeout: 15_000 }).toMatch(/sw\.js\?v=2$/);
   await expect.poll(() => updateStatus(page)).toBe('current');
   await expect(page.getByTestId('update-notice')).toHaveCount(0);
   expect(outside).toEqual([]);

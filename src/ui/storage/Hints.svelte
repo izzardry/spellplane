@@ -34,7 +34,6 @@
   });
 
   async function dismiss(id: HintId): Promise<void> {
-    seen = withSeen(seen ?? [], id);
     try {
       // Read again before writing: another hint may have been answered in another tab.
       const stored = (await settings?.get('hintsSeen')) ?? [];
@@ -42,6 +41,8 @@
     } catch {
       // Storage blocked: the hint stays away for this page only.
     }
+    // Hidden once the answer is stored (a few milliseconds), so a reload right after never shows it again.
+    seen = withSeen(seen ?? [], id);
   }
 
   async function keep(): Promise<void> {

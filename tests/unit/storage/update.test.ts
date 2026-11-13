@@ -173,6 +173,26 @@ describe('the page’s worker', () => {
     expect(update.status()).toBe('current');
   });
 
+  it('a first install whose states arrive late (after it took control) is not mistaken for an update', async () => {
+    const container = new FakeContainer();
+    const update = registerWorker({ container, url: 'sw.js', scope: './', reload: vi.fn(), every: () => undefined });
+    await update.ready;
+    // The first worker appears while the page is not controlled, takes control, and only then reports 'installed'
+    // while the registration still lists it as waiting.
+    const first = new FakeWorker();
+    container.reg.installing = first;
+    (container.reg as unknown as { found: (() => void)[] }).found.forEach((l) => l());
+    container.controller = first;
+    container.reg.waiting = first;
+    first.become('installed');
+    expect(update.status()).toBe('current');
+    // A real update later is offered.
+    container.reg.waiting = null;
+    first.state = 'activated';
+    container.reg.newVersion();
+    expect(update.status()).toBe('available');
+  });
+
   it('another tab applying the update does not reload a page mid-game; it reloads when it reaches the lobby', async () => {
     const { container, update, reload } = setup();
     await update.ready;

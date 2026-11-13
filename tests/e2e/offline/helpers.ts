@@ -43,9 +43,10 @@ export async function noNetwork(context: BrowserContext): Promise<string[]> {
 }
 
 /** The page's URL with the harness flags; `sw: true` lets a test build run its service worker (`?sw=on`). */
-export function appUrl(opts: { profile: string; sw?: boolean; update?: 'fake'; hash?: string; transport?: 'local' }): string {
+export function appUrl(opts: { profile: string; sw?: boolean; swv?: string; update?: 'fake'; hash?: string; transport?: 'local' }): string {
   const q = new URLSearchParams({ faces: 'placeholder', profile: opts.profile });
   if (opts.sw) q.set('sw', 'on');
+  if (opts.swv) q.set('swv', opts.swv);
   if (opts.update) q.set('update', opts.update);
   if (opts.transport) q.set('transport', opts.transport);
   return `./?${q.toString()}#${opts.hash ?? '/'}`;

@@ -68,12 +68,19 @@ export function registerWorker(opts: WorkerOptions): AppUpdate & { ready: Promis
     status = next;
     for (const l of [...listeners]) l(next);
   };
-  // A waiting worker is an update only when an older one controls this page; the first install activates by itself.
+  // A waiting worker is an update only when an older one already controlled this page when it appeared: the first
+  // install of a fresh page activates by itself (and some browsers report its states late, after it took control).
+  const updates = new WeakSet<WorkerLike>();
+  const controlledAtStart = opts.container.controller !== null;
   const offer = (): void => {
-    if (status === 'current' && registration?.waiting && opts.container.controller) set('available');
+    const waiting = registration?.waiting;
+    if (status !== 'current' || !waiting || waiting.state !== 'installed' || !updates.has(waiting)) return;
+    if (!opts.container.controller || opts.container.controller === waiting) return;
+    set('available');
   };
   const watch = (worker: WorkerLike | null): void => {
     if (!worker) return;
+    if (opts.container.controller) updates.add(worker);
     worker.addEventListener('statechange', () => {
       if (worker.state === 'installed') offer();
     });
@@ -99,6 +106,7 @@ export function registerWorker(opts: WorkerOptions): AppUpdate & { ready: Promis
     .register(opts.url, { scope: opts.scope, updateViaCache: 'none' })
     .then((reg) => {
       registration = reg;
+      if (reg.waiting && controlledAtStart) updates.add(reg.waiting);
       offer();
       watch(reg.installing);
       reg.addEventListener('updatefound', () => watch(reg.installing));
@@ -142,12 +150,16 @@ export function registerWorker(opts: WorkerOptions): AppUpdate & { ready: Promis
  */
 export function pageWorker(env: { production: boolean; dev: boolean; search: string; base: string }): (AppUpdate & { ready: Promise<RegistrationLike | null> }) | null {
   if (env.dev) return null;
-  if (!env.production && new URLSearchParams(env.search).get('sw') !== 'on') return null;
+  const params = new URLSearchParams(env.search);
+  if (!env.production && params.get('sw') !== 'on') return null;
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return null;
   const container = navigator.serviceWorker as unknown as ContainerLike;
+  // Test builds: `?swv=<v>` registers the same script under another URL, which the browser treats as a new version (the
+  // update spec's second version, served without the network). Production ignores it.
+  const version = env.production ? null : params.get('swv');
   return registerWorker({
     container,
-    url: `${env.base}${WORKER_FILE}`,
+    url: `${env.base}${WORKER_FILE}${version ? `?v=${encodeURIComponent(version)}` : ''}`,
     scope: env.base,
     reload: () => location.reload(),
     onError: (e) => console.warn('Spellplane: the offline cache is unavailable', e),
