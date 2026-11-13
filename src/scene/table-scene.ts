@@ -1640,7 +1640,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       } else {
         const e = entries.find((x) => x.item.id === r.item);
         if (!e) continue;
-        const p = entryPose(e);
+        // Where it comes to rest in the lane (a spell card may still be on its way there).
+        const p = e.pose;
         // Only when it is off screen: the camera brings it in, keeping the zoom.
         if (!rig.shows(p, FOLLOW_MARGIN_PX)) rig.focus(p, 'keep', performance.now(), blend());
       }

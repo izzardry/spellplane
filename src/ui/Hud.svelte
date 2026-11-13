@@ -678,7 +678,10 @@
       // The viewer's follow toggles (DESIGN "Camera and navigation", Follow options; Settings.followStack, followActive).
       void settings
         ?.all()
-        .then((s) => scene?.camera.setFollow({ stack: s.followStack, activePlayer: s.followActive }))
+        .then((s) => {
+          // The scene starts with both off (the default): only a toggle that is on needs handing over.
+          if (s.followStack || s.followActive) scene?.camera.setFollow({ stack: s.followStack, activePlayer: s.followActive });
+        })
         .catch(() => {});
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
       presence = attachPresence(sceneHost!, scene, session.presence, {

@@ -7,9 +7,11 @@ import { openHud, ui } from '../ui/harness';
 
 type Call = { method: string; args: unknown[] };
 
-test('the stored follow toggles are handed to the scene; both off by default', async ({ page }) => {
+test('the stored follow toggles are handed to the scene; both are off by default', async ({ page }) => {
   await openHud(page);
-  await expect.poll(() => ui<Call[]>(page, 'scene')).toContainEqual({ method: 'camera.setFollow', args: [{ stack: false, activePlayer: false }] });
+  // Off by default: the scene starts with both off, so nothing is handed over.
+  await expect(page.getByTestId('hud')).toBeVisible();
+  expect((await ui<Call[]>(page, 'scene')).filter((c) => c.method === 'camera.setFollow')).toEqual([]);
   await page.evaluate(() => localStorage.setItem('spellplane-ui-harness-settings', JSON.stringify({ followStack: true, followActive: true })));
   await openHud(page, { keepSettings: true });
   await expect.poll(() => ui<Call[]>(page, 'scene')).toContainEqual({ method: 'camera.setFollow', args: [{ stack: true, activePlayer: true }] });

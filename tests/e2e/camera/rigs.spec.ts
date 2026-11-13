@@ -106,8 +106,7 @@ test.describe('M4-P1 acceptance', () => {
     expect(await blendOf(page)).toBeNull();
     expect((await pose(page)).fovDeg).toBe(6);
     // The same switch without reduced motion animates (so the cut above is the reduced-motion path).
-    await page.emulateMedia({ reducedMotion: 'no-preference' });
-    await page.clock.runFor(32);
+    await page.evaluate(() => window.__sceneHarness!.setView({ reducedMotion: false }));
     await page.keyboard.press('p');
     expect(await blendOf(page)).not.toBeNull();
   });
@@ -139,7 +138,7 @@ test.describe('M4-P1 acceptance', () => {
       await check(`wheel at ${x},${y}`);
     }
     // Pitch down to the limit with a right-drag on empty table, then wheel again.
-    const empty = (await screenOf(page, -600, 120))!;
+    const empty = { x: 720, y: 200 };
     await page.mouse.move(empty.x, empty.y);
     await page.mouse.down({ button: 'right' });
     await page.mouse.move(empty.x, empty.y + 600, { steps: 12 });
@@ -183,7 +182,7 @@ test.describe('M4-P1 acceptance', () => {
 
 test.describe('navigation in the ego rig', () => {
   test('fit, seat keys, Home and avatar taps go where they go in bird\'s-eye', async ({ page }) => {
-    await openScene(page, { scenario: 'demo' });
+    await openScene(page);
     await page.evaluate(() => window.__spellplane!.rig!.setRig('ego', { animate: false }));
     const layout = await layoutOf(page);
     const centre = { x: 720, y: 450 };
@@ -227,16 +226,8 @@ test.describe('navigation in the ego rig', () => {
     await addCard(page, 'a', { x: -150, y: -250, rot: 0 });
     await page.evaluate(() => window.__spellplane!.rig!.setRig('ego', { animate: false }));
     await settle(page);
-    const p0 = await pose(page);
-    // Pan: dragging empty table sideways leans the camera the other way.
-    await page.mouse.move(900, 250);
-    await page.mouse.down();
-    await page.mouse.move(800, 250, { steps: 5 });
-    await page.mouse.up();
-    await settle(page);
-    const p1 = await pose(page);
-    expect(p1.position[0]).toBeGreaterThan(p0.position[0]);
     // Wheel: the camera dollies toward the cursor, which keeps its table point.
+    const p1 = await pose(page);
     const at = { x: 760, y: 470 };
     await page.mouse.move(at.x, at.y);
     const t = (await tableOf(page, at.x, at.y))!;
@@ -245,6 +236,13 @@ test.describe('navigation in the ego rig', () => {
     const p2 = await pose(page);
     expect(Math.hypot(t.x - p2.position[0], t.y - p2.position[1], p2.position[2])).toBeLessThan(Math.hypot(t.x - p1.position[0], t.y - p1.position[1], p1.position[2]));
     expect(dist((await toScreen(page, t))!, at)).toBeLessThan(2);
+    // Pan: dragging empty table sideways leans the camera the other way.
+    await page.mouse.move(900, 250);
+    await page.mouse.down();
+    await page.mouse.move(800, 250, { steps: 5 });
+    await page.mouse.up();
+    await settle(page);
+    expect((await pose(page)).position[0]).toBeGreaterThan(p2.position[0]);
     await page.keyboard.press('0');
     await settle(page);
     // A card drag: the card ends where the pointer let go, on the table under it.
