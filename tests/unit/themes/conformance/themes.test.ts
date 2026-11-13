@@ -49,7 +49,9 @@ describe.each(themes.map((t) => [t.id, t] as const))('%s', (_id, theme) => {
       for (let j = i + 1; j < seats.length; j++) expect(colourDistance(seats[i]!.colour, seats[j]!.colour), `seats ${i} and ${j}`).toBeGreaterThanOrEqual(SEAT_CONTRAST.pairwise);
   });
 
-  it('seat colours reach 3:1 against the HUD panels they mark (avatar edges, log lines, chips)', () => {
+  // The HUD also sets short bold names in a seat colour on a panel (ConfirmPrompt holder and waiting names). 3:1 is the
+  // floor for every theme; Paper, which must meet WCAG AA throughout, holds its seats to 4.5:1 (tests/unit/themes/paper.test.ts).
+  it('seat colours reach 3:1 against the HUD panels they mark (avatar edges, log lines, chips, seat-coloured names)', () => {
     const panel = opaque((theme.tokens.hud ?? { panel: c.bg }).panel, c.bg);
     for (const s of seats) expect(contrastRatio(s.colour, panel), `seat ${s.index} ${s.colour} on panel ${panel}`).toBeGreaterThanOrEqual(3);
   });

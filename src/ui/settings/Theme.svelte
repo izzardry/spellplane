@@ -5,7 +5,7 @@
   loads the group says so; a chunk that cannot be loaded leaves the current theme and says why. Nothing here is modal.
 -->
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { THEME_IDS, THEME_LABELS, type ThemeId } from '../../themes/index';
   import { THEME_BLURBS, type ThemeChoice, type ThemeChoiceState } from './theme';
 
@@ -23,10 +23,22 @@
 
   const checked = $derived<ThemeId>(st.loading ?? picking ?? st.theme.id);
 
+  const inputs: Partial<Record<ThemeId, HTMLInputElement>> = {};
+
   function pick(id: ThemeId): void {
     picking = id;
     // A failed load is reported through the state (st.error); the theme shown stays.
-    choice.set(id).catch(() => (picking = null));
+    choice.set(id).catch(async () => {
+      picking = null;
+      // A load that fails fast (a cached failed import) can take `checked` from the shown theme to the pick and back
+      // inside one update, so Svelte never re-applies it and the browser keeps the clicked radio checked. Put the DOM
+      // back to the theme shown.
+      await tick();
+      for (const t of THEME_IDS) {
+        const el = inputs[t];
+        if (el) el.checked = t === checked;
+      }
+    });
   }
 </script>
 
@@ -39,7 +51,7 @@
     <legend>Table theme for this browser</legend>
     {#each THEME_IDS as id (id)}
       <label class="option" data-testid="theme-option" data-theme={id} class:current={st.theme.id === id}>
-        <input type="radio" name="sp-theme" value={id} checked={checked === id} onchange={() => pick(id)} />
+        <input type="radio" name="sp-theme" value={id} checked={checked === id} bind:this={inputs[id]} onchange={() => pick(id)} />
         <span>
           {THEME_LABELS[id]}
           <small>— {THEME_BLURBS[id]}{#if st.loading === id}; loading…{/if}</small>

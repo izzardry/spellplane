@@ -139,6 +139,16 @@
   /** The viewer's theme picker (PLAN M4-P6): present when the app shell provides the choice, not in harness pages. */
   const themeChoice = themeContext();
   let themeOpen = $state(false);
+  let themeAnchor = $state<HTMLElement | null>(null);
+  // The picker is a dismissible popover: a press anywhere outside it (table, HUD) closes it, as Esc and × do.
+  $effect(() => {
+    if (!themeOpen) return;
+    const away = (e: PointerEvent) => {
+      if (themeAnchor && !themeAnchor.contains(e.target as Node | null)) themeOpen = false;
+    };
+    window.addEventListener('pointerdown', away, true);
+    return () => window.removeEventListener('pointerdown', away, true);
+  });
   /** The theme the scene was built with or last switched to; a new theme prop is handed to the scene without reload. */
   let sceneTheme: typeof theme | null = null;
   $effect(() => {
@@ -276,10 +286,12 @@
 
   /**
    * Close the topmost overlay for Esc. While a confirmation prompt shows, Esc means Hold, except that a transient
-   * overlay (menu, reveal-to, token search, inspect, cheat sheet) closes first; pile viewers and the deck dialog stay.
+   * overlay (menu, reveal-to, token search, inspect, cheat sheet, theme picker) closes first; pile viewers and the deck
+   * dialog stay.
    */
   function closeTop(promptUp: boolean): boolean {
     if (menu) menu = null;
+    else if (themeOpen) themeOpen = false;
     else if (revealTo) revealTo = null;
     else if (tokenNear) tokenNear = null;
     else if (inspectId) hooks.inspect(null);
@@ -748,7 +760,7 @@
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
         {#if themeChoice}
-          <span class="theme-anchor">
+          <span class="theme-anchor" bind:this={themeAnchor}>
             <button type="button" data-testid="open-theme-settings" aria-pressed={themeOpen} aria-expanded={themeOpen} aria-label="Theme" title="Theme" onclick={() => (themeOpen = !themeOpen)}>◐</button>
             {#if themeOpen}<div class="theme-pop"><ThemePicker choice={themeChoice} onclose={() => (themeOpen = false)} /></div>{/if}
           </span>

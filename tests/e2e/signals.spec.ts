@@ -32,7 +32,7 @@ import type { DebugStackEntry } from '../../src/scene/stack';
 import type { SceneDebugCard } from '../../src/scene/table-scene';
 import { GEOMETRY } from '../../src/core/geometry';
 import { SIGNALS, THEME_IDS, THEME_LABELS, contrastRatio, hudCssVars, loadTheme, type SignalId, type SignalSpec, type ThemeId } from '../../src/themes/index';
-import { changedFraction, crop, decodePng, encodePng, measurePair, unionRect, type Pixels, type Rect } from '../unit/themes/conformance/pixels';
+import { changedFraction, crop, decodePng, encodePng, measurePair, unionRect, type PairMeasure, type Pixels, type Rect } from '../unit/themes/conformance/pixels';
 import { hook } from './helpers/app';
 import { chair, decklist, freshRoom, openTable, setNickname } from './lobby/helpers';
 import { freshProfile, openSolo } from './solo/helpers';
@@ -142,7 +142,7 @@ interface PairPlan {
 
 /** Capture and measure a controlled pair, record it, and assert the signal's threshold. */
 /** `evidenceOnly`: record the pair and its numbers without asserting the threshold (extra evidence for the gate). */
-async function measure(page: Page, info: TestInfo, theme: ThemeId, s: SignalSpec, plan: PairPlan, name: string = s.id, evidenceOnly = false): Promise<void> {
+async function measure(page: Page, info: TestInfo, theme: ThemeId, s: SignalSpec, plan: PairPlan, name: string = s.id, evidenceOnly = false): Promise<PairMeasure> {
   await plan.ready();
   const n1 = await capture(page);
   const rects = await plan.region('neutral');
@@ -158,6 +158,7 @@ async function measure(page: Page, info: TestInfo, theme: ThemeId, s: SignalSpec
   evidence(info, theme, name, { neutral: a, signalled: c });
   info.annotations.push({ type: 'signal', description: `${theme} ${name}: ${(m.signal * 100).toFixed(2)}% changed beyond ${s.threshold.channelDelta}/255 (noise ${(m.noise * 100).toFixed(2)}%, threshold ${(s.threshold.changedFraction * 100).toFixed(1)}%, region ${Math.round(region.width)}×${Math.round(region.height)} px)` });
   if (!evidenceOnly) expect(m.signal, `${theme} ${name}: changed ${m.changed}, noise ${m.noise}`).toBeGreaterThanOrEqual(s.threshold.changedFraction);
+  return m;
 }
 
 // --- The controlled table ----------------------------------------------------------------------------------------------
@@ -367,23 +368,39 @@ for (const theme of THEME_IDS) {
     });
 
     test('foil', async ({ page }, info) => {
-      // Known gap, reported to the integrator: the play table (scene/table-scene.ts draw) draws no foil sheen or badge
-      // yet; only the draft and builder surfaces do (DECISIONS M2-P4). The test runs and is expected to fail until the
-      // table marks foils; it then fails as "unexpectedly passed" and this marker comes off.
-      test.fail(true, 'the play table draws no foil marker yet (scene/table-scene.ts, outside M4-P6)');
+      // Known gap, reported to the integrator (for M4-P2): the play table (scene/table-scene.ts draw) draws no foil sheen
+      // or badge yet; only the draft and builder surfaces do (DECISIONS M2-P4). The pair is measured and recorded as
+      // evidence, and only the gap itself is expected: the measured change stays below the threshold. Any other failure
+      // (setup, polls, the debug hook) stays red. Once the table marks foils, the last assertion fails: then assert the
+      // threshold like every other signal (drop `evidenceOnly`).
       const t = await controlledTable(page, info, theme);
       const s = spec('foil');
-      await measure(page, info, theme, s, {
-        margin: (s.probe as { marginMm: number }).marginMm * t.pxPerMm,
-        region: async (phase) => [await cardRect(page, phase === 'neutral' ? 'c1' : 'c1f')],
-        signal: async () => {
-          // The same printing, foil, in the same place (CardRef.foil; reduced motion: a static sheen).
-          await dispatch(page, { type: 'remove', card: 'c1', group: 'foil' });
-          await dispatch(page, { type: 'createToken', card: 'c1f', zone: 'battlefield:s0', pose: { x: -100, y: -200, rot: 0 }, ref: { sid: SID[0], foil: true }, group: 'foil' });
-          await expect.poll(async () => (await cards(page)).map((c) => c.id).sort()).toEqual(['c1f', 'c2', 'o1']);
+      const m = await measure(
+        page,
+        info,
+        theme,
+        s,
+        {
+          margin: (s.probe as { marginMm: number }).marginMm * t.pxPerMm,
+          region: async (phase) => [await cardRect(page, phase === 'neutral' ? 'c1' : 'c1f')],
+          signal: async () => {
+            // The same printing, foil, in the same place (CardRef.foil; reduced motion: a static sheen).
+            await dispatch(page, { type: 'remove', card: 'c1', group: 'foil' });
+            await dispatch(page, { type: 'createToken', card: 'c1f', zone: 'battlefield:s0', pose: { x: -100, y: -200, rot: 0 }, ref: { sid: SID[0], foil: true }, group: 'foil' });
+            await expect.poll(async () => (await cards(page)).map((c) => c.id).sort()).toEqual(['c1f', 'c2', 'o1']);
+            expect((await state(page)).cards.c1f?.identity?.foil, 'the foil card is in the state').toBe(true);
+          },
+          ready: () => settle(page),
         },
-        ready: () => settle(page),
-      });
+        s.id,
+        true,
+      );
+      info.annotations.push({ type: 'known-gap', description: `${theme} foil: the play table draws no foil marker (scene/table-scene.ts, M4-P2); measured ${(m.signal * 100).toFixed(2)}%` });
+      expect(
+        m.signal,
+        `${theme} foil: KNOWN GAP — the play table draws no foil marker yet, so the pair is expected to stay below the threshold. ` +
+          `It now reaches it (${(m.signal * 100).toFixed(2)}%): the gap is closed; assert the threshold here instead.`,
+      ).toBeLessThan(s.threshold.changedFraction);
     });
 
     test('seat colour: each of the eight against the table and against each other', async ({ page }, info) => {
@@ -439,7 +456,21 @@ for (const theme of THEME_IDS) {
       await dispatch(page, { type: 'seatTake', seat: 's1', name: 'Opponent', colour: 1 });
       await dispatch(page, { type: 'stackPush', item: 'i1', kind: 'ability', source: 'c2', note: 'draw a card' });
       const entry = async () => (await hook<DebugStackEntry[]>(page, 'stack')).find((e) => e.item === 'i1');
+      // The neutral is themes/signals.ts's: the stack item after every player passed. A first round about i1 runs to
+      // the end, so the pair also shows that a finished round is styled apart from a waiting one. This page speaks only
+      // for s0, so the opponent's silence is timed out as the sequencer's pass timer would (a timer the round needs; the
+      // solo table arms none, and the signal round below gets the table's own setting back).
+      const timer = (await state(page)).settings.passTimerMs;
+      await dispatch(page, { type: 'settings', settings: { passTimerMs: 30_000 } });
+      await expect.poll(async () => (await state(page)).settings.passTimerMs).toBe(30_000);
+      await dispatch(page, { type: 'ask', round: 'r0', about: 'i1' });
+      await expect.poll(async () => (await entry())?.pending).toBe(true);
+      await dispatch(page, { type: 'settings', settings: { passTimerMs: timer } });
+      await dispatch(page, { type: 'respond', round: 'r0', seat: 's1', response: 'timeout' });
+      await expect.poll(async () => (await state(page)).confirm?.responses.s1).toBe('timeout');
+      expect((await state(page)).settings.passTimerMs).toBe(timer);
       await expect.poll(async () => (await entry())?.pending).toBe(false);
+      expect((await state(page)).confirm?.about).toBe('i1');
       await measure(page, info, theme, s, {
         margin: (s.probe as { marginMm: number }).marginMm * t.pxPerMm,
         region: async () => {
@@ -663,6 +694,21 @@ test.describe('theme switcher', () => {
     await page.getByTestId('theme-close').click();
     await expect(picker).toHaveCount(0);
     expect(await currentTheme(page)).toBe('stonetable');
+    // It is a dismissible popover: Esc closes it, and so does a press outside it (here on the table).
+    await page.getByTestId('open-theme-settings').click();
+    await expect(picker).toBeVisible();
+    await option('dusk').focus();
+    await page.keyboard.press('Escape');
+    await expect(picker).toHaveCount(0);
+    await page.getByTestId('open-theme-settings').click();
+    await expect(picker).toBeVisible();
+    // A press inside it leaves it open.
+    await picker.locator('legend').click();
+    await expect(picker).toBeVisible();
+    const vp = page.viewportSize()!;
+    await page.mouse.click(vp.width / 2, vp.height / 2);
+    await expect(picker).toHaveCount(0);
+    expect(await currentTheme(page)).toBe('stonetable');
     expect(errors).toEqual([]);
   });
 
@@ -726,6 +772,16 @@ test.describe('theme switcher', () => {
     expect(await currentTheme(page)).toBe('paper');
     await expect(option('paper')).toBeChecked();
     await expect(option('wyrm')).not.toBeChecked();
+    // Picking it again on the same page fails at once (the failed import is cached): the radio still springs back.
+    await option('wyrm').click();
+    await expect(page.getByTestId('theme-error')).toContainText('Wyrm could not be loaded');
+    await expect(option('paper')).toBeChecked();
+    await expect(option('wyrm')).not.toBeChecked();
+    await option('dusk').click();
+    await expect(page.getByTestId('theme-error')).toContainText('Dusk could not be loaded');
+    await expect(option('paper')).toBeChecked();
+    await expect(option('dusk')).not.toBeChecked();
+    expect(await currentTheme(page)).toBe('paper');
     expect(await loadedThemes(page)).toEqual(['paper']);
     // The table is still live under it (nothing modal).
     await expect(page.getByTestId('hud')).toBeVisible();
@@ -803,7 +859,19 @@ test.describe('theme switcher', () => {
       await expect(a.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
       await expect.poll(() => currentTheme(a)).toBe('dusk');
       expect(await currentTheme(b)).toBe('wyrm');
-      await expect.poll(() => hash(a), { timeout: 15_000 }).toBe(await hash(b));
+      // While a reloads, the sequencer marks its seat away and back (and may hand over the sequencer role), so the
+      // shared state moves on: wait until both browsers see s0 present again, then until both hold the same state.
+      // Never compare with a snapshot of one side taken mid-way.
+      for (const p of [a, b]) await expect.poll(async () => (await state(p)).seats.s0?.away ?? false, { timeout: 15_000 }).toBe(false);
+      await expect
+        .poll(
+          async () => {
+            const [x, y] = [await hash(a), await hash(b)];
+            return x === y;
+          },
+          { timeout: 15_000 },
+        )
+        .toBe(true);
     } finally {
       await t.close();
     }
