@@ -5,8 +5,10 @@
   (ui/types.ts AppProps); without a session the shell shows the bootstrap stage.
 -->
 <script lang="ts">
-  import { paper } from '../themes/paper/index';
-  import { tokensToCssVars } from '../themes/index';
+  import { onMount, untrack } from 'svelte';
+  import { cssText, hudCssVars } from '../themes/index';
+  import type { Theme } from '../themes/types';
+  import { registerThemeDebug, setThemeContext, ThemeChoice } from './settings/theme';
   import type { AppProps } from './types';
   import Hud from './Hud.svelte';
   import Smoke from './Smoke.svelte';
@@ -18,14 +20,34 @@
   let props: Partial<AppProps> = $props();
 
   let route = $state<Route>(parseRoute(typeof location === 'undefined' ? '' : location.hash));
-  const cssVars = Object.entries(tokensToCssVars(paper.tokens))
-    .map(([k, v]) => `${k}: ${v}`)
-    .join('; ');
+
+  // The viewer's theme (PLAN M4-P6): kept in this browser's settings, shared with the shells below through the
+  // context, applied to the whole page as CSS custom properties. The table waits for the stored choice, so a page
+  // whose viewer picked Dusk does not first build Paper's scene.
+  const choice = new ThemeChoice({ settings: untrack(() => props.settings) });
+  setThemeContext(choice);
+  let theme = $state.raw<Theme>(choice.current());
+  let ready = $state(false);
+  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
+  onMount(() => {
+    registerThemeDebug(choice);
+    const off = choice.subscribe((s) => (theme = s.theme));
+    void choice.ready.then(() => (ready = true));
+    return off;
+  });
+  // The page itself (body background, scrollbars, form controls) follows the theme too.
+  $effect(() => {
+    const root = document.documentElement;
+    for (const [k, v] of Object.entries(hudCssVars(theme.tokens))) root.style.setProperty(k, v);
+    root.dataset.theme = theme.id;
+  });
 </script>
 
 <svelte:window onhashchange={() => (route = parseRoute(location.hash))} />
 
-{#if route.name === 'solo'}
+{#if !ready}
+  <!-- Reading the stored theme: a moment, at most a few seconds (ui/settings/theme.ts). -->
+{:else if route.name === 'solo'}
   {#if props.session && props.createScene && props.faces && props.cardData && props.game}
     <Hud
       session={props.session}
@@ -33,7 +55,7 @@
       faces={props.faces}
       cardData={props.cardData}
       game={props.game}
-      theme={paper}
+      {theme}
       settings={props.settings}
       parseDecklist={props.parseDecklist}
     />
@@ -62,8 +84,8 @@
   :global(html, body) {
     margin: 0;
     height: 100%;
-    background: #fff;
-    color: #111;
+    background: var(--sp-bg, #fff);
+    color: var(--sp-fg, #111);
     font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
     overflow: hidden;
   }

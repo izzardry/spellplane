@@ -7,12 +7,17 @@
 import * as THREE from 'three';
 import { DEFAULT_MOTION, type LineKind, type LineStyle, type SceneContext, type SeatColour, type SeatPattern, type Theme, type ThemeInstance } from '../types';
 
+/**
+ * Seat colours tuned for the white table (M4-P6, SEAT_CONTRAST): each at least 3.9:1 against white, every pair at
+ * least 0.24 apart. `ink` is the text colour on a seat-coloured chip at 4.5:1 (WCAG AA): white, except on the green and
+ * the orange, where near-black reads better.
+ */
 const SEATS: SeatColour[] = [
   { index: 0, colour: '#1f6fd1', pattern: 'solid', glyph: 'circle' },
-  { index: 1, colour: '#d1495b', pattern: 'dash', glyph: 'square' },
-  { index: 2, colour: '#2a8f55', pattern: 'dot', glyph: 'triangle' },
+  { index: 1, colour: '#c8404f', pattern: 'dash', glyph: 'square' },
+  { index: 2, colour: '#2a8f55', pattern: 'dot', glyph: 'triangle', ink: '#111111' },
   { index: 3, colour: '#8a4fd1', pattern: 'dash-dot', glyph: 'diamond' },
-  { index: 4, colour: '#c06c00', pattern: 'long-dash', glyph: 'star' },
+  { index: 4, colour: '#c06c00', pattern: 'long-dash', glyph: 'star', ink: '#111111' },
   { index: 5, colour: '#0f7f8f', pattern: 'dash-dot-dot', glyph: 'hexagon' },
   { index: 6, colour: '#b0408f', pattern: 'double', glyph: 'cross' },
   { index: 7, colour: '#6b6b1f', pattern: 'zigzag', glyph: 'ring' },

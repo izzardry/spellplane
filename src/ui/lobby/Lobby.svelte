@@ -11,7 +11,9 @@
   import type { DeckRecord } from '../../store/types';
   import type { SessionNetStatus } from '../../session/types';
   import { paper } from '../../themes/paper/index';
-  import { tokensToCssVars } from '../../themes/index';
+  import { cssText, hudCssVars } from '../../themes/index';
+  import { themeContext } from '../settings/theme';
+  import ThemePicker from '../settings/Theme.svelte';
   import { checkDeck, parsePlainList, type CheckedDeck } from '../deck';
   import type { LobbyProps } from '../types';
   import { ConnectivityCheck, type ConnectivityReport } from './connectivity';
@@ -21,11 +23,12 @@
 
   let { session, game, link, identity, decks, cardData, parseDecklist }: LobbyProps = $props();
 
-  const theme = paper;
-  const cssVars = Object.entries(tokensToCssVars(theme.tokens))
-    .map(([k, v]) => `${k}: ${v}`)
-    .join('; ');
-  const seatColours = theme.tokens.colours.seats;
+  // The viewer's theme (PLAN M4-P6): its seat colours colour the chairs; Paper where no app shell provides the choice.
+  const themeChoice = themeContext();
+  let theme = $state.raw(themeChoice?.current() ?? paper);
+  onMount(() => themeChoice?.subscribe((s) => (theme = s.theme)));
+  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
+  const seatColours = $derived(theme.tokens.colours.seats);
 
   let st = $state.raw<TableState>(untrack(() => session.getState()));
   let net = $state.raw<SessionNetStatus>(untrack(() => session.netStatus()));
@@ -356,6 +359,14 @@
         {/each}
       </fieldset>
 
+      {#if themeChoice}
+        <!-- The viewer's theme (PLAN M4-P6): only this browser changes; the chairs above take its seat colours. -->
+        <details class="theme-choice" data-testid="lobby-theme">
+          <summary>Theme: {theme.label}</summary>
+          <ThemePicker choice={themeChoice} />
+        </details>
+      {/if}
+
       <h3>Deck</h3>
       {#if me?.ready}
         <p data-testid="ready-done">You are ready. Your deck of {st.commitments[mySeat ?? '']?.instanceIds.length ?? 0} cards is committed and locked to your chair.</p>
@@ -570,6 +581,13 @@
   :focus-visible {
     outline: 2px solid var(--sp-focus, #1f6fd1);
     outline-offset: 2px;
+  }
+  .theme-choice {
+    margin: 8px 0 4px;
+  }
+  .theme-choice summary {
+    cursor: pointer;
+    margin-bottom: 6px;
   }
   .colours {
     display: flex;

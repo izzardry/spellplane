@@ -16,7 +16,8 @@
   import type { SessionNetStatus } from '../../session/types';
   import type { SettingsStore } from '../../store/types';
   import { paper } from '../../themes/paper/index';
-  import { tokensToCssVars } from '../../themes/index';
+  import { cssText, hudCssVars } from '../../themes/index';
+  import { themeContext } from '../settings/theme';
   import Hud from '../Hud.svelte';
   import type { LobbyProps } from '../types';
   import { hasFreeChair, heldChairOf, playHash, seatedPlayers, shownToMe, stageText, watchers } from './spectate';
@@ -24,10 +25,11 @@
   let props: LobbyProps & { createScene: CreateTableScene; faces: FaceSource; cardData: CardDataSource; settings?: SettingsStore | undefined; sets?: SetDataSource | undefined } = $props();
 
   const session = untrack(() => props.session);
-  const theme = paper;
-  const cssVars = Object.entries(tokensToCssVars(theme.tokens))
-    .map(([k, v]) => `${k}: ${v}`)
-    .join('; ');
+  // The viewer's theme (PLAN M4-P6); Paper where no app shell provides the choice.
+  const themeChoice = themeContext();
+  let theme = $state.raw(themeChoice?.current() ?? paper);
+  onMount(() => themeChoice?.subscribe((s) => (theme = s.theme)));
+  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
 
   let st = $state.raw<TableState>(session.getState());
   let secrets = $state.raw<SecretStore>(session.secrets());

@@ -18,7 +18,7 @@
   import { builderHandleOf, dispense, reconcile, type BuilderSurfaceOptionsExt } from '../../scene/builder';
   import type { BuilderSort, BuilderSurface } from '../../scene/types';
   import type { DeckRecord } from '../../store/types';
-  import { tokensToCssVars } from '../../themes/index';
+  import { cssText, hudCssVars } from '../../themes/index';
   import Inspect from '../Inspect.svelte';
   import type { BuilderProps, BuilderViewKind } from '../types';
   import ListView from './list/ListView.svelte';
@@ -46,11 +46,7 @@
   } = $props();
 
   const me = untrack(() => session.seat);
-  const cssVars = $derived(
-    Object.entries(tokensToCssVars(theme.tokens))
-      .map(([k, v]) => `${k}: ${v}`)
-      .join('; '),
-  );
+  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
   const back = $derived(theme.cardDressing.back ?? mtg.cardBack);
   const motionQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
   let reducedMotion = motionQuery?.matches ?? false;
