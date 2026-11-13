@@ -22,4 +22,12 @@ describe('Paper contrast', () => {
     expect(contrast(c.border, c.surface)).toBeGreaterThanOrEqual(3);
     expect(contrast(c.border, c.bg)).toBeGreaterThanOrEqual(3);
   });
+  it('seat colours reach 4.5:1 on the white table and panel, as text in a seat colour does (confirm prompt names)', () => {
+    const panel = paper.tokens.hud!.panel;
+    for (const seat of c.seats) {
+      expect(contrast(seat.colour, c.surface), `seat ${seat.index} ${seat.colour} on the table`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(seat.colour, panel), `seat ${seat.index} ${seat.colour} on the panel`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(seat.ink ?? c.bg, seat.colour), `ink on seat ${seat.index}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
 });

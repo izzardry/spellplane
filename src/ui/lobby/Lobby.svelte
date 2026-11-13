@@ -11,7 +11,9 @@
   import type { DeckRecord } from '../../store/types';
   import type { SessionNetStatus } from '../../session/types';
   import { paper } from '../../themes/paper/index';
-  import { tokensToCssVars } from '../../themes/index';
+  import { cssText, hudCssVars } from '../../themes/index';
+  import { themeContext } from '../settings/theme';
+  import ThemePicker from '../settings/Theme.svelte';
   import { checkDeck, parsePlainList, type CheckedDeck } from '../deck';
   import type { LobbyProps } from '../types';
   import { ConnectivityCheck, type ConnectivityReport } from './connectivity';
@@ -21,11 +23,12 @@
 
   let { session, game, link, identity, decks, cardData, parseDecklist }: LobbyProps = $props();
 
-  const theme = paper;
-  const cssVars = Object.entries(tokensToCssVars(theme.tokens))
-    .map(([k, v]) => `${k}: ${v}`)
-    .join('; ');
-  const seatColours = theme.tokens.colours.seats;
+  // The viewer's theme (PLAN M4-P6): its seat colours colour the chairs; Paper where no app shell provides the choice.
+  const themeChoice = themeContext();
+  let theme = $state.raw(themeChoice?.current() ?? paper);
+  onMount(() => themeChoice?.subscribe((s) => (theme = s.theme)));
+  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
+  const seatColours = $derived(theme.tokens.colours.seats);
 
   let st = $state.raw<TableState>(untrack(() => session.getState()));
   let net = $state.raw<SessionNetStatus>(untrack(() => session.netStatus()));
@@ -348,13 +351,21 @@
         {#each Array.from({ length: SEAT_COLOURS }, (_, i) => i) as c (c)}
           {@const sc = seatColours[c]}
           {@const takenBy = colourTakenBy(st, c, mySeat)}
-          <label class="swatch" style="--seat: {sc?.colour}" title={takenBy ? `Taken by ${st.seats[takenBy]?.name}` : `Colour ${c + 1}`}>
+          <label class="swatch" style="--seat: {sc?.colour}; --seat-ink: var(--sp-seat-{c}-ink, #fff)" title={takenBy ? `Taken by ${st.seats[takenBy]?.name}` : `Colour ${c + 1}`}>
             <input type="radio" name="seat-colour" value={c} checked={me?.colour === c} disabled={takenBy !== null} data-testid="colour" data-colour={c} onchange={() => pickSeatColour(c)} />
             <span class="glyph {sc?.glyph}" aria-hidden="true"></span>
             <span class="sr">Colour {c + 1}{takenBy ? `, taken by ${st.seats[takenBy]?.name}` : ''}</span>
           </label>
         {/each}
       </fieldset>
+
+      {#if themeChoice}
+        <!-- The viewer's theme (PLAN M4-P6): only this browser changes; the chairs above take its seat colours. -->
+        <details class="theme-choice" data-testid="lobby-theme">
+          <summary>Theme: {theme.label}</summary>
+          <ThemePicker choice={themeChoice} />
+        </details>
+      {/if}
 
       <h3>Deck</h3>
       {#if me?.ready}
@@ -571,6 +582,13 @@
     outline: 2px solid var(--sp-focus, #1f6fd1);
     outline-offset: 2px;
   }
+  .theme-choice {
+    margin: 8px 0 4px;
+  }
+  .theme-choice summary {
+    cursor: pointer;
+    margin-bottom: 6px;
+  }
   .colours {
     display: flex;
     flex-wrap: wrap;
@@ -613,7 +631,7 @@
     outline-offset: 3px;
   }
   .swatch .glyph {
-    background: #fff;
+    background: var(--seat-ink, #fff);
   }
   .glyph {
     display: inline-block;
