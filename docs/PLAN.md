@@ -444,13 +444,13 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M3-P5 Spectators
 - [x] M3-G Gate (owner playtest pending)
 - [x] M4-C Contracts
-- [ ] M4-P1 Camera rigs
+- [x] M4-P1 Camera rigs
 - [x] M4-P2 Lit pipeline
 - [x] M4-P3 Dusk
 - [x] M4-P4 Wyrm
 - [x] M4-P5 Stonetable
 - [x] M4-P6 Theme switcher and conformance
-- [ ] M4-G Gate and owner playtest
+- [x] M4-G Gate and owner playtest (gate green; owner playtest pending, see docs/gates/M4.md)
 - [ ] M5-P1 Touch
 - [ ] M5-P2 Audit
 - [ ] M5-P3 Offline and storage
