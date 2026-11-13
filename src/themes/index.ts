@@ -52,6 +52,32 @@ export function tokensToCssVars(tokens: ThemeTokens): Record<string, string> {
   return vars;
 }
 
+/**
+ * The HUD's custom properties for a theme (DESIGN "Themes and rendering", Tokens: "Exposed to the HUD as CSS custom
+ * properties"; M4-P6): `tokensToCssVars`, with the HUD's panel colours in the two variables HUD components paint
+ * panels and their frames with. The DOM never draws the table, so inside the HUD `--sp-surface` is the panel
+ * (`tokens.hud.panel`) and `--sp-border` the panel border; the table's own values stay available as
+ * `--sp-table-surface` and `--sp-table-border`. `color-scheme` follows `--sp-hud-scheme`. In Paper the two pairs are
+ * the same colours, so the light HUD is unchanged.
+ */
+export function hudCssVars(tokens: ThemeTokens): Record<string, string> {
+  const vars = tokensToCssVars(tokens);
+  const hud = tokens.hud ?? DEFAULT_HUD_TOKENS;
+  vars['--sp-table-surface'] = tokens.colours.surface;
+  vars['--sp-table-border'] = tokens.colours.border;
+  vars['--sp-surface'] = hud.panel;
+  vars['--sp-border'] = hud.panelBorder;
+  vars['color-scheme'] = hud.scheme;
+  return vars;
+}
+
+/** A `style` attribute value from custom properties (`--a: 1; --b: 2`). */
+export function cssText(vars: Record<string, string>): string {
+  return Object.entries(vars)
+    .map(([k, v]) => `${k}: ${v}`)
+    .join('; ');
+}
+
 /** Human names of the themes for the picker, without loading their chunks (DESIGN "Themes and rendering"). Added by M4-C. */
 export const THEME_LABELS: Readonly<Record<ThemeId, string>> = { paper: 'Paper', dusk: 'Dusk', wyrm: 'Wyrm', stonetable: 'Stonetable' };
 

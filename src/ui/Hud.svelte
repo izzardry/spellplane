@@ -15,7 +15,7 @@
   import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
-  import { tokensToCssVars } from '../themes/index';
+  import { cssText, hudCssVars } from '../themes/index';
   import { Commands, isEmptyChair, isOwnTurn, promptKeys, promptShowing, roundPassed, untapOfferOnOpen, type UiHooks } from './commands';
   import ConfirmPrompt from './confirm/ConfirmPrompt.svelte';
   import { promptModel, roundWhat } from './confirm/model';
@@ -45,6 +45,8 @@
   import VoicePanel from './voice/VoicePanel.svelte';
   import { attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
   import Speech from './settings/Speech.svelte';
+  import ThemePicker from './settings/Theme.svelte';
+  import { themeContext } from './settings/theme';
   import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption } from '../voice/types';
 
@@ -133,11 +135,28 @@
   let noteInput = $state<HTMLInputElement | undefined>();
   let drawInput = $state<HTMLInputElement | undefined>();
 
-  const cssVars = $derived(
-    Object.entries(tokensToCssVars(theme.tokens))
-      .map(([k, v]) => `${k}: ${v}`)
-      .join('; '),
-  );
+  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
+  /** The viewer's theme picker (PLAN M4-P6): present when the app shell provides the choice, not in harness pages. */
+  const themeChoice = themeContext();
+  let themeOpen = $state(false);
+  let themeAnchor = $state<HTMLElement | null>(null);
+  // The picker is a dismissible popover: a press anywhere outside it (table, HUD) closes it, as Esc and × do.
+  $effect(() => {
+    if (!themeOpen) return;
+    const away = (e: PointerEvent) => {
+      if (themeAnchor && !themeAnchor.contains(e.target as Node | null)) themeOpen = false;
+    };
+    window.addEventListener('pointerdown', away, true);
+    return () => window.removeEventListener('pointerdown', away, true);
+  });
+  /** The theme the scene was built with or last switched to; a new theme prop is handed to the scene without reload. */
+  let sceneTheme: typeof theme | null = null;
+  $effect(() => {
+    const t = theme;
+    if (!sceneReady || !scene || sceneTheme === null || t === sceneTheme) return;
+    sceneTheme = t;
+    scene.setTheme(t);
+  });
   const back = $derived(theme.cardDressing.back ?? game.cardBack);
   /**
    * Screen edges the screen-anchored layer covers, "top right bottom left" in CSS px, for the scene's fit (DESIGN
@@ -267,10 +286,12 @@
 
   /**
    * Close the topmost overlay for Esc. While a confirmation prompt shows, Esc means Hold, except that a transient
-   * overlay (menu, reveal-to, token search, inspect, cheat sheet) closes first; pile viewers and the deck dialog stay.
+   * overlay (menu, reveal-to, token search, inspect, cheat sheet, theme picker) closes first; pile viewers and the deck
+   * dialog stay.
    */
   function closeTop(promptUp: boolean): boolean {
     if (menu) menu = null;
+    else if (themeOpen) themeOpen = false;
     else if (revealTo) revealTo = null;
     else if (tokenNear) tokenNear = null;
     else if (inspectId) hooks.inspect(null);
@@ -671,6 +692,7 @@
           selectionChange: (ids) => (selection = [...ids]),
         },
       });
+      sceneTheme = theme;
       sceneReady = true;
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
       presence = attachPresence(sceneHost!, scene, session.presence, {
@@ -737,6 +759,12 @@
         <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
+        {#if themeChoice}
+          <span class="theme-anchor" bind:this={themeAnchor}>
+            <button type="button" data-testid="open-theme-settings" aria-pressed={themeOpen} aria-expanded={themeOpen} aria-label="Theme" title="Theme" onclick={() => (themeOpen = !themeOpen)}>◐</button>
+            {#if themeOpen}<div class="theme-pop"><ThemePicker choice={themeChoice} onclose={() => (themeOpen = false)} /></div>{/if}
+          </span>
+        {/if}
         {#if !liveVoice}
           {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
           {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
@@ -1060,6 +1088,7 @@
   .root {
     position: fixed;
     inset: 0;
+    color-scheme: var(--sp-hud-scheme, light);
     background: var(--sp-bg, #fff);
     color: var(--sp-fg, #111);
     font-family: var(--sp-font, system-ui);
@@ -1113,6 +1142,15 @@
   }
   .voice-row {
     position: relative;
+  }
+  .theme-anchor {
+    position: relative;
+  }
+  .theme-pop {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 70;
   }
   .voice-pop {
     position: absolute;

@@ -449,7 +449,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M4-P3 Dusk
 - [ ] M4-P4 Wyrm
 - [ ] M4-P5 Stonetable
-- [ ] M4-P6 Theme switcher and conformance
+- [x] M4-P6 Theme switcher and conformance
 - [ ] M4-G Gate and owner playtest
 - [ ] M5-P1 Touch
 - [ ] M5-P2 Audit

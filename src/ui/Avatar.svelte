@@ -89,7 +89,7 @@
   data-seat={seat.id}
   data-line-seat={seat.id}
   data-away={seat.away === true ? 'true' : 'false'}
-  aria-label="{seat.name}{me ? ' (you)' : ''}{seat.away ? ' (away)' : ''}" style:--seat="var(--sp-seat-{seat.colour}, #111)">
+  aria-label="{seat.name}{me ? ' (you)' : ''}{seat.away ? ' (away)' : ''}" style:--seat="var(--sp-seat-{seat.colour}, #111)" style:--seat-ink="var(--sp-seat-{seat.colour}-ink, #fff)">
   <header>
     <span class="glyph {glyph}" aria-hidden="true"></span>
     {#if ongoto}
@@ -251,14 +251,14 @@
     }
     to {
       background: var(--seat);
-      color: var(--sp-surface, #fff);
+      color: var(--seat-ink);
     }
   }
   @media (prefers-reduced-motion: reduce) {
     .tag.asking {
       animation: none;
       background: var(--seat);
-      color: var(--sp-surface, #fff);
+      color: var(--seat-ink);
     }
   }
   .glyph {

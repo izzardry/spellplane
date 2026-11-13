@@ -18,7 +18,7 @@
   import { draftHandleOf, picksNeeded, sharedPresenceScene, type DraftSurfaceOptionsWithData } from '../../scene/draft';
   import { attachPresence, type PresenceHandle } from '../../scene/presence';
   import type { DraftSurface } from '../../scene/types';
-  import { tokensToCssVars } from '../../themes/index';
+  import { cssText, hudCssVars } from '../../themes/index';
   import Inspect from '../Inspect.svelte';
   import type { DraftProps } from '../types';
   import { formatClock, remainingMs, SeqClock, URGENT_MS } from './timer';
@@ -29,11 +29,7 @@
   // DraftProps carries no game definition (M2-C); the draft is Magic's (DECISIONS [M2-P4]).
   const game = mtg;
   const me = untrack(() => session.seat);
-  const cssVars = $derived(
-    Object.entries(tokensToCssVars(theme.tokens))
-      .map(([k, v]) => `${k}: ${v}`)
-      .join('; '),
-  );
+  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
   const back = $derived(theme.cardDressing.back ?? game.cardBack);
   // Followed live: a change of the system setting reaches the surface with the next view.
   const motionQuery = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
