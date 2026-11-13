@@ -73,7 +73,7 @@ describe('Wyrm theme package', () => {
       }
   });
 
-  it('keeps the signals the HUD and the markings draw legible: hairlines, text, focus, away, speaking', () => {
+  it('keeps the signals the HUD and the markings draw legible: hairlines, text, focus, away, speaking, pending style', () => {
     // Zone hairlines on the slab (WCAG 1.4.11 non-text contrast).
     expect(contrastRatio(c.border, c.surface)).toBeGreaterThanOrEqual(3);
     // HUD text on the dark panels, muted text (the "away" avatar dims to it) still AA.
@@ -83,11 +83,18 @@ describe('Wyrm theme package', () => {
     expect(colourDistance(c.muted, c.fg)).toBeGreaterThanOrEqual(SEAT_CONTRAST.pairwise);
     // The speaking ring is drawn in the seat colour on the HUD's dark panel.
     for (const s of c.seats) expect(contrastRatio(s.colour, c.bg)).toBeGreaterThanOrEqual(3);
-    // Selection and hover read on the slab and apart from each other. Pending confirmation is measured on the drawn
-    // table by tests/e2e/signals.spec.ts (the scene draws it in the controller's seat colour, not from cardDressing).
+    // Selection and hover read on the slab and apart from each other.
     const d = wyrm.cardDressing;
     for (const h of [d.hover, d.selected]) expect(contrastRatio(h.colour, c.surface)).toBeGreaterThanOrEqual(3);
     expect(colourDistance(d.hover.colour, d.selected.colour)).toBeGreaterThan(0.1);
+    // The pending style, for the scene hook that draws it (scene/table-scene.ts entryHighlight does not read
+    // cardDressing.pending yet; tests/e2e/signals.spec.ts measures the drawn signal): it reads on the slab, apart from
+    // selection and hover, and apart from every seat colour, so a stack outline switching from its controller's seat
+    // colour to it changes colour as well as width.
+    expect(contrastRatio(d.pending.colour, c.surface)).toBeGreaterThanOrEqual(3);
+    for (const h of [d.hover, d.selected]) expect(colourDistance(d.pending.colour, h.colour)).toBeGreaterThan(0.1);
+    for (const s of c.seats) expect(colourDistance(d.pending.colour, s.colour), `seat ${s.index}`).toBeGreaterThanOrEqual(SEAT_CONTRAST.pairwise);
+    expect(d.pending.width).toBeGreaterThan(0.8);
     expect(d.selected.width).toBeGreaterThan(d.hover.width);
     const vars = tokensToCssVars(wyrm.tokens);
     expect(vars['--sp-hud-scheme']).toBe('dark');

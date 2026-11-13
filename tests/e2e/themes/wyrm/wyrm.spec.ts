@@ -12,8 +12,14 @@
  *
  * Of the twelve gate states (themes/signals.ts SIGNALS), the ten drawn by the table scene are scripted here. "Speaking"
  * and "away" are HUD avatars and "pending confirmation" needs a confirmation round, neither of which the harness table
- * has; the app reaches them once M4-P6's theme switch lands, and its conformance spec (tests/e2e/signals.spec.ts)
- * measures all twelve for every theme. Their Wyrm tokens are checked in tests/unit/themes/wyrm/theme.test.ts.
+ * has. The live check for those three is M4-P6's conformance spec, tests/e2e/signals.spec.ts ("signal conformance:
+ * Wyrm"), which switches the app to Wyrm and measures all twelve. Its "pending confirmation" pair is red on Chromium
+ * for Wyrm and Stonetable alike: the scene's stack outline (scene/table-scene.ts entryHighlight, M4-P2) only widens the
+ * controller's seat-coloured ring by a sub-pixel amount at that zoom and never reads `cardDressing.pending`; the fix is
+ * a scene hook, reported to the integrator (docs/DECISIONS.md). Wyrm's tokens and pending style are checked in
+ * tests/unit/themes/wyrm/theme.test.ts.
+ *
+ * The ego-rig variant skips until M4-P1 (camera rigs, parked) lands, so Wyrm's default rig is not exercised here yet.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { colourDelta, openRender, rh, screenAverage, setTheme, settle, stableTextures } from '../../render/helpers';

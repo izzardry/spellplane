@@ -44,6 +44,20 @@ function dataTexture(data: Uint8Array, size: number, srgb: boolean, repeat: THRE
   return t;
 }
 
+/** Angular frequencies (rad/s) of the seams' heat wave: three travelling waves. */
+export const SEAM_WAVE_FREQS = [0.35, 0.27, 0.6] as const;
+
+/**
+ * The seam wave's clock wraps at this period (s): a whole number of cycles of every wave (0.35, 0.27 and 0.6 times 200π
+ * are 70π, 54π and 120π), so the wrap is seamless and the float32 time in the shader never grows large enough to step.
+ */
+export const SEAM_WAVE_PERIOD_S = 200 * Math.PI;
+
+/** Advance the seam wave clock by `dtS` seconds, wrapped at SEAM_WAVE_PERIOD_S. */
+export function advanceSeamClock(timeS: number, dtS: number): number {
+  return (timeS + dtS) % SEAM_WAVE_PERIOD_S;
+}
+
 /** GLSL injected into the standard material: a heat wave across the table in world space (mm). */
 const WAVE_VERTEX_DECL = /* glsl */ `
 varying vec2 vWyrmXZ;
@@ -59,7 +73,7 @@ varying vec2 vWyrmXZ;
 const WAVE_FRAGMENT = /* glsl */ `
 {
   vec2 p = vWyrmXZ * 0.004;
-  float w = sin(p.x * 1.7 + uWyrmTime * 0.35) * cos(p.y * 1.3 - uWyrmTime * 0.27) + 0.5 * sin((p.x + p.y) * 2.9 - uWyrmTime * 0.6);
+  float w = sin(p.x * 1.7 + uWyrmTime * ${SEAM_WAVE_FREQS[0].toFixed(2)}) * cos(p.y * 1.3 - uWyrmTime * ${SEAM_WAVE_FREQS[1].toFixed(2)}) + 0.5 * sin((p.x + p.y) * 2.9 - uWyrmTime * ${SEAM_WAVE_FREQS[2].toFixed(2)});
   totalEmissiveRadiance *= max(0.0, 1.0 + uWyrmSwing * w);
 }
 `;

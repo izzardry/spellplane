@@ -26,6 +26,15 @@ export const SHIMMER_FADE_MS = 400;
 /** Largest displacement in CSS px at full strength. */
 export const SHIMMER_AMPLITUDE_PX = 2.4;
 
+/** Angular frequencies (rad/s) of the shimmer's waves: the rising wave, its sway and the cross wave. */
+export const SHIMMER_FREQS = [4.2, 1.3, 2.7] as const;
+
+/**
+ * The shimmer's clock wraps at this period (s): a whole number of cycles of every wave (4.2, 1.3 and 2.7 times 20π are
+ * 84π, 26π and 54π), so the wrap is seamless and the float32 time in the shader never grows large enough to step.
+ */
+export const SHIMMER_PERIOD_S = 20 * Math.PI;
+
 /** The shimmer's region in UV space (0..1, y up): centre and the ellipse's half axes. */
 export interface ShimmerRegion {
   centre: [number, number];
@@ -34,35 +43,53 @@ export interface ShimmerRegion {
 
 const scratch = new THREE.Vector3();
 
+/** Lowest and highest UV the region may span: a ring cut by the near plane projects arbitrarily far off screen. */
+const UV_LIMIT = [-0.5, 1.5] as const;
+
 /**
  * The screen region over a stack focus `at` (table mm): the bounding ellipse of a ring of `radiusMm` around it and of
- * the same ring raised by a hand's height (the heat rises), in UV. Null when the focus is behind the camera or off
+ * the same ring raised by a hand's height (the heat rises), in UV. Where the camera is close enough that part of a ring
+ * lies behind it (an ego dolly into the lane), the ring is cut at the near plane and only the part in front counts, so
+ * the shimmer stays on while the stack burns. Null when both rings lie wholly behind the camera or the region is off
  * screen entirely. Pure apart from three's vector maths.
  */
 export function shimmerRegion(camera: THREE.Camera, at: { x: number; y: number }, radiusMm = SHIMMER_RADIUS_MM): ShimmerRegion | null {
   camera.updateMatrixWorld();
+  const near = -Math.max(1e-3, (camera as THREE.PerspectiveCamera).isPerspectiveCamera ? (camera as THREE.PerspectiveCamera).near : 0);
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
+  const add = (view: THREE.Vector3) => {
+    scratch.copy(view).applyMatrix4(camera.projectionMatrix);
+    const u = scratch.x * 0.5 + 0.5;
+    const v = scratch.y * 0.5 + 0.5;
+    minX = Math.min(minX, u);
+    maxX = Math.max(maxX, u);
+    minY = Math.min(minY, v);
+    maxY = Math.max(maxY, v);
+  };
   const steps = 12;
   for (const z of [0, 60]) {
+    // The ring's points in view space (in front of the camera: view z below the near plane's).
+    const ring: THREE.Vector3[] = [];
     for (let i = 0; i < steps; i++) {
       const a = (i / steps) * Math.PI * 2;
-      scratch.set(at.x + Math.cos(a) * radiusMm, z, -(at.y + Math.sin(a) * radiusMm));
-      // Behind the camera: a projection would flip; the region is not usable.
-      const view = scratch.clone().applyMatrix4(camera.matrixWorldInverse);
-      if (view.z >= -1e-3) return null;
-      scratch.project(camera);
-      const u = scratch.x * 0.5 + 0.5;
-      const v = scratch.y * 0.5 + 0.5;
-      minX = Math.min(minX, u);
-      maxX = Math.max(maxX, u);
-      minY = Math.min(minY, v);
-      maxY = Math.max(maxY, v);
+      ring.push(new THREE.Vector3(at.x + Math.cos(a) * radiusMm, z, -(at.y + Math.sin(a) * radiusMm)).applyMatrix4(camera.matrixWorldInverse));
+    }
+    for (let i = 0; i < steps; i++) {
+      const p = ring[i]!;
+      const q = ring[(i + 1) % steps]!;
+      const pIn = p.z <= near;
+      if (pIn) add(p);
+      // An edge crossing the near plane: its crossing point bounds the visible part.
+      if (pIn !== q.z <= near) add(new THREE.Vector3().lerpVectors(p, q, (near - p.z) / (q.z - p.z)));
     }
   }
+  if (minX === Infinity) return null;
   if (maxX < 0 || maxY < 0 || minX > 1 || minY > 1) return null;
+  [minX, minY] = [Math.max(UV_LIMIT[0], minX), Math.max(UV_LIMIT[0], minY)];
+  [maxX, maxY] = [Math.min(UV_LIMIT[1], maxX), Math.min(UV_LIMIT[1], maxY)];
   return { centre: [(minX + maxX) / 2, (minY + maxY) / 2], radius: [Math.max(1e-4, (maxX - minX) / 2), Math.max(1e-4, (maxY - minY) / 2)] };
 }
 
@@ -104,8 +131,8 @@ void main() {
   if (m > 0.001) {
     vec2 p = vUv * uRes / 100.0;
     // Waves that rise up the screen and sway sideways, like air over embers.
-    w = sin(p.y * 9.0 - uTime * 4.2 + sin(p.x * 5.0 + uTime * 1.3) * 1.6);
-    float w2 = sin(p.x * 7.0 + uTime * 2.7 + p.y * 3.0);
+    w = sin(p.y * 9.0 - uTime * ${SHIMMER_FREQS[0].toFixed(2)} + sin(p.x * 5.0 + uTime * ${SHIMMER_FREQS[1].toFixed(2)}) * 1.6);
+    float w2 = sin(p.x * 7.0 + uTime * ${SHIMMER_FREQS[2].toFixed(2)} + p.y * 3.0);
     uv += vec2(w * 0.8 + w2 * 0.2, w2 * 0.5 + w * 0.3) * uAmp * m;
   }
   vec4 c = texture2D(tDiffuse, uv);
@@ -182,7 +209,7 @@ export function createShimmer(opts: { allowed: boolean }): Shimmer {
       if (focus) last = focus;
     },
     update(dtMs, camera, size, pixelRatio) {
-      time += dtMs / 1000;
+      time = (time + dtMs / 1000) % SHIMMER_PERIOD_S;
       const goal = target();
       const step = dtMs / SHIMMER_FADE_MS;
       strength = goal > strength ? Math.min(goal, strength + step) : Math.max(goal, strength - step);

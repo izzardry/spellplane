@@ -22,7 +22,7 @@ import { trackWyrm, type WyrmDebugInstance } from './debug';
 import { createEmbers } from './embers';
 import { DEFAULT_SCALE_OPTIONS } from './scales';
 import { createShimmer, SHIMMER_PASS_ID } from './shimmer';
-import { createSlab } from './slab';
+import { advanceSeamClock, createSlab } from './slab';
 
 /** The table surface as the HUD and the conformance checks see it: the slab's average obsidian. */
 export const WYRM_SURFACE = '#17100e';
@@ -108,7 +108,7 @@ function buildWyrm(ctx: SceneContext): ThemeInstance {
 
   return {
     update(dt) {
-      if (!ctx.reducedMotion) time += dt / 1000;
+      if (!ctx.reducedMotion) time = advanceSeamClock(time, dt / 1000);
       slab.update(time);
       ctx.renderer.getDrawingBufferSize(buffer);
       embers.update(dt, buffer.y);

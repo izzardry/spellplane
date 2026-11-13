@@ -8,10 +8,10 @@ import type { Pass } from 'three/examples/jsm/postprocessing/Pass.js';
 import type { PostPipeline } from '../../../../src/scene/types';
 import { qualityLevel, type QualityId, type SceneContext, type ThemeInstance } from '../../../../src/themes/types';
 import { wyrmInstances } from '../../../../src/themes/wyrm/debug';
-import { EMBER_COUNT, emberSeeds, FROZEN_TIME_S } from '../../../../src/themes/wyrm/embers';
+import { createEmbers, EMBER_COUNT, EMBER_MOTION, EMBER_PERIOD_S, EMBER_PLACES, EMBER_SPEED_STEPS, emberSeeds, FROZEN_TIME_S } from '../../../../src/themes/wyrm/embers';
 import { wyrm } from '../../../../src/themes/wyrm/index';
-import { SHIMMER_FADE_MS, SHIMMER_PASS_ID, shimmerRegion } from '../../../../src/themes/wyrm/shimmer';
-import { SLAB_DEPTH } from '../../../../src/themes/wyrm/slab';
+import { createShimmer, SHIMMER_FADE_MS, SHIMMER_FREQS, SHIMMER_PASS_ID, SHIMMER_PERIOD_S, shimmerRegion } from '../../../../src/themes/wyrm/shimmer';
+import { advanceSeamClock, SEAM_WAVE_FREQS, SEAM_WAVE_PERIOD_S, SLAB_DEPTH } from '../../../../src/themes/wyrm/slab';
 import { fakeRenderer, installFakeCanvas } from '../../render/fakes';
 
 let restore: () => void;
@@ -100,9 +100,53 @@ describe('Wyrm build', () => {
     for (let i = 0; i < 64; i++) {
       expect(Math.abs(a[i * 4]!)).toBeLessThanOrEqual(table.w / 2);
       expect(Math.abs(a[i * 4 + 1]!)).toBeLessThanOrEqual(table.d / 2);
-      expect(a[i * 4 + 3]).toBeGreaterThanOrEqual(0.7);
-      expect(a[i * 4 + 3]).toBeLessThanOrEqual(1.3);
+      expect(a[i * 4 + 3]).toBeGreaterThanOrEqual(0.68);
+      expect(a[i * 4 + 3]).toBeLessThanOrEqual(1.32);
+      // A whole number of speed steps, so the ember clock wraps seamlessly.
+      expect(Number.isInteger(a[i * 4 + 3]! * EMBER_SPEED_STEPS)).toBe(true);
     }
+  });
+
+  it('wraps every animation clock at a period where the motion repeats, so hours of play never make it step', () => {
+    const whole = (x: number) => Math.abs(x - Math.round(x)) < 1e-9;
+    // Embers: in one period every ember lives a whole number of lives and a whole number of EMBER_PLACES cycles, so
+    // its age and its rebirth place (cycle modulo EMBER_PLACES, as in the shader) match across the wrap.
+    const seeds = emberSeeds(EMBER_COUNT, { w: 1400, d: 1100 });
+    const life = EMBER_MOTION.life;
+    const shader = (time: number, i: number) => {
+      const t = time * seeds[i * 4 + 3]! + seeds[i * 4 + 2]! * life;
+      return { age: t / life - Math.floor(t / life), place: Math.floor(t / life) % EMBER_PLACES };
+    };
+    for (let i = 0; i < EMBER_COUNT; i++) {
+      expect(whole((EMBER_PERIOD_S * seeds[i * 4 + 3]!) / life / EMBER_PLACES), `ember ${i}`).toBe(true);
+      const before = shader(EMBER_PERIOD_S - 0.004, i);
+      const after = shader(EMBER_PERIOD_S + 0.012 - EMBER_PERIOD_S, i);
+      expect(after.place === before.place || after.place === (before.place + 1) % EMBER_PLACES, `ember ${i} place`).toBe(true);
+      expect(Math.abs(after.age - before.age) < 0.01 || Math.abs(after.age - before.age) > 0.99, `ember ${i} age`).toBe(true);
+    }
+    const embers = createEmbers({ w: 1400, d: 1100 }, { reducedMotion: false });
+    for (let i = 0; i < 400; i++) embers.update(60_000, 900);
+    expect(embers.time).toBeGreaterThanOrEqual(0);
+    expect(embers.time).toBeLessThan(EMBER_PERIOD_S);
+    expect(embers.time).toBeCloseTo((400 * 60) % EMBER_PERIOD_S, 6);
+    embers.dispose();
+    // The seams' heat wave and the shimmer: a whole number of cycles of each wave per period.
+    for (const f of SEAM_WAVE_FREQS) expect(whole((f * SEAM_WAVE_PERIOD_S) / (2 * Math.PI)), `seam ${f}`).toBe(true);
+    for (const f of SHIMMER_FREQS) expect(whole((f * SHIMMER_PERIOD_S) / (2 * Math.PI)), `shimmer ${f}`).toBe(true);
+    let seam = 0;
+    for (let i = 0; i < 1000; i++) seam = advanceSeamClock(seam, 60);
+    expect(seam).toBeLessThan(SEAM_WAVE_PERIOD_S);
+    expect(seam).toBeCloseTo(60_000 % SEAM_WAVE_PERIOD_S, 6);
+    const shimmer = createShimmer({ allowed: true });
+    shimmer.setFocus({ x: 0, y: 0 });
+    const camera = new THREE.PerspectiveCamera(45, 1.6, 1, 20000);
+    camera.position.set(0, 900, 1100);
+    camera.lookAt(0, 0, 0);
+    for (let i = 0; i < 100; i++) shimmer.update(60_000, camera, { w: 1440, h: 900 }, 1);
+    const uTime = (shimmer.pass.uniforms as { uTime: { value: number } }).uTime.value;
+    expect(uTime).toBeLessThan(SHIMMER_PERIOD_S);
+    expect(uTime).toBeCloseTo(6000 % SHIMMER_PERIOD_S, 6);
+    shimmer.dispose();
   });
 
   it('lights the heat shimmer over the stack, fades it in and out, and takes the pass out of the chain when it is gone', () => {
@@ -268,5 +312,30 @@ describe('shimmer region', () => {
   it('is null when the lane is behind the camera or off screen', () => {
     expect(shimmerRegion(camera, { x: 0, y: 5000 })).toBeNull();
     expect(shimmerRegion(camera, { x: 40000, y: 0 })).toBeNull();
+    // Facing away from the lane: both rings lie wholly behind the camera.
+    const away = camera.clone();
+    away.position.set(0, 300, 1500);
+    away.lookAt(0, 300, 3000);
+    expect(shimmerRegion(away, { x: 0, y: 0 })).toBeNull();
+  });
+
+  it('stays on when the camera comes inside the ring (an ego dolly into the lane): the ring is cut at the near plane', () => {
+    const inside = camera.clone();
+    // 100 mm in front of the lane's centre, a hand above the table, looking at the lane: part of each ring (radius
+    // about 208 mm) lies behind the camera.
+    inside.position.set(0, 120, 100);
+    inside.lookAt(0, 0, -60);
+    inside.updateMatrixWorld();
+    const behind = new THREE.Vector3(0, 0, 0 + 200).applyMatrix4(inside.matrixWorldInverse);
+    expect(behind.z).toBeGreaterThan(0);
+    const r = shimmerRegion(inside, { x: 0, y: 0 });
+    expect(r).not.toBeNull();
+    // The lane's centre is on screen and inside the region; the region stays within sane UV bounds.
+    const c = new THREE.Vector3(0, 0, 0).project(inside);
+    const q = [(c.x * 0.5 + 0.5 - r!.centre[0]) / r!.radius[0], (c.y * 0.5 + 0.5 - r!.centre[1]) / r!.radius[1]];
+    expect(Math.hypot(q[0]!, q[1]!)).toBeLessThan(1);
+    for (const v of [...r!.centre, ...r!.radius]) expect(Number.isFinite(v)).toBe(true);
+    expect(r!.centre[0] - r!.radius[0]).toBeGreaterThanOrEqual(-0.5 - 1e-9);
+    expect(r!.centre[0] + r!.radius[0]).toBeLessThanOrEqual(1.5 + 1e-9);
   });
 });

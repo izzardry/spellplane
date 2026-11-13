@@ -16,6 +16,19 @@ export const EMBER_COUNT = 180;
 /** Ember motion: rise height mm, life s, sway mm, wind mm per life, size mm, pixel size limits. */
 export const EMBER_MOTION = { rise: 240, life: 7.5, sway: 14, wind: [36, 22] as const, sizeMm: 2.6, minPx: 1.5, maxPx: 7 } as const;
 
+/** Ember speeds are whole multiples of 1/SPEED_STEPS (0.6875 .. 1.3125), so the ember clock can wrap seamlessly. */
+export const EMBER_SPEED_STEPS = 16;
+
+/** Rebirth places repeat every EMBER_PLACES cycles of an ember (a few minutes; nobody tracks one spark that long). */
+export const EMBER_PLACES = 64;
+
+/**
+ * The ember clock wraps at this period (s). An ember of speed q/16 runs q × 64 whole lives in it, so its age, and its
+ * rebirth place (picked by the cycle modulo EMBER_PLACES), are the same before and after the wrap; the float32 time in
+ * the shader stays below about two hours and never steps.
+ */
+export const EMBER_PERIOD_S = EMBER_MOTION.life * EMBER_SPEED_STEPS * EMBER_PLACES;
+
 /** The time embers are frozen at with reduced motion: a moment with most of them visible. */
 export const FROZEN_TIME_S = 11.3;
 
@@ -30,7 +43,7 @@ float h1(float x) { return fract(sin(x * 127.1) * 43758.5453); }
 void main() {
   float life = ${EMBER_MOTION.life.toFixed(2)};
   float t = uTime * aSeed.w + aSeed.z * life;
-  float cycle = floor(t / life);
+  float cycle = mod(floor(t / life), ${EMBER_PLACES.toFixed(1)});
   float age = fract(t / life);
   // Reborn somewhere else every cycle, wrapped onto the table.
   vec2 jitter = vec2(h1(aSeed.z * 91.7 + cycle * 13.1), h1(aSeed.z * 47.3 + cycle * 7.9)) - 0.5;
@@ -78,14 +91,14 @@ export interface Embers {
   dispose(): void;
 }
 
-/** The seeds of `count` embers over a table of `table` mm: x, y in mm, phase 0..1, speed 0.7..1.3. Deterministic. */
+/** The seeds of `count` embers over a table of `table` mm: x, y in mm, phase 0..1, speed 0.7..1.3 in steps of 1/16. Deterministic. */
 export function emberSeeds(count: number, table: { w: number; d: number }): Float32Array {
   const out = new Float32Array(count * 4);
   for (let i = 0; i < count; i++) {
     out[i * 4] = (hash01(i, 1, 31) - 0.5) * table.w;
     out[i * 4 + 1] = (hash01(i, 2, 31) - 0.5) * table.d;
     out[i * 4 + 2] = hash01(i, 3, 31);
-    out[i * 4 + 3] = 0.7 + 0.6 * hash01(i, 4, 31);
+    out[i * 4 + 3] = Math.round((0.7 + 0.6 * hash01(i, 4, 31)) * EMBER_SPEED_STEPS) / EMBER_SPEED_STEPS;
   }
   return out;
 }
@@ -138,7 +151,7 @@ export function createEmbers(table: { w: number; d: number }, opts: { reducedMot
     },
     update(dtMs, viewportH) {
       if (viewportH > 0) uniforms.uViewportH.value = viewportH;
-      if (!opts.reducedMotion && enabled) uniforms.uTime.value += dtMs / 1000;
+      if (!opts.reducedMotion && enabled) uniforms.uTime.value = (uniforms.uTime.value + dtMs / 1000) % EMBER_PERIOD_S;
     },
     dispose() {
       points.removeFromParent();
