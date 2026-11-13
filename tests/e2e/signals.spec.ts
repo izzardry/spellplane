@@ -31,7 +31,7 @@ import type { DrawnLine } from '../../src/scene/lines';
 import type { DebugStackEntry } from '../../src/scene/stack';
 import type { SceneDebugCard } from '../../src/scene/table-scene';
 import { GEOMETRY } from '../../src/core/geometry';
-import { SIGNALS, THEME_IDS, THEME_LABELS, hudCssVars, loadTheme, type SignalId, type SignalSpec, type ThemeId } from '../../src/themes/index';
+import { SIGNALS, THEME_IDS, THEME_LABELS, contrastRatio, hudCssVars, loadTheme, type SignalId, type SignalSpec, type ThemeId } from '../../src/themes/index';
 import { changedFraction, crop, decodePng, encodePng, measurePair, unionRect, type Pixels, type Rect } from '../unit/themes/conformance/pixels';
 import { hook } from './helpers/app';
 import { chair, decklist, freshRoom, openTable, setNickname } from './lobby/helpers';
@@ -141,7 +141,8 @@ interface PairPlan {
 }
 
 /** Capture and measure a controlled pair, record it, and assert the signal's threshold. */
-async function measure(page: Page, info: TestInfo, theme: ThemeId, s: SignalSpec, plan: PairPlan, name: string = s.id): Promise<void> {
+/** `evidenceOnly`: record the pair and its numbers without asserting the threshold (extra evidence for the gate). */
+async function measure(page: Page, info: TestInfo, theme: ThemeId, s: SignalSpec, plan: PairPlan, name: string = s.id, evidenceOnly = false): Promise<void> {
   await plan.ready();
   const n1 = await capture(page);
   const rects = await plan.region('neutral');
@@ -156,7 +157,7 @@ async function measure(page: Page, info: TestInfo, theme: ThemeId, s: SignalSpec
   const m = measurePair(a, b, c, s.threshold.channelDelta);
   evidence(info, theme, name, { neutral: a, signalled: c });
   info.annotations.push({ type: 'signal', description: `${theme} ${name}: ${(m.signal * 100).toFixed(2)}% changed beyond ${s.threshold.channelDelta}/255 (noise ${(m.noise * 100).toFixed(2)}%, threshold ${(s.threshold.changedFraction * 100).toFixed(1)}%, region ${Math.round(region.width)}×${Math.round(region.height)} px)` });
-  expect(m.signal, `${theme} ${name}: changed ${m.changed}, noise ${m.noise}`).toBeGreaterThanOrEqual(s.threshold.changedFraction);
+  if (!evidenceOnly) expect(m.signal, `${theme} ${name}: changed ${m.changed}, noise ${m.noise}`).toBeGreaterThanOrEqual(s.threshold.changedFraction);
 }
 
 // --- The controlled table ----------------------------------------------------------------------------------------------
@@ -302,6 +303,34 @@ for (const theme of THEME_IDS) {
         },
         ready: () => settle(page),
       });
+    });
+
+    test('attacking against a plain displaced card at the same pose (evidence only)', async ({ page }, info) => {
+      // The attacking pair above is carried mostly by the 110 mm move. This pair isolates the theme's attack styling:
+      // the neutral card is already displaced and tapped at the attack pose, the signalled one is the same card marked
+      // attacking. Recorded for the gate (annotation and cropped pair), not asserted: M4-C's signal spec measures
+      // attacking against the card at home.
+      const t = await controlledTable(page, info, theme);
+      const s = spec('attacking');
+      await dispatch(page, { type: 'moveTemp', card: 'c1', pose: { x: -100, y: -90, rot: 0 }, tap: true });
+      await expect.poll(async () => (await card(page, 'c1')).displaced).toBe(true);
+      await measure(
+        page,
+        info,
+        theme,
+        s,
+        {
+          margin: (s.probe as { marginMm: number }).marginMm * t.pxPerMm,
+          region: async (phase) => [await cardRect(page, 'c1'), ...(phase === 'signalled' ? await lineRects(page, 'attack', 'c1', t.toScreen) : [])],
+          signal: async () => {
+            await dispatch(page, { type: 'moveTemp', card: 'c1', pose: { x: -100, y: -90, rot: 0 }, combat: 'attack', tap: true });
+            await expect.poll(async () => (await state(page)).cards.c1?.combat).toBe('attack');
+          },
+          ready: () => settle(page),
+        },
+        'attacking-vs-displaced',
+        true,
+      );
     });
 
     test('blocking', async ({ page }, info) => {
@@ -483,6 +512,71 @@ test('every registered theme and every functional signal is covered', () => {
   expect(SIGNALS.map((s) => s.id)).toEqual(['tapped', 'selected', 'hovered', 'displaced', 'attacking', 'blocking', 'faceDown', 'foil', 'seatColour', 'speaking', 'pendingConfirmation', 'away']);
 });
 
+// --- Text on a seat colour ----------------------------------------------------------------------------------------------
+
+/** `rgb(r, g, b)` / `rgba(r, g, b, 1)` → `#rrggbb` (seat chips are opaque). */
+function rgbHex(css: string): string {
+  const m = /^rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)$/.exec(css.trim());
+  if (!m) throw new Error(`cannot read colour ${css}`);
+  if (m[4] !== undefined && Number(m[4]) < 1) throw new Error(`translucent colour ${css}`);
+  return `#${[m[1], m[2], m[3]].map((v) => Number(v).toString(16).padStart(2, '0')).join('')}`;
+}
+
+test('text the HUD draws on a seat colour (the "asks" tag, the attribution flash name) reaches 4.5:1 in every theme and seat colour', async ({ page }, info) => {
+  // DESIGN "Input and interaction design", Accessibility: "Paper meets WCAG AA contrast throughout"; "Themes and
+  // rendering", Tokens: seat colours "tuned per theme for contrast", exposed to the HUD as CSS custom properties. The
+  // check reads the computed colours the browser drew, not the tokens.
+  test.setTimeout(150_000);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await openSolo(page, freshProfile(info));
+  await expect(page.getByTestId('hud')).toBeVisible();
+  // Every flash name the page shows, read one frame after it appears (a flash lasts the ping fade time only).
+  await page.evaluate(() => {
+    const w = window as unknown as { __whoSeen: { colour: string; background: string }[] };
+    w.__whoSeen = [];
+    new MutationObserver((records) => {
+      for (const r of records)
+        for (const n of r.addedNodes) {
+          if (!(n instanceof HTMLElement)) continue;
+          for (const who of [n, ...n.querySelectorAll<HTMLElement>('*')].filter((e) => e.classList.contains('who') && e.closest('[data-testid="attribution-flash"]')))
+            requestAnimationFrame(() => {
+              const cs = getComputedStyle(who);
+              w.__whoSeen.push({ colour: cs.color, background: cs.backgroundColor });
+            });
+        }
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  const name = (await state(page)).seats.s0!.name || 'Player';
+  // A second player, so a manual round waits on someone; the solo table runs no pass timer, so it keeps waiting.
+  await dispatch(page, { type: 'seatTake', seat: 's1', name: 'Opponent', colour: 0 });
+  await dispatch(page, { type: 'createToken', card: 'theirs', zone: 'battlefield:s1', pose: { x: 0, y: 200, rot: 180 }, label: 'Their token', controller: 's1' });
+  await dispatch(page, { type: 'ask', round: 'ink' });
+  const tag = page.locator('[data-testid="avatar"][data-seat="s0"] [data-testid="asking"]');
+  await expect(tag).toBeVisible();
+  let tapped = false;
+  for (const theme of THEME_IDS) {
+    await setTheme(page, theme);
+    const seats = (await loadTheme(theme)).tokens.colours.seats;
+    for (let colour = 0; colour < 8; colour++) {
+      await dispatch(page, { type: 'seatTake', seat: 's0', name, colour });
+      const seatHex = seats[colour]!.colour.toLowerCase();
+      await expect.poll(async () => rgbHex(await tag.evaluate((el) => getComputedStyle(el).backgroundColor))).toBe(seatHex);
+      const ink = rgbHex(await tag.evaluate((el) => getComputedStyle(el).color));
+      expect(contrastRatio(ink, seatHex), `${theme} seat ${colour}: "asks" ${ink} on ${seatHex}`).toBeGreaterThanOrEqual(4.5);
+
+      // s0 touches s1's card: the flash names s0 on s0's seat colour.
+      const before = await page.evaluate(() => (window as unknown as { __whoSeen: unknown[] }).__whoSeen.length);
+      tapped = !tapped;
+      await dispatch(page, { type: 'tap', card: 'theirs', tapped });
+      await expect.poll(() => page.evaluate(() => (window as unknown as { __whoSeen: unknown[] }).__whoSeen.length), { timeout: 10_000 }).toBeGreaterThan(before);
+      const seen = await page.evaluate((i) => (window as unknown as { __whoSeen: { colour: string; background: string }[] }).__whoSeen[i]!, before);
+      expect(rgbHex(seen.background), `${theme} seat ${colour}: flash name background`).toBe(seatHex);
+      const whoInk = rgbHex(seen.colour);
+      expect(contrastRatio(whoInk, seatHex), `${theme} seat ${colour}: flash name ${whoInk} on ${seatHex}`).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+});
+
 // --- Two players at one networked table ---------------------------------------------------------------------------------
 
 async function ready(page: Page, file: string): Promise<void> {
@@ -627,6 +721,8 @@ test.describe('theme switcher', () => {
     // A click, not check(): the radio springs back to Paper as soon as the load fails, which may be before check() looks.
     await option('wyrm').click();
     await expect(page.getByTestId('theme-error')).toContainText('Wyrm could not be loaded');
+    // Picking again on this page would fail the same way (the browser keeps the failed import), so the text says to reload.
+    await expect(page.getByTestId('theme-error')).toContainText('reload the page to try again');
     expect(await currentTheme(page)).toBe('paper');
     await expect(option('paper')).toBeChecked();
     await expect(option('wyrm')).not.toBeChecked();

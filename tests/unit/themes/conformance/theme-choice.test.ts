@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from 'vitest';
 import type { Theme, ThemeId } from '../../../../src/themes/index';
 import { paper } from '../../../../src/themes/paper/index';
 import { MemorySettings } from '../../../../src/ui/fakes';
-import { ThemeChoice, type ThemeChoiceState } from '../../../../src/ui/settings/theme';
+import { parseRoute } from '../../../../src/ui/routes';
+import { ThemeChoice, waitsForStoredTheme, type ThemeChoiceState } from '../../../../src/ui/settings/theme';
 
 const fake = (id: ThemeId): Theme => ({ ...paper, id, label: id });
 
@@ -121,6 +122,7 @@ describe('ThemeChoice', () => {
     await expect(p).rejects.toThrow('Failed to fetch');
     expect(c.id()).toBe('paper');
     expect(c.state()).toMatchObject({ loading: null, error: expect.stringContaining('Dusk could not be loaded') });
+    expect(c.state().error).toContain('Paper stays; reload the page to try again');
     expect(c.loaded()).toEqual(['paper']);
     expect(settings.writes).toEqual([]);
     const retry = c.set('dusk');
@@ -168,6 +170,14 @@ describe('ThemeChoice', () => {
     await c.ready;
     expect(c.id()).toBe('paper');
     expect(c.state().error).toContain('Dusk could not be loaded');
+  });
+
+  it('only the pages that build a table scene wait for the stored theme; the start page and the connection check do not', () => {
+    expect(waitsForStoredTheme(parseRoute(''))).toBe(true);
+    expect(waitsForStoredTheme(parseRoute('#/t/room1/key1'))).toBe(true);
+    expect(waitsForStoredTheme(parseRoute('#/lobby'))).toBe(false);
+    expect(waitsForStoredTheme(parseRoute('#/diag'))).toBe(false);
+    expect(waitsForStoredTheme(parseRoute('#/nowhere'))).toBe(false);
   });
 
   it('two viewers keep separate choices (one settings store each, as each browser profile has)', async () => {

@@ -8,7 +8,7 @@
   import { onMount, untrack } from 'svelte';
   import { cssText, hudCssVars } from '../themes/index';
   import type { Theme } from '../themes/types';
-  import { registerThemeDebug, setThemeContext, ThemeChoice } from './settings/theme';
+  import { registerThemeDebug, setThemeContext, ThemeChoice, waitsForStoredTheme } from './settings/theme';
   import type { AppProps } from './types';
   import Hud from './Hud.svelte';
   import Smoke from './Smoke.svelte';
@@ -45,8 +45,10 @@
 
 <svelte:window onhashchange={() => (route = parseRoute(location.hash))} />
 
-{#if !ready}
-  <!-- Reading the stored theme: a moment, at most a few seconds (ui/settings/theme.ts). -->
+{#if !ready && waitsForStoredTheme(route)}
+  <!-- Reading the stored theme before a table builds its scene: a moment, at most a few seconds (ui/settings/theme.ts).
+       The pages without a scene (start page, connection check) do not wait. -->
+  <p class="theme-wait" role="status" data-testid="theme-wait">Loading…</p>
 {:else if route.name === 'solo'}
   {#if props.session && props.createScene && props.faces && props.cardData && props.game}
     <Hud
@@ -106,5 +108,20 @@
   }
   :global(.sp-page a) {
     color: var(--sp-fg);
+  }
+  /* Shown only when reading the stored theme takes noticeably long, so a quick read does not flash it. */
+  .theme-wait {
+    margin: 0;
+    padding: 48px 16px;
+    text-align: center;
+    font-family: var(--sp-font, system-ui);
+    color: var(--sp-muted, #5f5f5f);
+    opacity: 0;
+    animation: theme-wait-show 0s linear 400ms forwards;
+  }
+  @keyframes theme-wait-show {
+    to {
+      opacity: 1;
+    }
   }
 </style>

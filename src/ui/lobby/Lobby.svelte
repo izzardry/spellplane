@@ -351,7 +351,7 @@
         {#each Array.from({ length: SEAT_COLOURS }, (_, i) => i) as c (c)}
           {@const sc = seatColours[c]}
           {@const takenBy = colourTakenBy(st, c, mySeat)}
-          <label class="swatch" style="--seat: {sc?.colour}" title={takenBy ? `Taken by ${st.seats[takenBy]?.name}` : `Colour ${c + 1}`}>
+          <label class="swatch" style="--seat: {sc?.colour}; --seat-ink: var(--sp-seat-{c}-ink, #fff)" title={takenBy ? `Taken by ${st.seats[takenBy]?.name}` : `Colour ${c + 1}`}>
             <input type="radio" name="seat-colour" value={c} checked={me?.colour === c} disabled={takenBy !== null} data-testid="colour" data-colour={c} onchange={() => pickSeatColour(c)} />
             <span class="glyph {sc?.glyph}" aria-hidden="true"></span>
             <span class="sr">Colour {c + 1}{takenBy ? `, taken by ${st.seats[takenBy]?.name}` : ''}</span>
@@ -631,7 +631,7 @@
     outline-offset: 3px;
   }
   .swatch .glyph {
-    background: #fff;
+    background: var(--seat-ink, #fff);
   }
   .glyph {
     display: inline-block;

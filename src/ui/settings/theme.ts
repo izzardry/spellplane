@@ -138,7 +138,9 @@ export class ThemeChoice {
     } catch (e) {
       if (ticket === this.ticket) {
         this.loading = null;
-        this.error = `${THEME_LABELS[id]} could not be loaded: ${e instanceof Error ? e.message : String(e)}`;
+        // A browser keeps a failed dynamic import for that URL, so picking the theme again on this page fails the same
+        // way; the text says what helps.
+        this.error = `${THEME_LABELS[id]} could not be loaded (${e instanceof Error ? e.message : String(e)}). ${THEME_LABELS[this.theme.id]} stays; reload the page to try again.`;
         this.emit();
       }
       throw e;
@@ -165,6 +167,14 @@ export class ThemeChoice {
 const KEY = Symbol('spellplane.theme');
 
 /** Make the viewer's theme choice available to the shells below (App sets it). */
+/**
+ * Whether a page waits for the stored theme before it renders: the routes that build a table scene do (a viewer who
+ * picked Dusk does not first get Paper's scene); the start page and the connection check render at once.
+ */
+export function waitsForStoredTheme(route: { name: string }): boolean {
+  return route.name === 'solo' || route.name === 'room';
+}
+
 export function setThemeContext(choice: ThemeChoice): void {
   setContext(KEY, choice);
 }
