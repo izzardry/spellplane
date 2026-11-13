@@ -16,12 +16,13 @@ import type { AppProps, RoomLink, StartPageProps } from './ui/types';
 const target = document.getElementById('app');
 if (!target) throw new Error('#app missing');
 
-/** Module test pages (dev and test builds only): `?harness=scene`, `?harness=ui`, `?harness=confirm` or `?harness=voice` mounts that module's harness instead of the app. */
+/** Module test pages (dev and test builds only): `?harness=scene`, `?harness=ui`, `?harness=confirm`, `?harness=voice` or `?harness=render` (M4-P2, lit pipeline) mounts that module's harness instead of the app. */
 const HARNESSES = {
   scene: () => import('./scene/harness'),
   ui: () => import('./ui/harness'),
   confirm: () => import('./ui/confirm/harness'),
   voice: () => import('./ui/voice/harness'),
+  render: () => import('./scene/render-harness'),
 } as const;
 
 const harness = __SPELLPLANE_DEBUG__ ? new URLSearchParams(location.search).get('harness') : null;
