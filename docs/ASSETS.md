@@ -39,4 +39,11 @@ No bundled files: everything is computed or drawn at runtime by the theme's own 
 
 ## Stonetable
 
-To be filled by M4-P5.
+No bundled files: every texture and sound is generated in the browser by the modules below.
+
+| Asset | Used by | Kind | Source | Licence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/themes/stonetable/stone.ts` | Stonetable slab | texture | procedural | MIT (this repository) | Tileable stone height field (fractal value noise, ridged veins, pits): albedo, tangent-space normal and roughness maps, 256 × 256, one tile per 360 mm |
+| `src/themes/stonetable/runes.ts` | Stonetable rune band and card back | texture | procedural | MIT (this repository) | Invented straight-stroke rune alphabet drawn on canvases: the glowing band around the slab (1024 × 64) and the neutral card back (488 × 680) |
+| `src/themes/stonetable/motes.ts` | Stonetable dust motes | shader | procedural | MIT (this repository) | Point sprites drifting in a vertex shader, lit inside the torch's cone |
+| `src/themes/stonetable/sounds.ts` | Stonetable sound set | sound | procedural | MIT (this repository) | Web Audio: filtered seeded noise and sine partials (slide, tap, shuffle, turn chime, prompt tick, torch crackle) |

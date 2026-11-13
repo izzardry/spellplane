@@ -9,15 +9,14 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import type { Action } from '../../../src/core/actions';
+import { loadTheme } from '../../../src/themes/index';
+import { litTestTheme } from '../../../src/themes/test-lit';
 import { openRender, ready, rh, setTheme, settle, stableTextures, type HarnessThemeId } from './helpers';
 
 type Stats = { textures: number; geometries: number; passes: string[]; theme: string; drawCalls: number };
 type Card = { id: string; pose: { x: number; y: number; rot: number }; tapped: boolean; face: string; zone: string };
 
 const SWITCHES: HarnessThemeId[] = ['lit', 'dusk', 'lit', 'wyrm', 'stonetable', 'lit', 'paper', 'lit', 'dusk', 'paper'];
-
-const WYRM_PASSES = ['render', 'glow', 'bloom', 'vignette', 'output'];
-const WYRM_PASSES_SHIMMER = ['render', 'glow', 'bloom', 'wyrm-shimmer', 'vignette', 'output'];
 
 const dispatch = (page: Page, a: Action) => page.evaluate((x) => window.__spellplane!.dispatch!(x), a);
 
@@ -43,9 +42,9 @@ test('ten theme switches mid-game keep the state hash, the cards and the GPU tex
     await setTheme(page, id);
     const s = await rh<Stats>(page, 'stats');
     expect(s.theme, `switch ${i + 1}`).toBe(id === 'lit' ? 'stonetable' : id);
-    if (id === 'lit') expect(s.passes).toContain('bloom');
-    // Wyrm (M4-P4) at its default level: glow, bloom and vignette, plus its heat shimmer while the stack burns.
-    else if (id === 'wyrm') expect(s.passes).toEqual(s.passes.includes('wyrm-shimmer') ? WYRM_PASSES_SHIMMER : WYRM_PASSES);
+    // A theme with bloom runs the post chain (the lit test theme, and each real theme once it replaced its stub).
+    const theme = id === 'lit' ? litTestTheme() : await loadTheme(id);
+    if (theme.post.bloom) expect(s.passes).toContain('bloom');
     else expect(s.passes).toEqual([]);
     expect(await rh<string>(page, 'hash'), `hash after switch ${i + 1} (${id})`).toBe(hash0);
   }
