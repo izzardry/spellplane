@@ -710,7 +710,8 @@
       pendingChat = prunePending(pendingChat, log);
     });
     // The talk key's focus rules and the talk mouse button (M3-P3), and the speaking rings.
-    const voiceOff = liveVoice ? attachTalkInput(liveVoice) : null;
+    // The Ctrl talk key under the hold-alone rule (M5-P7) reads the talk binding with the player's remappings.
+    const voiceOff = liveVoice ? attachTalkInput(liveVoice, window, { talkChord: () => keymap.find((b) => b.action === 'talk' && b.context === 'table')?.chord ?? null }) : null;
     const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
     captionList = session.captions?.captions() ?? [];
     const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
@@ -840,7 +841,7 @@
              its layout and the avatar column below stays short. A spectator only sees captions. -->
         <div class="toolbar voice-row">
           {#if liveVoice}
-            <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'V'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
+            <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
           {/if}
           {#if session.captions && !spectating}
             <button

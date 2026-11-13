@@ -168,7 +168,8 @@ describe('MTG keymap', () => {
       ['table', 'Tab', 'nextPhase'], ['table', 'Ctrl+Enter', 'nextTurn'], ['table', 'Ctrl+U', 'untapAll'], ['table', 'F6', 'autoPass'],
       ['table', 'K', 'ask'], ['prompt', 'Enter', 'confirmOk'], ['prompt', 'Escape', 'confirmHold'], ['prompt', 'H', 'confirmHold'],
       ['table', 'Y', 'tidy'], ['table', 'Ctrl+T', 'token'], ['table', 'Ctrl+I', 'rollDie'], ['table', 'Ctrl+Shift+I', 'flipCoin'], ['table', 'Ctrl+Z', 'undo'],
-      ['table', 'V', 'talk'], ['table', 'Shift+V', 'teamTalk'], ['table', 'M', 'mute'], ['table', 'Enter', 'focusChat'],
+      // Talk: Ctrl, either key, instead of V (PLAN Milestone 5, owner decisions, Talk key; M5-P7).
+      ['table', 'Ctrl', 'talk'], ['table', 'Shift+Ctrl', 'teamTalk'], ['table', 'M', 'mute'], ['table', 'Enter', 'focusChat'],
       ['table', 'P', 'perspective'], ['table', '0', 'fitTable'], ['table', '1', 'seat1'], ['table', '2', 'seat2'], ['table', '3', 'seat3'],
       ['table', '4', 'seat4'], ['table', 'Home', 'ownSide'], ['table', '?', 'help'],
     ];

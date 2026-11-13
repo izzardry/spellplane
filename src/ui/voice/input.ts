@@ -1,13 +1,25 @@
 /**
  * The talk key's wiring between the HUD and the voice controller (DESIGN "Chat and voice", Live voice: "The talk key is
  * released on window blur and ignored while a text field has focus"; Notes by voice; Talk modes: the talk key may be a
- * mouse button; "Input and interaction design": keys never fire while a text field has focus). Implementer: M3-P3.
+ * mouse button; "Input and interaction design": keys never fire while a text field has focus). Implementer: M3-P3;
+ * the Ctrl talk key: M5-P7.
  *
- * The keys themselves come from the HUD's KeyEngine (keymap actions 'talk', 'teamTalk', 'mute'), which already drops
- * events from text fields and ends holds on blur; this module feeds the same facts to the controller directly, so the
- * gate closes even when a key-up never arrives.
+ * A letter talk key (the old V, or a remapped one) comes from the HUD's KeyEngine (keymap actions 'talk', 'teamTalk',
+ * 'mute'), which already drops events from text fields and ends holds on blur; this module feeds the same facts to the
+ * controller directly, so the gate closes even when a key-up never arrives.
+ *
+ * The default talk key is Ctrl, either key (PLAN Milestone 5, owner decisions, Talk key). A bare modifier never matches
+ * a KeyEngine chord (its own keydown reports the modifier flag), so this module reads it from the window itself under
+ * the hold-alone rule (voice/hold.ts): the mic and dictation open only after Ctrl was held alone for
+ * TALK_HOLD_ALONE_MS; a key, click or wheel turn first makes it a shortcut (Ctrl+Z, Ctrl+Enter, Ctrl+T, Ctrl+click) and
+ * nothing is sent; Ctrl pressed while a mouse button or finger is already down (a Ctrl-drag that skips snapping) is a
+ * shortcut too. Shift held when Ctrl goes down makes it team talk. Ctrl types nothing, so it never types into a note
+ * field; held alone there it dictates into the field (DESIGN "Notes by voice"), and in a chat or search field it is
+ * ignored like any talk key.
  */
-import type { VoiceControls } from '../../voice/types';
+import { CTRL_KEY_CHORD, isModifierChord, type KeyChord } from '../../games/types';
+import { createHoldAloneGate } from '../../voice/hold';
+import { TALK_HOLD_ALONE_MS, type HoldAloneState, type VoiceControls } from '../../voice/types';
 import { isTextEntry } from '../keymap';
 
 const CAPTURE: AddEventListenerOptions = { capture: true };
@@ -48,26 +60,144 @@ export function runTalkAction(
   } else voice.keyUp();
 }
 
+/** Options of `attachTalkInput` beyond the controller and the window (the HUD's keymap; test seams). */
+export interface TalkInputOptions {
+  /**
+   * The talk binding's chord now (the keymap with the player's remappings), read on every key press; a bare modifier
+   * (games/types.ts isModifierChord) is read here under the hold-alone rule, any other chord is left to the KeyEngine.
+   * Default: Ctrl (CTRL_KEY_CHORD).
+   */
+  talkChord?: () => KeyChord | null;
+  /** How long the modifier must be held alone (default TALK_HOLD_ALONE_MS). */
+  holdMs?: number;
+  /** Clock in ms (default performance.now or Date.now). */
+  now?: () => number;
+  /** Timers (default the window's). */
+  setTimer?: (fn: () => void, ms: number) => unknown;
+  clearTimer?: (handle: unknown) => void;
+  /** Told whenever the hold-alone state changes ('pending', 'talking', 'shortcut', 'idle'). */
+  onHold?: (state: HoldAloneState) => void;
+}
+
 /**
- * Follow window focus, text and note field focus, page visibility and the talk mouse button for `voice`. Returns the
- * function that stops it.
+ * Follow window focus, text and note field focus, page visibility, the talk mouse button and a modifier talk key (Ctrl
+ * by default) for `voice`. Returns the function that stops it.
  */
-export function attachTalkInput(voice: VoiceControls, win: Window = window): () => void {
+export function attachTalkInput(voice: VoiceControls, win: Window = window, opts: TalkInputOptions = {}): () => void {
   const doc = win.document;
   const fromFocus = (el: unknown): void => voice.focus(focusKind(el));
   fromFocus(doc.activeElement);
 
+  // --- The modifier talk key under the hold-alone rule (M5-P7) ---------------------------------------------------
+  const holdMs = opts.holdMs ?? TALK_HOLD_ALONE_MS;
+  const gate = createHoldAloneGate(holdMs);
+  const now = opts.now ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()));
+  const setTimer = opts.setTimer ?? ((fn: () => void, ms: number) => win.setTimeout(fn, ms));
+  const clearTimer = opts.clearTimer ?? ((h: unknown) => win.clearTimeout(h as number));
+  const talkChord = opts.talkChord ?? (() => CTRL_KEY_CHORD);
+  /** The physical keys of the talk modifier held now (ControlLeft, ControlRight): released when the last goes up. */
+  const heldKeys = new Set<string>();
+  /** The modifier being held as the talk key ('Control'), or null. */
+  let heldMod: string | null = null;
+  /** Pointers (mouse buttons, fingers, pens) down now: Ctrl pressed during a drag modifies that drag. */
+  const pointers = new Set<number>();
+  let timer: unknown = null;
+  let reported: HoldAloneState = 'idle';
+  const report = (): void => {
+    const s = gate.state();
+    if (s === reported) return;
+    reported = s;
+    opts.onHold?.(s);
+  };
+  const stopTimer = (): void => {
+    if (timer !== null) clearTimer(timer);
+    timer = null;
+  };
+  /** The modifier the talk binding names, or null when the talk key is not a bare modifier (a letter key). */
+  const modifier = (): string | null => {
+    const c = talkChord();
+    return c && isModifierChord(c) ? c.key : null;
+  };
+  /** Leave the hold: a talking key closes the mic; a pending or shortcut one just ends. */
+  const release = (): void => {
+    stopTimer();
+    const was = gate.state();
+    gate.up(now());
+    heldKeys.clear();
+    heldMod = null;
+    if (was === 'talking') voice.keyUp();
+    report();
+  };
+  const onTick = (): void => {
+    timer = null;
+    if (gate.tick(now()) === 'talking') {
+      // What has focus decides between a caption, a note field and nothing (a chat field), as for any talk key.
+      fromFocus(doc.activeElement);
+      voice.keyDown(gate.team());
+    }
+    report();
+  };
+  /** Another key, a click or a wheel turn while the modifier is held. */
+  const other = (): void => {
+    if (gate.state() !== 'pending') return;
+    const s = gate.other(now());
+    if (s === 'talking') onTick();
+    else stopTimer();
+    report();
+  };
+  const onKeyDown = (e: KeyboardEvent): void => {
+    const mod = heldMod ?? modifier();
+    if (mod !== null && e.key === mod) {
+      heldKeys.add(e.code || e.key);
+      if (heldMod !== null || e.repeat) return;
+      heldMod = mod;
+      gate.down(now(), mod !== 'Shift' && !!e.shiftKey);
+      // Held together with Alt or Meta, or pressed while a pointer is down (a Ctrl-drag), it is a chord at once.
+      if ((e.altKey && mod !== 'Alt') || e.metaKey || pointers.size > 0) gate.other(now());
+      else timer = setTimer(onTick, holdMs);
+      report();
+      return;
+    }
+    // Any other key while it waits, Shift included (Ctrl+Shift+I; team talk is Shift held first), makes it a shortcut.
+    if (heldMod !== null) other();
+  };
+  const onKeyUp = (e: KeyboardEvent): void => {
+    if (heldMod === null || e.key !== heldMod) return;
+    heldKeys.delete(e.code || e.key);
+    // One Ctrl released while the other is still down keeps the hold; a key-up without a code (synthetic) ends it.
+    if (heldKeys.size > 0 && e.code) return;
+    release();
+  };
+  const onPointerDown = (e: PointerEvent): void => {
+    pointers.add(e.pointerId ?? 0);
+    other();
+  };
+  const onPointerUp = (e: PointerEvent): void => {
+    pointers.delete(e.pointerId ?? 0);
+  };
+  const onWheel = (): void => other();
+
   const onBlur = (e: Event): void => {
-    if (e.target === win) voice.focus({ window: false });
+    if (e.target !== win) return;
+    pointers.clear();
+    release();
+    voice.focus({ window: false });
   };
   const onFocus = (e: Event): void => {
     if (e.target === win) voice.focus({ window: true });
   };
-  const onFocusIn = (e: FocusEvent): void => fromFocus(e.target);
+  const onFocusIn = (e: FocusEvent): void => {
+    // A chat or search field took focus: the held modifier is let go without talking (the note field keeps it).
+    if (focusKind(e.target).text) release();
+    fromFocus(e.target);
+  };
   // Focus leaving for nothing (relatedTarget null) or for another element: what gets it next decides.
   const onFocusOut = (e: FocusEvent): void => fromFocus(e.relatedTarget);
   const onVisibility = (): void => {
-    if (doc.visibilityState === 'hidden') voice.focus({ window: false });
+    if (doc.visibilityState !== 'hidden') return;
+    pointers.clear();
+    release();
+    voice.focus({ window: false });
   };
   let buttonHeld = false;
   const onMouseDown = (e: MouseEvent): void => {
@@ -92,6 +222,12 @@ export function attachTalkInput(voice: VoiceControls, win: Window = window): () 
     if (b !== null && e.button === b) e.preventDefault();
   };
 
+  win.addEventListener('keydown', onKeyDown, CAPTURE);
+  win.addEventListener('keyup', onKeyUp, CAPTURE);
+  win.addEventListener('pointerdown', onPointerDown, CAPTURE);
+  win.addEventListener('pointerup', onPointerUp, CAPTURE);
+  win.addEventListener('pointercancel', onPointerUp, CAPTURE);
+  win.addEventListener('wheel', onWheel, CAPTURE);
   win.addEventListener('blur', onBlur);
   win.addEventListener('focus', onFocus);
   win.addEventListener('focusin', onFocusIn);
@@ -101,6 +237,13 @@ export function attachTalkInput(voice: VoiceControls, win: Window = window): () 
   win.addEventListener('auxclick', onAux, CAPTURE);
   doc.addEventListener('visibilitychange', onVisibility);
   return () => {
+    win.removeEventListener('keydown', onKeyDown, CAPTURE);
+    win.removeEventListener('keyup', onKeyUp, CAPTURE);
+    win.removeEventListener('pointerdown', onPointerDown, CAPTURE);
+    win.removeEventListener('pointerup', onPointerUp, CAPTURE);
+    win.removeEventListener('pointercancel', onPointerUp, CAPTURE);
+    win.removeEventListener('wheel', onWheel, CAPTURE);
+    release();
     win.removeEventListener('blur', onBlur);
     win.removeEventListener('focus', onFocus);
     win.removeEventListener('focusin', onFocusIn);

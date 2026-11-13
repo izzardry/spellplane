@@ -32,8 +32,16 @@ export interface VoiceWiring {
   presence: Pick<Presence, 'peers' | 'subscribe'>;
 }
 
+/**
+ * Options of a session's voice beyond VoiceSessionOptions: `listenOnly` for a spectator (PLAN Milestone 5, owner
+ * decisions: "Spectators listen"; VoiceHost.listenOnly; M5-P7).
+ */
+export interface SessionVoiceExtras {
+  listenOnly?: boolean;
+}
+
 /** The voice host and presence over a session port: every call goes to the current engine and transport. */
-export function voiceWiring(port: VoicePort, opts: VoiceSessionOptions): VoiceWiring {
+export function voiceWiring(port: VoicePort, opts: VoiceSessionOptions, extras: SessionVoiceExtras = {}): VoiceWiring {
   const streamHandlers: ((stream: MediaStream, from: PeerId) => void)[] = [];
   const hooked = new WeakSet<Transport>();
   /** Listen for incoming audio on a transport once. */
@@ -86,6 +94,7 @@ export function voiceWiring(port: VoicePort, opts: VoiceSessionOptions): VoiceWi
     },
     media: opts.media,
     settings: opts.settings,
+    ...(extras.listenOnly ? { listenOnly: true } : {}),
   };
   const presence: VoiceWiring['presence'] = {
     peers: () => port.engine().presence.peers(),
@@ -117,8 +126,8 @@ function registerVoiceDebug(voice: VoiceControls): void {
 }
 
 /** Voice for a networked session (PLAN M3-P3); dispose it with the session. */
-export function createSessionVoice(port: VoicePort, opts: VoiceSessionOptions): VoiceControls {
-  const { host, presence } = voiceWiring(port, opts);
+export function createSessionVoice(port: VoicePort, opts: VoiceSessionOptions, extras: SessionVoiceExtras = {}): VoiceControls {
+  const { host, presence } = voiceWiring(port, opts, extras);
   const voice = createVoiceWith(host, { presence });
   registerVoiceDebug(voice);
   const dispose = voice.dispose.bind(voice);

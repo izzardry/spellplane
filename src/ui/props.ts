@@ -21,7 +21,7 @@ export interface HudProps {
   settings?: SettingsStore | undefined;
   /** Decklist parser (data/, M0-P2); defaults to the plain-list parser in ui/deck.ts. */
   parseDecklist?: ParseDecklist | undefined;
-  /** Voice controls (hold V, Shift+V, M); milestone 3 connects the voice module. */
+  /** Voice controls (hold Ctrl, Shift+Ctrl, M); milestone 3 connects the voice module. */
   onVoice?: ((action: 'talk' | 'teamTalk' | 'mute', phase: 'start' | 'end') => void) | undefined;
   /** Ids for new objects (tokens, stack items, rounds); defaults to seat-prefixed random ids. */
   newId?: ((prefix: string) => string) | undefined;
