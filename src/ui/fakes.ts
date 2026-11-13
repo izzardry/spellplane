@@ -718,6 +718,10 @@ export class RecordingScene implements TableScene {
     this.lastView = view;
   }
   setTheme(_theme: unknown): void {}
+  /** Records the back's id and size (M5-P5 card back setting). */
+  setCardBack(back: { id: string; width: number; height: number } | null): void {
+    this.calls.push({ method: 'setCardBack', args: [back ? { id: back.id, width: back.width, height: back.height } : null] });
+  }
   setLayout(_layout: unknown, _viewerSeat: unknown): void {}
   setQuality(id: QualityId): void {
     this.currentQuality = id;

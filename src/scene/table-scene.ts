@@ -23,7 +23,7 @@ import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
 import { CAMERA } from '../core/geometry';
 import type { CardInstance, InstanceId, Pose, SeatId, StackItemId, TableState, ZoneId } from '../core/types';
-import type { Rect, TableLayout } from '../games/types';
+import type { Rect, TableLayout, TextureSource } from '../games/types';
 import type { QualityId } from '../themes/types';
 import { registerDebug } from '../util/debug';
 import { NO_INSETS, type Insets } from './camera';
@@ -289,7 +289,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const runtime = new ThemeRuntime(renderer, scene, camera, { post: true, overlay, glow: () => [lineView.lines.object, lineView.pingRings] }, theme, placement(), opts.quality ?? 'high');
   let built = placement();
 
-  const backOf = (t: typeof theme) => t.cardDressing.back ?? opts.game.cardBack;
+  /** The viewer's chosen back (M5-P5, `setCardBack`: the official back once loaded), over the theme's and the game's. */
+  let backOverride: TextureSource | null = null;
+  const backOf = (t: typeof theme) => backOverride ?? t.cardDressing.back ?? opts.game.cardBack;
+  /** New face arrays when the back to draw changed (theme switch or card back setting); faces register again. */
+  const swapBack = (oldBack: TextureSource) => {
+    if (backOf(theme) === oldBack) return;
+    faces.dispose();
+    faces = new FaceTextures(renderer, opts.faces, backOf(theme), TEXTURE_CAP_BYTES, faceBudget);
+    faces.onChange = () => (dirty = true);
+    for (const rc of rcards.values()) if (rc.place.ref) faces.register(rc.place.ref, rc.place.faceIndex);
+    dirty = true;
+  };
   /** GPU bytes the face arrays may take: the 400 MB texture cap less the theme's own textures (PLAN M4 Performance). */
   const faceBudget = () => TEXTURE_CAP_BYTES - runtime.textureBytes() - FACE_BUDGET_HEADROOM;
   let faces = new FaceTextures(renderer, opts.faces, backOf(theme), TEXTURE_CAP_BYTES, faceBudget);
@@ -2001,12 +2012,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       runtime.setTheme(next, built);
       syncStackFocus(true);
       applyDressing();
-      if (backOf(next) !== oldBack) {
-        faces.dispose();
-        faces = new FaceTextures(renderer, opts.faces, backOf(next), TEXTURE_CAP_BYTES, faceBudget);
-        faces.onChange = () => (dirty = true);
-        for (const rc of rcards.values()) if (rc.place.ref) faces.register(rc.place.ref, rc.place.faceIndex);
-      }
+      swapBack(oldBack);
       cards.setBackground(theme.tokens.colours.surface);
       markMaterial.color.set(theme.tokens.colours.border);
       ghostLayer.setOpacity(theme.cardDressing.ghost.opacity);
@@ -2023,6 +2029,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
       rebuildMarkings();
       relayout(performance.now());
+    },
+    setCardBack(next: TextureSource | null) {
+      // DESIGN "Card data and images", Card back: the official back is the viewer's opt-in, drawn whole.
+      const oldBack = backOf(theme);
+      backOverride = next;
+      swapBack(oldBack);
     },
     setQuality(id: QualityId) {
       // Without reload (DESIGN "Themes and rendering", Renderer): a lower level drops shadows and post first.

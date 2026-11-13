@@ -25,7 +25,7 @@
   import { addPending, LogWatch, prunePending } from './chat/watch';
   import { inZoneKind, layoutOf } from './geometry';
   import { fitInsets as fitInsetsFor, handOrder } from './hand';
-  import { applyOverrides, chordToString, findConflict, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS, reservedConflict, validOverrides } from './keymap';
+  import { applyOverrides, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS } from './keymap';
   import { cardMenu, tableMenu, type MenuEntry } from './menu';
   import type { HudProps } from './props';
   import Avatar from './Avatar.svelte';
@@ -51,6 +51,14 @@
   import { cuesFor, soundModeOf, soundOn, ThemeSoundPlayer, type SoundMode } from './sound';
   import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption } from '../voice/types';
+  import EmptyState from './empty/EmptyState.svelte';
+  import Hint from './hints/Hint.svelte';
+  import { HintController, isTouchDevice } from './hints/hints';
+  import { CardBackSetting, type CardBackState } from './settings/back';
+  import { KeymapSettings, remapMessage } from './settings/keys';
+  import type { SettingsSection } from './settings/sections';
+  import SettingsPanel from './settings/Settings.svelte';
+  import { isQuotaError, isStorageFullLine } from './settings/storage';
 
   let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
 
@@ -82,6 +90,8 @@
   let selection = $state.raw<InstanceId[]>([]);
   let pings = $state.raw<ActivePing[]>([]);
   let openPile = $state<string | null>(null);
+  /** The player's keymap (M5-P5, ui/settings/keys.ts): the settings panel, the cheat sheet and the keys share it. */
+  const keySettings = new KeymapSettings(untrack(() => game.keymap), untrack(() => settings));
   let overrides = $state.raw<KeymapOverride[]>([]);
   const keymap = $derived(applyOverrides(game.keymap, overrides));
   let vw = $state(typeof window === 'undefined' ? 1440 : window.innerWidth);
@@ -142,6 +152,24 @@
   let drawInput = $state<HTMLInputElement | undefined>();
 
   const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
+  /** The settings panel (M5-P5, ui/settings/Settings.svelte); the theme popover below stays as its shortcut. */
+  let settingsOpen = $state(false);
+  let settingsSection = $state<SettingsSection>('display');
+  function openSettings(section: SettingsSection = 'display'): void {
+    settingsSection = section;
+    settingsOpen = true;
+    themeOpen = false;
+  }
+  /** First-run hints (M5-P5, ui/hints): one at a time, bottom right, never blocking. */
+  const hints = new HintController(
+    untrack(() => settings),
+    { where: 'table', touch: isTouchDevice(), voice: untrack(() => !!session.voice), spectator: untrack(() => session.role === 'spectator') },
+  );
+  /** A save that failed for lack of space (M5-P5 storage full): from the log, or a quota error anywhere on the page. */
+  let quotaError = $state(false);
+  let storageFullDismissed = $state(false);
+  /** No deck dismissed by the player (M5-P5 empty states). */
+  let noDeckDismissed = $state(false);
   /** The viewer's theme picker (PLAN M4-P6): present when the app shell provides the choice, not in harness pages. */
   const themeChoice = themeContext();
   let themeOpen = $state(false);
@@ -192,7 +220,18 @@
     sceneTheme = t;
     scene.setTheme(t);
   });
-  const back = $derived(theme.cardDressing.back ?? game.cardBack);
+  // The viewer's card back (M5-P5, ui/settings/back.ts): the official back once chosen and loaded, else the theme's or game's.
+  const cardBack = new CardBackSetting({ settings: untrack(() => settings) });
+  let backState = $state.raw<CardBackState>(cardBack.state());
+  const back = $derived(backState.back ?? theme.cardDressing.back ?? game.cardBack);
+  /** The back the scene has (it starts with the theme's or game's). */
+  let handedBack: CardBackState['back'] = null;
+  $effect(() => {
+    const b = backState.back;
+    if (!sceneReady || !scene || b === handedBack) return;
+    handedBack = b;
+    scene.setCardBack?.(b);
+  });
   /**
    * Screen edges the screen-anchored layer covers, "top right bottom left" in CSS px, for the scene's fit (DESIGN
    * "Camera and navigation", Screen-anchored layer): the toolbar and turn strip row, the open log column, the hand fan
@@ -328,6 +367,7 @@
   function closeTop(promptUp: boolean): boolean {
     if (menu) menu = null;
     else if (themeOpen) themeOpen = false;
+    else if (settingsOpen) settingsOpen = false;
     else if (revealTo) revealTo = null;
     else if (tokenNear) tokenNear = null;
     else if (inspectId) hooks.inspect(null);
@@ -373,21 +413,12 @@
     if (isTextEntry(e.target)) engine.blur();
   }
 
-  // --- Remapping (persisted through settings) ---------------------------------------------------------------------
+  // --- Remapping (persisted through settings; M5-P5 ui/settings/keys.ts) -------------------------------------------
   function remap(action: ActionId, context: KeyContext, chord: KeyChord): string | null {
-    const clash = findConflict(keymap, chord, context, action)?.label ?? reservedConflict(chord, context);
-    if (clash) return `${chordToString(chord)} is already “${clash}”.`;
-    remapped = true;
-    overrides = [...overrides.filter((o) => !(o.action === action && o.context === context)), { action, context, chord }];
-    void settings?.set('keymap', overrides);
-    return null;
+    return remapMessage(keySettings.remap(action, context, chord));
   }
-  /** Set once the player remaps in this session, so a late settings load never overwrites it. */
-  let remapped = false;
   function resetKeys() {
-    remapped = true;
-    overrides = [];
-    void settings?.set('keymap', []);
+    keySettings.resetAll();
   }
 
   // --- Pile viewers -------------------------------------------------------------------------------------------------
@@ -563,6 +594,9 @@
     else pendingChat = addPending(pendingChat, a, session.log(), Date.now());
   }
   const inspectCard = $derived<CardInstance | null>(inspectId ? (st.cards[inspectId] ?? null) : null);
+  /** No card of this player's anywhere on the table (M5-P5 empty states: no deck); not for a spectator or before the match. */
+  const noDeck = $derived(!spectating && !!st.seats[me] && st.stage === 'match' && !Object.values(st.cards).some((c) => c.owner === me));
+  const storageFull = $derived(quotaError || entries.some(isStorageFullLine));
   const keyOf = (a: ActionId, ctx: KeyContext = 'table') => keyLabel(keymap, a, ctx);
 
   // On Next turn, offer the new active player (or team) untap-and-draw; close the offer once the turn moves on
@@ -718,12 +752,11 @@
       ?.get('sound')
       .then((m) => (soundMode = soundModeOf(m)))
       .catch(() => (soundMode = 'theme'));
-    void settings
-      ?.get('keymap')
-      .then((o) => {
-        if (!remapped) overrides = validOverrides(o);
-      })
-      .catch(() => {});
+    const unsubKeys = keySettings.subscribe((o) => (overrides = o));
+    void keySettings.load();
+    const unsubBack = cardBack.subscribe((s) => (backState = s));
+    void cardBack.refresh();
+    void hints.load();
     try {
       const layout = layoutOf(game, st);
       if (!layout) throw new Error('the game definition has no table layout yet');
@@ -765,6 +798,9 @@
     }
     return () => {
       unsub();
+      unsubKeys();
+      unsubBack();
+      cardBack.dispose();
       unsubView();
       view.dispose();
       voiceOff?.();
@@ -793,6 +829,9 @@
   {onfocusin}
   {onclick}
   onblur={() => engine.blur()}
+  onunhandledrejection={(e) => {
+    if (isQuotaError(e.reason)) quotaError = true;
+  }}
   onfocus={() => syncView()}
   onpointermove={(e) => {
     pointer.x = e.clientX;
@@ -803,7 +842,7 @@
 />
 <svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncView()} />
 
-<div class="root" style={cssVars} data-testid="hud" data-sound={soundState}>
+<div class="root" style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
   <Flashes
@@ -824,6 +863,7 @@
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
         <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye')}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
+        <button type="button" data-testid="open-settings" aria-pressed={settingsOpen} aria-expanded={settingsOpen} aria-label="Settings" title="Settings" onclick={() => (settingsOpen ? (settingsOpen = false) : openSettings())}>⚙</button>
         {#if themeChoice}
           <span class="theme-anchor" bind:this={themeAnchor}>
             <button type="button" data-testid="open-theme-settings" aria-pressed={themeOpen} aria-expanded={themeOpen} aria-label="Theme" title="Theme" onclick={() => (themeOpen = !themeOpen)}>◐</button>
@@ -949,6 +989,12 @@
 
     <!-- Above the hand, centred (DESIGN "Specification: geometry, layout and motion", Screen layer); with a teammate's fan shown, above that fan too. -->
     <div class="above-hand" data-testid="above-hand" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
+      {#if storageFull && !storageFullDismissed}
+        <div class="state"><EmptyState id="storageFull" action={{ label: 'Storage settings', run: () => openSettings('storage'), testid: 'empty-storage-settings' }} ondismiss={() => (storageFullDismissed = true)} /></div>
+      {/if}
+      {#if noDeck && !noDeckDismissed && !deckOpen}
+        <div class="state"><EmptyState id="noDeck" action={{ label: 'Import a deck', run: () => (deckOpen = true), testid: 'empty-import-deck' }} ondismiss={() => (noDeckDismissed = true)} /></div>
+      {/if}
       {#if toast}<p class="toast" role="status" data-testid="toast">{toast.text}</p>{/if}
       {#if untapOffer}
         <div class="offer" data-testid="untap-offer">
@@ -1132,6 +1178,26 @@
     <Speech captions={session.captions} top={speechTop} onclose={() => (speechOpen = false)} />
   {/if}
 
+  {#if settingsOpen}
+    <SettingsPanel
+      {settings}
+      keys={keySettings}
+      {cardBack}
+      {themeChoice}
+      sound={{ mode: soundMode ?? 'theme', set: setSoundMode }}
+      view={{ prefs: viewPrefs, set: (name, value) => void view.set(name, value).catch(() => {}) }}
+      voice={liveVoice ?? undefined}
+      {session}
+      captions={spectating ? undefined : session.captions}
+      {storageFull}
+      section={settingsSection}
+      talkKey={keyOf('talk')}
+      onclose={() => (settingsOpen = false)}
+    />
+  {/if}
+
+  <Hint {hints} keyOf={(a) => keyOf(a)} />
+
   {#if cheatOpen}
     <CheatSheet {keymap} onremap={remap} onreset={resetKeys} onclose={() => (cheatOpen = false)} />
   {/if}
@@ -1310,6 +1376,12 @@
     flex-direction: column;
     align-items: center;
     gap: 6px;
+  }
+  .state {
+    max-width: min(440px, 90vw);
+  }
+  .state :global(button) {
+    pointer-events: auto;
   }
   .toast {
     margin: 0;
