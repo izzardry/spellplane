@@ -4,7 +4,8 @@
  * only for prompts addressed to this player; spoken names via an accessible mirror).
  */
 import { describe, expect, it, vi } from 'vitest';
-import { ANNOUNCE, ANNOUNCE_HISTORY_MAX, AnnounceQueue, describeCard, describeFocus, LogAnnouncements, lineText, zoneLabel, type AnnounceTimers } from '../../../src/ui/a11y/index';
+import { ANNOUNCE, AnnounceQueue, type AnnounceTimers } from '../../../src/ui/a11y/announcer';
+import { ANNOUNCE_HISTORY_MAX, describeCard, describeFocus, LogAnnouncements, lineText, zoneLabel } from '../../../src/ui/a11y/index';
 import type { Politeness } from '../../../src/ui/a11y/index';
 import type { LogLine } from '../../../src/ui/describe';
 import { game, namer, table, withCards } from './fixture';

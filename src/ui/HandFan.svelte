@@ -17,6 +17,7 @@
     faces,
     back,
     hovered,
+    focused = null,
     selection,
     vw,
     vh,
@@ -32,6 +33,8 @@
     faces: FaceSource;
     back: TextureSource | null;
     hovered: InstanceId | null;
+    /** The keyboard-focused card (M5-P4): a dashed focus outline, distinct from the hover lift and the selection. */
+    focused?: InstanceId | null;
     selection: readonly InstanceId[];
     vw: number;
     vh: number;
@@ -90,6 +93,8 @@
       <div
         class="card"
         class:hovered={id === hovered}
+        class:focused={id === focused}
+        data-focused={id === focused ? 'true' : undefined}
         class:selected={selection.includes(id)}
         class:dragging={id === dragging}
         data-testid="hand-card"
@@ -145,6 +150,12 @@
   }
   .card.selected {
     box-shadow: 0 0 0 3px var(--sp-focus, #1f6fd1);
+  }
+  /* Keyboard focus (M5-P4): a dashed outline a little outside the card, like the table's focus ring; hover is a solid
+     edge and selection a solid ring, so the three read apart. Never on the face. */
+  .card.focused {
+    outline: 3px dashed var(--sp-focus, #1f6fd1);
+    outline-offset: 4px;
   }
   .card.dragging {
     opacity: 0.35;

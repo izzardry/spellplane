@@ -49,8 +49,11 @@ test.describe('the focus ring on the table (PLAN M5-P4)', () => {
         return r.x <= card.x && r.y <= card.y && r.x + r.w >= card.x + card.width && r.y + r.h >= card.y + card.height && r.w < card.width * 1.5;
       })
       .toBe(true);
-    // The ring is drawn in the theme's focus colour, which is not the hover outline's.
+    // The ring is drawn in the theme's focus colour, which is not the hover outline's. Paper's selection outline has the
+    // same colour, so the ring is dashed (a selection outline is a solid line in the card shader) and stands off the card.
     expect(await ring.locator('polygon').last().getAttribute('stroke')).toBe('#1f6fd1');
+    expect(await ring.locator('polygon').last().getAttribute('stroke-dasharray')).toMatch(/^\d+(\.\d+)? \d+(\.\d+)?$/);
+    expect(await ring.locator('polygon').first().getAttribute('stroke-dasharray')).toBeNull();
 
     await page.keyboard.press('KeyT');
     await expect.poll(async () => (await state(page)).cards[id]?.tapped).toBe(true);

@@ -22,6 +22,7 @@
     faces,
     back,
     hovered,
+    focused = null,
     vw,
     vh,
     keys,
@@ -46,6 +47,8 @@
     faces: FaceSource;
     back: TextureSource | null;
     hovered: InstanceId | null;
+    /** The keyboard-focused card (M5-P4): a dashed focus outline, distinct from the hover lift and the selection. */
+    focused?: InstanceId | null;
     vw: number;
     vh: number;
     keys: Record<string, string | null>;
@@ -118,6 +121,8 @@
         <div
           class="card"
           class:hovered={c.id === hovered}
+          class:focused={c.id === focused}
+          data-focused={c.id === focused ? 'true' : undefined}
           data-testid="pile-card"
           data-card={c.id}
           role="button"
@@ -219,6 +224,12 @@
   }
   .card.hovered {
     box-shadow: 0 0 0 2px var(--sp-fg, #111);
+    z-index: 2;
+  }
+  /* Keyboard focus (M5-P4): a dashed outline outside the card, distinct from the hover edge. Never on the face. */
+  .card.focused {
+    outline: 3px dashed var(--sp-focus, #1f6fd1);
+    outline-offset: 4px;
     z-index: 2;
   }
   .index {

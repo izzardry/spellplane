@@ -43,7 +43,7 @@ import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type Combat
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, legibleScale, pointInCard, pointInRect, rot2 } from './math';
-import { createFocusRing, FOCUS_RING_GAP_MM } from './focus-ring';
+import { createFocusRing } from './focus-ring';
 import { CardMotion, HeldLift, heldTilt } from './motion';
 import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
@@ -722,7 +722,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const slotOf = new Map(entries.map((e) => [e.item.card ?? '', e]));
     const foilPhase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
     foilsDrawn.clear();
-    let focusTarget: { card: InstanceId; points: { x: number; y: number }[] } | null = null;
+    let focusTarget: { card: InstanceId; corners: { x: number; y: number }[] } | null = null;
     for (const rc of order) {
       const pose = rc.motion.pose;
       if (rc.motion.flipSwapped) {
@@ -741,7 +741,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const sel = selection.has(rc.id);
       if (view.focused === rc.id) {
         const z = rc.place.z + rc.lift.value;
-        focusTarget = { card: rc.id, points: cardCorners(pose, CARD_W + 2 * FOCUS_RING_GAP_MM, CARD_H + 2 * FOCUS_RING_GAP_MM).map((p) => rig.tableToScreen(p, z, cam)) };
+        // The ring stands off these corners by a gap that keeps it apart from a selection outline (focus-ring.ts).
+        focusTarget = { card: rc.id, corners: cardCorners(pose).map((p) => rig.tableToScreen(p, z, cam)) };
       }
       const hov = view.hovered === rc.id || hovered === rc.id || lit.has(rc.id);
       const entry = rc.place.kind === 'stack' && !dragging ? slotOf.get(rc.id) : undefined;

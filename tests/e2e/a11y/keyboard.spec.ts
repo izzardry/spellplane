@@ -27,6 +27,14 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     expect(await active(page)).toBe('a11y-mirror');
     await expect(page.getByTestId('a11y-mirror')).toHaveAttribute('data-focus-text', 'Spark Jolt. Your hand, 1 of 4');
     await expect(page.getByTestId('a11y-focus-chip')).toBeVisible();
+    // The focus is spoken once, through the live region: the mirror's description is the fixed key hint, not the card.
+    const describedBy = (await page.getByTestId('a11y-mirror').getAttribute('aria-describedby'))!;
+    await expect(page.locator(`[id="${describedBy}"]`)).not.toContainText('Spark Jolt');
+    await expect.poll(async () => (await announcements(page)).filter((t) => t.includes('Spark Jolt. Your hand, 1 of 4'))).toHaveLength(1);
+    // In the hand fan the focused card wears a focus outline of its own, apart from the hover edge.
+    await expect(page.locator('[data-testid="hand-card"][data-card="h1"]')).toHaveAttribute('data-focused', 'true');
+    expect(await page.locator('[data-testid="hand-card"][data-card="h1"]').evaluate((el) => getComputedStyle(el).outlineStyle)).toBe('dashed');
+    expect(await page.locator('[data-testid="hand-card"][data-focused]').count()).toBe(1);
     await page.keyboard.press('ArrowRight');
     await expect.poll(() => focus(page)).toEqual({ zone: 'hand:s0', card: 'h2' });
     await page.keyboard.press('ArrowLeft');
@@ -90,6 +98,20 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     await expect.poll(() => focus(page)).toBeNull();
     await page.keyboard.press('KeyT');
     await expect.poll(async () => (await drafts(page)).at(-1)).toEqual({ type: 'tap', card: 'dfc', tapped: true });
+  });
+
+  test('a focus on a zone without a focusable card gives the keys no card, even under a resting pointer', async ({ page }) => {
+    await openHud(page);
+    await hoverCard(page, 'bf1');
+    // hand:s0 → battlefield:s0 → library:s0, the pointer resting on bf1 throughout.
+    for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
+    await expect.poll(() => focus(page)).toEqual({ zone: 'library:s0', card: null });
+    await expect.poll(async () => (await announcements(page)).at(-1)).toBe('Your library, 3 cards, face down');
+    // T, G and E would act on bf1 if the resting pointer counted: nothing is tapped or moved.
+    for (const key of ['KeyT', 'KeyG', 'KeyE']) await page.keyboard.press(key);
+    await page.waitForTimeout(300);
+    expect((await drafts(page)).filter((d) => d.card === 'bf1')).toEqual([]);
+    expect((await ui<{ cards: Record<string, { zone: string; tapped: boolean }> }>(page, 'state')).cards.bf1).toMatchObject({ zone: 'battlefield:s0', tapped: false });
   });
 
   test('arrows in a text field stay in the field; Tab onto the table puts focus on the first card', async ({ page }) => {

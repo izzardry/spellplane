@@ -5,7 +5,8 @@
   reader passes the arrow and card keys through to the page), described by the focused card and listing the focused
   zone's cards with the focused one marked. Sighted keyboard users see a chip naming the focus; the scene draws the
   ring around the card (ViewState.focused). The HUD moves the focus (ui/a11y/index.ts moveFocus) and speaks it through
-  the live region; this element only shows it.
+  the live region, the one channel that speaks it: the element's description is the fixed key hint, never the focused
+  card, so a screen reader does not read each move twice (once as a changed description, once from the live region).
 -->
 <script lang="ts">
   let {
@@ -38,13 +39,13 @@
   tabindex="0"
   aria-roledescription="card table"
   aria-label="Table"
-  aria-describedby="sp-a11y-focus"
+  aria-describedby="sp-a11y-hint"
   data-testid="a11y-mirror"
   data-focus-text={text ?? ''}
   onfocus={onfocusin}
 >
   <span class="chip" aria-hidden="true" data-testid="a11y-focus-chip">{text ?? 'Table: arrow keys move between cards'}</span>
-  <span class="sr-only" id="sp-a11y-focus">{text ?? HINT}</span>
+  <span class="sr-only" id="sp-a11y-hint" data-testid="a11y-mirror-hint">{HINT}</span>
   {#if zone !== null && cards.length > 0}
     <ol class="sr-only" aria-label={zone} data-testid="a11y-mirror-cards">
       {#each cards as c (c.id)}

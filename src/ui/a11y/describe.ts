@@ -7,8 +7,8 @@
 import { parseZoneId } from '../../core/ids';
 import type { CardInstance, InstanceId, SeatId, TableState, ZoneId } from '../../core/types';
 import type { GameDefinition } from '../../games/types';
-import type { CardFocus, FocusOptions } from './index';
-import { focusCards } from './index';
+import { focusCards, type FocusOptions } from './focus';
+import type { CardFocus } from './index';
 
 /** A zone's name as `viewer` hears it: "Your graveyard", "Ben's battlefield", "Stack". */
 export function zoneLabel(state: TableState, game: GameDefinition, viewer: SeatId | null, zone: ZoneId): string {

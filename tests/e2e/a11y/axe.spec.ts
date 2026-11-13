@@ -5,9 +5,20 @@
  * default theme (Paper), WCAG 2.x A and AA rules and axe's best practices; serious and critical findings fail.
  */
 import { expect, test } from '@playwright/test';
+import { freshProfile, open, startPageLoaded } from '../lobby/helpers';
 import { seriousViolations, sealedBuilder, sceneReady, soloTable, twoInLobby } from './helpers';
 
 test.describe('axe: no serious or critical violations (PLAN M5-P4)', () => {
+  test('the start page (create or join a table), empty and with a nickname problem', async ({ page }, info) => {
+    await open(page, '/lobby', { profile: freshProfile(info, 'axe'), transport: 'local' });
+    await expect(page.getByTestId('start-page')).toBeVisible();
+    await startPageLoaded(page);
+    expect(await seriousViolations(page)).toEqual([]);
+    await page.getByTestId('nickname').fill('   ');
+    await page.getByTestId('join-link').fill('not a link');
+    expect(await seriousViolations(page)).toEqual([]);
+  });
+
   test('the lobby, with two players seated', async ({ browser }, info) => {
     test.setTimeout(120_000);
     const { context, a, b } = await twoInLobby(browser, info);

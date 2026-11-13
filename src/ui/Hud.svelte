@@ -86,8 +86,11 @@
   const hovered = $derived(hudHover ?? sceneHover);
   /** Keyboard card focus (DESIGN "Input and interaction design", Accessibility; PLAN M5-P4, ui/a11y): arrow keys move it. */
   let focus = $state.raw<CardFocus | null>(null);
-  /** The card the keymap acts on: the keyboard-focused card, else the hovered one. */
-  const keyTarget = $derived(focus?.card ?? hovered);
+  /**
+   * The card the keymap acts on: with a keyboard focus, its card, which is none on a zone without a focusable card (a
+   * library, an empty zone), so a resting pointer never acts behind the focus; without one, the hovered card.
+   */
+  const keyTarget = $derived(focus ? focus.card : hovered);
   let selection = $state.raw<InstanceId[]>([]);
   let pings = $state.raw<ActivePing[]>([]);
   let openPile = $state<string | null>(null);
@@ -1088,6 +1091,7 @@
       {faces}
       {back}
       hovered={keyTarget}
+      focused={focus?.card ?? null}
       {selection}
       {vw}
       {vh}
@@ -1118,6 +1122,7 @@
         {faces}
         {back}
         hovered={keyTarget}
+        focused={focus?.card ?? null}
         {vw}
         {vh}
         keys={{ draw: keyOf('draw'), drawN: keyOf('drawN'), shuffle: keyOf('shuffle'), mulligan: keyOf('mulligan') }}
