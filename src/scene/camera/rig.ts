@@ -22,10 +22,11 @@ import {
   egoFitNav,
   egoFrameDist,
   egoLimitsFor,
-  egoNavForAnchor,
+  egoLimitsWith,
   egoPanNav,
   egoPitchNav,
   egoPose,
+  egoSwitchNav,
   egoZoomNav,
   type EgoNav,
   type TableSize,
@@ -127,8 +128,17 @@ export class TableRig {
     return poseAt({ x: v.cx, y: v.cy }, v.dist, this.birdPitch(), this.bird.fovDeg, this.angle);
   }
 
+  /**
+   * The ego limits gestures and poses are clamped to: the rig's limits grown to include navigation `n` (the current one
+   * by default). A switch may land beyond the limits to hold the cursor's table point; from there a gesture keeps it or
+   * brings it back toward the limits, never further out, so nothing jumps (egoLimitsWith; DECISIONS [M4-P1 review]).
+   */
+  egoReach(n: EgoNav = this.nav): EgoRigParams {
+    return egoLimitsWith(this.ego, n);
+  }
+
   egoPoseOf(nav: EgoNav = this.nav): CameraPose {
-    return egoPose(this.ego, this.table, this.angle, nav, this.lateral);
+    return egoPose(this.egoReach(), this.table, this.angle, nav, this.lateral);
   }
 
   /** A rig's own pose, without the blend. */
@@ -298,7 +308,7 @@ export class TableRig {
     if (a) {
       const t = a.dur > 0 ? clamp((now - a.start) / a.dur, 0, 1) : 1;
       const e = easeBlend(t);
-      this.nav = clampEgoNav(this.ego, {
+      this.nav = clampEgoNav(this.egoReach(a.from), {
         lean: a.from.lean + (a.to.lean - a.from.lean) * e,
         dolly: a.from.dolly + (a.to.dolly - a.from.dolly) * e,
         pitchDeg: a.from.pitchDeg + (a.to.pitchDeg - a.from.pitchDeg) * e,
@@ -312,7 +322,7 @@ export class TableRig {
     const decay = Math.exp(-dtMs / tau);
     const travel = tau * (1 - decay);
     const before = this.nav;
-    this.nav = clampEgoNav(this.ego, { ...before, lean: before.lean + this.egoVel.lean * travel, dolly: before.dolly + this.egoVel.dolly * travel });
+    this.nav = clampEgoNav(this.egoReach(before), { ...before, lean: before.lean + this.egoVel.lean * travel, dolly: before.dolly + this.egoVel.dolly * travel });
     this.egoVel = { lean: this.egoVel.lean * decay, dolly: this.egoVel.dolly * decay };
     const speedPx = Math.hypot(this.egoVel.lean, this.egoVel.dolly) * this.pxPerMm();
     if (speedPx < INERTIA_STOP_PX_PER_MS || (this.nav.lean === before.lean && this.nav.dolly === before.dolly)) this.egoVel = { lean: 0, dolly: 0 };
@@ -326,7 +336,7 @@ export class TableRig {
     if (this.sw) return;
     if (this.active === 'ego') {
       this.egoAnim = null;
-      this.nav = egoPanNav(this.ego, this.table, this.angle, this.lateral, this.viewport, this.nav, dx, dy);
+      this.nav = egoPanNav(this.egoReach(), this.table, this.angle, this.lateral, this.viewport, this.nav, dx, dy);
       return;
     }
     if (this.tilt === 0) {
@@ -344,7 +354,7 @@ export class TableRig {
     if (this.sw) return;
     if (this.active === 'ego') {
       this.stop();
-      this.nav = egoZoomNav(this.ego, this.table, this.angle, this.lateral, this.viewport, this.nav, { x, y }, factor);
+      this.nav = egoZoomNav(this.egoReach(), this.table, this.angle, this.lateral, this.viewport, this.nav, { x, y }, factor);
       return;
     }
     if (this.tilt === 0) {
@@ -359,6 +369,13 @@ export class TableRig {
     let t = solve(a, { x, y });
     const hw = this.table.w / 2;
     const hd = this.table.d / 2;
+    // A centre a switch left beyond the edge: the cursor's table point holds (BirdseyeRig.zoomAt).
+    const kept = !b.onTable({ x: b.view.cx, y: b.view.cy }) && b.onTable(a);
+    if (kept && t) {
+      const v = { cx: t.x, cy: t.y, dist, angle: b.view.angle };
+      b.view = b.clampView(v, v);
+      return;
+    }
     if (t && (Math.abs(t.x) > hw || Math.abs(t.y) > hd)) {
       // Over the surround near an edge: pivot on the nearest table point, as the straight-down rig does.
       const q = { x: clamp(a.x, -hw, hw), y: clamp(a.y, -hd, hd) };
@@ -384,7 +401,7 @@ export class TableRig {
     if (this.sw || this.active !== 'ego') return;
     this.egoAnim = null;
     this.egoVel = { lean: 0, dolly: 0 };
-    this.nav = egoPitchNav(this.ego, this.nav, deg);
+    this.nav = egoPitchNav(this.egoReach(), this.nav, deg);
   }
 
   // --- Moves (eased over `dur` ms; 0 cuts) ------------------------------------------------------------------------
@@ -407,7 +424,8 @@ export class TableRig {
     const fromRig = this.active;
     this.stop();
     if (rig === 'ego') {
-      this.nav = table ? egoNavForAnchor(this.ego, this.table, this.angle, this.lateral, vp, table, screen, 0).nav : defaultEgoNav(this.ego);
+      // Within the limits when they can hold the cursor's table point, else beyond them (egoSwitchNav).
+      this.nav = table ? egoSwitchNav(this.ego, this.table, this.angle, this.lateral, vp, table, screen).nav : defaultEgoNav(this.ego);
     } else if (table) {
       // Back to the bird's-eye zoom the viewer left, centred so the anchor stays put.
       // When that centre would leave the table (a table point the ego view shows near a screen edge, from a seat
@@ -548,7 +566,7 @@ export class TableRig {
   /** A theme's camera defaults: ego parameter overrides and bird's-eye tilt (the navigation is re-clamped). */
   setTheme(ego: Partial<EgoRigParams> | undefined, tiltDeg: number | undefined): void {
     this.egoParams = { ...DEFAULT_EGO_RIG, ...(ego ?? {}) };
-    this.nav = clampEgoNav(this.ego, this.nav);
+    this.nav = clampEgoNav(this.egoReach(), this.nav);
     this.tilt = clamp(tiltDeg ?? 0, 0, MAX_BIRDSEYE_TILT_DEG);
   }
 }

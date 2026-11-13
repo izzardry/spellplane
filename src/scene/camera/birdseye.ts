@@ -210,10 +210,17 @@ export class BirdseyeRig {
     return { x: this.viewport.w / 2 + right * k, y: this.viewport.h / 2 - up * k };
   }
 
+  /** Whether a table point lies on the table (not over the surround). */
+  onTable(p: TablePoint): boolean {
+    return Math.abs(p.x) <= this.table.w / 2 && Math.abs(p.y) <= this.table.d / 2;
+  }
+
   /**
    * Zoom by `factor` (> 1 zooms in) keeping the table point under (x, y) fixed, within the zoom clamps. When that
    * would put the view centre off the table (cursor over the surround near an edge), the pivot is the nearest table
-   * point instead, so the clamp never makes the table jump under the cursor.
+   * point instead, so the clamp never makes the table jump under the cursor. A centre a rig switch left beyond the
+   * table edge (clampView's `keep`) is not re-clamped while the cursor is over the table: zooming out there moves it
+   * further out with the cursor's point held, as zooming in brings it back (DECISIONS [M4-P1 review]).
    */
   zoomAt(x: number, y: number, factor: number): void {
     this.stop();
@@ -222,6 +229,10 @@ export class BirdseyeRig {
     const around = (p: TablePoint): CameraView => ({ cx: p.x + (this.view.cx - p.x) * k, cy: p.y + (this.view.cy - p.y) * k, dist, angle: this.view.angle });
     const q = this.screenToTable(x, y);
     let v = around(q);
+    if (!this.onTable({ x: this.view.cx, y: this.view.cy }) && this.onTable(q)) {
+      this.view = this.clampView(v, v);
+      return;
+    }
     const hw = this.table.w / 2;
     const hd = this.table.d / 2;
     if (Math.abs(v.cx) > hw || Math.abs(v.cy) > hd) v = around({ x: clamp(q.x, -hw, hw), y: clamp(q.y, -hd, hd) });

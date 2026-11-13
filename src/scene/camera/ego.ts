@@ -66,6 +66,41 @@ export function maxDollyAt(params: EgoRigParams, pitchDeg: number): number {
   return Math.max(0, Math.min(params.maxDollyMm, byHeight));
 }
 
+/**
+ * Pitch bounds no ego pose ever leaves, a rig switch's landing pose included: the camera always looks down at the table
+ * and never straight down (bird's-eye is the rig for that). The rig's own limits (25°..60°) lie inside.
+ */
+export const EGO_PITCH_HARD = { min: 5, max: 85 } as const;
+
+/**
+ * The rig's limits grown to include navigation `n`, value by value (lean, dolly, pitch), never past EGO_PITCH_HARD or
+ * the minimum height. A switch from bird's-eye may land beyond the limits to keep the cursor's table point under the
+ * cursor; clamping later gestures to the limits grown to the current navigation lets them keep it there or bring it
+ * back toward the limits, never push it further out and never jump (DECISIONS [M4-P1 review]).
+ */
+export function egoLimitsWith(params: EgoRigParams, n: EgoNav): EgoRigParams {
+  const lo = Math.min(params.minPitchDeg, params.maxPitchDeg);
+  const hi = Math.max(params.minPitchDeg, params.maxPitchDeg);
+  const pitch = Number.isFinite(n.pitchDeg) ? clamp(n.pitchDeg, EGO_PITCH_HARD.min, EGO_PITCH_HARD.max) : params.pitchDeg;
+  return {
+    ...params,
+    minPitchDeg: Math.min(lo, pitch),
+    maxPitchDeg: Math.max(hi, pitch),
+    leanMm: Math.max(Math.abs(params.leanMm), Number.isFinite(n.lean) ? Math.abs(n.lean) : 0),
+    maxDollyMm: Math.max(params.maxDollyMm, Number.isFinite(n.dolly) ? n.dolly : 0),
+  };
+}
+
+/**
+ * How far a switch to ego may reach beyond the rig's limits, tried in order when the limits cannot hold the cursor's
+ * table point: first the pitch alone (EGO_PITCH_HARD), then also the lean and the dolly (times the factor). The minimum
+ * height and "never behind the seat" (dolly ≥ 0) always hold.
+ */
+const SWITCH_REACH = [
+  { pitch: true, lean: 1, dolly: 1 },
+  { pitch: true, lean: 2, dolly: 2 },
+] as const;
+
 /** Clamp a navigation to the rig's limits (lean, pitch, dolly never backward and never below the minimum height). */
 export function clampEgoNav(params: EgoRigParams, nav: EgoNav): EgoNav {
   const lo = Math.min(params.minPitchDeg, params.maxPitchDeg);
@@ -178,8 +213,9 @@ const ANCHOR_DOLLY_STEPS = 28;
  * stays under the cursor"). Two equations, three unknowns (lean, dolly, pitch): the solve prefers the seat and moves
  * forward only as far as it must. At each dolly from the seat (`dolly`, normally 0) up to the rig's limit it solves
  * lean and pitch, then lean and dolly at the pitch reached (for solutions with the pitch at a limit), and stops at the
- * first that holds the point. When the limits allow no exact solution the closest is returned and the blend carries
- * the difference (scene/camera/blend.ts; DECISIONS [M4-P1]).
+ * first that holds the point. When the limits allow no exact solution the closest is returned; a switch then reaches
+ * beyond the limits (egoSwitchNav), and only what that cannot hold either (a cursor over the surround) is carried by
+ * the blend (scene/camera/blend.ts; DECISIONS [M4-P1], [M4-P1 review]).
  */
 export function egoNavForAnchor(params: EgoRigParams, table: TableSize, angleDeg: number, lateral: number, vp: Viewport, a: TablePoint, s: ScreenPoint, dolly = 0): { nav: EgoNav; err: number } {
   // Starting guess at a dolly: lean straight at `a`, and the pitch that puts `a` on the view row of `s` from there.
@@ -216,6 +252,35 @@ export function egoNavForAnchor(params: EgoRigParams, table: TableSize, angleDeg
       if (!here || lp.err < here.err) here = lp;
     }
     warm = here ? here.nav : warm;
+  }
+  return best;
+}
+
+/**
+ * The ego navigation a switch from bird's-eye lands on, showing table point `a` at screen point `s` (DESIGN "Camera and
+ * navigation", Switching: "the point under the cursor stays under the cursor"). Within the rig's limits when they
+ * allow it (egoNavForAnchor). From the seat they cannot show every table point everywhere on screen: within 25°..60°
+ * the viewer's own near cards never show at the top of the screen, nor the far side at the bottom, and a point near
+ * one side edge never at the opposite screen edge. Then the landing pose reaches beyond the limits (SWITCH_REACH):
+ * steeper or flatter, further aside, further forward, never below the minimum height or behind the seat; for table
+ * points only (a cursor over the surround is outside the guarantee). The rig keeps such a navigation until gestures
+ * bring it back (egoLimitsWith; DECISIONS [M4-P1 review]).
+ */
+export function egoSwitchNav(params: EgoRigParams, table: TableSize, angleDeg: number, lateral: number, vp: Viewport, a: TablePoint, s: ScreenPoint): { nav: EgoNav; err: number } {
+  let best = egoNavForAnchor(params, table, angleDeg, lateral, vp, a, s, 0);
+  // A point over the surround stays outside the guarantee (DECISIONS [M4-P1]): no landing beyond the limits for it.
+  if (Math.abs(a.x) > table.w / 2 || Math.abs(a.y) > table.d / 2) return best;
+  for (const reach of SWITCH_REACH) {
+    if (best.err <= ANCHOR_TOL_PX) break;
+    const wide: EgoRigParams = {
+      ...params,
+      minPitchDeg: reach.pitch ? EGO_PITCH_HARD.min : params.minPitchDeg,
+      maxPitchDeg: reach.pitch ? EGO_PITCH_HARD.max : params.maxPitchDeg,
+      leanMm: Math.abs(params.leanMm) * reach.lean,
+      maxDollyMm: params.maxDollyMm * reach.dolly,
+    };
+    const r = egoNavForAnchor(wide, table, angleDeg, lateral, vp, a, s, 0);
+    if (r.err < best.err) best = r;
   }
   return best;
 }
