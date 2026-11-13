@@ -507,12 +507,12 @@ for (const theme of THEME_IDS) {
           margin: 6,
           region: async () => [await avatarRect(a, 's0')],
           signal: async () => {
-            await a.keyboard.down('v');
+            await a.keyboard.down('Control');
             await expect(avatar).toHaveAttribute(probe.attribute, probe.on);
           },
           ready: () => frames(a, 4),
         });
-        await a.keyboard.up('v');
+        await a.keyboard.up('Control');
         await expect(avatar).toHaveAttribute(probe.attribute, probe.off);
       } finally {
         await close();

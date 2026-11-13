@@ -169,8 +169,8 @@ test.describe('captions with the fake engine', () => {
     const input = a.getByTestId('note-input');
     await expect(input).toBeFocused();
     await input.fill('kicked');
-    // In a text field the talk key types; the talk mouse button (here the back button, which Playwright's mouse cannot
-    // press, so the event is dispatched) held over the field dictates into it.
+    // The talk mouse button (here the back button, which Playwright's mouse cannot press, so the event is dispatched)
+    // held over the field dictates into it (Ctrl held alone would too; tests/unit/voice/ctrl-key.test.ts).
     await input.dispatchEvent('mousedown', { button: 3, bubbles: true });
     expect(await say(a, 'gets plus two', false)).toBe(true);
     await expect(input).toHaveValue('kicked gets plus two');

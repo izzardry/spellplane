@@ -42,7 +42,7 @@ import { LAYER, cameraTable, compareSort, displayedRot, dropTargets, faceOf, fit
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
-import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, legibleScale, pointInCard, pointInRect, rot2 } from './math';
+import { CARD_H, CARD_W, rectPoint, cardCorners, cardHalfExtents, deltaDeg, legibleScale, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion, HeldLift, heldTilt } from './motion';
 import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { badgeItems, drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackCollapsed, stackEntries, stackSlotPose, type DebugStackEntry, type StackEntry } from './stack';
@@ -1857,7 +1857,17 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         const avatar = { x: sl.zones.avatar.x, y: sl.zones.avatar.y };
         const t = worldToScreen({ ...territory, z: 0 });
         const a = worldToScreen({ ...avatar, z: 0 });
-        return [{ seat: seat.id, index: seat.index, angle: sl.angle, territory, avatar, screen: t && a ? { territory: t, avatar: a } : null }];
+        // Corners of the territory, the pile column and the command area on screen (M5-P7's ego framing).
+        const cornersOf = (r: { x: number; y: number; w: number; d: number; rot: number }) =>
+          [
+            [-1, -1],
+            [1, -1],
+            [1, 1],
+            [-1, 1],
+          ].map(([u, v]) => worldToScreen({ ...rectPoint(r, (u! * r.w) / 2, (v! * r.d) / 2), z: 0 }));
+        const pile = (p: Pose) => cornersOf({ ...p, w: CARD_W, d: CARD_H });
+        const zones = { territory: cornersOf(sl.territory), library: pile(sl.zones.library), graveyard: pile(sl.zones.graveyard), exile: pile(sl.zones.exile), command: cornersOf(sl.zones.command) };
+        return [{ seat: seat.id, index: seat.index, angle: sl.angle, territory, avatar, screen: t && a ? { territory: t, avatar: a } : null, zones }];
       });
     return { format: layout.format, table: { ...layout.table }, viewerAngle: viewerAngle(st, layout, viewerSeat), camera: { x: v.x, y: v.y, dist: v.dist }, seats };
   }

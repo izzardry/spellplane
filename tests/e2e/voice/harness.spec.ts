@@ -3,7 +3,8 @@
  * page's real microphone, over a fake four-seat Two-Headed Giant session in which you are Anna, teamed with Ben against
  * Cara and Dan, and a fake transport that records the stream added to each connection).
  *
- * DESIGN "Chat and voice": push-to-talk opens the mic while the talk key (hold V) is held; "The talk key is released on
+ * DESIGN "Chat and voice": push-to-talk opens the mic while the talk key is held (Ctrl since M5: PLAN Milestone 5, owner
+ * decisions, Talk key; it opens after Ctrl was held alone for about 200 ms, so the tests poll for it); "The talk key is released on
  * window blur and ignored while a text field has focus"; the turn mic opens for the whole own turn ("In Two-Headed Giant
  * the active team's mics open"); "Shift plus the talk key sends audio only to the teammate"; a speaking ring; personal
  * volume and mute per player. "Input and interaction design": no table hotkey fires while the chat has focus. PLAN:
@@ -65,9 +66,9 @@ test.describe('voice on Chromium fake media (PLAN M3-P3)', () => {
     await openVoice(page);
     // Before joining no audio exists, and the key opens nothing.
     await toTable(page);
-    await page.keyboard.down('v');
+    await page.keyboard.down('Control');
     expect(await vh(page, 'sent')).toEqual([]);
-    await page.keyboard.up('v');
+    await page.keyboard.up('Control');
 
     await joinVoice(page);
     // The real microphone track: one live audio track per connection, each its own track.
@@ -75,26 +76,26 @@ test.describe('voice on Chromium fake media (PLAN M3-P3)', () => {
     expect(sent.map((s) => s.peer).sort()).toEqual(['t-ben', 't-cara', 't-dan']);
 
     await toTable(page);
-    await page.keyboard.down('v');
+    await page.keyboard.down('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
     await expect(page.getByTestId('talk-indicator')).toHaveAttribute('data-state', 'live');
-    await page.keyboard.up('v');
+    await page.keyboard.up('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
     await expect(page.getByTestId('talk-indicator')).toHaveAttribute('data-state', 'idle');
 
     // Held again, then the window loses focus: the key counts as released, and coming back does not reopen it.
-    await page.keyboard.down('v');
+    await page.keyboard.down('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
     await blurWindow(page);
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
     await focusWindow(page);
     expect(await sentEnabled(page)).toEqual(ALL_OFF);
-    await page.keyboard.up('v');
+    await page.keyboard.up('Control');
     expect(await sentEnabled(page)).toEqual(ALL_OFF);
     // A fresh press works again.
-    await page.keyboard.down('v');
+    await page.keyboard.down('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
-    await page.keyboard.up('v');
+    await page.keyboard.up('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
     // The debug hook reports the same per connection.
     const tracks = await page.evaluate(() => window.__spellplane!.voice!.tracks());
@@ -125,26 +126,26 @@ test.describe('voice on Chromium fake media (PLAN M3-P3)', () => {
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
     // Outside the own turn it is push-to-talk.
     await toTable(page);
-    await page.keyboard.down('v');
+    await page.keyboard.down('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
-    await page.keyboard.up('v');
+    await page.keyboard.up('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
     // The setting persists.
     expect(await vh<{ name: string; value: { gate?: string } }[]>(page, 'settingsWrites')).toContainEqual({ name: 'talk', value: expect.objectContaining({ gate: 'turn' }) });
   });
 
-  test('team talk (Shift+V) enables the track only on the teammate’s connection', async ({ page }) => {
+  test('team talk (Shift, then Ctrl) enables the track only on the teammate’s connection', async ({ page }) => {
     await openVoice(page);
     await joinVoice(page);
     await toTable(page);
     await page.keyboard.down('Shift');
-    await page.keyboard.down('KeyV');
+    await page.keyboard.down('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(TEAM_ONLY);
     await expect(page.getByTestId('talk-indicator')).toHaveAttribute('data-state', 'team');
     // Team talk is not announced on the broadcast speaking presence.
     expect(await vh<boolean[]>(page, 'announced')).not.toContain(true);
-    // Releasing V while Shift is still down closes it.
-    await page.keyboard.up('KeyV');
+    // Releasing Ctrl while Shift is still down closes it.
+    await page.keyboard.up('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
     await page.keyboard.up('Shift');
 
@@ -152,12 +153,12 @@ test.describe('voice on Chromium fake media (PLAN M3-P3)', () => {
     await vh(page, 'setTalk', { gate: 'open' });
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
     await page.keyboard.down('Shift');
-    await page.keyboard.down('KeyV');
+    await page.keyboard.down('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(TEAM_ONLY);
     // Window blur releases team talk too.
     await blurWindow(page);
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
-    await page.keyboard.up('KeyV');
+    await page.keyboard.up('Control');
     await page.keyboard.up('Shift');
     // M mutes the open mic.
     await focusWindow(page);
@@ -166,23 +167,33 @@ test.describe('voice on Chromium fake media (PLAN M3-P3)', () => {
     await expect(page.getByTestId('talk-indicator')).toHaveAttribute('data-state', 'muted');
   });
 
-  test('a talk key held when the chat takes focus is released, and the key types into the chat without opening the mic', async ({ page }) => {
+  test('a talk key held when the chat takes focus is released, and typing into the chat never opens the mic', async ({ page }) => {
     await openVoice(page);
     await joinVoice(page);
+    // Open the chat once (Enter) and come back to the table, so its field exists.
     await toTable(page);
-    await page.keyboard.down('v');
-    await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
-    // Enter focuses the chat while V is still held: the mic closes.
     await page.keyboard.press('Enter');
-    await expect(page.getByTestId('chat-input')).toBeFocused();
+    const chat = page.getByTestId('chat-input');
+    await expect(chat).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(chat).not.toBeFocused();
+    await toTable(page);
+    await page.keyboard.down('Control');
+    await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
+    // The chat takes focus while Ctrl is still held: the mic closes.
+    await chat.focus();
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
-    await page.keyboard.up('v');
+    await page.keyboard.up('Control');
     await page.keyboard.type('vivid view');
     await page.keyboard.down('Shift');
     await page.keyboard.press('KeyV');
     await page.keyboard.up('Shift');
-    await expect(page.getByTestId('chat-input')).toHaveValue('vivid viewV');
+    await expect(chat).toHaveValue('vivid viewV');
+    // Ctrl held alone in the chat opens nothing either.
+    await page.keyboard.down('Control');
+    await page.waitForTimeout(500);
     expect(await sentEnabled(page)).toEqual(ALL_OFF);
+    await page.keyboard.up('Control');
     await expect(page.getByTestId('talk-indicator')).toHaveAttribute('data-state', 'idle');
   });
 
@@ -220,16 +231,16 @@ test.describe('voice on Chromium fake media (PLAN M3-P3)', () => {
     await expect.poll(async () => (await vh<SentStream[]>(page, 'sent')).filter((s) => s.removed).length).toBe(3);
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
     expect(await vh<{ name: string; value: unknown }[]>(page, 'settingsWrites')).toContainEqual({ name: 'micDevice', value: id });
-    // The picker lets go of focus after a choice (a focused select would swallow V): the talk key works at once.
+    // The picker lets go of focus after a choice (a focused select counts as a text field): the talk key works at once.
     await expect(picker).not.toBeFocused();
-    await page.keyboard.down('v');
+    await page.keyboard.down('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
-    await page.keyboard.up('v');
+    await page.keyboard.up('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_OFF);
     await toTable(page);
-    await page.keyboard.down('v');
+    await page.keyboard.down('Control');
     await expect.poll(() => sentEnabled(page)).toEqual(ALL_ON);
-    await page.keyboard.up('v');
+    await page.keyboard.up('Control');
   });
 });
 
@@ -238,12 +249,12 @@ test('no talk key event leaks into chat while typing, and typing never opens the
   // Dictation on (it needs no microphone): a talk key that leaked from a text field would start dictating.
   await vh(page, 'setTalk', { dictation: true });
   await toTable(page);
-  await page.keyboard.down('v');
+  await page.keyboard.down('Control');
   await expect.poll(() => page.evaluate(() => window.__spellplane!.voice!.talk().dictation)).toBe('caption');
-  await page.keyboard.up('v');
+  await page.keyboard.up('Control');
   await expect.poll(() => page.evaluate(() => window.__spellplane!.voice!.talk().dictation)).toBe('off');
 
-  // In the chat: V and Shift+V type, nothing talks.
+  // In the chat: V and Shift+V type, Ctrl held alone does nothing, nothing talks.
   await page.keyboard.press('Enter');
   const chat = page.getByTestId('chat-input');
   await expect(chat).toBeFocused();
@@ -252,9 +263,12 @@ test('no talk key event leaks into chat while typing, and typing never opens the
   await page.keyboard.type('oice ');
   await page.keyboard.down('Shift');
   await page.keyboard.down('KeyV');
-  expect(await page.evaluate(() => window.__spellplane!.voice!.talk())).toEqual({ audio: 'off', dictation: 'off', reason: null, muted: false });
   await page.keyboard.up('KeyV');
   await page.keyboard.up('Shift');
+  await page.keyboard.down('Control');
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => window.__spellplane!.voice!.talk())).toEqual({ audio: 'off', dictation: 'off', reason: null, muted: false });
+  await page.keyboard.up('Control');
   await page.keyboard.press('m');
   await expect(chat).toHaveValue('voice Vm');
   // M typed into the chat did not mute.
@@ -263,8 +277,10 @@ test('no talk key event leaks into chat while typing, and typing never opens the
 
   // Another text field outside the HUD (a search box) is no different.
   await page.getByTestId('harness-text').click();
-  await page.keyboard.down('v');
+  await page.keyboard.down('Control');
+  await page.waitForTimeout(500);
   expect(await page.evaluate(() => window.__spellplane!.voice!.talk().dictation)).toBe('off');
-  await page.keyboard.up('v');
+  await page.keyboard.up('Control');
+  await page.keyboard.type('v');
   await expect(page.getByTestId('harness-text')).toHaveValue('v');
 });
