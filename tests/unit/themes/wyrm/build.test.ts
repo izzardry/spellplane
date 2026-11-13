@@ -41,7 +41,7 @@ function fakePost() {
   return { post, passes, log };
 }
 
-function setup(opts: { quality?: QualityId; reducedMotion?: boolean; post?: boolean; table?: { w: number; d: number } } = {}) {
+function setup(opts: { quality?: QualityId; reducedMotion?: boolean; post?: boolean; table?: { w: number; d: number }; maxAnisotropy?: number } = {}) {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(45, 1440 / 900, 1, 20000);
   // Looking down at the table centre from the near edge (an ego-like view).
@@ -50,7 +50,8 @@ function setup(opts: { quality?: QualityId; reducedMotion?: boolean; post?: bool
   camera.updateMatrixWorld();
   const p = fakePost();
   const ctx: SceneContext = {
-    renderer: fakeRenderer(),
+    // Not uploaded yet (no GL texture), no anisotropy extension: the slab keeps the level's value for the first upload.
+    renderer: Object.assign(fakeRenderer({ maxAnisotropy: opts.maxAnisotropy ?? 16 }), { properties: { get: () => ({}) }, extensions: { has: () => false } }),
     scene,
     camera,
     table: opts.table ?? { w: 1400, d: 1100 },
@@ -170,6 +171,21 @@ describe('Wyrm build', () => {
     expect(passes.has(SHIMMER_PASS_ID)).toBe(true);
     // The same objects: a quality change is not a rebuild.
     expect(find(scene, 'wyrm-embers')).toBe(embers);
+    inst.dispose();
+  });
+
+  it('reports and applies the anisotropy in effect: the level’s, clamped to the GPU maximum, without re-uploading the maps', () => {
+    const { scene, inst } = setup({ maxAnisotropy: 2 });
+    const top = ((find(scene, 'wyrm-slab') as THREE.Mesh).material as THREE.Material[])[2] as THREE.MeshStandardMaterial;
+    const maps = [top.map!, top.normalMap!, top.aoMap!, top.emissiveMap!];
+    expect(wyrmInstances().at(-1)!.slab.anisotropy).toBe(2);
+    for (const m of maps) expect(m.anisotropy).toBe(2);
+    const versions = maps.map((m) => m.version);
+    inst.setQuality!(qualityLevel(wyrm, 'low'));
+    expect(wyrmInstances().at(-1)!.slab.anisotropy).toBe(1);
+    for (const m of maps) expect(m.anisotropy).toBe(1);
+    // A quality change re-uploads nothing: same texture versions as before.
+    expect(maps.map((m) => m.version)).toEqual(versions);
     inst.dispose();
   });
 

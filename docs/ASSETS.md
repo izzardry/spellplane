@@ -31,11 +31,11 @@ No bundled files: everything is computed or drawn at runtime by the theme's own 
 
 | Asset | Used by | Kind | Source | Licence | Notes |
 | --- | --- | --- | --- | --- | --- |
-| `src/themes/wyrm/scales.ts` | Wyrm (slab) | texture | procedural | MIT (project code) | Obsidian scale relief: albedo, normal, AO/roughness/metalness and ember emissive maps computed as one 768 × 768 tile per 288 mm, cached per page |
-| `src/themes/wyrm/slab.ts` | Wyrm (slab) | shader | procedural | MIT (project code) | A travelling heat wave on the seams' glow, injected into three's standard material |
-| `src/themes/wyrm/embers.ts` | Wyrm (particles) | shader | procedural | MIT (project code) | Drifting ember particles, motion computed on the GPU |
-| `src/themes/wyrm/shimmer.ts` | Wyrm (stack) | shader | procedural | MIT (project code) | Heat-shimmer post pass over the stack lane (three's ShaderPass) |
-| `src/themes/wyrm/back.ts` | Wyrm (card back) | texture | procedural | MIT (project code) | Neutral geometric card back drawn on a canvas; no text, logos or official back |
+| `src/themes/wyrm/scales.ts` | Wyrm (slab) | texture | procedural | MIT (this repository) | Obsidian scale relief: albedo, normal, AO/roughness/metalness and ember emissive maps computed as one 768 × 768 tile per 288 mm, cached per page |
+| `src/themes/wyrm/slab.ts` | Wyrm (slab) | shader | procedural | MIT (this repository) | A travelling heat wave on the seams' glow, injected into three's standard material |
+| `src/themes/wyrm/embers.ts` | Wyrm (particles) | shader | procedural | MIT (this repository) | Drifting ember particles, motion computed on the GPU |
+| `src/themes/wyrm/shimmer.ts` | Wyrm (stack) | shader | procedural | MIT (this repository) | Heat-shimmer post pass over the stack lane (three's ShaderPass) |
+| `src/themes/wyrm/back.ts` | Wyrm (card back) | texture | procedural | MIT (this repository) | Neutral geometric card back drawn on a canvas; no text, logos or official back |
 
 ## Stonetable
 

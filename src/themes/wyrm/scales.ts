@@ -214,14 +214,21 @@ export function generateScaleMaps(partial: Partial<ScaleOptions> = {}): ScaleMap
   return { options: o, albedo, normal, orm, emissive, height, seam, seamDistance, owner, heat };
 }
 
-const cache = new Map<string, ScaleMaps>();
+/** What the slab's material needs of a tile: the four byte maps (the analysis fields stay with generateScaleMaps). */
+export type SlabMaps = Pick<ScaleMaps, 'options' | 'albedo' | 'normal' | 'orm' | 'emissive'>;
 
-/** generateScaleMaps, computed once per option set (a rebuild for another seat or quality level reuses it). */
-export function scaleMaps(partial: Partial<ScaleOptions> = {}): ScaleMaps {
+const cache = new Map<string, SlabMaps>();
+
+/**
+ * generateScaleMaps, computed once per option set (a rebuild for another seat or quality level reuses it). The page
+ * keeps only the four byte maps (≈ 9 MB at 768 px); the float and index fields used by tests are dropped.
+ */
+export function scaleMaps(partial: Partial<ScaleOptions> = {}): SlabMaps {
   const key = JSON.stringify({ ...DEFAULT_SCALE_OPTIONS, ...partial });
   let m = cache.get(key);
   if (!m) {
-    m = generateScaleMaps(partial);
+    const { options, albedo, normal, orm, emissive } = generateScaleMaps(partial);
+    m = { options, albedo, normal, orm, emissive };
     cache.set(key, m);
   }
   return m;

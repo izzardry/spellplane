@@ -9,7 +9,8 @@
  * lines injected into three's standard shader); with reduced motion it stands still. Everything is freed on dispose.
  */
 import * as THREE from 'three';
-import { scaleMaps, type ScaleMaps } from './scales';
+import { setTextureAnisotropy } from '../../scene/quality';
+import { scaleMaps, type SlabMaps } from './scales';
 
 /** Slab thickness below the table top, mm. */
 export const SLAB_DEPTH = 40;
@@ -21,8 +22,10 @@ export interface Slab {
   readonly object: THREE.Mesh;
   /** Advance the heat wave to `timeS` seconds. */
   update(timeS: number): void;
-  /** Anisotropic filtering of the slab's maps (the quality level's; three clamps it to the GPU's maximum). */
+  /** Anisotropic filtering of the slab's maps (the quality level's), set in place on uploaded maps (no re-upload). */
   setAnisotropy(samples: number): void;
+  /** The anisotropy in effect: the level's, clamped to the GPU's maximum when a renderer is known. */
+  readonly anisotropy: number;
   /** The textures this slab owns (tests). */
   readonly textures: readonly THREE.Texture[];
   dispose(): void;
@@ -62,8 +65,9 @@ const WAVE_FRAGMENT = /* glsl */ `
 `;
 
 /** Build the slab for a table of `table` mm. */
-export function createSlab(table: { w: number; d: number }, opts: { anisotropy?: number } = {}, maps: ScaleMaps = scaleMaps()): Slab {
-  const aniso = (n: number | undefined) => Math.max(1, Math.floor(n ?? 1));
+export function createSlab(table: { w: number; d: number }, opts: { anisotropy?: number; renderer?: THREE.WebGLRenderer } = {}, maps: SlabMaps = scaleMaps()): Slab {
+  const max = opts.renderer?.capabilities?.getMaxAnisotropy?.() || Infinity;
+  const aniso = (n: number | undefined) => Math.max(1, Math.min(max, Math.floor(n ?? 1)));
   let anisotropy = aniso(opts.anisotropy);
   const tile = maps.options.tileMm;
   const n = maps.options.size;
@@ -119,13 +123,17 @@ export function createSlab(table: { w: number; d: number }, opts: { anisotropy?:
     update(timeS) {
       uniforms.uWyrmTime.value = timeS;
     },
+    get anisotropy() {
+      return anisotropy;
+    },
     setAnisotropy(samples) {
       const next = aniso(samples);
       if (next === anisotropy) return;
       anisotropy = next;
       for (const t of textures) {
-        t.anisotropy = next;
-        t.needsUpdate = true;
+        // An uploaded map takes the GL parameter in place (scene/quality.ts); one not uploaded yet reads
+        // `t.anisotropy` at its first upload. Never `needsUpdate`: that re-uploads four maps and their mipmaps.
+        if (!opts.renderer || !setTextureAnisotropy(opts.renderer, t, next)) t.anisotropy = next;
       }
     },
     dispose() {

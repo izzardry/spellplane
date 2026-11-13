@@ -16,6 +16,9 @@ type Card = { id: string; pose: { x: number; y: number; rot: number }; tapped: b
 
 const SWITCHES: HarnessThemeId[] = ['lit', 'dusk', 'lit', 'wyrm', 'stonetable', 'lit', 'paper', 'lit', 'dusk', 'paper'];
 
+const WYRM_PASSES = ['render', 'glow', 'bloom', 'vignette', 'output'];
+const WYRM_PASSES_SHIMMER = ['render', 'glow', 'bloom', 'wyrm-shimmer', 'vignette', 'output'];
+
 const dispatch = (page: Page, a: Action) => page.evaluate((x) => window.__spellplane!.dispatch!(x), a);
 
 test('ten theme switches mid-game keep the state hash, the cards and the GPU texture count', async ({ page }) => {
@@ -41,7 +44,9 @@ test('ten theme switches mid-game keep the state hash, the cards and the GPU tex
     const s = await rh<Stats>(page, 'stats');
     expect(s.theme, `switch ${i + 1}`).toBe(id === 'lit' ? 'stonetable' : id);
     if (id === 'lit') expect(s.passes).toContain('bloom');
-    else if (id === 'paper') expect(s.passes).toEqual([]);
+    // Wyrm (M4-P4) at its default level: glow, bloom and vignette, plus its heat shimmer while the stack burns.
+    else if (id === 'wyrm') expect(s.passes).toEqual(s.passes.includes('wyrm-shimmer') ? WYRM_PASSES_SHIMMER : WYRM_PASSES);
+    else expect(s.passes).toEqual([]);
     expect(await rh<string>(page, 'hash'), `hash after switch ${i + 1} (${id})`).toBe(hash0);
   }
   await settle(page);

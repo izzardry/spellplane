@@ -123,5 +123,10 @@ describe('Wyrm scale relief', () => {
     expect(() => generateScaleMaps({ size: 16, radius: 0.5 })).toThrow();
     expect(() => generateScaleMaps({ size: 4 })).toThrow();
     expect(scaleMaps({ size: 32 })).toBe(scaleMaps({ size: 32 }));
+    // The page cache keeps only the four byte maps, the same bytes generateScaleMaps computes.
+    const cached = scaleMaps({ size: 32 });
+    expect(Object.keys(cached).sort()).toEqual(['albedo', 'emissive', 'normal', 'options', 'orm']);
+    const full = generateScaleMaps({ size: 32 });
+    for (const k of ['albedo', 'normal', 'orm', 'emissive'] as const) expect(cached[k]).toEqual(full[k]);
   });
 });

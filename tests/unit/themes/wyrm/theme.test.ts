@@ -3,6 +3,8 @@
 // contrast", exposed to the HUD); Card dressing; "Card faces are never restyled"; Assets (CC0 or procedural, no
 // Wizards artwork, logos or card back); Renderer ("a per-theme quality setting drops shadows and post-processing first").
 // "Specification: geometry, layout and motion": thickness 0.6, lift 12 with a 4° tilt in lit themes; motion constants.
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_MOTION, GEOMETRY } from '../../../../src/core/geometry';
 import type { LineKind } from '../../../../src/core/types';
@@ -71,7 +73,7 @@ describe('Wyrm theme package', () => {
       }
   });
 
-  it('keeps the signals the HUD and the markings draw legible: hairlines, text, focus, away, speaking, pending', () => {
+  it('keeps the signals the HUD and the markings draw legible: hairlines, text, focus, away, speaking', () => {
     // Zone hairlines on the slab (WCAG 1.4.11 non-text contrast).
     expect(contrastRatio(c.border, c.surface)).toBeGreaterThanOrEqual(3);
     // HUD text on the dark panels, muted text (the "away" avatar dims to it) still AA.
@@ -81,11 +83,11 @@ describe('Wyrm theme package', () => {
     expect(colourDistance(c.muted, c.fg)).toBeGreaterThanOrEqual(SEAT_CONTRAST.pairwise);
     // The speaking ring is drawn in the seat colour on the HUD's dark panel.
     for (const s of c.seats) expect(contrastRatio(s.colour, c.bg)).toBeGreaterThanOrEqual(3);
-    // Selection, hover and pending confirmation read on the slab and apart from each other.
+    // Selection and hover read on the slab and apart from each other. Pending confirmation is measured on the drawn
+    // table by tests/e2e/signals.spec.ts (the scene draws it in the controller's seat colour, not from cardDressing).
     const d = wyrm.cardDressing;
-    for (const h of [d.hover, d.selected, d.pending]) expect(contrastRatio(h.colour, c.surface)).toBeGreaterThanOrEqual(3);
+    for (const h of [d.hover, d.selected]) expect(contrastRatio(h.colour, c.surface)).toBeGreaterThanOrEqual(3);
     expect(colourDistance(d.hover.colour, d.selected.colour)).toBeGreaterThan(0.1);
-    expect(colourDistance(d.pending.colour, d.selected.colour)).toBeGreaterThan(0.1);
     expect(d.selected.width).toBeGreaterThan(d.hover.width);
     const vars = tokensToCssVars(wyrm.tokens);
     expect(vars['--sp-hud-scheme']).toBe('dark');
@@ -124,6 +126,17 @@ describe('Wyrm theme package', () => {
     // A post-off level never gets the shimmer even if the table says so.
     expect(shimmerAllowed({ ...high, post: false }, false)).toBe(false);
     expect(Object.keys(WYRM_EFFECTS).sort()).toEqual(['high', 'low', 'medium']);
+  });
+
+  it('lists its procedural modules in docs/ASSETS.md with the manifest’s licence for this repository’s code', () => {
+    const md = readFileSync(resolve(__dirname, '../../../../docs/ASSETS.md'), 'utf8');
+    const rows = md.split('\n').filter((l) => l.startsWith('| `src/themes/wyrm/'));
+    expect(rows.map((r) => r.split('|')[1]!.trim()).sort()).toEqual(['`src/themes/wyrm/back.ts`', '`src/themes/wyrm/embers.ts`', '`src/themes/wyrm/scales.ts`', '`src/themes/wyrm/shimmer.ts`', '`src/themes/wyrm/slab.ts`']);
+    for (const r of rows) {
+      const cells = r.split('|').map((x) => x.trim());
+      expect(cells[4], r).toBe('procedural');
+      expect(cells[5], r).toBe('MIT (this repository)');
+    }
   });
 
   it('bundles no asset file: every material map is procedural and the card back is drawn', () => {
