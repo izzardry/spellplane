@@ -53,7 +53,7 @@ describe('functional signals', () => {
 
 describe('theme interface v2', () => {
   it('loads every theme lazily under its own id, the stubs naming their package', async () => {
-    const stubs: Record<string, string> = { dusk: 'M4-P3', wyrm: 'M4-P4', stonetable: 'M4-P5' };
+    const stubs: Record<string, string> = { wyrm: 'M4-P4' };
     for (const id of THEME_IDS) {
       const t = await loadTheme(id);
       expect(t.id).toBe(id);
@@ -66,8 +66,10 @@ describe('theme interface v2', () => {
       if (stub !== undefined) expect(stub).toBe(stubs[id]);
       // A theme without the marker is a real one, not Paper under another id (a stub that lost its marker).
       else if (id !== 'paper') {
+        // Compared by value, so a copy of Paper's lighting (`{ ...paper.lighting }`) does not pass as a real theme's.
         expect(t.build, `${id} builds its own table`).not.toBe(paper.build);
-        expect(t.lighting, `${id} has its own lighting`).not.toBe(paper.lighting);
+        expect(t.lighting.lit, `${id} is lit`).toBe(true);
+        expect(t.lighting, `${id} has its own lighting`).not.toEqual(paper.lighting);
       }
     }
     expect((await loadTheme('stonetable')).camera.defaultRig).toBe('ego');
