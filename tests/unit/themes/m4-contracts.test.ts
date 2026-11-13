@@ -64,6 +64,11 @@ describe('theme interface v2', () => {
       // A theme package replaces its stub (Dusk: M4-P3); a theme still stubbed names the package that replaces it.
       const stub = (t as { stub?: string }).stub;
       if (stub !== undefined) expect(stub).toBe(stubs[id]);
+      // A theme without the marker is a real one, not Paper under another id (a stub that lost its marker).
+      else if (id !== 'paper') {
+        expect(t.build, `${id} builds its own table`).not.toBe(paper.build);
+        expect(t.lighting, `${id} has its own lighting`).not.toBe(paper.lighting);
+      }
     }
     expect((await loadTheme('stonetable')).camera.defaultRig).toBe('ego');
     expect((await loadTheme('wyrm')).camera.defaultRig).toBe('ego');

@@ -2,7 +2,7 @@
  * Browser entry for Dusk's Playwright specs (PLAN M4-P3), bundled from source by ./bundle.ts and served on the app's
  * own origin. It mounts the real table scene (scene/table-scene.ts) with the Dusk theme over a 1v1 Magic table
  * (games/mtg layout), driven by the real reducer (core/reducer), and the real HUD avatars (ui/Avatar.svelte) styled
- * by Dusk's tokens as CSS custom properties (themes/index.ts tokensToCssVars), so every functional signal
+ * by Dusk's tokens as CSS custom properties (themes/index.ts hudCssVars), so every functional signal
  * (themes/signals.ts) can be put on screen: the ten scene signals through shared and view state, speaking and away on
  * the avatars. Card faces are placeholders (scene/harness-fixture.ts harnessFaces); nothing touches the network.
  *
@@ -18,7 +18,7 @@ import { harnessFaces } from '../../../../src/scene/harness-fixture';
 import { createTableScene, type SceneDebug } from '../../../../src/scene/table-scene';
 import type { RenderStats, ScreenPoint, TableScene, ViewState } from '../../../../src/scene/types';
 import { DUSK_SOUNDS } from '../../../../src/themes/dusk/sounds';
-import { loadTheme, tokensToCssVars, type QualityId, type Theme, type ThemeId } from '../../../../src/themes/index';
+import { loadTheme, hudCssVars, type QualityId, type Theme, type ThemeId } from '../../../../src/themes/index';
 import Avatar from '../../../../src/ui/Avatar.svelte';
 import { registerDebug } from '../../../../src/util/debug';
 
@@ -103,8 +103,8 @@ async function main(target: HTMLElement): Promise<void> {
   const debug = scene.debug as SceneDebug;
 
   function applyTokens(): void {
-    for (const [k, v] of Object.entries(tokensToCssVars(theme.tokens))) hud.style.setProperty(k, v);
-    hud.style.colorScheme = theme.tokens.hud?.scheme ?? 'light';
+    // As the app's HUD does (App.svelte, M4-P6): panels in tokens.hud.panel, the felt colour as --sp-table-surface.
+    for (const [k, v] of Object.entries(hudCssVars(theme.tokens))) hud.style.setProperty(k, v);
   }
 
   const mounted: Record<Seat2, ReturnType<typeof mount> | null> = { s0: null, s1: null };

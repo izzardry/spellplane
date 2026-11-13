@@ -179,8 +179,8 @@ test.describe('Dusk look', () => {
       return { bg: cs.backgroundColor, fg: cs.color, scheme: getComputedStyle(el.parentElement!.parentElement!).colorScheme };
     });
     expect(style.scheme).toBe('dark');
-    // The avatar sits on the felt colour with light text (Dusk tokens surface and fg).
-    expect(style.bg).toBe('rgb(29, 53, 32)');
+    // As in the app (hudCssVars): the avatar is a HUD panel (tokens.hud.panel), not the felt, with light text (fg).
+    expect(style.bg).toBe('rgba(20, 18, 24, 0.9)');
     expect(style.fg).toBe('rgb(236, 230, 218)');
     expect(opened.errors).toEqual([]);
   });

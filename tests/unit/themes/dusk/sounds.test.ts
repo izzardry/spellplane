@@ -4,7 +4,7 @@
 // the destination, and stops by itself within CUE_MAX_S; the room tone fades in, stays under AMBIENCE_PEAK and fades
 // out on stop. The browser spec renders the same set with a real OfflineAudioContext.
 import { describe, expect, it } from 'vitest';
-import { AMBIENCE_FADE_S, AMBIENCE_PEAK, CUE_MAX_S, CUE_PEAK, DUSK_SOUNDS } from '../../../../src/themes/dusk/sounds';
+import { AMBIENCE_FADE_S, AMBIENCE_PEAK, CUE_MAX_S, CUE_PEAK, DUSK_SOUNDS, hold } from '../../../../src/themes/dusk/sounds';
 
 type Ev = { kind: 'set' | 'linear' | 'exp' | 'target'; v: number; t: number; tau?: number };
 
@@ -29,7 +29,15 @@ class Param {
     return this;
   }
   cancelScheduledValues(t: number) {
+    // Web Audio: removes every event at or after t; a ramp ending after t goes too, so the value falls back to the
+    // last remaining event.
     this.events = this.events.filter((e) => e.t < t);
+    return this;
+  }
+  cancelAndHoldAtTime(t: number) {
+    const v = this.at(t);
+    this.events = this.events.filter((e) => e.t < t && e.kind !== 'target');
+    this.events.push({ kind: 'set', v, t });
     return this;
   }
   /** The automation's value at `t` (Web Audio semantics for set, linear and exponential events). */
@@ -249,5 +257,46 @@ describe('Dusk room tone', () => {
     raw.currentTime = 30;
     handle.stop();
     expect(loop.stopped).toBe(stoppedAt);
+  });
+
+  it('stopped during its fade-in, fades out from where it is, without a jump', () => {
+    const { ctx, nodes, destination, raw } = fakeContext(5);
+    const handle = DUSK_SOUNDS.ambience!.start(ctx, 1);
+    const out = nodes.find((n): n is Gain => n instanceof Gain && n.out.includes(destination))!;
+    const depth = nodes.find((n): n is Gain => n instanceof Gain && n.out.includes(out.gain))!;
+    const stopAt = 5 + 0.5;
+    const before = out.gain.at(stopAt - 1e-4);
+    expect(before).toBeGreaterThan(0);
+    raw.currentTime = stopAt;
+    handle.stop();
+    // Sampled at 8 kHz from just before the stop to the end of the fade-out: no step steeper than a glide from the
+    // held value with the fade-out's time constant (fade / 3 / 6), so nothing jumps (a jump to 0 would be a click).
+    const rate = 8000;
+    const tau = AMBIENCE_FADE_S / 3 / 6;
+    for (const p of [out.gain, depth.gain]) {
+      const held = p.at(stopAt - 1e-6);
+      const maxStep = (held / tau / rate) * 1.01 + 1e-12;
+      let prev = p.at(stopAt - 1 / rate);
+      for (let i = 0; i <= (AMBIENCE_FADE_S / 3) * rate; i++) {
+        const t = stopAt + i / rate;
+        const v = p.at(t);
+        expect(Math.abs(v - prev), `step at ${t.toFixed(4)} s`).toBeLessThanOrEqual(maxStep);
+        prev = v;
+      }
+    }
+    // It never rises above where it was when stopped, and is silent when the sources stop.
+    expect(out.gain.at(stopAt + 0.01)).toBeLessThanOrEqual(before);
+    expect(out.gain.at(stopAt + AMBIENCE_FADE_S / 3)).toBeLessThan(before / 100);
+  });
+
+  it('holds the current value where a browser has no cancelAndHoldAtTime', () => {
+    const p = new Param(0);
+    p.setValueAtTime(0, 0);
+    p.linearRampToValueAtTime(1, 2);
+    // As in a browser without it: no cancelAndHoldAtTime, and `value` reads the automation's current value.
+    const plain = { value: p.at(0.5), cancelScheduledValues: (t: number) => p.cancelScheduledValues(t), setValueAtTime: (v: number, t: number) => p.setValueAtTime(v, t) };
+    hold(plain as unknown as AudioParam, 0.5);
+    expect(p.at(0.5)).toBeCloseTo(0.25);
+    expect(p.at(1.5)).toBeCloseTo(0.25);
   });
 });

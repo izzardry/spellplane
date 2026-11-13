@@ -130,6 +130,20 @@ const turnChime = cue((ctx, out, at) => {
 /** The prompt tick: a short, soft wooden blip. */
 const promptTick = cue((ctx, out, at) => tone(ctx, out, at, { from: 1320, to: 1100, peak: 0.1, attack: 0.002, decay: 0.05, type: 'triangle' }));
 
+/**
+ * Cancel a parameter's automation after `t` and keep its value at `t` (Web Audio cancelAndHoldAtTime; where a browser
+ * lacks it, cancelScheduledValues plus a set to the current value).
+ */
+export function hold(param: AudioParam, t: number): void {
+  if (typeof param.cancelAndHoldAtTime === 'function') {
+    param.cancelAndHoldAtTime(t);
+    return;
+  }
+  const v = param.value;
+  param.cancelScheduledValues(t);
+  param.setValueAtTime(v, t);
+}
+
 /** The room tone: low brown noise breathing slowly, faded in and out. */
 const ambience: AmbientSoundSource = {
   start(ctx, gain) {
@@ -166,11 +180,12 @@ const ambience: AmbientSoundSource = {
         stopped = true;
         const now = ctx.currentTime;
         const fade = AMBIENCE_FADE_S / 3;
-        out.gain.cancelScheduledValues(now);
-        depth.gain.cancelScheduledValues(now);
-        depth.gain.setValueAtTime(0, now);
-        // From wherever the level is now (also mid fade-in) toward silence: six time constants within the fade.
+        // Hold the level and the breath where they are now (also mid fade-in), then glide both to silence: six time
+        // constants within the fade. Cancelling alone would drop a pending ramp and jump back to its start (a click).
+        hold(out.gain, now);
+        hold(depth.gain, now);
         out.gain.setTargetAtTime(0, now, fade / 6);
+        depth.gain.setTargetAtTime(0, now, fade / 6);
         src.stop(now + fade);
         lfo.stop(now + fade);
       },

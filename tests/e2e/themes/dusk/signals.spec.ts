@@ -1,9 +1,11 @@
 /**
- * PLAN M4-P3 acceptance: "Each theme renders the twelve gate states without console errors" — for Dusk. The twelve
- * gate states are the functional signals of themes/signals.ts (decision M4-C). DESIGN "Themes and rendering":
- * "Functional signals … every theme must render all of them distinguishably". So each state is put on screen in Dusk
- * through the real reducer and the real table scene (and the real avatars for the HUD signals), as a controlled pair
- * with everything else unchanged and reduced motion on, and must
+ * PLAN M4-P3 acceptance: "Each theme renders the twelve gate states without console errors" — Dusk's own evidence for
+ * the ten scene signals. The gate and the official measure for all twelve, in the real app, are M4-P6's
+ * tests/e2e/signals.spec.ts, which runs Dusk too; speaking, away and pending confirmation are measured only there
+ * (they were duplicated here with an easier setup, which hid a Chromium failure of the pending pair). DESIGN "Themes
+ * and rendering": "Functional signals … every theme must render all of them distinguishably". Each state is put on
+ * screen in Dusk through the real reducer and the real table scene, as a controlled pair with everything else
+ * unchanged and reduced motion on, and must
  *   - raise no console or page error, and
  *   - differ from its neutral version by the signal's threshold (themes/signals.ts: at least `changedFraction` of the
  *     region's pixels change by more than `channelDelta`), minus the noise between two neutral captures.
@@ -16,7 +18,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { SceneDebugCard } from '../../../../src/scene/table-scene';
 import type { DrawnLine } from '../../../../src/scene/lines';
-import type { DebugStackEntry } from '../../../../src/scene/stack';
 import { SIGNALS, type SignalId, type SignalSpec } from '../../../../src/themes/signals';
 import { changedFraction, dusk, hookCall, openDusk, settle, shot, unionRect, type Opened, type Rect } from './bundle';
 
@@ -87,7 +88,7 @@ async function measure(page: Page, info: TestInfo, s: SignalSpec, pair: Pair, na
 
 const marginOf = (s: SignalSpec, pxPerMm: number): number => ('marginMm' in s.probe ? s.probe.marginMm : 2) * pxPerMm;
 
-test.describe('Dusk renders the twelve gate states', () => {
+test.describe('Dusk renders the scene gate states', () => {
   test.describe.configure({ timeout: 90_000 });
 
   test('there are twelve, in the PLAN’s order', () => {
@@ -290,69 +291,6 @@ test.describe('Dusk renders the twelve gate states', () => {
         const f = (await changedFraction(page, lines[i]!, lines[j]!, region, s.threshold.channelDelta)) - noise;
         expect.soft(f, `seat colours ${i} and ${j} tell apart`).toBeGreaterThanOrEqual(s.threshold.changedFraction);
       }
-    expect(opened.errors).toEqual([]);
-  });
-
-  test('speaking', async ({ page }, info) => {
-    const { opened } = await controlled(page);
-    const s = spec('speaking');
-    const probe = s.probe as { selector: string; attribute: string; on: string; off: string };
-    const avatar = page.locator(probe.selector.replace('{seat}', 's1'));
-    await expect(avatar).toHaveAttribute(probe.attribute, probe.off);
-    const box = async (): Promise<Rect> => (await avatar.boundingBox())!;
-    const m = await measure(page, info, s, {
-      margin: 4,
-      region: async () => [await box()],
-      signal: async () => {
-        await dusk(page, 'setSpeaking', 's1', true);
-        await expect(avatar).toHaveAttribute(probe.attribute, probe.on);
-      },
-    });
-    expect(m).toBeGreaterThanOrEqual(s.threshold.changedFraction);
-    expect(opened.errors).toEqual([]);
-  });
-
-  test('pending confirmation', async ({ page }, info) => {
-    const { opened, pxPerMm } = await controlled(page);
-    const s = spec('pendingConfirmation');
-    const entry = async () => (await hookCall<DebugStackEntry[]>(page, 'stack')).find((e) => e.item === 'i1');
-    await act(page, { type: 'stackPush', item: 'i1', kind: 'ability', source: 'c2', note: 'draw a card' });
-    // The neutral of themes/signals.ts: the stack item after every player passed.
-    await act(page, { type: 'ask', round: 'r0', about: 'i1' });
-    await expect.poll(async () => (await entry())?.pending).toBe(true);
-    await act(page, { by: 's1', type: 'respond', round: 'r0', seat: 's1', response: 'ok' });
-    await expect.poll(async () => (await entry())?.pending).toBe(false);
-    const m = await measure(page, info, s, {
-      margin: marginOf(s, pxPerMm),
-      region: async () => {
-        const e = await entry();
-        if (!e) throw new Error('stack item i1 is not drawn');
-        return [{ x: e.screen.x, y: e.screen.y, width: e.screen.width, height: e.screen.height }];
-      },
-      signal: async () => {
-        await act(page, { type: 'ask', round: 'r1', about: 'i1' });
-        await expect.poll(async () => (await entry())?.pending).toBe(true);
-      },
-    });
-    expect(m).toBeGreaterThanOrEqual(s.threshold.changedFraction);
-    expect(opened.errors).toEqual([]);
-  });
-
-  test('away', async ({ page }, info) => {
-    const { opened } = await controlled(page);
-    const s = spec('away');
-    const probe = s.probe as { selector: string; attribute: string; on: string; off: string };
-    const avatar = page.locator(probe.selector.replace('{seat}', 's1'));
-    await expect(avatar).toHaveAttribute(probe.attribute, probe.off);
-    const m = await measure(page, info, s, {
-      margin: 4,
-      region: async () => [(await avatar.boundingBox())!],
-      signal: async () => {
-        await act(page, { by: 'system', type: 'away', seat: 's1', away: true });
-        await expect(avatar).toHaveAttribute(probe.attribute, probe.on);
-      },
-    });
-    expect(m).toBeGreaterThanOrEqual(s.threshold.changedFraction);
     expect(opened.errors).toEqual([]);
   });
 });

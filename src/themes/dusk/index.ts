@@ -138,7 +138,7 @@ export const dusk: Theme = {
       // Faint cool fill, so the corners outside the lamp's pool stay readable.
       { kind: 'ambient', colour: '#4a4660', intensity: 0.5 },
       // The lamp: warm (about 2700 K), high above the table and a little toward the viewer, with a soft, wide edge.
-      { kind: 'spot', colour: '#ffd2a0', intensity: 4.6, position: [0, -220, 1700], target: [0, 40, 0], angleDeg: 38, penumbra: 1, decay: 0, distance: 0, castShadow: false },
+      { kind: 'spot', colour: '#ffd2a0', intensity: 4.2, position: [0, -220, 1700], target: [0, 40, 0], angleDeg: 45, penumbra: 1, decay: 0, distance: 0, castShadow: false },
     ],
     toneMapping: 'aces',
     exposure: 1.05,

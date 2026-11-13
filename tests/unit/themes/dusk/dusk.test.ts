@@ -4,6 +4,7 @@
 // drop shadows and post-processing first). The browser specs in tests/e2e/themes/dusk/ check how it renders.
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_MOTION } from '../../../../src/core/geometry';
+import { mtgLayout, soloLayout } from '../../../../src/games/mtg/layout';
 import { effectiveQuality, qualityLadderProblems } from '../../../../src/scene/quality';
 import { DUSK_BLOOM_THRESHOLD, DUSK_SURFACE, dusk } from '../../../../src/themes/dusk/index';
 import { FELT, FELT_COLOUR, RAIL } from '../../../../src/themes/dusk/table';
@@ -77,17 +78,19 @@ describe('a single warm lamp with a slow falloff', () => {
   it('falls off slowly: a soft, wide penumbra that still reaches the corners of every table', () => {
     if (lamp.kind !== 'spot') throw new Error('the lamp is a spot');
     expect(lamp.penumbra).toBeGreaterThanOrEqual(0.8);
-    // The corners of the 1v1 table (1400 × 1100) and the four-player table's territories (1800 × 1800, edge middles)
-    // lie inside the cone, so the light fades over them instead of stopping at a hard edge.
+    // Every corner of every format's table (1v1, three- and four-player free-for-all, Two-Headed Giant, solo) lies
+    // inside the cone with a margin, so the light fades over it instead of stopping at a hard edge.
     const angleTo = (x: number, y: number) => (Math.atan2(Math.hypot(x - lamp.position[0], y - lamp.position[1]), lamp.position[2]) * 180) / Math.PI;
-    for (const [x, y] of [
-      [700, 550],
-      [-700, -550],
-      [900, 0],
-      [0, 900],
-      [0, -900],
-    ] as const)
-      expect(angleTo(x, y), `${x},${y}`).toBeLessThan(lamp.angleDeg);
+    const tables = [...(['1v1', 'ffa3', 'ffa4', '2hg'] as const).map((f) => mtgLayout(f).table), soloLayout().table];
+    expect(tables.map((t) => `${t.w}x${t.d}`)).toContain('2200x1100');
+    for (const t of tables)
+      for (const [sx, sy] of [
+        [1, 1],
+        [1, -1],
+        [-1, 1],
+        [-1, -1],
+      ] as const)
+        expect(angleTo((sx * t.w) / 2, (sy * t.d) / 2), `${t.w}x${t.d} corner ${sx},${sy}`).toBeLessThanOrEqual(lamp.angleDeg - 3);
   });
 
   it('casts no shadow maps: soft contact shadows under the cards instead', () => {
