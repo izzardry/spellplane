@@ -53,7 +53,7 @@ describe('functional signals', () => {
 
 describe('theme interface v2', () => {
   it('loads every theme lazily under its own id, the stubs naming their package', async () => {
-    const stubs: Record<string, string> = { dusk: 'M4-P3', wyrm: 'M4-P4' };
+    const stubs: Record<string, string> = { dusk: 'M4-P3' };
     for (const id of THEME_IDS) {
       const t = await loadTheme(id);
       expect(t.id).toBe(id);

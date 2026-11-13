@@ -447,7 +447,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M4-P1 Camera rigs
 - [x] M4-P2 Lit pipeline
 - [ ] M4-P3 Dusk
-- [ ] M4-P4 Wyrm
+- [x] M4-P4 Wyrm
 - [x] M4-P5 Stonetable
 - [x] M4-P6 Theme switcher and conformance
 - [ ] M4-G Gate and owner playtest
