@@ -8,8 +8,8 @@
  * insertion order. A cache hit re-inserts its entry (put again), so insertion order is least-recently-used order and
  * eviction keeps deleting from the front, as `trimCache` does today. No extra IndexedDB store is needed.
  */
-import { MAX_IMAGE_ENTRIES } from './images';
-import type { PersistApi } from './persist';
+import { imageCacheName, MAX_IMAGE_ENTRIES } from './images';
+import { isStoragePersisted, type PersistApi } from './persist';
 
 /** Storage use as the settings' storage section and the debug hook show it (DESIGN "Card data and images", Caching). Added by M5-C. */
 export interface StorageStatus {
@@ -38,12 +38,84 @@ export const IMAGE_CACHE_LIMITS = {
   quotaShare: 0.5,
 } as const;
 
-/** The origin's storage use, never throwing (unsupported parts read as null). Implementer: M5-P3. Added by M5-C. */
-export function storageStatus(_api?: QuotaApi): Promise<StorageStatus> {
-  return Promise.reject(new Error('not implemented: M5-P3'));
+/**
+ * What one cached image is assumed to cost when the quota forces eviction (M5-P3): a normal-tier JPG is 50–100 kB and a
+ * large one up to 150 kB, so 100 kB per entry frees roughly what the overshoot needs without a size per entry.
+ */
+export const IMAGE_ENTRY_BYTES = 100_000;
+
+/** The Cache API part `storageStatus` counts image entries with; injectable for tests. */
+export type CacheCounter = Pick<CacheStorage, 'has' | 'open'>;
+
+function defaultQuotaApi(): QuotaApi | undefined {
+  return typeof navigator === 'undefined' ? undefined : navigator.storage;
 }
 
-/** How many image entries to keep given the current status (IMAGE_CACHE_LIMITS; LRU eviction above it). Implementer: M5-P3. Added by M5-C. */
-export function imageEntryLimit(_status: StorageStatus): number {
-  throw new Error('not implemented: M5-P3');
+function defaultCaches(): CacheCounter | undefined {
+  return typeof caches === 'undefined' ? undefined : caches;
+}
+
+/** A finite, non-negative number, else null. */
+function bytes(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/** Entries in the image cache named `name`, 0 when it does not exist yet, null without the Cache API. Never throws. */
+export async function countImageEntries(cacheStorage: CacheCounter | undefined = defaultCaches(), name: string = imageCacheName(typeof location === 'undefined' ? null : location.href)): Promise<number | null> {
+  if (!cacheStorage) return null;
+  try {
+    // `open` would create the cache; a profile that never cached an image has none.
+    if (!(await cacheStorage.has(name))) return 0;
+    return (await (await cacheStorage.open(name)).keys()).length;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The origin's storage use, never throwing (unsupported parts read as null). `cacheStorage` and `cacheName` choose the
+ * image cache to count (default: this page's profile). Implementer: M5-P3. Added by M5-C.
+ */
+export async function storageStatus(api: QuotaApi | undefined = defaultQuotaApi(), cacheStorage: CacheCounter | undefined = defaultCaches(), cacheName?: string): Promise<StorageStatus> {
+  let usage: number | null = null;
+  let quota: number | null = null;
+  if (api && typeof api.estimate === 'function') {
+    try {
+      const e = await api.estimate();
+      usage = bytes(e.usage);
+      quota = bytes(e.quota);
+    } catch {
+      // Unknown: shown as "not reported by this browser".
+    }
+  }
+  const [persisted, imageEntries] = await Promise.all([isStoragePersisted(api), cacheName === undefined ? countImageEntries(cacheStorage) : countImageEntries(cacheStorage, cacheName)]);
+  return { usage, quota, persisted, imageEntries };
+}
+
+/**
+ * How many image entries to keep given the current status (IMAGE_CACHE_LIMITS; LRU eviction above it): never more than
+ * `maxEntries`; when usage and quota are known and the origin uses more than `quotaShare` of its quota, the entries
+ * that cover the overshoot (at IMAGE_ENTRY_BYTES each) go as well, down to none. Implementer: M5-P3. Added by M5-C.
+ */
+export function imageEntryLimit(status: StorageStatus): number {
+  const max = IMAGE_CACHE_LIMITS.maxEntries;
+  const { usage, quota, imageEntries } = status;
+  if (usage === null || quota === null || quota <= 0 || imageEntries === null) return max;
+  const over = usage - quota * IMAGE_CACHE_LIMITS.quotaShare;
+  if (over <= 0) return max;
+  const keep = imageEntries - Math.ceil(over / IMAGE_ENTRY_BYTES);
+  return Math.max(0, Math.min(max, keep));
+}
+
+/** "12.3 MB" style size for the storage section (decimal units, as browsers report quotas). */
+export function formatBytes(n: number): string {
+  if (n < 1000) return `${Math.round(n)} B`;
+  const units = ['kB', 'MB', 'GB', 'TB'];
+  let v = n / 1000;
+  let i = 0;
+  while (v >= 1000 && i < units.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }

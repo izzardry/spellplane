@@ -2,22 +2,33 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { VitePWA } from 'vite-plugin-pwa';
+import { WEB_APP_MANIFEST } from './src/util/pwa.js';
 
 // GitHub Pages serves the app from https://izzardry.github.io/spellplane/
 export default defineConfig(({ mode }) => ({
   base: '/spellplane/',
   plugins: [
     svelte(),
-    // Service worker (src/sw.ts): cache-first Scryfall card images (DESIGN "Card data and images", Caching).
-    // Production builds only, so dev and test builds never run a worker; no precache and no web app manifest.
+    // Service worker (src/sw.ts) and web app manifest (PLAN M5-P3; util/pwa.ts): the worker precaches every file of
+    // the build (the list is injected as `self.__WB_MANIFEST`) and serves card images cache-first. Built in production
+    // and test builds; main.ts registers it in production, and in test builds only with `?sw=on` (the offline tests),
+    // so no other browser test runs behind a worker. Dev builds run none. vite-plugin-pwa only builds sw.ts and
+    // injects the file list; the worker has no Workbox runtime.
     VitePWA({
-      disable: mode !== 'production',
+      disable: mode !== 'production' && mode !== 'test',
       strategies: 'injectManifest',
       srcDir: 'src',
       filename: 'sw.ts',
-      injectRegister: 'script',
-      manifest: false,
-      injectManifest: { injectionPoint: undefined },
+      injectRegister: false,
+      manifest: { ...WEB_APP_MANIFEST, icons: WEB_APP_MANIFEST.icons.map((i) => ({ ...i })) },
+      includeManifestIcons: true,
+      injectManifest: {
+        injectionPoint: 'self.__WB_MANIFEST',
+        globPatterns: ['**/*.{html,js,css,ttf,woff2,png,svg,webmanifest}'],
+        globIgnores: ['sw.js', '**/*.map'],
+        // The main chunk is about 1 MB; the default limit (2 MB) would silently leave a grown one out of the precache.
+        maximumFileSizeToCacheInBytes: 16 * 1024 * 1024,
+      },
     }),
   ],
   define: {

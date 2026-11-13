@@ -96,12 +96,12 @@ describe('M5-P3 offline and storage', () => {
     expect(BACKUP_FILE_FORMAT).toBe('spellplane-backup');
     expect(BACKUP_FILE_VERSION).toBe(1);
   });
-  it('stubs name M5-P3', async () => {
-    await expect(storageStatus()).rejects.toThrow(notImplemented('M5-P3'));
-    expect(() => imageEntryLimit({ usage: null, quota: null, persisted: false, imageEntries: null })).toThrow(notImplemented('M5-P3'));
-    await expect(exportBackup({} as LocalStores, { decks: true, tables: 'all', settings: false }, 0)).rejects.toThrow(notImplemented('M5-P3'));
-    expect(() => readBackup({})).toThrow(notImplemented('M5-P3'));
-    expect(() => updateMayApply({ route: 'room', stage: 'match' })).toThrow(notImplemented('M5-P3'));
+  it('M5-P3 implemented its stubs (behaviour: tests/unit/store/quota*, export*, tests/unit/storage/*)', async () => {
+    expect(await storageStatus(undefined, undefined, 'none')).toEqual({ usage: null, quota: null, persisted: false, imageEntries: null });
+    expect(imageEntryLimit({ usage: null, quota: null, persisted: false, imageEntries: null })).toBe(IMAGE_CACHE_LIMITS.maxEntries);
+    await expect(exportBackup({} as LocalStores, { decks: true, tables: 'all', settings: false }, 0)).rejects.not.toThrow(notImplemented('M5-P3'));
+    expect(readBackup({}).errors).toEqual([{ where: 'file', message: 'The file is not a Spellplane backup.' }]);
+    expect(updateMayApply({ route: 'room', stage: 'match' })).toBe(false);
   });
 });
 
