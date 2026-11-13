@@ -11,7 +11,8 @@
  *   below every seat colour, so the lines glow and the table does not (DUSK_BLOOM_THRESHOLD; the pipeline draws the
  *   lines into the bloomed image, decision M4-P2); a vignette.
  * - Cards: 0.6 mm boxes in dark matte sleeves with a little gloss, faces near-unlit (faceShade 0.02 ≤
- *   CARD_FACE_MAX_SHADE), Dusk's own geometric back, warm brass hover and selection outlines.
+ *   CARD_FACE_MAX_SHADE), Dusk's own geometric back, a quiet warm-grey hover outline and a
+ *   wide saturated gold selection outline (apart in hue, saturation and width at a play zoom).
  * - Seat colours: light pastels tuned for the dark felt (SEAT_CONTRAST), each brighter than the bloom threshold.
  * - HUD: dark tokens (scheme 'dark', translucent panels, warm accent).
  * - Sound: a muted procedural set with a quiet room tone (themes/dusk/sounds.ts).
@@ -67,7 +68,7 @@ const SEATS: SeatColour[] = [
 function lineStyle(kind: LineKind, seat: SeatColour): LineStyle {
   return {
     colour: seat.colour,
-    // 3 px: the bloom samples the image at half resolution, so a thinner stroke would fall under its threshold.
+    // 3 px over the table; the bloom draws its glow copy at least 4 device px wide (scene/post.ts GLOW_MIN_DEVICE_PX).
     widthPx: 3,
     dash: kind === 'mark' ? (PATTERN_DASH[seat.pattern] ?? [6, 4]) : PATTERN_DASH[seat.pattern],
     geometry: 'stroke',
@@ -117,8 +118,10 @@ export const dusk: Theme = {
     sleeve: '#1d1b24',
     thickness: 0.6,
     back: DUSK_BACK,
-    hover: { colour: '#f0dcb4', width: 0.7, lift: 0, glow: 0.3 },
-    selected: { colour: '#ffd28a', width: 1.4, lift: 0, glow: 0.6 },
+    // Hover is a quiet warm grey and selection a saturated gold at the full 2 mm outline slot: at a play zoom (about
+    // 64 px per card) both outlines are 1.5 px or less, so hue and saturation must tell them apart, not width alone.
+    hover: { colour: '#b9b4aa', width: 0.7, lift: 0, glow: 0.3 },
+    selected: { colour: '#ffbf40', width: 2, lift: 0, glow: 0.6 },
     tappedBadge: '#f0dcb4',
     displacedMarker: '#f0dcb4',
     ghost: { colour: '#e8dcc4', opacity: 0.45, dashed: true },

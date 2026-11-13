@@ -33,6 +33,7 @@ import { TableRig, lateralOf } from './camera/rig';
 import { CardBoxes, CardLayer, ContactShadows, boxShape, legibleOutlineMm, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
 import { FOIL_SHEEN, TABLE_FOIL, foilHue, foilSheenColour } from './foil';
+import { ambientDue, uploadScale } from './pacing';
 import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
 import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
@@ -810,6 +811,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** Lit themes animate (lights flicker, particles drift, shimmer): they draw every frame unless motion is reduced. */
   const animated = () => theme.lighting.lit && !reduced();
+  /** When the last frame was drawn (tick time), and whether the tick before this one drew it. */
+  let drewAt = -Infinity;
+  let drewLastTick = false;
+  /** What the last drawn frame cost: the time from the tick that drew it to the next animation frame, ms. */
+  let frameCost = 0;
+  /** The pointer position of the card drag the last tick followed. */
+  let dragDrawn: { x: number; y: number } | null = null;
 
   function tick(): void {
     if (disposed) return;
@@ -817,6 +825,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const now = performance.now();
     const dt = Math.min(100, now - lastTick);
     lastTick = now;
+    // The browser hands out the next animation frame once the last drawn one is done, GPU work included.
+    if (drewLastTick) frameCost = now - drewAt;
+    drewLastTick = false;
     let changed = rig.step(now, dt);
     if (pendingFollow.length && !holding()) {
       const reqs = pendingFollow;
@@ -826,8 +837,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     if (drag) {
       followDrag();
-      changed = true;
-    }
+      // A held card redraws when the pointer moved (its springs keep it drawing while it catches up and tilts); a
+      // pointer held still over a card at rest needs no frames.
+      if (drag.last !== dragDrawn) changed = true;
+      dragDrawn = drag.last;
+    } else dragDrawn = null;
     const held = theme.cardDressing.held.lift;
     for (const rc of rcards.values()) {
       const lift = drag?.ids.includes(rc.id) ? held : 0;
@@ -836,8 +850,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         rc.lift.step(dt, theme.motion);
         changed = true;
       }
-      if (rc.motion.moving && rc.motion.step(now, dt, theme.motion)) changed = true;
-      else if (rc.motion.moving === false && rc.shownKey !== rc.place.key && rc.motion.flipSwapped) changed = true;
+      // The step that brings a card to rest still needs its frame (the rest pose; a held card's tilt back to flat).
+      if (rc.motion.moving) {
+        rc.motion.step(now, dt, theme.motion);
+        changed = true;
+      } else if (rc.shownKey !== rc.place.key && rc.motion.flipSwapped) changed = true;
       if (rc.expect && now > rc.expect.until) {
         rc.expect = null;
         if (!samePose(rc.motion.target, rc.place.rest)) rc.motion.moveTo(rc.place.rest, 'spring', now, theme.motion, reduced());
@@ -845,15 +862,19 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
       if (rc.motion.moving) changed = true;
     }
-    if (faces.pump(frame)) changed = true;
-    if (pingsLive) changed = true;
-    if (!reduced() && entries.some((e) => e.pending)) changed = true;
-    if (animated()) changed = true;
+    if (faces.pump(frame, uploadScale(frameCost))) changed = true;
+    // Ambient motion: what moves with nothing changing (ping fades, the pending pulse, a lit theme's light and
+    // particles, the foil sheen). On a slow renderer it waits a few frame costs between frames (scene/pacing.ts).
+    let ambient = pingsLive || (!reduced() && entries.some((e) => e.pending)) || animated();
     // The foil sheen drifts at a low frame rate while foils are drawn (not with reduced motion).
-    if (!changed && !dirty && foilsDrawn.size > 0 && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs) changed = true;
-    if (changed || dirty) {
+    if (foilsDrawn.size > 0 && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs) ambient = true;
+    if (ambient && !changed && !dirty && !ambientDue(frameCost, now - drewAt)) ambient = false;
+    if (changed || dirty || ambient) {
       if (foilsDrawn.size > 0) lastSheen = now;
-      draw(dt);
+      // Theme animation advances by the time since the last drawn frame (still at most 100 ms).
+      draw(Math.min(100, now - drewAt));
+      drewAt = now;
+      drewLastTick = true;
     }
     if (captionLayer.active) captionLayer.place();
   }

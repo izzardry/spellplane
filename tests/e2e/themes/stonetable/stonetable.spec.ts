@@ -67,6 +67,9 @@ test('quality levels drop the torch shadows first, then post-processing and the 
 });
 
 test('a held card lifts 12 mm, tilts at most 4° toward the drag and keeps casting its shadow', async ({ page }) => {
+  // Read from the debug hook, not from pixels: a smaller viewport keeps the torch-shadowed frames cheap where WebGL is
+  // software-rendered (CI), and a drag draws a frame per pointer move.
+  await page.setViewportSize({ width: 960, height: 600 });
   await openRender(page, { theme: 'stonetable', scenario: 'demo' });
   await settle(page);
   const start = await card(page, 's0-b05');

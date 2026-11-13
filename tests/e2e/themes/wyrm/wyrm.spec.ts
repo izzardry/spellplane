@@ -167,10 +167,11 @@ test('the default build is lit: shadows, card boxes, bloom and vignette, embers 
   expect(w.embers.count).toBeGreaterThan(0);
   expect(w.embers.visible).toBe(true);
   expect(w.shimmer).toMatchObject({ allowed: true, inChain: false, focus: null, strength: 0 });
-  // The embers drift: their clock runs with the frames.
+  // The embers drift: their clock runs with the frames. On a slow renderer (software GL) ambient frames come a few
+  // frame costs apart (scene/pacing.ts), so wait for the next one rather than a fixed number of animation frames.
   const t0 = w.embers.time;
   await frames(page, 10);
-  expect((await wyrmBuild(page)).embers.time).toBeGreaterThan(t0);
+  await expect.poll(async () => (await wyrmBuild(page)).embers.time, { timeout: 60_000 }).toBeGreaterThan(t0);
   expect(errors).toEqual([]);
 });
 
@@ -249,9 +250,9 @@ for (const viewer of ['s0', 's1'] as const) {
     const a = await screenPixels(page, rect);
     const tA = (await wyrmBuild(page)).shimmer!.time;
     await frames(page, 20);
+    // On a slow renderer ambient frames come a few frame costs apart (scene/pacing.ts): wait for the shimmer to move on.
+    await expect.poll(async () => (await wyrmBuild(page)).shimmer!.time, { timeout: 60_000 }).toBeGreaterThan(tA);
     const b = await screenPixels(page, rect);
-    const tB = (await wyrmBuild(page)).shimmer!.time;
-    expect(tB).toBeGreaterThan(tA);
     expect((await wyrmBuild(page)).shimmer!.inChain).toBe(true);
     expect(maxChannelDelta(a, b)).toBeLessThanOrEqual(2);
 

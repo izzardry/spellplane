@@ -135,9 +135,12 @@ export class FaceTextures {
     }
   }
 
-  /** Upload decoded images into the arrays (bounded per frame). Returns whether anything changed. */
-  pump(frame: number): boolean {
-    let budget = UPLOAD_BUDGET;
+  /**
+   * Upload decoded images into the arrays (bounded per frame; `scale` multiplies the bound, scene/pacing.ts
+   * uploadScale). Returns whether anything changed.
+   */
+  pump(frame: number, scale = 1): boolean {
+    let budget = UPLOAD_BUDGET * Math.max(1, scale);
     let changed = false;
     while (this.ready.length && budget > 0) {
       const item = this.ready.shift()!;
