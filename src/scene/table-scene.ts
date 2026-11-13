@@ -677,7 +677,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         draw: {
           pose,
           z: rc.place.z + rc.lift.value,
-          held: dragging,
+          // Still lifted after the drop: its contact shadow follows it down instead of popping in on landing.
+          held: dragging || rc.lift.value > 0,
           tilt,
           scaleX: rc.motion.flipScale(lastTick),
           uv,
