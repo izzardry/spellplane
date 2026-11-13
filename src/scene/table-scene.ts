@@ -40,7 +40,7 @@ import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, 
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, legibleScale, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion, HeldLift, heldTilt } from './motion';
 import { CaptionLayer, captionBadge, captionPoint } from './captions';
-import { drawnPose, entryAt, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
+import { drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
 import { TextLayer, type TextSpec } from './text';
 import { tierForScreenHeight } from './textures';
@@ -585,12 +585,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return rc ? rc.motion.pose : e.pose;
   }
 
-  /** Outline of a stack entry: its controller's seat colour, pulsing while its round waits (reduced motion: steady). */
+  /** Outline of a stack entry: its controller's seat colour, the theme's pending colour pulsing while its round waits (reduced motion: steady). */
   function entryHighlight(e: StackEntry): { colour: string; width: number } {
-    const base = 0.8;
-    if (!e.pending) return { colour: seatColour(e.item.controller), width: base };
-    const pulse = reduced() ? 1 : 0.5 + 0.5 * Math.sin((lastTick / 900) * Math.PI * 2);
-    return { colour: seatColour(e.item.controller), width: base + 1.4 * pulse };
+    const pulse = !e.pending || reduced() ? 1 : 0.5 + 0.5 * Math.sin((lastTick / 900) * Math.PI * 2);
+    return entryOutline(e.pending, seatColour(e.item.controller), theme.cardDressing, pulse);
   }
 
   function pileCount(pile: string): number {
