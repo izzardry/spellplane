@@ -196,29 +196,32 @@ describe('the post-game audit on a simulated network', () => {
     }
   });
 
-  it('shows a player who left before the game ended as "could not be checked: records missing", never as a mismatch', async () => {
+  it('shows a player who left before the game ended as "could not be checked: records missing", never as a mismatch; the others hold their records until the player is back', async () => {
     const network = net({ seed: 25 });
     const g = await startGame(network, browsers);
     g.b.leave();
     // Anna ends the game alone (Ben's chair answers the round by the pass timer).
     const proposal = g.a.evening!.propose('nextGame');
     expect(await settle(proposal, 60_000, 'the next game')).toBe(true);
-    await until(() => g.a.audit!.published().length === 1, 20_000, 'Anna’s bundle');
-    // While the audit waits for Ben, his verdict is pending.
-    expect(g.a.audit!.verdicts().map((v) => v.seat)).toEqual(['s0']);
-    expect(g.a.audit!.games()[0]!.seats.find((x) => x.seat === 's1')!.verdict).toBeNull();
-    await vi.advanceTimersByTimeAsync(AUDIT_WAIT_MS);
-    await verdictsIn([g.a]);
-    expect(verdictOf(g.a, 's0')!.status).toBe('verified');
+    // Ben was marked away and answered for: Anna's history may still lose to one in which he plays on, so she holds her
+    // records back (they would show her library orders there); her own row waits, his says "could not be checked".
+    await vi.advanceTimersByTimeAsync(AUDIT_WAIT_MS + 1000);
+    expect(actions(g.a).some((x) => x.type === 'auditPublish')).toBe(false);
+    expect(g.a.audit!.published()).toEqual([]);
+    expect(g.a.audit!.games()[0]!.seats.find((x) => x.seat === 's0')!.verdict).toBeNull();
+    expect(g.a.audit!.verdicts().map((v) => v.seat)).toEqual(['s1']);
     expect(verdictOf(g.a, 's1')).toMatchObject({ status: 'unverifiable', reason: 'recordsMissing', checked: 0 });
-    expect(auditLines(g.a)).toContainEqual('Audit of game 1: Ben — could not be checked: records missing (No audit records were published (the player left early or lost the save).)');
+    expect(auditLines(g.a)).toEqual(['Audit of game 1: Ben — could not be checked: records missing (No audit records were published (the player left early or lost the save).)']);
 
-    // Ben comes back with his save: his browser publishes the records it kept, and the verdict becomes his real one.
+    // Ben comes back with his save: his browser publishes the records it kept, and once he acted in Anna's history she
+    // publishes hers; both verdicts become the real ones.
     await reload(network, g.B);
     const b = g.B.session!;
-    await until(() => g.a.audit!.verdicts().find((v) => v.seat === 's1')?.status === 'verified', 60_000, 'Ben’s late bundle');
+    await until(() => verdictOf(g.a, 's1')?.status === 'verified' && verdictOf(g.a, 's0')?.status === 'verified', 60_000, 'both bundles on Anna’s side');
     await until(() => verdictOf(b, 's1')?.status === 'verified' && verdictOf(b, 's0')?.status === 'verified', 60_000, 'Ben’s own verdicts');
     expect(auditLines(g.a).filter((l) => l.startsWith('Audit of game 1: Ben'))).toEqual([expect.stringContaining('could not be checked'), expect.stringContaining('verified')]);
+    expect(auditLines(g.a).filter((l) => l.startsWith('Audit of game 1: Anna'))).toEqual([expect.stringContaining('verified')]);
+    expect(g.a.audit!.published()).toHaveLength(1);
   });
 
   it('a browser whose audit records were lost publishes what it has: "could not be checked", not a mismatch', async () => {
@@ -232,7 +235,11 @@ describe('the post-game audit on a simulated network', () => {
     await endGame(g);
     await verdictsIn([g.a, g.b]);
     for (const s of [g.a, g.b]) {
-      expect(verdictOf(s, 's1')).toMatchObject({ status: 'unverifiable', reason: 'recordsMissing', checked: 1, detail: '1 of 2 shuffles and reorders checked; the rest could not be checked.' });
+      expect(verdictOf(s, 's1')).toMatchObject({ status: 'unverifiable', reason: 'recordsMissing', checked: 1 });
+      // The unrecorded shuffle is named, so a selective gap shows; the draws after it went unchecked.
+      const first = actions(s).find((x) => x.type === 'shuffleDone' && x.by === 's1')!.seq;
+      const v = verdictOf(s, 's1')!;
+      expect(v.status === 'unverifiable' && v.detail).toBe(`1 of 2 shuffles and reorders checked; the rest could not be checked (no record of action ${first}); 2 of 9 draws checked.`);
       expect(verdictOf(s, 's0')!.status).toBe('verified');
     }
     const pub = actions(g.a).find((x): x is Extract<Action, { type: 'auditPublish' }> => x.type === 'auditPublish' && x.by === 's1')!;

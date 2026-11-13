@@ -25,6 +25,7 @@
   import type { LobbyProps } from '../types';
   import EveningBar from './EveningBar.svelte';
   import AuditPanel from '../audit/AuditPanel.svelte';
+  import { sessionAudit } from '../../session/audit';
   import LobbyDraft from './LobbyDraft.svelte';
 
   let props: LobbyProps & { createScene: CreateTableScene; faces: FaceSource; cardData: CardDataSource; settings?: SettingsStore | undefined; sets?: SetDataSource | undefined } = $props();
@@ -34,6 +35,8 @@
   const stage = $derived<StageId>(st.stage);
   const evening = $derived(props.session.evening);
   const draft = $derived(props.session.draft);
+  // The post-game audit of a networked session (M5-P2, session/audit.ts); none in solo play or for a spectator.
+  const audit = $derived(sessionAudit(props.session));
   // The viewer's theme (PLAN M4-P6), switchable mid-evening; Paper where no app shell provides the choice.
   const themeChoice = themeContext();
   let theme = $state.raw(themeChoice?.current() ?? paper);
@@ -76,9 +79,9 @@
       <EveningBar session={props.session} {evening} state={st} answer={stage !== 'match'} />
     </div>
   {/if}
-  {#if props.session.audit}
+  {#if audit}
     <!-- The post-game audit (M5-P2): opens by itself when a game ends, in whatever stage follows. -->
-    <AuditPanel audit={props.session.audit} playing={stage === 'match'} />
+    <AuditPanel {audit} playing={stage === 'match'} />
   {/if}
 </div>
 

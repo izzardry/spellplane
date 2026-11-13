@@ -39,8 +39,8 @@ export interface AuditGameView {
 }
 
 /**
- * The audit as a networked session offers it (session/types.ts TableSession.audit; the audit panel ui/audit/*; the
- * debug hook's `audit` part). Added by M5-P2.
+ * The audit as a networked session offers it (session/audit.ts `sessionAudit`; the audit panel ui/audit/*; the debug
+ * hook's `audit` part). Added by M5-P2.
  */
 export interface AuditControls {
   /** Every verdict this page computed, oldest game first, seat order within a game (pending seats are left out). */
@@ -139,7 +139,9 @@ export class AuditLedger {
       event = 'ended';
     }
     if (a.type === 'auditPublish' && explain(prior, { ...a, seq } as Action) === null) {
-      const g = this.done.find((x) => x.game.game === a.bundle.game.game);
+      // A bundle counts for the game whose span it names exactly (one built in an abandoned history names another span).
+      const b = a.bundle.game;
+      const g = this.done.find((x) => x.game.game === b.game && x.game.fromSeq === b.fromSeq && x.game.toSeq === b.toSeq);
       if (g && !g.bundles.has(a.by)) {
         g.bundles.set(a.by, { bundle: a.bundle, seq });
         if (a.by === self) this.own.push(a.bundle);

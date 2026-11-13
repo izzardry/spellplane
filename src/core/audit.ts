@@ -383,7 +383,8 @@ function verify(input: AuditInput): AuditVerdict {
   const usedReorders = new Set<PublishedReorder>();
   const mismatches: AuditMismatch[] = [];
   const incomplete = bundle === null || bundle.incomplete === true;
-  let missing = 0;
+  /** The seqs of the public shuffles and reorders without a record in an incomplete bundle (shown in the verdict). */
+  const missing: number[] = [];
   let checked = 0;
   let shuffles = 0;
   let draws = 0;
@@ -392,7 +393,7 @@ function verify(input: AuditInput): AuditVerdict {
   let s = start;
 
   const unrecorded = (seq: number, ref: ShuffleId | ZoneId, what: string): void => {
-    if (incomplete) missing++;
+    if (incomplete) missing.push(seq);
     else mismatches.push({ kind: 'unrecorded', seq, ref, detail: `${what} (action ${seq}) has no published record.` });
   };
 
@@ -501,9 +502,12 @@ function verify(input: AuditInput): AuditVerdict {
 
   if (mismatches.length > 0) return { seat, game: g, status: 'mismatch', mismatches };
   if (bundle === null) return { seat, game: g, status: 'unverifiable', reason: 'recordsMissing', detail: 'No audit records were published (the player left early or lost the save).', checked: 0 };
-  if (missing > 0) {
-    const total = checked + missing;
-    return { seat, game: g, status: 'unverifiable', reason: 'recordsMissing', detail: `${checked} of ${total} shuffles and reorders checked; the rest could not be checked.`, checked };
+  if (missing.length > 0) {
+    // Which public shuffles and reorders went unrecorded, and how many draws were checked: a selective gap shows.
+    const total = checked + missing.length;
+    const which = `${missing.length === 1 ? 'action' : 'actions'} ${missing.join(', ')}`;
+    const detail = `${checked} of ${total} shuffles and reorders checked; the rest could not be checked (no record of ${which}); ${draws} of ${drawn} ${drawn === 1 ? 'draw' : 'draws'} checked.`;
+    return { seat, game: g, status: 'unverifiable', reason: 'recordsMissing', detail, checked };
   }
   return { seat, game: g, status: 'verified', shuffles, draws };
 }

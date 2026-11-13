@@ -9,7 +9,6 @@ import type { CardData, CardDataSource, GeneratePack, SetDataSource } from '../d
 import type { DraftControls } from '../draft/types';
 import type { GameDefinition } from '../games/types';
 import type { ChatChannel, PeerRole } from '../net/messages';
-import type { AuditControls } from '../net/audit';
 import type { Transport } from '../net/transport';
 import type { ConnectionStatus, NetEngine, PeerInfo, Presence } from '../net/types';
 import type { IdentityRecord, SettingsStore, TableStore } from '../store/types';
@@ -136,12 +135,6 @@ export interface TableSession {
   readonly voice?: VoiceControls;
   /** Dictation and captions (DESIGN "Chat and voice", Dictation and captions). Added by M3-C; implementer: M3-P4. */
   readonly captions?: CaptionControls;
-  /**
-   * The post-game audit (DESIGN "Multiplayer architecture", Hidden information 6; PLAN Milestone 5, owner decisions:
-   * "Audit: automatic at game end"): verdicts per finished game and seat for the log and the audit panel. Added by
-   * M5-P2 (additive); absent in solo play and for spectators.
-   */
-  readonly audit?: AuditControls;
 }
 
 /** One card of the teammate's hand as this browser received it (DESIGN "Players, seats and formats", Two-Headed Giant). Added by M3-C. */

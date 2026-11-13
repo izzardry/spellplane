@@ -11,6 +11,7 @@
   import { onMount, untrack } from 'svelte';
   import { AUDIT_STATUS_TEXT } from '../../core/audit';
   import type { AuditControls, AuditGameView, AuditSeatView } from '../../net/audit';
+  import { gamesSeen } from './panel';
 
   /** `playing`: a match is on; the panel and its button step aside (the verdicts stay in the log). */
   let { audit, playing = false }: { audit: AuditControls; playing?: boolean } = $props();
@@ -25,8 +26,9 @@
   onMount(() =>
     audit.subscribe(() => {
       games = audit.games();
-      if (games.length > seen) {
-        seen = games.length;
+      const next = gamesSeen(seen, games.length);
+      seen = next.seen;
+      if (next.opens) {
         picked = null;
         open = true;
       }

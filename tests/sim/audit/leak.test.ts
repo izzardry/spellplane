@@ -14,15 +14,16 @@
  * A negative control shows the scan is not vacuous.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AuditBundle } from '../../../src/core/audit';
+import { auditGames, buildAuditBundle, type AuditBundle } from '../../../src/core/audit';
 import type { Action } from '../../../src/core/actions';
 import type { SecretStore } from '../../../src/core/types';
 import type { LoopbackOptions } from '../../../src/net/loopback';
 import { forbiddenFor, leakScan } from '../../leak/leak';
 import { scan } from '../../leak/scan';
+import { AUDIT_WAIT_MS } from '../../../src/net/audit';
 import { stageIs } from '../flow/evening';
-import { closeAll, FAKE_TIMERS, net, observedBy, settle, trackDisclosures, waitConverged, type Browser, type NetTable } from '../session/harness';
-import { endGame, isLand, playMiddle, startGame, verdictsIn } from './game';
+import { closeAll, FAKE_TIMERS, net, observedBy, settle, trackDisclosures, until, waitConverged, type Browser, type NetTable } from '../session/harness';
+import { endGame, isLand, playMiddle, startGame, verdictOf, verdictsIn } from './game';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
@@ -111,5 +112,61 @@ describe('shared leak test: the post-game audit', () => {
     const g2 = withoutPublished(g.a.secrets(), published).audit[0]!;
     const leaked = leakScan({ ...rest, observed: [...observed, { t: 'chat', text: g2.kind === 'shuffle' ? g2.ownerNonce : g2.nonce }] });
     expect(leaked.tokens).toHaveLength(1);
+  });
+
+  it.each([3, 8])('never sends a bundle into a history in which its game is still being played: cut off, ending the game alone, the other history wins (seed %i)', async (seed) => {
+    const network = net({ seed });
+    const g = await startGame(network, browsers);
+    const benActions = (s: NetTable): Action[] => s.log().flatMap((e) => (e.kind === 'action' && e.action.by === 's1' ? [e.action] : []));
+
+    // Ben is cut off; once Anna is silent for long enough he sequences alone and marks her away.
+    network.kill(g.B.peerId);
+    await until(() => g.b.engine.isSequencer() && g.b.engine.confirmedState().seats.s0!.away === true, 30_000, 'Ben sequencing alone');
+    // He ends the game in his history (Anna's chair answers by the pass timer); Anna draws on in hers, which grows longer.
+    const ending = g.b.evening!.propose('nextGame');
+    for (let i = 0; i < 15; i++) await settle(g.a.draw(1));
+    expect(await settle(ending, 60_000, 'Ben’s next game')).toBe(true);
+    await until(() => g.b.engine.confirmedState().stage === 'build', 30_000, 'Ben’s history to leave the match');
+    await vi.advanceTimersByTimeAsync(AUDIT_WAIT_MS + 1000);
+    // Nobody else follows Ben's history past the end: he holds his bundle back, and his own row waits.
+    expect(benActions(g.b).some((a) => a.type === 'auditPublish')).toBe(false);
+    expect(g.b.audit!.games()[0]!.seats.find((x) => x.seat === 's1')!.verdict).toBeNull();
+    expect(g.b.engine.seq()).toBeLessThan(g.a.engine.seq());
+    const game = auditGames(g.b.log().flatMap((e) => (e.kind === 'action' ? [e.action] : [])))[0]!;
+    const isolated = buildAuditBundle(g.b.secrets(), game, g.b.log().flatMap((e) => (e.kind === 'action' ? [e.action] : [])));
+    const nonces = g.b.secrets().audit.map((r) => (r.kind === 'shuffle' ? r.ownerNonce : r.nonce));
+    expect(isolated.records.length).toBeGreaterThan(0);
+    expect(nonces.length).toBeGreaterThan(0);
+
+    // Ben is back: Anna's longer history wins. His abandoned "Next game?" is asked again there; Anna holds, so the game
+    // is still on in the history both now follow.
+    network.revive(g.B.peerId);
+    await until(() => g.a.engine.confirmedState().confirm?.label === 'Next game?', 30_000, 'Ben’s question again in Anna’s history');
+    const round = g.a.engine.confirmedState().confirm!.id;
+    g.a.dispatch({ type: 'respond', round, seat: 's0', response: 'hold' });
+    await waitConverged([g.a, g.b], 'Anna’s history');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await waitConverged([g.a, g.b], 'Anna’s history, held');
+    for (const s of [g.a, g.b]) expect(s.engine.confirmedState().stage).toBe('match');
+    // Nothing Anna received carries Ben's nonces or orders.
+    expect(scan(await observedBy(network, g.A), nonces)).toEqual([]);
+    // And should a proposal of that bundle still be on its way (the engine proposes an abandoned history's own actions
+    // again), the transport carries no record of it: the confirmed history has not ended that game.
+    const propose = { v: 1 as const, t: 'propose', cid: 'c-isolated', action: { type: 'auditPublish', by: 's1', cid: 'c-isolated', bundle: isolated } };
+    const sent = g.b.auditOutgoing('act', propose);
+    expect(scan([sent], nonces)).toEqual([]);
+    expect(g.b.auditOutgoing('act', { v: 1, t: 'propose', cid: 'c-chat', action: { type: 'chat', by: 's1', cid: 'c-chat', text: 'hi' } })).toMatchObject({ action: { text: 'hi' } });
+
+    // Anna lets the question pass: the game ends in the shared history, both publish, and Ben's audit (rebuilt with the
+    // adopted history) passes on both browsers.
+    g.a.dispatch({ type: 'respond', round, seat: 's0', response: 'release' });
+    g.a.dispatch({ type: 'respond', round, seat: 's0', response: 'ok' });
+    await until(() => [g.a, g.b].every((s) => s.engine.confirmedState().stage === 'build'), 30_000, 'the end of the game');
+    await verdictsIn([g.a, g.b]);
+    for (const s of [g.a, g.b]) {
+      expect(verdictOf(s, 's0')!.status).toBe('verified');
+      expect(verdictOf(s, 's1')!.status).toBe('verified');
+    }
+    expect(g.b.audit!.published()).toHaveLength(1);
   });
 });

@@ -74,6 +74,19 @@ describe('the audit ledger', () => {
     expect(ledger.finished().every((x) => x.game.game === 1)).toBe(true);
   });
 
+  it('counts a bundle only for the game whose span it names exactly (one built in an abandoned history does not count)', () => {
+    const g = played();
+    const honest = g.bundle('s1');
+    // The same game number, but the span of another history: the reducer cannot tell, the ledger does not take it.
+    g.t.apply('s1', { type: 'auditPublish', bundle: { ...honest, game: { ...honest.game, toSeq: honest.game.toSeq - 1 } } });
+    g.t.apply('s1', { type: 'auditPublish', bundle: honest });
+    const ledger = new AuditLedger();
+    feed(ledger, g, g.log);
+    const seq = g.log.filter((a) => a.type === 'auditPublish').at(-1)!.seq;
+    expect(ledger.finished()[0]!.bundles.get('s1')).toEqual({ bundle: honest, seq });
+    expect(ledger.verdicts(0).find((v) => v.seat === 's1')!.status).toBe('verified');
+  });
+
   it('drops the games a catch-up or rewind may have replaced', () => {
     const g = played();
     const ledger = new AuditLedger();

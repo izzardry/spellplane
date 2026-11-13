@@ -237,12 +237,14 @@ describe('verifyAudit with missing or malformed records', () => {
     expect(full.records).toHaveLength(2);
     const lost = { ...full, records: full.records.slice(1) };
     expect(mismatchKinds(verifyAudit(g.input('s0', lost)))).toEqual(['unrecorded']);
+    // The verdict names the unrecorded shuffle by its action, and how many draws went unchecked after it.
+    const firstDone = g.input('s0', lost).log.find((a) => a.type === 'shuffleDone' && a.by === 's0')!.seq!;
     expect(verifyAudit(g.input('s0', { ...lost, incomplete: true }))).toEqual({
       seat: 's0',
       game: 1,
       status: 'unverifiable',
       reason: 'recordsMissing',
-      detail: '1 of 2 shuffles and reorders checked; the rest could not be checked.',
+      detail: `1 of 2 shuffles and reorders checked; the rest could not be checked (no record of action ${firstDone}); 2 of 9 draws checked.`,
       checked: 1,
     });
     // A disagreement among the records that do exist is still a mismatch.
