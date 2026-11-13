@@ -99,6 +99,19 @@ const DUTY_RECORDS: ReadonlySet<string> = new Set(['away', 'sequencerClaim']);
 /** Reason of a `nack` for a proposal that was already sequenced (the proposer drops it silently). */
 export const NACK_DUPLICATE = 'duplicate';
 
+/**
+ * Whether a stored action was this identity's own (M5-P6: solo actions survive a reload after a disconnect): its `by`
+ * is the seat this identity holds in `state` (only the browser holding a seat's key pair proposes for it, net/sequencer.ts
+ * senderSeat), or it took a chair for this identity; never a record the sequencer makes of its own view (`away`,
+ * `sequencerClaim`, `commitClose`, `draftTimeout`, a `respond` timeout), which another sequencer derives afresh.
+ */
+function ownRecord(a: Action, state: TableState, peerId: string): boolean {
+  if (DUTY_RECORDS.has(a.type) || a.type === 'commitClose' || a.type === 'draftTimeout' || (a.type === 'respond' && a.response === 'timeout')) return false;
+  if (a.type === 'seatTake') return a.peer === peerId;
+  const seat = seatOfPeer(state, peerId);
+  return seat !== null && a.by === seat;
+}
+
 /** Wire messages the debug log keeps (a ring: the oldest are overwritten). */
 const MESSAGE_LOG_LIMIT = 200_000;
 /** The wire-message log feeds the debug hook and the leak tests: dev and test builds only, nothing in production. */
@@ -299,6 +312,9 @@ class Engine implements NetEngine {
     this.replica = new Replica(opts.game, opts.start.snapshot);
     this.replica.onApply = (a) => this.onApplied(a);
     if (opts.start.tail.length) this.replica.load(opts.start.snapshot, opts.start.tail);
+    // A reload (M5-P6): the stored log's own actions are this page's own again, so a part of them that the room's
+    // history abandons (they were sequenced alone, after a real disconnect) is proposed again, as without the reload.
+    for (const a of opts.start.tail) if (ownRecord(a, this.replica.confirmed(), opts.identity.peerId)) this.noteOwn(a.cid);
     this.applied = [];
     this.lastView = this.replica.view();
     this.lastSeats = this.replica.confirmed().seats;
