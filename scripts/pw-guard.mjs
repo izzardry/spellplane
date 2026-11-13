@@ -88,11 +88,17 @@ const WINDOW_OWNERS_JXA = [
   "ObjC.import('CoreGraphics');",
   'const l = ObjC.castRefToObject($.CGWindowListCopyWindowInfo($.kCGWindowListOptionOnScreenOnly, 0));',
   'const n = [];',
-  "for (let i = 0; i < l.count; i++) n.push(ObjC.unwrap(l.objectAtIndex(i).objectForKey('kCGWindowOwnerName')));",
+  'for (let i = 0; i < l.count; i++) {',
+  '  const w = l.objectAtIndex(i);',
+  "  const b = ObjC.deepUnwrap(w.objectForKey('kCGWindowBounds')) || {};",
+  // A prompt is a real dialog; UserNotificationCenter can leave a 4x4 px window on screen with nothing in it.
+  '  if ((b.Width || 0) < 50 || (b.Height || 0) < 50) continue;',
+  "  n.push(ObjC.unwrap(w.objectForKey('kCGWindowOwnerName')));",
+  '}',
   'JSON.stringify(n);',
 ].join('\n');
 
-/** Names of the processes owning on-screen windows, or null if that cannot be determined. */
+/** Names of the processes owning on-screen windows of at least 50x50 px, or null if that cannot be determined. */
 function onScreenWindowOwners() {
   const r = spawnSync('osascript', ['-l', 'JavaScript', '-e', WINDOW_OWNERS_JXA], { encoding: 'utf8', timeout: 5000 });
   if (r.status !== 0) return null;
