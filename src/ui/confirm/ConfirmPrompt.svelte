@@ -16,6 +16,7 @@
   import { onDestroy, untrack } from 'svelte';
   import type { SeatId } from '../../core/types';
   import { Countdown, type PromptModel } from './model';
+  import SeatGlyph from '../a11y/SeatGlyph.svelte';
 
   let {
     model,
@@ -111,7 +112,7 @@
 {#if model.mode === 'respond'}
   <div class="prompt" data-testid="confirm-prompt" data-round={model.round.id} role="alertdialog" aria-label="Confirmation" style:--seat={colour(model.round.askedBy)}>
     {@render ring()}
-    <span class="what"><b>{asker}</b> {what}</span>
+    <span class="what"><SeatGlyph colour={seatColour(model.round.askedBy)} /><b>{asker}</b> {what}</span>
     {#if holderName}<span class="holding" data-testid="confirm-holder">{holderName} is responding</span>{/if}
     <button type="button" data-testid="prompt-ok" onclick={onok}>OK {#if keys.ok}<kbd>{keys.ok}</kbd>{/if}</button>
     {#if !model.holder || model.holder === me}<button type="button" data-testid="prompt-hold" onclick={onhold}>Hold {#if keys.hold}<kbd>{keys.hold}</kbd>{/if}</button>{/if}
@@ -119,7 +120,7 @@
 {:else if model.mode === 'holding'}
   <div class="prompt holding-me" data-testid="confirm-prompt" data-round={model.round.id} role="alertdialog" aria-label="Confirmation" style:--seat={colour(model.round.askedBy)}>
     {@render ring()}
-    <span class="what"><b>{asker}</b> {what}</span>
+    <span class="what"><SeatGlyph colour={seatColour(model.round.askedBy)} /><b>{asker}</b> {what}</span>
     <span>You hold the floor.</span>
     <button type="button" data-testid="release" onclick={onrelease}>Release {#if keys.ok}<kbd>{keys.ok}</kbd>{/if}</button>
   </div>
@@ -127,10 +128,10 @@
   <div class="status" data-testid="confirm-status" data-round={model.round.id} role="status" aria-live="polite">
     {@render ring()}
     {#if holderName}
-      <span data-testid="confirm-holder"><b style:color={colour(model.holder ?? '')}>{holderName}</b> is responding</span>
+      <span data-testid="confirm-holder"><SeatGlyph colour={model.holder ? seatColour(model.holder) : null} /><b style:color={colour(model.holder ?? '')}>{holderName}</b> is responding</span>
     {:else}
       <span>Waiting for
-        {#each waitingNames as s, i (s)}<b class="seat" data-seat={s} style:color={colour(s)}>{seatName(s)}</b>{i < waitingNames.length - 2 ? ', ' : i === waitingNames.length - 2 ? ' and ' : ''}{/each}
+        {#each waitingNames as s, i (s)}<SeatGlyph colour={seatColour(s)} /><b class="seat" data-seat={s} style:color={colour(s)}>{seatName(s)}</b>{i < waitingNames.length - 2 ? ', ' : i === waitingNames.length - 2 ? ' and ' : ''}{/each}
       </span>
     {/if}
   </div>

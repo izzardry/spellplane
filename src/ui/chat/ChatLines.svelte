@@ -10,6 +10,7 @@
   import type { FaceSource } from '../../data/types';
   import type { TextureSource } from '../../util/texture';
   import CardFace from '../CardFace.svelte';
+  import SeatGlyph from '../a11y/SeatGlyph.svelte';
   import type { LogLine } from '../describe';
   import type { CardNameResolver, NameLookup } from './names';
 
@@ -74,10 +75,12 @@
 
 <svelte:window bind:innerHeight={vh} />
 
-<ol bind:this={list} aria-live="polite" aria-relevant="additions" data-testid="log-lines" data-filter={filter}>
+<!-- Not a live region itself: the page's live region (ui/a11y) announces new lines once, whatever the filter or tab, and
+     batches bursts (M5-P4); a live list here would re-read lines whenever a filter or tab brings them back. -->
+<ol bind:this={list} aria-label="Log lines" data-testid="log-lines" data-filter={filter}>
   {#each shown as line (line.key)}
     <li class={line.kind} class:warn={line.level === 'warn'} data-testid="log-line" data-kind={line.kind} style:--seat={line.colour === null ? 'transparent' : `var(--sp-seat-${line.colour})`}>
-      {#if line.kind !== 'system'}<b class="actor">{line.actor}</b>{(line.kind === 'chat' && !line.told) || line.joined ? ': ' : ' '}{/if}{#each line.segs as s, i (i)}{#if 'card' in s}<span
+      {#if line.kind !== 'system'}<SeatGlyph colour={line.colour} /><b class="actor">{line.actor}</b>{(line.kind === 'chat' && !line.told) || line.joined ? ': ' : ' '}{/if}{#each line.segs as s, i (i)}{#if 'card' in s}<span
             class="card"
             data-testid="log-card"
             data-card={s.card}

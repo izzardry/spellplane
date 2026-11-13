@@ -16,6 +16,7 @@
   import RoomRoute from './lobby/RoomRoute.svelte';
   import StartRoute from './lobby/StartRoute.svelte';
   import { parseRoute, type Route } from './routes';
+  import { installReducedMotionCss } from './a11y/motion';
 
   let props: Partial<AppProps> = $props();
 
@@ -30,6 +31,8 @@
   let ready = $state(false);
   const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
   onMount(() => {
+    // Every animation cuts under prefers-reduced-motion, on every page of the app (M5-P4, ui/a11y/motion.ts).
+    installReducedMotionCss();
     registerThemeDebug(choice);
     const off = choice.subscribe((s) => (theme = s.theme));
     void choice.ready.then(() => (ready = true));

@@ -111,7 +111,8 @@ describe('M5-P4 accessibility', () => {
     const keys = new Set(Object.values(FOCUS_KEYS));
     expect(keys.size).toBe(6);
     for (const b of MTG_KEYMAP) expect(keys.has(b.chord.key)).toBe(false);
-    expect(() => moveFocus(table(), mtg, null, null, 'nextCard')).toThrow(notImplemented('M5-P4'));
+    // Implemented by M5-P4 (tests/unit/a11y): a spectator's first focus is the stack.
+    expect(moveFocus(table(), mtg, null, null, 'nextCard')).toEqual({ zone: 'stack', card: null });
   });
 });
 

@@ -10,15 +10,17 @@ import { DEFAULT_MOTION, type LineKind, type LineStyle, type SceneContext, type 
 /**
  * Seat colours tuned for the white table (M4-P6, SEAT_CONTRAST): each at least 4.5:1 against white, so the HUD can also
  * set text in a seat colour on the white panel (e.g. holder and waiting names in the confirm prompt) at WCAG AA; every
- * pair at least 0.26 apart. Text on a seat-coloured chip (`ink`) is the theme's white `bg`, also at 4.5:1.
+ * pair at least 0.26 apart. Text on a seat-coloured chip (`ink`) is the theme's white `bg`, also at 4.5:1. M5-P4
+ * darkened six of them slightly so seat-coloured names drawn beside the table, on the warm grey around it
+ * (PAPER_SURROUND), also reach 4.5:1 (DESIGN "Paper meets WCAG AA contrast throughout").
  */
 const SEATS: SeatColour[] = [
-  { index: 0, colour: '#1f6fd1', pattern: 'solid', glyph: 'circle' },
-  { index: 1, colour: '#c8404f', pattern: 'dash', glyph: 'square' },
-  { index: 2, colour: '#25834d', pattern: 'dot', glyph: 'triangle' },
-  { index: 3, colour: '#8a4fd1', pattern: 'dash-dot', glyph: 'diamond' },
-  { index: 4, colour: '#a96000', pattern: 'long-dash', glyph: 'star' },
-  { index: 5, colour: '#0f7f8f', pattern: 'dash-dot-dot', glyph: 'hexagon' },
+  { index: 0, colour: '#1e6bc9', pattern: 'solid', glyph: 'circle' },
+  { index: 1, colour: '#c03d4c', pattern: 'dash', glyph: 'square' },
+  { index: 2, colour: '#237b48', pattern: 'dot', glyph: 'triangle' },
+  { index: 3, colour: '#874dcd', pattern: 'dash-dot', glyph: 'diamond' },
+  { index: 4, colour: '#a15b00', pattern: 'long-dash', glyph: 'star' },
+  { index: 5, colour: '#0e7786', pattern: 'dash-dot-dot', glyph: 'hexagon' },
   { index: 6, colour: '#b0408f', pattern: 'double', glyph: 'cross' },
   { index: 7, colour: '#6b6b1f', pattern: 'zigzag', glyph: 'ring' },
 ];
@@ -107,7 +109,8 @@ export const paper: Theme = {
     selected: { colour: '#1f6fd1', width: 1.2, lift: 0 },
     tappedBadge: '#111111',
     displacedMarker: '#111111',
-    ghost: { colour: '#111111', opacity: 0.25, dashed: true },
+    // M5-P4: 0.5 draws the ghost outline at 3.5:1 on the white table (WCAG 1.4.11; 0.25 gave 1.7:1).
+    ghost: { colour: '#111111', opacity: 0.5, dashed: true },
     faceDownOwnerOpacity: 0.5,
     foilSheen: true,
     // v2 (M4-C): flat and unlit, so no sleeve material, no visible edge, no shading of the face, no tilt or shadow when held.

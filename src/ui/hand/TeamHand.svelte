@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import CardFace from '../CardFace.svelte';
+  import SeatGlyph from '../a11y/SeatGlyph.svelte';
   import { TEAM_FAN_HEIGHT, type TeamHandProps } from '../types';
   import { teamFanBottom, teamFanLayout } from './team';
 
@@ -22,7 +23,7 @@
 <div class="team-hand" data-testid="team-hand" data-seat={seat} aria-label={label} role="group" style:--seat="var(--sp-seat-{owner?.colour ?? 0}, #111)">
   {#if cards.length > 0}
     <div class="label" style:bottom="{teamFanBottom(vh) + vh * TEAM_FAN_HEIGHT + 4}px" data-testid="team-hand-label">
-      <span class="dot" aria-hidden="true"></span>{label} · {cards.length}
+      <SeatGlyph colour={owner?.colour ?? null} size={8} />{label} · {cards.length}
     </div>
   {/if}
   {#each cards as c, i (c.id)}
@@ -81,14 +82,6 @@
     border-radius: 4px;
     padding: 2px 6px;
     white-space: nowrap;
-  }
-  .dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--seat);
-    margin-right: 4px;
   }
   .card {
     position: absolute;

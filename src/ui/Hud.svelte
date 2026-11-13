@@ -51,6 +51,11 @@
   import { cuesFor, soundModeOf, soundOn, ThemeSoundPlayer, type SoundMode } from './sound';
   import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption } from '../voice/types';
+  import { describeCard, describeFocus, focusCards, focusMoveOf, keepFocus, LogAnnouncements, moveFocus, zoneLabel, type CardFocus, type FocusMove } from './a11y/index';
+  import { pageAnnouncer } from './a11y/announcer';
+  import { installReducedMotionCss, prefersReducedMotion, watchReducedMotion } from './a11y/motion';
+  import FocusMirror from './a11y/FocusMirror.svelte';
+  import { registerDebug } from '../util/debug';
 
   let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
 
@@ -79,6 +84,10 @@
   let sceneHover = $state<InstanceId | null>(null);
   let hudHover = $state<InstanceId | null>(null);
   const hovered = $derived(hudHover ?? sceneHover);
+  /** Keyboard card focus (DESIGN "Input and interaction design", Accessibility; PLAN M5-P4, ui/a11y): arrow keys move it. */
+  let focus = $state.raw<CardFocus | null>(null);
+  /** The card the keymap acts on: the keyboard-focused card, else the hovered one. */
+  const keyTarget = $derived(focus?.card ?? hovered);
   let selection = $state.raw<InstanceId[]>([]);
   let pings = $state.raw<ActivePing[]>([]);
   let openPile = $state<string | null>(null);
@@ -101,7 +110,8 @@
   }
   let sceneReady = $state(false);
   let sceneError = $state('');
-  const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** The viewer's reduced-motion setting, followed live (M5-P4 reduced-motion audit; ui/a11y/motion.ts). */
+  let reducedMotion = $state(prefersReducedMotion());
 
   // --- Overlays ------------------------------------------------------------------------------------------------
   let cheatOpen = $state(false);
@@ -295,7 +305,8 @@
     session: untrack(() => session),
     game: untrack(() => game),
     scene: () => scene,
-    view: () => ({ hovered: forcedHover ?? hovered, selection }),
+    // The keyboard-focused card counts as hovered (DESIGN "Input and interaction design", Accessibility; M5-P4).
+    view: () => ({ hovered: forcedHover ?? keyTarget, selection }),
     ui: hooks,
     newId: makeId,
     now: () => Date.now(),
@@ -335,6 +346,7 @@
     else if (promptUp) return false;
     else if (viewer) closeViewer();
     else if (deckOpen) deckOpen = false;
+    else if (focus) setFocus(null, false);
     else return false;
     return true;
   }
@@ -353,6 +365,12 @@
       e.preventDefault();
       untapOffer = false;
       commands.untapAndDraw();
+      return;
+    }
+    const move = focusMoveOf(e);
+    if (move && !menu && !ownsArrows(e.target)) {
+      e.preventDefault();
+      moveKeyFocus(move);
       return;
     }
     if (engine.keydown(e, false)) e.preventDefault();
@@ -614,10 +632,82 @@
     if (live.length !== selection.length) selection = live;
   });
 
+  // --- Keyboard card focus and the live region (DESIGN "Input and interaction design", Accessibility; PLAN M5-P4) ---
+  /** The focus order's viewer: the own seat, or none for a spectator (who starts at the stack). */
+  const a11yViewer = $derived(st.seats[me] ? me : null);
+  const focusOpts = $derived({ handOrder: hand });
+  /** The focused zone's cards in focus order as last seen, so focus on a card that leaves passes to its neighbour. */
+  let focusOrder: InstanceId[] = [];
+  /** Where the pointer was when the keyboard last moved focus: a pointer that moves away onto a card takes over. */
+  let focusPointer = { x: 0, y: 0 };
+  const { announcer, release: releaseAnnouncer } = pageAnnouncer();
+  let mirrorEl = $state<HTMLElement | undefined>();
+  function setFocus(next: CardFocus | null, speak: boolean): void {
+    focus = next;
+    focusOrder = next ? focusCards(st, game, a11yViewer, next.zone, focusOpts) : [];
+    focusPointer = { x: pointer.x, y: pointer.y };
+    if (speak && next) announcer.focus(describeFocus(st, game, a11yViewer, next, nameOf, focusOpts));
+  }
+  function moveKeyFocus(move: FocusMove): void {
+    setFocus(moveFocus(st, game, a11yViewer, focus, move, focusOpts), true);
+    // The mirror takes DOM focus, so a screen reader follows (unless a HUD control has it).
+    const active = typeof document === 'undefined' ? null : document.activeElement;
+    if (mirrorEl && active !== mirrorEl && (!active || active === document.body || (sceneHost?.contains(active) ?? false))) mirrorEl.focus({ preventScroll: true });
+  }
+  /** Keys the focused element uses itself: arrows in a select, slider, menu, list box or grid are not card focus. */
+  function ownsArrows(t: EventTarget | null): boolean {
+    const el = t as HTMLElement | null;
+    if (!el?.closest) return false;
+    if (el.tagName === 'SELECT' || (el.tagName === 'INPUT' && ['range', 'radio', 'number'].includes((el as HTMLInputElement).type))) return true;
+    return !!el.closest('[role="menu"], [role="menubar"], [role="listbox"], [role="slider"], [role="radiogroup"], [role="tablist"], [role="grid"], [role="tree"]');
+  }
+  // The table changed: focus stays on its card, or passes to the card that took its place (ui/a11y keepFocus).
+  $effect(() => {
+    const s = st;
+    const opts = focusOpts;
+    untrack(() => {
+      if (!focus) return;
+      const next = keepFocus(s, game, a11yViewer, focus, focusOrder, opts);
+      if (next?.zone !== focus.zone || next?.card !== focus.card) focus = next;
+      focusOrder = next ? focusCards(s, game, a11yViewer, next.zone, opts) : [];
+    });
+  });
+  // The last input wins: a pointer moved onto a card hands the keys back to hover.
+  $effect(() => {
+    const h = hovered;
+    untrack(() => {
+      if (h !== null && focus && Math.hypot(pointer.x - focusPointer.x, pointer.y - focusPointer.y) > 4) focus = null;
+    });
+  });
+  const focusText = $derived(focus ? describeFocus(st, game, a11yViewer, focus, nameOf, focusOpts) : null);
+  const mirrorCards = $derived(focus ? focusCards(st, game, a11yViewer, focus.zone, focusOpts).map((id) => ({ id, text: describeCard(st, id, nameOf), current: id === focus?.card })) : []);
+  // New log lines are announced once each, batched (ui/a11y/log.ts, announcer.ts).
+  const logAnnouncements = new LogAnnouncements(untrack(() => me));
+  $effect(() => {
+    const texts = logAnnouncements.next(lines);
+    untrack(() => {
+      for (const t of texts) announcer.announce(t);
+    });
+  });
+  // Prompts addressed to this player are assertive: a confirmation round to answer, the untap offer.
+  let promptSpoken: string | null = null;
+  $effect(() => {
+    const p = prompt;
+    if (!p || p.mode !== 'respond' || promptSpoken === p.round.id) return;
+    promptSpoken = p.round.id;
+    untrack(() => {
+      const asker = st.seats[p.round.askedBy]?.name || 'A player';
+      announcer.announce(`${asker} ${roundWhat(st, p.round, nameOf)}. ${keyOf('confirmOk', 'prompt') || 'Enter'}: OK. ${keyOf('confirmHold', 'prompt') || 'Escape'}: hold.`, 'assertive');
+    });
+  });
+  $effect(() => {
+    if (untapOffer) untrack(() => announcer.announce('Your turn. U: untap all and draw.', 'assertive'));
+  });
+
   // --- Scene ------------------------------------------------------------------------------------------------------
   $effect(() => {
     if (!sceneReady || !scene) return;
-    const view: ViewState = { selection: [...selection], hovered, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile, captions: sceneCaptions(captionList, st) };
+    const view: ViewState = { selection: [...selection], hovered, focused: focus?.card ?? null, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile, captions: sceneCaptions(captionList, st) };
     scene.update(st, view);
   });
 
@@ -693,6 +783,9 @@
   }
 
   onMount(() => {
+    installReducedMotionCss();
+    const unwatchMotion = watchReducedMotion((v) => (reducedMotion = v));
+    registerDebug({ a11y: { focus: () => focus, announcements: () => announcer.history() } });
     seenLog = entries.length;
     watch.start(entries);
     followTeam();
@@ -764,6 +857,8 @@
       sceneError = e instanceof Error ? e.message : String(e);
     }
     return () => {
+      unwatchMotion();
+      releaseAnnouncer();
       unsub();
       unsubView();
       view.dispose();
@@ -963,6 +1058,15 @@
           <button type="button" class="x" aria-label="Dismiss" onclick={() => (untapOffer = false)}>×</button>
         </div>
       {/if}
+      <FocusMirror
+        bind:el={mirrorEl}
+        text={focusText}
+        zone={focus ? zoneLabel(st, game, a11yViewer, focus.zone) : null}
+        cards={mirrorCards}
+        onfocusin={() => {
+          if (!focus) setFocus(moveFocus(st, game, a11yViewer, null, 'first', focusOpts), true);
+        }}
+      />
       {#if prompt}
         <ConfirmPrompt
           model={prompt}
@@ -985,7 +1089,7 @@
       {nameOf}
       {faces}
       {back}
-      {hovered}
+      hovered={keyTarget}
       {selection}
       {vw}
       {vh}
@@ -1015,7 +1119,7 @@
         bind:shuffleOnClose={viewer.shuffleOnClose}
         {faces}
         {back}
-        {hovered}
+        hovered={keyTarget}
         {vw}
         {vh}
         keys={{ draw: keyOf('draw'), drawN: keyOf('drawN'), shuffle: keyOf('shuffle'), mulligan: keyOf('mulligan') }}

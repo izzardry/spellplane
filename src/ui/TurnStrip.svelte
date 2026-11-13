@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import type { PhaseSpec } from '../core/types';
+  import SeatGlyph from './a11y/SeatGlyph.svelte';
 
   let {
     turn,
@@ -30,7 +31,7 @@
 
 <nav class="strip" data-testid="turn-strip" aria-label="Turn">
   <span class="turn" data-testid="turn-number">Turn {turn}</span>
-  <span class="active" data-testid="active-player" style:--seat={activeColour === null ? 'currentColor' : `var(--sp-seat-${activeColour})`}>{activeName}</span>
+  <span class="active" data-testid="active-player" style:--seat={activeColour === null ? 'currentColor' : `var(--sp-seat-${activeColour})`}><SeatGlyph colour={activeColour} />{activeName}</span>
   <ol>
     {#each phases as p (p.id)}
       <li>

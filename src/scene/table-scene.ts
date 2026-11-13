@@ -43,6 +43,7 @@ import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type Combat
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, legibleScale, pointInCard, pointInRect, rot2 } from './math';
+import { createFocusRing, FOCUS_RING_GAP_MM } from './focus-ring';
 import { CardMotion, HeldLift, heldTilt } from './motion';
 import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
@@ -246,6 +247,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   marqueeEl.setAttribute('data-scene', 'marquee');
   Object.assign(marqueeEl.style, { position: 'absolute', display: 'none', pointerEvents: 'none', border: `1px dashed ${theme.tokens.colours.focus}`, background: 'rgba(31,111,209,0.06)' });
   host.appendChild(marqueeEl);
+  // The keyboard focus ring (ViewState.focused; M5-P4, scene/focus-ring.ts), over the canvas like the marquee.
+  const focusRing = createFocusRing(host);
 
   /** The lit, post-processed world (theme, card boxes, markings) and the overlay drawn after post (faces, text, lines). */
   const scene = new THREE.Scene();
@@ -719,6 +722,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const slotOf = new Map(entries.map((e) => [e.item.card ?? '', e]));
     const foilPhase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
     foilsDrawn.clear();
+    let focusTarget: { card: InstanceId; points: { x: number; y: number }[] } | null = null;
     for (const rc of order) {
       const pose = rc.motion.pose;
       if (rc.motion.flipSwapped) {
@@ -735,6 +739,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (tilt) tiltDrawn.set(rc.id, tilt.deg);
       else tiltDrawn.delete(rc.id);
       const sel = selection.has(rc.id);
+      if (view.focused === rc.id) {
+        const z = rc.place.z + rc.lift.value;
+        focusTarget = { card: rc.id, points: cardCorners(pose, CARD_W + 2 * FOCUS_RING_GAP_MM, CARD_H + 2 * FOCUS_RING_GAP_MM).map((p) => rig.tableToScreen(p, z, cam)) };
+      }
       const hov = view.hovered === rc.id || hovered === rc.id || lit.has(rc.id);
       const entry = rc.place.kind === 'stack' && !dragging ? slotOf.get(rc.id) : undefined;
       // A foil printing shown face up carries the sheen (a rim, unless another outline takes the slot) and the badge.
@@ -782,6 +790,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       });
     }
     sorted.sort((a, b) => compareSort(a.sort, b.sort));
+    focusRing.set(focusTarget, { ring: theme.tokens.colours.focus, halo: theme.tokens.colours.bg });
     const draws = sorted.map((x) => x.draw);
     cards.setTextures(faces.textures());
     // Anisotropic filtering of the face arrays follows the quality level (a grown array starts at the GPU maximum).
@@ -2104,6 +2113,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       removeEventListener('pointermove', releaseIdlePointer, true);
       removeEventListener('blur', releaseAllPointers);
       releaseDressing();
+      focusRing.dispose();
       runtime.dispose();
       boxes.dispose();
       contact.dispose();
