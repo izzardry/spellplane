@@ -1483,9 +1483,13 @@ class Engine implements NetEngine {
     // A fork found again from the source this replica already adopts from lies at or below the point it rewound to
     // (an older fork the first one hid): it rewinds further (review M1-P1 retry round 1).
     if (this.mode === 'active' || !this.peerMap.has(to) || this.forced === to) return;
-    this.system('warn', `${why}: taking over the sequencer's history from there.`);
+    const retained = this.replica.tail(forkSeq - 1);
+    // The players are told only when something a player did may be lost: an abandoned part that holds nothing but a
+    // sequencer's records of its own view (`away`, `sequencerClaim`: a page that was cut off and noted the others gone)
+    // loses nothing, since the sequencer of the adopted history derives those afresh (decision M4-G fix).
+    if (retained === null || retained.some((a) => !DUTY_RECORDS.has(a.type))) this.system('warn', `${why}: taking over the sequencer's history from there.`);
     if (this.mode === 'claiming') this.noteRival(this.peerMap.get(to)?.info.peerId);
-    const abandoned = this.replica.tail(forkSeq - 1) ?? [];
+    const abandoned = retained ?? [];
     // The sequencer's own records of its view at the time (`away`, `sequencerClaim`) are not proposed again: they
     // described the abandoned history, and the sequencer derives them afresh once it is active. Own actions of an
     // earlier abandoned part still waiting (another fork found before this one was repaired) are kept, oldest first.

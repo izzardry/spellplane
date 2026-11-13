@@ -31,6 +31,17 @@ export class TrysteroTransport implements Transport {
   /** Bumped by `leave`, so a `join` still loading Trystero does not open a room after it. */
   private generation = 0;
   private joining: Promise<void> | null = null;
+  /**
+   * The page is unloading: Trystero leaves its rooms on `beforeunload` and, ~100 ms later, closes every peer
+   * connection, which it reports as peers leaving. Those are not reported to this page's engine: it is still running
+   * (a reload keeps the old page until the new one arrives) and would act on a room it believes lost — a sequencer
+   * marks the other seats away, a follower takes over as sequencer — and save records that the reopened page then
+   * finds in no one else's history (M4 gate: "history diverged at seq N" after a reload; net/broadcast.ts likewise).
+   */
+  private unloading = false;
+  private readonly onUnload = (): void => {
+    this.unloading = true;
+  };
 
   constructor(private readonly options: TrysteroOptions = {}) {}
 
@@ -77,9 +88,10 @@ export class TrysteroTransport implements Transport {
     };
     room.onPeerLeave = (peer) => {
       this.gone.add(peer);
-      if (!this.known.delete(peer)) return;
+      if (!this.known.delete(peer) || this.unloading) return;
       for (const h of this.peerHandlers) h('leave', peer);
     };
+    if (typeof addEventListener === 'function') addEventListener('beforeunload', this.onUnload);
     room.onPeerStream = (stream, peer) => {
       for (const h of this.streamHandlers) h(stream, peer);
     };
@@ -91,6 +103,7 @@ export class TrysteroTransport implements Transport {
     const room = this.room;
     if (!room) return;
     this.room = null;
+    if (typeof removeEventListener === 'function') removeEventListener('beforeunload', this.onUnload);
     this.senders.clear();
     this.gone.clear();
     for (const peer of [...this.known]) {

@@ -128,7 +128,8 @@ export interface SimPeer {
 export interface Sim {
   net: LoopbackNetwork;
   peers: SimPeer[];
-  add(index: number, start?: { seq: number; state: TableState }, role?: PeerRole): SimPeer;
+  /** `tail`: the stored log after `start` (a reload from the local save, as session/net.ts `loadSaved` hands it over). */
+  add(index: number, start?: { seq: number; state: TableState }, role?: PeerRole, tail?: readonly SequencedAction[]): SimPeer;
   live(): SimPeer[];
 }
 
@@ -149,7 +150,7 @@ export function makeSim(opts: SimOptions): Sim {
   const sim: Sim = {
     net,
     peers,
-    add(index, from = start, role = 'player') {
+    add(index, from = start, role = 'player', tail = []) {
       const transport = new SilentableTransport(net.create(`t${index}-${peers.length}`));
       const engine = createNetEngine({
         transport,
@@ -157,7 +158,7 @@ export function makeSim(opts: SimOptions): Sim {
         roomKey: KEY,
         identity: fakeNetIdentity(peerIdOf(index), `P${index}`),
         game: TEST_GAME,
-        start: { snapshot: from, tail: [] },
+        start: { snapshot: from, tail: [...tail] },
         role,
         now: () => Date.now(),
         ...(opts.deadlines ? { deadlines: opts.deadlines } : {}),
