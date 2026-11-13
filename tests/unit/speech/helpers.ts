@@ -8,6 +8,7 @@ import type { Anchor, LogEntry, SeatId, TableState } from '../../../src/core/typ
 import type { PeerPresence } from '../../../src/net/types';
 import { DEFAULT_SETTINGS, type Settings, type SettingsStore } from '../../../src/store/types';
 import { FakeSpeechEngine } from '../../../src/voice/fake';
+import type { AudioCapture } from '../../../src/voice/speech/local';
 import type { ProbedSpeechEngineFactory } from '../../../src/voice/speech/index';
 import { TALK_CLOSED, type CaptionHost, type DictationTarget, type SpeechEngine, type SpeechEngineFactory, type SpeechEngineId, type TalkState } from '../../../src/voice/types';
 import { act, ok } from '../core/helpers';
@@ -133,6 +134,34 @@ export class TestTable {
       settings: this.settings,
       now: () => Date.now(),
     };
+  }
+}
+
+/** A microphone the test speaks into (16 kHz samples; 0.1 is speech). */
+export class ScriptCapture implements AudioCapture {
+  buf: number[] = [];
+  recording = false;
+  async begin(): Promise<void> {
+    this.buf = [];
+    this.recording = true;
+  }
+  feed(seconds: number, level = 0.1): void {
+    if (this.recording) for (let i = 0; i < Math.round(seconds * 16000); i++) this.buf.push(level);
+  }
+  samples(): Float32Array {
+    return Float32Array.from(this.buf);
+  }
+  cut(): Float32Array {
+    const out = Float32Array.from(this.buf);
+    this.buf = [];
+    return out;
+  }
+  end(): Float32Array {
+    this.recording = false;
+    return this.cut();
+  }
+  close(): void {
+    this.recording = false;
   }
 }
 

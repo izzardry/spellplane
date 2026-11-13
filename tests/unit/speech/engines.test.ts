@@ -5,8 +5,8 @@
  * and the test asserts the real loader is not called before `load`.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { FAKE_SPEECH, SPEECH_ENGINES, createdEngines } from '../../../src/voice/speech/index';
-import { downsampler, LocalWhisperEngine, SEGMENT_MAX_S, WebAudioCapture, WHISPER_MODEL, type AsrPipeline, type AudioCapture, type ProgressInfo, type TransformersLike } from '../../../src/voice/speech/local';
+import { FAKE_SPEECH, LOCAL_MODEL_SOURCES, SPEECH_ENGINES, createdEngines } from '../../../src/voice/speech/index';
+import { downsampler, LocalWhisperEngine, SEGMENT_MAX_S, TRANSFORMERS_URL, WebAudioCapture, WHISPER_MODEL, type AsrPipeline, type AudioCapture, type ProgressInfo, type TransformersLike } from '../../../src/voice/speech/local';
 import { MAX_FAILURES, RETRY_MS, WebSpeechEngine, recognitionCtor, type RecognitionEventLike, type RecognitionLike } from '../../../src/voice/speech/webspeech';
 
 // --- Web Speech ------------------------------------------------------------------------------------------------------
@@ -448,6 +448,60 @@ describe('on-device Whisper engine', () => {
     expect(got).toEqual([]);
     expect(f.runs).toEqual([]);
   });
+
+  it('settles a stopped listener only once every transcription queued for it has been passed on', async () => {
+    const texts = ['attack with both', 'no blocks'];
+    let i = 0;
+    const pipe: AsrPipeline = async () => {
+      await new Promise((r) => setTimeout(r, 2000));
+      return { text: texts[i++] ?? '?' };
+    };
+    const cap = new FakeCapture();
+    const e = new LocalWhisperEngine({ library: async () => ({ pipeline: async () => pipe }), capture: () => cap, webgpu: false });
+    await e.load();
+    const first: string[] = [];
+    const second: string[] = [];
+    const onFirst = (t: string, final: boolean): number => final ? first.push(t) : 0;
+    const onSecond = (t: string, final: boolean): number => final ? second.push(t) : 0;
+    // Owed nothing: a listener never started, or started and stopped without words.
+    await e.settled(onFirst);
+    e.start('en', onFirst);
+    await vi.advanceTimersByTimeAsync(0);
+    cap.feed(0.6);
+    e.stop();
+    e.start('en', onSecond);
+    await vi.advanceTimersByTimeAsync(0);
+    cap.feed(0.6);
+    e.stop();
+    let firstSettled = false;
+    let secondSettled = false;
+    void e.settled(onFirst).then(() => (firstSettled = true));
+    void e.settled(onSecond).then(() => (secondSettled = true));
+    await vi.advanceTimersByTimeAsync(1999);
+    expect([firstSettled, secondSettled]).toEqual([false, false]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(first).toEqual(['attack with both']);
+    expect([firstSettled, secondSettled]).toEqual([true, false]);
+    // The second phrase waited behind the first: it is settled 4 s after its release, with its final passed on.
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(second).toEqual(['no blocks']);
+    expect(secondSettled).toBe(true);
+  });
+
+  it('a listener still listening is not settled', async () => {
+    const f = fakeTransformers(() => 'x');
+    const e = new LocalWhisperEngine({ library: async () => f.lib, capture: () => new FakeCapture(), webgpu: false });
+    await e.load();
+    const on = (): void => undefined;
+    e.start('en', on);
+    let settled = false;
+    void e.settled(on).then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(settled).toBe(false);
+    e.stop();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(settled).toBe(true);
+  });
 });
 
 // --- Microphone capture ----------------------------------------------------------------------------------------------
@@ -642,6 +696,13 @@ describe('engine factories', () => {
     expect(SPEECH_ENGINES.local.info).toMatchObject({ audio: 'device', statement: expect.stringMatching(/stays on this device/) });
     expect(SPEECH_ENGINES.local.info.downloadBytes).toBeGreaterThan(10_000_000);
     expect(FAKE_SPEECH.info.audio).toBe('none');
+  });
+
+  it('name where the on-device model’s code and weights are downloaded from', () => {
+    expect(LOCAL_MODEL_SOURCES).toMatch(/jsDelivr/);
+    expect(LOCAL_MODEL_SOURCES).toMatch(/Hugging Face/);
+    expect(LOCAL_MODEL_SOURCES).toContain(new URL(TRANSFORMERS_URL).host);
+    expect(LOCAL_MODEL_SOURCES).toContain('huggingface.co');
   });
 
   it('creating the local engine loads its code but not the model or transformers.js', async () => {

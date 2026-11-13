@@ -14,9 +14,9 @@ import type { LogEntry } from '../../../src/core/types';
 import { CAPTION_LINGER_MS, TALK_CLOSED, type CaptionControls, type LocalSpeechEngine, type SpeechEngine, type SpeechEngineFactory, type SpeechListener } from '../../../src/voice/types';
 import { CAPTION_MAX_CHARS, createCaptions, FINAL_GRACE_MS, INTERIM_STALE_MS, lastTouched, pieces, publicAnchor, speechLang, tail } from '../../../src/voice/captions';
 import { FakeSpeechEngine } from '../../../src/voice/fake';
-import { LocalWhisperEngine, type AsrPipeline, type AudioCapture, type TransformersLike } from '../../../src/voice/speech/local';
+import { LocalWhisperEngine, type AsrPipeline, type TransformersLike } from '../../../src/voice/speech/local';
 import { P, play, readyTable } from '../core/helpers';
-import { act, countingFactory, memorySettings, OPEN, TestTable } from './helpers';
+import { act, countingFactory, memorySettings, OPEN, ScriptCapture, TestTable } from './helpers';
 
 /** Two seats, each with two cards on its battlefield (a00, a01 for s0; b00, b01 for s1) and eight in the library. */
 function table(me = 's0'): TestTable {
@@ -41,34 +41,6 @@ function fakeOf(t: TestTable): FakeSpeechEngine {
   const e = f.created.at(-1);
   if (!(e instanceof FakeSpeechEngine)) throw new Error('no fake engine was created');
   return e;
-}
-
-/** A microphone the test speaks into (16 kHz samples; 0.1 is speech). */
-class ScriptCapture implements AudioCapture {
-  buf: number[] = [];
-  recording = false;
-  async begin(): Promise<void> {
-    this.buf = [];
-    this.recording = true;
-  }
-  feed(seconds: number, level = 0.1): void {
-    if (this.recording) for (let i = 0; i < Math.round(seconds * 16000); i++) this.buf.push(level);
-  }
-  samples(): Float32Array {
-    return Float32Array.from(this.buf);
-  }
-  cut(): Float32Array {
-    const out = Float32Array.from(this.buf);
-    this.buf = [];
-    return out;
-  }
-  end(): Float32Array {
-    this.recording = false;
-    return this.cut();
-  }
-  close(): void {
-    this.recording = false;
-  }
 }
 
 let controls: CaptionControls | null = null;
@@ -550,8 +522,13 @@ describe('dictation into note fields (DESIGN "Chat and voice", Notes by voice)',
     expect(c.captions()).toHaveLength(0);
     expect(t.captionsSent()).toHaveLength(0);
     expect(t.interims).toHaveLength(0);
-    // Leaving the field returns dictation to captions.
+    // Leaving the field returns dictation to captions once the talk state says so (the key is still held); words in
+    // between, with the field gone but the talk state still on it, are dropped.
     c.dictateInto(null);
+    await flush();
+    fakeOf(t).say('lost words', true);
+    t.setTalk(OPEN);
+    await flush();
     fakeOf(t).say('now a caption', true);
     expect(t.captionsSent().map((a) => a.text)).toEqual(['now a caption']);
   });
@@ -564,9 +541,11 @@ describe('dictation into note fields (DESIGN "Chat and voice", Notes by voice)',
     t.setTalk({ ...OPEN, dictation: 'field' });
     await flush();
     c.dictateInto({ kind: 'cardNote', card: 'a00' });
+    await flush();
     fakeOf(t).say('gets plus two', true);
     expect(t.state.cards.a00?.note).toBe('kicked gets plus two');
     c.dictateInto({ kind: 'stackNote', item: 'trig' });
+    await flush();
     fakeOf(t).say('targets Ben', true);
     expect(t.state.stack.find((i) => i.id === 'trig')?.note).toBe('targets Ben');
     expect(t.captionsSent()).toHaveLength(0);

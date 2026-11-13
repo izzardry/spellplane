@@ -14,6 +14,10 @@
  * segment grows, it alone is transcribed about once a second for the interim caption. Silence before any speech is
  * dropped, so an open microphone (dictation with the open gate, or for the whole own turn) keeps only the current
  * phrase. Audio never leaves the page.
+ *
+ * Transcriptions run one after another, so after `stop` a listener may still be owed finals for several seconds (a
+ * second phrase queued behind the first, a long phrase on WASM). Each listener counts the transcriptions it is owed;
+ * `settled` resolves once it was stopped and that count is zero, so the caller waits exactly as long as needed.
  */
 import { MIC_CONSTRAINTS, type LocalSpeechEngine, type MediaDevicesLike, type SpeechListener } from '../types';
 
@@ -265,6 +269,10 @@ interface Listening {
   /** Time since the last interim pass, ms. */
   sinceInterim: number;
   timer: ReturnType<typeof setInterval> | null;
+  /** Transcriptions handed in for this listener and not settled yet (interim passes and finals). */
+  pending: number;
+  /** Resolved once the listener is stopped and owed nothing (`settled`). */
+  waiters: (() => void)[];
 }
 
 /** Judge the samples of `seg` not judged yet (`audio` is the segment so far), window by window. */
@@ -288,6 +296,8 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
   private loading: Promise<void> | null = null;
   private capture: AudioCapture | null = null;
   private listening: Listening | null = null;
+  /** Listeners not settled yet: the current one, and stopped ones still owed a transcription. */
+  private readonly owing = new Set<Listening>();
   /** One transcription at a time; interim passes are skipped while one runs. */
   private busy: Promise<unknown> = Promise.resolve();
   private running = false;
@@ -345,8 +355,9 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
 
   start(lang: string, on: SpeechListener): void {
     this.stop();
-    const l: Listening = { lang, on, active: true, seg: newSegment(), sinceInterim: 0, timer: null };
+    const l: Listening = { lang, on, active: true, seg: newSegment(), sinceInterim: 0, timer: null, pending: 0, waiters: [] };
     this.listening = l;
+    this.owing.add(l);
     this.capture ??= (this.opts.capture ?? (() => new WebAudioCapture()))();
     const capture = this.capture;
     void this.load()
@@ -358,8 +369,29 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
       })
       .catch((e: unknown) => {
         l.active = false;
+        this.settle(l);
         console.warn('Spellplane: the on-device speech engine could not listen', e);
       });
+  }
+
+  /**
+   * Resolves once `on` was stopped and every transcription handed in for it has been passed on (voice/types.ts
+   * SpeechEngine.settled). A listener this engine does not know (never started, or settled already) is owed nothing.
+   */
+  settled(on: SpeechListener): Promise<void> {
+    const l = [...this.owing].find((x) => x.on === on);
+    if (!l) return Promise.resolve();
+    return new Promise((resolve) => {
+      l.waiters.push(resolve);
+      this.settle(l);
+    });
+  }
+
+  /** A stopped listener owed nothing more is settled: its waiters resolve. */
+  private settle(l: Listening): void {
+    if (l.active || l.pending > 0) return;
+    this.owing.delete(l);
+    for (const w of l.waiters.splice(0)) w();
   }
 
   stop(): void {
@@ -369,11 +401,13 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
     const wasActive = l.active;
     l.active = false;
     if (l.timer !== null) clearInterval(l.timer);
-    if (!wasActive || !this.capture) return;
-    const audio = this.capture.end();
-    judge(l.seg, audio);
-    // Trailing silence after the last phrase carries no words (and Whisper would invent some).
-    this.finish(l.seg.heard ? audio : new Float32Array(0), l.seg, l);
+    if (wasActive && this.capture) {
+      const audio = this.capture.end();
+      judge(l.seg, audio);
+      // Trailing silence after the last phrase carries no words (and Whisper would invent some).
+      this.finish(l.seg.heard ? audio : new Float32Array(0), l.seg, l);
+    }
+    this.settle(l);
   }
 
   /** Release the microphone and the model (the engine can start again later, loading the model anew). */
@@ -418,7 +452,9 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
     if (l.sinceInterim < this.interimMs) return;
     l.sinceInterim = 0;
     if (this.running || audio.length < MIN_SAMPLES) return;
-    void this.transcribe(audio, l.lang).then(
+    this.transcribeFor(
+      l,
+      audio,
       (text) => {
         // Transcriptions run one after another, so this interim always arrives before its segment's final.
         if (l.active && text) {
@@ -436,7 +472,9 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
       if (seg.spoke) l.on('', true);
       return;
     }
-    void this.transcribe(audio, l.lang).then(
+    this.transcribeFor(
+      l,
+      audio,
       (text) => {
         if (text || seg.spoke) l.on(text, true);
       },
@@ -444,6 +482,18 @@ export class LocalWhisperEngine implements LocalSpeechEngine {
         if (seg.spoke) l.on('', true);
       },
     );
+  }
+
+  /** Transcribe for `l`, counted as owed to it until `done` or `failed` has run. */
+  private transcribeFor(l: Listening, audio: Float32Array, done: (text: string) => void, failed: () => void): void {
+    l.pending++;
+    void this.transcribe(audio, l.lang)
+      .then(done, failed)
+      .catch((e: unknown) => console.warn('Spellplane: a transcript could not be passed on', e))
+      .finally(() => {
+        l.pending--;
+        this.settle(l);
+      });
   }
 
   private transcribe(audio: Float32Array, lang: string): Promise<string> {
