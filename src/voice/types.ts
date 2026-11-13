@@ -66,9 +66,47 @@ export const TALK_CLOSED: TalkState = { audio: 'off', dictation: 'off', reason: 
 /**
  * The talk-mode indicator (PLAN M3-G screenshot set: "talk-mode indicator states"; DESIGN "Chat and voice", Talk modes):
  * 'noMic' before the mic is acquired, 'muted', 'idle' (gate closed), 'live' (audio to all), 'team' (audio to the
- * teammate), 'dictating' (captions only, no audio).
+ * teammate), 'dictating' (captions only, no audio). 'listening' (added by M5-C, M5-P7): a spectator's listen-only
+ * session, which hears the table and never talks (PLAN Milestone 5, owner decisions: "Spectators listen").
  */
-export type TalkIndicatorState = 'noMic' | 'muted' | 'idle' | 'live' | 'team' | 'dictating';
+export type TalkIndicatorState = 'noMic' | 'muted' | 'idle' | 'live' | 'team' | 'dictating' | 'listening';
+
+/**
+ * How long the Ctrl talk key must be held alone before the mic and dictation open (PLAN Milestone 5, owner decisions,
+ * Talk key: "The mic and dictation open only after Ctrl has been held alone for about 200 ms. A key or click during
+ * that time makes it a shortcut (Ctrl+Z, Ctrl+Enter, Ctrl+T, Ctrl+click), and no audio or caption is sent"). Applies
+ * when the talk binding is a bare modifier (games/types.ts `isModifierChord`); a letter talk key (the old V, or a
+ * remapped one) opens at once as before. Added by M5-C; implementer: M5-P7.
+ */
+export const TALK_HOLD_ALONE_MS = 200;
+
+/**
+ * Where a held modifier talk key stands (PLAN Milestone 5, owner decisions, Talk key): 'idle' (not held), 'pending'
+ * (held alone for less than TALK_HOLD_ALONE_MS: nothing is sent), 'talking' (held alone long enough: the talk key is
+ * down for the voice controller), 'shortcut' (another key or a click came first: it stays a shortcut until released).
+ * Added by M5-C.
+ */
+export type HoldAloneState = 'idle' | 'pending' | 'talking' | 'shortcut';
+
+/**
+ * The hold-alone rule as a pure state machine with injected time (PLAN Milestone 5, owner decisions, Talk key). The HUD
+ * feeds it the talk key's down and up, any other key or pointer press while it is held, and a timer tick; on a change
+ * to 'talking' it calls VoiceControls.keyDown, and on release from 'talking' keyUp. Window blur resets it. Added by
+ * M5-C; implementer: M5-P7 (voice/hold.ts).
+ */
+export interface HoldAloneGate {
+  /** The talk key went down at `now`; `team` when Shift was held (team talk). */
+  down(now: number, team: boolean): HoldAloneState;
+  /** Another key or a click while the talk key is held. */
+  other(now: number): HoldAloneState;
+  /** The talk key was released. */
+  up(now: number): HoldAloneState;
+  /** Advance the clock: 'pending' becomes 'talking' once TALK_HOLD_ALONE_MS passed. */
+  tick(now: number): HoldAloneState;
+  /** Window blur or a text field took focus: back to 'idle' without talking. */
+  reset(): void;
+  state(): HoldAloneState;
+}
 
 /** Pure talk-state rule (voice/modes.ts `talkState`; DESIGN "Chat and voice", Talk modes). Implementer: M3-P3. */
 export type TalkStateFn = (inputs: TalkInputs) => TalkState;
@@ -116,6 +154,14 @@ export interface VoiceHost {
   presence: Pick<Presence, 'speaking'>;
   media: MediaDevicesLike;
   settings: SettingsStore;
+  /**
+   * A spectator's listen-only session (PLAN Milestone 5, owner decisions: "A spectator gets a listen-only voice
+   * session: they hear the table's open voice but never talk, and team-only talk never reaches them"). With it `join`
+   * acquires no microphone, key and button presses are ignored, and the indicator is 'listening'. Players add their
+   * outgoing track to spectator connections too, enabled only for open (non-team) talk. Added by M5-C; implementer:
+   * M5-P7.
+   */
+  listenOnly?: boolean;
   /** Plays a remote peer's audio at the player's volume; injectable so unit tests need no audio output. */
   play?(peer: PeerId, stream: MediaStream, setting: PeerAudioSetting): { set(setting: PeerAudioSetting): void; stop(): void };
 }

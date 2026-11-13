@@ -5,3 +5,4 @@ export { talkState, talkIndicator } from './modes';
 export { createVoice } from './mic';
 export { createCaptions, lastTouched } from './captions';
 export { FAKE_SPEECH, SPEECH_ENGINES } from './speech/index';
+export { createHoldAloneGate } from './hold';

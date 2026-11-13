@@ -12,3 +12,4 @@ export { createPrivateChannel } from './private';
 export { chooseResume, type ResumeChoice, type ResumeOffer } from './sync';
 export { createTeamChannel } from './team';
 export { SPECTATOR_ACTIONS, roleProblem, spectatorsOf, type SpectatorInfo } from './roles';
+export { roomProtocol, versionAdvice, versionNotice, type VersionAdvice, type VersionMismatch } from './version';

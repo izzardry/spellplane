@@ -10,6 +10,7 @@ import type { RevealedCard } from '../core/commit';
 import type { Anchor, CoreGameSpec, Deadline, InstanceId, PackId, Pose, SeatId, TableState, ZoneId } from '../core/types';
 import type { ChatChannel, LookReqMessage, PeerRole, PrivateMessage, SequencedAction, WireMessage } from './messages';
 import type { Channel, PeerId, Transport } from './transport';
+import type { VersionMismatch } from './version';
 
 /** Heartbeat interval on `ctl` (DESIGN "Specification: network protocol and secrecy", Liveness). */
 export const HEARTBEAT_MS = 2000;
@@ -264,6 +265,12 @@ export interface NetEngine {
 
   /** Every message sent and received since join (debug hook and leak test). */
   messages(): NetMessageRecord[];
+  /**
+   * The latest protocol-version mismatch with a peer, or null (PLAN Milestone 5, owner decisions, Version mismatch:
+   * "a clear message naming both versions and what to do"). Added by M5-C; implementer: M5-P6 (net/version.ts).
+   * Optional until M5-P6 lands.
+   */
+  versionMismatch?(): VersionMismatch | null;
 }
 
 /** Create a network engine (DESIGN "Multiplayer architecture"). Implementer: M1-P1 (net/engine.ts). */

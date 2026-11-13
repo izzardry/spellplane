@@ -90,7 +90,28 @@ export interface Settings {
    * 'theme' follows the theme's SoundSet.onByDefault, 'on' and 'off' override it for every theme.
    */
   sound: 'theme' | 'on' | 'off';
+  /**
+   * Added by M5-C. The card back other players' hidden cards show (DESIGN "Card data and images", Card back:
+   * Spellplane's own neutral back; the official back is an opt-in setting loaded from backs.scryfall.io at runtime and
+   * never bundled). Implementer: M5-P5.
+   */
+  cardBack: CardBackChoice;
+  /**
+   * Added by M5-C. Hints this browser has shown and the player dismissed (PLAN M5-P5 first-run hints; M5-P3 the iPad
+   * Home Screen hint and the storage-persistence prompt), so each shows once. Ids this build does not know are ignored.
+   */
+  hintsSeen: HintId[];
 }
+
+/** Which card back to draw (DESIGN "Card data and images", Card back). Added by M5-C. */
+export type CardBackChoice = 'spellplane' | 'official';
+
+/**
+ * A one-time hint (PLAN M5-P5 first-run hints; PLAN Milestone 5, owner decisions: "a one-time hint on iPad and iPhone
+ * explaining why" to add Spellplane to the Home Screen; M5-P3 storage-persistence prompt). Added by M5-C; packages may
+ * add ids here through the contracts owner, and a stored id this build does not know is ignored.
+ */
+export type HintId = 'welcome' | 'tableKeys' | 'touchGestures' | 'talkKey' | 'installHomeScreen' | 'persistStorage';
 
 /** Talk defaults (DESIGN "Decision log": push-to-talk; hold V). Added by M3-C. */
 export const DEFAULT_TALK: TalkSettings = { gate: 'ptt', voice: true, dictation: false, muted: false, mouseButton: null };
@@ -109,6 +130,8 @@ export const DEFAULT_SETTINGS: Settings = {
   micDevice: null,
   peerAudio: {},
   sound: 'theme',
+  cardBack: 'spellplane',
+  hintsSeen: [],
 };
 
 /** `settings` store record, keyed by name (DESIGN "Local persistence"). */
@@ -126,6 +149,12 @@ export interface TableRecord {
   seat: SeatId | null;
   stage: Stage;
   updatedAt: number;
+  /**
+   * Added by M5-C. The protocol version (net/messages.ts PROTOCOL_VERSION) this browser last played the room with
+   * (PLAN Milestone 5, owner decisions: "A room records its protocol version"). Absent on records written before M5:
+   * read as 1. M5-P6 writes and checks it (net/version.ts).
+   */
+  protocol?: number;
 }
 
 /** `log` store record, key [roomId, seq] (DESIGN "Local persistence"). */
@@ -183,6 +212,63 @@ export interface LibraryFile {
 export interface LibraryImport {
   decks: DeckRecord[];
   errors: { index: number; message: string }[];
+}
+
+/**
+ * Format tag of a backup file (PLAN Milestone 5, owner decisions, Installable on iPad: "lets decks and saved tables be
+ * exported to a file and imported again", because Safari deletes a site's storage after 7 days without a visit). Added
+ * by M5-C; implementer: M5-P3 (store/backup.ts).
+ */
+export const BACKUP_FILE_FORMAT = 'spellplane-backup';
+
+/** Current version of the backup file (a later version bumps it with a reader for the older one). Added by M5-C. */
+export const BACKUP_FILE_VERSION = 1;
+
+/**
+ * The identity in a backup file (DESIGN "Players, seats and formats", Identity: a returning key pair reclaims its
+ * seat). Key pair as JWK, never CryptoKey objects (CLAUDE.md: keychain prompts in WebKit). Added by M5-C.
+ */
+export interface ExportedIdentity {
+  privateJwk: JsonWebKey;
+  publicJwk: JsonWebKey;
+  peerId: string;
+  nickname: string;
+  seatColour: number;
+}
+
+/** One saved table in a backup file: everything `TableStore.loadTable` restores, plus the full log (DESIGN "Multiplayer architecture", Resume). Added by M5-C. */
+export interface SavedTableExport {
+  table: TableRecord;
+  /** Every stored log record of the room, ascending. */
+  log: LogRecord[];
+  /** The owner's own secret store of that room (it stays with its owner: the file is the player's own copy). */
+  secrets: SecretStore | null;
+}
+
+/**
+ * A backup file, plain JSON (PLAN Milestone 5, owner decisions, Installable on iPad). Decks reuse `DeckRecord`; the
+ * deck-only `LibraryFile` stays readable as before. Added by M5-C; implementer: M5-P3.
+ */
+export interface BackupFile {
+  format: typeof BACKUP_FILE_FORMAT;
+  version: number;
+  /** ms epoch of the export. */
+  exportedAt: number;
+  decks: DeckRecord[];
+  tables: SavedTableExport[];
+  /** Present when tables are exported: without the key pair a restored table could not reclaim its seat. */
+  identity?: ExportedIdentity;
+  /** The settings, when the player chose to include them. */
+  settings?: Partial<Settings>;
+}
+
+/** Result of reading a backup file: what to restore and one message per entry that was skipped (M5-P3). Added by M5-C. */
+export interface BackupImport {
+  decks: DeckRecord[];
+  tables: SavedTableExport[];
+  identity: ExportedIdentity | null;
+  settings: Partial<Settings>;
+  errors: { where: string; message: string }[];
 }
 
 /** `cards` store record keyed by Scryfall id; `data` is data/'s CardData (DESIGN "Local persistence"). */

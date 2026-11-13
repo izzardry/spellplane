@@ -28,6 +28,9 @@ export function indicatorLabel(state: TalkIndicatorState, settings: TalkSettings
       return 'Team only';
     case 'dictating':
       return 'Dictating';
+    case 'listening':
+      // Added by M5-C for M5-P7's spectator listen-only session.
+      return 'Listening';
     case 'idle':
       return settings.gate === 'turn' ? `Turn mic · hold ${talkKey}` : `Hold ${talkKey} to talk`;
   }

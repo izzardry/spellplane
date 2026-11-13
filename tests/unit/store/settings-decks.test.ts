@@ -34,6 +34,8 @@ const CHANGED: Settings = {
   micDevice: 'mic-2',
   peerAudio: { '0123456789abcdef': { volume: 0.5, muted: true } },
   sound: 'off',
+  cardBack: 'official',
+  hintsSeen: ['welcome', 'installHomeScreen'],
 };
 
 describe('settings', () => {

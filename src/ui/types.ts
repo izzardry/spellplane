@@ -13,6 +13,7 @@ import type { Transport } from '../net/transport';
 import type { EveningControls, TableSession, TeammateHandCard } from '../session/types';
 import type { DeckStore, IdentityStore, SettingsStore, TableRecord } from '../store/types';
 import type { CaptionControls, VoiceControls } from '../voice/types';
+import type { AppUpdate } from './update';
 
 /** What main.ts hands the app shell (PLAN M0-P4, M0-P7). */
 export interface AppProps {
@@ -37,6 +38,8 @@ export interface AppProps {
   diag?: DiagProps;
   /** MTGJSON sets for the lobby's set picker (DESIGN "Pre-game", Lobby settings). Added by M2-C; wired by M2-P7 in main.ts. */
   sets?: SetDataSource;
+  /** Service-worker updates, applied only between games (PLAN Milestone 5, owner decisions). Added by M5-C; wired by M5-P3 in main.ts; absent in dev and test builds. */
+  update?: AppUpdate;
 }
 
 /**

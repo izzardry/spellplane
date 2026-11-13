@@ -119,6 +119,8 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   formatSet: format.formatSet,
   recover: recovery.recover,
   recoverCommit: recovery.recoverCommit,
+  // Added by M5-C: a public record; M5-P2 adds its structural checks (seat, game, bundle shape; core/audit.ts).
+  auditPublish: record,
 };
 
 /**

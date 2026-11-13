@@ -38,6 +38,7 @@ import type {
   TeamId,
   ZoneId,
 } from './types';
+import type { AuditBundle } from './audit';
 import type { RevealedCard } from './commit';
 import type { SpectatorId } from './teams';
 
@@ -354,6 +355,14 @@ export type LobbySetAction = A<'lobbySet', { lobby: LobbySettings }>;
  */
 export type FormatSetAction = A<'formatSet', { format: Format; life: number }>;
 
+/**
+ * A seat publishes its audit records of a finished game (DESIGN "Multiplayer architecture", Hidden information 6:
+ * "At game end each browser can publish its nonces and order history"; PLAN Milestone 5, owner decisions: automatic at
+ * game end). Added by M5-C; `bundle.seat` equals `by`; the bundle never carries an identity (core/audit.ts). Reducer:
+ * a public record (M5-P2 adds its structural checks); verdicts are computed by every peer with `verifyAudit`.
+ */
+export type AuditPublishAction = A<'auditPublish', { bundle: AuditBundle }>;
+
 /** Every shared action (DESIGN "Data model and protocol"). */
 export type Action =
   | MoveAction
@@ -421,7 +430,8 @@ export type Action =
   | LobbySetAction
   | FormatSetAction
   | RecoverAction
-  | RecoverCommitAction;
+  | RecoverCommitAction
+  | AuditPublishAction;
 
 /** The `type` tag of an action (DESIGN "Data model and protocol"). */
 export type ActionType = Action['type'];
@@ -506,6 +516,7 @@ export const ACTION_FAMILIES: Readonly<Record<ActionType, ActionFamily>> = {
   formatSet: 'meta',
   recover: 'zone',
   recoverCommit: 'zone',
+  auditPublish: 'meta',
 };
 
 /** Every action type, in declaration order (DESIGN "Data model and protocol"). */

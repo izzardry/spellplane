@@ -97,6 +97,7 @@ describe('actions', () => {
     chat: true, caption: true,
     undo: true, snapshotHash: true, sequencerClaim: true, settings: true, stageSet: true, lobbySet: true, formatSet: true,
     recover: true, recoverCommit: true,
+    auditPublish: true,
   };
 
   it('ACTION_FAMILIES covers every action type exactly', () => {

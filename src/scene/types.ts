@@ -6,7 +6,7 @@
 import type { ActionDraft } from '../core/actions';
 import type { Anchor, CardRef, DeckBuild, DraftCard, InstanceId, Line, PackId, PileId, Pose, SeatColourIndex, SeatId, TableState, ZoneId } from '../core/types';
 import type { CardData, FaceSource } from '../data/types';
-import type { GameDefinition, TableLayout } from '../games/types';
+import type { GameDefinition, TableLayout, TextureSource } from '../games/types';
 import type { CardDressing, MaterialSpec, PostSettings, QualityId, QualityLevel, Theme, ThemeId } from '../themes/types';
 import type { Material, Texture } from 'three';
 import type { Pass } from 'three/examples/jsm/postprocessing/Pass.js';
@@ -51,6 +51,12 @@ export interface ViewState {
   openPile: PileId | ZoneId | null;
   /** Captions to draw (DESIGN "Chat and voice", Placement). Added by M3-C; absent means none; drawn by M3-P4 (scene/captions.ts). */
   captions?: SceneCaption[];
+  /**
+   * The card with keyboard focus (DESIGN "Input and interaction design", Accessibility: "every card action is reachable
+   * from the keyboard by cycling focus through cards in a zone"), drawn with a focus ring distinct from hover and
+   * selection; the keymap acts on it like on a hovered card. Added by M5-C; absent means none; M5-P4 (ui/a11y/*).
+   */
+  focused?: InstanceId | null;
 }
 
 /**
@@ -92,6 +98,12 @@ export interface SceneEvents {
   inspect(card: InstanceId): void;
   pileOpen(id: ZoneId | PileId): void;
   selectionChange(ids: InstanceId[]): void;
+  /**
+   * A long-press on a card (touch): open the radial menu at `at` (DESIGN "Input and interaction design", Touch;
+   * ui/touch/actions.ts RADIAL_SLOTS). A drag after it draws a line instead and the scene calls it with `card` null to
+   * close the menu. Added by M5-C; M5-P1.
+   */
+  radialMenu?(card: InstanceId | null, at: ScreenPoint): void;
 }
 
 /** Options for createTableScene (DESIGN "Specification: code interfaces"). */
@@ -343,6 +355,13 @@ export interface TableScene {
   quality(): QualityLevel;
   /** v2 (M4-C): render statistics of the last frame (the debug hook's `render.stats`). */
   renderStats(): RenderStats;
+  /**
+   * Draw other players' hidden cards with this back instead of the theme's or game's (DESIGN "Card data and images",
+   * Card back: the official back is an opt-in setting loaded from backs.scryfall.io); null returns to the default.
+   * The source draws the loaded image whole, never cropped or tinted. Added by M5-C; implementer: M5-P5 (optional
+   * until it lands).
+   */
+  setCardBack?(back: TextureSource | null): void;
   readonly camera: TableCameraControls;
   /** Topmost card under a screen point, or null. */
   cardAt(x: number, y: number): InstanceId | null;
@@ -355,6 +374,37 @@ export interface TableScene {
   readonly debug: SceneDebugParts;
   dispose(): void;
 }
+
+/**
+ * Far-zoom stack (DESIGN "The effect stack", Reading it: "at far zoom it collapses to a count badge that expands on
+ * hover"; "Camera and navigation", Level of detail; PLAN Milestone 5, owner decisions, Far-zoom stack: expands on hover,
+ * or on tap on touch). The lane collapses while a stack card would be drawn shorter than this on screen, CSS px (its
+ * title bar is then too small to read). Value chosen by M5-C; M5-P7 may tune it. Added by M5-C.
+ */
+export const STACK_COLLAPSE_CARD_PX = 72;
+
+/** The stack's far-zoom badge for the debug hook (`stackBadge()`; PLAN Milestone 5, owner decisions, Far-zoom stack). Added by M5-C; M5-P7. */
+export interface StackBadgeState {
+  /** Items on the stack. */
+  count: number;
+  /** The lane is drawn as the badge (far zoom). */
+  collapsed: boolean;
+  /** The badge is expanded (hover, or tap on touch) and shows the items readably. */
+  expanded: boolean;
+  /** The badge's screen rectangle while collapsed, else null. */
+  screen: DOMRect | null;
+}
+
+/**
+ * Viewports at which the default ego view must show the viewer's own pile column (library, graveyard, exile, command)
+ * and whole battlefield row (PLAN Milestone 5, owner decisions, Ego framing: "at 1440x900 and on an iPad landscape
+ * viewport"; iPad Pro 11" landscape is 1194 × 834 CSS px). M5-P7 reframes the rig (DEFAULT_EGO_RIG, CAMERA.ego values,
+ * within DESIGN's limits) until both hold. Added by M5-C.
+ */
+export const EGO_FRAMING_VIEWPORTS: readonly { width: number; height: number }[] = [
+  { width: 1440, height: 900 },
+  { width: 1194, height: 834 },
+];
 
 /** Create a scene in `host` (DESIGN "Specification: code interfaces"). Implemented in scene/index.ts by M0-P3. */
 export type CreateTableScene = (host: HTMLElement, opts: TableSceneOptions) => TableScene;
