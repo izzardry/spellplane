@@ -7,11 +7,12 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { mergeTimeline, type ChatTab } from '../core/log';
-  import type { CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
+  import type { Anchor, CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import type { ActivePing, TableScene, ViewState } from '../scene/types';
   import { attachPresence, type PresenceHandle } from '../scene/presence';
+  import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
   import { tokensToCssVars } from '../themes/index';
@@ -43,6 +44,9 @@
   import TalkIndicator from './voice/TalkIndicator.svelte';
   import VoicePanel from './voice/VoicePanel.svelte';
   import { attachTalkInput, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
+  import Speech from './settings/Speech.svelte';
+  import { fieldDictation, sceneCaptions } from './settings/captions';
+  import type { Caption } from '../voice/types';
 
   let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
 
@@ -123,6 +127,9 @@
     return !!peer && speaking[peer] === true;
   };
   let logPanel = $state<LogPanel | undefined>();
+  /** Dictated captions (M3-P4, session.captions) and the speech settings panel. */
+  let captionList = $state.raw<Caption[]>([]);
+  let speechOpen = $state(false);
   let noteInput = $state<HTMLInputElement | undefined>();
   let drawInput = $state<HTMLInputElement | undefined>();
 
@@ -546,8 +553,44 @@
   // --- Scene ------------------------------------------------------------------------------------------------------
   $effect(() => {
     if (!sceneReady || !scene) return;
-    const view: ViewState = { selection: [...selection], hovered, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile };
+    const view: ViewState = { selection: [...selection], hovered, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile, captions: sceneCaptions(captionList, st) };
     scene.update(st, view);
+  });
+
+  // The hovered card or stack item is a caption's anchor (DESIGN "Chat and voice", Placement: "last acted on or is
+  // hovering"). A stack marker (an ability or trigger) has no card: the scene reports it on its own.
+  let captionHover = '';
+  function syncCaptionHover(card: InstanceId | null): void {
+    if (!session.captions) return;
+    const item = card ? null : hoveredStackItem(scene);
+    const anchor: Anchor | null = card ? { kind: 'card', id: card } : item ? { kind: 'stackItem', id: item } : null;
+    const key = anchor ? `${anchor.kind}:${anchor.id}` : '';
+    if (key === captionHover) return;
+    captionHover = key;
+    session.captions.hover(anchor);
+  }
+  $effect(() => {
+    const h = hovered;
+    untrack(() => syncCaptionHover(h));
+  });
+  /** While the note field has focus, dictation goes into it (DESIGN "Chat and voice", Notes by voice). */
+  function dictateNote(on: boolean): void {
+    session.captions?.dictateInto(
+      on
+        ? fieldDictation(
+            () => note?.text ?? null,
+            (text) => {
+              if (note) note.text = text;
+            },
+            80,
+          )
+        : null,
+    );
+  }
+
+  // A note field removed without a blur (Enter, Escape) hands dictation back to captions.
+  $effect(() => {
+    if (note === null) untrack(() => dictateNote(false));
   });
 
   let seenLog = 0;
@@ -582,6 +625,8 @@
     // The talk key's focus rules and the talk mouse button (M3-P3), and the speaking rings.
     const voiceOff = liveVoice ? attachTalkInput(liveVoice) : null;
     const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
+    captionList = session.captions?.captions() ?? [];
+    const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
     void settings
       ?.get('keymap')
       .then((o) => {
@@ -630,6 +675,8 @@
       speakOff?.();
       teamUnsub?.();
       teamUnsub = null;
+      unsubCaptions?.();
+      session.captions?.dictateInto(null);
       for (const t of timers) clearTimeout(t);
       timers = [];
       engine.blur();
@@ -652,6 +699,7 @@
   onpointermove={(e) => {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
+    syncCaptionHover(hovered);
   }}
 />
 
@@ -683,6 +731,12 @@
       {#if liveVoice}
         <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'V'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
         {#if voicePanel}<VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} />{/if}
+      {/if}
+      {#if session.captions}
+        <!-- The speech settings (M3-P4) on a row of their own, so the shared toolbar keeps its layout. -->
+        <div class="toolbar" role="group" aria-label="Dictation">
+          <button type="button" data-testid="open-speech-settings" aria-pressed={speechOpen} onclick={() => (speechOpen = !speechOpen)}>Dictation</button>
+        </div>
       {/if}
       {#each seats.filter((s) => s.id !== me && !isEmptyChair(st, s.id)) as seat (seat.id)}
         <Avatar
@@ -868,7 +922,11 @@
           if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && !e.altKey) submitNote();
           else if (e.key === 'Escape') note = null;
         }}
-        onblur={() => (note = null)}
+        onfocus={() => dictateNote(true)}
+        onblur={() => {
+          dictateNote(false);
+          note = null;
+        }}
       />
     </div>
   {/if}
@@ -943,6 +1001,10 @@
       }}
       onclose={() => (deckOpen = false)}
     />
+  {/if}
+
+  {#if speechOpen && session.captions}
+    <Speech captions={session.captions} onclose={() => (speechOpen = false)} />
   {/if}
 
   {#if cheatOpen}

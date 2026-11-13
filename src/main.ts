@@ -57,6 +57,7 @@ async function boot(el: HTMLElement): Promise<void> {
   const registerSession = (session: TableSession): void => {
     debug?.registerSessionDebug(session, { cardData, parseDecklist });
     debug?.registerDraftDebug(session);
+    debug?.registerSpeechDebug(session);
   };
   registerSession(solo);
 

@@ -30,6 +30,7 @@ import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
 import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, legibleScale, pointInCard, pointInRect, rot2 } from './math';
 import { CardMotion } from './motion';
+import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { drawnPose, entryAt, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
 import { TextLayer, type TextSpec } from './text';
@@ -283,6 +284,30 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   });
   scene.add(lineView.lines.object);
   scene.add(lineView.pingRings);
+  // Caption bubbles over the canvas (DESIGN "Chat and voice", Placement; scene/captions.ts, M3-P4).
+  const captionLayer = new CaptionLayer({
+    container: host,
+    toScreen: (p) => rig.tableToScreen(p),
+    viewport: () => rig.viewport,
+    canvasRect: () => canvas.getBoundingClientRect(),
+    point: (c) =>
+      state
+        ? captionPoint(state, layout, c, {
+            viewer: viewerSeat,
+            drawn: (a) => {
+              if (a.kind === 'card') {
+                const rc = rcards.get(a.id);
+                return rc && rc.place.kind !== 'hand' ? rc.motion.pose : null;
+              }
+              const e = a.kind === 'stackItem' ? entries.find((x) => x.item.id === a.id) : undefined;
+              return e ? itemAnchor(entryPose(e)) : null;
+            },
+          })
+        : null,
+    fill: (c) => (c.colour === null ? theme.tokens.colours.muted : (theme.tokens.colours.seats[c.colour]?.colour ?? theme.tokens.colours.muted)),
+    badge: (c) => captionBadge(state, theme.tokens.colours.seats, c),
+    reduced,
+  });
   const seatAngleOf = (seat: SeatId): number => (state ? (seatLayoutOf(state, layout, seat)?.angle ?? 0) : 0);
   const combatCtx: CombatContext = { angleOf: seatAngleOf, newId };
 
@@ -639,6 +664,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (pingsLive) changed = true;
     if (!reduced() && entries.some((e) => e.pending)) changed = true;
     if (changed || dirty) draw();
+    if (captionLayer.active) captionLayer.place();
   }
 
   // --- Coordinates --------------------------------------------------------------------------------------------------
@@ -1411,6 +1437,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     lastDrop: () => lastDrop,
     idle: () => !drag && !rig.moving && ![...rcards.values()].some((rc) => rc.motion.moving),
     pendingTextures: () => faces.pending,
+    captions: () => captionLayer.debug(),
   };
   /** The stack lane as drawn (scene/stack.ts DebugStackEntry). */
   function stackDebug(): DebugStackEntry[] {
@@ -1457,6 +1484,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     pings: () => debug.pings(),
     stack: () => stackDebug(),
     tableView: () => tableViewDebug(),
+    captions: () => captionLayer.debug(),
   };
   registerDebug(debugParts);
 
@@ -1564,6 +1592,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
       if (prevState !== next || openChanged) relayout(performance.now());
       if (viewChanged) dirty = true;
+      if (nextView.captions || captionLayer.active) captionLayer.set(nextView.captions ?? []);
     },
     setTheme(next) {
       themeInstance.dispose();
@@ -1655,6 +1684,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       lineView.dispose();
       ghostLayer.dispose();
       markerLayer.dispose();
+      captionLayer.dispose();
       markGeometry.dispose();
       markMaterial.dispose();
       renderer.dispose();

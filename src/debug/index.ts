@@ -6,4 +6,5 @@ export * from './session';
 export { FixtureCardDataSource, injectedCardData, type InjectedFixtures } from './fixture-cards';
 export * from './net';
 export * from './draft';
+export * from './speech';
 export { fixtureSetSource, injectedSets } from './fixture-sets';

@@ -80,6 +80,8 @@ import { buildFromDeck, Evening, type DraftPort } from './draft';
 import { TeamView } from './team';
 import { MAX_TEAM_CHAT } from '../net/team';
 import { formatTeamSeats, isTeamFormat, teamIdOf } from '../core/teams';
+import { mountCaptions } from './captions';
+import type { CaptionControls } from '../voice/types';
 import type { DraftControls } from '../draft/types';
 import { createSessionVoice, latestTransport } from './voice';
 import type { VoiceControls } from '../voice/types';
@@ -297,6 +299,8 @@ class NetTable implements NetSession, SessionRecovery {
   voiceImpl: VoiceControls | null = null;
   /** The Two-Headed Giant team view (M3-P2, session/team.ts). */
   private readonly teamView = new TeamView({ seat: () => this.seat, confirmedState: () => this.engine.confirmedState(), secrets: () => this.sec, now: () => this.now() });
+  /** Dictation and captions (session/captions.ts, M3-P4); set once joined when the session has voice options. */
+  captions?: CaptionControls;
 
   constructor(
     engine: NetEngine,
@@ -482,6 +486,7 @@ class NetTable implements NetSession, SessionRecovery {
     this.eveningImpl?.dispose();
     this.voiceImpl?.dispose();
     this.teamView.dispose();
+    this.captions?.dispose();
     for (const u of this.unsubs.splice(0)) u();
     this.engine.leave();
     for (const w of this.waiters.splice(0)) {
@@ -2003,6 +2008,7 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
     if (!saved) session.saveBase();
     session.prefetch(session.knownSids());
     await abortable(session.sitDown(internals.settleMs ?? SETTLE_MS, internals.seatTimeoutMs ?? SEAT_TIMEOUT_MS), signal);
+    if (opts.voice) session.captions = mountCaptions(session, opts.voice, opts.now);
   } catch (e) {
     session.leave();
     throw e;
