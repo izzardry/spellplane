@@ -77,7 +77,7 @@
 <ol bind:this={list} aria-live="polite" aria-relevant="additions" data-testid="log-lines" data-filter={filter}>
   {#each shown as line (line.key)}
     <li class={line.kind} class:warn={line.level === 'warn'} data-testid="log-line" data-kind={line.kind} style:--seat={line.colour === null ? 'transparent' : `var(--sp-seat-${line.colour})`}>
-      {#if line.kind !== 'system'}<b class="actor">{line.actor}</b>{line.kind === 'chat' || line.joined ? ': ' : ' '}{/if}{#each line.segs as s, i (i)}{#if 'card' in s}<span
+      {#if line.kind !== 'system'}<b class="actor">{line.actor}</b>{(line.kind === 'chat' && !line.told) || line.joined ? ': ' : ' '}{/if}{#each line.segs as s, i (i)}{#if 'card' in s}<span
             class="card"
             data-testid="log-card"
             data-card={s.card}

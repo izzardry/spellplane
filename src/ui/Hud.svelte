@@ -35,7 +35,7 @@
   import DeckImport from './DeckImport.svelte';
   import HandFan from './HandFan.svelte';
   import TeamHands from './hand/TeamHands.svelte';
-  import { teamRevealChoices } from './hand/team';
+  import { teamFanTop, teamRevealChoices } from './hand/team';
   import Inspect from './Inspect.svelte';
   import LogPanel from './LogPanel.svelte';
   import PileViewer from './PileViewer.svelte';
@@ -745,9 +745,12 @@
           {#if session.captions && !spectating}
             <button type="button" data-testid="open-speech-settings" aria-pressed={speechOpen} onclick={() => (speechOpen = !speechOpen)}>Dictation</button>
           {/if}
+          {#if liveVoice && voicePanel}
+            <!-- Drops down over the avatar column instead of pushing it into the own avatar (M3-G). -->
+            <div class="voice-pop"><VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} /></div>
+          {/if}
         </div>
       {/if}
-      {#if liveVoice && voicePanel}<VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} />{/if}
       {#each others as seat (seat.id)}
         <Avatar
           {seat}
@@ -836,7 +839,8 @@
       </div>
     {/if}
 
-    <div class="above-hand">
+    <!-- Above the hand, centred (DESIGN "Specification: geometry, layout and motion", Screen layer); with a teammate's fan shown, above that fan too. -->
+    <div class="above-hand" data-testid="above-hand" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
       {#if toast}<p class="toast" role="status" data-testid="toast">{toast.text}</p>{/if}
       {#if untapOffer}
         <div class="offer" data-testid="untap-offer">
@@ -1100,6 +1104,17 @@
     padding: 2px 8px;
     cursor: pointer;
   }
+  .voice-row {
+    position: relative;
+  }
+  .voice-pop {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 30;
+    max-height: calc(100vh - 96px);
+    overflow-y: auto;
+  }
   kbd {
     font-family: var(--sp-font-mono, monospace);
     opacity: 0.7;
@@ -1164,6 +1179,8 @@
   }
   .above-hand {
     position: absolute;
+    /* Above the teammate's fan (z-index 19), so a hovered teammate card never covers OK and Hold. */
+    z-index: 20;
     left: 50%;
     bottom: calc(22vh + 16px);
     transform: translateX(-50%);
