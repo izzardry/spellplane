@@ -450,7 +450,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M4-P4 Wyrm
 - [x] M4-P5 Stonetable
 - [x] M4-P6 Theme switcher and conformance
-- [x] M4-G Gate and owner playtest (gate green; owner playtest pending, see docs/gates/M4.md)
+- [x] M4-G Gate (owner playtest pending)
 - [ ] M5-P1 Touch
 - [ ] M5-P2 Audit
 - [ ] M5-P3 Offline and storage
