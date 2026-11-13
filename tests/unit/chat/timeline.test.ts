@@ -124,6 +124,26 @@ describe('filterTimeline (DESIGN "Chat and voice": filterable to chat only or ac
   });
 });
 
+describe('captions in the log (DESIGN "Chat and voice", Record)', () => {
+  // As ui/chat/ChatLines.svelte joins them.
+  const text = (l: { kind: string; actor: string; segs: ({ text: string } | { name: string })[]; told?: true }) => `${l.actor}${l.kind === 'chat' && !l.told ? ': ' : ' '}${l.segs.map((s) => ('name' in s ? s.name : s.text)).join('')}`;
+  const { state } = tableWith(['Anna', 'Ben'], [{ id: 'shock', zone: 'stack', sid: 'sid-bolt' }]);
+  const ctx = { state, cardName: (id: string) => (id === 'shock' ? 'Shock' : null), phaseLabel: (p: string) => p };
+  const cast = entry(1, { type: 'stackPush', item: 'i1', kind: 'spell', card: 'shock' });
+
+  it('a caption is told with the action it is attached to, still a chat line', () => {
+    const lines = logLines([cast, entry(2, { type: 'caption', text: 'two damage to your Elf', about: 'c1' })], ctx);
+    expect(lines.map(text)).toEqual(['Anna casts Shock', "Anna casts Shock: 'two damage to your Elf'"]);
+    expect(lines[1]!.kind).toBe('chat');
+  });
+
+  it('without an action of the speaker\'s own to attach to, it reads as the speaker\'s words', () => {
+    expect(logLines([entry(2, { type: 'caption', text: 'hm' })], ctx).map(text)).toEqual(['Anna: hm']);
+    expect(logLines([entry(2, { type: 'caption', text: 'hm', about: 'gone' })], ctx).map(text)).toEqual(['Anna: hm']);
+    expect(logLines([cast, entry(2, { type: 'caption', text: 'hm', about: 'c1', by: 's1' })], ctx).map(text)).toEqual(['Anna casts Shock', 'Ben: hm']);
+  });
+});
+
 describe('pending own chat lines (ui/chat/watch.ts)', () => {
   it('a sent line stays pending until the log holds its cid, then the log copy is the only one', () => {
     const sent = act(undefined, { type: 'chat', text: 'hi', channel: 'table' }, 'mine');

@@ -641,6 +641,13 @@ test.describe('M3 gate @gate', () => {
         if (!(await B.page.getByTestId('voice-panel').isVisible())) await B.page.getByTestId('voice-settings').click();
         await B.page.getByTestId('talk-dictation').check();
         await B.page.getByTestId('talk-voice').uncheck();
+        // The open panel drops over the avatar column: it does not push the other avatars into the own one.
+        const ownTop = (await B.page.locator('[data-testid="avatar"][data-seat="s1"]').boundingBox())!.y;
+        for (const s of ['s0', 's2', 's3']) {
+          const box = (await B.page.locator(`[data-testid="avatar"][data-seat="${s}"]`).boundingBox())!;
+          expect(box.y + box.height, `${s}'s avatar above the own avatar with the voice panel open`).toBeLessThanOrEqual(ownTop);
+        }
+        await shot(B.page, 'M3', 'voice-panel-open', project);
         await B.page.getByTestId('voice-settings').click();
         await neutral(B.page);
         await B.page.keyboard.down('v');
@@ -685,6 +692,27 @@ test.describe('M3 gate @gate', () => {
       await expect(p.page.getByTestId('confirm-prompt')).toBeVisible();
       await p.page.keyboard.press('KeyH');
       for (const q of everyone()) await expect.poll(async () => (await state(q)).confirm?.holder).toBe(p.seat);
+    };
+    /**
+     * Every button of `p`'s confirmation prompt is the topmost element at its centre: nothing (the teammate's fan in
+     * particular) covers it. `toBeVisible()` does not detect occlusion. The pointer is parked over the table first, so
+     * a hovered own hand card (which may rise over the prompt) does not count.
+     */
+    const promptOnTop = async (p: Player) => {
+      await p.page.mouse.move(1000, 160);
+      const buttons = p.page.locator('[data-testid="confirm-prompt"] button');
+      await expect(buttons.first()).toBeVisible();
+      const tops = () =>
+        buttons.evaluateAll((els) =>
+          els.map((el) => {
+            const r = el.getBoundingClientRect();
+            const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+            const what = top !== null && el.contains(top) ? 'on top' : `under ${top?.closest('[data-testid]')?.getAttribute('data-testid') ?? top?.tagName ?? 'nothing'}`;
+            return `${el.getAttribute('data-testid') ?? el.textContent}: ${what}`;
+          }),
+        );
+      await expect.poll(async () => (await tops()).filter((t) => !t.endsWith(': on top')), { message: `${p.name}'s prompt buttons are uncovered` }).toEqual([]);
+      expect((await tops()).some((t) => t.startsWith('prompt-ok:'))).toBe(true);
     };
     /** Everyone but the asker answers OK. */
     const allOk = async (asker: Player) => {
@@ -762,6 +790,8 @@ test.describe('M3 gate @gate', () => {
       spell = await tutor(A, (c) => isCreature(c) && !isLand(c), 'creature');
       await cast(A, spell);
       for (const p of [B, C, D]) await expect(p.page.getByTestId('confirm-prompt')).toBeVisible();
+      // At a Two-Headed Giant table every player sees a teammate's fan: OK and Hold stay uncovered and clickable.
+      for (const p of [B, C, D]) await promptOnTop(p);
     });
     await step('2HG turn 3: Cleo holds (H) and casts Essence Scatter at Anna\'s spell (right-drag between stack items)', async () => {
       await hold(C);
@@ -790,6 +820,7 @@ test.describe('M3 gate @gate', () => {
         await expect.poll(async () => Object.values((await state(q)).lines).filter((l) => l.kind === 'target').length).toBe(2);
         await expect.poll(async () => Object.values((await state(q)).lines).filter((l) => l.kind === 'target' && l.to.kind === 'seat' && l.to.id === 's2').length).toBe(1);
       }
+      for (const p of [A, C, D]) await promptOnTop(p);
       for (const p of [A, C]) {
         await focus(p.page);
         await p.page.mouse.move(1000, 160);
@@ -905,6 +936,10 @@ test.describe('M3 gate @gate', () => {
         await expect
           .poll(async () => (await log(q)).some((e) => e.kind === 'action' && e.action.type === 'caption' && e.action.text.includes(text) && e.action.anchor?.kind === 'card' && e.action.anchor.id === attacker))
           .toBe(true);
+      }
+      // The log tells it with that action (DESIGN "Chat and voice", Record: "Anna casts Shock: '…'"), not as "Anna: …".
+      for (const q of [A, C]) {
+        await expect(q.page.getByTestId('log-line').filter({ hasText: text })).toHaveText([new RegExp(`^Anna [a-z][^:]*: '${text}'$`)]);
       }
     });
 

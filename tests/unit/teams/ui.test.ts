@@ -8,7 +8,7 @@ import { SCREEN_LAYER } from '../../../src/core/geometry';
 import { createTable } from '../../../src/core/reducer';
 import { mtg } from '../../../src/games/index';
 import { fanLayout } from '../../../src/ui/hand';
-import { teamFanBottom, teamFanLayout, teamRevealChoices, TEAM_FAN_WIDTH_FRACTION } from '../../../src/ui/hand/team';
+import { teamFanBottom, teamFanLayout, teamFanTop, teamRevealChoices, TEAM_FAN_WIDTH_FRACTION } from '../../../src/ui/hand/team';
 import { chairChoice, teamGroups } from '../../../src/ui/lobby/seats';
 import { TEAM_FAN_HEIGHT } from '../../../src/ui/types';
 import { freshNetTable } from '../../../src/session/net';
@@ -34,6 +34,8 @@ describe('the teammate’s fan', () => {
           expect(b.left).toBeGreaterThanOrEqual(0);
           expect(b.left + b.width).toBeLessThanOrEqual(vw + 0.001);
         }
+        // The above-hand stack (confirmation prompt) goes above this line: no resting card reaches it.
+        for (const b of boxes) expect(b.bottom + b.height).toBeLessThan(teamFanTop(vh));
         const span = boxes[n - 1]!.left + boxes[n - 1]!.width - boxes[0]!.left;
         expect(span).toBeLessThanOrEqual(Math.max(vw * TEAM_FAN_WIDTH_FRACTION, boxes[0]!.width) + 0.001);
       }

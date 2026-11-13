@@ -44,6 +44,11 @@ export interface LogLine {
   channel?: ChatTab;
   /** The actor and the text are joined by a colon, as in "Anna: 20 → 14" (a change to the actor's own life). */
   joined?: true;
+  /**
+   * A caption told with the action it is attached to, as in "Anna casts Shock: 'two damage to your Elf'": the actor
+   * starts the action's text, no colon after the name (DESIGN "Chat and voice", Record).
+   */
+  told?: true;
 }
 
 /** What the describer needs besides the entries. */
@@ -210,7 +215,8 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     }
     const chair = chairLine(a, chairs);
     if (chair === 'skip') continue;
-    const segs = chair ?? describe(a, d);
+    const told = toldWith(a, d);
+    const segs = chair ?? told ?? describe(a, d);
     if (!segs) continue;
     // An answer is the answering seat's line, also when the sequencer's clock sent it for that seat (a timeout).
     const who = a.type === 'respond' ? a.seat : a.by;
@@ -218,10 +224,25 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
     const actor = isSpectatorId(who) ? spectatorLabel(a.type === 'chat' ? a.name : undefined) : seatName(who);
     const line: LogLine = { key: entryKey, kind: a.type === 'chat' || a.type === 'caption' ? 'chat' : 'action', seat: who, colour: st.seats[who]?.colour ?? null, actor, segs, at: e.at };
     if (a.type === 'chat') line.channel = a.channel;
+    if (told) line.told = true;
     lines.push(line);
     merge = sig === null ? null : { line, sig, a, cards: [a.type === 'draw' ? t('a card') : card(cardOf(a)!)] };
   }
   return lines;
+}
+
+/**
+ * A caption's line with the action it is attached to (`about`), as in "Anna casts Shock: 'two damage to your Elf'"
+ * (DESIGN "Chat and voice", Record), or null for the plain "Anna: …": no `about`, an action not in these entries, one
+ * by another seat (the speaker starts the line) or one without a line of its own.
+ */
+function toldWith(a: Action, d: Describers): Seg[] | null {
+  if (a.type !== 'caption' || a.about === undefined) return null;
+  const about = d.original(a.about);
+  if (!about || about.by !== a.by || about.type === 'caption' || about.type === 'chat') return null;
+  const action = describe(about, d);
+  const words = describe(a, d);
+  return action && words ? [...action, t(": '"), ...words, t("'")] : null;
 }
 
 /** The name a chair carries before its player saved a nickname (session/net.ts DEFAULT_NICKNAME). */
