@@ -48,7 +48,7 @@
   {#if zone !== null && cards.length > 0}
     <ol class="sr-only" aria-label={zone} data-testid="a11y-mirror-cards">
       {#each cards as c (c.id)}
-        <li data-card={c.id} aria-current={c.current ? 'true' : undefined}>{c.text}</li>
+        <li data-focus-card={c.id} aria-current={c.current ? 'true' : undefined}>{c.text}</li>
       {/each}
     </ol>
   {/if}

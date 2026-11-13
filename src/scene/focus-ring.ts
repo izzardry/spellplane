@@ -55,11 +55,11 @@ export function createFocusRing(host: HTMLElement): FocusRing {
       shown = usable ? usable.map((p) => ({ x: p.x, y: p.y })) : null;
       if (!usable) {
         svg.style.display = 'none';
-        svg.removeAttribute('data-card');
+        svg.removeAttribute('data-focus-card');
         return;
       }
       const attr = usable.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
-      svg.setAttribute('data-card', target!.card);
+      svg.setAttribute('data-focus-card', target!.card);
       halo.setAttribute('points', attr);
       ring.setAttribute('points', attr);
       halo.setAttribute('stroke', colours.halo);

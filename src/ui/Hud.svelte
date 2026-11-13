@@ -672,13 +672,10 @@
       focusOrder = next ? focusCards(s, game, a11yViewer, next.zone, opts) : [];
     });
   });
-  // The last input wins: a pointer moved onto a card hands the keys back to hover.
-  $effect(() => {
-    const h = hovered;
-    untrack(() => {
-      if (h !== null && focus && Math.hypot(pointer.x - focusPointer.x, pointer.y - focusPointer.y) > 4) focus = null;
-    });
-  });
+  /** The last input wins: a pointer moved onto a card hands the keys back to hover (window pointermove, after the scene's hover). */
+  function pointerTakesOver(): void {
+    if (focus && hovered !== null && hovered !== focus.card && Math.hypot(pointer.x - focusPointer.x, pointer.y - focusPointer.y) > 4) focus = null;
+  }
   const focusText = $derived(focus ? describeFocus(st, game, a11yViewer, focus, nameOf, focusOpts) : null);
   const mirrorCards = $derived(focus ? focusCards(st, game, a11yViewer, focus.zone, focusOpts).map((id) => ({ id, text: describeCard(st, id, nameOf), current: id === focus?.card })) : []);
   // New log lines are announced once each, batched (ui/a11y/log.ts, announcer.ts).
@@ -893,6 +890,7 @@
     pointer.x = e.clientX;
     pointer.y = e.clientY;
     pointerSeen = true;
+    pointerTakesOver();
     syncCaptionHover(hovered);
   }}
 />
