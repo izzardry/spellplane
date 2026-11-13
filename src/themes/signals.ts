@@ -184,7 +184,8 @@ export const SIGNALS: readonly SignalSpec[] = [
     source: 'state',
     neutral: 'a non-foil printing, reduced motion on (static sheen)',
     signalled: 'the same printing foil (CardRef.foil)',
-    probe: { kind: 'card', marginMm: 0 },
+    // The sheen is a rim just outside the face (faces are never tinted), so the probe takes the outline's margin (M4-G).
+    probe: { kind: 'card', marginMm: 4 },
     styledBy: ['cardDressing.foilSheen'],
     perSeat: false,
     threshold: { channelDelta: 16, changedFraction: 0.02 },

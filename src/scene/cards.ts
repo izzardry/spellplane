@@ -17,11 +17,21 @@ import * as THREE from 'three';
 import type { Pose } from '../core/types';
 import type { CardDressing, ShadowSettings } from '../themes/types';
 import type { SlotUv } from './atlas';
+import { TABLE_FOIL } from './foil';
 import { KEY_LIGHT_GLSL } from './materials';
 import { CARD_H, CARD_W, DEG } from './math';
 
 /** Outline margin around each quad, mm (must hold the widest highlight). */
 const PAD_MM = 2;
+
+/**
+ * An outline width in mm that shows at least `minPx` CSS px on a card drawn `cardPx` tall, never wider than the outline
+ * slot (PAD_MM); the theme's width when that is wider already or the card is off screen.
+ */
+export function legibleOutlineMm(mm: number, cardPx: number, minPx: number): number {
+  if (!(cardPx > 0)) return mm;
+  return Math.min(PAD_MM, Math.max(mm, (minPx * CARD_H) / cardPx));
+}
 
 export interface CardDraw {
   pose: Pose;
@@ -40,6 +50,11 @@ export interface CardDraw {
   held?: boolean;
   /** Tilt of a held card: the edge toward table direction (x, y) dips by `deg` (DESIGN geometry table: 4° in lit themes). */
   tilt?: { x: number; y: number; deg: number } | null;
+  /**
+   * A foil printing shown face up: the hue (0..1) of its foil badge, a small diamond over the card's bottom-left corner
+   * (scene/foil.ts TABLE_FOIL); null or absent draws no badge. The sheen rim goes in `highlight`.
+   */
+  foil?: number | null;
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -123,6 +138,7 @@ uniform vec2 uCard;
 uniform float uRadius;
 uniform vec3 uBg;
 uniform float uShade;
+uniform vec3 uFoil;
 varying vec2 vLocal;
 varying vec2 vUv;
 varying float vLight;
@@ -132,6 +148,10 @@ flat varying vec4 vHi;
 float sdRoundRect(vec2 p, vec2 b, float r) {
   vec2 q = abs(p) - b + r;
   return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+vec3 hsl2rgb(float h, float s, float l) {
+  vec3 k = clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+  return l + s * (k - 0.5) * (1.0 - abs(2.0 * l - 1.0));
 }
 void main() {
   float d = sdRoundRect(vLocal, uCard * 0.5, uRadius);
@@ -148,6 +168,16 @@ void main() {
   // Near-unlit: the key light may darken the face by at most uShade (≤ CARD_FACE_MAX_SHADE), never tint it.
   c.rgb *= 1.0 - uShade * (1.0 - vLight);
   c.rgb = mix(c.rgb, uBg, vMisc.z);
+  // Foil badge (vMisc.w = 1 + hue): a diamond over the bottom-left corner, outlined dark, drawn over the face like a
+  // counter badge; the face around it is untouched.
+  if (vMisc.w > 0.5) {
+    vec2 bp = vLocal - (-uCard * 0.5 + vec2(uFoil.x));
+    float bd = (abs(bp.x) + abs(bp.y) - uFoil.y) * 0.70710678;
+    float baa = max(fwidth(bd), 1e-4);
+    vec3 fill = hsl2rgb(fract(vMisc.w), 0.6, 0.72 + 0.12 * clamp(1.0 - length(bp) / uFoil.y, 0.0, 1.0));
+    vec3 badge = mix(fill, vec3(0.08, 0.08, 0.1), smoothstep(-uFoil.z - baa, -uFoil.z + baa, bd));
+    c.rgb = mix(c.rgb, badge, 1.0 - smoothstep(-baa, baa, bd));
+  }
   float inside = 1.0 - smoothstep(-aa, aa, d);
   float ring = vHi.a > 0.0 ? 1.0 - smoothstep(vHi.a - aa, vHi.a + aa, d) : 0.0;
   vec4 col = mix(vec4(vHi.rgb, ring), vec4(c.rgb, 1.0), inside);
@@ -187,6 +217,7 @@ export class CardLayer {
         uBg: { value: rawColour(bg) },
         uShade: { value: 0 },
         uKeyLight: { value: new THREE.Vector4(0, 1, 0, -1) },
+        uFoil: { value: new THREE.Vector3(TABLE_FOIL.badge.inset, TABLE_FOIL.badge.radius, TABLE_FOIL.badge.outline) },
       },
       transparent: true,
       depthTest: false,
@@ -264,7 +295,7 @@ export class CardLayer {
         misc[q + 1] = 0;
       }
       misc[q + 2] = d.dim;
-      misc[q + 3] = 0;
+      misc[q + 3] = d.foil == null ? 0 : 1 + Math.min(0.999, Math.max(0, d.foil));
       if (d.highlight) {
         tmpColour.setStyle(d.highlight.colour, THREE.LinearSRGBColorSpace);
         hi[q] = tmpColour.r;

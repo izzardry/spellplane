@@ -164,7 +164,7 @@ export class ScryfallCardDataSource implements CardDataSource {
           continue;
         }
         cards[card.id] = card;
-        for (let i = 0; i < e.count; i++) out.push({ sid: card.id });
+        for (let i = 0; i < e.count; i++) out.push(e.foil ? { sid: card.id, foil: true } : { sid: card.id });
       }
       return out;
     };

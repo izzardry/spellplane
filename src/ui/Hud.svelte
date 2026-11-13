@@ -47,6 +47,7 @@
   import Speech from './settings/Speech.svelte';
   import ThemePicker from './settings/Theme.svelte';
   import { themeContext } from './settings/theme';
+  import { cuesFor, soundModeOf, soundOn, ThemeSoundPlayer, type SoundMode } from './sound';
   import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption } from '../voice/types';
 
@@ -134,6 +135,8 @@
   /** Dictated captions (M3-P4, session.captions) and the speech settings panel. */
   let captionList = $state.raw<Caption[]>([]);
   let speechOpen = $state(false);
+  /** Where the speech settings open: just below the Dictation button, wherever the wrapped toolbar puts it. */
+  let speechTop = $state<number | undefined>(undefined);
   let noteInput = $state<HTMLInputElement | undefined>();
   let drawInput = $state<HTMLInputElement | undefined>();
 
@@ -150,6 +153,35 @@
     };
     window.addEventListener('pointerdown', away, true);
     return () => window.removeEventListener('pointerdown', away, true);
+  });
+  // The theme's sound set (DESIGN "Themes and rendering", Sound) under the viewer's Settings.sound; audio starts on the
+  // viewer's first press or key (browsers' autoplay rule).
+  const sound = new ThemeSoundPlayer();
+  /** The viewer's Settings.sound; null until it is read, so a viewer who turned sound off never hears a start. */
+  let soundMode = $state<SoundMode | null>(untrack(() => (settings ? null : 'theme')));
+  let soundLive = $state(false);
+  $effect(() => {
+    sound.setTheme(theme.sounds);
+    sound.setMode(soundMode ?? 'off');
+    soundLive = sound.ambient();
+  });
+  /** 'off', 'on' (waiting for a gesture or no room tone) or 'playing' (the room tone runs). */
+  const soundState = $derived(soundOn(theme.sounds, soundMode ?? 'off') ? (soundLive ? 'playing' : 'on') : 'off');
+  function setSoundMode(mode: SoundMode): void {
+    soundMode = mode;
+    void settings?.set('sound', mode).catch(() => {});
+  }
+  $effect(() => {
+    const unlock = () => {
+      sound.unlock();
+      soundLive = sound.ambient();
+    };
+    window.addEventListener('pointerdown', unlock, true);
+    window.addEventListener('keydown', unlock, true);
+    return () => {
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
   });
   /** The theme the scene was built with or last switched to; a new theme prop is handed to the scene without reload. */
   let sceneTheme: typeof theme | null = null;
@@ -642,6 +674,8 @@
         later(() => (pings = pings.filter((p) => p !== ping)), fade);
       }
     }
+    // A log that shrank (a resume replaced it) rings nothing.
+    if (log.length > seenLog) sound.play(cuesFor(log.slice(seenLog), me));
     seenLog = log.length;
   }
 
@@ -684,6 +718,10 @@
     const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
     captionList = session.captions?.captions() ?? [];
     const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
+    void settings
+      ?.get('sound')
+      .then((m) => (soundMode = soundModeOf(m)))
+      .catch(() => (soundMode = 'theme'));
     void settings
       ?.get('keymap')
       .then((o) => {
@@ -744,6 +782,7 @@
       presence = null;
       scene?.dispose();
       scene = null;
+      sound.dispose();
     };
   });
 </script>
@@ -766,7 +805,7 @@
 />
 <svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncFollow()} />
 
-<div class="root" style={cssVars} data-testid="hud">
+<div class="root" style={cssVars} data-testid="hud" data-sound={soundState}>
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
   <Flashes
@@ -790,7 +829,7 @@
         {#if themeChoice}
           <span class="theme-anchor" bind:this={themeAnchor}>
             <button type="button" data-testid="open-theme-settings" aria-pressed={themeOpen} aria-expanded={themeOpen} aria-label="Theme" title="Theme" onclick={() => (themeOpen = !themeOpen)}>◐</button>
-            {#if themeOpen}<div class="theme-pop"><ThemePicker choice={themeChoice} onclose={() => (themeOpen = false)} /></div>{/if}
+            {#if themeOpen}<div class="theme-pop"><ThemePicker choice={themeChoice} sound={{ mode: soundMode ?? 'theme', set: setSoundMode }} onclose={() => (themeOpen = false)} /></div>{/if}
           </span>
         {/if}
         {#if !liveVoice}
@@ -806,7 +845,15 @@
             <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'V'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
           {/if}
           {#if session.captions && !spectating}
-            <button type="button" data-testid="open-speech-settings" aria-pressed={speechOpen} onclick={() => (speechOpen = !speechOpen)}>Dictation</button>
+            <button
+              type="button"
+              data-testid="open-speech-settings"
+              aria-pressed={speechOpen}
+              onclick={(e) => {
+                speechTop = Math.round((e.currentTarget as HTMLElement).getBoundingClientRect().bottom + 6);
+                speechOpen = !speechOpen;
+              }}>Dictation</button
+            >
           {/if}
           {#if liveVoice && voicePanel}
             <!-- Drops down over the avatar column instead of pushing it into the own avatar (M3-G). -->
@@ -1084,7 +1131,7 @@
   {/if}
 
   {#if speechOpen && session.captions}
-    <Speech captions={session.captions} onclose={() => (speechOpen = false)} />
+    <Speech captions={session.captions} top={speechTop} onclose={() => (speechOpen = false)} />
   {/if}
 
   {#if cheatOpen}
@@ -1153,9 +1200,13 @@
   }
   .toolbar {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
     pointer-events: auto;
     align-items: center;
+    /* Clear of the turn strip centred above the table (about 640 px wide): the tools wrap to a second row rather than
+       slide under it (the View button of M4-P1 made the row too long at 1440 px). */
+    max-width: max(220px, calc(50vw - 336px));
   }
   .toolbar button,
   .stack-chip button,

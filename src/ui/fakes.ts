@@ -182,7 +182,7 @@ export class FakeCardData implements CardDataSource {
           continue;
         }
         out.cards[hit.id] = hit;
-        for (let i = 0; i < e.count; i++) into.push({ sid: hit.id });
+        for (let i = 0; i < e.count; i++) into.push(e.foil ? { sid: hit.id, foil: true } : { sid: hit.id });
       }
     };
     take([...list.main, ...list.commander, ...list.companion], out.main);

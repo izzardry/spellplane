@@ -7,9 +7,10 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { THEME_IDS, THEME_LABELS, type ThemeId } from '../../themes/index';
+  import { SOUND_MODES, type SoundMode } from '../sound';
   import { THEME_BLURBS, type ThemeChoice, type ThemeChoiceState } from './theme';
 
-  let { choice, onclose }: { choice: ThemeChoice; onclose?: () => void } = $props();
+  let { choice, onclose, sound }: { choice: ThemeChoice; onclose?: () => void; sound?: { mode: SoundMode; set(mode: SoundMode): void } } = $props();
 
   let st = $state.raw<ThemeChoiceState>(untrack(() => choice.state()));
   /** The radio the viewer picked last, shown checked while its chunk loads. */
@@ -59,6 +60,14 @@
       </label>
     {/each}
   </fieldset>
+  {#if sound}
+    <label class="sound">
+      Sound
+      <select data-testid="theme-sound" value={sound.mode} onchange={(e) => sound.set((e.currentTarget as HTMLSelectElement).value as SoundMode)}>
+        {#each SOUND_MODES as m (m.id)}<option value={m.id}>{m.label}</option>{/each}
+      </select>
+    </label>
+  {/if}
   {#if st.loading}<p class="status" role="status" data-testid="theme-loading">Loading {THEME_LABELS[st.loading]}…</p>{/if}
   {#if st.error}<p class="error" role="alert" data-testid="theme-error">{st.error}</p>{/if}
   <p class="note">Only this browser changes: the other players keep their own themes, and the game goes on.</p>
@@ -118,6 +127,15 @@
   }
   .status {
     margin: 8px 0 0;
+  }
+  .sound {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+    margin: 8px 0 0;
+  }
+  .sound select {
+    font: inherit;
   }
   .error {
     margin: 8px 0 0;

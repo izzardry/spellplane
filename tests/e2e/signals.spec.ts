@@ -368,39 +368,23 @@ for (const theme of THEME_IDS) {
     });
 
     test('foil', async ({ page }, info) => {
-      // Known gap, reported to the integrator (for M4-P2): the play table (scene/table-scene.ts draw) draws no foil sheen
-      // or badge yet; only the draft and builder surfaces do (DECISIONS M2-P4). The pair is measured and recorded as
-      // evidence, and only the gap itself is expected: the measured change stays below the threshold. Any other failure
-      // (setup, polls, the debug hook) stays red. Once the table marks foils, the last assertion fails: then assert the
-      // threshold like every other signal (drop `evidenceOnly`).
+      // The play table marks a foil printing with the sheen (a rim outside the face) and a badge over the bottom-left
+      // corner (scene/foil.ts TABLE_FOIL); the face itself is never tinted.
       const t = await controlledTable(page, info, theme);
       const s = spec('foil');
-      const m = await measure(
-        page,
-        info,
-        theme,
-        s,
-        {
-          margin: (s.probe as { marginMm: number }).marginMm * t.pxPerMm,
-          region: async (phase) => [await cardRect(page, phase === 'neutral' ? 'c1' : 'c1f')],
-          signal: async () => {
-            // The same printing, foil, in the same place (CardRef.foil; reduced motion: a static sheen).
-            await dispatch(page, { type: 'remove', card: 'c1', group: 'foil' });
-            await dispatch(page, { type: 'createToken', card: 'c1f', zone: 'battlefield:s0', pose: { x: -100, y: -200, rot: 0 }, ref: { sid: SID[0], foil: true }, group: 'foil' });
-            await expect.poll(async () => (await cards(page)).map((c) => c.id).sort()).toEqual(['c1f', 'c2', 'o1']);
-            expect((await state(page)).cards.c1f?.identity?.foil, 'the foil card is in the state').toBe(true);
-          },
-          ready: () => settle(page),
+      await measure(page, info, theme, s, {
+        margin: (s.probe as { marginMm: number }).marginMm * t.pxPerMm,
+        region: async (phase) => [await cardRect(page, phase === 'neutral' ? 'c1' : 'c1f')],
+        signal: async () => {
+          // The same printing, foil, in the same place (CardRef.foil; reduced motion: a static sheen).
+          await dispatch(page, { type: 'remove', card: 'c1', group: 'foil' });
+          await dispatch(page, { type: 'createToken', card: 'c1f', zone: 'battlefield:s0', pose: { x: -100, y: -200, rot: 0 }, ref: { sid: SID[0], foil: true }, group: 'foil' });
+          await expect.poll(async () => (await cards(page)).map((c) => c.id).sort()).toEqual(['c1f', 'c2', 'o1']);
+          expect((await state(page)).cards.c1f?.identity?.foil, 'the foil card is in the state').toBe(true);
+          await expect.poll(async () => (await card(page, 'c1f')).foil, 'the table draws the foil marker').toBe(true);
         },
-        s.id,
-        true,
-      );
-      info.annotations.push({ type: 'known-gap', description: `${theme} foil: the play table draws no foil marker (scene/table-scene.ts, M4-P2); measured ${(m.signal * 100).toFixed(2)}%` });
-      expect(
-        m.signal,
-        `${theme} foil: KNOWN GAP — the play table draws no foil marker yet, so the pair is expected to stay below the threshold. ` +
-          `It now reaches it (${(m.signal * 100).toFixed(2)}%): the gap is closed; assert the threshold here instead.`,
-      ).toBeLessThan(s.threshold.changedFraction);
+        ready: () => settle(page),
+      });
     });
 
     test('seat colour: each of the eight against the table and against each other', async ({ page }, info) => {

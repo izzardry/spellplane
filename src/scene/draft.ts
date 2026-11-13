@@ -25,6 +25,7 @@ import { CardLayer, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures, faceKey } from './faces';
 import { CARD_H, CARD_W, cardCorners, deltaDeg, forward, pointInCard, rot2 } from './math';
 import { CardMotion } from './motion';
+import { FOIL_SHEEN, foilSheenColour } from './foil';
 import { tierForScreenHeight } from './textures';
 import type { CameraControls, CreateDraftSurface, DebugCard, DraftSurface, DraftSurfaceOptions, DraftSurfaceView, ScreenPoint, TablePoint, TablePoint3, TableScene } from './types';
 
@@ -300,16 +301,7 @@ interface RCard {
 
 const DRAG_THRESHOLD_PX = 4;
 
-/**
- * Foil sheen (DESIGN "Pre-game", Pack generation: "Foils are marked with a subtle sheen and a badge"; "Card faces are
- * never recoloured"): a thin rim outside the face whose light hue drifts slowly, each card a little out of phase. With
- * reduced motion the rim holds still.
- */
-export const FOIL_SHEEN = { widthMm: 0.9, periodMs: 6000, saturation: 55, lightness: 72, frameMs: 50 } as const;
-export function foilSheenColour(phase: number, cardIndex: number): string {
-  const hue = Math.round((((phase + cardIndex * 0.13) % 1) + 1) % 1 * 360);
-  return `hsl(${hue}, ${FOIL_SHEEN.saturation}%, ${FOIL_SHEEN.lightness}%)`;
-}
+export { FOIL_SHEEN, foilSheenColour } from './foil';
 /** The foil badge's centre, table mm: in the gutter left of the card's top strip, the part a pool cascade leaves visible. */
 export function foilBadgeAt(pose: Pose): TablePoint {
   const gutter = DRAFT_LAYOUT.colStep - GEOMETRY.card.w;

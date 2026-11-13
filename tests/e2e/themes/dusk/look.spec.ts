@@ -112,18 +112,29 @@ test.describe('Dusk look', () => {
     await settle(page);
     const halo = async (name: string): Promise<number> => {
       const [a, b] = [await cardRect(page, 'c1'), await cardRect(page, 'c2')];
-      const y = a.y + a.height / 2;
-      // A band beside the stroke, clear of the stroke itself (2 px wide at most) and its arrowhead.
-      const band: Rect = { x: a.x + a.width + 20, y: y - 8, width: b.x - (a.x + a.width) - 60, height: 5 };
-      const without = await averageColour(page, await shot(page), band);
+      const y = Math.round(a.y + a.height / 2);
+      const x = a.x + a.width + 20;
+      const width = b.x - (a.x + a.width) - 60;
+      const before = await shot(page);
       await act(page, { type: 'lineAdd', line: `t-${name}`, kind: 'target', from: { kind: 'card', id: 'c1' }, to: { kind: 'card', id: 'c2' } });
       await settle(page);
       const png = await shot(page);
       evidence(info, `line-${name}`, png);
-      const withLine = await averageColour(page, png, band);
+      // Dusk's bird's-eye is tilted 10° (camera.birdseyeTiltDeg), so the stroke's lift above the table puts it a few
+      // pixels off the cards' centre line: find its row first (the row the line brightens most), then measure bands
+      // beside it, clear of the stroke itself (2 px wide at most) and its arrowhead.
+      const rowGain = async (row: number) => lum(await averageColour(page, png, { x, y: row, width, height: 1 })) - lum(await averageColour(page, before, { x, y: row, width, height: 1 }));
+      let stroke = y;
+      let best = -Infinity;
+      for (let row = y - 24; row <= y + 8; row++) {
+        const g = await rowGain(row);
+        if (g > best) [best, stroke] = [g, row];
+      }
+      const band = async (top: number) => lum(await averageColour(page, png, { x, y: top, width, height: 5 })) - lum(await averageColour(page, before, { x, y: top, width, height: 5 }));
+      const beside = ((await band(stroke - 8)) + (await band(stroke + 4))) / 2;
       await act(page, { type: 'lineRemove', line: `t-${name}` });
       await settle(page);
-      return lum(withLine) - lum(without);
+      return beside;
     };
     const bloomed = await halo('high');
     await dusk(page, 'setQuality', 'low');

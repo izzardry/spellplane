@@ -1,5 +1,7 @@
 # M4-P1 Camera rigs: parked
 
+> **Update (M4 gate fix round, 13 Nov 2026):** the gate fixer merged `m4-p1` at `fada822` into `m4`, resolving the conflicts as step 1 below describes. The merge commit is "merge(m4): M4-P1 Camera rigs". Picking uses M4-P2's held lift and face lift, and the render loop applies the clip planes. Afterwards `pnpm check` and `tests/e2e/camera/*` passed on Chromium and WebKit. The M4 gate games and matrix passed on both rigs. Its performance check found a texture-memory overrun in the ego rig, now fixed (DECISIONS `[M4-G fix]`). The separate review round on `fada822` (step 3) has **not** run; it remains open for the owner.
+
 - **Status:** parked, not merged into `m4`. The pipeline stopped after three review rounds without a clean review. The last review left one blocking finding, quoted below. The implementer's round-3 commit (`fada822`) targets exactly that finding, but no review round checked that commit.
 - **Branch:** `m4-p1` (worktree `spellplane-wt/m4-p1`), head `fada822 fix(m4-p1): ego to bird's-eye holds the cursor point from any lean; picking at card height; projected tier height; clip planes`. Five commits on top of `c5d4c74 feat(m4-c): contracts`. The branch has no remote copy (`origin/m4-p1` does not exist). The working tree is clean.
 - **Behind `m4`:** M4-P2 (Lit pipeline) and M4-P6 (Theme switcher and conformance) were merged into `m4` after the branch was cut. `git merge-tree m4 m4-p1` reports conflicts in three files:

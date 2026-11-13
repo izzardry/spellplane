@@ -30,6 +30,8 @@ export function parsePlainList(text: string): ParseResult {
       sec = 'side';
       s = s.replace(/^SB:\s*/i, '');
     }
+    const foil = /\s+\*[FfEe]\*$/.test(s);
+    if (foil) s = s.replace(/\s+\*[FfEe]\*$/, '');
     const m = /^(\d+)x?\s+(.+?)(?:\s+\(([A-Za-z0-9]{2,6})\)(?:\s+(\S+))?)?$/.exec(s);
     if (!m || Number(m[1]) < 1) {
       errors.push({ line, text: raw, kind: 'syntax', message: `Line ${line}: expected "<count> <card name>"`, nearMatches: [] });
@@ -38,6 +40,7 @@ export function parsePlainList(text: string): ParseResult {
     const entry: DeckEntry = { count: Number(m[1]), name: m[2]!.trim(), section: sec, line };
     if (m[3]) entry.set = m[3].toLowerCase();
     if (m[4]) entry.collectorNumber = m[4];
+    if (foil) entry.foil = true;
     list[sec === 'main' ? 'main' : sec].push(entry);
   });
   return { list, errors };
@@ -69,5 +72,5 @@ export function replaceName(text: string, line: number, oldName: string, name: s
 
 /** The name an unresolved error refers to: the text after the count. */
 export function errorName(err: ParseError): string {
-  return err.text.replace(/^\s*(?:SB:\s*)?\d+x?\s+/i, '').replace(/\s+\([A-Za-z0-9]{2,6}\)(?:\s+\S+)?\s*$/, '').trim();
+  return err.text.replace(/^\s*(?:SB:\s*)?\d+x?\s+/i, '').replace(/\s+\*[FfEe]\*\s*$/, '').replace(/\s+\([A-Za-z0-9]{2,6}\)(?:\s+\S+)?\s*$/, '').trim();
 }

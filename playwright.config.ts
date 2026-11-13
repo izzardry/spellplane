@@ -33,8 +33,11 @@ export default defineConfig({
   // instead of launching browser after browser.
   maxFailures: process.env.CI ? 0 : 10,
   globalTimeout: process.env.CI ? 0 : 45 * 60_000,
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
-  timeout: 60_000,
+  reporter: process.env.CI ? [['list'], ['github'], ['html', { open: 'never' }]] : 'list',
+  // CI runners have no GPU: Chromium renders WebGL in software (SwiftShader), where a lit theme's frame (shadow maps,
+  // post-processing) costs many times what it does on a GPU. Budgets grow there; no spec asserts on timing.
+  timeout: process.env.CI ? 180_000 : 60_000,
+  expect: { timeout: process.env.CI ? 15_000 : 5_000 },
   use: {
     baseURL: BASE_URL,
     trace: 'retain-on-failure',
@@ -51,6 +54,8 @@ export default defineConfig({
             '--use-fake-ui-for-media-stream',
             '--use-fake-device-for-media-stream',
             '--use-gl=angle',
+            // SPELLPLANE_SWIFTSHADER=1 renders with SwiftShader locally as well, to reproduce CI's software GL.
+            ...(process.env.SPELLPLANE_SWIFTSHADER ? ['--use-angle=swiftshader'] : []),
             '--enable-unsafe-swiftshader',
           ],
         },

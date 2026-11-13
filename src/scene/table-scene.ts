@@ -30,8 +30,9 @@ import { NO_INSETS, type Insets } from './camera';
 import { followRequests, type FollowRequest } from './camera/follow';
 import { basis } from './camera/pose';
 import { TableRig, lateralOf } from './camera/rig';
-import { CardBoxes, CardLayer, ContactShadows, boxShape, type CardDraw } from './cards';
+import { CardBoxes, CardLayer, ContactShadows, boxShape, legibleOutlineMm, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
+import { FOIL_SHEEN, TABLE_FOIL, foilHue, foilSheenColour } from './foil';
 import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
 import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
@@ -46,7 +47,7 @@ import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
 import { TextLayer, type TextSpec } from './text';
-import { tierForScreenHeight } from './textures';
+import { TEXTURE_CAP_BYTES, tierForScreenHeight } from './textures';
 import type {
   CameraPose,
   CameraRig,
@@ -90,6 +91,8 @@ export interface SceneDebugCard extends DebugCard {
   lift: number;
   /** Tilt toward the drag direction drawn in the last frame, degrees (M4-P2: CardDressing.held.tiltDeg, lit themes). */
   tilt: number;
+  /** Drawn as a foil printing (sheen and badge) in the last frame (scene/foil.ts; DESIGN "Foils are marked with a subtle sheen and a badge"). */
+  foil: boolean;
 }
 
 export type { SceneDebugLine };
@@ -200,6 +203,10 @@ const ZONE_LABEL_SIZE = 5.5;
 const ZONE_LABEL_MIN_PX = 9;
 const ZONE_LABEL_MAX_SCALE = 3;
 /** Stroke widths of ghost outlines and displacement markers, CSS px. */
+/** Room kept free under the texture cap for render targets that come and go (a resize, a quality change), bytes. */
+const FACE_BUDGET_HEADROOM = 16 * 1024 * 1024;
+/** Least on-screen width of the hover outline, CSS px. */
+const HOVER_MIN_PX = 1.5;
 const GHOST_WIDTH_PX = 1;
 const MARKER_WIDTH_PX = 2;
 /** After a right-drag drew a line, the context menu that some platforms fire on release is ignored this long, ms. */
@@ -282,7 +289,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let built = placement();
 
   const backOf = (t: typeof theme) => t.cardDressing.back ?? opts.game.cardBack;
-  let faces = new FaceTextures(renderer, opts.faces, backOf(theme));
+  /** GPU bytes the face arrays may take: the 400 MB texture cap less the theme's own textures (PLAN M4 Performance). */
+  const faceBudget = () => TEXTURE_CAP_BYTES - runtime.textureBytes() - FACE_BUDGET_HEADROOM;
+  let faces = new FaceTextures(renderer, opts.faces, backOf(theme), TEXTURE_CAP_BYTES, faceBudget);
   faces.onChange = () => (dirty = true);
   const cards = new CardLayer(overlay, theme.tokens.colours.surface);
   overlay.add(cards.mesh);
@@ -669,6 +678,23 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return rc.inst.home;
   }
 
+  /**
+   * The hover outline's width in mm: the theme's width, but at least HOVER_MIN_PX on screen (up to the 2 mm the outline
+   * slot holds), so the hover reads at play zoom, where a card is some 60 px tall and a 0.6 mm line is under a pixel.
+   */
+  const hoverWidth = (mm: number, cardPx: number): number => legibleOutlineMm(mm, cardPx, HOVER_MIN_PX);
+  /** Foil cards drawn with the sheen and badge in the last frame (debug; the tick redraws them while the sheen drifts). */
+  const foilsDrawn = new Set<InstanceId>();
+  /** Whether a card shows a foil printing's face: public face up, or the owner's own dimmed view (local only). */
+  const foilShown = (rc: RCard): boolean => rc.place.ref?.foil === true && rc.shownKey !== BACK_KEY && rc.shownKey === rc.place.key;
+  /** A stable per-card phase offset of the sheen, so neighbouring foils shimmer out of step. */
+  const foilIndex = (id: InstanceId): number => {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+    return (h % 97) / 13;
+  };
+  let lastSheen = 0;
+
   /** Tilt of held cards in the last frame (debug). */
   const tiltDrawn = new Map<InstanceId, number>();
 
@@ -690,6 +716,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const sorted: { sort: readonly number[]; draw: CardDraw }[] = [];
     const lit = new Set(hoverItem && state ? hoverHighlights(state, hoverItem) : []);
     const slotOf = new Map(entries.map((e) => [e.item.card ?? '', e]));
+    const foilPhase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
+    foilsDrawn.clear();
     for (const rc of order) {
       const pose = rc.motion.pose;
       if (rc.motion.flipSwapped) {
@@ -708,6 +736,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const sel = selection.has(rc.id);
       const hov = view.hovered === rc.id || hovered === rc.id || lit.has(rc.id);
       const entry = rc.place.kind === 'stack' && !dragging ? slotOf.get(rc.id) : undefined;
+      // A foil printing shown face up carries the sheen (a rim, unless another outline takes the slot) and the badge.
+      const foil = foilShown(rc) ? foilHue(foilPhase, foilIndex(rc.id)) : null;
+      if (foil !== null) foilsDrawn.add(rc.id);
       sorted.push({
         sort: sortKey(rc),
         draw: {
@@ -719,7 +750,16 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           scaleX: rc.motion.flipScale(lastTick),
           uv,
           dim: rc.shownDim ? 1 - dressing.faceDownOwnerOpacity : 0,
-          highlight: sel ? { colour: dressing.selected.colour, width: dressing.selected.width } : hov ? { colour: dressing.hover.colour, width: dressing.hover.width } : entry ? entryHighlight(entry) : null,
+          highlight: sel
+            ? { colour: dressing.selected.colour, width: dressing.selected.width }
+            : hov
+              ? { colour: dressing.hover.colour, width: hoverWidth(dressing.hover.width, cardPx) }
+              : entry
+                ? entryHighlight(entry)
+                : foil !== null && dressing.foilSheen
+                  ? { colour: foilSheenColour(foilPhase, foilIndex(rc.id)), width: TABLE_FOIL.rimMm }
+                  : null,
+          foil,
         },
       });
     }
@@ -737,7 +777,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const hov = hoverItem === e.item.id || held;
       sorted.push({
         sort: held ? [LAYER.dragged, 0, 0] : [LAYER.stack, 0, e.index],
-        draw: { pose, z: held ? dressing.held.lift : 0, held, scaleX: 1, scale: k, uv, dim: 0, highlight: hov ? { colour: dressing.hover.colour, width: dressing.hover.width } : entryHighlight(e) },
+        draw: { pose, z: held ? dressing.held.lift : 0, held, scaleX: 1, scale: k, uv, dim: 0, highlight: hov ? { colour: dressing.hover.colour, width: hoverWidth(dressing.hover.width, cardPx / k) } : entryHighlight(e) },
       });
     }
     sorted.sort((a, b) => compareSort(a.sort, b.sort));
@@ -809,7 +849,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (pingsLive) changed = true;
     if (!reduced() && entries.some((e) => e.pending)) changed = true;
     if (animated()) changed = true;
-    if (changed || dirty) draw(dt);
+    // The foil sheen drifts at a low frame rate while foils are drawn (not with reduced motion).
+    if (!changed && !dirty && foilsDrawn.size > 0 && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs) changed = true;
+    if (changed || dirty) {
+      if (foilsDrawn.size > 0) lastSheen = now;
+      draw(dt);
+    }
     if (captionLayer.active) captionLayer.place();
   }
 
@@ -1610,6 +1655,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           ghost: ghostOf(rc),
           lift: rc.lift.value,
           tilt: tiltDrawn.get(rc.id) ?? 0,
+          foil: foilsDrawn.has(rc.id),
         };
       });
     },
@@ -1936,7 +1982,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       applyDressing();
       if (backOf(next) !== oldBack) {
         faces.dispose();
-        faces = new FaceTextures(renderer, opts.faces, backOf(next));
+        faces = new FaceTextures(renderer, opts.faces, backOf(next), TEXTURE_CAP_BYTES, faceBudget);
         faces.onChange = () => (dirty = true);
         for (const rc of rcards.values()) if (rc.place.ref) faces.register(rc.place.ref, rc.place.faceIndex);
       }

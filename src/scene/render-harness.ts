@@ -3,7 +3,9 @@
  * harness table (scene/harness-fixture.ts) with any theme, including the test-only lit theme (themes/test-lit.ts), so
  * the pipeline can be tested before Dusk, Wyrm and Stonetable land (PLAN M4-P2). Added by M4-P2.
  *
- * URL: `?harness=render&faces=placeholder&scenario=empty|demo|bench&theme=paper|dusk|wyrm|stonetable|lit&quality=high|medium|low&viewer=s0|s1`.
+ * URL: `?harness=render&faces=placeholder&scenario=empty|demo|bench&theme=paper|dusk|wyrm|stonetable|lit&quality=high|medium|low&viewer=s0|s1&rig=birdseye|ego|theme`.
+ * The camera starts in the bird's-eye rig unless `rig=ego` (or `rig=theme`, the theme's default camera) asks otherwise: the
+ * render specs measure materials, light and post on a near-affine view.
  * Test API: window.__renderHarness (below) and window.__spellplane (state, dispatch, render, cards, frameStats).
  */
 import type { Action, ActionDraft } from '../core/actions';
@@ -77,6 +79,8 @@ export async function mount(target: HTMLElement): Promise<void> {
   let themeId: HarnessThemeId = isTheme(themeParam) ? themeParam : 'paper';
   const quality = (['high', 'medium', 'low'] as const).find((q) => q === params.get('quality')) ?? 'high';
   const viewer = params.get('viewer') === 's1' ? 's1' : 's0';
+  const rigParam = params.get('rig');
+  const rig = rigParam === 'ego' ? 'ego' : rigParam === 'theme' ? undefined : 'birdseye';
 
   target.textContent = '';
   const host = document.createElement('div');
@@ -98,6 +102,7 @@ export async function mount(target: HTMLElement): Promise<void> {
     layout,
     viewerSeat: viewer,
     theme,
+    ...(rig ? { rig } : {}),
     faces: harnessFaces,
     quality,
     dispatch(draft) {

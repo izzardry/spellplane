@@ -124,10 +124,15 @@ export class TierArray {
     this.free.push(slot);
   }
 
-  /** Double the layer count (GPU copy of the old layers). False when at the maximum. */
-  grow(): boolean {
-    if (this.layers >= this.maxLayers) return false;
-    const layers = Math.min(this.maxLayers, this.layers * 2);
+  /** Bytes of one layer (level 0). */
+  get layerBytes(): number {
+    return this.texW * this.texH * 4;
+  }
+
+  /** Grow to `to` layers (default: double; GPU copy of the old layers). False when it cannot grow. */
+  grow(to = this.layers * 2): boolean {
+    const layers = Math.min(this.maxLayers, to);
+    if (layers <= this.layers) return false;
     const next = makeArray(this.texW, this.texH, layers, this.texture.anisotropy);
     this.renderer.initTexture(next);
     this.renderer.copyTextureToTexture(this.texture, next, new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(this.texW, this.texH, this.layers)), new THREE.Vector3(0, 0, 0));

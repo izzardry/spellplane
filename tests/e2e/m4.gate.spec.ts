@@ -44,6 +44,8 @@ const FIXTURE_CARDS = new Map<string, { name: string; type_line: string }>(
 
 type Seat = 's0' | 's1';
 type Rig = 'birdseye' | 'ego';
+/** Each theme's default camera (DESIGN "Themes and rendering", theme table: Default camera). */
+const DEFAULT_RIG: Record<ThemeId, Rig> = { paper: 'birdseye', dusk: 'birdseye', wyrm: 'ego', stonetable: 'ego' };
 interface Player {
   name: string;
   seat: Seat;
@@ -160,6 +162,12 @@ async function handWhere(page: Page, pred: (c: { name: string; type_line: string
 const isLand = (c: { type_line: string }) => c.type_line.includes('Land');
 const isCreature = (c: { type_line: string }) => c.type_line.includes('Creature');
 const named = (n: string) => (c: { name: string }) => c.name === n;
+/** The list with one Pegasus Courser split off as a foil printing (`*F*`); the card count stays the same. */
+const withFoil = (list: string): string => {
+  const out = list.replace(/^4 Pegasus Courser$/m, '3 Pegasus Courser\n1 Pegasus Courser *F*');
+  if (out === list) throw new Error('the matrix decklist has no "4 Pegasus Courser" line to mark foil');
+  return out;
+};
 
 /** Wait until both pages report the same state hash. */
 async function converged(a: Page, b: Page): Promise<string> {
@@ -345,44 +353,52 @@ test.describe('M4 gate @gate', () => {
       const errors = await openRender(page, { theme, scenario: 'bench' });
       await settleRender(page);
       const drawn = (await rh<unknown[]>(page, 'cards')).length;
-      const samples: Stats[] = [];
-      const vp = page.viewportSize()!;
-      for (const factor of [1, 2.5, 6]) {
-        if (factor !== 1) await page.evaluate(([x, y, f]) => window.__renderHarness!.camera.zoomAt(x!, y!, f!), [vp.width / 2, vp.height * 0.7, factor] as const);
-        await settleRender(page);
-        for (let i = 0; i < 5; i++) {
-          await page.evaluate(() => window.__renderHarness!.camera.panBy(1, 0));
-          await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-          samples.push((await page.evaluate(() => window.__spellplane!.render!.stats())) as Stats);
+      // Both camera rigs: the theme's default first (bird's-eye in Paper and Dusk, ego in Wyrm and Stonetable).
+      const first = await page.evaluate(() => window.__renderHarness!.camera.rig());
+      for (const rig of [first, first === 'birdseye' ? 'ego' : 'birdseye'] as const) {
+        if ((await page.evaluate(() => window.__renderHarness!.camera.rig())) !== rig) {
+          await page.evaluate((r) => window.__renderHarness!.camera.setRig(r, { animate: false }), rig);
+          await page.evaluate(() => window.__renderHarness!.camera.fit(false));
+          await settleRender(page);
         }
+        const samples: Stats[] = [];
+        const vp = page.viewportSize()!;
+        for (const factor of [1, 2.5, 6]) {
+          if (factor !== 1) await page.evaluate(([x, y, f]) => window.__renderHarness!.camera.zoomAt(x!, y!, f!), [vp.width / 2, vp.height * 0.7, factor] as const);
+          await settleRender(page);
+          for (let i = 0; i < 5; i++) {
+            await page.evaluate(() => window.__renderHarness!.camera.panBy(1, 0));
+            await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+            samples.push((await page.evaluate(() => window.__spellplane!.render!.stats())) as Stats);
+          }
+        }
+        const maxCalls = Math.max(...samples.map((s) => s.drawCalls));
+        const maxBytes = Math.max(...samples.map((s) => s.textureBytes));
+        const ms = samples.map((s) => s.frameMs).sort((a, b) => a - b);
+        const median = ms[Math.floor(ms.length / 2)]!;
+        const row = {
+          cards: drawn,
+          drawCallsMax: maxCalls,
+          drawCallBudget: budget[theme],
+          textureMB: Number((maxBytes / 2 ** 20).toFixed(1)),
+          textures: Math.max(...samples.map((s) => s.textures)),
+          frameCpuMedianMs: Number(median.toFixed(2)),
+          frameCpuMaxMs: Number(ms.at(-1)!.toFixed(2)),
+          passes: samples[0]!.passes,
+          shadows: samples[0]!.shadows,
+          rig,
+        };
+        report[`${theme}/${rig}`] = row;
+        const line = `${theme}/${rig}/${info.project.name}: ${drawn} cards, draw calls ≤ ${maxCalls} (budget ${budget[theme]}), texture memory ${row.textureMB} MB, frame CPU median ${row.frameCpuMedianMs} ms (max ${row.frameCpuMaxMs} ms), passes [${row.passes.join(', ')}], shadows ${row.shadows}`;
+        info.annotations.push({ type: 'perf', description: line });
+        console.log(`[perf] ${line}`);
+        if (samples[0]!.theme !== theme) problems.push(`${theme}: render stats name ${samples[0]!.theme}`);
+        if (maxCalls > budget[theme]) problems.push(`${theme} ${rig}: ${maxCalls} draw calls > ${budget[theme]}`);
+        if (maxBytes >= 400 * 2 ** 20) problems.push(`${theme} ${rig}: texture memory ${row.textureMB} MB ≥ 400 MB`);
       }
-      const maxCalls = Math.max(...samples.map((s) => s.drawCalls));
-      const maxBytes = Math.max(...samples.map((s) => s.textureBytes));
-      const ms = samples.map((s) => s.frameMs).sort((a, b) => a - b);
-      const median = ms[Math.floor(ms.length / 2)]!;
-      const row = {
-        cards: drawn,
-        drawCallsMax: maxCalls,
-        drawCallBudget: budget[theme],
-        textureMB: Number((maxBytes / 2 ** 20).toFixed(1)),
-        textures: Math.max(...samples.map((s) => s.textures)),
-        frameCpuMedianMs: Number(median.toFixed(2)),
-        frameCpuMaxMs: Number(ms.at(-1)!.toFixed(2)),
-        passes: samples[0]!.passes,
-        shadows: samples[0]!.shadows,
-        rig: 'birdseye',
-      };
-      report[theme] = row;
-      const line = `${theme}/${info.project.name}: ${drawn} cards, draw calls ≤ ${maxCalls} (budget ${budget[theme]}), texture memory ${row.textureMB} MB, frame CPU median ${row.frameCpuMedianMs} ms (max ${row.frameCpuMaxMs} ms), passes [${row.passes.join(', ')}], shadows ${row.shadows}`;
-      info.annotations.push({ type: 'perf', description: line });
-      console.log(`[perf] ${line}`);
       if (drawn < 300) problems.push(`${theme}: only ${drawn} cards drawn`);
-      if (samples[0]!.theme !== theme) problems.push(`${theme}: render stats name ${samples[0]!.theme}`);
-      if (maxCalls > budget[theme]) problems.push(`${theme}: ${maxCalls} draw calls > ${budget[theme]}`);
-      if (maxBytes >= 400 * 2 ** 20) problems.push(`${theme}: texture memory ${row.textureMB} MB ≥ 400 MB`);
       if (errors.length) problems.push(`${theme}: page errors ${JSON.stringify(errors.slice(0, 3))}`);
     }
-    // The ego rig (default in Wyrm and Stonetable) cannot be measured until it exists (M4-P1 parked).
     writeReport(info, 'perf', report);
     expect(problems).toEqual([]);
   });
@@ -657,15 +673,18 @@ async function scriptedGame(browser: Browser, info: TestInfo, theme: ThemeId, ne
     });
   });
 
-  // Perspective switch: Ann watches Ben's turn 4 from the ego rig.
-  const egoOk = await step('perspective: Ann presses P over her creature; the camera blends to the ego rig and the table does not change', async () => {
+  // Perspective switch: Ann's page opens in the theme's default rig (bird's-eye in Paper and Dusk, ego in Wyrm and
+  // Stonetable; DESIGN "Themes and rendering", Default camera); she watches Ben's turn 4 from the other rig.
+  const homeRig: Rig = DEFAULT_RIG[theme];
+  const awayRig: Rig = homeRig === 'birdseye' ? 'ego' : 'birdseye';
+  const egoOk = await step(`perspective: Ann's page opens in the ${homeRig} rig; she presses P over her creature; the camera blends to the ${awayRig} rig and the table does not change`, async () => {
     await focus(A);
     const h = await converged(A.page, B.page);
-    expect(await rigOf(A.page)).toBe('birdseye');
-    await pressPerspective(A.page, 'ego', await centreOf(A.page, creatures.s0[0]!));
+    expect(await rigOf(A.page)).toBe(homeRig);
+    await pressPerspective(A.page, awayRig, await centreOf(A.page, creatures.s0[0]!));
     expect(await hashOf(A.page)).toBe(h);
     await sceneIdle(A.page);
-    await shot(A.page, 'M4', name('ego'), project);
+    await shot(A.page, 'M4', name(awayRig), project);
   });
 
   await turn(4, B, async () => {
@@ -687,22 +706,22 @@ async function scriptedGame(browser: Browser, info: TestInfo, theme: ThemeId, ne
       const [ra, rb] = [(await state(A.page)).rng[rid], (await state(B.page)).rng[rid]];
       expect(ra?.result).toBe(rb?.result);
     });
-    await step('turn 4: Ann\'s ego view shows Ben\'s creature (debug hook), still in the ego rig', async () => {
+    await step(`turn 4: Ann's ${awayRig} view shows Ben's creature (debug hook), still in that rig`, async () => {
       if (!egoOk) return; // already recorded by the switch step
       await focus(A);
-      expect(await rigOf(A.page)).toBe('ego');
+      expect(await rigOf(A.page)).toBe(awayRig);
       await sceneIdle(A.page);
       const c = (await shown(A.page)).find((x) => x.id === creatures.s1[0]);
       expect(c?.visible).toBe(true);
-      await shot(A.page, 'M4', name('ego-opponent-creature'), project);
+      await shot(A.page, 'M4', name(`${awayRig}-opponent-creature`), project);
     });
   });
 
-  await step('perspective: Ann presses P again; back to bird\'s-eye, the table unchanged', async () => {
+  await step(`perspective: Ann presses P again; back to the ${homeRig} rig, the table unchanged`, async () => {
     await focus(A);
     const h = await converged(A.page, B.page);
-    if (egoOk) await pressPerspective(A.page, 'birdseye', await centreOf(A.page, creatures.s0[0]!));
-    expect(await rigOf(A.page)).toBe('birdseye');
+    if (egoOk) await pressPerspective(A.page, homeRig, await centreOf(A.page, creatures.s0[0]!));
+    expect(await rigOf(A.page)).toBe(homeRig);
     expect(await hashOf(A.page)).toBe(h);
   });
 
@@ -923,7 +942,14 @@ async function scriptedGame(browser: Browser, info: TestInfo, theme: ThemeId, ne
 }
 
 /** Search a player's library through the avatar's library button (Search) and put a matching card into the hand (H). */
-async function tutorFromLibrary(page: Page, seat: string, pred: (c: { name: string; type_line: string }) => boolean, what: string, except: string[] = []): Promise<string> {
+async function tutorFromLibrary(
+  page: Page,
+  seat: string,
+  pred: (c: { name: string; type_line: string }) => boolean,
+  what: string,
+  except: string[] = [],
+  byId: (id: string) => boolean = () => true,
+): Promise<string> {
   await page.bringToFront();
   await page.locator(`[data-testid="avatar"][data-seat="${seat}"] [data-testid="zone-button"][data-zone="library:${seat}"]`).click();
   await expect(page.getByTestId('pile-viewer')).toBeVisible();
@@ -931,7 +957,7 @@ async function tutorFromLibrary(page: Page, seat: string, pred: (c: { name: stri
   const sec = await secrets(page);
   let id: string | undefined;
   for (const x of sec.libraryOrder) {
-    if (except.includes(x)) continue;
+    if (except.includes(x) || !byId(x)) continue;
     const c = FIXTURE_CARDS.get(sec.identities[x]!.card.sid);
     if (c && pred(c)) {
       id = x;
@@ -999,7 +1025,9 @@ async function matrix(browser: Browser, browserName: string, info: TestInfo): Pr
     await A.page.getByTestId('lobby-pass-timer').selectOption('off');
     await expect.poll(async () => (await state(B.page)).settings.passTimerMs).toBeNull();
     for (const p of both) {
-      await p.page.getByTestId('lobby-deck-text').fill(decklist(p.deck));
+      // Ann's list marks one Pegasus Courser as a foil printing (`*F*`, the export marker): the foil state of the
+      // matrix comes onto the table through the UI like every other card.
+      await p.page.getByTestId('lobby-deck-text').fill(p === A ? withFoil(decklist(p.deck)) : decklist(p.deck));
       await p.page.getByTestId('lobby-deck-check').click();
       await expect(p.page.getByTestId('lobby-deck-summary')).toContainText('60 cards in the deck');
       await p.page.getByTestId('ready').click();
@@ -1032,7 +1060,9 @@ async function matrix(browser: Browser, browserName: string, info: TestInfo): Pr
   const vp = A.page.viewportSize()!;
   await step('setup: Ann drags two creatures from her hand onto the battlefield, Ben one', async () => {
     for (const [key, p, x] of [['c1', A, 0.42], ['c2', A, 0.54], ['o1', B, 0.48]] as const) {
-      const taken = Object.values(ids).filter(Boolean);
+      // The foil printing stays out of the neutral cards: it is the foil state's own card.
+      const foils = Object.entries((await secrets(p.page)).identities).filter(([, v]) => v.card.foil === true).map(([k]) => k);
+      const taken = [...Object.values(ids).filter(Boolean), ...foils];
       const id = (await handWhere(p.page, creature, taken)) ?? (await tutorFromLibrary(p.page, p.seat, creature, 'creature', taken));
       await p.page.bringToFront();
       await neutral(p.page);
@@ -1248,16 +1278,21 @@ async function matrix(browser: Browser, browserName: string, info: TestInfo): Pr
   });
   await captureAll('07-face-down', atRest);
 
-  // 8. Foil: no UI path puts a foil printing on the play table (decklists carry no finish; foils come from drafts).
-  await step('foil: a foil printing of c2 beside it (debug hook: no UI path for a foil on the play table)', async () => {
-    gaps.push('foil: no UI path puts a foil card on the play table in a constructed game (decklists carry no foil finish); the matrix creates a foil token through __spellplane.dispatch');
-    const sid = (await secrets(A.page)).identities[ids.c2]?.card.sid ?? (await state(A.page)).cards[ids.c2]?.identity?.sid;
-    const pose = (await state(A.page)).cards[ids.c2]!.pose!;
-    await A.page.evaluate(
-      ([s, p]) => window.__spellplane!.dispatch!({ by: 's0', cid: 'm4-foil', type: 'createToken', card: 'foil1', zone: 'battlefield:s0', pose: { x: (p as { x: number }).x + 75, y: (p as { y: number }).y, rot: 0 }, ref: { sid: s, foil: true } } as never),
-      [sid, pose] as const,
-    );
-    await expect.poll(async () => (await state(A.page)).cards.foil1?.identity?.foil).toBe(true);
+  // 8. Foil: Ann plays the foil printing her decklist names (`*F*`) from her hand beside c2.
+  await step('foil: Ann drags the foil Pegasus Courser from her hand beside c2 (decklist *F*)', async () => {
+    await ann();
+    const sec = await secrets(A.page);
+    const foil = (x: string) => sec.identities[x]?.card.foil === true;
+    const st = await state(A.page);
+    const id = sec.hand.find((x) => foil(x) && st.cards[x]?.zone === 'hand:s0') ?? (await tutorFromLibrary(A.page, 's0', () => true, 'foil printing', Object.values(ids), foil));
+    await A.page.mouse.move(rest.x, rest.y);
+    const c2 = await centreOf(A.page, ids.c2);
+    const w = (await shown(A.page)).find((c) => c.id === ids.c2)!.screen.width;
+    await dragFromHand(A.page, id, { x: c2.x + 1.25 * w, y: c2.y });
+    await expect.poll(async () => (await state(A.page)).cards[id]?.zone).toBe('battlefield:s0');
+    await expect.poll(async () => (await state(A.page)).cards[id]?.identity?.foil).toBe(true);
+    await expect.poll(async () => (await shown(A.page)).find((c) => c.id === id)?.foil, 'the table draws the foil sheen and badge').toBe(true);
+    await converged(A.page, B.page);
   });
   await captureAll('08-foil', atRest);
 
