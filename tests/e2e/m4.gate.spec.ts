@@ -1073,13 +1073,39 @@ async function matrix(browser: Browser, browserName: string, info: TestInfo): Pr
     await converged(A.page, B.page);
   });
 
-  /** The empty table left of c1, where the pointer rests between states. */
+  /** The empty table left of c1, where the pointer rests between states (bird's-eye). */
   let rest = { x: vp.width * 0.2, y: vp.height * 0.45 };
+  /**
+   * Where P is pressed: the centre of Ann's row, from c1's left edge to the slot right of c2 where the foil card comes.
+   * The switch keeps the table point under the pointer fixed and the ego view shows Ann's cards larger than the
+   * bird's-eye does, so they spread out from this point: pressed at the resting point left of c1, the row spread to
+   * the right under the HUD's log panel. Switching back at the same point returns to the same bird's-eye view.
+   */
+  let anchor = { x: vp.width * 0.5, y: vp.height * 0.6 };
+  /**
+   * The ego view's own resting point (left of c1 as the ego view shows it), per theme (Dusk's tilted bird's-eye puts
+   * the anchor over a slightly different table point), found at the first ego switch per bird's-eye view, c1 at home.
+   */
+  const egoRests = new Map<ThemeId, { x: number; y: number }>();
+  let egoRest: { x: number; y: number } | null = null;
   const findRest = async () => {
     const c1 = await centreOf(A.page, ids.c1);
+    const c2 = await centreOf(A.page, ids.c2);
     const w = (await shown(A.page)).find((c) => c.id === ids.c1)!.screen.width;
     rest = { x: c1.x - 2.5 * w, y: c1.y };
+    anchor = { x: (c1.x - w / 2 + c2.x + 1.75 * w) / 2, y: c1.y };
+    egoRests.clear();
   };
+  const findEgoRest = async (): Promise<{ x: number; y: number }> => {
+    const c1 = await centreOf(A.page, ids.c1);
+    const w = (await shown(A.page)).find((c) => c.id === ids.c1)!.screen.width;
+    // Clear of Ann's avatar panel at the left edge (190 px).
+    const at = { x: Math.max(230, c1.x - 2.5 * w), y: c1.y };
+    if (at.x > c1.x - w) throw new Error(`no empty table left of c1 in the ego view (c1 at ${Math.round(c1.x)}, ${Math.round(w)} px wide)`);
+    return at;
+  };
+  /** The pointer's resting point in the rig shown. */
+  const restNow = async () => ((await rigOf(A.page)) === 'ego' && egoRest ? egoRest : rest);
   await step('setup: a resting point on empty table beside Ann\'s cards', async () => {
     await A.page.bringToFront();
     await findRest();
@@ -1095,8 +1121,12 @@ async function matrix(browser: Browser, browserName: string, info: TestInfo): Pr
           if (rig === 'ego' && egoWorks === false) continue;
           if ((await rigOf(A.page)) !== rig) {
             try {
-              await pressPerspective(A.page, rig, rest, 4000);
-              if (rig === 'ego') egoWorks = true;
+              await pressPerspective(A.page, rig, anchor, 4000);
+              if (rig === 'ego') {
+                egoWorks = true;
+                egoRest = egoRests.get(theme) ?? (await findEgoRest());
+                egoRests.set(theme, egoRest);
+              }
             } catch (e) {
               if (rig === 'ego' && egoWorks === null) {
                 egoWorks = false;
@@ -1114,7 +1144,7 @@ async function matrix(browser: Browser, browserName: string, info: TestInfo): Pr
           shotsTaken.push(n);
         }
         // Leave each theme in the bird's-eye rig, so the next state's setup gestures work on known screen geometry.
-        if ((await rigOf(A.page)) !== 'birdseye') await pressPerspective(A.page, 'birdseye', rest, 4000);
+        if ((await rigOf(A.page)) !== 'birdseye') await pressPerspective(A.page, 'birdseye', anchor, 4000);
       });
     }
     // The next state's setup starts from Paper's bird's-eye view.
@@ -1123,7 +1153,8 @@ async function matrix(browser: Browser, browserName: string, info: TestInfo): Pr
     });
   };
   const atRest = async () => {
-    await A.page.mouse.move(rest.x, rest.y);
+    const at = await restNow();
+    await A.page.mouse.move(at.x, at.y);
     await frames(A.page);
   };
   const ann = async () => {
@@ -1136,10 +1167,7 @@ async function matrix(browser: Browser, browserName: string, info: TestInfo): Pr
   };
 
   // The whole table at the fitted view, once per theme and rig: the mood of each theme.
-  await captureAll('00-fit', async () => {
-    await A.page.mouse.move(rest.x, rest.y);
-    await frames(A.page);
-  });
+  await captureAll('00-fit', atRest);
 
   // The signals are judged closer in: Ann zooms with the wheel (centred on the cursor) between her cards and Ben's,
   // until a card is about 64 px tall.
