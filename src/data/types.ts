@@ -115,6 +115,11 @@ export interface DeckEntry {
   name: string;
   set?: string;
   collectorNumber?: string;
+  /**
+   * A foil printing: the line ends in the export marker `*F*` (Moxfield, Archidekt; `*E*` etched counts as foil).
+   * Added by the M4 gate fix (additive): the finish reaches `CardRef.foil` (DESIGN "Specification: card data").
+   */
+  foil?: true;
   section: DeckSection;
   /** 1-based source line. */
   line: number;

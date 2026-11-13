@@ -23,7 +23,8 @@ import { CAMERA, GEOMETRY } from '../core/geometry';
 import type { CardRef, DeckBuild, PileRef, PoolCard, Pose } from '../core/types';
 import type { CardData } from '../data/types';
 import { mtg } from '../games/index';
-import type { Theme, ThemeInstance } from '../themes/types';
+import type { Theme } from '../themes/types';
+import { ThemeRuntime } from './theme-runtime';
 import { BirdseyeRig, NO_INSETS, type Insets } from './camera';
 import { CardLayer, type CardDraw } from './cards';
 import { FOIL_SHEEN, foilSheenColour } from './draft';
@@ -716,7 +717,8 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
   insetObserver.observe(host, { attributes: true, attributeFilter: ['data-fit-insets'] });
 
   let builtReduced = reduced();
-  let themeInstance: ThemeInstance = theme.build({ renderer, scene, camera, table: L.table, quality: theme.quality[0]!, reducedMotion: builtReduced });
+  // The theme's lights, tone mapping and materials (M4-P2, scene/theme-runtime.ts); pre-game surfaces skip post-processing.
+  const themes = new ThemeRuntime(renderer, scene, camera, { post: false }, theme, { table: L.table, viewerAngle: 0, reducedMotion: builtReduced });
   const backOf = (t: Theme) => t.cardDressing.back ?? mtg.cardBack;
   let back = backOf(theme);
   let faces = new FaceTextures(renderer, opts.faces, back);
@@ -768,9 +770,8 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
   let drag: { ids: string[]; anchor: string; start: Poses; grabOffset: TablePoint; cur: TablePoint; ctrl: boolean } | null = null;
 
   function rebuildTheme(): void {
-    themeInstance.dispose();
     builtReduced = reduced();
-    themeInstance = theme.build({ renderer, scene, camera, table: L.table, quality: theme.quality[0]!, reducedMotion: builtReduced });
+    themes.setTheme(theme, { table: L.table, viewerAngle: 0, reducedMotion: builtReduced });
     dirty = true;
   }
 
@@ -846,6 +847,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
   function resize(): void {
     const vp = viewport();
     renderer.setSize(vp.w, vp.h, false);
+    themes.setSize(vp.w, vp.h);
     rig.resize(vp);
     dirty = true;
   }
@@ -903,8 +905,8 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
     }
     cards.setTextures(faces.textures());
     cards.write(draws);
-    themeInstance.update(0);
-    renderer.render(scene, camera);
+    themes.update(0);
+    themes.render(0);
     syncOverlay(piles);
     dirty = false;
   }
@@ -1638,7 +1640,7 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('contextmenu', onContextMenu);
       removeEventListener('keydown', onKey);
-      themeInstance.dispose();
+      themes.dispose();
       faces.dispose();
       cards.dispose();
       outlineGeometry.dispose();

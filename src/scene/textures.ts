@@ -11,6 +11,19 @@ import { IMAGE_TIERS, type ImageTier } from '../data/types';
 export const TEXTURE_CAP_BYTES = 400 * 1024 * 1024;
 export const TIERS: readonly ImageTier[] = ['small', 'normal', 'large'];
 
+/** GPU bytes per byte of level 0 with a full mip chain (the face arrays are mip-mapped). */
+export const MIP_FACTOR = 4 / 3;
+
+/**
+ * How many layers a tier's face array may grow to (DESIGN "Specification: geometry, layout and motion", Texture tiers:
+ * at most 400 MB of textures): normally double, but never past its maximum or past what still fits in `budget` bytes
+ * next to `otherBytes` already allocated (both with mip-maps). Returns the current count when it cannot grow.
+ */
+export function grownLayers(a: { layers: number; maxLayers: number; layerBytes: number }, otherBytes: number, budget: number): number {
+  const fit = Math.floor((budget - otherBytes) / (a.layerBytes * MIP_FACTOR));
+  return Math.max(a.layers, Math.min(a.maxLayers, a.layers * 2, fit));
+}
+
 /** The tier for a card drawn `px` CSS px tall. */
 export function tierForScreenHeight(px: number): ImageTier {
   if (px < IMAGE_TIERS.small.maxScreenHeightPx) return 'small';

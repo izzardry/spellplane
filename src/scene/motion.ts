@@ -173,3 +173,49 @@ export class CardMotion {
     return this.r.x + deltaDeg(this.r.x, rot);
   }
 }
+
+/**
+ * Lift of one card while held (DESIGN "Specification: geometry, layout and motion": "Lift while dragged 12, with a 4°
+ * tilt toward the drag direction in lit themes"; themes/types.ts CardDressing.held). The lift rises and falls with the
+ * card spring; reduced motion cuts. Pure: time is passed in. Added by M4-P2.
+ */
+export class HeldLift {
+  lift: SpringAxis = { x: 0, v: 0 };
+  target = 0;
+
+  /** Lift toward `mm` (the dressing's held lift while held, 0 after the drop). */
+  set(mm: number, reduced: boolean): void {
+    this.target = mm;
+    if (reduced) this.lift = { x: mm, v: 0 };
+  }
+
+  get value(): number {
+    return this.lift.x;
+  }
+
+  get moving(): boolean {
+    return Math.abs(this.lift.x - this.target) >= REST_POS || Math.abs(this.lift.v) >= REST_VEL;
+  }
+
+  /** Advance by `dtMs`; returns whether the lift still moves. */
+  step(dtMs: number, m: MotionConstants): boolean {
+    if (!this.moving) return false;
+    const { stiffness: k, damping: c, mass } = m.spring;
+    this.lift = springStep(this.lift, this.target, Math.min(dtMs, 100) / 1000, k, c, mass);
+    if (!this.moving) this.lift = { x: this.target, v: 0 };
+    return this.moving;
+  }
+}
+
+/** Drag speed (mm/s) at which a held card reaches its full tilt. */
+export const FULL_TILT_SPEED = 400;
+
+/**
+ * Tilt of a held card from its velocity (mm/s, table frame): toward the drag direction, `tiltDeg` at FULL_TILT_SPEED and
+ * above, proportionally less when slower, none at rest, with reduced motion or in themes without tilt (Paper).
+ */
+export function heldTilt(vx: number, vy: number, tiltDeg: number, reduced: boolean): { x: number; y: number; deg: number } | null {
+  const speed = Math.hypot(vx, vy);
+  if (reduced || tiltDeg <= 0 || speed < 1e-3) return null;
+  return { x: vx / speed, y: vy / speed, deg: tiltDeg * Math.min(1, speed / FULL_TILT_SPEED) };
+}

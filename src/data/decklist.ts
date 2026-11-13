@@ -2,7 +2,8 @@
  * Decklist parser (DESIGN "Specification: card data, packs and draft formats", Decklist grammar; "Pre-game",
  * Constructed decks): plain, MTGA and MTGO lists.
  *
- *   line     = <count>[x] <name> [(<SET>) <collector number>]
+ *   line     = <count>[x] <name> [(<SET>) <collector number>] [*F*]
+ *   *F*      = a foil printing (the export marker of Moxfield and Archidekt; *E*, etched, counts as foil)
  *   SB: line = a sideboard card
  *   headers  = Deck | Sideboard | Commander | Companion   (switch section)
  *   blank    = after the main deck, starts the sideboard; after a commander or companion block, ends it (back to
@@ -26,6 +27,8 @@ const HEADERS: Record<string, DeckSection | 'about'> = {
 };
 
 // The set code may also come without a collector number ("4 Shock (M19)"), which pins the set only.
+/** A trailing finish marker: `*F*` foil, `*E*` etched (a foil finish). */
+const FOIL_MARK = /\s+\*[FfEe]\*$/;
 const CARD_LINE = /^(\d+)\s*[xX]?\s+(.+?)(?:\s+\(([A-Za-z0-9]{2,6})\)(?:\s+([A-Za-z0-9★†-]+))?)?$/u;
 
 export function emptyDeckList(): DeckList {
@@ -44,7 +47,8 @@ function syntaxError(line: number, text: string, message: string): ParseError {
 
 /** Parses one card line (without an `SB:` prefix); a string is the syntax error message. */
 export function parseCardLine(text: string): Omit<DeckEntry, 'section' | 'line'> | string {
-  const m = CARD_LINE.exec(text);
+  const foil = FOIL_MARK.test(text);
+  const m = CARD_LINE.exec(foil ? text.replace(FOIL_MARK, '') : text);
   if (!m) {
     return /^\d/.test(text) ? 'Expected "<count> <card name>" with a card name after the count' : 'Expected "<count> <card name>", e.g. "4 Lightning Bolt"';
   }
@@ -56,6 +60,7 @@ export function parseCardLine(text: string): Omit<DeckEntry, 'section' | 'line'>
   const entry: Omit<DeckEntry, 'section' | 'line'> = { count, name };
   if (m[3] !== undefined) entry.set = m[3].toLowerCase();
   if (m[3] !== undefined && m[4] !== undefined) entry.collectorNumber = m[4];
+  if (foil) entry.foil = true;
   return entry;
 }
 

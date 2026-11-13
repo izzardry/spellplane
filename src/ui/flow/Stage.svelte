@@ -16,6 +16,7 @@
   import type { CreateTableScene } from '../../scene/types';
   import type { SettingsStore } from '../../store/types';
   import { paper } from '../../themes/paper/index';
+  import { themeContext } from '../settings/theme';
   import Hud from '../Hud.svelte';
   import { BuilderView } from '../builder/index';
   import { DraftView } from '../draft/index';
@@ -31,7 +32,10 @@
   const stage = $derived<StageId>(st.stage);
   const evening = $derived(props.session.evening);
   const draft = $derived(props.session.draft);
-  const theme = paper;
+  // The viewer's theme (PLAN M4-P6), switchable mid-evening; Paper where no app shell provides the choice.
+  const themeChoice = themeContext();
+  let theme = $state.raw(themeChoice?.current() ?? paper);
+  onMount(() => themeChoice?.subscribe((s) => (theme = s.theme)));
 </script>
 
 <div class="stage" data-testid="stage" data-stage={stage}>

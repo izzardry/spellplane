@@ -11,7 +11,7 @@ import type { TextureSource } from '../util/texture';
 import { TierArray, slotsPerLayer, type SlotUv } from './atlas';
 import { BACK_KEY, BLANK_KEY, faceKey } from './faces-key';
 import { drawPlaceholderFace } from './placeholder';
-import { TEXTURE_CAP_BYTES, TIERS, TextureLru, tierBytes, type CacheEntry } from './textures';
+import { MIP_FACTOR, TEXTURE_CAP_BYTES, TIERS, TextureLru, grownLayers, tierBytes, type CacheEntry } from './textures';
 
 export { BACK_KEY, BLANK_KEY, faceKey };
 
@@ -46,6 +46,12 @@ export class FaceTextures {
     faces: FaceSource,
     back: TextureSource,
     capBytes = TEXTURE_CAP_BYTES,
+    /**
+     * GPU bytes the face arrays may take with their mip-maps (the scene passes the 400 MB cap less its theme's own
+     * textures). Thumbnails are pinned and always grow; the normal and large arrays stop growing at the budget and evict
+     * least recently drawn faces of their tier instead, so a card shows a smaller tier rather than break the cap.
+     */
+    private readonly gpuBudget: () => number = () => capBytes,
   ) {
     this.loader = new FaceLoader(faces, back);
     this.lru = new TextureLru(capBytes);
@@ -129,9 +135,12 @@ export class FaceTextures {
     }
   }
 
-  /** Upload decoded images into the arrays (bounded per frame). Returns whether anything changed. */
-  pump(frame: number): boolean {
-    let budget = UPLOAD_BUDGET;
+  /**
+   * Upload decoded images into the arrays (bounded per frame; `scale` multiplies the bound, scene/pacing.ts
+   * uploadScale). Returns whether anything changed.
+   */
+  pump(frame: number, scale = 1): boolean {
+    let budget = UPLOAD_BUDGET * Math.max(1, scale);
     let changed = false;
     while (this.ready.length && budget > 0) {
       const item = this.ready.shift()!;
@@ -140,7 +149,7 @@ export class FaceTextures {
       const arr = this.arrays[item.tier];
       const bytes = tierBytes(item.tier);
       let slot = arr.alloc();
-      if (slot === null && arr.grow()) slot = arr.alloc();
+      if (slot === null && arr.grow(this.growTarget(item.tier))) slot = arr.alloc();
       const room = this.lru.makeRoom(item.tier, bytes, frame, slot === null, pinned);
       for (const e of room.evicted) this.arrays[e.tier].release(e.slot);
       if (!room.ok) {
@@ -162,7 +171,16 @@ export class FaceTextures {
     return changed;
   }
 
-  textures(): [THREE.DataArrayTexture, THREE.DataArrayTexture, THREE.DataArrayTexture] {
+  /** The layer count the tier's array may grow to now (see `gpuBudget`). */
+  private growTarget(tier: ImageTier): number {
+    const arr = this.arrays[tier];
+    if (tier === 'small') return arr.layers * 2;
+    let others = 0;
+    for (const t of TIERS) if (t !== tier) others += this.arrays[t].allocatedBytes * MIP_FACTOR;
+    return grownLayers({ layers: arr.layers, maxLayers: arr.maxLayers, layerBytes: arr.layerBytes }, others, this.gpuBudget());
+  }
+
+    textures(): [THREE.DataArrayTexture, THREE.DataArrayTexture, THREE.DataArrayTexture] {
     return [this.arrays.small.texture, this.arrays.normal.texture, this.arrays.large.texture];
   }
 

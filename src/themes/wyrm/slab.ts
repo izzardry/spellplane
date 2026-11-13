@@ -1,0 +1,161 @@
+/**
+ * Wyrm's table: an obsidian slab with the computed scale relief and ember-lit seams (DESIGN "Themes and rendering",
+ * theme table; themes/wyrm/scales.ts). A thick box whose top lies at table height 0, so cards, markings and shadows sit
+ * on it as on Paper's plane; its top carries the tile in table millimetres (the scales keep their size on every table),
+ * its sides are plain polished obsidian.
+ *
+ * The material is a MeshStandardMaterial built here rather than through SceneContext.materials, because a MaterialSpec
+ * has no emissive map and the seams glow from one. A slow travelling heat wave brightens and dims the seams (a few
+ * lines injected into three's standard shader); with reduced motion it stands still. Everything is freed on dispose.
+ */
+import * as THREE from 'three';
+import { setTextureAnisotropy } from '../../scene/quality';
+import { scaleMaps, type SlabMaps } from './scales';
+
+/** Slab thickness below the table top, mm. */
+export const SLAB_DEPTH = 40;
+
+/** Seam glow: base emissive intensity, and how far the heat wave swings it either way. */
+export const SEAM_GLOW = { intensity: 1.0, swing: 0.5 } as const;
+
+export interface Slab {
+  readonly object: THREE.Mesh;
+  /** Advance the heat wave to `timeS` seconds. */
+  update(timeS: number): void;
+  /** Anisotropic filtering of the slab's maps (the quality level's), set in place on uploaded maps (no re-upload). */
+  setAnisotropy(samples: number): void;
+  /** The anisotropy in effect: the level's, clamped to the GPU's maximum when a renderer is known. */
+  readonly anisotropy: number;
+  /** The textures this slab owns (tests). */
+  readonly textures: readonly THREE.Texture[];
+  dispose(): void;
+}
+
+function dataTexture(data: Uint8Array, size: number, srgb: boolean, repeat: THREE.Vector2, anisotropy: number): THREE.DataTexture {
+  const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
+  t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.copy(repeat);
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.anisotropy = anisotropy;
+  t.needsUpdate = true;
+  return t;
+}
+
+/** Angular frequencies (rad/s) of the seams' heat wave: three travelling waves. */
+export const SEAM_WAVE_FREQS = [0.35, 0.27, 0.6] as const;
+
+/**
+ * The seam wave's clock wraps at this period (s): a whole number of cycles of every wave (0.35, 0.27 and 0.6 times 200π
+ * are 70π, 54π and 120π), so the wrap is seamless and the float32 time in the shader never grows large enough to step.
+ */
+export const SEAM_WAVE_PERIOD_S = 200 * Math.PI;
+
+/** Advance the seam wave clock by `dtS` seconds, wrapped at SEAM_WAVE_PERIOD_S. */
+export function advanceSeamClock(timeS: number, dtS: number): number {
+  return (timeS + dtS) % SEAM_WAVE_PERIOD_S;
+}
+
+/** GLSL injected into the standard material: a heat wave across the table in world space (mm). */
+const WAVE_VERTEX_DECL = /* glsl */ `
+varying vec2 vWyrmXZ;
+`;
+const WAVE_VERTEX = /* glsl */ `
+vWyrmXZ = (modelMatrix * vec4(transformed, 1.0)).xz;
+`;
+const WAVE_FRAGMENT_DECL = /* glsl */ `
+uniform float uWyrmTime;
+uniform float uWyrmSwing;
+varying vec2 vWyrmXZ;
+`;
+const WAVE_FRAGMENT = /* glsl */ `
+{
+  vec2 p = vWyrmXZ * 0.004;
+  float w = sin(p.x * 1.7 + uWyrmTime * ${SEAM_WAVE_FREQS[0].toFixed(2)}) * cos(p.y * 1.3 - uWyrmTime * ${SEAM_WAVE_FREQS[1].toFixed(2)}) + 0.5 * sin((p.x + p.y) * 2.9 - uWyrmTime * ${SEAM_WAVE_FREQS[2].toFixed(2)});
+  totalEmissiveRadiance *= max(0.0, 1.0 + uWyrmSwing * w);
+}
+`;
+
+/** Build the slab for a table of `table` mm. */
+export function createSlab(table: { w: number; d: number }, opts: { anisotropy?: number; renderer?: THREE.WebGLRenderer } = {}, maps: SlabMaps = scaleMaps()): Slab {
+  const max = opts.renderer?.capabilities?.getMaxAnisotropy?.() || Infinity;
+  const aniso = (n: number | undefined) => Math.max(1, Math.min(max, Math.floor(n ?? 1)));
+  let anisotropy = aniso(opts.anisotropy);
+  const tile = maps.options.tileMm;
+  const n = maps.options.size;
+  // BoxGeometry's top face has UVs 0..1 over the whole table: repeat the tile every tileMm.
+  const repeat = new THREE.Vector2(table.w / tile, table.d / tile);
+  const albedo = dataTexture(maps.albedo, n, true, repeat, anisotropy);
+  const normal = dataTexture(maps.normal, n, false, repeat, anisotropy);
+  const orm = dataTexture(maps.orm, n, false, repeat, anisotropy);
+  const emissive = dataTexture(maps.emissive, n, true, repeat, anisotropy);
+  albedo.name = 'wyrm-slab-albedo';
+  normal.name = 'wyrm-slab-normal';
+  orm.name = 'wyrm-slab-orm';
+  emissive.name = 'wyrm-slab-emissive';
+
+  const uniforms = { uWyrmTime: { value: 0 }, uWyrmSwing: { value: SEAM_GLOW.swing } };
+  const top = new THREE.MeshStandardMaterial({
+    color: '#ffffff',
+    map: albedo,
+    normalMap: normal,
+    normalScale: new THREE.Vector2(1, 1),
+    aoMap: orm,
+    aoMapIntensity: 1,
+    roughnessMap: orm,
+    roughness: 1,
+    metalnessMap: orm,
+    metalness: 1,
+    emissive: new THREE.Color('#ffffff'),
+    emissiveMap: emissive,
+    emissiveIntensity: SEAM_GLOW.intensity,
+  });
+  top.name = 'wyrm-slab-top';
+  top.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = WAVE_VERTEX_DECL + shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>\n${WAVE_VERTEX}`);
+    shader.fragmentShader = WAVE_FRAGMENT_DECL + shader.fragmentShader.replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>\n${WAVE_FRAGMENT}`);
+  };
+  top.customProgramCacheKey = () => 'wyrm-slab-top';
+  const side = new THREE.MeshStandardMaterial({ color: '#120c0b', roughness: 0.25, metalness: 0, emissive: new THREE.Color('#3a0e04'), emissiveIntensity: 0.25 });
+  side.name = 'wyrm-slab-side';
+
+  const geometry = new THREE.BoxGeometry(table.w, SLAB_DEPTH, table.d);
+  // Box faces: +x, -x, +y (top), -y, +z, -z.
+  const mesh = new THREE.Mesh(geometry, [side, side, top, side, side, side]);
+  mesh.name = 'wyrm-slab';
+  mesh.position.set(0, -SLAB_DEPTH / 2, 0);
+  mesh.receiveShadow = true;
+  mesh.renderOrder = 0;
+
+  const textures = [albedo, normal, orm, emissive];
+  return {
+    object: mesh,
+    textures,
+    update(timeS) {
+      uniforms.uWyrmTime.value = timeS;
+    },
+    get anisotropy() {
+      return anisotropy;
+    },
+    setAnisotropy(samples) {
+      const next = aniso(samples);
+      if (next === anisotropy) return;
+      anisotropy = next;
+      for (const t of textures) {
+        // An uploaded map takes the GL parameter in place (scene/quality.ts); one not uploaded yet reads
+        // `t.anisotropy` at its first upload. Never `needsUpdate`: that re-uploads four maps and their mipmaps.
+        if (!opts.renderer || !setTextureAnisotropy(opts.renderer, t, next)) t.anisotropy = next;
+      }
+    },
+    dispose() {
+      mesh.removeFromParent();
+      geometry.dispose();
+      top.dispose();
+      side.dispose();
+      for (const t of textures) t.dispose();
+    },
+  };
+}

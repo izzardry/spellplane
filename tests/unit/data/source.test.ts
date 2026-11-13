@@ -54,6 +54,13 @@ describe('resolveDeck', () => {
     expect(island.collector_number).toBe('268');
   });
 
+  it('carries a foil line\'s finish to its card refs (CardRef.foil); other lines stay non-foil', async () => {
+    const { source } = setup();
+    const deck = await source.resolveDeck(parseDecklist('2 Shock *F*\n1 Shock\n1 Resplendent Angel').list);
+    expect(deck.errors).toEqual([]);
+    expect(deck.main).toEqual([{ sid: shock.id, foil: true }, { sid: shock.id, foil: true }, { sid: shock.id }, { sid: angel.id }]);
+  });
+
   it('reports the unresolvable name of deck C with its line number and still resolves the rest', async () => {
     const { source } = setup();
     const deck = await source.resolveDeck(parseDecklist(fixtureDecklist('mixed-40.mtgo.txt')).list);

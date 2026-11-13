@@ -15,7 +15,7 @@
   import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
-  import { tokensToCssVars } from '../themes/index';
+  import { cssText, hudCssVars } from '../themes/index';
   import { Commands, isEmptyChair, isOwnTurn, promptKeys, promptShowing, roundPassed, untapOfferOnOpen, type UiHooks } from './commands';
   import ConfirmPrompt from './confirm/ConfirmPrompt.svelte';
   import { promptModel, roundWhat } from './confirm/model';
@@ -45,6 +45,10 @@
   import VoicePanel from './voice/VoicePanel.svelte';
   import { attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
   import Speech from './settings/Speech.svelte';
+  import ThemePicker from './settings/Theme.svelte';
+  import { themeContext } from './settings/theme';
+  import { ViewSettings, type ViewPrefs } from './settings/view';
+  import { cuesFor, soundModeOf, soundOn, ThemeSoundPlayer, type SoundMode } from './sound';
   import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption } from '../voice/types';
 
@@ -83,6 +87,8 @@
   let vw = $state(typeof window === 'undefined' ? 1440 : window.innerWidth);
   let vh = $state(typeof window === 'undefined' ? 900 : window.innerHeight);
   const pointer = { x: 0, y: 0 };
+  /** Whether the pointer moved over the page yet (the P key's anchor, M4-P1). */
+  let pointerSeen = false;
   let forcedHover: InstanceId | null = null;
   let sceneHost = $state<HTMLElement | undefined>();
   let scene: TableScene | null = null;
@@ -130,14 +136,62 @@
   /** Dictated captions (M3-P4, session.captions) and the speech settings panel. */
   let captionList = $state.raw<Caption[]>([]);
   let speechOpen = $state(false);
+  /** Where the speech settings open: just below the Dictation button, wherever the wrapped toolbar puts it. */
+  let speechTop = $state<number | undefined>(undefined);
   let noteInput = $state<HTMLInputElement | undefined>();
   let drawInput = $state<HTMLInputElement | undefined>();
 
-  const cssVars = $derived(
-    Object.entries(tokensToCssVars(theme.tokens))
-      .map(([k, v]) => `${k}: ${v}`)
-      .join('; '),
-  );
+  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
+  /** The viewer's theme picker (PLAN M4-P6): present when the app shell provides the choice, not in harness pages. */
+  const themeChoice = themeContext();
+  let themeOpen = $state(false);
+  let themeAnchor = $state<HTMLElement | null>(null);
+  // The picker is a dismissible popover: a press anywhere outside it (table, HUD) closes it, as Esc and × do.
+  $effect(() => {
+    if (!themeOpen) return;
+    const away = (e: PointerEvent) => {
+      if (themeAnchor && !themeAnchor.contains(e.target as Node | null)) themeOpen = false;
+    };
+    window.addEventListener('pointerdown', away, true);
+    return () => window.removeEventListener('pointerdown', away, true);
+  });
+  // The theme's sound set (DESIGN "Themes and rendering", Sound) under the viewer's Settings.sound; audio starts on the
+  // viewer's first press or key (browsers' autoplay rule).
+  const sound = new ThemeSoundPlayer();
+  /** The viewer's Settings.sound; null until it is read, so a viewer who turned sound off never hears a start. */
+  let soundMode = $state<SoundMode | null>(untrack(() => (settings ? null : 'theme')));
+  let soundLive = $state(false);
+  $effect(() => {
+    sound.setTheme(theme.sounds);
+    sound.setMode(soundMode ?? 'off');
+    soundLive = sound.ambient();
+  });
+  /** 'off', 'on' (waiting for a gesture or no room tone) or 'playing' (the room tone runs). */
+  const soundState = $derived(soundOn(theme.sounds, soundMode ?? 'off') ? (soundLive ? 'playing' : 'on') : 'off');
+  function setSoundMode(mode: SoundMode): void {
+    soundMode = mode;
+    void settings?.set('sound', mode).catch(() => {});
+  }
+  $effect(() => {
+    const unlock = () => {
+      sound.unlock();
+      soundLive = sound.ambient();
+    };
+    window.addEventListener('pointerdown', unlock, true);
+    window.addEventListener('keydown', unlock, true);
+    return () => {
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+    };
+  });
+  /** The theme the scene was built with or last switched to; a new theme prop is handed to the scene without reload. */
+  let sceneTheme: typeof theme | null = null;
+  $effect(() => {
+    const t = theme;
+    if (!sceneReady || !scene || sceneTheme === null || t === sceneTheme) return;
+    sceneTheme = t;
+    scene.setTheme(t);
+  });
   const back = $derived(theme.cardDressing.back ?? game.cardBack);
   /**
    * Screen edges the screen-anchored layer covers, "top right bottom left" in CSS px, for the scene's fit (DESIGN
@@ -245,6 +299,7 @@
     ui: hooks,
     newId: makeId,
     now: () => Date.now(),
+    pointer: () => (pointerSeen ? { x: pointer.x, y: pointer.y } : null),
   });
   const engine = new KeyEngine(
     untrack(() => game.keymap),
@@ -267,10 +322,12 @@
 
   /**
    * Close the topmost overlay for Esc. While a confirmation prompt shows, Esc means Hold, except that a transient
-   * overlay (menu, reveal-to, token search, inspect, cheat sheet) closes first; pile viewers and the deck dialog stay.
+   * overlay (menu, reveal-to, token search, inspect, cheat sheet, theme picker) closes first; pile viewers and the deck
+   * dialog stay.
    */
   function closeTop(promptUp: boolean): boolean {
     if (menu) menu = null;
+    else if (themeOpen) themeOpen = false;
     else if (revealTo) revealTo = null;
     else if (tokenNear) tokenNear = null;
     else if (inspectId) hooks.inspect(null);
@@ -618,13 +675,29 @@
         later(() => (pings = pings.filter((p) => p !== ping)), fade);
       }
     }
+    // A log that shrank (a resume replaced it) rings nothing.
+    if (log.length > seenLog) sound.play(cuesFor(log.slice(seenLog), me));
     seenLog = log.length;
+  }
+
+  /**
+   * The viewer's quality level and follow toggles (DESIGN "Themes and rendering", Renderer; "Camera and navigation",
+   * Follow options), handed to the scene whenever they differ from what it has: on mount, when the picker changes them,
+   * and when the window regains focus or becomes visible (another tab may have changed them; SettingsStore has no change
+   * events). The scene keeps the quality choice across theme switches.
+   */
+  const view = new ViewSettings(untrack(() => settings));
+  let viewPrefs = $state.raw<ViewPrefs>(view.state());
+  function syncView(): void {
+    void view.refresh();
   }
 
   onMount(() => {
     seenLog = entries.length;
     watch.start(entries);
     followTeam();
+    const unsubView = view.subscribe((p) => (viewPrefs = p));
+    syncView();
     const unsub = session.subscribe((s) => {
       followTeam();
       const log = session.log();
@@ -641,6 +714,10 @@
     const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
     captionList = session.captions?.captions() ?? [];
     const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
+    void settings
+      ?.get('sound')
+      .then((m) => (soundMode = soundModeOf(m)))
+      .catch(() => (soundMode = 'theme'));
     void settings
       ?.get('keymap')
       .then((o) => {
@@ -671,7 +748,10 @@
           selectionChange: (ids) => (selection = [...ids]),
         },
       });
+      sceneTheme = theme;
       sceneReady = true;
+      // The viewer's quality and follow toggles (Settings.quality, followStack, followActive).
+      view.attach(scene);
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
       presence = attachPresence(sceneHost!, scene, session.presence, {
         selfSeat: me,
@@ -685,6 +765,8 @@
     }
     return () => {
       unsub();
+      unsubView();
+      view.dispose();
       voiceOff?.();
       speakOff?.();
       teamUnsub?.();
@@ -698,6 +780,7 @@
       presence = null;
       scene?.dispose();
       scene = null;
+      sound.dispose();
     };
   });
 </script>
@@ -710,14 +793,17 @@
   {onfocusin}
   {onclick}
   onblur={() => engine.blur()}
+  onfocus={() => syncView()}
   onpointermove={(e) => {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
+    pointerSeen = true;
     syncCaptionHover(hovered);
   }}
 />
+<svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncView()} />
 
-<div class="root" style={cssVars} data-testid="hud">
+<div class="root" style={cssVars} data-testid="hud" data-sound={soundState}>
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
   <Flashes
@@ -736,7 +822,14 @@
         <button type="button" data-testid="open-deck-import" onclick={() => (deckOpen = !deckOpen)}>Import deck</button>
         <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
+        <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye')}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
+        {#if themeChoice}
+          <span class="theme-anchor" bind:this={themeAnchor}>
+            <button type="button" data-testid="open-theme-settings" aria-pressed={themeOpen} aria-expanded={themeOpen} aria-label="Theme" title="Theme" onclick={() => (themeOpen = !themeOpen)}>◐</button>
+            {#if themeOpen}<div class="theme-pop"><ThemePicker choice={themeChoice} sound={{ mode: soundMode ?? 'theme', set: setSoundMode }} view={{ prefs: viewPrefs, set: (name, value) => void view.set(name, value).catch(() => {}) }} onclose={() => (themeOpen = false)} /></div>{/if}
+          </span>
+        {/if}
         {#if !liveVoice}
           {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
           {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
@@ -750,7 +843,15 @@
             <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'V'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
           {/if}
           {#if session.captions && !spectating}
-            <button type="button" data-testid="open-speech-settings" aria-pressed={speechOpen} onclick={() => (speechOpen = !speechOpen)}>Dictation</button>
+            <button
+              type="button"
+              data-testid="open-speech-settings"
+              aria-pressed={speechOpen}
+              onclick={(e) => {
+                speechTop = Math.round((e.currentTarget as HTMLElement).getBoundingClientRect().bottom + 6);
+                speechOpen = !speechOpen;
+              }}>Dictation</button
+            >
           {/if}
           {#if liveVoice && voicePanel}
             <!-- Drops down over the avatar column instead of pushing it into the own avatar (M3-G). -->
@@ -1028,7 +1129,7 @@
   {/if}
 
   {#if speechOpen && session.captions}
-    <Speech captions={session.captions} onclose={() => (speechOpen = false)} />
+    <Speech captions={session.captions} top={speechTop} onclose={() => (speechOpen = false)} />
   {/if}
 
   {#if cheatOpen}
@@ -1060,6 +1161,7 @@
   .root {
     position: fixed;
     inset: 0;
+    color-scheme: var(--sp-hud-scheme, light);
     background: var(--sp-bg, #fff);
     color: var(--sp-fg, #111);
     font-family: var(--sp-font, system-ui);
@@ -1096,9 +1198,13 @@
   }
   .toolbar {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
     pointer-events: auto;
     align-items: center;
+    /* Clear of the turn strip centred above the table (about 640 px wide): the tools wrap to a second row rather than
+       slide under it (the View button of M4-P1 made the row too long at 1440 px). */
+    max-width: max(220px, calc(50vw - 336px));
   }
   .toolbar button,
   .stack-chip button,
@@ -1113,6 +1219,15 @@
   }
   .voice-row {
     position: relative;
+  }
+  .theme-anchor {
+    position: relative;
+  }
+  .theme-pop {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 70;
   }
   .voice-pop {
     position: absolute;

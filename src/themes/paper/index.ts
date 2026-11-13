@@ -7,12 +7,17 @@
 import * as THREE from 'three';
 import { DEFAULT_MOTION, type LineKind, type LineStyle, type SceneContext, type SeatColour, type SeatPattern, type Theme, type ThemeInstance } from '../types';
 
+/**
+ * Seat colours tuned for the white table (M4-P6, SEAT_CONTRAST): each at least 4.5:1 against white, so the HUD can also
+ * set text in a seat colour on the white panel (e.g. holder and waiting names in the confirm prompt) at WCAG AA; every
+ * pair at least 0.26 apart. Text on a seat-coloured chip (`ink`) is the theme's white `bg`, also at 4.5:1.
+ */
 const SEATS: SeatColour[] = [
   { index: 0, colour: '#1f6fd1', pattern: 'solid', glyph: 'circle' },
-  { index: 1, colour: '#d1495b', pattern: 'dash', glyph: 'square' },
-  { index: 2, colour: '#2a8f55', pattern: 'dot', glyph: 'triangle' },
+  { index: 1, colour: '#c8404f', pattern: 'dash', glyph: 'square' },
+  { index: 2, colour: '#25834d', pattern: 'dot', glyph: 'triangle' },
   { index: 3, colour: '#8a4fd1', pattern: 'dash-dot', glyph: 'diamond' },
-  { index: 4, colour: '#c06c00', pattern: 'long-dash', glyph: 'star' },
+  { index: 4, colour: '#a96000', pattern: 'long-dash', glyph: 'star' },
   { index: 5, colour: '#0f7f8f', pattern: 'dash-dot-dot', glyph: 'hexagon' },
   { index: 6, colour: '#b0408f', pattern: 'double', glyph: 'cross' },
   { index: 7, colour: '#6b6b1f', pattern: 'zigzag', glyph: 'ring' },
@@ -72,6 +77,7 @@ function lineStyle(kind: LineKind, seat: SeatColour): LineStyle {
 /** The Paper theme (DESIGN "Themes and rendering"). */
 export const paper: Theme = {
   id: 'paper',
+  label: 'Paper',
   tokens: {
     colours: {
       bg: '#ffffff',
@@ -89,6 +95,7 @@ export const paper: Theme = {
     type: { family: "system-ui, -apple-system, 'Segoe UI', sans-serif", mono: 'ui-monospace, monospace', size: 14, small: 12, large: 18, weight: 400, weightBold: 600 },
     radii: { sm: 2, md: 4, lg: 8 },
     spacing: { xs: 2, sm: 4, md: 8, lg: 16, xl: 24 },
+    hud: { scheme: 'light', panel: '#ffffff', panelBorder: '#8c8c8c', shadow: 'none', blur: 0, overlay: 'rgba(255, 255, 255, 0.92)' },
   },
   camera: { defaultRig: 'birdseye' },
   build: buildPaper,
@@ -103,8 +110,18 @@ export const paper: Theme = {
     ghost: { colour: '#111111', opacity: 0.25, dashed: true },
     faceDownOwnerOpacity: 0.5,
     foilSheen: true,
+    // v2 (M4-C): flat and unlit, so no sleeve material, no visible edge, no shading of the face, no tilt or shadow when held.
+    sleeveMaterial: null,
+    edge: '#ffffff',
+    faceShade: 0,
+    held: { lift: 12, tiltDeg: 0, shadow: false },
+    pending: { colour: '#8a5a00', width: 1.2, lift: 0 },
   },
   lineStyle,
   motion: DEFAULT_MOTION,
-  quality: [{ id: 'high', shadows: false, post: false, particles: false, pixelRatio: 2 }],
+  quality: [{ id: 'high', shadows: false, post: false, particles: false, pixelRatio: 2, anisotropy: 4, msaa: 0 }],
+  // v2 (M4-C): "Flat white plane, no lighting, no shadows" (DESIGN theme table).
+  lighting: { lit: false, lights: [], toneMapping: 'none', exposure: 1, background: PAPER_SURROUND, fog: null },
+  shadows: { enabled: false, map: null, contact: null },
+  post: { bloom: null, vignette: null },
 };

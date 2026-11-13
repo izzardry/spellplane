@@ -399,6 +399,17 @@ describe('deck import (DESIGN "Pre-game", Constructed decks; "Specification: car
     expect(r.resolved.main).toEqual([{ sid: 'sid-dfc' }]);
   });
 
+  it('a foil line (*F*) keeps its finish through the fallback parser and the check (M4 gate fix)', async () => {
+    const r = parsePlainList('1 Test Bear *F*\n2 Spark Jolt (TST) 2 *F*');
+    expect(r.list.main).toEqual([
+      { count: 1, name: 'Test Bear', foil: true, section: 'main', line: 1 },
+      { count: 2, name: 'Spark Jolt', set: 'tst', collectorNumber: '2', foil: true, section: 'main', line: 2 },
+    ]);
+    const checked = await checkDeck('1 Test Bear *F*\n1 Test Bear', parsePlainList, new FakeCardData());
+    expect(checked.resolved.main.map((c) => c.foil ?? false)).toEqual([true, false]);
+    expect(errorName({ line: 1, text: '1 Tset Bear (TST) 1 *F*', kind: 'unresolved', message: '', nearMatches: [] })).toBe('Tset Bear');
+  });
+
   it('a near match replaces only the name on its line', () => {
     const text = '4 Test Bear\n2 Sprk Jolt (TST) 2\n1 Moon Sage';
     expect(replaceName(text, 2, 'Sprk Jolt', 'Spark Jolt')).toBe('4 Test Bear\n2 Spark Jolt (TST) 2\n1 Moon Sage');

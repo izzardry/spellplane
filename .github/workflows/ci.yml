@@ -8,7 +8,7 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
@@ -18,13 +18,34 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
-      - run: pnpm exec playwright install --with-deps chromium webkit
-      - run: pnpm e2e
-      - uses: actions/upload-artifact@v4
-        if: failure()
+  # The browser suite is split by browser and into shards: on GitHub's runners Chromium renders WebGL in software
+  # (SwiftShader), so the lit themes cost far more per frame than on a GPU and one job for everything ran past any
+  # sensible limit. Specs never assert on timing; only their budgets grow under CI (playwright.config.ts).
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
         with:
-          name: playwright-report
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
+      - run: pnpm e2e -- --project=${{ matrix.browser }} --shard=${{ matrix.shard }}/4
+      # Always, so a timed-out or cancelled shard still leaves its report and traces behind.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-${{ matrix.browser }}-${{ matrix.shard }}
           path: |
             playwright-report
             test-results
           retention-days: 7
+          if-no-files-found: ignore

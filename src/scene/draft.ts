@@ -18,12 +18,14 @@ import { CAMERA, GEOMETRY } from '../core/geometry';
 import { seatsInOrder } from '../core/selectors';
 import type { CardRef, DraftCard, InstanceId, PackId, Pose, SeatId, TableState } from '../core/types';
 import type { CardData } from '../data/types';
-import type { Theme, ThemeInstance } from '../themes/types';
+import type { Theme } from '../themes/types';
+import { ThemeRuntime } from './theme-runtime';
 import { BirdseyeRig, NO_INSETS, type FrameBox, type Insets } from './camera';
 import { CardLayer, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures, faceKey } from './faces';
 import { CARD_H, CARD_W, cardCorners, deltaDeg, forward, pointInCard, rot2 } from './math';
 import { CardMotion } from './motion';
+import { FOIL_SHEEN, foilSheenColour } from './foil';
 import { tierForScreenHeight } from './textures';
 import type { CameraControls, CreateDraftSurface, DebugCard, DraftSurface, DraftSurfaceOptions, DraftSurfaceView, ScreenPoint, TablePoint, TablePoint3, TableScene } from './types';
 
@@ -299,16 +301,7 @@ interface RCard {
 
 const DRAG_THRESHOLD_PX = 4;
 
-/**
- * Foil sheen (DESIGN "Pre-game", Pack generation: "Foils are marked with a subtle sheen and a badge"; "Card faces are
- * never recoloured"): a thin rim outside the face whose light hue drifts slowly, each card a little out of phase. With
- * reduced motion the rim holds still.
- */
-export const FOIL_SHEEN = { widthMm: 0.9, periodMs: 6000, saturation: 55, lightness: 72, frameMs: 50 } as const;
-export function foilSheenColour(phase: number, cardIndex: number): string {
-  const hue = Math.round((((phase + cardIndex * 0.13) % 1) + 1) % 1 * 360);
-  return `hsl(${hue}, ${FOIL_SHEEN.saturation}%, ${FOIL_SHEEN.lightness}%)`;
-}
+export { FOIL_SHEEN, foilSheenColour } from './foil';
 /** The foil badge's centre, table mm: in the gutter left of the card's top strip, the part a pool cascade leaves visible. */
 export function foilBadgeAt(pose: Pose): TablePoint {
   const gutter = DRAFT_LAYOUT.colStep - GEOMETRY.card.w;
@@ -410,7 +403,8 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
 
   // The theme instance is built with the reduced-motion setting it runs under, and rebuilt when that setting changes.
   let builtReduced = opts.reducedMotion ?? false;
-  let themeInstance: ThemeInstance = theme.build({ renderer, scene, camera, table: geometry.table, quality: theme.quality[0]!, reducedMotion: builtReduced });
+  // The theme's lights, tone mapping and materials (M4-P2, scene/theme-runtime.ts); pre-game surfaces skip post-processing.
+  const themes = new ThemeRuntime(renderer, scene, camera, { post: false }, theme, { table: geometry.table, viewerAngle: 0, reducedMotion: builtReduced });
   const backOf = (t: Theme) => t.cardDressing.back ?? opts.game.cardBack;
   let back = backOf(theme);
   let faces = new FaceTextures(renderer, opts.faces, back);
@@ -441,9 +435,8 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   let lastSheen = 0;
   const reduced = () => view?.reducedMotion ?? opts.reducedMotion ?? false;
   function rebuildTheme(): void {
-    themeInstance.dispose();
     builtReduced = reduced();
-    themeInstance = theme.build({ renderer, scene, camera, table: geometry.table, quality: theme.quality[0]!, reducedMotion: builtReduced });
+    themes.setTheme(theme, { table: geometry.table, viewerAngle: 0, reducedMotion: builtReduced });
     dirty = true;
   }
 
@@ -594,6 +587,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   function resize(): void {
     const vp = viewport();
     renderer.setSize(vp.w, vp.h, false);
+    themes.setSize(vp.w, vp.h);
     rig.resize(vp);
     dirty = true;
   }
@@ -646,8 +640,8 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
     }
     cards.setTextures(faces.textures());
     cards.write(draws);
-    themeInstance.update(0);
-    renderer.render(scene, camera);
+    themes.update(0);
+    themes.render(0);
     syncOverlay();
     dirty = false;
   }
@@ -1197,7 +1191,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       canvas.removeEventListener('wheel', onWheel);
       canvas.removeEventListener('contextmenu', onContextMenu);
       removeEventListener('keydown', onKey);
-      themeInstance.dispose();
+      themes.dispose();
       faces.dispose();
       cards.dispose();
       outlineGeometry.dispose();

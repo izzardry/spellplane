@@ -12,37 +12,57 @@
  * Combat and annotation (M1-P4): dropping another seat's creature onto an attacker blocks it (scene/combat.ts),
  * right-drag from a card draws a line (Shift: a persistent mark), pings ring the pinged thing, settled cards go home
  * with the settle timing.
+ *
+ * Lit pipeline (M4-P2): two scenes. The world (theme table, lights, card boxes and contact shadows, zone markings,
+ * ghost outlines) goes through the theme's post-processing; the overlay (card faces, text over the cards,
+ * displacement markers, lines and pings) is drawn after it without tone mapping, so printed faces keep their colours
+ * (DESIGN "Card faces are never restyled"). scene/theme-runtime.ts owns the theme, materials, post chain and quality.
+ * Paper stays one cheap pass: no lights, boxes, shadows or post, the same draw calls as before.
  */
 import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
-import { CAMERA, GEOMETRY } from '../core/geometry';
+import { CAMERA } from '../core/geometry';
 import type { CardInstance, InstanceId, Pose, SeatId, StackItemId, TableState, ZoneId } from '../core/types';
-import type { TableLayout } from '../games/types';
-import type { ThemeInstance } from '../themes/types';
+import type { Rect, TableLayout } from '../games/types';
+import type { QualityId } from '../themes/types';
 import { registerDebug } from '../util/debug';
-import { BirdseyeRig, NO_INSETS, type Insets } from './camera';
-import { CardLayer, type CardDraw } from './cards';
+import { NO_INSETS, type Insets } from './camera';
+import { followRequests, type FollowRequest } from './camera/follow';
+import { basis } from './camera/pose';
+import { TableRig, lateralOf } from './camera/rig';
+import { CardBoxes, CardLayer, ContactShadows, boxShape, legibleOutlineMm, type CardDraw } from './cards';
 import { BACK_KEY, FaceTextures } from './faces';
+import { FOIL_SHEEN, TABLE_FOIL, foilHue, foilSheenColour } from './foil';
+import { ambientDue, uploadScale } from './pacing';
+import { clampShade } from './materials';
+import { setTextureAnisotropy } from './quality';
+import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
 import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
 import { LAYER, compareSort, displayedRot, dropTargets, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
-import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, forward, legibleScale, pointInCard, pointInRect, rot2 } from './math';
-import { CardMotion } from './motion';
+import { CARD_H, CARD_W, cardCorners, cardHalfExtents, deltaDeg, legibleScale, pointInCard, pointInRect, rot2 } from './math';
+import { CardMotion, HeldLift, heldTilt } from './motion';
 import { CaptionLayer, captionBadge, captionPoint } from './captions';
-import { drawnPose, entryAt, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
+import { drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
 import { TextLayer, type TextSpec } from './text';
-import { tierForScreenHeight } from './textures';
+import { TEXTURE_CAP_BYTES, tierForScreenHeight } from './textures';
 import type {
-  CameraControls,
+  CameraPose,
   CameraRig,
+  FollowOptions,
+  RenderDebug,
+  RenderStats,
+  RigDebug,
+  TableCameraControls,
   DebugCamera,
   DebugCard,
   FrameStats,
   SceneDebugParts,
   ScreenPoint,
+  SetRigOptions,
   TablePoint,
   TablePoint3,
   TableScene,
@@ -68,6 +88,12 @@ export interface SceneDebugCard extends DebugCard {
   displaced: boolean;
   /** Where its ghost outline is drawn (the home slot), or null. */
   ghost: Pose | null;
+  /** Lift above its resting height while held, mm (M4-P2: CardDressing.held.lift). */
+  lift: number;
+  /** Tilt toward the drag direction drawn in the last frame, degrees (M4-P2: CardDressing.held.tiltDeg, lit themes). */
+  tilt: number;
+  /** Drawn as a foil printing (sheen and badge) in the last frame (scene/foil.ts; DESIGN "Foils are marked with a subtle sheen and a badge"). */
+  foil: boolean;
 }
 
 export type { SceneDebugLine };
@@ -86,6 +112,25 @@ export interface SceneDebug extends SceneDebugParts {
   idle(): boolean;
   /** Face textures queued, loading or waiting for upload. */
   pendingTextures(): number;
+  /** Frames drawn so far (M4-P2: tests wait for a frame after a theme or quality switch). */
+  frames(): number;
+  /** The lit pipeline's state (M4-P2): live library materials and textures, card boxes, contact shadows, face shade. */
+  pipeline(): {
+    materials: number;
+    materialTextures: number;
+    boxes: boolean;
+    contactShadows: boolean;
+    faceShade: number;
+    faceLift: number;
+    toneMapping: number;
+    post: string[];
+    /** Anisotropic filtering of the face arrays and the GPU's maximum. */
+    anisotropy: number;
+    maxAnisotropy: number;
+    pixelRatio: number;
+    /** MSAA samples of the post chain's targets (0 with post off). */
+    samples: number;
+  };
 }
 
 /** A TableScene whose debug parts carry the scene's extras (assignable to TableScene). */
@@ -104,6 +149,8 @@ interface RCard {
   /** After a drop: expected pose, and when to give up waiting for the state to confirm it. */
   expect: { pose: Pose; until: number } | null;
   tierDrawn: 'small' | 'normal' | 'large' | null;
+  /** Lift while held (CardDressing.held.lift), springing up on grab and down on release. */
+  lift: HeldLift;
 }
 
 interface DragState {
@@ -137,7 +184,9 @@ type Gesture =
   | { kind: 'marquee'; pointerId: number; x0: number; y0: number; x1: number; y1: number; base: InstanceId[] }
   | { kind: 'line'; pointerId: number }
   | { kind: 'drag' }
-  | { kind: 'pinch' };
+  | { kind: 'pinch' }
+  /** Right-drag on empty table in the ego rig: pitch (DESIGN "Camera and navigation", Navigation gestures). */
+  | { kind: 'pitch'; pointerId: number; last: { x: number; y: number } };
 
 const DRAG_THRESHOLD_PX = 4;
 /** Counter badge type size on the table (mm), its place on the card (over the art box) and its far-zoom floor. */
@@ -155,11 +204,19 @@ const ZONE_LABEL_SIZE = 5.5;
 const ZONE_LABEL_MIN_PX = 9;
 const ZONE_LABEL_MAX_SCALE = 3;
 /** Stroke widths of ghost outlines and displacement markers, CSS px. */
+/** Room kept free under the texture cap for render targets that come and go (a resize, a quality change), bytes. */
+const FACE_BUDGET_HEADROOM = 16 * 1024 * 1024;
+/** Least on-screen width of the hover outline, CSS px. */
+const HOVER_MIN_PX = 1.5;
 const GHOST_WIDTH_PX = 1;
 const MARKER_WIDTH_PX = 2;
 /** After a right-drag drew a line, the context menu that some platforms fire on release is ignored this long, ms. */
 const MENU_SUPPRESS_MS = 400;
 const TOUCH_THRESHOLD_PX = 8;
+/** Right-drag pitch in the ego rig: degrees per CSS px dragged (down looks further down). */
+const PITCH_DEG_PER_PX = 0.2;
+/** A followed stack item counts as on screen when its centre is at least this far inside the viewport, CSS px. */
+const FOLLOW_MARGIN_PX = 40;
 /** How long a dropped card waits for the state to confirm its new pose before returning. */
 const EXPECT_MS = 1500;
 
@@ -174,7 +231,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, theme.quality[0]?.pixelRatio ?? 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.info.autoReset = true;
+  // A frame is several render calls (world, post passes, overlay): the scene resets the counters once per frame.
+  renderer.info.autoReset = false;
   const canvas = renderer.domElement;
   canvas.style.display = 'block';
   canvas.style.width = '100%';
@@ -189,10 +247,29 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   Object.assign(marqueeEl.style, { position: 'absolute', display: 'none', pointerEvents: 'none', border: `1px dashed ${theme.tokens.colours.focus}`, background: 'rgba(31,111,209,0.06)' });
   host.appendChild(marqueeEl);
 
+  /** The lit, post-processed world (theme, card boxes, markings) and the overlay drawn after post (faces, text, lines). */
   const scene = new THREE.Scene();
+  const overlay = new THREE.Scene();
+  overlay.name = 'overlay';
   const camera = new THREE.PerspectiveCamera(CAMERA.birdseye.fovDeg, 1, 10, 100000);
   const viewport = () => ({ w: Math.max(1, host.clientWidth || innerWidth), h: Math.max(1, host.clientHeight || innerHeight) });
-  const rig = new BirdseyeRig(layout.table, viewport(), viewerAngle(null, layout, viewerSeat), theme.motion.panInertiaMs);
+  // Both camera rigs and the blend between them (scene/camera/rig.ts, M4-P1).
+  const rig = new TableRig({
+    table: layout.table,
+    viewport: viewport(),
+    angle: viewerAngle(null, layout, viewerSeat),
+    inertiaMs: theme.motion.panInertiaMs,
+    rig: opts.rig ?? theme.camera.defaultRig,
+    ego: theme.camera.ego,
+    tiltDeg: theme.camera.birdseyeTiltDeg,
+  });
+  /** Whether the viewer chose a rig (P); until then a theme switch brings the new theme's default rig. */
+  let rigChosen = opts.rig !== undefined;
+  /** The ego seat sits in front of the viewer's own territory (Three players, Two-Headed Giant share an edge). */
+  const viewerLateral = (st: TableState | null): number => {
+    const sl = st ? seatLayoutOf(st, layout, viewerSeat) : null;
+    return sl ? lateralOf(sl.territory, sl.angle) : 0;
+  };
   // The HUD tells the scene which screen edges its screen-anchored layer covers through the host's
   // `data-fit-insets="top right bottom left"` (CSS px); fitting the table keeps the table clear of them.
   const readInsets = (): Insets => {
@@ -200,33 +277,60 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (v.length !== 4 || v.some((n) => !Number.isFinite(n) || n < 0)) return NO_INSETS;
     return { top: v[0]!, right: v[1]!, bottom: v[2]!, left: v[3]! };
   };
-  rig.insets = readInsets();
-  rig.view = rig.fitView();
+  rig.bird.insets = readInsets();
+  rig.bird.view = rig.bird.fitView();
   const insetObserver = new MutationObserver(() => {
     rig.setInsets(readInsets());
     dirty = true;
   });
   insetObserver.observe(host, { attributes: true, attributeFilter: ['data-fit-insets'] });
 
-  let themeInstance: ThemeInstance = theme.build({ renderer, scene, camera, table: layout.table, quality: theme.quality[0]!, reducedMotion: false });
+  const placement = (): ThemePlacement => ({ table: layout.table, viewerAngle: viewerAngle(state, layout, viewerSeat), reducedMotion: view.reducedMotion });
+  const runtime = new ThemeRuntime(renderer, scene, camera, { post: true, overlay, glow: () => [lineView.lines.object, lineView.pingRings] }, theme, placement(), opts.quality ?? 'high');
+  let built = placement();
 
-  const faces = new FaceTextures(renderer, opts.faces, theme.cardDressing.back ?? opts.game.cardBack);
+  const backOf = (t: typeof theme) => t.cardDressing.back ?? opts.game.cardBack;
+  /** GPU bytes the face arrays may take: the 400 MB texture cap less the theme's own textures (PLAN M4 Performance). */
+  const faceBudget = () => TEXTURE_CAP_BYTES - runtime.textureBytes() - FACE_BUDGET_HEADROOM;
+  let faces = new FaceTextures(renderer, opts.faces, backOf(theme), TEXTURE_CAP_BYTES, faceBudget);
   faces.onChange = () => (dirty = true);
-  const cards = new CardLayer(scene, theme.tokens.colours.surface);
-  scene.add(cards.mesh);
+  const cards = new CardLayer(overlay, theme.tokens.colours.surface);
+  overlay.add(cards.mesh);
+  // Card boxes and contact shadows (themes with thickness and shadows) live in the lit world.
+  const boxes = new CardBoxes(scene);
+  const contact = new ContactShadows(scene);
+  let boxMaterials: { sleeve: THREE.Material; edge: THREE.Material } | null = null;
+  /** Card dressing of the current theme within the current quality level: boxes, contact shadows, face shade. */
+  function applyDressing(): void {
+    const d = theme.cardDressing;
+    const eff = runtime.effective;
+    const shape = boxShape(d);
+    releaseDressing();
+    boxMaterials = shape.thickness > 0 ? runtime.materials.cardSides(d) : null;
+    boxes.configure({ ...shape, materials: boxMaterials, castShadow: eff.shadowMap && d.held.shadow, receiveShadow: eff.shadowMap });
+    contact.configure(eff.contactShadows ? theme.shadows.contact : null);
+    cards.faceLift = shape.thickness > 0 ? shape.thickness + 0.02 : 0;
+    cards.setShade(clampShade(d.faceShade), runtime.keyLight);
+  }
+  function releaseDressing(): void {
+    if (!boxMaterials) return;
+    runtime.materials.release(boxMaterials.sleeve);
+    runtime.materials.release(boxMaterials.edge);
+    boxMaterials = null;
+  }
   const text = new TextLayer();
   // Table markings (zone labels) lie under the cards, like the hairlines.
   const labels = new TextLayer(1, 'zone-labels');
   // Glyph layout runs in a worker: redraw once a batch finishes.
   text.object.addEventListener('synccomplete', () => (dirty = true));
   labels.object.addEventListener('synccomplete', () => (dirty = true));
-  scene.add(text.object);
+  overlay.add(text.object);
   scene.add(labels.object);
   // Ghost outlines at the home slots of displaced cards (under the cards) and their displacement markers (over them).
   const ghostLayer = new LineLayer({ renderOrder: 1, opacity: theme.cardDressing.ghost.opacity, name: 'ghosts' });
   const markerLayer = new LineLayer({ renderOrder: 4, name: 'displacement-markers' });
   scene.add(ghostLayer.object);
-  scene.add(markerLayer.object);
+  overlay.add(markerLayer.object);
   const markGeometry = new THREE.BufferGeometry();
   const markMaterial = new THREE.LineBasicMaterial({ color: theme.tokens.colours.border, depthTest: false, depthWrite: false, transparent: true });
   const marks = new THREE.LineSegments(markGeometry, markMaterial);
@@ -241,6 +345,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let order: RCard[] = [];
   let drag: DragState | null = null;
   let gesture: Gesture | null = null;
+  /** Pointers pressed anywhere on the page (the follow options wait for their release). */
+  const pressedPointers = new Set<number>();
   const touches = new Map<number, { x: number; y: number }>();
   let pinch: { d: number; cx: number; cy: number } | null = null;
   let dirty = true;
@@ -282,8 +388,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     },
     extraLines: () => markerLines(),
   });
-  scene.add(lineView.lines.object);
-  scene.add(lineView.pingRings);
+  overlay.add(lineView.lines.object);
+  overlay.add(lineView.pingRings);
+  applyDressing();
   // Caption bubbles over the canvas (DESIGN "Chat and voice", Placement; scene/captions.ts, M3-P4).
   const captionLayer = new CaptionLayer({
     container: host,
@@ -335,6 +442,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (!state) return;
     const places = placeCards(state, view, { game: opts.game, layout, viewerSeat });
     entries = stackEntries(state, layout.stackLane, viewerAngle(state, layout, viewerSeat));
+    syncStackFocus();
     if (hoverItem && !state.stack.some((i) => i.id === hoverItem)) hoverItem = null;
     for (const id of [...rcards.keys()]) if (!places.has(id) && !drag?.ids.includes(id)) rcards.delete(id);
     // Cards a settle sends home move together with the settle timing, staggered, their attachments riding along
@@ -345,7 +453,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (place.ref) faces.register(place.ref, place.faceIndex);
       let rc = rcards.get(id);
       if (!rc) {
-        rc = { id, inst, place, motion: new CardMotion(place.rest), shownKey: place.key, shownDim: place.dimmed, localUntil: 0, expect: null, tierDrawn: null };
+        rc = { id, inst, place, motion: new CardMotion(place.rest), shownKey: place.key, shownDim: place.dimmed, localUntil: 0, expect: null, tierDrawn: null, lift: new HeldLift() };
         rcards.set(id, rc);
         continue;
       }
@@ -388,17 +496,24 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   // --- Rendering ----------------------------------------------------------------------------------------------------
+  const camBasis = new THREE.Matrix4();
+  const camAxes = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()] as const;
+  /** Copy the rig's pose onto the camera (table x, y, z up → three's x, z, -y). */
   function syncCamera(): void {
-    const v = rig.view;
+    const pose = rig.pose();
     const vp = rig.viewport;
-    const f = forward(v.angle);
-    camera.fov = rig.fovDeg;
+    const b = basis(rig.angle, pose.pitchDeg);
+    const clip = rig.clipPlanes(pose);
+    camera.fov = pose.fovDeg;
     camera.aspect = vp.w / vp.h;
-    camera.near = Math.max(1, v.dist - 400);
-    camera.far = v.dist + 400;
-    camera.position.set(v.cx, v.dist, -v.cy);
-    camera.up.set(f.x, 0, -f.y);
-    camera.lookAt(v.cx, 0, -v.cy);
+    camera.near = clip.near;
+    camera.far = clip.far;
+    const p = pose.position;
+    camera.position.set(p[0], p[2], -p[1]);
+    camAxes[0].set(b.r[0], b.r[2], -b.r[1]);
+    camAxes[1].set(b.u[0], b.u[2], -b.u[1]);
+    camAxes[2].set(-b.d[0], -b.d[2], b.d[1]);
+    camera.quaternion.setFromRotationMatrix(camBasis.makeBasis(camAxes[0], camAxes[1], camAxes[2]));
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld();
   }
@@ -406,6 +521,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   function resize(): void {
     const vp = viewport();
     renderer.setSize(vp.w, vp.h, false);
+    runtime.setSize(vp.w, vp.h);
     rig.resize(vp);
     lineView.setResolution(vp.w, vp.h);
     ghostLayer.setResolution(vp.w, vp.h);
@@ -514,12 +630,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return rc ? rc.motion.pose : e.pose;
   }
 
-  /** Outline of a stack entry: its controller's seat colour, pulsing while its round waits (reduced motion: steady). */
+  /** Outline of a stack entry: its controller's seat colour, the theme's pending colour pulsing while its round waits (reduced motion: steady). */
   function entryHighlight(e: StackEntry): { colour: string; width: number } {
-    const base = 0.8;
-    if (!e.pending) return { colour: seatColour(e.item.controller), width: base };
-    const pulse = reduced() ? 1 : 0.5 + 0.5 * Math.sin((lastTick / 900) * Math.PI * 2);
-    return { colour: seatColour(e.item.controller), width: base + 1.4 * pulse };
+    const pulse = !e.pending || reduced() ? 1 : 0.5 + 0.5 * Math.sin((lastTick / 900) * Math.PI * 2);
+    return entryOutline(e.pending, seatColour(e.item.controller), theme.cardDressing, pulse);
   }
 
   function pileCount(pile: string): number {
@@ -565,44 +679,88 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return rc.inst.home;
   }
 
+  /**
+   * The hover outline's width in mm: the theme's width, but at least HOVER_MIN_PX on screen (up to the 2 mm the outline
+   * slot holds), so the hover reads at play zoom, where a card is some 60 px tall and a 0.6 mm line is under a pixel.
+   */
+  const hoverWidth = (mm: number, cardPx: number): number => legibleOutlineMm(mm, cardPx, HOVER_MIN_PX);
+  /** Foil cards drawn with the sheen and badge in the last frame (debug; the tick redraws them while the sheen drifts). */
+  const foilsDrawn = new Set<InstanceId>();
+  /** Whether a card shows a foil printing's face: public face up, or the owner's own dimmed view (local only). */
+  const foilShown = (rc: RCard): boolean => rc.place.ref?.foil === true && rc.shownKey !== BACK_KEY && rc.shownKey === rc.place.key;
+  /** A stable per-card phase offset of the sheen, so neighbouring foils shimmer out of step. */
+  const foilIndex = (id: InstanceId): number => {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+    return (h % 97) / 13;
+  };
+  let lastSheen = 0;
+
+  /** Tilt of held cards in the last frame (debug). */
+  const tiltDrawn = new Map<InstanceId, number>();
+
   /** A ping is still fading: keep drawing. */
   let pingsLive = false;
 
-  function draw(): void {
+  function draw(dt = 0): void {
     const t0 = performance.now();
     frame++;
+    renderer.info.reset();
     syncCamera();
-    const cardPx = CARD_H * rig.pxPerMm();
-    const want = tierForScreenHeight(cardPx);
+    const cam = rig.pose();
+    // Each card's texture tier from its own on-screen height: in the ego rig near cards show larger than far ones, and a
+    // card lying flat shows shorter than it would face on (its projected height, not its scale times its height).
+    const cardPxAt = (p: { x: number; y: number; rot: number }, k = 1, z = 0) => rig.cardScreenHeight(p, z, k, cam);
     const selection = new Set(view.selection);
     const dressing = theme.cardDressing;
     const vp = rig.viewport;
     const sorted: { sort: readonly number[]; draw: CardDraw }[] = [];
     const lit = new Set(hoverItem && state ? hoverHighlights(state, hoverItem) : []);
     const slotOf = new Map(entries.map((e) => [e.item.card ?? '', e]));
+    const foilPhase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
+    foilsDrawn.clear();
     for (const rc of order) {
       const pose = rc.motion.pose;
       if (rc.motion.flipSwapped) {
         rc.shownKey = rc.place.key;
         rc.shownDim = rc.place.dimmed;
       }
-      const s = rig.tableToScreen(pose);
-      const onScreen = s.x > -cardPx && s.y > -cardPx && s.x < vp.w + cardPx && s.y < vp.h + cardPx;
-      const uv = faces.use(rc.shownKey, onScreen ? want : 'small', frame);
+      const s = rig.tableToScreen(pose, 0, cam);
+      const cardPx = cardPxAt(pose, 1, rc.place.z);
+      const onScreen = cardPx > 0 && s.x > -cardPx && s.y > -cardPx && s.x < vp.w + cardPx && s.y < vp.h + cardPx;
+      const uv = faces.use(rc.shownKey, onScreen ? tierForScreenHeight(cardPx) : 'small', frame);
       rc.tierDrawn = uv ? (['small', 'normal', 'large'] as const)[uv.tier]! : null;
       const dragging = drag?.ids.includes(rc.id) ?? false;
+      const tilt = dragging ? heldTilt(rc.motion.x.v, rc.motion.y.v, dressing.held.tiltDeg, reduced()) : null;
+      if (tilt) tiltDrawn.set(rc.id, tilt.deg);
+      else tiltDrawn.delete(rc.id);
       const sel = selection.has(rc.id);
       const hov = view.hovered === rc.id || hovered === rc.id || lit.has(rc.id);
       const entry = rc.place.kind === 'stack' && !dragging ? slotOf.get(rc.id) : undefined;
+      // A foil printing shown face up carries the sheen (a rim, unless another outline takes the slot) and the badge.
+      const foil = foilShown(rc) ? foilHue(foilPhase, foilIndex(rc.id)) : null;
+      if (foil !== null) foilsDrawn.add(rc.id);
       sorted.push({
         sort: sortKey(rc),
         draw: {
           pose,
-          z: rc.place.z + (dragging ? GEOMETRY.dragLift : 0),
+          z: rc.place.z + rc.lift.value,
+          // Still lifted after the drop: its contact shadow follows it down instead of popping in on landing.
+          held: dragging || rc.lift.value > 0,
+          tilt,
           scaleX: rc.motion.flipScale(lastTick),
           uv,
           dim: rc.shownDim ? 1 - dressing.faceDownOwnerOpacity : 0,
-          highlight: sel ? { colour: dressing.selected.colour, width: dressing.selected.width } : hov ? { colour: dressing.hover.colour, width: dressing.hover.width } : entry ? entryHighlight(entry) : null,
+          highlight: sel
+            ? { colour: dressing.selected.colour, width: dressing.selected.width }
+            : hov
+              ? { colour: dressing.hover.colour, width: hoverWidth(dressing.hover.width, cardPx) }
+              : entry
+                ? entryHighlight(entry)
+                : foil !== null && dressing.foilSheen
+                  ? { colour: foilSheenColour(foilPhase, foilIndex(rc.id)), width: TABLE_FOIL.rimMm }
+                  : null,
+          foil,
         },
       });
     }
@@ -612,20 +770,25 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const src = e.face ? rcards.get(e.face) : undefined;
       const k = entryScale(e);
       const pose = drawnPose(entryPose(e), k);
-      const s = rig.tableToScreen(pose);
-      const onScreen = s.x > -cardPx && s.y > -cardPx && s.x < vp.w + cardPx && s.y < vp.h + cardPx;
-      const uv = faces.use(src ? src.shownKey : BACK_KEY, onScreen ? want : 'small', frame);
+      const s = rig.tableToScreen(pose, 0, cam);
+      const cardPx = cardPxAt(pose, k);
+      const onScreen = cardPx > 0 && s.x > -cardPx && s.y > -cardPx && s.x < vp.w + cardPx && s.y < vp.h + cardPx;
+      const uv = faces.use(src ? src.shownKey : BACK_KEY, onScreen ? tierForScreenHeight(cardPx) : 'small', frame);
       const held = itemDrag?.item === e.item.id;
       const hov = hoverItem === e.item.id || held;
       sorted.push({
         sort: held ? [LAYER.dragged, 0, 0] : [LAYER.stack, 0, e.index],
-        draw: { pose, z: held ? GEOMETRY.dragLift : 0, scaleX: 1, scale: k, uv, dim: 0, highlight: hov ? { colour: dressing.hover.colour, width: dressing.hover.width } : entryHighlight(e) },
+        draw: { pose, z: held ? dressing.held.lift : 0, held, scaleX: 1, scale: k, uv, dim: 0, highlight: hov ? { colour: dressing.hover.colour, width: hoverWidth(dressing.hover.width, cardPx / k) } : entryHighlight(e) },
       });
     }
     sorted.sort((a, b) => compareSort(a.sort, b.sort));
     const draws = sorted.map((x) => x.draw);
     cards.setTextures(faces.textures());
+    // Anisotropic filtering of the face arrays follows the quality level (a grown array starts at the GPU maximum).
+    for (const a of Object.values(faces.arrays)) setTextureAnisotropy(renderer, a.texture, runtime.effective.anisotropy);
     cards.write(draws);
+    boxes.write(draws);
+    contact.write(dressing.held.shadow ? draws : draws.filter((d) => !d.held));
     lineView.sync();
     const specs = textSpecs();
     lineView.labelSpecs(specs);
@@ -633,11 +796,28 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     labels.sync(labelSpecs());
     syncDisplaced();
     pingsLive = lineView.syncPings(performance.now());
-    themeInstance.update(0);
-    renderer.render(scene, camera);
-    stats = { drawCalls: renderer.info.render.calls, textureBytes: faces.bytes, frameMs: performance.now() - t0 };
+    runtime.update(dt);
+    runtime.render(dt);
+    stats = { drawCalls: renderer.info.render.calls, textureBytes: faceTextureBytes() + runtime.textureBytes(), frameMs: performance.now() - t0 };
     dirty = false;
   }
+
+  /** GPU bytes of the face texture arrays as allocated (all layers, with mip-maps). */
+  function faceTextureBytes(): number {
+    let bytes = 0;
+    for (const a of Object.values(faces.arrays)) bytes += a.texW * a.texH * a.layers * 4 * (4 / 3);
+    return Math.round(bytes);
+  }
+
+  /** Lit themes animate (lights flicker, particles drift, shimmer): they draw every frame unless motion is reduced. */
+  const animated = () => theme.lighting.lit && !reduced();
+  /** When the last frame was drawn (tick time), and whether the tick before this one drew it. */
+  let drewAt = -Infinity;
+  let drewLastTick = false;
+  /** What the last drawn frame cost: the time from the tick that drew it to the next animation frame, ms. */
+  let frameCost = 0;
+  /** The pointer position of the card drag the last tick followed. */
+  let dragDrawn: { x: number; y: number } | null = null;
 
   function tick(): void {
     if (disposed) return;
@@ -645,14 +825,36 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const now = performance.now();
     const dt = Math.min(100, now - lastTick);
     lastTick = now;
+    // The browser hands out the next animation frame once the last drawn one is done, GPU work included.
+    if (drewLastTick) frameCost = now - drewAt;
+    drewLastTick = false;
     let changed = rig.step(now, dt);
-    if (drag) {
-      followDrag();
+    if (pendingFollow.length && !holding()) {
+      const reqs = pendingFollow;
+      pendingFollow = [];
+      applyFollow(reqs);
       changed = true;
     }
+    if (drag) {
+      followDrag();
+      // A held card redraws when the pointer moved (its springs keep it drawing while it catches up and tilts); a
+      // pointer held still over a card at rest needs no frames.
+      if (drag.last !== dragDrawn) changed = true;
+      dragDrawn = drag.last;
+    } else dragDrawn = null;
+    const held = theme.cardDressing.held.lift;
     for (const rc of rcards.values()) {
-      if (rc.motion.moving && rc.motion.step(now, dt, theme.motion)) changed = true;
-      else if (rc.motion.moving === false && rc.shownKey !== rc.place.key && rc.motion.flipSwapped) changed = true;
+      const lift = drag?.ids.includes(rc.id) ? held : 0;
+      if (rc.lift.target !== lift) rc.lift.set(lift, reduced());
+      if (rc.lift.moving) {
+        rc.lift.step(dt, theme.motion);
+        changed = true;
+      }
+      // The step that brings a card to rest still needs its frame (the rest pose; a held card's tilt back to flat).
+      if (rc.motion.moving) {
+        rc.motion.step(now, dt, theme.motion);
+        changed = true;
+      } else if (rc.shownKey !== rc.place.key && rc.motion.flipSwapped) changed = true;
       if (rc.expect && now > rc.expect.until) {
         rc.expect = null;
         if (!samePose(rc.motion.target, rc.place.rest)) rc.motion.moveTo(rc.place.rest, 'spring', now, theme.motion, reduced());
@@ -660,10 +862,20 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
       if (rc.motion.moving) changed = true;
     }
-    if (faces.pump(frame)) changed = true;
-    if (pingsLive) changed = true;
-    if (!reduced() && entries.some((e) => e.pending)) changed = true;
-    if (changed || dirty) draw();
+    if (faces.pump(frame, uploadScale(frameCost))) changed = true;
+    // Ambient motion: what moves with nothing changing (ping fades, the pending pulse, a lit theme's light and
+    // particles, the foil sheen). On a slow renderer it waits a few frame costs between frames (scene/pacing.ts).
+    let ambient = pingsLive || (!reduced() && entries.some((e) => e.pending)) || animated();
+    // The foil sheen drifts at a low frame rate while foils are drawn (not with reduced motion).
+    if (foilsDrawn.size > 0 && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs) ambient = true;
+    if (ambient && !changed && !dirty && !ambientDue(frameCost, now - drewAt)) ambient = false;
+    if (changed || dirty || ambient) {
+      if (foilsDrawn.size > 0) lastSheen = now;
+      // Theme animation advances by the time since the last drawn frame (still at most 100 ms).
+      draw(Math.min(100, now - drewAt));
+      drewAt = now;
+      drewLastTick = true;
+    }
     if (captionLayer.active) captionLayer.place();
   }
 
@@ -678,6 +890,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return rig.screenToTable(c.x, c.y);
   }
   function worldToScreen(p: TablePoint3): ScreenPoint | null {
+    if (!(rig.depthOf(p, p.z) > 0)) return null;
     syncCamera();
     const v = new THREE.Vector3(p.x, p.z, -p.y).project(camera);
     if (!Number.isFinite(v.x) || !Number.isFinite(v.y)) return null;
@@ -685,14 +898,35 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
   }
 
+  /** The height a card is drawn at: its place in a pile plus the theme's held lift (M4-P2's `HeldLift`). */
+  function drawnZ(rc: RCard): number {
+    return rc.place.z + rc.lift.value;
+  }
+
+  /**
+   * Where the ray through a viewport point crosses the plane a card is drawn at (its top face): in the ego rig a card on
+   * a tall pile or lifted shows well away from its footprint on the table, and every gesture works the same in both
+   * rigs (DESIGN "Camera and navigation").
+   */
+  function screenToCardPlane(x: number, y: number, z: number): TablePoint | null {
+    const top = z + cards.faceLift;
+    if (top === 0) return screenToTable(x, y);
+    const c = toCanvas(x, y);
+    return rig.screenToPlane(c.x, c.y, top);
+  }
+
   /** Topmost drawn card under a viewport point; null when a stack marker covers that point. */
   function pick(x: number, y: number, exclude?: ReadonlySet<InstanceId>): RCard | null {
     const p = screenToTable(x, y);
     const marker = markerAt(p);
+    const atZ = new Map<number, TablePoint | null>(cards.faceLift === 0 ? [[0, p]] : []);
     for (let i = order.length - 1; i >= 0; i--) {
       const rc = order[i]!;
       if (exclude?.has(rc.id)) continue;
-      if (!pointInCard(p, rc.motion.pose)) continue;
+      const z = drawnZ(rc);
+      let q = atZ.get(z);
+      if (q === undefined) atZ.set(z, (q = screenToCardPlane(x, y, z)));
+      if (!q || !pointInCard(q, rc.motion.pose)) continue;
       // A marker covers what lies under it: older items of the lane and anything on the table below the lane.
       if (marker && (rc.place.kind === 'stack' ? (entries.find((e) => e.item.card === rc.id)?.index ?? -1) < marker.index : rc.place.sort[0] < LAYER.stack)) return null;
       return rc;
@@ -1003,8 +1237,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
     if (e.button === 1) e.preventDefault();
     const rc = pick(e.clientX, e.clientY);
-    // Right button: a press on a public card may become a line (right-drag); elsewhere it is the context menu alone.
-    if (e.button === 2 && (!rc || !lineSource(rc))) return;
+    // Right button: a press on a public card may become a line (right-drag); on empty table in the ego rig a
+    // right-drag pitches; elsewhere it is the context menu alone.
+    if (e.button === 2 && (!rc || !lineSource(rc)) && (rc || rig.rig() !== 'ego')) return;
     menuPending = null;
     const pileGrab = !!rc && rc.inst.pile?.kind === 'squared' && onPileBadge(rc, e.clientX, e.clientY);
     const item = rc ? null : (markerAt(screenToTable(e.clientX, e.clientY))?.item.id ?? null);
@@ -1041,7 +1276,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   function onPileBadge(rc: RCard, x: number, y: number): boolean {
-    const p = screenToTable(x, y);
+    const p = screenToCardPlane(x, y, drawnZ(rc));
+    if (!p) return false;
     const pose = rc.motion.pose;
     const [bx, by] = rot2(-CARD_W / 2 + 8, CARD_H / 2 - 8, pose.rot);
     return Math.hypot(p.x - (pose.x + bx), p.y - (pose.y + by)) <= 8;
@@ -1098,6 +1334,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const moved = Math.hypot(e.clientX - g.x0, e.clientY - g.y0);
       if (moved < (e.pointerType === 'touch' ? TOUCH_THRESHOLD_PX : DRAG_THRESHOLD_PX)) return;
       const rc = g.card ? rcards.get(g.card) : null;
+      if (g.button === 2 && !rc && rig.rig() === 'ego') {
+        menuPending = null;
+        gesture = { kind: 'pitch', pointerId: g.pointerId, last: { x: e.clientX, y: e.clientY } };
+        rig.pitchBy((e.clientY - g.y0) * PITCH_DEG_PER_PX);
+        setHover(null);
+        dirty = true;
+        return;
+      }
       if (g.button === 2) {
         const source = rc ? lineSource(rc) : null;
         menuPending = null;
@@ -1128,7 +1372,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       rig.stop();
       gesture = { kind: 'pan', pointerId: g.pointerId, last: { x: g.x0, y: g.y0 }, samples: [{ x: g.x0, y: g.y0, t: performance.now() }] };
     }
-    if (gesture.kind === 'pan') {
+    if (gesture.kind === 'pitch') {
+      rig.pitchBy((e.clientY - gesture.last.y) * PITCH_DEG_PER_PX);
+      gesture.last = { x: e.clientX, y: e.clientY };
+      dirty = true;
+    } else if (gesture.kind === 'pan') {
       const g = gesture;
       rig.panBy(e.clientX - g.last.x, e.clientY - g.last.y);
       g.last = { x: e.clientX, y: e.clientY };
@@ -1181,6 +1429,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (!g || ('pointerId' in g && g.pointerId !== e.pointerId)) return;
     gesture = null;
     release(e);
+    if (g.kind === 'pitch') {
+      // The context menu some platforms fire on release does not open after a pitch.
+      menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
+      return;
+    }
     if (g.kind === 'line') {
       menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
       const dr = lineView.draft;
@@ -1380,7 +1633,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   function screenRect(rc: RCard): DOMRect {
     syncCamera();
     const r = canvasRect();
-    const z = rc.place.z + (drag?.ids.includes(rc.id) ? GEOMETRY.dragLift : 0);
+    const z = rc.place.z + rc.lift.value + cards.faceLift;
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -1421,12 +1674,15 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           order: i,
           displaced: ghostOf(rc) !== null,
           ghost: ghostOf(rc),
+          lift: rc.lift.value,
+          tilt: tiltDrawn.get(rc.id) ?? 0,
+          foil: foilsDrawn.has(rc.id),
         };
       });
     },
     camera(): DebugCamera {
-      const v = rig.view;
-      return { rig: 'birdseye', fov: rig.fovDeg, position: [v.cx, v.cy, v.dist], pitch: 90 };
+      const p = rig.pose();
+      return { rig: rig.rig(), fov: p.fovDeg, position: [...p.position], pitch: p.pitchDeg };
     },
     lines: () => lineView.debugLines(),
     drawnLines: () => lineView.debugDrawn(),
@@ -1435,8 +1691,26 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return { ...stats };
     },
     lastDrop: () => lastDrop,
-    idle: () => !drag && !rig.moving && ![...rcards.values()].some((rc) => rc.motion.moving),
+    idle: () => !drag && !rig.moving && pendingFollow.length === 0 && ![...rcards.values()].some((rc) => rc.motion.moving || rc.lift.moving),
     pendingTextures: () => faces.pending,
+    frames: () => frame,
+    pipeline() {
+      const m = runtime.materials.stats();
+      return {
+        materials: m.materials,
+        materialTextures: m.textures,
+        boxes: boxes.active,
+        contactShadows: contact.active,
+        faceShade: clampShade(theme.cardDressing.faceShade),
+        faceLift: cards.faceLift,
+        toneMapping: renderer.toneMapping,
+        post: runtime.post.passes(),
+        anisotropy: faces.arrays.small.texture.anisotropy,
+        maxAnisotropy: renderer.capabilities.getMaxAnisotropy(),
+        pixelRatio: renderer.getPixelRatio(),
+        samples: runtime.post.composer?.renderTarget1.samples ?? 0,
+      };
+    },
     captions: () => captionLayer.debug(),
   };
   /** The stack lane as drawn (scene/stack.ts DebugStackEntry). */
@@ -1475,7 +1749,44 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       };
     });
   }
+  // --- Render and rig parts of the debug hook (M4-C seams; M4-P2 fills quality and stats, M4-P1 the rig) ------------
+  let follow: FollowOptions = { stack: opts.follow?.stack ?? false, activePlayer: opts.follow?.activePlayer ?? false };
+  function renderStats(): RenderStats {
+    const info = renderer.info;
+    return {
+      ...stats,
+      triangles: info.render.triangles,
+      textures: info.memory.textures,
+      geometries: info.memory.geometries,
+      programs: info.programs?.length ?? 0,
+      passes: runtime.post.passes(),
+      shadows: runtime.effective.shadowMap || runtime.effective.contactShadows,
+      quality: runtime.level.id,
+      theme: theme.id,
+    };
+  }
+  /** The camera's pose in table space (scene/camera/rig.ts). */
+  function cameraPose(): CameraPose {
+    const p = rig.pose();
+    return { position: [...p.position], target: [...p.target], fovDeg: p.fovDeg, pitchDeg: p.pitchDeg };
+  }
+  const renderDebug: RenderDebug = {
+    stats: () => renderStats(),
+    quality: () => runtime.qualityChoice,
+    setQuality: (id) => sceneApi.setQuality(id),
+  };
+  const rigDebug: RigDebug = {
+    rig: () => controls.rig(),
+    setRig: (r, o) => controls.setRig(r, o),
+    blend: () => controls.blend(),
+    follow: () => controls.follow(),
+    setFollow: (next) => controls.setFollow(next),
+    pose: () => controls.pose(),
+  };
+
   const debugParts = {
+    render: renderDebug,
+    rig: rigDebug,
     cards: () => debug.cards(),
     camera: () => debug.camera(),
     lines: () => debug.lines(),
@@ -1492,7 +1803,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   function tableViewDebug(): DebugTableView | null {
     if (!state) return null;
     const st = state;
-    const v = rig.view;
+    const v = rig.centre();
     const seats = Object.values(st.seats)
       .sort((a, b) => a.index - b.index)
       .flatMap((seat): DebugSeatView[] => {
@@ -1504,14 +1815,60 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         const a = worldToScreen({ ...avatar, z: 0 });
         return [{ seat: seat.id, index: seat.index, angle: sl.angle, territory, avatar, screen: t && a ? { territory: t, avatar: a } : null }];
       });
-    return { format: layout.format, table: { ...layout.table }, viewerAngle: viewerAngle(st, layout, viewerSeat), camera: { x: v.cx, y: v.cy, dist: v.dist }, seats };
+    return { format: layout.format, table: { ...layout.table }, viewerAngle: viewerAngle(st, layout, viewerSeat), camera: { x: v.x, y: v.y, dist: v.dist }, seats };
   }
 
-  // --- Camera controls ------------------------------------------------------------------------------------------------
+  // --- Camera controls (scene/camera/rig.ts; M4-P1) ------------------------------------------------------------------
   const blend = (animate = true) => (animate && !reduced() ? theme.motion.cameraBlendMs : 0);
-  const controls: CameraControls = {
+  /** A client point inside the canvas as canvas px, or null outside it. */
+  function canvasPoint(p: ScreenPoint | undefined): ScreenPoint | null {
+    if (!p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
+    const c = toCanvas(p.x, p.y);
+    const vp = rig.viewport;
+    return c.x >= 0 && c.y >= 0 && c.x <= vp.w && c.y <= vp.h ? c : null;
+  }
+  /** The table rect a seat or a team (Two-Headed Giant's shared turn) occupies. */
+  function territoryOf(who: string): Rect | null {
+    if (!state) return null;
+    const seat = seatLayoutOf(state, layout, who);
+    if (seat) return seat.territory;
+    const team = state.teams[who];
+    const first = team ? seatLayoutOf(state, layout, team.seats[0]) : null;
+    if (first?.team !== undefined) return layout.teams?.[first.team]?.territory ?? first.territory;
+    return first?.territory ?? null;
+  }
+  /**
+   * Whether the player may be dragging: follow moves wait until it ends (DESIGN: "nothing ever moves the camera while
+   * the player is dragging"). Any pointer pressed anywhere on the page counts, a press on the table not yet past the
+   * drag threshold and a hand-fan drag still in the HUD included.
+   */
+  const holding = () => drag !== null || itemDrag !== null || gesture !== null || pressedPointers.size > 0;
+  let pendingFollow: FollowRequest[] = [];
+  /** Ease to what the follow toggles ask for (DESIGN "Camera and navigation", Follow options). */
+  function applyFollow(reqs: FollowRequest[]): void {
+    for (const r of reqs) {
+      if (r.kind === 'active') {
+        const rect = territoryOf(r.who);
+        if (rect) rig.goToRect(rect, performance.now(), blend());
+      } else {
+        const e = entries.find((x) => x.item.id === r.item);
+        if (!e) continue;
+        // Where it comes to rest in the lane (a spell card may still be on its way there).
+        const p = e.pose;
+        // Only when it is off screen: the camera brings it in, keeping the zoom.
+        if (!rig.shows(p, FOLLOW_MARGIN_PX)) rig.focus(p, 'keep', performance.now(), blend());
+      }
+      dirty = true;
+    }
+  }
+  function requestFollow(reqs: FollowRequest[]): void {
+    if (!reqs.length) return;
+    if (holding()) pendingFollow = [...pendingFollow.filter((p) => !reqs.some((r) => r.kind === p.kind)), ...reqs];
+    else applyFollow(reqs);
+  }
+  const controls: TableCameraControls = {
     fit(animate = true) {
-      rig.animateTo(rig.fitView(), performance.now(), blend(animate));
+      rig.fit(performance.now(), blend(animate));
       dirty = true;
     },
     zoomAt(x, y, factor) {
@@ -1527,7 +1884,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (!state || drag) return;
       const sl = seatLayoutOf(state, layout, seat);
       if (!sl) return;
-      rig.animateTo(rig.rectView(sl.territory), performance.now(), blend());
+      rig.goToRect(sl.territory, performance.now(), blend());
       dirty = true;
     },
     zoomTo(target) {
@@ -1546,13 +1903,35 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         }
       }
       if (!p) return;
-      rig.animateTo({ cx: p.x, cy: p.y, dist: rig.minDist(), angle: rig.view.angle }, performance.now(), blend());
+      rig.focus(p, 'close', performance.now(), blend());
       dirty = true;
     },
-    setRig(_rig: CameraRig) {
-      // M0 ships the bird's-eye rig only; the ego rig arrives with M4-P1.
+    setRig(next: CameraRig, o?: SetRigOptions) {
+      if (next !== 'birdseye' && next !== 'ego') return;
+      // Only a real switch is the viewer's choice: asking for the rig already shown keeps the theme's default in charge.
+      if (next !== rig.rig()) rigChosen = true;
+      rig.setRig(next, performance.now(), blend(o?.animate ?? true), canvasPoint(o?.anchor));
+      dirty = true;
     },
-    rig: () => 'birdseye',
+    rig: () => rig.rig(),
+    pitchBy(deg: number) {
+      if (!Number.isFinite(deg)) return;
+      rig.pitchBy(deg);
+      dirty = true;
+    },
+    follow: () => ({ ...follow }),
+    setFollow(next) {
+      follow = { stack: next.stack ?? follow.stack, activePlayer: next.activePlayer ?? follow.activePlayer };
+      if (!follow.stack) pendingFollow = pendingFollow.filter((r) => r.kind !== 'stackItem');
+      if (!follow.activePlayer) pendingFollow = pendingFollow.filter((r) => r.kind !== 'active');
+    },
+    blend() {
+      const b = rig.blendState();
+      if (!b?.anchor) return b;
+      const r = canvasRect();
+      return { ...b, anchor: { table: b.anchor.table, screen: { x: b.anchor.screen.x + r.left, y: b.anchor.screen.y + r.top } } };
+    },
+    pose: () => cameraPose(),
   };
 
   raf = requestAnimationFrame(tick);
@@ -1567,6 +1946,24 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
   }
 
+  /** The stack lane's centre while the stack holds items (Wyrm's heat shimmer follows it), told to the theme on change. */
+  let stackFocus: TablePoint | null = null;
+  function syncStackFocus(force = false): void {
+    const next = state && state.stack.length > 0 ? { x: layout.stackLane.x, y: layout.stackLane.y } : null;
+    if (!force && next?.x === stackFocus?.x && next?.y === stackFocus?.y) return;
+    stackFocus = next;
+    runtime.setStackFocus(next);
+  }
+
+  /** Rebuild the theme for a new placement (table size, viewer seat, reduced motion). */
+  function rebuildTheme(next: ThemePlacement): void {
+    built = next;
+    runtime.rebuild(next);
+    syncStackFocus(true);
+    cards.setShade(clampShade(theme.cardDressing.faceShade), runtime.keyLight);
+    dirty = true;
+  }
+
   const sceneApi: SceneHandle = {
     update(next, nextView) {
       const prevState = state;
@@ -1577,13 +1974,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       // The table's format picks the layout (DESIGN "Players, seats and formats"; M3-P1): a format changed in the lobby
       // brings its own table size, territories and seat angles.
       const formatLayout = next.format !== layout.format ? layoutFor(next.format) : null;
-      if (formatLayout) {
-        layout = formatLayout;
-        themeInstance.dispose();
-        themeInstance = theme.build({ renderer, scene, camera, table: layout.table, quality: theme.quality[0]!, reducedMotion: reduced() });
-      }
+      if (formatLayout) layout = formatLayout;
+      // The theme is built for the table size, the viewer's seat (lights stand behind their edge) and reduced motion.
+      const want = placement();
+      if (want.table !== built.table || want.viewerAngle !== built.viewerAngle || want.reducedMotion !== built.reducedMotion) rebuildTheme(want);
       if (formatLayout || prevState === null || Object.keys(prevState.seats).length !== Object.keys(next.seats).length) {
-        rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat));
+        rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
         rebuildMarkings();
       } else if (prevState.seats !== next.seats) {
         // A chair taken or left changes which hand rows the fitted view must show, and the names at the avatar spots.
@@ -1591,28 +1987,54 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         if (Object.values(next.seats).some((s) => prevState.seats[s.id]?.name !== s.name)) rebuildMarkings();
       }
       if (prevState !== next || openChanged) relayout(performance.now());
+      if (prevState !== next && !formatLayout) requestFollow(followRequests(prevState, next, follow));
       if (viewChanged) dirty = true;
       if (nextView.captions || captionLayer.active) captionLayer.set(nextView.captions ?? []);
     },
     setTheme(next) {
-      themeInstance.dispose();
+      // Hot-swap (DESIGN "Themes and rendering": switchable mid-game without reloading): the old theme's objects,
+      // passes, lights, shadow maps and released materials go first; the state and the cards' motion stay.
+      const oldBack = backOf(theme);
+      releaseDressing();
       theme = next;
-      themeInstance = theme.build({ renderer, scene, camera, table: layout.table, quality: theme.quality[0]!, reducedMotion: reduced() });
+      built = placement();
+      runtime.setTheme(next, built);
+      syncStackFocus(true);
+      applyDressing();
+      if (backOf(next) !== oldBack) {
+        faces.dispose();
+        faces = new FaceTextures(renderer, opts.faces, backOf(next), TEXTURE_CAP_BYTES, faceBudget);
+        faces.onChange = () => (dirty = true);
+        for (const rc of rcards.values()) if (rc.place.ref) faces.register(rc.place.ref, rc.place.faceIndex);
+      }
       cards.setBackground(theme.tokens.colours.surface);
       markMaterial.color.set(theme.tokens.colours.border);
       ghostLayer.setOpacity(theme.cardDressing.ghost.opacity);
       rig.inertiaMs = theme.motion.panInertiaMs;
+      // The theme's camera defaults: its ego parameters and bird's-eye tilt, and its preferred rig unless the viewer chose one.
+      rig.setTheme(theme.camera.ego, theme.camera.birdseyeTiltDeg);
+      if (!rigChosen && rig.rig() !== theme.camera.defaultRig) rig.setRig(theme.camera.defaultRig, performance.now(), blend(), null);
       dirty = true;
     },
     setLayout(nextLayout: TableLayout, seat: SeatId | null) {
       layout = nextLayout;
       viewerSeat = seat;
-      themeInstance.dispose();
-      themeInstance = theme.build({ renderer, scene, camera, table: layout.table, quality: theme.quality[0]!, reducedMotion: reduced() });
-      rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat));
+      rebuildTheme(placement());
+      rig.setTable(layout.table, viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
       rebuildMarkings();
       relayout(performance.now());
     },
+    setQuality(id: QualityId) {
+      // Without reload (DESIGN "Themes and rendering", Renderer): a lower level drops shadows and post first.
+      releaseDressing();
+      runtime.setQuality(id);
+      syncStackFocus(true);
+      applyDressing();
+      resize();
+      dirty = true;
+    },
+    quality: () => runtime.level,
+    renderStats: () => renderStats(),
     camera: controls,
     cardAt(x, y) {
       return pick(x, y)?.id ?? null;
@@ -1644,6 +2066,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           localUntil: 0,
           expect: null,
           tierDrawn: null,
+          lift: new HeldLift(),
         };
         rcards.set(card, rc);
         added.push(card);
@@ -1676,7 +2099,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       removeEventListener('pointercancel', onWindowUp);
       removeEventListener('keydown', onKey);
       removeEventListener('pointerdown', trackPointer, true);
-      themeInstance.dispose();
+      removeEventListener('pointerup', releasePointer, true);
+      removeEventListener('pointercancel', releasePointer, true);
+      removeEventListener('pointermove', releaseIdlePointer, true);
+      removeEventListener('blur', releaseAllPointers);
+      releaseDressing();
+      runtime.dispose();
+      boxes.dispose();
+      contact.dispose();
       faces.dispose();
       cards.dispose();
       text.dispose();
@@ -1702,8 +2132,24 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let activePointer: number | null = null;
   function trackPointer(e: PointerEvent): void {
     activePointer = e.pointerId;
+    pressedPointers.add(e.pointerId);
+  }
+  function releasePointer(e: PointerEvent): void {
+    pressedPointers.delete(e.pointerId);
+  }
+  function releaseAllPointers(): void {
+    pressedPointers.clear();
+  }
+  // A release the page never saw (the button let go outside the window, a native context menu that swallowed the
+  // pointerup): the pointer's next move with no button down ends its press, so follow moves do not wait forever.
+  function releaseIdlePointer(e: PointerEvent): void {
+    if (e.buttons === 0 && pressedPointers.has(e.pointerId)) pressedPointers.delete(e.pointerId);
   }
   addEventListener('pointerdown', trackPointer, true);
+  addEventListener('pointerup', releasePointer, true);
+  addEventListener('pointercancel', releasePointer, true);
+  addEventListener('pointermove', releaseIdlePointer, true);
+  addEventListener('blur', releaseAllPointers);
   // The HUD's hover keys reach a marker through this (scene/stack.ts hoveredStackItem).
   registerStackHover(sceneApi, () => hoverItem);
 

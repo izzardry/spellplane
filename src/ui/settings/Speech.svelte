@@ -10,7 +10,8 @@
   import { LOCAL_MODEL_SOURCES } from '../../voice/speech/index';
   import { engineStatement } from './captions';
 
-  let { captions, onclose }: SpeechSettingsProps & { onclose?: () => void } = $props();
+  /** `top`: CSS px from the viewport top, below the HUD's Dictation button (the toolbar above it may wrap to two rows). */
+  let { captions, onclose, top }: SpeechSettingsProps & { onclose?: () => void; top?: number } = $props();
 
   let active = $state<SpeechEngineInfo>(untrack(() => captions.engine()));
   let lang = $state(untrack(() => captions.lang()));
@@ -97,7 +98,7 @@
   }
 </script>
 
-<section class="speech" data-testid="speech-settings" aria-label="Dictation settings">
+<section class="speech" data-testid="speech-settings" aria-label="Dictation settings" style={top !== undefined ? `top: ${top}px; max-height: calc(100vh - ${top + 48}px)` : undefined}>
   <header>
     <h2>Dictation</h2>
     {#if onclose}<button type="button" class="x" onclick={onclose} aria-label="Close">×</button>{/if}

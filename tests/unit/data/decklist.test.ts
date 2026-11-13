@@ -160,6 +160,18 @@ describe('grammar', () => {
     expect(list.side.map((e) => [e.name, e.line])).toEqual([['Sift', 5]]);
   });
 
+  it('a trailing *F* (or *E*, etched) marks a foil printing; without it the entry has no finish (M4 gate fix)', () => {
+    const { list, errors } = parseDecklist('1 Shock (M19) 156 *F*\n2 Cancel *f*\n1 Sift (M19) 74 *E*\n4 Island\n1 Star *F* Card');
+    expect(errors).toEqual([]);
+    expect(list.main[0]).toEqual({ count: 1, name: 'Shock', set: 'm19', collectorNumber: '156', foil: true, section: 'main', line: 1, text: '1 Shock (M19) 156 *F*' });
+    expect(list.main[1]).toMatchObject({ count: 2, name: 'Cancel', foil: true });
+    expect(list.main[2]).toMatchObject({ name: 'Sift', set: 'm19', collectorNumber: '74', foil: true });
+    expect(list.main[3]).not.toHaveProperty('foil');
+    // Only a trailing marker counts.
+    expect(list.main[4]).toMatchObject({ name: 'Star *F* Card' });
+    expect(list.main[4]).not.toHaveProperty('foil');
+  });
+
   it('skips an MTGA "About" block', () => {
     const { list, errors } = parseDecklist('About\nName Izzet Tempo\n\nDeck\n4 Shock\n\nSideboard\n2 Sift');
     expect(errors).toEqual([]);

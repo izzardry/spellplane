@@ -11,6 +11,7 @@ import { paper } from '../themes/paper/index';
 import { FakeCardData, FakeFaces, FakeSession, MemorySettings, RecordingScene, fakeGame, tableWith, type FakeCardSpec, type SceneCall, type SessionCall } from './fakes';
 import Hud from './Hud.svelte';
 import type { HudProps } from './props';
+import type { Settings } from '../store/types';
 
 /** The page's harness API (Playwright reads it with page.evaluate). */
 export interface UiHarness {
@@ -24,6 +25,8 @@ export interface UiHarness {
   voice(): { action: string; phase: string }[];
   /** Settings writes (keymap remapping). */
   settingsWrites(): { name: string; value: unknown }[];
+  /** Change a stored setting, as another tab or a settings panel would (not recorded in settingsWrites). */
+  setSetting(name: string, value: unknown): Promise<void>;
   /** The last view state the HUD gave the scene. */
   view(): ViewState | null;
   state(): TableState;
@@ -213,6 +216,10 @@ export function mount(target: HTMLElement): void {
     scene: () => JSON.parse(JSON.stringify(scene?.calls ?? [])) as SceneCall[],
     voice: () => [...voice],
     settingsWrites: () => JSON.parse(JSON.stringify(settings.writes)) as { name: string; value: unknown }[],
+    setSetting: async (name, value) => {
+      await settings.set(name as keyof Settings, value as never);
+      settings.writes.pop();
+    },
     view: () => (scene?.lastView ? (JSON.parse(JSON.stringify(scene.lastView)) as ViewState) : null),
     state: () => JSON.parse(JSON.stringify(session.getState())) as TableState,
     update: (fn) => {

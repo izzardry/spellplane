@@ -214,6 +214,13 @@ Dusk, Wyrm and Stonetable join Paper, and the ego camera arrives. Because Paper 
 | M4-P5 Stonetable | Carved stone slab with CC0 physically based materials, torch-like key light, real shadows, rune lines, dust motes, ego camera by default. | `themes/stonetable/*` | M4-P2 |
 | M4-P6 Theme switcher and conformance | Per-viewer theme picker, lazy chunk loading, HUD token mapping to CSS custom properties, per-theme seat-colour tuning, automated signal conformance checks, asset licence manifest. | `ui/settings/Theme.svelte`, `tests/e2e/signals.spec.ts`, `docs/ASSETS.md` | M4-C |
 
+**Ownership within M4** *(M4-C)*: the shared shapes are `themes/types.ts` (Theme v2), `themes/signals.ts` (the twelve functional signals, which are also the "twelve gate states"), the camera, material, post-processing, quality and render-stats additions in `scene/types.ts` (`TableCameraControls`, `EgoRigParams`, `CameraPose`, `MaterialLibrary`, `PostPipeline`, `RenderStats`, `RenderDebug`, `RigDebug`), the debug parts `render`, `rig` and `theme` in `debug/types.ts`, and the `Settings` key `sound`. The table scene already registers the `render` and `rig` parts with stub bodies; the packages fill them.
+- **M4-P1 Camera rigs** owns `scene/camera/*` (it may move `scene/camera.ts`'s bird's-eye rig there), the camera controls and the `rig` debug part in `scene/table-scene.ts`, the P key and right-drag pitch in the HUD's key and pointer handling, and the wiring of `Settings.followStack`/`followActive` to `setFollow`.
+- **M4-P2 Lit pipeline** owns `scene/materials.ts`, `scene/post.ts`, `scene/quality.ts`, card boxes and held lift in `scene/cards.ts` and `scene/motion.ts`, and in `scene/table-scene.ts` the render loop, theme build and hot-swap (`setTheme`, `setQuality`, `quality`, `renderStats`, the `render` debug part, passing `post`, `materials` and `viewerAngle` in `SceneContext`), plus the `theme.build` calls in `scene/draft.ts` and `scene/builder.ts`. It may adjust Paper's v2 values when the pipeline needs it.
+- **M4-P3, M4-P4, M4-P5** own `themes/dusk/*`, `themes/wyrm/*` and `themes/stonetable/*` respectively, replacing the stub (`themes/stub.ts`, removed by the integrator once all three landed). Each tunes its own seat colours to `SEAT_CONTRAST` and adds its rows to `docs/ASSETS.md`. A theme needing a pipeline hook beyond `SceneContext.post`/`materials` reports it instead of editing `scene/`.
+- **M4-P6 Theme switcher and conformance** owns `ui/settings/Theme.svelte`, the per-viewer theme state and CSS custom properties in the HUD shells (`ui/Hud.svelte`, `ui/App.svelte`, `ui/lobby/*`, `ui/draft/*`, `ui/builder/*`: only the theme lines), `tokensToCssVars` and `loadTheme` in `themes/index.ts`, the `theme` debug part, Paper's seat colours, `tests/e2e/signals.spec.ts` and the format of `docs/ASSETS.md`.
+- **Shared stubs.** The contract files are M4-C's; a package that needs a change there reports it.
+
 **Acceptance tests**
 
 - **M4-P1.** During a blend the world point under the cursor moves less than 2 px; the ego camera never passes below the table edge; with reduced motion the switch is a cut.
@@ -436,14 +443,14 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M3-P4 Dictation and captions
 - [x] M3-P5 Spectators
 - [x] M3-G Gate (owner playtest pending)
-- [ ] M4-C Contracts
-- [ ] M4-P1 Camera rigs
-- [ ] M4-P2 Lit pipeline
-- [ ] M4-P3 Dusk
-- [ ] M4-P4 Wyrm
-- [ ] M4-P5 Stonetable
-- [ ] M4-P6 Theme switcher and conformance
-- [ ] M4-G Gate and owner playtest
+- [x] M4-C Contracts
+- [x] M4-P1 Camera rigs
+- [x] M4-P2 Lit pipeline
+- [x] M4-P3 Dusk
+- [x] M4-P4 Wyrm
+- [x] M4-P5 Stonetable
+- [x] M4-P6 Theme switcher and conformance
+- [x] M4-G Gate (owner playtest pending)
 - [ ] M5-P1 Touch
 - [ ] M5-P2 Audit
 - [ ] M5-P3 Offline and storage

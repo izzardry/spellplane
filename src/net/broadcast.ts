@@ -4,6 +4,12 @@ import type { Channel, Message, MessageHandler, PeerHandler, PeerId, Transport }
  * Transport over BroadcastChannel (test harness, selected with ?transport=local).
  * Several pages of one browser context form a room. Presence is detected with
  * hello/here/bye frames plus a heartbeat, so a closed page is noticed within ~3 s.
+ *
+ * A page that goes away (`pagehide`: a reload, a close, a navigation) says `bye` so the others notice at once, but
+ * does not report its peers gone to its own page: that page's engine is still running, and would act on a room it
+ * believes lost (a sequencer marks every other seat away, a follower takes over as sequencer) and save those records
+ * locally, where the reopened page finds a history nobody else has (M4 gate: "history diverged at seq N" after a
+ * reload). Only an explicit `leave` (the engine leaving, which closes it first) reports them.
  */
 type Frame =
   | { k: 'hello'; from: PeerId }
@@ -21,7 +27,7 @@ export class BroadcastTransport implements Transport {
   private readonly peerHandlers: PeerHandler[] = [];
   private readonly lastSeen = new Map<PeerId, number>();
   private beat: ReturnType<typeof setInterval> | null = null;
-  private readonly onUnload = () => this.leave();
+  private readonly onUnload = () => this.close(false);
 
   constructor(readonly selfId: PeerId) {}
 
@@ -39,13 +45,19 @@ export class BroadcastTransport implements Transport {
   }
 
   leave(): void {
+    this.close(true);
+  }
+
+  /** Say `bye` and close; `report`: tell this page's own handlers that every peer is gone (not when the page unloads). */
+  private close(report: boolean): void {
     if (!this.bc) return;
     this.post({ k: 'bye', from: this.selfId });
     if (this.beat) clearInterval(this.beat);
     this.beat = null;
     this.bc.close();
     this.bc = null;
-    for (const peer of [...this.lastSeen.keys()]) this.drop(peer);
+    if (report) for (const peer of [...this.lastSeen.keys()]) this.drop(peer);
+    else this.lastSeen.clear();
     if (typeof removeEventListener === 'function') removeEventListener('pagehide', this.onUnload);
   }
 

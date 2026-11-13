@@ -8,7 +8,8 @@ import { DEFAULT_TABLE_SETTINGS, type CardInstance, type CardRef, type InstanceI
 import type { CardData, CardDataSource, DeckEntry, DeckList, FaceImage, FaceSource, ParseError, ResolvedDeck } from '../data/types';
 import type { GameDefinition, SeatLayout, TableLayout } from '../games/types';
 import { MTG_KEYMAP } from '../games/mtg/keymap';
-import type { CameraControls, CameraRig, DebugCamera, SceneDebugParts, TableScene, ViewState } from '../scene/types';
+import type { CameraRig, DebugCamera, FollowOptions, RenderStats, SceneDebugParts, TableCameraControls, TableScene, ViewState } from '../scene/types';
+import type { QualityId, QualityLevel } from '../themes/types';
 import type { ChatChannel } from '../net/messages';
 import type { Presence } from '../net/types';
 import { NULL_PRESENCE } from '../session/presence';
@@ -181,7 +182,7 @@ export class FakeCardData implements CardDataSource {
           continue;
         }
         out.cards[hit.id] = hit;
-        for (let i = 0; i < e.count; i++) into.push({ sid: hit.id });
+        for (let i = 0; i < e.count; i++) into.push(e.foil ? { sid: hit.id, foil: true } : { sid: hit.id });
       }
     };
     take([...list.main, ...list.commander, ...list.companion], out.main);
@@ -680,7 +681,9 @@ export class RecordingScene implements TableScene {
   lastState: TableState | null = null;
   lastView: ViewState | null = null;
   private currentRig: CameraRig = 'birdseye';
-  readonly camera: CameraControls;
+  private currentQuality: QualityId = 'high';
+  private currentFollow: FollowOptions = { stack: false, activePlayer: false };
+  readonly camera: TableCameraControls;
   readonly debug: SceneDebugParts;
 
   constructor() {
@@ -698,6 +701,14 @@ export class RecordingScene implements TableScene {
         this.calls.push({ method: 'camera.setRig', args: [rig] });
       },
       rig: () => this.currentRig,
+      pitchBy: rec('camera.pitchBy'),
+      follow: () => ({ ...this.currentFollow }),
+      setFollow: (next: Partial<FollowOptions>) => {
+        this.currentFollow = { ...this.currentFollow, ...next };
+        this.calls.push({ method: 'camera.setFollow', args: [next] });
+      },
+      blend: () => null,
+      pose: () => ({ position: [0, 0, 0], target: [0, 0, 0], fovDeg: 6, pitchDeg: 90 }),
     };
     const cam: DebugCamera = { rig: 'birdseye', fov: 6, position: [0, 0, 0], pitch: 90 };
     this.debug = { cards: () => [], camera: () => ({ ...cam, rig: this.currentRig }), lines: () => Object.values(this.lastState?.lines ?? {}), frameStats: () => ({ drawCalls: 0, textureBytes: 0, frameMs: 0 }) };
@@ -708,6 +719,16 @@ export class RecordingScene implements TableScene {
   }
   setTheme(_theme: unknown): void {}
   setLayout(_layout: unknown, _viewerSeat: unknown): void {}
+  setQuality(id: QualityId): void {
+    this.currentQuality = id;
+    this.calls.push({ method: 'setQuality', args: [id] });
+  }
+  quality(): QualityLevel {
+    return { id: this.currentQuality, shadows: false, post: false, particles: false, pixelRatio: 1 };
+  }
+  renderStats(): RenderStats {
+    return { drawCalls: 0, textureBytes: 0, frameMs: 0, triangles: 0, textures: 0, geometries: 0, programs: 0, passes: [], shadows: false, quality: this.currentQuality, theme: 'paper' };
+  }
   cardAt(_x: number, _y: number): InstanceId | null {
     return null;
   }

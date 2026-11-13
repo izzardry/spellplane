@@ -8,7 +8,8 @@ import type { DeckBuild, InstanceId, Line, Pose, SecretStore, TableState } from 
 import type { DraftPrivateView } from '../draft/types';
 import type { PeerId } from '../net/transport';
 import type { ConnectionStatus, NetMessageRecord, PeerInfo } from '../net/types';
-import type { DebugCaption, Vec3 } from '../scene/types';
+import type { DebugCaption, RenderDebug, RigDebug, Vec3 } from '../scene/types';
+import type { ThemeId } from '../themes/types';
 import type { Caption, SpeechEngineId, TalkIndicatorState, TalkState, VoiceTrackState } from '../voice/types';
 
 /**
@@ -74,6 +75,20 @@ export interface SpeechDebug {
   drawn(): DebugCaption[];
 }
 
+/**
+ * The theme part of the debug hook (DESIGN "Themes and rendering": themes are chosen per viewer, loaded on demand and
+ * switchable mid-game without reloading; PLAN M4-G: a mid-game theme switch, screenshot matrix of four themes). Added by
+ * M4-C; registered by M4-P6's theme switcher, which also updates the HUD's CSS custom properties and the stored setting.
+ */
+export interface ThemeDebug {
+  /** The theme this page shows. */
+  current(): ThemeId;
+  /** Load the theme's chunk if needed and switch the scene and HUD to it; resolves once the new theme rendered a frame. */
+  set(id: ThemeId): Promise<void>;
+  /** Theme chunks loaded so far (lazy loading: only the shown themes). */
+  loaded(): ThemeId[];
+}
+
 /** The full debug hook (DESIGN "Specification: code interfaces"). */
 export interface SpellplaneDebug {
   state(): TableState;
@@ -90,6 +105,12 @@ export interface SpellplaneDebug {
   voice: VoiceDebug;
   /** Added by M3-C. */
   speech: SpeechDebug;
+  /** Added by M4-C: render statistics and quality (registered by the table scene; M4-P2). */
+  render: RenderDebug;
+  /** Added by M4-C: camera rig, blend and follow toggles (registered by the table scene; M4-P1). */
+  rig: RigDebug;
+  /** Added by M4-C: per-viewer theme (registered by the theme switcher; M4-P6). */
+  theme: ThemeDebug;
 }
 
 // Types registerDebug (util/debug.ts) against SpellplaneDebug without util/ importing debug/.

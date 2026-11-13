@@ -89,7 +89,7 @@ export class FixtureCardDataSource implements CardDataSource {
           continue;
         }
         cards[c.id] = c;
-        for (let i = 0; i < e.count; i++) out.push({ sid: c.id });
+        for (let i = 0; i < e.count; i++) out.push(e.foil ? { sid: c.id, foil: true } : { sid: c.id });
       }
       return out;
     };
