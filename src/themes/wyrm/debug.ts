@@ -30,7 +30,8 @@ export interface WyrmDebugInstance {
     /** The shimmer's own clock, s. */
     time: number;
   } | null;
-  slab: { tileMm: number; textures: number };
+  /** The slab's tile size, its map count and their anisotropic filtering (the quality level's). */
+  slab: { tileMm: number; textures: number; anisotropy: number };
 }
 
 export interface WyrmDebug {

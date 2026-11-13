@@ -67,7 +67,7 @@ export function shimmerAllowed(level: QualityLevel, reducedMotion: boolean): boo
 }
 
 function buildWyrm(ctx: SceneContext): ThemeInstance {
-  const slab = createSlab(ctx.table);
+  const slab = createSlab(ctx.table, { anisotropy: ctx.quality.anisotropy ?? 1 });
   ctx.scene.add(slab.object);
   const embers = createEmbers(ctx.table, { reducedMotion: ctx.reducedMotion });
   ctx.scene.add(embers.object);
@@ -101,7 +101,7 @@ function buildWyrm(ctx: SceneContext): ThemeInstance {
       shimmer: shimmer
         ? { allowed: shimmer.allowed, strength: shimmer.strength, target: shimmer.target, focus: shimmer.focus, inChain, region: inChain ? region : null, time: (shimmer.pass.uniforms as { uTime: { value: number } }).uTime.value }
         : null,
-      slab: { tileMm: DEFAULT_SCALE_OPTIONS.tileMm, textures: slab.textures.length },
+      slab: { tileMm: DEFAULT_SCALE_OPTIONS.tileMm, textures: slab.textures.length, anisotropy: slab.textures[0]!.anisotropy },
     };
   };
   const untrack = trackWyrm(report);
@@ -116,6 +116,7 @@ function buildWyrm(ctx: SceneContext): ThemeInstance {
     },
     setQuality(next) {
       level = next;
+      slab.setAnisotropy(next.anisotropy ?? 1);
       embers.setEnabled(next.particles);
       if (shimmer) {
         shimmer.setAllowed(shimmerAllowed(next, ctx.reducedMotion));

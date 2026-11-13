@@ -21,12 +21,14 @@ export interface Slab {
   readonly object: THREE.Mesh;
   /** Advance the heat wave to `timeS` seconds. */
   update(timeS: number): void;
+  /** Anisotropic filtering of the slab's maps (the quality level's; three clamps it to the GPU's maximum). */
+  setAnisotropy(samples: number): void;
   /** The textures this slab owns (tests). */
   readonly textures: readonly THREE.Texture[];
   dispose(): void;
 }
 
-function dataTexture(data: Uint8Array, size: number, srgb: boolean, repeat: THREE.Vector2): THREE.DataTexture {
+function dataTexture(data: Uint8Array, size: number, srgb: boolean, repeat: THREE.Vector2, anisotropy: number): THREE.DataTexture {
   const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat, THREE.UnsignedByteType);
   t.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -34,7 +36,7 @@ function dataTexture(data: Uint8Array, size: number, srgb: boolean, repeat: THRE
   t.magFilter = THREE.LinearFilter;
   t.minFilter = THREE.LinearMipmapLinearFilter;
   t.generateMipmaps = true;
-  t.anisotropy = 4;
+  t.anisotropy = anisotropy;
   t.needsUpdate = true;
   return t;
 }
@@ -60,15 +62,17 @@ const WAVE_FRAGMENT = /* glsl */ `
 `;
 
 /** Build the slab for a table of `table` mm. */
-export function createSlab(table: { w: number; d: number }, maps: ScaleMaps = scaleMaps()): Slab {
+export function createSlab(table: { w: number; d: number }, opts: { anisotropy?: number } = {}, maps: ScaleMaps = scaleMaps()): Slab {
+  const aniso = (n: number | undefined) => Math.max(1, Math.floor(n ?? 1));
+  let anisotropy = aniso(opts.anisotropy);
   const tile = maps.options.tileMm;
   const n = maps.options.size;
   // BoxGeometry's top face has UVs 0..1 over the whole table: repeat the tile every tileMm.
   const repeat = new THREE.Vector2(table.w / tile, table.d / tile);
-  const albedo = dataTexture(maps.albedo, n, true, repeat);
-  const normal = dataTexture(maps.normal, n, false, repeat);
-  const orm = dataTexture(maps.orm, n, false, repeat);
-  const emissive = dataTexture(maps.emissive, n, true, repeat);
+  const albedo = dataTexture(maps.albedo, n, true, repeat, anisotropy);
+  const normal = dataTexture(maps.normal, n, false, repeat, anisotropy);
+  const orm = dataTexture(maps.orm, n, false, repeat, anisotropy);
+  const emissive = dataTexture(maps.emissive, n, true, repeat, anisotropy);
   albedo.name = 'wyrm-slab-albedo';
   normal.name = 'wyrm-slab-normal';
   orm.name = 'wyrm-slab-orm';
@@ -114,6 +118,15 @@ export function createSlab(table: { w: number; d: number }, maps: ScaleMaps = sc
     textures,
     update(timeS) {
       uniforms.uWyrmTime.value = timeS;
+    },
+    setAnisotropy(samples) {
+      const next = aniso(samples);
+      if (next === anisotropy) return;
+      anisotropy = next;
+      for (const t of textures) {
+        t.anisotropy = next;
+        t.needsUpdate = true;
+      }
     },
     dispose() {
       mesh.removeFromParent();

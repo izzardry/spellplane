@@ -129,13 +129,28 @@ describe('Wyrm build', () => {
     inst.dispose();
   });
 
+  it('keeps the pass out of the chain while the lane is off screen or behind the camera, and brings it back', () => {
+    const { inst, passes } = setup();
+    inst.setStackFocus!({ x: 40000, y: 0 });
+    run(inst, SHIMMER_FADE_MS + 50);
+    expect(passes.size).toBe(0);
+    expect(wyrmInstances().at(-1)!.shimmer).toMatchObject({ target: 1, inChain: false });
+    inst.setStackFocus!({ x: 0, y: 0 });
+    inst.update(16);
+    expect(passes.has(SHIMMER_PASS_ID)).toBe(true);
+    inst.dispose();
+    expect(passes.size).toBe(0);
+  });
+
   it('applies quality levels without a rebuild: medium drops the shimmer at once, low the embers too, high restores both', () => {
     const { scene, inst, passes } = setup();
     const embers = find(scene, 'wyrm-embers')!;
     inst.setStackFocus!({ x: 0, y: 0 });
     run(inst, SHIMMER_FADE_MS + 50);
     expect(passes.has(SHIMMER_PASS_ID)).toBe(true);
+    expect(wyrmInstances().at(-1)!.slab.anisotropy).toBe(8);
     inst.setQuality!(qualityLevel(wyrm, 'medium'));
+    expect(wyrmInstances().at(-1)!.slab.anisotropy).toBe(4);
     // Gone before the next frame renders, not faded.
     expect(passes.has(SHIMMER_PASS_ID)).toBe(false);
     run(inst, 100);
@@ -144,6 +159,7 @@ describe('Wyrm build', () => {
     inst.setQuality!(qualityLevel(wyrm, 'low'));
     expect(embers.visible).toBe(false);
     expect(wyrmInstances().at(-1)!.embers.count).toBe(0);
+    expect(wyrmInstances().at(-1)!.slab.anisotropy).toBe(1);
     // Hidden embers do not advance either.
     const t = wyrmInstances().at(-1)!.embers.time;
     run(inst, 100);
