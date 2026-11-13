@@ -7,6 +7,8 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { MTG_KEYMAP } from '../../../src/games/mtg/keymap';
+import type { KeymapOverride } from '../../../src/store/types';
+import { applyOverrides } from '../../../src/ui/keymap';
 import { drafts, hoverCard, openHud, ui } from '../ui/harness';
 import { openHudSettings } from './helpers';
 
@@ -108,12 +110,17 @@ test.describe('key remapping in the settings panel', () => {
   test('the talk key takes Ctrl alone; other actions refuse a bare Ctrl; Ctrl+T stays the token key', async ({ page }) => {
     await openHud(page);
     await openHudSettings(page, 'keys');
+    // From a letter to Ctrl alone (whichever the default is).
+    await change(page, 'talk', () => page.keyboard.press('KeyJ'));
+    await expect(row(page, 'talk').getByTestId('key-current')).toHaveText(['J']);
     await change(page, 'talk', async () => {
       await page.keyboard.down('Control');
       await page.keyboard.up('Control');
     });
     await expect(row(page, 'talk').getByTestId('key-current')).toHaveText([/^(Ctrl|Control)$/]);
-    expect((await ui<{ name: string; value: unknown }[]>(page, 'settingsWrites')).at(-1)).toEqual({ name: 'keymap', value: [{ action: 'talk', context: 'table', chord: { key: 'Control' } }] });
+    const stored = (await ui<{ name: string; value: KeymapOverride[] }[]>(page, 'settingsWrites')).at(-1)!;
+    expect(stored.name).toBe('keymap');
+    expect(applyOverrides(MTG_KEYMAP, stored.value).find((b) => b.action === 'talk')!.chord).toEqual({ key: 'Control' });
 
     // A bare Ctrl for tapping is refused with the reason.
     await change(page, 'tap', async () => {

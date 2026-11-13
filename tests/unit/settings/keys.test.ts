@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { MTG_KEYMAP } from '../../../src/games/mtg/keymap';
 import { CTRL_KEY_CHORD, type ActionId } from '../../../src/games/types';
 import { MemorySettings } from '../../../src/ui/fakes';
-import { cheatSheet, findBinding, keyLabel } from '../../../src/ui/keymap';
+import { applyOverrides, cheatSheet, findBinding, keyLabel } from '../../../src/ui/keymap';
 import { ChordCapture, checkRemap, FOCUS_KEYS, KeymapSettings, keyRows, remapMessage } from '../../../src/ui/settings/keys';
 
 const ALL_ACTIONS = [...new Set(MTG_KEYMAP.map((b) => `${b.context}|${b.action}`))];
@@ -120,11 +120,14 @@ describe('the talk key (owner decision: Ctrl, remappable)', () => {
 
   it('moves from Ctrl to a letter and back, each persisted', async () => {
     const { keys, store } = fresh();
+    const storedTalk = async () => applyOverrides(MTG_KEYMAP, await store.get('keymap')).find((b) => b.action === 'talk')!.chord;
     keys.remap('talk', 'table', CTRL_KEY_CHORD);
+    expect(await storedTalk()).toEqual(CTRL_KEY_CHORD);
     expect(keys.remap('talk', 'table', { key: 'j' })).toEqual({ ok: true });
     expect(await store.get('keymap')).toEqual([{ action: 'talk', context: 'table', chord: { key: 'j' } }]);
     keys.remap('talk', 'table', CTRL_KEY_CHORD);
-    expect(await store.get('keymap')).toEqual([{ action: 'talk', context: 'table', chord: { key: 'Control' } }]);
+    // Whether Ctrl is the default (M5-P7) or an override, the stored keymap gives Ctrl.
+    expect(await storedTalk()).toEqual(CTRL_KEY_CHORD);
   });
 
   it('a stored Ctrl talk key loads back', async () => {
