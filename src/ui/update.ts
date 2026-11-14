@@ -32,6 +32,7 @@ export interface AppUpdate {
  * true on pages without a table and at a table in the 'lobby' stage, false in 'draft', 'build' and 'match'.
  * Implementer: M5-P3. Added by M5-C.
  */
-export function updateMayApply(_place: UpdatePlace): boolean {
-  throw new Error('not implemented: M5-P3');
+export function updateMayApply(place: UpdatePlace): boolean {
+  if (place.stage === null) return place.route !== 'solo' && place.route !== 'room';
+  return place.stage === 'lobby';
 }

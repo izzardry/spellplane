@@ -5,6 +5,7 @@
  */
 import { trimCard } from './cards';
 import { scryfallLimiter, type RateLimiter } from './limiter';
+import { guarded, REQUEST_TIMEOUT_MS, UnreachableError } from './offline';
 import type { CardData } from './types';
 
 export const SCRYFALL_API = 'https://api.scryfall.com';
@@ -42,6 +43,10 @@ export interface ScryfallClientOptions {
   fetch?: FetchLike;
   limiter?: RateLimiter;
   baseUrl?: string;
+  /** How long one request may take, answer included (data/offline.ts; default REQUEST_TIMEOUT_MS.Scryfall). */
+  timeoutMs?: number;
+  /** Whether the browser believes it is online; offline requests fail at once instead of queueing (default navigator.onLine). */
+  online?: () => boolean;
 }
 
 type Json = Record<string, unknown>;
@@ -75,38 +80,57 @@ export class ScryfallClient {
   private readonly fetchFn: FetchLike;
   readonly limiter: RateLimiter;
   readonly baseUrl: string;
+  private readonly timeoutMs: number;
+  private readonly online: () => boolean;
 
   constructor(opts: ScryfallClientOptions = {}) {
     this.fetchFn = opts.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.limiter = opts.limiter ?? scryfallLimiter;
     this.baseUrl = opts.baseUrl ?? SCRYFALL_API;
+    this.timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS.Scryfall;
+    this.online = opts.online ?? (() => (typeof navigator === 'undefined' || typeof navigator.onLine !== 'boolean' ? true : navigator.onLine));
   }
 
   /**
    * One API request through the shared limiter. A 429 pauses the limiter for 30 s and retries (up to MAX_ATTEMPTS);
-   * 404 resolves to null (Scryfall's "no results"); any other error status throws a ScryfallError.
+   * 404 resolves to null (Scryfall's "no results"); any other error status throws a ScryfallError. A request that
+   * cannot reach Scryfall, or gets no complete answer within the timeout, throws an UnreachableError (data/offline.ts)
+   * at once, without retrying; while the browser is offline no request is made.
    */
   async request(url: string, init?: RequestInit): Promise<Json | null> {
     for (let attempt = 1; ; attempt++) {
-      // A retry after a 429 goes to the front of the queue so it keeps its place ahead of later requests.
+      if (!this.online()) throw new UnreachableError('Scryfall', 'offline', url);
+      // A retry after a 429 goes to the front of the queue so it keeps its place ahead of later requests. The deadline
+      // starts when the request does, not while it waits for the limiter.
       const res = await this.limiter.schedule(
-        () => this.fetchFn(url, { ...init, headers: { Accept: 'application/json', ...(init?.headers ?? {}) } }),
+        () =>
+          guarded(
+            'Scryfall',
+            url,
+            async (signal) => {
+              const r = await this.fetchFn(url, { ...init, signal, headers: { Accept: 'application/json', ...(init?.headers ?? {}) } });
+              if (!r.ok) return { status: r.status, body: undefined as unknown, invalid: false };
+              try {
+                return { status: r.status, body: (await r.json()) as unknown, invalid: false };
+              } catch (e) {
+                // A body cut off is a network failure (TypeError); one that is not JSON is a proxy or captive-portal page.
+                if (e instanceof TypeError) throw e;
+                return { status: r.status, body: undefined as unknown, invalid: true };
+              }
+            },
+            { timeoutMs: this.timeoutMs, online: this.online },
+          ),
         { front: attempt > 1 },
       );
       if (res.status === 429) {
         this.limiter.backOff();
-        if (attempt >= MAX_ATTEMPTS) throw new ScryfallError('Scryfall rate limit (429)', 429, url);
+        if (attempt >= MAX_ATTEMPTS) throw new ScryfallError('Scryfall is limiting requests (429); wait half a minute and try again.', 429, url);
         continue;
       }
       if (res.status === 404) return null;
-      if (!res.ok) throw new ScryfallError(`Scryfall ${res.status}`, res.status, url);
-      let body: unknown;
-      try {
-        body = await res.json();
-      } catch {
-        // A proxy or captive-portal page, or a truncated body.
-        throw new ScryfallError('Scryfall: invalid JSON', res.status, url);
-      }
+      if (res.status < 200 || res.status > 299) throw new ScryfallError(`Scryfall ${res.status}: the card service answered with an error. Cards already loaded on this device still work; try again later.`, res.status, url);
+      if (res.invalid) throw new ScryfallError('Scryfall: invalid JSON', res.status, url);
+      const body = res.body;
       if (typeof body !== 'object' || body === null) throw new ScryfallError('Scryfall: unexpected response', res.status, url);
       return body as Json;
     }

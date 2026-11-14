@@ -9,6 +9,7 @@
  */
 import { IdbSetCache } from '../store/sets';
 import type { SetCache, SetRecord } from '../store/types';
+import { guarded, REQUEST_TIMEOUT_MS, UnreachableError } from './offline';
 import { FEATURED_SET_INFO, normaliseSetCode, orderSets } from './sets';
 import {
   BOOSTER_TYPES,
@@ -35,6 +36,10 @@ export interface SetDataSourceOptions {
   refreshAgeMs?: number;
   /** Fetch MTGJSON's SetList for the picker (default true); false lists only featured and cached sets. */
   setList?: boolean;
+  /** How long one set file may take, body included (data/offline.ts; default REQUEST_TIMEOUT_MS.MTGJSON). Added by M5-P3. */
+  timeoutMs?: number;
+  /** Whether the browser believes it is online; offline loads fail at once (default navigator.onLine). Added by M5-P3. */
+  online?: () => boolean;
 }
 
 /** Age after which a cached set file is refreshed in the background (same policy as card JSON: 30 days). */
@@ -256,8 +261,12 @@ class MtgjsonSetDataSource implements SetDataSource {
   private readonly inflight = new Map<SetCode, Promise<SetData | null>>();
   private readonly refreshing = new Set<SetCode>();
   private setList: Promise<SetSummary[]> | null = null;
+  private readonly timeoutMs: number;
+  private readonly online: () => boolean;
 
   constructor(opts: SetDataSourceOptions) {
+    this.timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS.MTGJSON;
+    this.online = opts.online ?? (() => (typeof navigator === 'undefined' || typeof navigator.onLine !== 'boolean' ? true : navigator.onLine));
     this.fetchFn = opts.fetch ?? (typeof fetch === 'function' ? fetch.bind(globalThis) : null);
     this.cache = opts.cache === undefined ? new IdbSetCache() : opts.cache;
     this.now = opts.now ?? (() => Date.now());
@@ -302,13 +311,35 @@ class MtgjsonSetDataSource implements SetDataSource {
     return set;
   }
 
-  /** Fetch and trim one set file and store it; null when MTGJSON has no such set or no usable booster data. */
+  /**
+   * Fetch and trim one set file and store it; null when MTGJSON has no such set or no usable booster data. A set file
+   * that cannot be fetched (offline, no answer within the timeout) throws an UnreachableError that names the set and
+   * says that sets used before still work (data/offline.ts).
+   */
   private async fetchSet(code: SetCode): Promise<SetData | null> {
     if (!this.fetchFn) throw new Error('no fetch available to load set data');
-    const res = await this.fetchFn(MTGJSON_SET_URL(mtgjsonFileCode(code)));
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`MTGJSON ${code}: HTTP ${res.status}`);
-    const set = trimSetFile(await res.json());
+    const fetchFn = this.fetchFn;
+    const url = MTGJSON_SET_URL(mtgjsonFileCode(code));
+    if (!this.online()) throw new UnreachableError('MTGJSON', 'offline', url);
+    const answer = await guarded(
+      'MTGJSON',
+      url,
+      async (signal) => {
+        const res = await fetchFn(url, { signal });
+        if (!res.ok) return { status: res.status, raw: undefined as unknown, invalid: false };
+        try {
+          return { status: res.status, raw: (await res.json()) as unknown, invalid: false };
+        } catch (e) {
+          if (e instanceof TypeError) throw e;
+          return { status: res.status, raw: undefined as unknown, invalid: true };
+        }
+      },
+      { timeoutMs: this.timeoutMs, online: this.online },
+    );
+    if (answer.status === 404) return null;
+    if (answer.status < 200 || answer.status > 299) throw new Error(`MTGJSON ${code}: HTTP ${answer.status}. The booster data service answered with an error; sets already loaded on this device still work, try again later.`);
+    if (answer.invalid) throw new Error(`MTGJSON ${code}: the set file is not valid JSON (a network or proxy page answered instead). Sets already loaded on this device still work.`);
+    const set = trimSetFile(answer.raw);
     if (set) await this.cachePut({ code, data: set, fetchedAt: this.now() });
     return set;
   }
@@ -349,10 +380,19 @@ class MtgjsonSetDataSource implements SetDataSource {
     if (!this.setList) {
       const fetchFn = this.fetchFn;
       this.setList = (async () => {
-        if (!fetchFn) return [];
+        if (!fetchFn || !this.online()) return [];
         try {
-          const res = await fetchFn(MTGJSON_SET_LIST_URL);
-          return res.ok ? setListSummaries(await res.json()) : [];
+          // The list only adds sets to the picker: without it the featured and cached sets are still offered.
+          return await guarded(
+            'MTGJSON',
+            MTGJSON_SET_LIST_URL,
+            async (signal) => {
+              const res = await fetchFn(MTGJSON_SET_LIST_URL, { signal });
+              return res.ok ? setListSummaries(await res.json()) : [];
+            },
+            // The picker waits for the list: give up sooner than on a set file.
+            { timeoutMs: Math.min(this.timeoutMs, REQUEST_TIMEOUT_MS.Scryfall), online: this.online },
+          );
         } catch {
           return [];
         }

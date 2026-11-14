@@ -48,3 +48,39 @@ export type UpdateStatus = 'current' | 'available' | 'applying';
 
 /** The notice's text (PLAN Milestone 5, owner decisions: "New version available: it applies after this game"). */
 export const UPDATE_NOTICE = 'New version available: it applies after this game';
+
+/** One file of the build as vite-plugin-pwa lists it for the precache: a URL relative to the app's base, and a content revision for files whose name carries no hash. */
+export interface PrecacheEntry {
+  url: string;
+  revision: string | null;
+}
+
+/**
+ * The version of an app shell: a short hash (FNV-1a, 32 bit, base 36) of its file list with revisions. Hashed file
+ * names change with their content, and index.html carries a revision, so any change to the build changes the version.
+ */
+export function shellVersion(entries: readonly PrecacheEntry[]): string {
+  const text = entries
+    .map((e) => `${e.url} ${e.revision ?? ''}`)
+    .sort()
+    .join('\n');
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(36);
+}
+
+/**
+ * The shell cache of one version. One per version, not per ?profile=: the files are the same for every profile, and a
+ * waiting version must not overwrite the files the running version still loads (lazy theme chunks).
+ */
+export function shellCacheName(version: string): string {
+  return `${SHELL_CACHE_BASE}-${version}`;
+}
+
+/** Whether a Cache API name is an app-shell cache (of any version). */
+export function isShellCache(name: string): boolean {
+  return name.startsWith(`${SHELL_CACHE_BASE}-`);
+}

@@ -43,36 +43,56 @@ export function imageCacheName(clientUrl: string | null | undefined): string {
 export type ImageCache = Pick<Cache, 'match' | 'put' | 'keys' | 'delete'>;
 
 /**
- * Cache-first: answer from the cache, else fetch and store a copy of a successful (status 200, non-opaque) response.
- * Opaque responses are never stored: they cannot be read back for a CORS request (WebGL textures) and browsers pad
- * their quota cost. Storing runs in the background through `defer` (the fetch event's waitUntil); its failures
- * (quota) are swallowed because the cache is only an optimisation.
+ * Cache-first with least-recently-used eviction (PLAN M5-P3: image cache limits with LRU eviction). A hit is answered
+ * from the cache and re-inserted in the background, so the Cache API's insertion order (`keys()`) is least-recently-used
+ * order. A miss is fetched and a copy of a successful (status 200, non-opaque) response is stored, then the cache is
+ * trimmed from the front to `limit()` entries (default MAX_IMAGE_ENTRIES; the service worker passes the quota-aware
+ * limit of store/quota.ts). Opaque responses are never stored: they cannot be read back for a CORS request (WebGL
+ * textures) and browsers pad their quota cost. Background work runs through `defer` (the fetch event's waitUntil); its
+ * failures (quota) are swallowed because the cache is only an optimisation.
  */
 export async function cacheFirst(
   request: Request,
   cache: ImageCache,
   fetchFn: (request: Request) => Promise<Response>,
   defer: (work: Promise<unknown>) => void = () => undefined,
+  limit: () => Promise<number> | number = () => MAX_IMAGE_ENTRIES,
 ): Promise<Response> {
   const hit = await cache.match(request.url).catch(() => undefined);
-  if (hit) return hit;
+  if (hit) {
+    defer(touch(cache, request.url, hit.clone()));
+    return hit;
+  }
   const response = await fetchFn(request);
   if (response.status === 200 && response.type !== 'opaque') {
     const copy = response.clone();
     defer(
       cache
         .put(request.url, copy)
-        .then(() => trimCache(cache))
+        .then(async () => trimCache(cache, await limit()))
         .catch(() => undefined),
     );
   }
   return response;
 }
 
-/** Evict the oldest entries (Cache API keys come back in insertion order) until at most `max` remain. */
+/**
+ * Mark an entry as just used: delete and put it again, so it moves to the end of the insertion order. Never throws; an
+ * entry evicted meanwhile is not brought back by a failed put.
+ */
+export async function touch(cache: ImageCache, url: string, response: Response): Promise<void> {
+  try {
+    await cache.delete(url);
+    await cache.put(url, response);
+  } catch {
+    // The cache is only an optimisation.
+  }
+}
+
+/** Evict the least recently used entries (Cache API keys come back in insertion order) until at most `max` remain. */
 export async function trimCache(cache: ImageCache, max: number = MAX_IMAGE_ENTRIES): Promise<number> {
   const keys = await cache.keys();
-  const excess = keys.length - max;
+  const excess = keys.length - Math.max(0, Math.floor(max));
   if (excess <= 0) return 0;
   await Promise.all(keys.slice(0, excess).map((k) => cache.delete(k)));
   return excess;

@@ -115,6 +115,7 @@
         faces={app.faces}
         settings={app.settings}
         sets={app.sets}
+        update={app.update}
       />
     {/key}
   </div>

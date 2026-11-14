@@ -493,7 +493,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M5-C Contracts
 - [ ] M5-P1 Touch
 - [ ] M5-P2 Audit
-- [ ] M5-P3 Offline and storage
+- [x] M5-P3 Offline and storage
 - [ ] M5-P4 Accessibility
 - [x] M5-P5 Finish
 - [ ] M5-P6 Hardening

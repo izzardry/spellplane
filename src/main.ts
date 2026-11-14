@@ -5,9 +5,12 @@ import { createTableScene } from './scene/index';
 import { createSoloSession, LONE_WAIT_MS, openNetSession, openSpectatorSession, type NetSession, type TableSession } from './session/index';
 import { liveIdentity } from './session/live-identity';
 import { createPageTransport, KillableTransport, pageTransportKind } from './session/transports';
-import { createSetCache, openStores, SOLO_ROOM_ID, type LocalStores } from './store/index';
+import { createSetCache, openStores, requestPersistentStorage, SOLO_ROOM_ID, storageStatus, type LocalStores } from './store/index';
 import App from './ui/App.svelte';
 import { startProps } from './ui/lobby/start';
+import { FakeAppUpdate, pageWorker } from './ui/storage/worker';
+import type { AppUpdate } from './ui/update';
+import { registerDebug } from './util/debug';
 import { parseRoute } from './ui/routes';
 import { flags } from './util/flags';
 import { FAKE_SPEECH, SPEECH_ENGINES, type MediaDevicesLike } from './voice/index';
@@ -41,6 +44,14 @@ async function boot(el: HTMLElement): Promise<void> {
   const fixtureSets = __SPELLPLANE_DEBUG__
     ? await import('./debug/fixture-sets').then((m) => m.injectedSets() ?? (fixtures ? m.fixtureSetSource([]) : null))
     : null;
+
+  // Offline and updates (M5-P3): the service worker that precaches the app shell, and the update it holds back until
+  // the page is between games. Browser tests drive a fake with `?update=fake` (dev and test builds only).
+  const update = appUpdate();
+  if (__SPELLPLANE_DEBUG__) registerDebug({ storage: { status: () => storageStatus(), update: () => update?.status() ?? 'current' } });
+  // The app asks for persistent storage but never depends on it (DESIGN "Card data and images", Caching); browsers
+  // that prompt for it ask here, the others decide by themselves. The start page explains it when it was not granted.
+  void requestPersistentStorage();
 
   let stores: LocalStores | null = null;
   try {
@@ -153,9 +164,20 @@ async function boot(el: HTMLElement): Promise<void> {
     openRoom,
     sets,
     diag: { createTransport: () => createPageTransport(), room: null, now: () => Date.now() },
+    ...(update ? { update } : {}),
     ...(stores && identity ? { settings: stores.settings, identity: identity.store, decks: stores.decks, start: createdRooms(startProps({ identity: identity.store, tables: stores.tables }), markCreated) } : {}),
   };
   mount(App, { target: el, props });
+}
+
+/** The service worker's AppUpdate, a test's fake one (`?update=fake`, dev and test builds), or null without a worker. */
+function appUpdate(): AppUpdate | null {
+  if (__SPELLPLANE_DEBUG__ && new URLSearchParams(location.search).get('update') === 'fake') {
+    const fake = new FakeAppUpdate();
+    (window as Window & { __spellplaneFakeUpdate?: FakeAppUpdate }).__spellplaneFakeUpdate = fake;
+    return fake;
+  }
+  return pageWorker({ production: import.meta.env.MODE === 'production', dev: import.meta.env.DEV, search: location.search, base: import.meta.env.BASE_URL });
 }
 
 /** The page's media devices; without them (an insecure page) joining voice says so instead of failing silently. */

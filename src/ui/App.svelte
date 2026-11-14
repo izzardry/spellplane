@@ -20,6 +20,9 @@
   import Hint from './hints/Hint.svelte';
   import { HintController } from './hints/hints';
   import SettingsPage from './settings/SettingsPage.svelte';
+  import UpdateNotice from './storage/UpdateNotice.svelte';
+  import type { UpdatePlace } from './update';
+  import type { Stage } from '../core/types';
 
   let props: Partial<AppProps> = $props();
 
@@ -42,6 +45,16 @@
     void choice.ready.then(() => (ready = true));
     return off;
   });
+  // Updates only between games (M5-P3, ui/storage/UpdateNotice.svelte): the pages without a table and the solo table
+  // here; a networked table shows its own notice with its stage (ui/lobby/TableRoom.svelte).
+  let soloStage = $state<Stage | null>(null);
+  $effect(() => {
+    const s = props.session;
+    if (!s) return;
+    soloStage = s.getState().stage;
+    return s.subscribe((st) => (soloStage = st.stage));
+  });
+  const updatePlace = $derived<UpdatePlace>(route.name === 'solo' ? { route: 'solo', stage: soloStage } : { route: route.name, stage: null });
   // The page itself (body background, scrollbars, form controls) follows the theme too.
   $effect(() => {
     const root = document.documentElement;
@@ -51,6 +64,8 @@
 </script>
 
 <svelte:window onhashchange={() => (route = parseRoute(location.hash))} />
+
+{#if route.name !== 'room'}<UpdateNotice update={props.update} place={updatePlace} />{/if}
 
 {#if !ready && waitsForStoredTheme(route)}
   <!-- Reading the stored theme before a table builds its scene: a moment, at most a few seconds (ui/settings/theme.ts).
