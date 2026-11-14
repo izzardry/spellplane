@@ -13,8 +13,9 @@
 import { expect } from 'vitest';
 import type { InstanceId, SeatId } from '../../../src/core/types';
 import type { LoopbackNetwork } from '../../../src/net/loopback';
-import { both, seatedPair, stageIs, type Evening } from '../flow/evening';
-import { fixtureDeck, settle, typeOf, until, waitConverged, type Browser, type NetTable } from '../session/harness';
+import type { Transport } from '../../../src/net/transport';
+import { both, EVENING_OPTS, seatedPair, stageIs, type Evening } from '../flow/evening';
+import { browser, fixtureDeck, open, settle, typeOf, until, waitConverged, type Browser, type NetTable } from '../session/harness';
 
 export const isLand = (sid: string): boolean => /\bLand\b/.test(typeOf(sid));
 
@@ -95,6 +96,48 @@ export async function endGame(g: Game, asker: SeatId = 's0'): Promise<void> {
   other.dispatch({ type: 'respond', round: other.engine.confirmedState().confirm!.id, seat: other.seat, response: 'ok' });
   expect(await settle(proposal, 30_000, 'the next game')).toBe(true);
   await stageIs(g, 'build');
+}
+
+export interface ThreeGame {
+  A: Browser;
+  B: Browser;
+  C: Browser;
+  a: NetTable;
+  b: NetTable;
+  c: NetTable;
+  all: NetTable[];
+}
+
+/**
+ * Anna (s0), Ben (s1) and Cara (s2) at a three-player table (ffa3), each Ready with a fixture deck, in the match with
+ * shuffled libraries and opening hands. `transportB` replaces Ben's transport (a link that can go silent).
+ */
+export async function startThree(network: LoopbackNetwork, browsers: Browser[], opts: { transportB?: () => Transport; passTimerMs?: number | null } = {}): Promise<ThreeGame> {
+  const A = await browser('anna', 'peer-a', 'Anna', 2);
+  const B = await browser('ben', 'peer-b', 'Ben', 5);
+  const C = await browser('cara', 'peer-c', 'Cara', 7);
+  browsers.push(A, B, C);
+  await open(network, A, {}, { ...EVENING_OPTS, format: 'ffa3' });
+  await open(network, B, {}, { ...EVENING_OPTS, format: 'ffa3', ...(opts.transportB ? { transport: opts.transportB } : {}) });
+  await open(network, C, {}, { ...EVENING_OPTS, format: 'ffa3' });
+  const [a, b, c] = [A.session!, B.session!, C.session!];
+  const all = [a, b, c];
+  await waitConverged(all, 'three seated');
+  expect([a.seat, b.seat, c.seat]).toEqual(['s0', 's1', 's2']);
+  if (opts.passTimerMs !== undefined) {
+    a.dispatch({ type: 'settings', settings: { passTimerMs: opts.passTimerMs } });
+    await waitConverged(all, 'the pass timer');
+  }
+  a.evening!.setLobby({ draft: null, sets: ['M19'], pickTimer: false });
+  await settle(a.importDeck(await fixtureDeck('gw-m19-60.txt')), 30_000, 'Anna ready');
+  await settle(b.importDeck(await fixtureDeck('ur-m19-60.mtga.txt')), 30_000, 'Ben ready');
+  await settle(c.importDeck(await fixtureDeck('gw-m19-60.txt')), 30_000, 'Cara ready');
+  a.evening!.start();
+  await until(() => all.every((s) => s.engine.confirmedState().stage === 'match'), 60_000, 'the match');
+  await settle(Promise.all([a.shuffle(), b.shuffle(), c.shuffle()]), 60_000, 'three shuffles');
+  for (const s of all) await settle(s.draw(7));
+  await waitConverged(all, 'opening hands');
+  return { A, B, C, a, b, c, all };
 }
 
 /** Wait until `sessions` all hold a verdict for every seat of `game`. */

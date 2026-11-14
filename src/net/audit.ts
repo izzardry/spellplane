@@ -28,6 +28,8 @@ export interface AuditSeatView {
   colour: number;
   /** Null while the audit still waits for this seat's records. */
   verdict: AuditVerdict | null;
+  /** Why the own records are not published yet (the players whose acknowledgement of the game's end they wait for). */
+  note?: string;
 }
 
 /** One finished game in the audit panel, oldest first. */
@@ -215,11 +217,20 @@ function plural(n: number, one: string): string {
   return `${n} ${n === 1 ? one : `${one}s`}`;
 }
 
+/**
+ * What a 'verified' verdict checked: "3 shuffles and 21 draws checked", or "nothing to check" for a seat that never
+ * shuffled and never drew from an order it committed to (the status word alone would overstate it).
+ */
+export function verifiedDetail(v: { shuffles: number; draws: number }): string {
+  if (v.shuffles === 0 && v.draws === 0) return 'nothing to check (no shuffle and no draw from a committed order)';
+  return `${plural(v.shuffles, 'shuffle')} and ${plural(v.draws, 'draw')} checked`;
+}
+
 /** One verdict as one plain sentence: the log line's and the panel's words (PLAN M5 owner decisions). */
 export function verdictText(v: AuditVerdict): string {
   switch (v.status) {
     case 'verified':
-      return `${AUDIT_STATUS_TEXT.verified}: ${plural(v.shuffles, 'shuffle')} and ${plural(v.draws, 'draw')} checked`;
+      return `${AUDIT_STATUS_TEXT.verified}: ${verifiedDetail(v)}`;
     case 'mismatch': {
       const first = v.mismatches[0];
       const more = v.mismatches.length > 1 ? ` (and ${v.mismatches.length - 1} more)` : '';

@@ -101,6 +101,8 @@ describe('the audit ledger', () => {
   it('words every verdict for the log and the panel', () => {
     expect(verdictText({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 7 })).toBe('verified: 1 shuffle and 7 draws checked');
     expect(verdictLine({ seat: 's0', game: 2, status: 'verified', shuffles: 2, draws: 1 }, 'Anna')).toBe('Audit of game 2: Anna — verified: 2 shuffles and 1 draw checked');
+    // A seat that never shuffled and never drew from a committed order: the status word alone would overstate it.
+    expect(verdictText({ seat: 's0', game: 1, status: 'verified', shuffles: 0, draws: 0 })).toBe('verified: nothing to check (no shuffle and no draw from a committed order)');
     expect(
       verdictText({
         seat: 's1',

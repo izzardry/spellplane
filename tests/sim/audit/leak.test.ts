@@ -11,21 +11,53 @@
  * - after game two started: Anna's game-one nonces and orders are public now, and nothing else is: no identity or salt
  *   of a card that stayed hidden in either game, no nonce or re-issue link of game two. The published bundle itself holds
  *   no identity or salt, and names no card of game two.
- * A negative control shows the scan is not vacuous.
+ * A negative control shows the scan is not vacuous. Two fork scenarios: a player cut off who ends the game alone in a
+ * history that loses, and (three players) a player cut off right after agreeing to "Next game?" who plays on alone
+ * in a history that wins; neither history carries anybody's records.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { auditGames, buildAuditBundle, type AuditBundle } from '../../../src/core/audit';
 import type { Action } from '../../../src/core/actions';
 import type { SecretStore } from '../../../src/core/types';
 import type { LoopbackOptions } from '../../../src/net/loopback';
+import type { Channel, Message, MessageHandler, PeerHandler, PeerId, Transport } from '../../../src/net/transport';
 import { forbiddenFor, leakScan } from '../../leak/leak';
 import { scan } from '../../leak/scan';
 import { AUDIT_WAIT_MS } from '../../../src/net/audit';
 import { stageIs } from '../flow/evening';
 import { closeAll, FAKE_TIMERS, net, observedBy, settle, trackDisclosures, until, waitConverged, type Browser, type NetTable } from '../session/harness';
-import { endGame, isLand, playMiddle, startGame, verdictOf, verdictsIn } from './game';
+import { endGame, isLand, playMiddle, startGame, startThree, verdictOf, verdictsIn } from './game';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
+
+/** A transport whose link can go silent both ways without a leave event (a real WebRTC cut). */
+class Cuttable implements Transport {
+  cut = false;
+  constructor(private readonly inner: Transport) {}
+  get selfId(): PeerId {
+    return this.inner.selfId;
+  }
+  join(roomId: string, roomKey: string): Promise<void> {
+    return this.inner.join(roomId, roomKey);
+  }
+  leave(): void {
+    this.inner.leave();
+  }
+  peers(): PeerId[] {
+    return this.inner.peers();
+  }
+  send(channel: Channel, msg: Message, to?: PeerId): void {
+    if (!this.cut) this.inner.send(channel, msg, to);
+  }
+  on(channel: Channel, handler: MessageHandler): void {
+    this.inner.on(channel, (msg, from) => {
+      if (!this.cut) handler(msg, from);
+    });
+  }
+  onPeer(handler: PeerHandler): void {
+    this.inner.onPeer(handler);
+  }
+}
 
 const FAULTS: LoopbackOptions = { delay: { min: 0, max: 400 }, drop: 0.05, faultyChannels: ['act', 'ctl', 'pres'] };
 
@@ -168,5 +200,73 @@ describe('shared leak test: the post-game audit', () => {
       expect(verdictOf(s, 's1')!.status).toBe('verified');
     }
     expect(g.b.audit!.published()).toHaveLength(1);
+  });
+
+  it('three players: a player cut off right after his "ok" plays on alone, his history wins, and nobody\'s records reached anyone meanwhile', async () => {
+    const network = net({ seed: 3 });
+    let cutB: Cuttable | null = null;
+    const t = await startThree(network, browsers, { passTimerMs: null, transportB: () => (cutB = new Cuttable(network.create('peer-b'))) });
+    const { a, b, c } = t;
+    // Anna plays a land and takes it back: her hand gets fresh opaque ids (a reorder with a re-issue, whose published
+    // form would link the land Cara saw to its new hand id).
+    const landIn = (): string | undefined => a.secrets().hand.find((id) => isLand(a.secrets().identities[id]!.card.sid));
+    for (let i = 0; i < 20 && landIn() === undefined; i++) await settle(a.draw(1));
+    const land = landIn()!;
+    a.dispatch({ type: 'move', card: land, to: 'battlefield:s0', pose: { x: 0, y: -200, rot: 0 } });
+    await waitConverged(t.all, 'the land');
+    a.dispatch({ type: 'toZone', card: land, to: 'hand:s0', position: 'any' });
+    await until(() => a.engine.confirmedState().cards[land] === undefined && a.engine.pending().length === 0, 20_000, 'the hand re-issue');
+    await waitConverged(t.all, 'the hand re-issue');
+
+    // "Next game?": Ben answers ok, and his link goes silent (no leave event) the moment Anna sequences it; Cara agrees.
+    a.engine.onSequenced((x: Action) => {
+      if (x.type === 'respond' && x.by === 's1' && x.response === 'ok') cutB!.cut = true;
+    });
+    const ending = a.evening!.propose('nextGame');
+    await until(() => [b, c].every((s) => s.engine.confirmedState().confirm?.label === 'Next game?'), 10_000, 'the question');
+    b.dispatch({ type: 'respond', round: b.engine.confirmedState().confirm!.id, seat: 's1', response: 'ok' });
+    await until(() => cutB!.cut, 10_000, 'Ben’s ok sequenced');
+    c.dispatch({ type: 'respond', round: c.engine.confirmedState().confirm!.id, seat: 's2', response: 'ok' });
+    expect(await settle(ending, 30_000, 'the next game')).toBe(true);
+    await until(() => [a, c].every((s) => s.engine.confirmedState().stage === 'build'), 10_000, 'the end for Anna and Cara');
+    await vi.advanceTimersByTimeAsync(AUDIT_WAIT_MS + 1000);
+    // Ben never reported the end: Anna and Cara hold their records, and their rows say for whom.
+    const published = (s: NetTable): Action[] => s.log().flatMap((e) => (e.kind === 'action' && e.action.type === 'auditPublish' ? [e.action] : []));
+    expect(published(a)).toEqual([]);
+    expect(published(c)).toEqual([]);
+    expect(a.audit!.games()[0]!.seats.find((x) => x.seat === 's0')!.note).toMatch(/^Published once Ben/);
+    expect(c.audit!.games()[0]!.seats.find((x) => x.seat === 's2')!.note).toMatch(/^Published once Ben/);
+    expect(b.engine.confirmedState().stage).toBe('match');
+
+    // Ben, alone, plays on in game one and replaces the round; his history grows longer.
+    await until(() => b.engine.isSequencer(), 30_000, 'Ben sequencing alone');
+    for (let i = 0; i < 30; i++) await settle(b.draw(1));
+    b.dispatch({ type: 'ask', round: 'r-ben-attacks', label: 'Attacks?' });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(b.engine.seq()).toBeGreaterThan(a.engine.seq());
+
+    // The link is back: Ben's longer history wins, game one is still being played everywhere.
+    network.kill('peer-b');
+    cutB!.cut = false;
+    await vi.advanceTimersByTimeAsync(100);
+    network.revive('peer-b');
+    await until(() => t.all.every((s) => s.engine.confirmedState().stage === 'match' && s.engine.seq() >= b.engine.seq()), 60_000, 'Ben’s history everywhere');
+    await vi.advanceTimersByTimeAsync(10_000);
+    for (const s of t.all) expect(s.engine.confirmedState().stage).toBe('match');
+    // Nobody received anybody's audit records: no bundle, no nonce, no re-issue link.
+    const noncesOf = (s: NetTable): string[] => s.secrets().audit.map((r) => (r.kind === 'shuffle' ? r.ownerNonce : r.nonce));
+    for (const [owner, others] of [
+      [a, [t.B, t.C]],
+      [b, [t.A, t.C]],
+      [c, [t.A, t.B]],
+    ] as const) {
+      const nonces = noncesOf(owner);
+      expect(nonces.length).toBeGreaterThan(0);
+      for (const o of others) {
+        const observed = await observedBy(network, o);
+        expect(scan(observed, nonces)).toEqual([]);
+        expect(JSON.stringify(observed)).not.toContain('auditPublish');
+      }
+    }
   });
 });

@@ -15,7 +15,7 @@ import { AUDIT_WAIT_MS } from '../../../src/net/audit';
 import type { LoopbackOptions } from '../../../src/net/loopback';
 import { closeAll, FAKE_TIMERS, net, settle, until, waitConverged, type Browser, type NetTable } from '../session/harness';
 import { cheat, honest } from './cheat';
-import { endGame, playMiddle, startGame, verdictOf, verdictsIn } from './game';
+import { endGame, playMiddle, startGame, startThree, verdictOf, verdictsIn } from './game';
 import { reload } from '../flow/evening';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
@@ -203,18 +203,19 @@ describe('the post-game audit on a simulated network', () => {
     // Anna ends the game alone (Ben's chair answers the round by the pass timer).
     const proposal = g.a.evening!.propose('nextGame');
     expect(await settle(proposal, 60_000, 'the next game')).toBe(true);
-    // Ben was marked away and answered for: Anna's history may still lose to one in which he plays on, so she holds her
-    // records back (they would show her library orders there); her own row waits, his says "could not be checked".
+    // Ben has not acknowledged the end: Anna's history may still lose to one in which he plays on, so she holds her
+    // records back (they would show her library orders there); her own row waits and says for whom, his says "could
+    // not be checked".
     await vi.advanceTimersByTimeAsync(AUDIT_WAIT_MS + 1000);
     expect(actions(g.a).some((x) => x.type === 'auditPublish')).toBe(false);
     expect(g.a.audit!.published()).toEqual([]);
-    expect(g.a.audit!.games()[0]!.seats.find((x) => x.seat === 's0')!.verdict).toBeNull();
+    expect(g.a.audit!.games()[0]!.seats.find((x) => x.seat === 's0')).toMatchObject({ verdict: null, note: "Published once Ben (away) has the game's end" });
     expect(g.a.audit!.verdicts().map((v) => v.seat)).toEqual(['s1']);
     expect(verdictOf(g.a, 's1')).toMatchObject({ status: 'unverifiable', reason: 'recordsMissing', checked: 0 });
     expect(auditLines(g.a)).toEqual(['Audit of game 1: Ben — could not be checked: records missing (No audit records were published (the player left early or lost the save).)']);
 
-    // Ben comes back with his save: his browser publishes the records it kept, and once he acted in Anna's history she
-    // publishes hers; both verdicts become the real ones.
+    // Ben comes back with his save: his browser publishes the records it kept, and once his browser reports the end in
+    // Anna's history she publishes hers; both verdicts become the real ones.
     await reload(network, g.B);
     const b = g.B.session!;
     await until(() => verdictOf(g.a, 's1')?.status === 'verified' && verdictOf(g.a, 's0')?.status === 'verified', 60_000, 'both bundles on Anna’s side');
@@ -222,6 +223,27 @@ describe('the post-game audit on a simulated network', () => {
     expect(auditLines(g.a).filter((l) => l.startsWith('Audit of game 1: Ben'))).toEqual([expect.stringContaining('could not be checked'), expect.stringContaining('verified')]);
     expect(auditLines(g.a).filter((l) => l.startsWith('Audit of game 1: Anna'))).toEqual([expect.stringContaining('verified')]);
     expect(g.a.audit!.published()).toHaveLength(1);
+  });
+
+  it('three players, two of whom let "Next game?" pass on the default pass timer: every browser publishes and every player is verified', async () => {
+    const network = net({ seed: 31, ...FAULTS });
+    const t = await startThree(network, browsers);
+    expect(t.a.engine.confirmedState().settings.passTimerMs).toBeGreaterThan(0);
+    for (const s of t.all) await settle(s.draw(1));
+    await waitConverged(t.all, 'a draw each');
+    // Anna asks; Ben and Cara say nothing, the sequencer answers for them when the timer runs out.
+    expect(await settle(t.a.evening!.propose('nextGame'), 60_000, 'the next game')).toBe(true);
+    await until(() => t.all.every((s) => s.engine.confirmedState().stage === 'build'), 30_000, 'the builder');
+    const timeouts = actions(t.a).filter((x) => x.type === 'respond' && x.response === 'timeout');
+    expect(timeouts.map((x) => (x as { seat: string }).seat).sort()).toEqual(['s1', 's2']);
+    await verdictsIn(t.all, 1, 3);
+    for (const s of t.all) {
+      for (const seat of ['s0', 's1', 's2']) expect(verdictOf(s, seat)).toMatchObject({ status: 'verified', shuffles: 1, draws: 8 });
+      expect(auditLines(s).some((l) => l.includes('could not be checked'))).toBe(false);
+      expect(s.audit!.published()).toHaveLength(1);
+    }
+    expect(t.b.audit!.verdicts()).toEqual(t.a.audit!.verdicts());
+    expect(t.c.audit!.verdicts()).toEqual(t.a.audit!.verdicts());
   });
 
   it('a browser whose audit records were lost publishes what it has: "could not be checked", not a mismatch', async () => {

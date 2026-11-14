@@ -10,7 +10,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { AUDIT_STATUS_TEXT } from '../../core/audit';
-  import type { AuditControls, AuditGameView, AuditSeatView } from '../../net/audit';
+  import { verifiedDetail, type AuditControls, type AuditGameView, type AuditSeatView } from '../../net/audit';
   import { gamesSeen } from './panel';
 
   /** `playing`: a match is on; the panel and its button step aside (the verdicts stay in the log). */
@@ -46,8 +46,10 @@
     return s.verdict === null ? 'waiting for records' : AUDIT_STATUS_TEXT[s.verdict.status];
   }
 
-  function plural(n: number, one: string): string {
-    return `${n} ${n === 1 ? one : `${one}s`}`;
+  /** The sentence under the heading: what the rows show, true for whatever state they are in. */
+  function about(g: AuditGameView): string {
+    if (g.done && g.seats.every((s) => s.verdict?.status !== 'unverifiable')) return 'Every player published their shuffle nonces and orders; this table replayed them against the log.';
+    return 'Published shuffle nonces and orders are replayed against the log; a player without records is shown as such, never as a mismatch.';
   }
 </script>
 
@@ -58,7 +60,7 @@
         <h2>Audit of game {shown.game.game}</h2>
         <button type="button" class="close" aria-label="Close the audit" data-testid="audit-close" onclick={() => (open = false)}>×</button>
       </header>
-      <p class="about">Every browser published its shuffle nonces and orders; this table replayed them against the log.</p>
+      <p class="about" data-testid="audit-about">{about(shown)}</p>
       <ul class="seats">
         {#each shown.seats as s (s.seat)}
           <li data-testid="audit-row" data-seat={s.seat} data-status={s.verdict?.status ?? 'pending'} class={s.verdict?.status ?? 'pending'}>
@@ -67,8 +69,10 @@
               <span class="name">{s.name}</span>
               <span class="status" data-testid="audit-status">{status(s)}</span>
             </div>
-            {#if s.verdict?.status === 'verified'}
-              <p class="detail">{plural(s.verdict.shuffles, 'shuffle')} and {plural(s.verdict.draws, 'draw')} checked</p>
+            {#if s.verdict === null && s.note}
+              <p class="detail" data-testid="audit-note">{s.note}</p>
+            {:else if s.verdict?.status === 'verified'}
+              <p class="detail">{verifiedDetail(s.verdict)}</p>
             {:else if s.verdict?.status === 'unverifiable'}
               <p class="detail">{s.verdict.detail}</p>
             {:else if s.verdict?.status === 'mismatch'}

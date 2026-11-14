@@ -1,19 +1,36 @@
 /**
  * The session's audit (session/audit.ts; PLAN M5-P2, audit round 1) on a pure-core table with a fake session port:
- * a bundle is proposed only into a history the other players follow past the game's end, the transport never carries
+ * a bundle is proposed only once every other player acknowledged the game's end in this history, the transport never carries
  * one the confirmed history does not accept, and another table starts its verdict lines afresh.
  */
 import { describe, expect, it } from 'vitest';
 import type { Action, ActionDraft } from '../../../src/core/actions';
-import type { LogEntry } from '../../../src/core/types';
+import type { LogEntry, TableState } from '../../../src/core/types';
+import { AUDIT_WAIT_MS, type AuditSeatView } from '../../../src/net/audit';
+import type { SequencedAction } from '../../../src/net/messages';
+import type { PeerInfo } from '../../../src/net/types';
 import { gatedTransport, SessionAudit } from '../../../src/session/audit';
 import type { Channel, Message, Transport } from '../../../src/net/transport';
 import { AuditTable } from './helpers';
 
-function fixture(g: AuditTable) {
+/** Give every seat of the table (its start and its state) a peer id, as a networked table has. */
+function withPeers(g: AuditTable): void {
+  const patch = (st: TableState): TableState => ({ ...st, seats: Object.fromEntries(Object.entries(st.seats).map(([id, seat]) => [id, { ...seat, peer: seat.peer ?? `peer-${id}` }])) });
+  const t = g.t as { start: TableState; state: TableState };
+  t.start = patch(t.start);
+  t.state = patch(t.state);
+}
+
+function fixture(g: AuditTable, opts: { now?: number } = {}) {
+  withPeers(g);
   const proposed: ActionDraft[] = [];
   const lines: string[] = [];
   const entries = (): LogEntry[] => g.log.map((a) => ({ kind: 'action', seq: a.seq!, at: 0, action: a }));
+  const peerOf = (seat: string): string => g.state.seats[seat]!.peer!;
+  const peers = (): PeerInfo[] =>
+    Object.values(g.state.seats)
+      .filter((s) => s.id !== 's0' && s.peer)
+      .map((s) => ({ transportId: `t-${s.id}`, peerId: s.peer!, nickname: s.name, seat: s.id, role: 'player', status: 'connected', lastSeq: 0 }));
   const audit = new SessionAudit({
     seat: () => 's0',
     secrets: () => g.t.secrets.s0!,
@@ -25,11 +42,18 @@ function fixture(g: AuditTable) {
       return true;
     },
     log: (_level, text) => void lines.push(text),
-    now: () => 0,
+    now: () => opts.now ?? 0,
     changed: () => {},
+    peers,
+    // Anna (s0) sequences, in step with the room.
+    sequencer: () => peerOf('s0'),
+    isSequencer: () => true,
+    inStep: () => true,
   });
   const rebuild = (fresh = false): void => audit.rebuild([g.t.start], entries(), g.state, fresh);
-  return { audit, proposed, lines, rebuild };
+  /** A heartbeat of `seat`'s browser: at `seq`, following `sequencer` (Anna's peer by default). */
+  const hb = (seat: string, seq: number, sequencer: string | null = peerOf('s0')): void => audit.incoming('ctl', `t-${seat}`, { v: 1, t: 'hb', seq, sequencer });
+  return { audit, proposed, lines, rebuild, hb };
 }
 
 /** A game Anna ends while Ben is silent: the sequencer (Anna) answers his part of the round. */
@@ -46,19 +70,65 @@ function endedAlone(): AuditTable {
 }
 
 describe('the session’s audit', () => {
-  it('holds the own bundle while another player has not acted since the sequencer answered for them, and its row waits', () => {
+  it('holds the own bundle until every other player acknowledged the game’s end in this history; the row says whom it waits for', async () => {
     const g = endedAlone();
+    const toSeq = g.state.seq;
     const f = fixture(g);
     f.rebuild();
     f.audit.drive();
     expect(f.proposed).toEqual([]);
-    expect(f.audit.games()[0]!.seats.find((s) => s.seat === 's0')!.verdict).toBeNull();
+    const own = (): AuditSeatView => f.audit.games()[0]!.seats.find((s) => s.seat === 's0')!;
+    expect(own().verdict).toBeNull();
+    expect(own().note).toBe("Published once Ben has the game's end");
     expect(f.lines.some((l) => l.includes('Anna'))).toBe(false);
-    // Ben acts in this history: it is his too now, and the bundle goes out.
+    // Not yet at the end; following another sequencer (a history of his own); ahead of this browser (another history).
+    f.hb('s1', toSeq - 1);
+    f.hb('s1', toSeq + 5, 'peer-elsewhere');
+    f.hb('s1', toSeq + 5);
+    // An own action of Ben's in this history is no proof either: he may have proposed it before the end reached him.
     g.t.apply('s1', { type: 'chat', text: 'back', channel: 'table' });
     f.rebuild();
+    await Promise.resolve();
+    f.audit.drive();
+    expect(f.proposed).toEqual([]);
+    // His browser reports the end, following this browser: the bundle goes out.
+    f.hb('s1', toSeq);
+    await Promise.resolve();
+    expect(f.proposed).toEqual([{ type: 'auditPublish', bundle: g.bundle('s0') }]);
+  });
+
+  it('a timeout answer is no evidence either way: a player the pass timer answered for acknowledges like any other', async () => {
+    const g = endedAlone();
+    const f = fixture(g);
+    f.rebuild();
+    f.hb('s1', g.state.seq);
+    await Promise.resolve();
     f.audit.drive();
     expect(f.proposed).toEqual([{ type: 'auditPublish', bundle: g.bundle('s0') }]);
+  });
+
+  it('forgets the acknowledgements when the history is rewound or caught up from a snapshot', async () => {
+    const g = endedAlone();
+    const f = fixture(g);
+    f.rebuild();
+    const prior = g.state;
+    f.hb('s1', g.state.seq);
+    // A rewind before Ben's acknowledgement was used: it counts no more.
+    f.audit.sequenced({ ...g.log.at(-1)!, seq: prior.seq } as SequencedAction, prior, { ...prior }, false);
+    await Promise.resolve();
+    await Promise.resolve();
+    f.audit.drive();
+    expect(f.proposed).toEqual([]);
+  });
+
+  it('a reload long after the game does not log the own seat as "records missing" while its bundle is held', () => {
+    const g = endedAlone();
+    const f = fixture(g, { now: AUDIT_WAIT_MS + 1 });
+    f.rebuild();
+    expect(f.lines).toEqual(['Audit of game 1: Ben — could not be checked: records missing (No audit records were published (the player left early or lost the save).)']);
+    f.audit.drive();
+    expect(f.lines).toHaveLength(1);
+    expect(f.audit.verdicts().map((v) => v.seat)).toEqual(['s1']);
   });
 
   it('lets an own bundle through the transport only for a game the confirmed history ended with exactly its span', () => {
@@ -69,6 +139,7 @@ describe('the session’s audit', () => {
     g.endMatch();
     const f = fixture(g);
     f.rebuild();
+    f.hb('s1', g.state.seq);
     const bundle = g.bundle('s0');
     const sent: Message[] = [];
     const raw = { selfId: 'p', join: async () => {}, leave: () => {}, peers: () => [], send: (_c: Channel, m: Message) => void sent.push(m), on: () => {}, onPeer: () => {} } satisfies Transport;

@@ -9,12 +9,18 @@
  *   the game ended: the reducer refuses that too. It played a game when its secret store holds an identity of a card
  *   its seat committed to in that game, so a browser that sits down later in the same chair never speaks for the
  *   player before it. A refused bundle is tried again up to three times.
- * - Only into a history the other players share: the bundle shows the library orders, and a history this browser
- *   sequenced alone (cut off, the others marked away or timed out) may be abandoned for one in which the game is still
- *   being played (DESIGN "Resume and failure handling": later arrivals reconcile to the copy with the highest sequence
- *   number). So a bundle is proposed only once every other player of the game who still holds a chair has acted in
- *   this browser's history after the last time the sequencer marked them away or answered a round for them (`marks`).
- *   Until then the own row stays "waiting for records". And the transport never carries an own `auditPublish`
+ * - Only into a history in which every player has seen the game end: the bundle shows the library orders, and a
+ *   history may be abandoned for one in which the game is still being played (DESIGN "Resume and failure handling":
+ *   later arrivals reconcile to the copy with the highest sequence number; a player cut off just before the end plays
+ *   on alone). So a bundle is proposed only once every other player of the game who still holds a chair acknowledged
+ *   the game's end in this browser's history (`acks`): its heartbeat names the sequencer this browser follows, in step,
+ *   at a seq at or after the end and not ahead of this browser (a peer further ahead may hold another history), or
+ *   its own bundle of the game is sequenced here. Every history that can win a reconciliation then holds the end. A
+ *   player who answered nothing (the pass timer answered for them) acknowledges like any other; one who left before
+ *   the end holds the bundle until they are back or their chair is free, and the own row says so ("waiting for
+ *   records", held for Ben). Acknowledgements are dropped when the history is rewound or caught up from a snapshot,
+ *   and none is taken after a change of sequencer until this browser applied an action from the new one in step.
+ *   And the transport never carries an own `auditPublish`
  *   proposal that the confirmed history does not accept as the end of a game the ledger saw (the engine proposes an
  *   abandoned history's own actions again after adopting another one, net/engine.ts requeueLost): `outgoing` replaces
  *   such a bundle by a withheld stub every reducer refuses, so the proposal is rolled back without its records.
@@ -30,9 +36,10 @@ import { canonicalJson } from '../core/hash';
 import { explain } from '../core/reducer/index';
 import type { LogEntry, SecretStore, SeatId, TableState } from '../core/types';
 import { AUDIT_WAIT_MS, AuditLedger, verdictLine, type AuditControls, type AuditGameView, type LedgerGame } from '../net/audit';
-import { applySequenced } from '../net/sequencer';
+import { applySequenced, seatOfPeer } from '../net/sequencer';
 import type { SequencedAction } from '../net/messages';
-import type { Channel, Message, Transport } from '../net/transport';
+import type { PeerInfo } from '../net/types';
+import type { Channel, Message, PeerId, Transport } from '../net/transport';
 import { registerDebug } from '../util/debug';
 
 /** Refusals of one game's bundle before this browser stops proposing it. */
@@ -55,12 +62,14 @@ export interface AuditPort {
   now(): number;
   /** Something the HUD shows changed. */
   changed(): void;
-}
-
-/** Per seat: the seq of its latest own action and of the latest time the sequencer marked it away or answered for it. */
-interface Marks {
-  own: number;
-  silent: number;
+  /** The engine's peers (transport id, identity, status, role). */
+  peers(): readonly PeerInfo[];
+  /** The peer id of the sequencer this browser follows (itself when it sequences), or null. */
+  sequencer(): string | null;
+  /** Whether this browser is the sequencer. */
+  isSequencer(): boolean;
+  /** Whether the engine is in step with the room (status 'connected': no catch-up, claim or overlap read under way). */
+  inStep(): boolean;
 }
 
 /** The replacement of a bundle the transport must not carry (see the module comment); no reducer accepts it. */
@@ -73,9 +82,13 @@ export class SessionAudit implements AuditControls {
   private readonly refusals = new Map<number, number>();
   /** Cids of own `auditPublish` proposals the transport withheld (their rollback is no refusal). */
   private readonly withheld = new Set<string>();
-  private marks = new Map<SeatId, Marks>();
-  /** Games whose own bundle waits for the other players to share this history (the own row stays pending). */
-  private holding = new Set<number>();
+  /** Per seat: the highest seq of this browser's history its browser acknowledged (see the module comment). */
+  private readonly acks = new Map<SeatId, number>();
+  /** This browser sequences, or applied an action in step since the sequencer last changed (its acks may count). */
+  private followed = false;
+  /** The games whose own bundle is held, with the seats they wait for (a change is shown). */
+  private holdKey = '';
+  private wakeQueued = false;
   /** The states a rebuild may replay from: the room's seq-0 table, the latest saved snapshot. */
   private bases: TableState[] = [];
   private rebuildQueued = false;
@@ -96,9 +109,10 @@ export class SessionAudit implements AuditControls {
       this.logged.clear();
       this.refusals.clear();
       this.withheld.clear();
+      this.acks.clear();
+      this.followed = false;
     }
     this.ledger = this.replay(entries, confirmed) ?? new AuditLedger();
-    this.marks = marksOf(entries);
     this.refresh();
   }
 
@@ -129,11 +143,13 @@ export class SessionAudit implements AuditControls {
         // A rewind to another history or a catch-up: drop what may have been replaced now, and replay the saved log
         // once the engine has settled (the game in progress is kept when the log still runs without a gap).
         this.ledger.rebase(Math.min(a.seq, prior.seq + 1));
+        this.acks.clear();
+        this.followed = false;
         this.queueRebuild();
       }
     } else {
       this.ledger.apply(a, prior, next, this.port.now(), this.port.seat());
-      noteMarks(this.marks, a);
+      this.followed = true;
     }
     this.refresh();
   }
@@ -145,7 +161,6 @@ export class SessionAudit implements AuditControls {
       this.rebuildQueued = false;
       if (this.disposed) return;
       const entries = this.port.entries();
-      this.marks = marksOf(entries);
       const ledger = this.replay(entries, this.port.confirmed());
       if (ledger) this.ledger = ledger;
       this.refresh();
@@ -158,49 +173,95 @@ export class SessionAudit implements AuditControls {
     if (a.type !== 'auditPublish') return false;
     if (this.withheld.delete(a.cid)) return true;
     if (typeof a.bundle?.game?.game !== 'number') return false;
-    this.refusals.set(a.bundle.game.game, (this.refusals.get(a.bundle.game.game) ?? 0) + 1);
+    const n = (this.refusals.get(a.bundle.game.game) ?? 0) + 1;
+    this.refusals.set(a.bundle.game.game, n);
+    // Given up: the own row shows what the others see.
+    if (n >= PUBLISH_ATTEMPTS) this.refresh();
     return false;
   }
 
+  /** The sequencer changed: acknowledgements count again once this browser applied an action from it in step. */
+  sequencerChanged(): void {
+    this.followed = false;
+  }
+
   /**
-   * Whether every other player of `g` who still holds a chair follows this browser's history past the game's end: it
-   * acted here after the latest time the sequencer marked it away or answered a round for it.
+   * A message the engine received (before the engine handles it): a peer's heartbeat acknowledges the seq it reports
+   * when it follows the sequencer this browser follows and this browser is in step with it (see the module comment).
    */
-  private shared(g: LedgerGame, me: SeatId): boolean {
+  incoming(channel: Channel, from: string, msg: Message): void {
+    if (this.disposed || channel !== 'ctl' || msg.t !== 'hb') return;
+    const seq = msg.seq;
+    const named = msg.sequencer;
+    const sequencer = this.port.sequencer();
+    if (typeof seq !== 'number' || !Number.isSafeInteger(seq) || sequencer === null || named !== sequencer) return;
+    if (!this.port.inStep() || !(this.followed || this.port.isSequencer())) return;
+    const info = this.port.peers().find((p) => p.transportId === from);
+    if (!info || info.status === 'handshake' || info.role !== 'player' || info.peerId === '') return;
     const st = this.port.confirmed();
-    for (const p of g.players) {
-      if (p === me) continue;
+    const seat = seatOfPeer(st, info.peerId);
+    if (seat === null) return;
+    // The sequencer's history is the one this browser follows: it holds this browser's seqs up to its own. Another
+    // peer ahead of this browser may hold a history the sequencer has not adopted (yet).
+    let at: number;
+    if (info.peerId === sequencer) at = Math.min(seq, st.seq);
+    else if (seq <= st.seq) at = seq;
+    else return;
+    if (at <= (this.acks.get(seat) ?? -1)) return;
+    this.acks.set(seat, at);
+    if (this.holdKey !== '') this.wake();
+  }
+
+  private wake(): void {
+    if (this.wakeQueued) return;
+    this.wakeQueued = true;
+    queueMicrotask(() => {
+      this.wakeQueued = false;
+      this.drive();
+    });
+  }
+
+  /**
+   * The other players of `g` who still hold a chair and have not acknowledged the game's end in this browser's
+   * history (see the module comment); the own bundle waits for them.
+   */
+  private blockers(g: LedgerGame, me: SeatId): SeatId[] {
+    const st = this.port.confirmed();
+    return g.players.filter((p) => {
+      if (p === me || g.bundles.has(p)) return false;
       const seat = st.seats[p];
-      if (!seat || seat.name.trim() === '') continue;
-      if (seat.away === true) return false;
-      const m = this.marks.get(p);
-      if (m && m.silent >= 0 && m.own <= m.silent) return false;
-    }
-    return true;
+      if (!seat || seat.name.trim() === '') return false;
+      return (this.acks.get(p) ?? -1) < g.game.toSeq;
+    });
+  }
+
+  /** Whether this browser may still publish its own bundle of `g` (it played the game, has not published, not given up). */
+  private canPublish(g: LedgerGame, me: SeatId | null): me is SeatId {
+    if (me === null || g.bundles.has(me)) return false;
+    const sec = this.port.secrets();
+    return sec.seat === me && this.played(g, me, sec) && (this.refusals.get(g.game.game) ?? 0) < PUBLISH_ATTEMPTS;
   }
 
   /** Propose the bundle of every finished game this browser played and has not published (see the module comment). */
   drive(): void {
     if (this.disposed) return;
-    const holding = new Set<number>();
+    const held: string[] = [];
     const me = this.port.seat();
-    const sec = this.port.secrets();
-    if (me !== null && sec.seat === me) {
-      for (const g of this.ledger.finished()) {
-        if (g.bundles.has(me) || !this.played(g, me, sec)) continue;
-        const n = g.game.game;
-        if ((this.refusals.get(n) ?? 0) >= PUBLISH_ATTEMPTS) continue;
-        if (!this.shared(g, me)) {
-          holding.add(n);
-          continue;
-        }
-        if (this.port.pending().some((a) => a.type === 'auditPublish' && a.bundle.game.game === n)) continue;
-        const bundle = buildAuditBundle(sec, g.game, g.log);
-        if (!this.port.propose({ type: 'auditPublish', bundle })) this.refusals.set(n, (this.refusals.get(n) ?? 0) + 1);
+    for (const g of this.ledger.finished()) {
+      if (!this.canPublish(g, me)) continue;
+      const n = g.game.game;
+      const blockers = this.blockers(g, me);
+      if (blockers.length > 0) {
+        held.push(`${n}:${blockers.join(',')}`);
+        continue;
       }
+      if (this.port.pending().some((a) => a.type === 'auditPublish' && a.bundle?.game?.game === n)) continue;
+      const bundle = buildAuditBundle(this.port.secrets(), g.game, g.log);
+      if (!this.port.propose({ type: 'auditPublish', bundle })) this.refusals.set(n, (this.refusals.get(n) ?? 0) + 1);
     }
-    if (!sameSet(holding, this.holding)) {
-      this.holding = holding;
+    const key = held.join('|');
+    if (key !== this.holdKey) {
+      this.holdKey = key;
       this.refresh();
       this.port.changed();
     }
@@ -229,7 +290,7 @@ export class SessionAudit implements AuditControls {
     if (me === null || a.by !== me) return false;
     const span = a.bundle?.game;
     const g = this.ledger.finished().find((x) => x.game.game === span?.game && x.game.fromSeq === span.fromSeq && x.game.toSeq === span.toSeq);
-    return g !== undefined && explain(this.port.confirmed(), a) === null && this.shared(g, me);
+    return g !== undefined && explain(this.port.confirmed(), a) === null && this.blockers(g, me).length === 0;
   }
 
   /** Log every verdict that became final, arm the timer of a game still waiting, tell the listeners. */
@@ -271,9 +332,9 @@ export class SessionAudit implements AuditControls {
     }
   }
 
-  /** The ledger's verdict, except that the own seat stays pending while its bundle is held back. */
+  /** The ledger's verdict, except that the own seat stays pending while this browser may still publish its bundle. */
   private verdictOf(g: LedgerGame, seat: SeatId, me: SeatId | null, now: number): AuditVerdict | null {
-    if (seat === me && !g.bundles.has(seat) && this.holding.has(g.game.game)) return null;
+    if (seat === me && this.canPublish(g, me)) return null;
     return this.ledger.verdict(g, seat, now);
   }
 
@@ -292,8 +353,14 @@ export class SessionAudit implements AuditControls {
     const finished = this.ledger.finished();
     return this.ledger.views(this.port.now()).map((view, i) => {
       const g = finished[i];
-      if (me === null || !g || g.bundles.has(me) || !this.holding.has(view.game.game)) return view;
-      const seats = view.seats.map((s) => (s.seat === me ? { ...s, verdict: null } : s));
+      if (!g || !this.canPublish(g, me)) return view;
+      const st = this.port.confirmed();
+      const held = this.blockers(g, me).map((p) => {
+        const name = g.names[p]?.name || p;
+        return st.seats[p]?.away === true ? `${name} (away)` : name;
+      });
+      const note = held.length > 0 ? `Published once ${list(held)} ${held.length === 1 ? 'has' : 'have'} the game's end` : undefined;
+      const seats = view.seats.map((s) => (s.seat === me ? { ...s, verdict: null, ...(note ? { note } : {}) } : s));
       return { ...view, seats, done: false };
     });
   }
@@ -313,27 +380,8 @@ export class SessionAudit implements AuditControls {
   }
 }
 
-function sameSet(a: ReadonlySet<number>, b: ReadonlySet<number>): boolean {
-  return a.size === b.size && [...a].every((x) => b.has(x));
-}
-
-/** Update `marks` with one sequenced action (see `Marks`). */
-function noteMarks(marks: Map<SeatId, Marks>, a: Action): void {
-  const seq = a.seq ?? 0;
-  const at = (seat: SeatId): Marks => {
-    let m = marks.get(seat);
-    if (!m) marks.set(seat, (m = { own: -1, silent: -1 }));
-    return m;
-  };
-  if (typeof a.by === 'string') at(a.by).own = seq;
-  if (a.type === 'away' && a.away && a.seat !== a.by) at(a.seat).silent = seq;
-  if (a.type === 'respond' && a.response === 'timeout' && a.seat !== a.by) at(a.seat).silent = seq;
-}
-
-function marksOf(entries: readonly LogEntry[]): Map<SeatId, Marks> {
-  const marks = new Map<SeatId, Marks>();
-  for (const e of entries) if (e.kind === 'action') noteMarks(marks, { ...e.action, seq: e.seq } as Action);
-  return marks;
+function list(names: readonly string[]): string {
+  return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
 }
 
 /** The sessions' audits, for the stage view (ui/flow/Stage.svelte) without a contract member on `TableSession`. */
@@ -351,9 +399,10 @@ export function sessionAudit(session: object): AuditControls | undefined {
 
 /**
  * `transport` with every outgoing message passed through `gate` first (the audit's check of own `auditPublish`
- * proposals, `SessionAudit.outgoing`); everything else is the transport's own.
+ * proposals, `SessionAudit.outgoing`) and every incoming one shown to `observe` before its handler (the audit's
+ * acknowledgements, `SessionAudit.incoming`); everything else is the transport's own.
  */
-export function gatedTransport(transport: Transport, gate: (channel: Channel, msg: Message) => Message): Transport {
+export function gatedTransport(transport: Transport, gate: (channel: Channel, msg: Message) => Message, observe?: (channel: Channel, from: PeerId, msg: Message) => void): Transport {
   const t: Transport = {
     get selfId() {
       return transport.selfId;
@@ -362,7 +411,20 @@ export function gatedTransport(transport: Transport, gate: (channel: Channel, ms
     leave: () => transport.leave(),
     peers: () => transport.peers(),
     send: (channel, msg, to) => transport.send(channel, gate(channel, msg), to),
-    on: (channel, handler) => transport.on(channel, handler),
+    on: (channel, handler) =>
+      transport.on(
+        channel,
+        observe
+          ? (msg, from) => {
+              try {
+                observe(channel, from, msg);
+              } catch (e) {
+                console.error('audit observer failed', e);
+              }
+              handler(msg, from);
+            }
+          : handler,
+      ),
     onPeer: (handler) => transport.onPeer(handler),
   };
   if (transport.addStream) t.addStream = (stream, to) => transport.addStream!(stream, to);
@@ -371,7 +433,11 @@ export function gatedTransport(transport: Transport, gate: (channel: Channel, ms
   return t;
 }
 
-/** The debug hook's `audit` part (debug/types.ts AuditDebug) for a session's audit. */
-export function registerAuditDebug(audit: AuditControls): void {
-  registerDebug({ audit: { verdicts: () => audit.verdicts(), published: () => audit.published() } });
+/** The debug hook's `audit` part (debug/types.ts AuditDebug) for a session's audit; the result unregisters it. */
+export function registerAuditDebug(audit: AuditControls): () => void {
+  const part = { verdicts: () => audit.verdicts(), published: () => audit.published() };
+  registerDebug({ audit: part });
+  return () => {
+    if (typeof window !== 'undefined' && window.__spellplane?.audit === part) delete window.__spellplane.audit;
+  };
 }
