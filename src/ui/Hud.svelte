@@ -562,6 +562,8 @@
     if (!at) return [];
     return [{ id: 'clipHere', label: 'Clip here', key: null, run: () => void commands.clipHere(under, at) }];
   }
+  /** Where the long-press that opened the radial menu was: its full menu offers "Clip here" there (M6-P1). */
+  let radialPoint: { x: number; y: number } | null = null;
   /** A paperclip's own menu (right-click or long-press on it): remove it (M6-P1). */
   function openClipMenu(clip: string, at: { x: number; y: number }): void {
     radial = null;
@@ -1064,6 +1066,7 @@
           radialMenu: (id, at) => {
             menu = null;
             radial = id && !spectating && st.cards[id] ? { card: id, at: { x: at.x, y: at.y } } : null;
+            if (radial) radialPoint = { ...radial.at };
           },
         },
       });
@@ -1417,7 +1420,7 @@
       insets={radialInsets}
       applies={(a) => !!radial && radialApplies(radial.card, a)}
       onrun={(card, a) => runOn(card, a)}
-      onmore={(card, x, y) => openMenu(card, x, y, false, radial ? { ...radial.at } : null)}
+      onmore={(card, x, y) => openMenu(card, x, y, false, radialPoint)}
       onclose={() => (radial = null)}
     />
   {/if}
