@@ -282,6 +282,12 @@ export interface PresenceSenderOptions {
 /** While the pointer rests on the table the last cursor is sent again this often, so a still cursor never goes stale. */
 export const PRESENCE_RESEND_MS = 10_000;
 
+/**
+ * A finger that lifts ends its cursor, so no resting-cursor resend repeats the drag end; it is said once more this long
+ * after the lift instead (a lost drag end would otherwise leave a ghost on the others' tables until it goes stale).
+ */
+export const DRAG_END_ECHO_MS = 1_000;
+
 /** Cards a press on `card` would drag: the selection when the card is in it, else the card alone (DESIGN "Card manipulation"). */
 export function dragSet(card: InstanceId, selection: readonly InstanceId[]): InstanceId[] {
   return selection.includes(card) ? [...selection] : [card];
@@ -381,13 +387,19 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
   let last: { at: { x: number; y: number } | null; over: InstanceId | null } = { at: null, over: null };
   let resend: ReturnType<typeof setInterval> | null = null;
   // Presence travels on the unreliable channel; a lost drag end would leave the ghost on the others' tables until it
-  // goes stale. So the end of a drag is said once more with the next cursor (a move or the resting-cursor resend).
+  // goes stale. So the end of a drag is said once more: with the next cursor (a move or the resting-cursor resend), or,
+  // after a finger lifts (no cursor follows), by its own timer.
   let echoEnd = false;
+  let echoTimer: ReturnType<typeof setTimeout> | null = null;
   const endDrag = (): void => {
     channel.drag([]);
     echoEnd = true;
   };
   const echo = (): void => {
+    if (echoTimer) {
+      clearTimeout(echoTimer);
+      echoTimer = null;
+    }
     if (!echoEnd) return;
     echoEnd = false;
     channel.drag([]);
@@ -463,7 +475,7 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
       if (press?.dragging && press.grabs?.length) endDrag();
       press = null;
       // A finger that lifts is gone from the table: no cursor stays where it last touched (M5 gate; a mouse rests).
-      // The drag end's echo still waits for the next cursor (as for a resting mouse).
+      // Without a cursor there is no resting-cursor resend to carry the drag end's echo, so it gets its own timer.
       if (pointer?.touch && fingers.size === 0 && last.at) {
         last = { at: null, over: null };
         channel.cursor(null, null);
@@ -472,6 +484,7 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
           resend = null;
         }
       }
+      if (pointer?.touch && fingers.size === 0 && echoEnd && !echoTimer) echoTimer = setTimeout(echo, DRAG_END_ECHO_MS);
     },
     leave() {
       if (!press) cursor(null, null);
@@ -490,6 +503,7 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
       if (press?.dragging && press.grabs?.length) endDrag();
       press = null;
       fingers.clear();
+      // The cursor's echo also says a pending drag end again and clears its timer: none outlives the tracker.
       cursor(null, null);
     },
   };
