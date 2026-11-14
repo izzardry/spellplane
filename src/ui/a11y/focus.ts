@@ -12,10 +12,13 @@ import { layoutOf, rotateCw, seatAngle } from '../geometry';
 
 /**
  * What the focus order may know beyond shared state (M5-P4): the viewer's own hand in the order the hand fan shows it
- * (SecretStore.hand; shared state keeps hidden zones sorted). Absent means the zone's own order.
+ * (SecretStore.hand; shared state keeps hidden zones sorted; absent means the zone's own order), and the cards of an
+ * own hidden zone the viewer is looking at in the pile viewer (Search, Look at top N), in the viewer's order.
  */
 export interface FocusOptions {
   handOrder?: readonly InstanceId[];
+  /** The open pile viewer's looked-at cards of `zone` (the viewer's own library), in the order the viewer shows them. */
+  looked?: { zone: ZoneId; ids: readonly InstanceId[] } | null;
 }
 
 /** The seat zone kinds that take focus, in order (M5-C: hand, battlefield, library, graveyard, exile, command). */
@@ -83,7 +86,8 @@ function readingOrder(state: TableState, game: GameDefinition, viewer: SeatId | 
 /**
  * The cards of `zone` that take focus, in their visible order (pure; M5-C "only zones and cards this viewer may see are
  * focusable"): a public zone's cards, the viewer's own hand in its fan order, nothing of a hidden zone (a library shows
- * only its back). Battlefields read as the viewer sees them, rows far to near and left to right; piles and the stack
+ * only its back) except the cards of an own hidden zone the viewer is looking at in the pile viewer (`opts.looked`, in
+ * the viewer's order). Battlefields read as the viewer sees them, rows far to near and left to right; piles and the stack
  * start with the top card. Added by M5-P4.
  */
 export function focusCards(state: TableState, game: GameDefinition, viewer: SeatId | null, zone: ZoneId, opts: FocusOptions = {}): InstanceId[] {
@@ -91,6 +95,13 @@ export function focusCards(state: TableState, game: GameDefinition, viewer: Seat
   if (!z) return [];
   const { kind } = parseZoneId(zone);
   if (z.visibility !== 'public') {
+    const looked = opts.looked;
+    if (looked && looked.zone === zone && kind !== 'hand') {
+      // Only the viewer's own zone: the looked cards are what this browser was shown (session.lookAt).
+      if (viewer === null || z.owner !== viewer) return [];
+      const members = new Set(z.ids);
+      return [...new Set(looked.ids)].filter((id) => members.has(id));
+    }
     if (kind !== 'hand' || viewer === null || z.owner !== viewer) return [];
     const members = new Set(z.ids);
     const ordered = (opts.handOrder ?? []).filter((id) => members.has(id));

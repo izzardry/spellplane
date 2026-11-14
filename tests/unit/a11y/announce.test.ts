@@ -121,6 +121,18 @@ describe('LogAnnouncements (which log lines are new)', () => {
     expect(la.next([life('20 → 17')])).toEqual(['Ben: 20 → 17']);
   });
 
+  it('an older line that changed in place (a card name resolved late, a seat renamed) is not read out again', () => {
+    const la = new LogAnnouncements('s0');
+    la.next([]);
+    const named = (key: string, name: string) => line(key, { segs: [{ text: 'taps ' }, { card: 'c1', name }] });
+    expect(la.next([named('a', 'Card'), named('b', 'Card'), named('c', 'Card')])).toEqual(['Ben taps Card', 'Ben taps Card', 'Ben taps Card']);
+    // The card data loaded: every line now names the card. Only the newest is spoken again, never a burst of old lines.
+    expect(la.next([named('a', 'Forest'), named('b', 'Forest'), named('c', 'Forest')])).toEqual(['Ben taps Forest']);
+    // A rename of the seat changes old lines only, while a new line arrives: just the new line.
+    expect(la.next([named('a', 'Forest'), named('b', 'Forest'), named('c', 'Forest'), line('d', { actor: 'Benjamin', segs: [{ text: 'draws a card' }] })])).toEqual(['Benjamin draws a card']);
+    expect(la.next([line('a', { actor: 'Benjamin' }), line('b', { actor: 'Benjamin' }), line('c', { actor: 'Benjamin' }), line('d', { actor: 'Benjamin', segs: [{ text: 'draws a card' }] })])).toEqual([]);
+  });
+
   it('does not echo the viewer\'s own chat, but reads others\' chat and system lines', () => {
     const la = new LogAnnouncements('s0');
     la.next([]);

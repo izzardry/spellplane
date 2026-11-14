@@ -80,6 +80,25 @@ describe('the cards of a zone', () => {
     expect(focusCards(st, game, null, 'hand:s0')).toEqual([]);
   });
 
+  it('the own library cards the pile viewer shows (Search, Look at top N) take focus in the viewer\'s order; nobody else\'s', () => {
+    const st = busy();
+    const looked = { zone: 'library:s0', ids: ['lib2', 'lib1', 'gone'] };
+    expect(focusCards(st, game, 's0', 'library:s0', { looked })).toEqual(['lib2', 'lib1']);
+    // Only the zone the viewer shows, only the own library, never for a spectator.
+    expect(focusCards(st, game, 's0', 'library:s1', { looked })).toEqual([]);
+    expect(focusCards(st, game, 's0', 'library:s1', { looked: { zone: 'library:s1', ids: ['ol1'] } })).toEqual([]);
+    expect(focusCards(st, game, null, 'library:s0', { looked })).toEqual([]);
+    // Moving onto the library lands on the first looked card; a card that leaves passes focus on; closing the viewer
+    // leaves the zone without a card.
+    expect(moveFocus(st, game, 's0', { zone: 'battlefield:s0', card: 'bfa' }, 'nextZone', { looked })).toEqual({ zone: 'library:s0', card: 'lib2' });
+    expect(moveFocus(st, game, 's0', { zone: 'library:s0', card: 'lib2' }, 'nextCard', { looked })).toEqual({ zone: 'library:s0', card: 'lib1' });
+    const after = without(st, 'lib2');
+    expect(keepFocus(after, game, 's0', { zone: 'library:s0', card: 'lib2' }, ['lib2', 'lib1'], { looked })).toEqual({ zone: 'library:s0', card: 'lib1' });
+    expect(keepFocus(st, game, 's0', { zone: 'library:s0', card: 'lib2' }, ['lib2', 'lib1'], {})).toEqual({ zone: 'library:s0', card: null });
+    // Opening the viewer on a focused library moves focus onto its first looked card.
+    expect(keepFocus(st, game, 's0', { zone: 'library:s0', card: null }, [], { looked })).toEqual({ zone: 'library:s0', card: 'lib2' });
+  });
+
   it('a battlefield reads as the viewer sees it: rows far to near, each left to right', () => {
     const st = busy();
     // Seat 0 sees its own territory upright: the row at y≈-255 (bfa, bfd, bfb by x), then the near row (bfc).

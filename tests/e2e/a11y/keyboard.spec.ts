@@ -15,6 +15,7 @@ import { drafts, hoverCard, hoverNothing, openHud, ui } from '../ui/harness';
 const focus = (page: Page) => hook<CardFocus | null>(page, 'a11y.focus');
 const announcements = (page: Page) => hook<string[]>(page, 'a11y.announcements');
 const view = (page: Page) => ui<ViewState | null>(page, 'view');
+const select = (page: Page, ids: string[]) => page.evaluate((v) => (window as unknown as { __uiHarness: { select(ids: string[]): void } }).__uiHarness.select(v), ids);
 const active = (page: Page) => page.evaluate(() => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName ?? null);
 
 test.describe('keyboard card focus (PLAN M5-P4)', () => {
@@ -55,8 +56,11 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     await expect.poll(() => focus(page)).toEqual({ zone: 'battlefield:s0', card: 'bf2' });
     await page.keyboard.press('KeyG');
     await expect.poll(async () => (await ui<{ cards: Record<string, { zone: string }> }>(page, 'state')).cards.bf2?.zone).toBe('graveyard:s0');
-    // The card left: focus passes to the card that took its place.
+    // The card left: focus passes to the card that took its place, and the new focus is spoken.
     await expect.poll(() => focus(page)).toEqual({ zone: 'battlefield:s0', card: 'dfc' });
+    const passed = (await page.getByTestId('a11y-mirror').getAttribute('data-focus-text'))!;
+    expect(passed).toMatch(/\. Your battlefield, \d of \d$/);
+    await expect.poll(async () => (await announcements(page)).includes(passed)).toBe(true);
 
     // Escape leaves the focus; the scene stops drawing the ring.
     await page.keyboard.press('Escape');
@@ -92,6 +96,9 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('PageDown');
     await expect.poll(() => focus(page)).toEqual({ zone: 'battlefield:s0', card: 'land1' });
+    // One target on screen: the scene draws no hover outline on the card under the resting pointer, only the ring.
+    await expect.poll(async () => (await view(page))?.focused).toBe('land1');
+    expect((await view(page))?.hovered ?? null).toBeNull();
     await page.keyboard.press('KeyT');
     await expect.poll(() => drafts(page)).toEqual([{ type: 'tap', card: 'land1', tapped: true }]);
     await hoverCard(page, 'dfc');
@@ -100,21 +107,110 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     await expect.poll(async () => (await drafts(page)).at(-1)).toEqual({ type: 'tap', card: 'dfc', tapped: true });
   });
 
-  test('a focus on a zone without a focusable card gives the keys no card, even under a resting pointer', async ({ page }) => {
+  test('a focus on a zone without a focusable card gives the keys no card, even under a resting pointer or with a selection', async ({ page }) => {
     await openHud(page);
+    // bf2 is selected; the pointer rests on bf1.
+    await select(page, ['bf2']);
     await hoverCard(page, 'bf1');
     // hand:s0 → battlefield:s0 → library:s0, the pointer resting on bf1 throughout.
     for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
     await expect.poll(() => focus(page)).toEqual({ zone: 'library:s0', card: null });
     await expect.poll(async () => (await announcements(page)).at(-1)).toBe('Your library, 3 cards, face down');
-    // T, G and E would act on bf1 if the resting pointer counted: nothing is tapped or moved.
+    // T, G and E would act on bf1 if the resting pointer counted, or on bf2 if the selection did: nothing is tapped or moved.
     for (const key of ['KeyT', 'KeyG', 'KeyE']) await page.keyboard.press(key);
     await page.waitForTimeout(300);
-    expect((await drafts(page)).filter((d) => d.card === 'bf1')).toEqual([]);
-    expect((await ui<{ cards: Record<string, { zone: string; tapped: boolean }> }>(page, 'state')).cards.bf1).toMatchObject({ zone: 'battlefield:s0', tapped: false });
+    expect((await drafts(page)).filter((d) => d.card === 'bf1' || d.card === 'bf2')).toEqual([]);
+    const cards = (await ui<{ cards: Record<string, { zone: string; tapped: boolean }> }>(page, 'state')).cards;
+    expect(cards.bf1).toMatchObject({ zone: 'battlefield:s0', tapped: false });
+    expect(cards.bf2).toMatchObject({ zone: 'battlefield:s0', tapped: true });
   });
 
-  test('arrows in a text field stay in the field; Tab onto the table puts focus on the first card', async ({ page }) => {
+  test('with a focused card the keys act on it alone, not on a selection that lacks it; on the selection when it holds it', async ({ page }) => {
+    await openHud(page);
+    await hoverNothing(page);
+    await select(page, ['bf2', 'dfc']);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect.poll(() => focus(page)).toEqual({ zone: 'battlefield:s0', card: 'bf1' });
+    await page.keyboard.press('KeyT');
+    await expect.poll(() => drafts(page)).toEqual([{ type: 'tap', card: 'bf1', tapped: true }]);
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => focus(page)).toEqual({ zone: 'battlefield:s0', card: 'bf2' });
+    // T on bf2 acts on the selection it belongs to: bf2 is already tapped, so only dfc taps.
+    await page.keyboard.press('KeyT');
+    await expect.poll(() => drafts(page)).toEqual([
+      { type: 'tap', card: 'bf1', tapped: true },
+      { type: 'tap', card: 'dfc', tapped: true },
+    ]);
+  });
+
+  test('cards of the own library shown by Search take focus: H puts the focused one into the hand, Shift+L the next to the bottom', async ({ page }) => {
+    await openHud(page);
+    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
+    const viewer = page.getByTestId('pile-viewer');
+    await viewer.getByTestId('search-library').click();
+    await expect(viewer.getByTestId('pile-card')).toHaveCount(3);
+    await hoverNothing(page);
+    // hand → battlefield → library, which now offers the cards the viewer shows.
+    for (let i = 0; i < 3; i++) await page.keyboard.press('ArrowDown');
+    await expect.poll(() => focus(page)).toEqual({ zone: 'library:s0', card: 'lib1' });
+    await expect(page.getByTestId('a11y-mirror')).toHaveAttribute('data-focus-text', 'Verdant Field. Your library, 1 of 3');
+    await expect(viewer.locator('[data-card="lib1"]')).toHaveAttribute('data-focused', 'true');
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => focus(page)).toEqual({ zone: 'library:s0', card: 'lib2' });
+    await page.keyboard.press('KeyH');
+    await expect.poll(() => drafts(page)).toEqual([{ type: 'toZone', card: 'lib2', to: 'hand:s0', position: 'any' }]);
+    await expect(page.locator('[data-testid="hand-card"][data-card="lib2"]')).toHaveCount(1);
+    // Focus passes to the next shown card, and says so.
+    await expect.poll(() => focus(page)).toEqual({ zone: 'library:s0', card: 'lib3' });
+    await expect.poll(async () => (await announcements(page)).includes('Spark Jolt. Your library, 2 of 2')).toBe(true);
+    await page.keyboard.press('Shift+KeyL');
+    await expect.poll(async () => (await drafts(page)).at(-1)).toEqual({ type: 'toZone', card: 'lib3', to: 'library:s0', position: 'bottom' });
+    // Closing the viewer leaves the library a zone without a card.
+    await viewer.getByRole('button', { name: /close/i }).click();
+    await expect.poll(() => focus(page)).toEqual({ zone: 'library:s0', card: null });
+  });
+
+  test('the context-menu key and Shift+F10 open the focused card\'s menu; arrows and Enter add a loyalty counter; focus comes back', async ({ page }) => {
+    await openHud(page);
+    await hoverNothing(page);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect.poll(() => focus(page)).toEqual({ zone: 'battlefield:s0', card: 'bf1' });
+    await page.keyboard.press('ContextMenu');
+    const menu = page.getByTestId('context-menu');
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute('aria-label', 'Test Bear');
+    // The first entry has focus; Down moves, wrapping; Escape closes and hands focus back to the table.
+    await expect(menu.getByRole('menuitem').first()).toBeFocused();
+    await page.keyboard.press('ArrowUp');
+    await expect(menu.getByRole('menuitem').last()).toBeFocused();
+    await page.keyboard.press('Home');
+    await expect(menu.getByRole('menuitem').first()).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(menu).toHaveCount(0);
+    expect(await active(page)).toBe('a11y-mirror');
+    expect(await focus(page)).toEqual({ zone: 'battlefield:s0', card: 'bf1' });
+
+    await page.keyboard.press('Shift+F10');
+    await expect(menu).toBeVisible();
+    for (let i = 0; i < 40; i++) {
+      if ((await page.evaluate(() => document.activeElement?.getAttribute('data-action'))) === 'counter:loyalty') break;
+      await page.keyboard.press('ArrowDown');
+    }
+    await expect(menu.locator('[data-action="counter:loyalty"]')).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect.poll(() => drafts(page)).toEqual([{ type: 'counter', card: 'bf1', kind: 'loyalty', delta: 1 }]);
+    await expect(menu).toHaveCount(0);
+    expect(await active(page)).toBe('a11y-mirror');
+    // The table keys still act on the focused card afterwards.
+    await page.keyboard.press('KeyT');
+    await expect.poll(async () => (await drafts(page)).at(-1)).toEqual({ type: 'tap', card: 'bf1', tapped: true });
+  });
+
+  // Tab is the "next phase" key, so the mirror is reached with the arrow keys or by a screen reader moving its focus there
+  // (programmatic focus, as here), not by pressing Tab.
+  test('arrows in a text field stay in the field; focusing the table mirror puts focus on the first card', async ({ page }) => {
     await openHud(page);
     await hoverNothing(page);
     await page.getByTestId('chat-input').focus();

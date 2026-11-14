@@ -3,8 +3,9 @@
  * a live region, so screen readers announce actions"; "Turn flow and confirmation", Action log). Pure: the HUD hands
  * every new timeline (ui/describe.ts LogLine[]) to `next`, which returns the texts to announce. What the page showed
  * when it opened (a resume, a reload) is not read out again, nor is a timeline that shrank or was replaced, and the
- * viewer's own chat lines are not echoed back. A line that changed in place (life changes merged into one line) is
- * announced again with its new text. Filters and chat tabs of the log panel do not change what is announced.
+ * viewer's own chat lines are not echoed back. The newest line, when it changed in place (life changes merged into one
+ * line), is announced again with its new text; an older line that changed (a card name that resolved late, a seat
+ * renamed) is not, so such changes never come back as a burst of old lines. Filters and chat tabs of the log panel do not change what is announced.
  */
 import type { SeatId } from '../../core/types';
 import type { LogLine } from '../describe';
@@ -34,10 +35,12 @@ export class LogAnnouncements {
     this.count = lines.length;
     if (prev === null || shrank) return [];
     const out: string[] = [];
+    const last = lines[lines.length - 1];
     for (const l of lines) {
       const t = texts.get(l.key)!;
       const before = prev.get(l.key);
       if (before === t) continue;
+      if (before !== undefined && l !== last) continue;
       // The own chat line is what this viewer just typed; a pending one later reappears from the log under a new key.
       if (l.kind === 'chat' && l.seat !== null && l.seat === this.me) continue;
       out.push(t);

@@ -121,7 +121,7 @@
   let inspectId = $state<InstanceId | null>(null);
   let inspectRef = $state<CardRef | null>(null);
   let viewer = $state<{ zone: ZoneId; looked: LookedCard[] | null; looking: 'top' | 'search' | null; shuffleOnClose: boolean } | null>(null);
-  let menu = $state<{ title: string; entries: MenuEntry[]; x: number; y: number } | null>(null);
+  let menu = $state<{ title: string; entries: MenuEntry[]; x: number; y: number; keyboard: boolean } | null>(null);
   let note = $state<{ target: { card: InstanceId } | { item: StackItemId }; x: number; y: number; text: string } | null>(null);
   /** The inline count prompt for draw N (Shift+D) and mill N (table menu). */
   let drawN = $state<{ text: string; what: 'draw' | 'mill' } | null>(null);
@@ -308,8 +308,14 @@
     session: untrack(() => session),
     game: untrack(() => game),
     scene: () => scene,
-    // The keyboard-focused card counts as hovered (DESIGN "Input and interaction design", Accessibility; M5-P4).
-    view: () => ({ hovered: forcedHover ?? keyTarget, selection }),
+    // The keyboard-focused card counts as hovered (DESIGN "Input and interaction design", Accessibility; M5-P4). With a
+    // keyboard focus the keys act on that card only: the selection counts only when it holds the card, and a focus on a
+    // zone without a focusable card gives no card (no selection, no stack marker under a resting pointer).
+    view: () => {
+      if (!focus) return { hovered: forcedHover ?? hovered, selection };
+      const card = forcedHover ?? focus.card;
+      return { hovered: card, selection: card !== null && selection.includes(card) ? selection : [], keyFocus: true };
+    },
     ui: hooks,
     newId: makeId,
     now: () => Date.now(),
@@ -368,6 +374,11 @@
       e.preventDefault();
       untapOffer = false;
       commands.untapAndDraw();
+      return;
+    }
+    if (isMenuKey(e) && !menu && !ownsArrows(e.target)) {
+      e.preventDefault();
+      openKeyMenu();
       return;
     }
     const move = focusMoveOf(e);
@@ -457,9 +468,41 @@
   });
 
   // --- Menus ----------------------------------------------------------------------------------------------------
-  function openMenu(card: InstanceId | null, x: number, y: number) {
+  function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false) {
     const c = card ? st.cards[card] : undefined;
-    menu = c ? { title: nameOf(c.id), entries: cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), x, y } : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y };
+    menu = c
+      ? { title: focusName(c.id), entries: cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), x, y, keyboard }
+      : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y, keyboard };
+  }
+  /** The context-menu key or Shift+F10 (the platform keys for a context menu; M5-P4). */
+  function isMenuKey(e: KeyboardEvent): boolean {
+    if (e.ctrlKey || e.altKey || e.metaKey) return false;
+    return (e.key === 'ContextMenu' && !e.shiftKey) || (e.key === 'F10' && e.shiftKey);
+  }
+  /**
+   * The context menu from the keyboard (DESIGN "Input and interaction design": every action has a context-menu route,
+   * and every card action is reachable from the keyboard; M5-P4): for the keyboard-focused card (the table menu on a
+   * zone without one), else for the hovered card, beside the card; the menu takes focus and hands it back on close.
+   */
+  function openKeyMenu(): void {
+    const card = focus ? focus.card : hovered;
+    // The menu hands focus back to the element that had it: the mirror, so a screen reader follows the card again.
+    if (focus && mirrorEl && (document.activeElement === document.body || document.activeElement === null)) mirrorEl.focus({ preventScroll: true });
+    const at = menuAnchor(card);
+    openMenu(card, at.x, at.y, true);
+  }
+  /** Where a keyboard-opened menu stands: at the top right of the card (its focus ring, or its hand or pile element), else mid-screen or at the pointer. */
+  function menuAnchor(card: InstanceId | null): { x: number; y: number } {
+    if (card !== null && typeof document !== 'undefined') {
+      const sel = CSS.escape(card);
+      const els = [document.querySelector(`[data-testid="focus-ring"][data-focus-card="${sel}"] polygon`), ...document.querySelectorAll(`[data-card="${sel}"]`)];
+      for (const el of els) {
+        const r = el?.getBoundingClientRect();
+        if (r && r.width > 0 && r.height > 0) return { x: Math.round(r.right), y: Math.round(r.top) };
+      }
+    }
+    if (!focus && pointerSeen) return { x: pointer.x, y: pointer.y };
+    return { x: Math.round(vw / 2), y: Math.round(vh / 2) };
   }
 
   /** Keyless library actions for the table menu (DESIGN "Card manipulation", Library actions: reveal top, mill N). */
@@ -638,7 +681,17 @@
   // --- Keyboard card focus and the live region (DESIGN "Input and interaction design", Accessibility; PLAN M5-P4) ---
   /** The focus order's viewer: the own seat, or none for a spectator (who starts at the stack). */
   const a11yViewer = $derived(st.seats[me] ? me : null);
-  const focusOpts = $derived({ handOrder: hand });
+  /** The focus order's extras: the hand's fan order, and the own library cards the pile viewer shows (Search, Look at top N). */
+  const focusOpts = $derived({ handOrder: hand, looked: viewer?.looked ? { zone: viewer.zone, ids: viewer.looked.map((l) => l.id) } : null });
+  /**
+   * A card's name for the focus and its menu: as `nameOf`, and a card of the own library the pile viewer shows by the
+   * identity this browser was shown (it stays in this browser: the mirror and the live region are local).
+   */
+  function focusName(id: InstanceId): string {
+    if (refOf(id)) return nameOf(id);
+    const ref = viewer?.looked?.find((l) => l.id === id)?.ref;
+    return ref ? (dataOf(ref)?.name ?? 'Card') : nameOf(id);
+  }
   /** The focused zone's cards in focus order as last seen, so focus on a card that leaves passes to its neighbour. */
   let focusOrder: InstanceId[] = [];
   /** Where the pointer was when the keyboard last moved focus: a pointer that moves away onto a card takes over. */
@@ -649,7 +702,7 @@
     focus = next;
     focusOrder = next ? focusCards(st, game, a11yViewer, next.zone, focusOpts) : [];
     focusPointer = { x: pointer.x, y: pointer.y };
-    if (speak && next) announcer.focus(describeFocus(st, game, a11yViewer, next, nameOf, focusOpts));
+    if (speak && next) announcer.focus(describeFocus(st, game, a11yViewer, next, focusName, focusOpts));
   }
   function moveKeyFocus(move: FocusMove): void {
     setFocus(moveFocus(st, game, a11yViewer, focus, move, focusOpts), true);
@@ -671,16 +724,19 @@
     untrack(() => {
       if (!focus) return;
       const next = keepFocus(s, game, a11yViewer, focus, focusOrder, opts);
-      if (next?.zone !== focus.zone || next?.card !== focus.card) focus = next;
+      const moved = next?.zone !== focus.zone || next?.card !== focus.card;
+      if (moved) focus = next;
       focusOrder = next ? focusCards(s, game, a11yViewer, next.zone, opts) : [];
+      // The next key acts on another card: say which (after the log line of the move, which is polite and batched).
+      if (moved && next) announcer.focus(describeFocus(s, game, a11yViewer, next, focusName, opts));
     });
   });
   /** The last input wins: a pointer moved onto a card hands the keys back to hover (window pointermove, after the scene's hover). */
   function pointerTakesOver(): void {
     if (focus && hovered !== null && hovered !== focus.card && Math.hypot(pointer.x - focusPointer.x, pointer.y - focusPointer.y) > 4) focus = null;
   }
-  const focusText = $derived(focus ? describeFocus(st, game, a11yViewer, focus, nameOf, focusOpts) : null);
-  const mirrorCards = $derived(focus ? focusCards(st, game, a11yViewer, focus.zone, focusOpts).map((id) => ({ id, text: describeCard(st, id, nameOf), current: id === focus?.card })) : []);
+  const focusText = $derived(focus ? describeFocus(st, game, a11yViewer, focus, focusName, focusOpts) : null);
+  const mirrorCards = $derived(focus ? focusCards(st, game, a11yViewer, focus.zone, focusOpts).map((id) => ({ id, text: describeCard(st, id, focusName), current: id === focus?.card })) : []);
   // New log lines are announced once each, batched (ui/a11y/log.ts, announcer.ts).
   const logAnnouncements = new LogAnnouncements(untrack(() => me));
   $effect(() => {
@@ -707,7 +763,8 @@
   // --- Scene ------------------------------------------------------------------------------------------------------
   $effect(() => {
     if (!sceneReady || !scene) return;
-    const view: ViewState = { selection: [...selection], hovered, focused: focus?.card ?? null, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile, captions: sceneCaptions(captionList, st) };
+    // With a keyboard focus the keys act on the focused card, so the scene shows no hover outline on another (M5-P4).
+    const view: ViewState = { selection: [...selection], hovered: focus ? null : hovered, focused: focus?.card ?? null, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile, captions: sceneCaptions(captionList, st) };
     scene.update(st, view);
   });
 
@@ -1067,6 +1124,11 @@
         onfocusin={() => {
           if (!focus) setFocus(moveFocus(st, game, a11yViewer, null, 'first', focusOpts), true);
         }}
+        oncontextmenu={(e) => {
+          // The context-menu key's own event (some platforms send it after the keydown the HUD already handled).
+          e.preventDefault();
+          if (!menu) openKeyMenu();
+        }}
       />
       {#if prompt}
         <ConfirmPrompt
@@ -1137,7 +1199,7 @@
   {/if}
 
   {#if menu}
-    <ContextMenu title={menu.title} entries={menu.entries} x={menu.x} y={menu.y} onclose={() => (menu = null)} />
+    <ContextMenu title={menu.title} entries={menu.entries} x={menu.x} y={menu.y} autofocus={menu.keyboard} onclose={() => (menu = null)} />
   {/if}
 
   {#if note}

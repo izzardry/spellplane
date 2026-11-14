@@ -370,6 +370,18 @@ describe('keys on a hovered stack marker (DESIGN "The effect stack": Note, Copy;
     expect(r.ui).toEqual([{ hook: 'openNote', args: [{ card: 'dfc' }] }]);
   });
 
+  it('with a keyboard focus (M5-P4) a marker under the resting pointer never counts', () => {
+    const r = onMarker();
+    r.view.keyFocus = true;
+    r.view.selection = [];
+    for (const key of ['n', 'x', 'g', 't']) r.press({ key });
+    r.press({ key: 'i' });
+    r.clock.t += 100;
+    r.press({ key: 'i' });
+    expect(r.session.dispatched).toEqual([]);
+    expect(r.ui).toEqual([]);
+  });
+
   it('a spell in the lane is reached as its card, as before', () => {
     const r = rig({ stack: markers });
     registerStackHover(r.scene, () => 'si9');

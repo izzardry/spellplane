@@ -32,7 +32,7 @@ export interface Rig {
   commands: Commands;
   engine: KeyEngine;
   ui: UiCall[];
-  view: { hovered: InstanceId | null; selection: InstanceId[] };
+  view: { hovered: InstanceId | null; selection: InstanceId[]; keyFocus?: boolean };
   clock: { t: number };
   /** Press (keydown + keyup) a chord as a browser would send it. */
   press(chord: KeyChord, opts?: { inText?: boolean; repeat?: boolean }): boolean;
