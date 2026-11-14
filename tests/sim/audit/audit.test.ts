@@ -12,6 +12,7 @@ import type { Action } from '../../../src/core/actions';
 import { orderHash, shuffleOutcome, shuffleSeed } from '../../../src/core/rng';
 import type { ReorderRecord, SecretStore, ShuffleRecord } from '../../../src/core/types';
 import { AUDIT_WAIT_MS } from '../../../src/net/audit';
+import { tamperNextBundle, type SessionAudit } from '../../../src/session/audit';
 import type { LoopbackOptions } from '../../../src/net/loopback';
 import { closeAll, FAKE_TIMERS, net, settle, until, waitConverged, type Browser, type NetTable } from '../session/harness';
 import { cheat, honest } from './cheat';
@@ -126,7 +127,7 @@ describe('the post-game audit on a simulated network', () => {
     const network = net({ seed: 21 });
     const g = await startGame(network, browsers);
     // As the gate does through window.__spellplane.audit.tamper on Anna's page.
-    (g.a as unknown as { auditImpl: { tamper(): void } }).auditImpl.tamper();
+    tamperNextBundle((g.a as unknown as { auditImpl: SessionAudit }).auditImpl);
     await endGame(g);
     await verdictsIn([g.a, g.b]);
     for (const s of [g.a, g.b]) {
