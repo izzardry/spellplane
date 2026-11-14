@@ -263,6 +263,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     onHoverItem: (item) => setHoverItem(item),
     // A right press on an item of the expanded list starts a line from that stack item (startBadgeLine below).
     onLinePress: (item, e) => startBadgeLine(item, e),
+    // A finger on an item of the list feeds the touch gestures; long-press then drag draws a line from it (badgeTouch).
+    onTouch: (item, e) => badgeTouch(item, e),
   });
   /** The lane is drawn as the badge this frame (far zoom; scene/stack.ts stackCollapsed). */
   let stackFolded = false;
@@ -1528,8 +1530,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (!g || ('pointerId' in g && g.pointerId !== e.pointerId)) return;
     gesture = null;
     release(e);
-    // A right press on the far-zoom badge's list that never became a line lets the list go (scene/stack-badge.ts).
-    if (g.kind === 'press' && g.badge) stackBadge.trackLine(null);
+    // A right press on the far-zoom badge's list that never became a line lets the list go (scene/stack-badge.ts); it
+    // stays open while the pointer rests on it.
+    if (g.kind === 'press' && g.badge) stackBadge.trackLine({ x: e.clientX, y: e.clientY }, true);
     if (g.kind === 'pitch') {
       // The context menu some platforms fire on release does not open after a pitch.
       menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
@@ -1539,7 +1542,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
       const dr = lineView.draft;
       dispatch(lineView.finish(dr ? lineTargetAt(e.clientX, e.clientY, dr.sourceCard) : null, e.shiftKey, newId));
-      stackBadge.trackLine(null);
+      // The badge's list stays open while the pointer rests on it (as a hover), else it collapses.
+      stackBadge.trackLine({ x: e.clientX, y: e.clientY }, true);
       dirty = true;
       return;
     }
@@ -1632,8 +1636,52 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let touchTableMenu: ScreenPoint | null = null;
   /** The radial menu this scene opened for a long-press (closed again when the finger goes on to draw a line). */
   let touchRadial = false;
+  /** The one-finger touch started on an item of the far-zoom badge's list (scene/stack-badge.ts onTouch). */
+  let touchBadge: { item: StackItemId; lastY: number } | null = null;
+
+  /**
+   * A finger's pointer events on an item of the far-zoom badge's expanded list (the badge holds that finger, so the
+   * canvas gets none): they feed the same touch gestures as the canvas, so long-press then drag draws a line from the
+   * stack item as from a card on iPad (DESIGN "Input and interaction design", Touch; "The effect stack": lines from
+   * stack items; the right press of a mouse does it with startBadgeLine).
+   */
+  function badgeTouch(item: StackItemId, e: PointerEvent): void {
+    if (e.type === 'pointerdown' && !touchInput.active()) touchBadge = { item, lastY: e.clientY };
+    if (!touchInput.take(e)) return;
+    if (e.type === 'pointerdown' && touchInput.recognizer.fingers() > 1) touchSecondFinger({ x: e.clientX, y: e.clientY });
+    if (e.type === 'pointerup' || e.type === 'pointercancel') touchReleased(e.type === 'pointercancel');
+  }
+
+  /**
+   * A one-finger gesture that started on an item of the badge's list: long-press then drag draws a line from that
+   * stack item, a plain drag scrolls the list; a tap or a long-press alone does nothing on the table under the badge.
+   */
+  function badgeGesture(b: { item: StackItemId; lastY: number }, g: TouchGesture): void {
+    if (g.kind === 'drag') {
+      if (g.phase === 'start' || g.phase === 'move') stackBadge.scrollList(b.lastY - g.at.y);
+      b.lastY = g.at.y;
+      return;
+    }
+    if (g.kind !== 'longPressDrag') return;
+    if (g.phase !== 'start') {
+      touchLine(g);
+      return;
+    }
+    const entry = stackFolded ? entries.find((x) => x.item.id === b.item) : undefined;
+    if (!entry) return;
+    const sourceCard = entry.item.card ?? b.item;
+    lineView.draft = { pointerId: -1, source: { kind: 'stackItem', id: b.item }, sourceCard, target: lineTargetAt(g.at.x, g.at.y, sourceCard), cur: screenToTable(g.at.x, g.at.y), shift: false };
+    touchHold = { kind: 'line' };
+    touchInput.capture();
+    stackBadge.trackLine(g.at);
+    dirty = true;
+  }
 
   function onTouchGesture(g: TouchGesture): void {
+    if (touchBadge && g.kind !== 'twoFinger' && g.kind !== 'twoFingerDoubleTap') {
+      badgeGesture(touchBadge, g);
+      return;
+    }
     switch (g.kind) {
       case 'tap': {
         const rc = pick(g.at.x, g.at.y);
@@ -1765,6 +1813,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (g.phase === 'move') {
       if (h.kind === 'line' && lineView.draft) {
         lineView.draft.cur = screenToTable(g.at.x, g.at.y);
+        // The far-zoom badge's list (opened by a tap) reports the item under the finger, so a line can end there.
+        stackBadge.trackLine(g.at);
         lineView.draft.target = lineTargetAt(g.at.x, g.at.y, lineView.draft.sourceCard);
       } else if (h.kind === 'marquee') {
         h.x1 = g.at.x;
@@ -1779,6 +1829,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const dr = lineView.draft;
       if (g.phase === 'end' && dr) dispatch(lineView.finish(lineTargetAt(g.at.x, g.at.y, dr.sourceCard), false, newId));
       else lineView.draft = null;
+      stackBadge.trackLine(null);
     } else if (h.kind === 'marquee') {
       if (g.phase === 'end') finishMarquee(h);
       else marqueeEl.style.display = 'none';
@@ -1805,6 +1856,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   function touchReleased(cancel = false): void {
     if (cancel) touchTableMenu = null;
     if (touchInput.active()) return;
+    touchBadge = null;
     touchRadial = false;
     const at = touchTableMenu;
     touchTableMenu = null;

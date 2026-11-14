@@ -45,8 +45,15 @@ export interface StackBadgeOptions {
   /**
    * A right press (mouse or pen) on an item of the expanded list: the scene starts a connection line from that stack
    * item, as from its card in the lane (DESIGN "Combat and annotation"; "The effect stack": lines from stack items).
+   * A finger does it by long-press then drag (`onTouch`).
    */
   onLinePress?: (item: string, e: PointerEvent) => void;
+  /**
+   * A finger on an item of the expanded list: its press, moves and release (pointer events, pointerType 'touch') go to
+   * the scene's touch gestures, so long-press then drag draws a line from that stack item as from a card (DESIGN "Input
+   * and interaction design", Touch: long-press then drag draws a line; PLAN Milestone 5: iPad Safari).
+   */
+  onTouch?: (item: string, e: PointerEvent) => void;
 }
 
 /** What the scene hands the badge each frame. */
@@ -78,6 +85,8 @@ export class StackBadgeView {
   private itemsKey = '';
   /** The list item under the pointer (reported through onHoverItem). */
   private hoverItem: string | null = null;
+  /** The finger pressing an item of the list (its events go to `onTouch`). */
+  private finger: { id: number; item: string } | null = null;
   /** Loaded faces by face key (an image, or a drawn placeholder canvas); each row shows a copy. */
   private readonly faceCache = new Map<string, HTMLElement>();
   private disposed = false;
@@ -155,6 +164,15 @@ export class StackBadgeView {
       e.preventDefault();
       this.render();
     };
+    // A finger pressing an item is captured by the element it pressed (implicitly, as in Safari): its moves and release
+    // reach the panel and go on to the scene with the press.
+    const fingerEvent = (e: PointerEvent): void => {
+      const f = this.finger;
+      if (!f || e.pointerId !== f.id) return;
+      if (e.type === 'pointerup' || e.type === 'pointercancel') this.finger = null;
+      this.opts.onTouch?.(f.item, e);
+    };
+    for (const type of ['pointermove', 'pointerup', 'pointercancel'] as const) this.panel.addEventListener(type, fingerEvent);
     // The platform's own menu never opens over the badge: a right press there draws a line (scene) instead.
     this.el.addEventListener('contextmenu', (e) => e.preventDefault());
     // Touch presses are watched as touches and mouse presses too: some WebKit builds (Linux) deliver an emulated tap
@@ -203,19 +221,25 @@ export class StackBadgeView {
   /**
    * A connection line is being drawn (the scene holds the pointer, so the badge gets no hover events): the badge
    * expands while the line's end is over it, so a line can end at an item of the list, and collapses when it leaves.
-   * `null` ends the tracking.
+   * `null` ends the tracking; `end` with the pointer's place ends it too, and a mouse left resting on the badge keeps
+   * it expanded (as a hover) until the pointer leaves.
    */
-  trackLine(at: ScreenPoint | null): void {
+  trackLine(at: ScreenPoint | null, end = false): void {
     if (this.disposed) return;
     const el = at && typeof document.elementFromPoint === 'function' ? document.elementFromPoint(at.x, at.y) : null;
     const over = !!el && this.el.contains(el);
-    const hold = this.lineHold && over;
+    const hold = !end && this.lineHold && over;
     if (over === this.hovering && hold === this.lineHold) return;
     this.hovering = over;
     this.lineHold = hold;
     if (!this.collapsed) return;
     this.render();
     this.opts.onChange?.();
+  }
+
+  /** Scroll the expanded list by `dy` CSS px (a finger dragging it: its items take no browser panning, see fill). */
+  scrollList(dy: number): void {
+    this.panel.scrollTop += dy;
   }
 
   /** The stack item of the expanded list under a client point (a line's end), or null. */
@@ -301,7 +325,8 @@ export class StackBadgeView {
       row.setAttribute('data-testid', 'stack-badge-item');
       row.setAttribute('data-item', it.item);
       row.setAttribute('data-line-item', it.item);
-      Object.assign(row.style, { position: 'absolute', left: '8px', top: `${8 + i * BADGE_STEP_PX}px`, width: `${BADGE_CARD_W + 2 * LABEL_W}px`, height: `${BADGE_CARD_PX}px` });
+      // No browser panning on an item: a finger's long-press then drag draws a line (a pan would cancel the pointer).
+      Object.assign(row.style, { position: 'absolute', left: '8px', top: `${8 + i * BADGE_STEP_PX}px`, width: `${BADGE_CARD_W + 2 * LABEL_W}px`, height: `${BADGE_CARD_PX}px`, touchAction: 'none' });
       const label = document.createElement('span');
       label.textContent = `${it.number} ${it.kindLabel.toUpperCase()}`;
       Object.assign(label.style, { position: 'absolute', left: '0', top: '2px', width: `${LABEL_W - 6}px`, textAlign: 'right', color: it.colour, fontWeight: '600', letterSpacing: '0.04em' });
@@ -316,7 +341,13 @@ export class StackBadgeView {
       }
       row.addEventListener('pointerenter', () => this.setHoverItem(it.item));
       row.addEventListener('pointerdown', (e) => {
-        if (e.button !== 2 || e.pointerType === 'touch' || !this.opts.onLinePress) return;
+        if (e.pointerType === 'touch') {
+          if (this.finger || !this.opts.onTouch) return;
+          this.finger = { id: e.pointerId, item: it.item };
+          this.opts.onTouch(it.item, e);
+          return;
+        }
+        if (e.button !== 2 || !this.opts.onLinePress) return;
         e.preventDefault();
         this.lineHold = true;
         this.opts.onLinePress(it.item, e);

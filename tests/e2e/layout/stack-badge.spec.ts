@@ -11,6 +11,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { SceneDebugCard } from '../../../src/scene/table-scene';
 import type { StackBadgeState } from '../../../src/scene/types';
+import { IPAD, fingers, path } from '../touch/helpers';
 
 async function openWithStack(page: Page): Promise<void> {
   const errors: string[] = [];
@@ -138,6 +139,12 @@ test.describe('far zoom with a mouse', () => {
     await expect.poll(targets).toEqual([{ from: { kind: 'stackItem', id: 'i3' }, to: { kind: 'stackItem', id: 'i1' } }]);
     // No context menu of the browser's own over the badge.
     await expect(page.getByTestId('stack-badge')).toBeVisible();
+    // The pointer rests on the list where the line ended: it stays open, as under a hover, until the pointer leaves.
+    await page.waitForTimeout(150);
+    expect((await badge(page)).expanded).toBe(true);
+    await expect(page.getByTestId('stack-badge-items')).toBeVisible();
+    await page.mouse.move(40, 40, { steps: 4 });
+    await expect.poll(async () => (await badge(page)).expanded).toBe(false);
   });
 
   test('an empty stack shows no badge', async ({ page }) => {
@@ -173,5 +180,37 @@ test.describe('far zoom on touch', () => {
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await page.keyboard.press('Escape');
     await expect.poll(async () => (await badge(page)).expanded).toBe(false);
+  });
+});
+
+test.describe('far zoom on an iPad (WebKit, touch)', () => {
+  // PLAN Milestone 5, owner decisions: iPad with Safari, emulated in WebKit. The harness has no HUD insets, so a smaller
+  // window than the iPad's puts its fit at far zoom.
+  test.use({ ...IPAD, viewport: { width: 1024, height: 700 } });
+  test.skip(({ browserName }) => browserName !== 'webkit', 'the iPad is emulated in WebKit (PLAN M5, owner decisions)');
+
+  test('long-press then drag from an item of the expanded list draws a target line, as from a card', async ({ page }) => {
+    await openWithStack(page);
+    await expect.poll(async () => (await badge(page)).collapsed).toBe(true);
+    await page.getByTestId('stack-badge-count').tap();
+    await expect.poll(async () => (await badge(page)).expanded).toBe(true);
+    const rowOf = async (item: string) => (await page.locator(`[data-testid="stack-badge-item"][data-item="${item}"]`).boundingBox())!;
+    const fromRow = await rowOf('i3');
+    const toRow = await rowOf('i1');
+    const from = { x: Math.round(fromRow.x + fromRow.width / 2 + 20), y: Math.round(fromRow.y + 12) };
+    const to = { x: Math.round(toRow.x + toRow.width / 2 + 20), y: Math.round(toRow.y + 12) };
+    const lines = () => page.evaluate(() => Object.values(window.__spellplane!.state!().lines).map((l) => ({ kind: l.kind, from: l.from, to: l.to })));
+    // A finger held still on the ability (i3) past the long-press, then slid to the first spell (i1) and lifted there:
+    // pointer events of pointerType 'touch' to the element it pressed (helpers.ts fingers).
+    await fingers(page, [{ type: 'down', id: 1, ...from, wait: 800 }, ...path(1, from, to, 10), { type: 'up', id: 1, ...to }]);
+    await expect.poll(lines).toEqual([{ kind: 'target', from: { kind: 'stackItem', id: 'i3' }, to: { kind: 'stackItem', id: 'i1' } }]);
+    // The list a tap opened stays open; nothing on the table under it was selected.
+    expect((await badge(page)).expanded).toBe(true);
+    expect((await cards(page)).filter((c) => c.selected).map((c) => c.id)).toEqual([]);
+
+    // A finger that slides without the long-press draws nothing (it scrolls the list when it is longer than the screen).
+    await fingers(page, [{ type: 'down', id: 1, ...from, wait: 30 }, ...path(1, from, to, 6), { type: 'up', id: 1, ...to }]);
+    await page.waitForTimeout(150);
+    expect(await lines()).toHaveLength(1);
   });
 });
