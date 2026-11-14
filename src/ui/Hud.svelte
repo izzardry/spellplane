@@ -142,8 +142,6 @@
   let note = $state<{ target: { card: InstanceId } | { item: StackItemId }; x: number; y: number; text: string } | null>(null);
   /** The inline count prompt for draw N (Shift+D) and mill N (table menu). */
   let drawN = $state<{ text: string; what: 'draw' | 'mill' } | null>(null);
-  /** A pointer is down inside the draw-N field (its button): the input's blur does not close it. */
-  let drawPress = false;
   /** The inline Ask field (K): an optional short label, Enter asks (M1-P3). */
   let askField = $state<{ text: string } | null>(null);
   let askInput = $state<HTMLInputElement | undefined>();
@@ -1439,19 +1437,10 @@
   {/if}
 
   {#if drawN}
-    <!-- A press inside (the Draw button on a touch screen, which has no Enter key) keeps the field open. -->
-    <div
-      class="inline draw-n"
-      data-testid="draw-n"
-      role="group"
-      onpointerdown={() => (drawPress = true)}
-      onpointerup={() => {
-        drawPress = false;
-        if (drawN) queueMicrotask(() => drawInput?.focus());
-      }}
-    >
-      <label>{drawN.what === 'mill' ? 'Mill how many?' : 'Draw how many?'} <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" enterkeyhint="go" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => !drawPress && (drawN = null)} /></label>
-      <button type="button" data-testid="draw-n-go" onclick={() => submitDrawN()}>{drawN.what === 'mill' ? 'Mill' : 'Draw'}</button>
+    <div class="inline draw-n" data-testid="draw-n">
+      <label>{drawN.what === 'mill' ? 'Mill how many?' : 'Draw how many?'} <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" enterkeyhint="go" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => (drawN = null)} /></label>
+      <!-- The button for a screen without an Enter key (a tablet): its press keeps the focus in the field, whose blur would close it. -->
+      <button type="button" data-testid="draw-n-go" onmousedown={(e) => e.preventDefault()} onclick={() => submitDrawN()}>{drawN.what === 'mill' ? 'Mill' : 'Draw'}</button>
     </div>
   {/if}
 
