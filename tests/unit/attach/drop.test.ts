@@ -12,7 +12,7 @@ import { checkInvariants } from '../../../src/core/invariants';
 import { tuckPose } from '../../../src/core/reducer';
 import type { InstanceId, Pose, TableState } from '../../../src/core/types';
 import { inverse } from '../../../src/core/undo';
-import { carryDropActions } from '../../../src/scene/carry';
+import { carryDropActions, rigidPoses, tempCarryActions } from '../../../src/scene/carry';
 import { toStoredPoses } from '../../../src/scene/gestures';
 import { displayedRot } from '../../../src/scene/layout';
 import type { DropResult } from '../../../src/scene/snap';
@@ -224,6 +224,71 @@ describe('clipped groups', () => {
     const { state } = dropGroup(s, 'a01', { rule: 1, kind: 'zone', zone: 'graveyard:s0' });
     expect(card(state, 'a00').zone).toBe('graveyard:s0');
     expect(card(state, 'a01').zone).toBe('graveyard:s0');
+    expect(state.clips).toBeUndefined();
+  });
+});
+
+describe('M6.1 review fixes', () => {
+  it('an Aura carried off by a clip leaves its host (a logged detach in the same group); the host no longer yanks it', () => {
+    let s = base();
+    s = ok(s, act('attach', { card: 'a01', to: 'a00' }));
+    s = ok(s, act('clipAdd', { clip: 'k1', cards: ['a01', 'a02'], anchor: { card: 'a02', x: 0, y: 0 } }));
+    const { state, actions } = dropGroup(s, 'a02', { rule: 5, kind: 'free', pose: P(400, 0) });
+    expect(actions.filter((a) => a.type === 'detach').map((a) => (a as Extract<Action, { type: 'detach' }>).card)).toEqual(['a01']);
+    expect(new Set(actions.map((a) => a.group)).size).toBe(1);
+    expect(card(state, 'a01').attachedTo).toBeUndefined();
+    expect(card(state, 'a01').pose).toEqual(P(110, 10));
+    expect(carryGroup(state, 'a00').cards).toEqual(['a00']);
+    expect(withoutSeq(undoAll(s, actions))).toBe(withoutSeq(s));
+  });
+
+  it('a temporary move grabbed by an attachment whose host is selected lands where the preview showed', () => {
+    let s = base();
+    s = ok(s, act('attach', { card: 'a01', to: 'a00' }));
+    const g = carryGroup(s, 'a01', { selection: ['a00', 'a01'], piles: false });
+    const start = startOf(s, g.cards);
+    const drafts = tempCarryActions(s, g, start, P(300, 0), opts);
+    let st = s;
+    for (const d of toStoredPoses(s, drafts)) st = ok(st, { ...d, by: 's0', cid: `t-${++n}` } as Action);
+    const preview = rigidPoses(g, start, P(300, 0));
+    expect(card(st, 'a01').pose).toEqual(preview.get('a01'));
+    expect(card(st, 'a00').pose).toEqual(preview.get('a00'));
+    expect(card(st, 'a00').pose).toEqual(P(290, -10));
+  });
+
+  it('a new tuck takes the first free slot: after a middle attachment left, and past chained attachments', () => {
+    let s = base();
+    s = play(s, 'a03', P(-300, -200));
+    s = ok(s, act('attach', { card: 'a01', to: 'a00' }));
+    s = ok(s, act('attach', { card: 'a02', to: 'a00' }));
+    s = ok(s, act('detach', { card: 'a01', pose: P(200, 100) }));
+    s = ok(s, act('attach', { card: 'a03', to: 'a00' }));
+    expect(card(s, 'a02').pose).toEqual(P(20, -180));
+    expect(card(s, 'a03').pose).toEqual(P(10, -190));
+    // Chained: a02 tucked behind a01 (itself at slot 1) sits on the host's slot 2; the next direct one goes to slot 3.
+    let c = base();
+    c = play(c, 'a03', P(-300, -200));
+    c = ok(c, act('attach', { card: 'a01', to: 'a00' }));
+    c = ok(c, act('attach', { card: 'a02', to: 'a01' }));
+    expect(card(c, 'a02').pose).toEqual(P(20, -180));
+    c = ok(c, act('attach', { card: 'a03', to: 'a00' }));
+    expect(card(c, 'a03').pose).toEqual(P(30, -170));
+  });
+
+  it('a group dropped on my hand leaves another player\'s clipped card (and its Aura) on the battlefield; mine go', () => {
+    let s = base();
+    s = play(s, 'b00', P(0, 200, 180), 's1');
+    s = play(s, 'b01', P(100, 200, 180), 's1');
+    s = ok(s, act('attach', { card: 'b01', to: 'b00' }, 's1'));
+    s = ok(s, act('attach', { card: 'a01', to: 'a00' }));
+    s = ok(s, act('clipAdd', { clip: 'k1', cards: ['a00', 'b00'], anchor: { card: 'a00', x: 0, y: 40 } }));
+    const g = carryGroup(s, 'a00');
+    expect([...g.cards].sort()).toEqual(['a00', 'a01', 'b00', 'b01']);
+    const { state } = dropGroup(s, 'a00', { rule: 1, kind: 'zone', zone: 'hand:s0' });
+    expect(card(state, 'a00').zone).toBe('hand:s0');
+    expect(card(state, 'a01').zone).toBe('hand:s0');
+    expect(card(state, 'b00')).toMatchObject({ zone: 'battlefield:s1', pose: P(0, 200, 180) });
+    expect(card(state, 'b01')).toMatchObject({ zone: 'battlefield:s1', attachedTo: 'b00' });
     expect(state.clips).toBeUndefined();
   });
 });
