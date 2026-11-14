@@ -53,9 +53,14 @@
   let filter = $state<TimelineFilter>('all');
   let tab = $state<ChatTab>('table');
   const resolver = $derived(cardData ? new CardNameResolver(cardData) : null);
-  // A tab that disappears (a team dissolved) falls back to the table tab.
+  /**
+   * The tabs offered: a tab that disappears (a team dissolved, the last spectator left) stays while the field holds a
+   * draft written on it, so Enter never sends that draft to another audience (M6-P2); once it is sent or emptied the
+   * tab goes and the field falls back to the table tab.
+   */
+  const shownTabs = $derived(tabs.includes(tab) || !text.trim() ? tabs : [...tabs, tab]);
   $effect(() => {
-    if (!tabs.includes(tab)) tab = 'table';
+    if (!shownTabs.includes(tab)) tab = 'table';
   });
   /** This field's typing indicator (M6-P2): announced while it holds text, on the tab it would go to. */
   const typing = new TypingSender({ send: (channel) => ontyping?.(channel) });
@@ -66,7 +71,7 @@
       if (typing.channel() !== null) typing.input(text, t);
     });
   });
-  onDestroy(() => typing.stop());
+  onDestroy(() => typing.dispose());
 
   /** Focus the chat field (Enter with no prompt showing, DESIGN "Input and interaction design"). */
   export function focusChat() {
@@ -84,7 +89,7 @@
 <aside class="log" class:closed={!open} data-testid="log" aria-label="Log and chat">
   <header>
     <h2>Log</h2>
-    {#if open}<FilterBar bind:filter bind:tab {tabs} />{/if}
+    {#if open}<FilterBar bind:filter bind:tab tabs={shownTabs} />{/if}
     <button type="button" onclick={ontoggle} aria-expanded={open}>{open ? 'Hide' : 'Log'}</button>
   </header>
   {#if open}
@@ -107,7 +112,7 @@
       } else if (e.key === 'Escape') input?.blur();
     }}
   />
-  <TypingLine {typers} {tab} {tabs} />
+  <TypingLine {typers} {tab} tabs={shownTabs} />
 </aside>
 
 <style>

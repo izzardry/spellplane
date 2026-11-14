@@ -137,3 +137,47 @@ test('who is typing shows beside the chat field and on the avatar; players and s
   expect(errors).toEqual([]);
   await context.close();
 });
+
+test('a draft on the spectator tab stays there when the last spectator leaves: Enter never sends it to the table', async ({ browser }, info) => {
+  test.setTimeout(150_000);
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const [a, b, v] = [await context.newPage(), await context.newPage(), await context.newPage()];
+  const errors: string[] = [];
+  for (const p of [a, b]) p.on('pageerror', (e) => errors.push(e.message));
+  const room = freshRoom();
+  await openTable(a, room, freshProfile(info, 'da'));
+  await setNickname(a, 'Ann');
+  await openTable(b, room, freshProfile(info, 'db'));
+  await setNickname(b, 'Ben');
+  await expect(chair(b, 's1')).toHaveAttribute('data-mine', 'true');
+  for (const p of [a, b]) await expect.poll(() => hook<string>(p, 'net.status'), { timeout: 15_000 }).toBe('connected');
+  const watchLink = await a.getByTestId('watch-link').inputValue();
+  await a.evaluate((text) => window.__spellplane!.session!.importDecklist(text), decklist('gw-m19-60.txt'));
+  await b.evaluate((text) => window.__spellplane!.session!.importDecklist(text), decklist('ur-m19-60.mtga.txt'));
+  await expect(a.getByTestId('start-game')).toBeVisible();
+  await a.getByTestId('start-game').click();
+  for (const p of [a, b]) await expect(p.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+
+  // Viv watches; Ann starts a line to the spectators but has not sent it when Viv leaves.
+  await watchFromStart(v, freshProfile(info, 'dv'), 'Viv', watchLink);
+  await expect(v.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+  await expect(a.getByTestId('chat-tab-spectator')).toBeVisible({ timeout: 15_000 });
+  await a.bringToFront();
+  await a.getByTestId('chat-tab-spectator').click();
+  const annInput = a.getByTestId('chat-input');
+  await annInput.click();
+  await annInput.pressSequentially('thanks for watching');
+  await v.close();
+  await expect
+    .poll(async () => (await hook<{ role: string }[]>(a, 'net.peers')).filter((p) => p.role === 'spectator').length, { timeout: 30_000 })
+    .toBe(0);
+  // The tab the draft was written on stays, still chosen, with the draft.
+  await expect(a.getByTestId('chat-tab-spectator')).toHaveAttribute('aria-selected', 'true');
+  await expect(annInput).toHaveValue('thanks for watching');
+  await annInput.press('Enter');
+  for (const p of [a, b]) await expect.poll(() => chats(p)).toContainEqual({ text: 'thanks for watching', channel: 'spectator', by: 's0' });
+  expect((await chats(a)).filter((c) => c.text === 'thanks for watching').map((c) => c.channel)).toEqual(['spectator']);
+  await expect(line(b, 'thanks for watching')).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await context.close();
+});

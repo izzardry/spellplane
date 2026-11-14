@@ -151,6 +151,30 @@ test('with "Talk while I hold or drag" on, a held drag talks until release and a
   // It really was a drag: the card moved, on both pages.
   await expect.poll(async () => (await hook<TableState>(b, 'state')).cards[card]?.pose?.x ?? before.x, { timeout: 15_000 }).not.toBe(before.x);
 
+  // Playing a card from the hand: the press starts on the hand fan (HUD), the scene takes the drag over, and it talks
+  // until the button is let go on the battlefield.
+  await a.evaluate(() => window.__spellplane!.session!.draw(3));
+  await expect.poll(async () => (await hook<{ hand: InstanceId[] }>(a, 'secrets')).hand.length, { timeout: 15_000 }).toBe(3);
+  const handCard = (await hook<{ hand: InstanceId[] }>(a, 'secrets')).hand[1]!;
+  const inHand = a.locator(`[data-testid="hand-card"][data-card="${handCard}"]`);
+  await expect(inHand).toBeVisible();
+  const hb = (await inHand.boundingBox())!;
+  const drop = await tablePoint(a, OPEN_TABLE);
+  await record(a);
+  await a.mouse.move(hb.x + hb.width / 2, hb.y + hb.height - 12, { steps: 3 });
+  await a.mouse.down();
+  await a.mouse.move(hb.x + hb.width / 2, hb.y - 80, { steps: 4 });
+  await a.mouse.move(drop.x, drop.y, { steps: 8 });
+  await expect.poll(() => enabled(a)).toEqual([true]);
+  expect(await pressHeld(a)).toBe(true);
+  await expect(indicator(a)).toHaveAttribute('data-state', 'live');
+  await a.waitForTimeout(300);
+  expect(await enabled(a)).toEqual([true]);
+  await a.mouse.up();
+  await expect.poll(() => enabled(a)).toEqual([false]);
+  expect(await pressHeld(a)).toBe(false);
+  await expect.poll(async () => (await hook<TableState>(a, 'state')).cards[handCard]?.zone ?? '', { timeout: 15_000 }).toMatch(/^battlefield:/);
+
   // A camera drag on empty table talks too, and so does a press held still (as when holding to clip).
   await holdDrag(a, await tablePoint(a, OPEN_TABLE), -80);
   await expect.poll(() => enabled(a)).toEqual([true]);
@@ -190,6 +214,125 @@ test('with "Talk while I hold or drag" on, a held drag talks until release and a
   expect(await seen(a)).toEqual([]);
   expect(errors).toEqual([]);
   await context.close();
+});
+
+/** Sample whether a held table press was ever talking (voice.pressHeld) from now on; no microphone needed. */
+async function recordPress(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __pressSeen: boolean[]; __pressTimer?: number };
+    if (w.__pressTimer) clearInterval(w.__pressTimer);
+    w.__pressSeen = [];
+    w.__pressTimer = window.setInterval(() => {
+      if (window.__spellplane?.voice?.pressHeld?.()) w.__pressSeen.push(true);
+    }, 5);
+  });
+}
+const pressSeen = (page: Page) => page.evaluate(() => (window as unknown as { __pressSeen: boolean[] }).__pressSeen.length);
+
+type Finger = { type: 'down' | 'move' | 'up'; id: number; x: number; y: number; wait?: number };
+/**
+ * Finger steps as touch pointer events (as in tests/e2e/m5.gate.spec.ts: Playwright has no held-finger or multi-touch
+ * API), each sent to the element under the finger at its press, inside one evaluate.
+ */
+async function fingers(page: Page, steps: Finger[]): Promise<void> {
+  await page.evaluate(async (list) => {
+    const w = window as unknown as { __holdFingers?: Map<number, Element> };
+    const targets = (w.__holdFingers ??= new Map<number, Element>());
+    const names = { down: 'pointerdown', move: 'pointermove', up: 'pointerup' } as const;
+    for (const s of list) {
+      let target = targets.get(s.id);
+      if (s.type === 'down' || !target) {
+        target = document.elementFromPoint(s.x, s.y) ?? document.body;
+        targets.set(s.id, target);
+      }
+      const pressed = s.type !== 'up';
+      target.dispatchEvent(
+        new PointerEvent(names[s.type], {
+          pointerId: 300 + s.id,
+          pointerType: 'touch',
+          isPrimary: s.id === 1,
+          clientX: s.x,
+          clientY: s.y,
+          button: s.type === 'move' ? -1 : 0,
+          buttons: pressed ? 1 : 0,
+          width: 20,
+          height: 20,
+          pressure: pressed ? 0.5 : 0,
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+        }),
+      );
+      if (s.type === 'up') targets.delete(s.id);
+      await new Promise((r) => setTimeout(r, s.wait ?? 16));
+    }
+  }, steps);
+}
+
+test.describe('on a touch screen (iPad emulation: a touch context, the iPad Pro 11" landscape viewport)', () => {
+  test('a finger held on the table, or a pinch, is a held press; a tap is not (read from voice.pressHeld, no microphone)', async ({ browser }, info) => {
+    test.setTimeout(150_000);
+    const context = await browser.newContext({ hasTouch: true, viewport: { width: 1194, height: 834 } });
+    const [a, b] = [await context.newPage(), await context.newPage()];
+    const errors: string[] = [];
+    for (const p of [a, b]) p.on('pageerror', (e) => errors.push(e.message));
+    // "Talk while I hold or drag" on before the table (the offline Voice section), so no microphone is ever asked for.
+    const profile = freshProfile(info, 'tt');
+    await openApp(a, { profile, hash: '/settings' });
+    await a.locator('[data-testid="settings-tab"][data-section="voice"]').click();
+    await a.getByTestId('voice-settings-offline').getByTestId('talk-while-holding').check();
+    await expect(a.getByTestId('voice-settings-offline').getByTestId('talk-while-holding')).toBeChecked();
+    const room = freshRoom();
+    await openTable(a, room, profile);
+    await setNickname(a, 'Ann');
+    await expect(chair(a, 's0')).toHaveAttribute('data-mine', 'true');
+    await openTable(b, room, freshProfile(info, 'tu'));
+    await setNickname(b, 'Ben');
+    await expect(chair(b, 's1')).toHaveAttribute('data-mine', 'true');
+    for (const p of [a, b]) await expect.poll(() => hook<string>(p, 'net.status'), { timeout: 15_000 }).toBe('connected');
+    await ready(a, 'gw-m19-60.txt');
+    await ready(b, 'ur-m19-60.mtga.txt');
+    await expect(a.getByTestId('ready-count')).toHaveText('2 of 2 players ready.');
+    await a.getByTestId('start-game').click();
+    for (const p of [a, b]) await expect(p.getByTestId('hud')).toBeVisible();
+    await a.bringToFront();
+    await expect.poll(() => pressHeld(a)).toBe(false);
+    const p0 = await tablePoint(a, OPEN_TABLE);
+
+    // A tap never counts, not even for a moment.
+    await recordPress(a);
+    await fingers(a, [
+      { type: 'down', id: 1, ...p0, wait: 60 },
+      { type: 'up', id: 1, ...p0 },
+    ]);
+    await a.waitForTimeout(400);
+    expect(await pressSeen(a)).toBe(0);
+
+    // A finger held still on the table: a held press until it lifts.
+    await fingers(a, [{ type: 'down', id: 1, ...p0 }]);
+    await expect.poll(() => pressHeld(a)).toBe(true);
+    await fingers(a, [{ type: 'up', id: 1, ...p0 }]);
+    await expect.poll(() => pressHeld(a)).toBe(false);
+
+    // A pinch is one press: it stays held when the first finger lifts and ends with the last one.
+    const q = { x: p0.x + 60, y: p0.y };
+    await fingers(a, [
+      { type: 'down', id: 1, ...p0, wait: 30 },
+      { type: 'down', id: 2, ...q },
+      ...[1, 2, 3, 4, 5].flatMap((i): Finger[] => [
+        { type: 'move', id: 1, x: p0.x - 6 * i, y: p0.y, wait: 0 },
+        { type: 'move', id: 2, x: q.x + 6 * i, y: q.y, wait: 50 },
+      ]),
+    ]);
+    await expect.poll(() => pressHeld(a)).toBe(true);
+    await fingers(a, [{ type: 'up', id: 1, x: p0.x - 30, y: p0.y }]);
+    await a.waitForTimeout(150);
+    expect(await pressHeld(a)).toBe(true);
+    await fingers(a, [{ type: 'up', id: 2, x: q.x + 30, y: q.y }]);
+    await expect.poll(() => pressHeld(a)).toBe(false);
+    expect(errors).toEqual([]);
+    await context.close();
+  });
 });
 
 let table: Table | null = null;

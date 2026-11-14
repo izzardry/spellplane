@@ -127,6 +127,8 @@
   /** Hand a drag out of the hand fan or a pile viewer to the scene, and show it to the others (M1-P5 presence). */
   function dragOut(id: InstanceId, x: number, y: number): void {
     if (!scene) return;
+    // The drag becomes a table press ("Talk while I hold or drag", M6-P2): captions said meanwhile attach to this card.
+    pressTalk.dragOut(id);
     scene.startDrag(id, x, y);
     presence?.beginExternalDrag(id, x, y);
   }
@@ -193,7 +195,7 @@
   const typingAt = $derived(typingSeats(typers));
   function refreshTypers(): void {
     const peers = session.netStatus().peers;
-    typers = typersOf(session.presence.peers(), st, me, peers);
+    typers = typersOf(session.presence.peers(), st, me, peers, Date.now());
     watching = new Set(peers.filter((p) => p.role === 'spectator' && p.status !== 'handshake' && p.peerId).map((p) => p.peerId)).size;
   }
   /** Dictated captions (M3-P4, session.captions) and the speech settings panel. */
@@ -1036,6 +1038,8 @@
     const typingOff = session.presence.subscribe(() => refreshTypers());
     const typingNetOff = session.subscribeNet(() => refreshTypers());
     const typingStateOff = session.subscribe(() => refreshTypers());
+    // A typing peer that went silent (a lost stop) drops out after TYPING_STALE_MS even if nothing else changes.
+    const typingTimer = setInterval(() => typers.length > 0 && refreshTypers(), 1000);
     captionList = session.captions?.captions() ?? [];
     const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
     void settings
@@ -1109,6 +1113,7 @@
       typingOff();
       typingNetOff();
       typingStateOff();
+      clearInterval(typingTimer);
       pressTalk.dispose();
       modifierOff();
       speakOff?.();

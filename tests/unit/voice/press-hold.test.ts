@@ -285,6 +285,33 @@ describe('the scene press tracker', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('a press adopted from the HUD (a card dragged out of the hand) counts from when it went down there', () => {
+    const { t, calls } = tracker('card');
+    // Handed over 120 ms after the press on the hand fan: it talks 80 ms later, not 200 ms later.
+    t.press(4, 120);
+    vi.advanceTimersByTime(HOLD_PRESS_TALK_MS - 120 - 1);
+    expect(calls).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(calls).toEqual([['start', 'card']]);
+    t.release(4);
+    expect(calls.at(-1)).toEqual(['end', 'card']);
+    // Held on the HUD past the hold time already: it talks at once (on the next tick).
+    t.press(5, HOLD_PRESS_TALK_MS * 3);
+    vi.advanceTimersByTime(0);
+    expect(calls.at(-1)).toEqual(['start', 'card']);
+    t.release(5);
+    expect(calls).toHaveLength(4);
+    // A hand-over released quickly never talks; a nonsense elapsed time counts as none.
+    t.press(6, 20);
+    vi.advanceTimersByTime(50);
+    t.release(6);
+    t.press(7, Number.NaN);
+    vi.advanceTimersByTime(HOLD_PRESS_TALK_MS - 1);
+    t.release(7);
+    vi.advanceTimersByTime(1000);
+    expect(calls).toHaveLength(4);
+  });
+
   it('a scene that cannot tell what the press does still reports a held press', () => {
     const calls: string[] = [];
     const t = new PressHoldTracker({
@@ -317,6 +344,23 @@ describe('the HUD forwarder', () => {
     expect(held).toEqual([true, false]);
     expect(p.anchorCard()).toBeNull();
     expect(anchors).toEqual(['card-1', null]);
+  });
+
+  it('a card dragged out of the hand anchors captions on that card, though the press began on the HUD', () => {
+    const held: boolean[] = [];
+    const anchors: (string | null)[] = [];
+    const p = new PressTalk({ voice: { pressHeld: (h) => held.push(h) }, cardAt: () => 'table-card', onAnchor: (c) => anchors.push(c) });
+    // An earlier quick click on a table card left its card behind; the hand drag replaces it.
+    p.down(5, 5);
+    p.dragOut('hand-card');
+    p.hold('start', 'card');
+    expect(p.anchorCard()).toBe('hand-card');
+    // A drag-out while another press talks changes nothing.
+    p.dragOut('other');
+    expect(p.anchorCard()).toBe('hand-card');
+    p.hold('end', 'card');
+    expect(held).toEqual([true, false]);
+    expect(anchors).toEqual(['hand-card', null]);
   });
 
   it('a camera drag, a line or a press on empty table talks without a card anchor', () => {

@@ -2486,6 +2486,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (startCardDrag(rc, -1, x, y, false, false, true)) {
         drag!.added = added;
         drag!.pointerId = activePointer ?? -1;
+        // A card dragged out of the hand or a pile viewer is a table press from here on ("Talk while I hold or drag",
+        // M6-P2): timed from its press on the HUD, ended by that pointer's release.
+        if (activePointer !== null && pressedPointers.has(activePointer)) pressHold.adopt(activePointer, performance.now() - activePointerAt);
       }
     },
     worldToScreen,
@@ -2546,8 +2549,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   // The HUD's drag starts with its own pointerdown; remember that pointer so its moves and release reach us.
   let activePointer: number | null = null;
+  /** When the active pointer went down (performance.now()). */
+  let activePointerAt = 0;
   function trackPointer(e: PointerEvent): void {
     activePointer = e.pointerId;
+    activePointerAt = performance.now();
     pressedPointers.add(e.pointerId);
   }
   function releasePointer(e: PointerEvent): void {

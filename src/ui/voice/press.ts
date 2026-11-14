@@ -40,6 +40,11 @@ export class PressTalk {
     }
   }
 
+  /** A card dragged out of the hand or a pile viewer onto the table: that press holds this card. */
+  dragOut(card: InstanceId): void {
+    if (!this.talking) this.downCard = card;
+  }
+
   /** SceneEvents.pressHold. */
   hold(phase: 'start' | 'end', kind: TablePressKind): void {
     if (phase === 'start') {

@@ -9,7 +9,9 @@
  * it reports 'start' once, with what the press is doing then (`kind`); 'end' follows when the press ends: the last
  * pointer released or cancelled, the window losing focus, the page hidden, or a pointer whose release never arrived
  * (its next move reports no button down). Time alone decides, so a press held still (holding to clip) talks like a
- * drag. Presses on the HUD over the table are not table presses: only the scene's own surface counts.
+ * drag. Presses on the HUD over the table are not table presses: only the scene's own surface counts, except a card
+ * dragged out of the HUD (the hand fan, a pile viewer) onto the table: the scene takes that drag over and `adopt`s its
+ * press, timed from the press on the HUD (DECISIONS [M6-P2]).
  */
 import { HOLD_PRESS_TALK_MS, type TablePressKind } from './types';
 
@@ -33,6 +35,12 @@ export interface PressHold {
   held(): boolean;
   /** The kind reported with the current 'start', or null. */
   kind(): TablePressKind | null;
+  /**
+   * Count a press that started elsewhere (on the HUD) as a table press from now on: a card drag handed to the scene
+   * (TableScene.startDrag). `elapsedMs` is how long that pointer has been down already, so the press talks
+   * HOLD_PRESS_TALK_MS after it went down, not after the hand-over. It ends on the pointer's release like any other.
+   */
+  adopt(pointerId: number, elapsedMs?: number): void;
   /** End a held press now (reporting 'end') and stop listening. */
   dispose(): void;
 }
@@ -55,11 +63,13 @@ export class PressHoldTracker {
     this.clearTimer = opts.clearTimer ?? ((h) => clearTimeout(h as ReturnType<typeof setTimeout>));
   }
 
-  /** A mouse button or finger went down on the table. */
-  press(pointerId: number): void {
+  /** A mouse button or finger went down on the table (`elapsedMs` ago: a press adopted from the HUD). */
+  press(pointerId: number, elapsedMs = 0): void {
     const first = this.down.size === 0;
     this.down.add(pointerId);
-    if (first && this.reported === null) this.timer = this.setTimer(() => this.fire(), this.holdMs);
+    if (!first || this.reported !== null) return;
+    const already = Number.isFinite(elapsedMs) && elapsedMs > 0 ? elapsedMs : 0;
+    this.timer = this.setTimer(() => this.fire(), Math.max(0, this.holdMs - already));
   }
 
   /** A pointer went up or was cancelled (anywhere: it may have been captured or have left the table). */
@@ -138,6 +148,7 @@ export function attachPressHold(surface: HTMLElement, opts: PressHoldOptions, wi
   return {
     held: () => tracker.held(),
     kind: () => tracker.kind(),
+    adopt: (pointerId, elapsedMs) => tracker.press(pointerId, elapsedMs),
     dispose: () => {
       surface.removeEventListener('pointerdown', onDown, CAPTURE);
       win.removeEventListener('pointerup', onUp, CAPTURE);

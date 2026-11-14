@@ -9,7 +9,7 @@ import type { TableState } from '../../../src/core/types';
 import { mtg } from '../../../src/games/mtg/index';
 import type { ChatChannel } from '../../../src/net/messages';
 import type { PeerInfo, PeerPresence } from '../../../src/net/types';
-import { TYPING_IDLE_MS, TypingSender, typersOf, typingSeats, typingText } from '../../../src/ui/chat/typing';
+import { TYPING_IDLE_MS, TYPING_REFRESH_MS, TYPING_STALE_MS, TypingSender, typersOf, typingSeats, typingText } from '../../../src/ui/chat/typing';
 
 const t1v1 = (): TableState =>
   createTable({ game: mtg, format: '1v1', seats: [{ name: 'Anna', colour: 0, peer: 'pa' }, { name: 'Ben', colour: 1, peer: 'pb' }] });
@@ -20,15 +20,16 @@ const t2hg = (): TableState =>
     seats: ['Anna', 'Ben', 'Cara', 'Dan'].map((name, i) => ({ name, colour: i as 0 | 1 | 2 | 3, peer: `p${i}`, team: i < 2 ? 't0' : 't1' })),
   });
 
-const pres = (peerId: string, seat: string | null, typing: ChatChannel | null): PeerPresence => ({ peerId, seat, cursor: null, over: null, drag: [], speaking: false, typing, caption: null, at: 0 });
+const pres = (peerId: string, seat: string | null, typing: ChatChannel | null, at = 0): PeerPresence => ({ peerId, seat, cursor: null, over: null, drag: [], speaking: false, typing, caption: null, at });
 const spectatorPeer = (peerId: string, nickname: string): PeerInfo => ({ transportId: `t-${peerId}`, peerId, nickname, seat: null, role: 'spectator', status: 'connected', lastSeq: 0 });
 
 describe('announcing typing', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
-  const sender = () => {
+  // Without re-announcements unless a test asks for them, so the counts below are the announcements proper.
+  const sender = (refreshMs = 1e9) => {
     const sent: (ChatChannel | null)[] = [];
-    return { s: new TypingSender({ send: (c) => sent.push(c) }), sent };
+    return { s: new TypingSender({ send: (c) => sent.push(c), refreshMs }), sent };
   };
 
   it('announces the tab once the field holds text, once, and clears it when the text is sent or emptied', () => {
@@ -73,6 +74,44 @@ describe('announcing typing', () => {
     expect(sent).toEqual(['spectator', 'table', null]);
     expect(s.channel()).toBeNull();
   });
+
+  it('re-announces the tab while typing (presence is unreliable; a peer joining meanwhile learns it) and repeats a stop once', () => {
+    const { s, sent } = sender(TYPING_REFRESH_MS);
+    s.input('a', 'table');
+    vi.advanceTimersByTime(TYPING_REFRESH_MS - 1);
+    expect(sent).toEqual(['table']);
+    s.input('ab', 'table');
+    vi.advanceTimersByTime(1);
+    expect(sent).toEqual(['table', 'table']);
+    vi.advanceTimersByTime(TYPING_REFRESH_MS);
+    expect(sent).toEqual(['table', 'table', 'table']);
+    // Sent: the stop goes out now and once more a moment later, and nothing after that.
+    s.stop();
+    expect(sent.at(-1)).toBeNull();
+    vi.advanceTimersByTime(TYPING_REFRESH_MS);
+    expect(sent.slice(3)).toEqual([null, null]);
+    vi.advanceTimersByTime(TYPING_REFRESH_MS * 5);
+    expect(sent).toHaveLength(5);
+    // Typing again before the repeat cancels it: no stale stop overtakes the new announcement.
+    s.input('x', 'spectator');
+    s.stop();
+    s.input('xy', 'spectator');
+    vi.advanceTimersByTime(TYPING_REFRESH_MS);
+    expect(sent.slice(5)).toEqual(['spectator', null, 'spectator', 'spectator']);
+    // The idle stop ends the re-announcements.
+    vi.advanceTimersByTime(TYPING_IDLE_MS * 3);
+    expect(sent.filter((c) => c === 'spectator').length).toBeLessThanOrEqual(4);
+    expect(sent.at(-1)).toBeNull();
+    expect(s.channel()).toBeNull();
+  });
+
+  it('a disposed field sends its stop and nothing later', () => {
+    const { s, sent } = sender(TYPING_REFRESH_MS);
+    s.input('a', 'table');
+    s.dispose();
+    vi.advanceTimersByTime(TYPING_REFRESH_MS * 5);
+    expect(sent).toEqual(['table', null]);
+  });
 });
 
 describe('who is shown typing', () => {
@@ -106,6 +145,15 @@ describe('who is shown typing', () => {
   it('ignores a peer without an identity yet and a channel it does not know', () => {
     const st = t1v1();
     expect(typersOf([pres('', 's1', 'table'), pres('pb', 's1', 'lobby' as ChatChannel)], st, 's0')).toEqual([]);
+  });
+
+  it('drops a peer not heard from for a while (a lost stop on the unreliable channel), given the presence clock', () => {
+    const st = t1v1();
+    const list = [pres('pb', 's1', 'table', 10_000)];
+    expect(typersOf(list, st, 's0', [], 10_000 + TYPING_STALE_MS).map((t) => t.seat)).toEqual(['s1']);
+    expect(typersOf(list, st, 's0', [], 10_000 + TYPING_STALE_MS + 1)).toEqual([]);
+    // Without a clock nothing expires.
+    expect(typersOf(list, st, 's0', []).map((t) => t.seat)).toEqual(['s1']);
   });
 
   it('a seat id that is not at the table counts as a spectator', () => {
