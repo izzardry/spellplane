@@ -3,7 +3,7 @@
  * `w`/`set`/`delete` methods, which copy a record before its first change; the input state is never touched, and
  * untouched records keep their identity in the result (cheap change detection for the scene and HUD).
  */
-import type { CardInstance, Commitment, ConfirmRound, DraftState, Format, Line, LobbySettings, RngRound, Seat, ShuffleRound, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
+import type { CardInstance, Clip, Commitment, ConfirmRound, DraftState, Format, Line, LobbySettings, RngRound, Seat, ShuffleRound, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
 import { byId, own, reject } from './util';
 
 /** One keyed record of the state (cards, zones, lines, seats, teams, commitments). */
@@ -94,6 +94,8 @@ export class Draft {
   readonly rng: RecordDraft<RngRound>;
   /** Secret-shuffle rounds (M1-P2). */
   readonly shuffles: RecordDraft<ShuffleRound>;
+  /** Paperclips (M6-P1, core/reducer/clips.ts); the state's key is absent when there are none. */
+  readonly clips: RecordDraft<Clip>;
   private stackCopy: StackItem[] | null = null;
   private turnCopy: TurnState | null = null;
   private settingsCopy: TableSettings | null = null;
@@ -118,6 +120,7 @@ export class Draft {
     this.commitments = new RecordDraft(base.commitments, 'commitment');
     this.rng = new RecordDraft(base.rng, 'randomness round');
     this.shuffles = new RecordDraft(base.shuffles, 'shuffle');
+    this.clips = new RecordDraft(base.clips ?? {}, 'clip');
   }
 
   /** The stack, bottom to top (read-only). */
@@ -226,6 +229,7 @@ export class Draft {
       this.commitments.changed ||
       this.rng.changed ||
       this.shuffles.changed ||
+      this.clips.changed ||
       this.stackCopy !== null ||
       this.turnCopy !== null ||
       this.settingsCopy !== null ||
@@ -269,6 +273,12 @@ export class Draft {
     else if (this.draftValue !== undefined) next.draft = this.draftValue;
     if (this.lobbyValue !== undefined) next.lobby = this.lobbyValue;
     if (this.gamesValue !== undefined) next.games = this.gamesValue;
+    // Paperclips (M6-P1): the key is dropped with the last clip, so tables without clips hash as before M6.
+    if (this.clips.changed) {
+      const clips = this.clips.result();
+      if (Object.keys(clips).length) next.clips = clips;
+      else delete next.clips;
+    }
     return next;
   }
 }

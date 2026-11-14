@@ -41,11 +41,10 @@ describe('M6-P1 attach, carry and clips', () => {
     expect(JSON.parse(canonicalJson(add))).toEqual(add);
   });
 
-  it('refuses clip actions with the implementing package until M6-P1 lands', () => {
+  it('has the clip reducer of M6-P1 (no stub left): unknown cards and clips are refused for what they are', () => {
     const t = table();
-    expect(explain(t, { type: 'clipAdd', by: 's0', cid: 'c1', clip: 'k1', cards: ['a', 'b'], anchor: { card: 'a', x: 0, y: 0 } })).toMatch(notImplemented('M6-P1'));
-    expect(explain(t, { type: 'clipRemove', by: 's0', cid: 'c2', clip: 'k1' })).toMatch(notImplemented('M6-P1'));
-    // Nothing undoable yet: the stub refuses the action itself.
+    expect(explain(t, { type: 'clipAdd', by: 's0', cid: 'c1', clip: 'k1', cards: ['a', 'b'], anchor: { card: 'a', x: 0, y: 0 } })).toMatch(/unknown card a/);
+    expect(explain(t, { type: 'clipRemove', by: 's0', cid: 'c2', clip: 'k1' })).toMatch(/unknown clip k1/);
     expect(inverse(t, { type: 'clipRemove', by: 's0', cid: 'c2', clip: 'k1' })).toBeNull();
   });
 
@@ -63,7 +62,7 @@ describe('M6-P1 attach, carry and clips', () => {
     expect(clipGroup(table(), 'a')).toEqual(['a']);
   });
 
-  it('stubs the carry rule with the anchor alone (M6-P1 implements it)', () => {
+  it('carries nothing for an unknown card (M6-P1 implements the rule: tests/unit/attach)', () => {
     const t = table();
     expect(carryGroup(t, 'nope')).toEqual({ anchor: 'nope', cards: [], reason: {}, leavesPile: null, leavesHost: null });
   });

@@ -15,12 +15,15 @@
  */
 import type { RestorableCardField, RestorePatch } from '../actions';
 import { canonicalJson } from '../hash';
-import type { CardInstance, Line, StackItem } from '../types';
+import type { CardInstance, Clip, Line, StackItem } from '../types';
+import { CLIP } from '../geometry';
+import { MAX_ANCHOR_MM, MAX_CLIP_CARDS } from './clips';
 import type { Draft } from './draft';
-import { isHidden } from './place';
-import { checkAnchor, checkId, checkInt, checkPileRef, checkPose, checkRef, checkString, isObj, reject } from './util';
+import { ZONE_KIND, isHidden } from './place';
+import { byId, checkAnchor, checkFinite, checkId, checkInt, checkPileRef, checkPose, checkRef, checkString, isObj, q, reject } from './util';
 
-const PATCH_KEYS = new Set(['cards', 'zones', 'lines', 'stack', 'turn', 'seats']);
+const PATCH_KEYS = new Set(['cards', 'zones', 'lines', 'clips', 'stack', 'turn', 'seats']);
+const CLIP_KEYS = new Set(['id', 'cards', 'anchor', 'by']);
 const LINE_KINDS: readonly string[] = ['target', 'attack', 'block', 'attach', 'mark'];
 const ITEM_KINDS: readonly string[] = ['spell', 'ability', 'trigger', 'copy'];
 const ITEM_KEYS = new Set(['id', 'kind', 'controller', 'card', 'source', 'copyOf', 'note']);
@@ -102,6 +105,33 @@ function checkLine(d: Draft, id: string, v: unknown): Line {
   return { id, kind: v.kind as Line['kind'], from: checkAnchor(v.from), to: checkAnchor(v.to), by, ...(label !== undefined ? { label } : {}) };
 }
 
+/**
+ * A clip a patch puts back (M6-P1: undoing a clip's removal restores its creator, undoing a move off the battlefield
+ * restores the clips it dissolved). Its cards must stand on a battlefield once the patch's card steps are applied, which
+ * the clip prune after the step and the invariants check.
+ */
+function checkClip(d: Draft, id: string, v: unknown): Clip {
+  if (!isObj(v) || Object.keys(v).some((k) => !CLIP_KEYS.has(k))) reject('invalid restore clip');
+  if (v.id !== id) reject(`restore clip ${id} has another id`);
+  const by = d.seats.need(checkId(v.by, 'seat')).id;
+  if (!Array.isArray(v.cards) || v.cards.length < CLIP.minCards || v.cards.length > MAX_CLIP_CARDS) reject('invalid restore clip cards');
+  const cards = (v.cards as unknown[]).map((x) => d.cards.need(checkId(x, 'card')).id);
+  const sorted = [...new Set(cards)].sort(byId);
+  if (sorted.length !== cards.length || sorted.some((x, i) => x !== cards[i])) reject('restore clip cards must be distinct and sorted');
+  for (const c of cards) {
+    const z = d.zones.need(d.cards.need(c).zone);
+    if (isHidden(z) || z.kind !== ZONE_KIND.battlefield) reject(`a restore patch cannot clip ${c}: it is not on a battlefield`);
+  }
+  const a = v.anchor;
+  if (!isObj(a) || Object.keys(a).some((k) => k !== 'card' && k !== 'x' && k !== 'y')) reject('invalid restore clip anchor');
+  const card = checkId(a.card, 'anchor card');
+  if (!cards.includes(card)) reject('restore clip anchor is not one of its cards');
+  const x = checkFinite(a.x, 'anchor x', MAX_ANCHOR_MM);
+  const y = checkFinite(a.y, 'anchor y', MAX_ANCHOR_MM);
+  if (q(x) !== x || q(y) !== y) reject('restore clip anchor is not quantised');
+  return { id, cards, anchor: { card, x, y }, by };
+}
+
 function checkItem(d: Draft, v: unknown): StackItem {
   if (!isObj(v) || Object.keys(v).some((k) => !ITEM_KEYS.has(k))) reject('invalid restore stack item');
   if (typeof v.kind !== 'string' || !ITEM_KINDS.includes(v.kind)) reject('invalid stack item kind');
@@ -156,6 +186,17 @@ export function applyRestore(d: Draft, patch: RestorePatch): void {
     writes.push(() => {
       if (put === null) d.lines.delete(id);
       else d.lines.set(id, put);
+    });
+  }
+
+  for (const [id, raw] of entries(patch.clips, 'clips')) {
+    checkId(id, 'clip');
+    const s = step(raw, `clip ${id}`);
+    expectNow(d.clips.get(id), s, `clip ${id}`);
+    const put = s.put === null ? null : checkClip(d, id, s.put);
+    writes.push(() => {
+      if (put === null) d.clips.delete(id);
+      else d.clips.set(id, put);
     });
   }
 
