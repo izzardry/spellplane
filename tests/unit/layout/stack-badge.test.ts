@@ -110,4 +110,17 @@ describe('the expanded badge lists the items readably', () => {
     expect(items[0]!.ref).toBeNull();
     expect(items[1]!.ref).toEqual(s.cards.b00!.identity);
   });
+
+  it('names each item\'s controller by glyph and name as well as colour (nothing depends on hue alone)', () => {
+    const layout = mtg.layout('ffa3');
+    const s = withStack('ffa3', 3);
+    const entries = stackEntries(s, layout.stackLane, 0);
+    const glyphs = { s0: 'circle', s1: 'square', s2: 'triangle' } as const;
+    const items = badgeItems(entries, () => ({ ref: null, faceIndex: 0 }), () => '#000', (seat) => ({ glyph: glyphs[seat as keyof typeof glyphs], name: `P${seat}` }));
+    expect(items.map((i) => [i.item, i.glyph, i.controller])).toEqual([
+      ['it2', 'triangle', 'Ps2'],
+      ['it1', 'square', 'Ps1'],
+      ['it0', 'circle', 'Ps0'],
+    ]);
+  });
 });
