@@ -6,7 +6,7 @@
   table (the in-table lobby). Without a settings store a hint is shown at most once per page.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { isStoragePersisted, requestPersistentStorage } from '../../store/persist';
   import type { HintId, SettingsStore } from '../../store/types';
   import { storageHintsShown } from './showing.svelte';
@@ -57,10 +57,13 @@
   const persist = $derived(!homeScreen && seen !== null && persistState !== null && hints.includes('persistStorage') && showPersistHint(persistState, seen));
   // The welcome hint (ui/hints) waits while one of these shows.
   $effect(() => {
-    const n = (homeScreen ? 1 : 0) + (persist ? 1 : 0);
-    storageHintsShown.count += n;
+    // Still reading what was answered (or whether storage is kept) counts too, so the welcome does not flash first.
+    const deciding = seen === null || (hints.includes('persistStorage') && persistState === null);
+    const n = (homeScreen ? 1 : 0) + (persist ? 1 : 0) + (deciding ? 1 : 0);
+    // Written, never read, by this effect (reading the count would make it depend on its own write).
+    untrack(() => (storageHintsShown.count += n));
     return () => {
-      storageHintsShown.count -= n;
+      untrack(() => (storageHintsShown.count -= n));
     };
   });
 </script>

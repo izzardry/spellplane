@@ -140,12 +140,21 @@ test.describe('first-run hints', () => {
     await expect(hint).toContainText('long-press');
     await hint.getByTestId('hint-dismiss').click();
     await expect(hint).toHaveAttribute('data-hint', 'talkKey');
-    await expect(hint).toContainText(/^.*Hold \S+ to talk/);
+    // A touch screen has no talk key to hold: the hint names the thumb bar's Talk button (M5 gate).
+    await expect(hint).toContainText('Touch and hold Talk');
+    await expect(hint).not.toContainText('Ctrl');
   });
 
   test('the start page welcomes a new player once', async ({ page }) => {
     await openApp(page, { hash: '/lobby' });
     const hint = page.getByTestId('hint');
+    // One hint at a time (M5 gate): where the browser can be asked to keep the data, that prompt comes first.
+    const persist = page.getByTestId('hint-persist');
+    await expect(hint.or(persist)).toBeVisible();
+    if ((await persist.count()) > 0) {
+      await expect(hint).toHaveCount(0);
+      await persist.getByTestId('hint-persist-later').click();
+    }
     await expect(hint).toHaveAttribute('data-hint', 'welcome');
     await hint.getByTestId('hint-dismiss').click();
     await expect(hint).toHaveCount(0);
@@ -167,7 +176,7 @@ test.describe('first-run hints', () => {
             };
           }),
       );
-    await expect.poll(stored).toEqual(['welcome']);
+    await expect.poll(async () => ((await stored()) as string[] | null)?.includes('welcome') ?? false).toBe(true);
     await page.reload();
     await expect(page.getByTestId('route-lobby')).toBeVisible();
     await page.waitForTimeout(300);

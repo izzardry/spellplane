@@ -54,7 +54,8 @@
   }
   .hint.corner {
     position: fixed;
-    z-index: 60;
+    /* Under the context and radial menus (60, 62), which may open over it, above the HUD panels. */
+    z-index: 55;
     /* Top centre, below the turn strip and the notices: clear of the hand fan, the log, the toolbar and the avatars
        (M5 gate); over the far side of the table, which stays live under it. */
     left: 50%;
