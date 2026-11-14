@@ -86,7 +86,7 @@ import { mountCaptions } from './captions';
 import type { CaptionControls } from '../voice/types';
 import type { DraftControls } from '../draft/types';
 import { createSessionVoice, latestTransport } from './voice';
-import { attachAudit, gatedTransport, registerAuditDebug, SessionAudit } from './audit';
+import { attachAudit, gatedTransport, registerAuditDebug, SessionAudit, tamperNextBundle } from './audit';
 import type { AuditControls } from '../net/audit';
 import type { Channel, Message } from '../net/transport';
 import type { VoiceControls } from '../voice/types';
@@ -366,7 +366,8 @@ class NetTable implements NetSession, SessionRecovery {
       inStep: () => this.engine.status() === 'connected',
     });
     this.auditImpl.rebuild([freshNetTable(opts.game, opts.format ?? '1v1'), init.snapshot], init.entries, engine.confirmedState());
-    this.unregisterAuditDebug = registerAuditDebug(this.auditImpl, () => this.auditImpl.tamper());
+    // The test-only tamper hook (M5 gate) is compiled into dev and test builds only.
+    this.unregisterAuditDebug = registerAuditDebug(this.auditImpl, __SPELLPLANE_DEBUG__ ? () => tamperNextBundle(this.auditImpl) : undefined);
     attachAudit(this, this.auditImpl);
   }
 

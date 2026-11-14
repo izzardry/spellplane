@@ -687,12 +687,14 @@
    * Card names as each log line was first written (DESIGN "Table model", Hidden cards: a later reveal never names an
    * earlier hidden move); the watch fills in the names this browser could see just before each action (M1-P6).
    */
+  const soloShuffles = untrack(() => session.netStatus().mode === 'solo');
   const lines = $derived(
     logLines(mergeTimeline(entries, teamChat, pendingChat), {
       state: st,
       cardName: logName,
       phaseLabel: (id) => game.phases.find((p) => p.id === id)?.label ?? id,
       names: watch.names,
+      soloShuffles,
     }),
   );
   /** Chat tabs (DESIGN "Chat and voice", Text chat): the team tab when the own seat has a team. */

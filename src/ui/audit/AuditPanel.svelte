@@ -2,7 +2,8 @@
   The audit panel (DESIGN "Multiplayer architecture", Hidden information 6: peers replay the published nonces and order
   history and confirm that every draw came from the committed order; PLAN M5-P2: "show a per-player verdict and any
   mismatch"; PLAN Milestone 5, owner decisions: automatic at game end, "could not be checked: records missing" shown
-  neutrally). One row per player of the finished game: verified (shuffles and draws checked), mismatch (every finding:
+  neutrally). One row per player of the finished game: verified (shuffles and draws checked; no ✓ when some draws
+  could not be checked against a committed order), mismatch (every finding:
   which shuffle, reorder or draw, expected against found), could not be checked, or waiting for the player's records.
   It opens by itself when a game ends, can be closed, and reopened from its button; earlier games of the evening are
   one click away; it steps aside while a match is played. Not modal. Implementer: M5-P2.
@@ -11,7 +12,7 @@
   import SeatGlyph from '../a11y/SeatGlyph.svelte';
   import { onMount, untrack } from 'svelte';
   import { AUDIT_STATUS_TEXT } from '../../core/audit';
-  import { verifiedDetail, type AuditControls, type AuditGameView, type AuditSeatView } from '../../net/audit';
+  import { partlyChecked, verifiedDetail, type AuditControls, type AuditGameView, type AuditSeatView } from '../../net/audit';
   import { gamesSeen } from './panel';
 
   /**
@@ -68,7 +69,14 @@
       <p class="about" data-testid="audit-about">{about(shown)}</p>
       <ul class="seats">
         {#each shown.seats as s (s.seat)}
-          <li data-testid="audit-row" data-seat={s.seat} data-status={s.verdict?.status ?? 'pending'} class={s.verdict?.status ?? 'pending'}>
+          <li
+            data-testid="audit-row"
+            data-seat={s.seat}
+            data-status={s.verdict?.status ?? 'pending'}
+            data-partial={s.verdict?.status === 'verified' && partlyChecked(s.verdict) ? 'true' : null}
+            class={s.verdict?.status ?? 'pending'}
+            class:partial={s.verdict?.status === 'verified' && partlyChecked(s.verdict)}
+          >
             <div class="line">
               <span class="swatch" style="background: var(--sp-seat-{s.colour}, #888)" aria-hidden="true"></span><SeatGlyph colour={s.colour} />
               <span class="name">{s.name}</span>
@@ -177,6 +185,13 @@
   }
   .verified .status::before {
     content: '✓ ';
+  }
+  /* Some draws came while the library order was not committed: verified as far as it goes, without the ✓ (M5 review). */
+  .verified.partial .status {
+    color: var(--sp-muted, #5f5f5f);
+  }
+  .verified.partial .status::before {
+    content: '– ';
   }
   .mismatch .status {
     color: var(--sp-danger, #b3261e);

@@ -98,20 +98,8 @@ export class SessionAudit implements AuditControls {
   private rebuildQueued = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
-  /** Test builds only (the debug hook's `audit.tamper`): the next own bundle carries a rewritten library order. */
-  private tamperNext = false;
 
   constructor(private readonly port: AuditPort) {}
-
-  /**
-   * Test-only (M5 gate: "a tampered game shows a mismatch"; reached through the debug hook, which production builds
-   * do not have): the next bundle this browser publishes reports its first shuffle's resulting library order with the
-   * top two cards swapped, as a browser that lied about its library order would. The other browsers' replay of the
-   * nonces then disagrees with it, and the audit reports a mismatch for this seat.
-   */
-  tamper(): void {
-    this.tamperNext = true;
-  }
 
   /**
    * Rebuild from a saved log: `bases` are the states a replay may start from (the room's seq-0 table, the latest saved
@@ -275,9 +263,9 @@ export class SessionAudit implements AuditControls {
       }
       if (this.port.pending().some((a) => a.type === 'auditPublish' && a.bundle?.game?.game === n)) continue;
       let bundle = buildAuditBundle(this.port.secrets(), g.game, g.log);
-      if (this.tamperNext) bundle = tampered(bundle);
+      if (__SPELLPLANE_DEBUG__ && tamperNext?.has(this) === true) bundle = tampered(bundle);
       if (!this.port.propose({ type: 'auditPublish', bundle })) this.refusals.set(n, (this.refusals.get(n) ?? 0) + 1);
-      else this.tamperNext = false;
+      else if (__SPELLPLANE_DEBUG__) tamperNext?.delete(this);
     }
     const key = held.join('|');
     if (key !== this.holdKey) {
@@ -456,7 +444,24 @@ export function gatedTransport(transport: Transport, gate: (channel: Channel, ms
   return t;
 }
 
-/** A bundle whose first shuffle (or else first reorder) reports its top two cards swapped (SessionAudit.tamper; test builds only). */
+/**
+ * Test builds only (the debug hook's `audit.tamper`): the audits whose next own bundle carries a rewritten library
+ * order. Every use sits behind `__SPELLPLANE_DEBUG__`, so production builds contain none of it (DECISIONS [M5-review]).
+ */
+let tamperNext: WeakSet<SessionAudit> | null = null;
+
+/**
+ * Test-only (M5 gate: "a tampered game shows a mismatch"; reached through the debug hook, which production builds do
+ * not have, and a no-op there): the next bundle `audit` publishes reports its first shuffle's resulting library order
+ * with the top two cards swapped, as a browser that lied about its library order would. The other browsers' replay of
+ * the nonces then disagrees with it, and the audit reports a mismatch for this seat.
+ */
+export function tamperNextBundle(audit: SessionAudit): void {
+  if (!__SPELLPLANE_DEBUG__) return;
+  (tamperNext ??= new WeakSet()).add(audit);
+}
+
+/** A bundle whose first shuffle (or else first reorder) reports its top two cards swapped (tamperNextBundle; test builds only). */
 function tampered(bundle: AuditBundle): AuditBundle {
   let i = bundle.records.findIndex((r) => r.kind === 'shuffle' && r.order.length >= 2);
   if (i < 0) i = bundle.records.findIndex((r) => r.order.length >= 2);
@@ -476,7 +481,7 @@ function tampered(bundle: AuditBundle): AuditBundle {
  * only).
  */
 export function registerAuditDebug(audit: AuditControls, tamper?: () => void): () => void {
-  const part = { verdicts: () => audit.verdicts(), published: () => audit.published(), ...(tamper ? { tamper } : {}) };
+  const part = { verdicts: () => audit.verdicts(), published: () => audit.published(), ...(__SPELLPLANE_DEBUG__ && tamper ? { tamper } : {}) };
   registerDebug({ audit: part });
   return () => {
     if (typeof window !== 'undefined' && window.__spellplane?.audit === part) delete window.__spellplane.audit;

@@ -218,12 +218,23 @@ function plural(n: number, one: string): string {
 }
 
 /**
- * What a 'verified' verdict checked: "3 shuffles and 21 draws checked", or "nothing to check" for a seat that never
- * shuffled and never drew from an order it committed to (the status word alone would overstate it).
+ * Whether a 'verified' verdict left draws unchecked: some draws came while the library order was not committed (before
+ * the first shuffle, after a mulligan or an unplaced arrival). The panel then shows no ✓ (DECISIONS [M5-review]).
  */
-export function verifiedDetail(v: { shuffles: number; draws: number }): string {
-  if (v.shuffles === 0 && v.draws === 0) return 'nothing to check (no shuffle and no draw from a committed order)';
-  return `${plural(v.shuffles, 'shuffle')} and ${plural(v.draws, 'draw')} checked`;
+export function partlyChecked(v: { draws: number; drawn: number }): boolean {
+  return v.draws < v.drawn;
+}
+
+/**
+ * What a 'verified' verdict checked: "3 shuffles and 21 draws checked"; "1 shuffle and 5 of 8 draws checked; 3 drawn
+ * while the library order was not committed" when some draws could not be checked (the status word alone would
+ * overstate it); "nothing to check" for a seat that never shuffled and never drew.
+ */
+export function verifiedDetail(v: { shuffles: number; draws: number; drawn: number }): string {
+  if (v.shuffles === 0 && v.drawn === 0) return 'nothing to check (no shuffle and no draw from a committed order)';
+  if (!partlyChecked(v)) return `${plural(v.shuffles, 'shuffle')} and ${plural(v.draws, 'draw')} checked`;
+  const open = v.drawn - v.draws;
+  return `${plural(v.shuffles, 'shuffle')} and ${v.draws} of ${plural(v.drawn, 'draw')} checked; ${open} drawn while the library order was not committed`;
 }
 
 /** One verdict as one plain sentence: the log line's and the panel's words (PLAN M5 owner decisions). */

@@ -12,6 +12,7 @@ import type { Action } from '../../../src/core/actions';
 import { orderHash, shuffleOutcome, shuffleSeed } from '../../../src/core/rng';
 import type { ReorderRecord, SecretStore, ShuffleRecord } from '../../../src/core/types';
 import { AUDIT_WAIT_MS } from '../../../src/net/audit';
+import { tamperNextBundle, type SessionAudit } from '../../../src/session/audit';
 import type { LoopbackOptions } from '../../../src/net/loopback';
 import { closeAll, FAKE_TIMERS, net, settle, until, waitConverged, type Browser, type NetTable } from '../session/harness';
 import { cheat, honest } from './cheat';
@@ -63,6 +64,8 @@ describe('the post-game audit on a simulated network', () => {
       expect(b!.status === 'verified' && b!.shuffles).toBe(1);
       expect(b!.status === 'verified' && b!.draws).toBe(9);
       expect(a!.status === 'verified' && a!.draws).toBeGreaterThanOrEqual(10);
+      // No draw of an honest game goes unchecked (the panel shows the ✓; M5 review).
+      for (const v of [a!, b!]) expect(v.status === 'verified' && v.draws === v.drawn).toBe(true);
     }
     // Every peer computes the same verdicts from the same log.
     expect(g.b.audit!.verdicts()).toEqual(g.a.audit!.verdicts());
@@ -124,7 +127,7 @@ describe('the post-game audit on a simulated network', () => {
     const network = net({ seed: 21 });
     const g = await startGame(network, browsers);
     // As the gate does through window.__spellplane.audit.tamper on Anna's page.
-    (g.a as unknown as { auditImpl: { tamper(): void } }).auditImpl.tamper();
+    tamperNextBundle((g.a as unknown as { auditImpl: SessionAudit }).auditImpl);
     await endGame(g);
     await verdictsIn([g.a, g.b]);
     for (const s of [g.a, g.b]) {
@@ -206,6 +209,64 @@ describe('the post-game audit on a simulated network', () => {
       if (v.status !== 'mismatch') continue;
       expect(v.mismatches.map((m) => m.kind)).toEqual(['order']);
       expect(v.mismatches[0]!.detail).toMatch(/a reorder of 1 card moved \d+ cards of the library/);
+    }
+  });
+
+  it('detects a whole-library "reorder" that stacks the library (count = library size; M5 review)', async () => {
+    const network = net({ seed: 25 });
+    const g = await startGame(network, browsers);
+    // Anna's patched client turns her scry into a reorder of every card of her library, in an order she chose.
+    cheat.seat = 's0';
+    cheat.reorder = (r) => {
+      const rec = r.secrets.audit.at(-1) as ReorderRecord;
+      const stacked = [...rec.order].reverse();
+      const audit = [...r.secrets.audit.slice(0, -1), { ...rec, count: stacked.length, order: stacked }];
+      return { secrets: { ...r.secrets, libraryOrder: stacked, audit }, action: { ...r.action, count: stacked.length, orderHash: orderHash(stacked, rec.nonce) } };
+    };
+    const [seen] = await settle(g.a.lookAt('library:s0', 1));
+    g.a.dispatch({ type: 'toZone', card: seen!.id, to: 'library:s0', position: 'bottom' });
+    honest();
+    await waitConverged([g.a, g.b]);
+    const size = g.a.secrets().libraryOrder.length;
+    expect(actions(g.a).at(-1)).toMatchObject({ type: 'reorder', zone: 'library:s0', count: size });
+    await settle(g.a.draw(3));
+    await waitConverged([g.a, g.b]);
+    await endGame(g);
+    await verdictsIn([g.a, g.b]);
+    for (const s of [g.a, g.b]) {
+      const v = verdictOf(s, 's0')!;
+      expect(v.status).toBe('mismatch');
+      if (v.status !== 'mismatch') continue;
+      expect(v.mismatches.map((m) => m.kind)).toEqual(['order']);
+      expect(v.mismatches[0]!.detail).toMatch(new RegExp(`a reorder of the top ${size} cards rearranged \\d+ cards nobody had looked at`));
+      expect(verdictOf(s, 's1')!.status).toBe('verified');
+    }
+  });
+
+  it('a card put back with position "any" keeps the library order followed: draws from the bottom afterwards are caught (M5 review)', async () => {
+    const network = net({ seed: 26 });
+    const g = await startGame(network, browsers);
+    // Ben's modified client puts a hand card back with 'any' (the honest UI never sends it) ...
+    const back = g.b.secrets().hand[0]!;
+    g.b.dispatch({ type: 'toZone', card: back, to: 'library:s1', position: 'any' });
+    await waitConverged([g.a, g.b]);
+    // ... his browser places it on top, as every honest one does ...
+    expect(g.b.secrets().libraryOrder[0]).toBe(back);
+    // ... and then he draws his bottom card, which his own browser now calls the top.
+    const bottom = g.b.secrets().libraryOrder.at(-1)!;
+    setSecrets(g.b, (sec) => ({ ...sec, libraryOrder: [bottom, ...sec.libraryOrder.slice(0, -1)] }));
+    await settle(g.b.draw(1));
+    await waitConverged([g.a, g.b]);
+    await endGame(g);
+    await verdictsIn([g.a, g.b]);
+    for (const s of [g.a, g.b]) {
+      expect(verdictOf(s, 's0')!.status).toBe('verified');
+      const v = verdictOf(s, 's1')!;
+      expect(v.status).toBe('mismatch');
+      if (v.status !== 'mismatch') continue;
+      expect(v.mismatches.map((m) => m.kind)).toEqual(['draw']);
+      expect(v.mismatches[0]!.detail).toContain(`took ${bottom.slice(0, 8)}`);
+      expect(v.mismatches[0]!.detail).toContain(`the top of the committed library was ${back.slice(0, 8)}`);
     }
   });
 

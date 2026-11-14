@@ -62,6 +62,11 @@ export interface LogContext {
    * names it was written with. The HUD keeps one memo for the page's life.
    */
   names?: Map<string, string | null>;
+  /**
+   * The log is the solo table's, whose shuffle is a private reorder of the whole zone (session/solo.ts shuffleNow;
+   * core/undo.ts `soloShuffles`): a reorder of several cards reads "shuffles". Elsewhere it never does.
+   */
+  soloShuffles?: boolean;
 }
 
 /** The memo key prefix of an action entry's line (LogContext.names keys are `<entryKey>|<card id>`). */
@@ -204,7 +209,7 @@ export function logLines(entries: readonly LogEntry[], ctx: LogContext): LogLine
       const next = entries.slice(i + 1).find((x) => x.kind === 'action' && !SILENT.has(x.action.type));
       if (next?.kind === 'action' && next.action.by === a.by && cardOf(next.action) === a.instanceId) continue;
     }
-    const d: Describers = { card, zone, seatName, stackItem, phaseLabel: ctx.phaseLabel, state: st, original: (cid) => byCid.get(cid) ?? null, frozen };
+    const d: Describers = { card, zone, seatName, stackItem, phaseLabel: ctx.phaseLabel, state: st, original: (cid) => byCid.get(cid) ?? null, frozen, ...(ctx.soloShuffles === true ? { soloShuffles: true } : {}) };
     const sig = mergeSig(a);
     if (sig !== null && merge && merge.sig === sig) {
       // A draw stays unnamed: it adds a count, not a card.
@@ -307,6 +312,22 @@ interface Describers {
   original(cid: string): Action | null;
   /** A word computed once per line and kept (see `frozen` in logLines); without a memo it is computed each time. */
   frozen?(tag: string, compute: () => string): string;
+  /** LogContext.soloShuffles. */
+  soloShuffles?: boolean;
+}
+
+/**
+ * A private reorder as the log says it (DECISIONS [M5-review]). On the solo table a reorder of several cards is the
+ * public trace of its shuffle (session/solo.ts shuffleNow) and reads "shuffles". At a networked table a shuffle is a
+ * `shuffleCommit`, so a reorder never reads as one: the honest client moves one card ("moves a card within"); a reorder
+ * of more cards says how many of the top it rearranged, which the audit holds it to; a re-issue of the hand's ids
+ * rearranges the hand.
+ */
+function reorderText(a: Extract<Action, { type: 'reorder' }>, where: string, solo: boolean): string {
+  if (a.count <= 1 && a.reissue === undefined) return `moves a card within ${where}`;
+  if (solo) return `shuffles ${where}`;
+  if (a.reissue !== undefined || !a.zone.startsWith('library')) return `rearranges ${where}`;
+  return `reorders the top ${plural(a.count, 'card')} of ${where}`;
 }
 
 /** The text of one action, without the actor (who is shown separately). Null for nothing to show. */
@@ -359,9 +380,7 @@ export function describe(a: Action, d: Describers): Seg[] | null {
     case 'shuffleCommit':
       return [t(a.purpose === 'pack' ? 'opens a pack' : `shuffles ${zone(a.zone, a.by)}`)];
     case 'reorder':
-      // In M0 a reorder of more than one card is the public trace of a shuffle (M1-P2 publishes shuffleCommit
-      // instead); a private reorder moves one card within the library (scry or surveil to top or bottom).
-      return [t(a.count > 1 ? `shuffles ${zone(a.zone, a.by)}` : `moves a card within ${zone(a.zone, a.by)}`)];
+      return [t(reorderText(a, zone(a.zone, a.by), d.soloShuffles === true))];
     case 'lookAt': {
       if (a.card) return [t('peeks at '), card(a.card)];
       // A look at every card of the zone is a search (DESIGN "Card manipulation", Library actions; M0-G finding).
