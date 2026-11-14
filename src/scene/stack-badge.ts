@@ -134,11 +134,15 @@ export class StackBadgeView {
     });
     // A tap or click anywhere else closes a pinned badge.
     const onDown = (e: Event): void => {
-      if (!(this.pinned || this.hovering) || this.el.contains(e.target as Node | null)) return;
+      if (!(this.pinned || this.hovering || this.focused) || this.el.contains(e.target as Node | null)) return;
       // A press elsewhere also ends a hover a tap left behind (WebKit reports a tap's compatibility hover as a mouse
-      // that never leaves).
+      // that never leaves) and the focus a tap or click gave the button (Linux WebKit focuses a tapped button, and a
+      // tap on the canvas moves no focus).
       this.pinned = false;
       this.hovering = false;
+      this.focused = false;
+      const active = typeof document === 'undefined' ? null : document.activeElement;
+      if (active instanceof HTMLElement && this.el.contains(active)) active.blur();
       this.render();
     };
     // Escape closes a badge opened by a click, tap or focus wherever the keyboard focus is (WebKit leaves a tapped

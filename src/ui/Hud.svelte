@@ -1690,6 +1690,16 @@
     bottom: calc(22vh + 16px);
     display: flex;
   }
+  /* A narrow screen (an upright tablet): the turn strip packs tighter, so it clears the toolbar and the log (M5 gate). */
+  @media (max-width: 1000px) {
+    .top-centre :global([data-testid='turn-strip']) {
+      gap: 4px;
+      padding: 4px 6px;
+    }
+    .top-centre :global([data-testid='turn-strip'] button) {
+      padding: 1px 3px;
+    }
+  }
   /* An upright tablet: the thumb bar spans under the log, so the log (its chat input) ends above it (M5 gate). */
   @media (max-width: 1000px) {
     .touch-ui .right {
