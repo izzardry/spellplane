@@ -21,8 +21,9 @@
  */
 import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
-import { CAMERA } from '../core/geometry';
-import type { CardInstance, InstanceId, Pose, SeatId, StackItemId, TableState, ZoneId } from '../core/types';
+import { CAMERA, CLIP } from '../core/geometry';
+import { carryGroup, clipGroup, type DragGroup } from '../core/clips';
+import type { CardInstance, ClipId, InstanceId, Pose, SeatId, StackItemId, TableState, ZoneId } from '../core/types';
 import type { Rect, TableLayout, TextureSource } from '../games/types';
 import type { QualityId } from '../themes/types';
 import { registerDebug } from '../util/debug';
@@ -37,7 +38,9 @@ import { ambientDue, uploadScale } from './pacing';
 import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
 import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
-import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
+import { tapActions, tempMoveActions, toStoredPoses } from './gestures';
+import { carryDropActions, rigidPoses } from './carry';
+import { ClipView, clipCorners, clipFrame, clipHere, pointInClip, type ClipCard, type ClipDraw, type ClipFrame } from './clips';
 import { LAYER, cameraTable, compareSort, displayedRot, dropTable, dropTargets, faceOf, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
@@ -56,6 +59,9 @@ import { FACE_BUDGET_HEADROOM, TEXTURE_CAP_BYTES, tierForScreenHeight } from './
 import type {
   CameraPose,
   CameraRig,
+  ClipDebugState,
+  DebugClip,
+  DropPreview,
   FollowOptions,
   RenderDebug,
   RenderStats,
@@ -173,6 +179,32 @@ interface DragState {
   external: boolean;
   /** Cards not drawn before the drag (hand): drawn while dragged. */
   added: InstanceId[];
+  /** What the drag carries and why (core/clips.ts carryGroup; M6-P1), null for a card off the battlefield. */
+  group: DragGroup | null;
+  /** Ctrl held at the last pointer event (skips snapping; the preview follows it). */
+  ctrl: boolean;
+}
+
+/**
+ * A paperclip held by the pointer (PLAN Milestone 6, owner decisions, Paperclips): an existing clip picked up (dropped
+ * on empty table it comes off; on other overlapping cards it moves there; elsewhere it springs back), or a new one
+ * dragged out of the HUD's clip tray (`clip` null: dropped where two or more cards overlap it clips them, else it
+ * vanishes).
+ */
+interface ClipDrag {
+  pointerId: number;
+  clip: ClipId | null;
+  last: { x: number; y: number };
+  /** Started in the HUD (the tray): listen on window. */
+  external: boolean;
+}
+
+/** A left press held still on an overlap: at CLIP.holdMs it clips the cards under it (ring from CLIP.ringFromMs). */
+interface ClipHold {
+  pointerId: number;
+  t0: number;
+  at: { x: number; y: number };
+  cards: InstanceId[];
 }
 
 /** A stack marker held by the pointer (DESIGN "The effect stack", Resolving 4: reorder or drag out by hand). */
@@ -185,7 +217,9 @@ interface ItemDrag {
 }
 
 type Gesture =
-  | { kind: 'press'; pointerId: number; button: number; card: InstanceId | null; item: StackItemId | null; x0: number; y0: number; shift: boolean; alt: boolean; pileGrab: boolean; badge?: boolean }
+  | { kind: 'press'; pointerId: number; button: number; card: InstanceId | null; item: StackItemId | null; x0: number; y0: number; shift: boolean; alt: boolean; pileGrab: boolean; badge?: boolean; clip?: ClipId }
+  /** A press-and-hold that clipped cards (M6-P1): the release does nothing more. */
+  | { kind: 'held'; pointerId: number }
   | { kind: 'pan'; pointerId: number; last: { x: number; y: number }; samples: { x: number; y: number; t: number }[] }
   | { kind: 'marquee'; pointerId: number; x0: number; y0: number; x1: number; y1: number; base: InstanceId[] }
   | { kind: 'line'; pointerId: number }
@@ -388,6 +422,33 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const markerLayer = new LineLayer({ renderOrder: 4, name: 'displacement-markers' });
   scene.add(ghostLayer.object);
   overlay.add(markerLayer.object);
+  // Paperclips over the cards and the drop preview's ghost outline (M6-P1; PLAN Milestone 6, owner decisions).
+  const clipView = new ClipView();
+  overlay.add(clipView.object);
+  const previewLayer = new LineLayer({ renderOrder: 4, name: 'drop-preview' });
+  overlay.add(previewLayer.object);
+  /** The hold ring (fills from CLIP.ringFromMs to CLIP.holdMs) and the tuck's attach glyph, over the canvas. */
+  const ringEl = document.createElement('div');
+  ringEl.setAttribute('data-scene', 'clip-ring');
+  ringEl.innerHTML = '<svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true"><circle cx="22" cy="22" r="18" fill="none" stroke-width="4" opacity="0.25"/><circle class="fill" cx="22" cy="22" r="18" fill="none" stroke-width="4" stroke-linecap="round" transform="rotate(-90 22 22)" stroke-dasharray="113.1" stroke-dashoffset="113.1"/></svg>';
+  Object.assign(ringEl.style, { position: 'absolute', display: 'none', pointerEvents: 'none', width: '44px', height: '44px', marginLeft: '-22px', marginTop: '-22px', zIndex: '2' });
+  host.appendChild(ringEl);
+  const glyphEl = document.createElement('div');
+  glyphEl.setAttribute('data-scene', 'attach-glyph');
+  glyphEl.title = 'Attach';
+  glyphEl.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 13l7-7a3 3 0 0 1 4 4l-9 9a5 5 0 0 1-7-7l8-8" fill="none" stroke-width="2" stroke-linecap="round"/></svg>';
+  Object.assign(glyphEl.style, { position: 'absolute', display: 'none', pointerEvents: 'none', width: '22px', height: '22px', marginLeft: '-11px', marginTop: '-11px', borderRadius: '50%', zIndex: '2' });
+  host.appendChild(glyphEl);
+  function styleOverlays(): void {
+    const c = theme.tokens.colours;
+    const ink = c.focus;
+    for (const el of ringEl.querySelectorAll('circle')) el.setAttribute('stroke', ink);
+    glyphEl.style.background = c.surface;
+    glyphEl.style.border = `1px solid ${ink}`;
+    glyphEl.querySelector('path')?.setAttribute('stroke', ink);
+    clipView.setStyle({ lit: theme.lighting.lit, colour: theme.lighting.lit ? '#d9dde3' : c.fg });
+  }
+  styleOverlays();
   const markGeometry = new THREE.BufferGeometry();
   const markMaterial = new THREE.LineBasicMaterial({ color: theme.tokens.colours.border, depthTest: false, depthWrite: false, transparent: true });
   const marks = new THREE.LineSegments(markGeometry, markMaterial);
@@ -419,6 +480,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let entries: StackEntry[] = [];
   /** The marker being dragged, if any. */
   let itemDrag: ItemDrag | null = null;
+  // Paperclips (M6-P1): the clip held by the pointer, a press-and-hold on an overlap, the clip under the pointer, and
+  // where the card drag in progress would land.
+  let clipDrag: ClipDrag | null = null;
+  let clipHold: ClipHold | null = null;
+  let hoverClip: ClipId | null = null;
+  let preview: DropPreview | null = null;
+  /** The pointer of the drag the preview was last computed for (recomputed when it moves). */
+  let previewFor: { x: number; y: number; ctrl: boolean } | null = null;
   let idCounter = 0;
   const idPrefix = Math.random().toString(36).slice(2, 8);
   const newId = (p: string) => `${p}-${idPrefix}-${(++idCounter).toString(36)}`;
@@ -780,7 +849,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const dressing = theme.cardDressing;
     const vp = rig.viewport;
     const sorted: { sort: readonly number[]; draw: CardDraw }[] = [];
-    const lit = new Set(hoverItem && state ? hoverHighlights(state, hoverItem) : []);
+    const lit = new Set([...(hoverItem && state ? hoverHighlights(state, hoverItem) : []), ...hoverClipCards()]);
     const slotOf = new Map(entries.map((e) => [e.item.card ?? '', e]));
     const foilPhase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
     foilsDrawn.clear();
@@ -876,6 +945,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     text.sync(specs);
     labels.sync(labelSpecs());
     syncDisplaced();
+    clipView.sync(clipDraws());
+    syncPreview(cam);
     pingsLive = lineView.syncPings(performance.now());
     runtime.update(dt);
     runtime.render(dt);
@@ -923,7 +994,22 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       // pointer held still over a card at rest needs no frames.
       if (drag.last !== dragDrawn) changed = true;
       dragDrawn = drag.last;
+      // The drop preview follows the pointer and Ctrl (M6-P1).
+      if (!previewFor || previewFor.x !== drag.last.x || previewFor.y !== drag.last.y || previewFor.ctrl !== drag.ctrl) {
+        previewFor = { x: drag.last.x, y: drag.last.y, ctrl: drag.ctrl };
+        const next = computePreview(drag);
+        if (!samePreview(preview, next)) {
+          preview = next;
+          changed = true;
+        }
+      }
     } else dragDrawn = null;
+    // A press held still on an overlap clips at CLIP.holdMs; its ring fills from CLIP.ringFromMs (M6-P1).
+    if (clipHold) {
+      if (now - clipHold.t0 >= CLIP.holdMs) commitHold();
+      syncRing(now);
+    }
+    if (clipDrag) changed = true;
     const held = theme.cardDressing.held.lift;
     for (const rc of rcards.values()) {
       const lift = drag?.ids.includes(rc.id) ? held : 0;
@@ -1061,6 +1147,203 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return state ? dropTargets(state, layout, viewerAngle(state, layout, viewerSeat), opts.game) : [];
   }
 
+  // --- Paperclips (M6-P1; PLAN Milestone 6, owner decisions, Paperclips) ------------------------------------------
+  /** Battlefield cards drawn under a screen point, top first, as the clip routes see them. */
+  function cardsUnder(x: number, y: number): ClipCard[] {
+    const out: ClipCard[] = [];
+    const atZ = new Map<number, TablePoint | null>();
+    for (let i = order.length - 1; i >= 0; i--) {
+      const rc = order[i]!;
+      if (rc.place.kind !== 'free' || rc.place.fanned || !isBattlefield(rc.inst.zone)) continue;
+      const z = drawnZ(rc);
+      let q = atZ.get(z);
+      if (q === undefined) atZ.set(z, (q = screenToCardPlane(x, y, z)));
+      if (q && pointInCard(q, rc.motion.pose)) out.push({ id: rc.id, pose: rc.motion.pose, tapped: rc.inst.tapped });
+    }
+    return out;
+  }
+
+  /** Where a clip of the state is drawn now (its anchor card's drawn pose), with its height over the cards it holds. */
+  function clipDrawnFrame(id: ClipId): { frame: ClipFrame; z: number } | null {
+    const c = state?.clips?.[id];
+    const rc = c ? rcards.get(c.anchor.card) : undefined;
+    if (!c || !rc || rc.place.kind !== 'free') return null;
+    let z = 0;
+    for (const m of c.cards) {
+      const r = rcards.get(m);
+      if (r) z = Math.max(z, drawnZ(r));
+    }
+    return { frame: clipFrame(c.anchor, rc.motion.pose, rc.inst.tapped), z: z + cards.faceLift + 0.6 };
+  }
+
+  /** The clip under a screen point (clips lie over the cards; a finger gets a wider margin), or null. */
+  function clipUnder(x: number, y: number, touch = false): ClipId | null {
+    if (!state?.clips) return null;
+    const ids = Object.keys(state.clips).sort().reverse();
+    for (const id of ids) {
+      const f = clipDrawnFrame(id);
+      if (!f) continue;
+      const p = screenToCardPlane(x, y, f.z - cards.faceLift);
+      if (p && pointInClip(p, f.frame, touch ? 4 : 1.5)) return id;
+    }
+    return null;
+  }
+
+  function setHoverClip(id: ClipId | null): void {
+    if (id === hoverClip) return;
+    hoverClip = id;
+    dirty = true;
+  }
+
+  /** The cards a hovered clip outlines: its whole connected clip group (owner decisions: "Hovering a clip outlines the clipped cards"). */
+  function hoverClipCards(): InstanceId[] {
+    const c = hoverClip ? state?.clips?.[hoverClip] : undefined;
+    return c && state ? clipGroup(state, c.cards[0]!) : [];
+  }
+
+  /** A left press on an overlap starts the hold (PLAN Milestone 6, owner decisions, Creating a clip, Mouse). */
+  function startHold(pointerId: number, x: number, y: number): void {
+    const under = cardsUnder(x, y);
+    clipHold = under.length >= CLIP.minCards ? { pointerId, t0: performance.now(), at: { x, y }, cards: under.map((c) => c.id) } : null;
+  }
+
+  function cancelHold(): void {
+    if (!clipHold) return;
+    clipHold = null;
+    ringEl.style.display = 'none';
+  }
+
+  /** The hold reached CLIP.holdMs without moving: the cards under it are clipped, and the press does nothing more. */
+  function commitHold(): void {
+    const h = clipHold;
+    cancelHold();
+    if (!h || !state) return;
+    if (gesture?.kind === 'press' && gesture.pointerId === h.pointerId) gesture = { kind: 'held', pointerId: h.pointerId };
+    const made = clipHere(state, cardsUnder(h.at.x, h.at.y), screenToTable(h.at.x, h.at.y));
+    if (made) dispatch([{ type: 'clipAdd', clip: newId('clip'), cards: made.cards, anchor: made.anchor }]);
+  }
+
+  /** The hold ring: shown from CLIP.ringFromMs, full at CLIP.holdMs. */
+  function syncRing(now: number): void {
+    const h = clipHold;
+    const el = h ? now - h.t0 : 0;
+    if (!h || el < CLIP.ringFromMs) {
+      if (ringEl.style.display !== 'none') ringEl.style.display = 'none';
+      return;
+    }
+    const hr = host.getBoundingClientRect();
+    const frac = Math.min(1, (el - CLIP.ringFromMs) / (CLIP.holdMs - CLIP.ringFromMs));
+    ringEl.style.display = 'block';
+    ringEl.style.left = `${h.at.x - hr.left}px`;
+    ringEl.style.top = `${h.at.y - hr.top}px`;
+    ringEl.querySelector('.fill')?.setAttribute('stroke-dashoffset', String(113.1 * (1 - frac)));
+  }
+
+  /** Pick up an existing clip (or, from the tray, a new one) at a screen point. */
+  function startClipDrag(pointerId: number, clip: ClipId | null, x: number, y: number, external: boolean): void {
+    cancelHold();
+    clipDrag = { pointerId, clip, last: { x, y }, external };
+    setHover(null);
+    dirty = true;
+  }
+
+  /**
+   * Drop the held clip (owner decisions, Paperclips): a new clip from the tray clips the cards under it (two or more),
+   * else it vanishes; an existing clip dropped on empty table comes off, dropped on two or more other cards it moves
+   * there (one step: off, then on), elsewhere it springs back.
+   */
+  function finishClipDrag(cancel = false): void {
+    const d = clipDrag;
+    clipDrag = null;
+    dirty = true;
+    if (!d || cancel || !state) return;
+    const under = cardsUnder(d.last.x, d.last.y);
+    const p = screenToTable(d.last.x, d.last.y);
+    if (d.clip === null) {
+      const made = clipHere(state, under, p);
+      if (made) dispatch([{ type: 'clipAdd', clip: newId('clip'), cards: made.cards, anchor: made.anchor }]);
+      return;
+    }
+    const clip = state.clips?.[d.clip];
+    if (!clip) return;
+    if (under.length === 0) {
+      dispatch([{ type: 'clipRemove', clip: clip.id }]);
+      return;
+    }
+    const made = clipHere(state, under, p, clip.id);
+    if (!made) return;
+    const group = newId('g');
+    dispatch([
+      { type: 'clipRemove', clip: clip.id, group },
+      { type: 'clipAdd', clip: newId('clip'), cards: made.cards, anchor: made.anchor, group },
+    ]);
+  }
+
+  /** The clips to draw this frame: every clip of the state on its anchor card, a held one under the pointer. */
+  function clipDraws(): ClipDraw[] {
+    const out: ClipDraw[] = [];
+    const held = clipDrag ? screenToTable(clipDrag.last.x, clipDrag.last.y) : null;
+    for (const id of Object.keys(state?.clips ?? {}).sort()) {
+      const f = clipDrawnFrame(id);
+      if (!f) continue;
+      const frame = clipDrag?.clip === id && held ? { ...f.frame, x: held.x, y: held.y } : f.frame;
+      out.push({ id, frame, z: clipDrag?.clip === id ? f.z + theme.cardDressing.held.lift : f.z, lifted: hoverClip === id || clipDrag?.clip === id });
+    }
+    if (clipDrag && clipDrag.clip === null && held) out.push({ id: 'tray', frame: { x: held.x, y: held.y, rot: viewerAngle(state, layout, viewerSeat) }, z: theme.cardDressing.held.lift, lifted: true });
+    return out;
+  }
+
+  /** The drop preview: a ghost outline at the landing spot and, for a tuck, the attach glyph at the peeking strip. */
+  function syncPreview(cam: ReturnType<typeof rig.pose>): void {
+    const pv = preview;
+    if (!pv) {
+      previewLayer.sync([]);
+      if (glyphEl.style.display !== 'none') glyphEl.style.display = 'none';
+      return;
+    }
+    const colour = theme.tokens.colours.focus;
+    previewLayer.sync(ghostSegments(pv.pose, true).map((sgm) => ({ ...sgm, colour, widthPx: 1.5 })));
+    if (pv.kind !== 'tuck') {
+      glyphEl.style.display = 'none';
+      return;
+    }
+    const [ox, oy] = rot2(0, CARD_H / 2 - 5, pv.pose.rot);
+    const s = rig.tableToScreen({ x: pv.pose.x + ox, y: pv.pose.y + oy }, 0, cam);
+    glyphEl.style.display = 'block';
+    glyphEl.style.left = `${s.x}px`;
+    glyphEl.style.top = `${s.y}px`;
+  }
+
+  const samePreview = (a: DropPreview | null, b: DropPreview | null): boolean =>
+    a === b || (!!a && !!b && a.kind === b.kind && a.target === b.target && Math.abs(a.pose.x - b.pose.x) < 1e-6 && Math.abs(a.pose.y - b.pose.y) < 1e-6 && Math.abs(a.pose.rot - b.pose.rot) < 1e-6);
+
+  /** The debug hook's clip part (PLAN Milestone 6 acceptance through the hook, never pixels). */
+  function clipDebug(): ClipDebugState {
+    syncCamera();
+    const r = canvasRect();
+    const clips: DebugClip[] = Object.keys(state?.clips ?? {})
+      .sort()
+      .map((id) => {
+        const c = state!.clips![id]!;
+        const f = clipDrawnFrame(id);
+        let screen: DOMRect | null = null;
+        if (f) {
+          const pts = clipCorners(f.frame).map((q) => new THREE.Vector3(q.x, f.z, -q.y).project(camera));
+          const xs = pts.map((v) => r.left + ((v.x + 1) / 2) * r.width);
+          const ys = pts.map((v) => r.top + ((1 - v.y) / 2) * r.height);
+          screen = new DOMRect(Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+        }
+        return { id, cards: [...c.cards], at: f ? { x: f.frame.x, y: f.frame.y } : { x: 0, y: 0 }, screen };
+      });
+    const h = clipHold;
+    return {
+      clips,
+      hold: h ? { at: { ...h.at }, progress: Math.min(1, (performance.now() - h.t0) / CLIP.holdMs), cards: [...h.cards] } : null,
+      drag: drag?.group ?? null,
+      preview,
+    };
+  }
+
   // --- Selection and hover ------------------------------------------------------------------------------------------
   function setSelection(ids: InstanceId[]): void {
     const same = ids.length === view.selection.length && ids.every((id, i) => view.selection[i] === id);
@@ -1086,19 +1369,16 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     // Library cards are drawn through the draw action (a private effect), other seats' hands are not ours to drag.
     if (!external && zoneObj && zoneObj.visibility !== 'public') return false;
     let ids: InstanceId[] = [rc.id];
-    let keepPile = false;
+    let group: DragGroup | null = null;
     if (pres === 'free') {
-      const sel = view.selection.filter((id) => id !== rc.id && state!.cards[id] && isBattlefield(state!.cards[id]!.zone));
-      if (view.selection.includes(rc.id) && sel.length > 0) ids = [rc.id, ...sel];
-      else if (inst.pile && (inst.pile.index === 0 || pileGrab)) {
-        const members = Object.values(state.cards)
-          .filter((c) => c.pile?.id === inst.pile!.id)
-          .sort((a, b) => a.pile!.index - b.pile!.index)
-          .map((c) => c.id);
-        ids = [members[0]!, ...members.slice(1)];
-        keepPile = true;
-      }
+      // The solitaire carry rule (PLAN Milestone 6, owner decisions, Carry rule; Paperclips): the grabbed card takes
+      // the cards riding on it, its clipped group and, when it is selected, the selection. A press on a squared
+      // pile's count badge grabs the pile by its bottom card. Temporary moves leave pile riders behind (core/clips.ts).
+      const base = pileGrab && inst.pile ? Object.values(state.cards).find((c) => c.pile?.id === inst.pile!.id && c.pile.index === 0) : undefined;
+      group = carryGroup(state, base?.id ?? rc.id, { selection: view.selection, piles: !temp });
+      if (group.cards.length) ids = group.cards;
     }
+    const keepPile = false;
     const anchor = rcards.get(ids[0]!)!;
     const p = screenToTable(x, y);
     const start = new Map<InstanceId, Pose>();
@@ -1107,7 +1387,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (r) start.set(id, { ...r.motion.pose, rot: r.place.rest.rot });
     }
     const a = anchor.motion.pose;
-    drag = { pointerId, ids, offset: { x: a.x - p.x, y: a.y - p.y }, start, keepPile, temp, last: { x, y }, external, added: [] };
+    drag = { pointerId, ids, offset: { x: a.x - p.x, y: a.y - p.y }, start, keepPile, temp, last: { x, y }, external, added: [], group, ctrl: false };
+    preview = null;
+    previewFor = null;
     for (const id of ids) rcards.get(id)!.expect = null;
     sortOrder();
     dirty = true;
@@ -1160,6 +1442,65 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return { zone: current, controller: owner, frameDeg: sl?.angle ?? 0 };
   }
 
+  /** The carry group of a drag (a card off the battlefield: itself, or the dragged ids as they are). */
+  function groupOf(d: DragState): DragGroup {
+    return d.group ?? { anchor: d.ids[0]!, cards: [...d.ids], reason: {}, leavesPile: null, leavesHost: null };
+  }
+
+  /**
+   * Where a drag would land with the pointer at `d.last`: the snap result (DESIGN "Specification: geometry, layout and
+   * motion", Drop resolution, with rule 3a), the battlefield under the anchor and the anchor's free pose. Shared by the
+   * drop and its preview, so the ghost outline shows exactly where the release puts the card.
+   */
+  function resolveFor(d: DragState, ctrl: boolean): { result: DropResult; dest: ReturnType<typeof destinationAt>; anchorPose: Pose; p: TablePoint } | null {
+    if (!state) return null;
+    const first = state.cards[d.ids[0]!];
+    const a0 = d.start.get(d.ids[0]!);
+    if (!first || !a0) return null;
+    const p = screenToTable(d.last.x, d.last.y);
+    const anchorPose: Pose = { x: p.x + d.offset.x, y: p.y + d.offset.y, rot: a0.rot };
+    const dest = destinationAt({ x: anchorPose.x, y: anchorPose.y }, first);
+    const dragged = new Set(d.ids);
+    const snapCards: SnapCard[] = [];
+    for (const rc of rcards.values()) {
+      if (dragged.has(rc.id) || rc.place.kind !== 'free' || rc.place.fanned) continue;
+      const sl = seatLayoutOf(state, layout, rc.inst.controller);
+      // Drawn pose: a tapped card's extents are those of the turned card.
+      snapCards.push({
+        id: rc.id,
+        pose: rc.place.rest,
+        frameDeg: sl?.angle ?? 0,
+        ...(rc.inst.pile ? { pile: rc.inst.pile } : {}),
+        ...(rc.inst.attachedTo !== undefined ? { attachedTo: rc.inst.attachedTo } : {}),
+        ...(rc.inst.tapped ? { tapped: true } : {}),
+      });
+    }
+    const result: DropResult = resolveDrop(
+      { pose: anchorPose, cursor: p, single: d.ids.length === 1, ctrl, frameDeg: dest?.frameDeg ?? 0, extent: groupExtent(d) },
+      { table: dropTable(layout), cards: snapCards, targets: targets() },
+    );
+    return { result, dest, anchorPose, p };
+  }
+
+  /** The drawn pose of a tuck slot (its stored pose plus the dragged card's own tap turn). */
+  const tuckDrawn = (c: CardInstance | undefined, pose: Pose): Pose => ({ ...pose, rot: c?.tapped ? (pose.rot + 90) % 360 : pose.rot });
+
+  /**
+   * The landing spot of the drag in progress as the preview shows it (PLAN Milestone 6, owner decisions, Preview: "the
+   * landing spot of every snap (pile, cascade, tuck) is shown as a ghost outline, and a tuck also shows a small attach
+   * glyph"): null for a temporary move, a zone drop and a free or aligned spot.
+   */
+  function computePreview(d: DragState): DropPreview | null {
+    if (d.temp || !state) return null;
+    const r = resolveFor(d, d.ctrl);
+    if (!r) return null;
+    const res = r.result;
+    if (res.kind === 'squared') return { kind: 'squared', target: res.onto, pose: res.pose };
+    if (res.kind === 'cascade') return { kind: 'cascade', target: res.below, pose: res.pose };
+    if (res.kind === 'tuck') return { kind: 'tuck', target: res.host, pose: tuckDrawn(state.cards[d.ids[0]!], res.pose) };
+    return null;
+  }
+
   function finishDrag(ctrl: boolean, cancel = false): void {
     const d = drag;
     if (!d || !state) {
@@ -1167,6 +1508,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return;
     }
     drag = null;
+    preview = null;
+    previewFor = null;
+    dirty = true;
     const now = performance.now();
     const insts = d.ids.map((id) => state!.cards[id]).filter((c): c is CardInstance => !!c);
     const anchorRc = rcards.get(d.ids[0]!);
@@ -1183,13 +1527,19 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const p = screenToTable(d.last.x, d.last.y);
     const a0 = d.start.get(d.ids[0]!)!;
     const anchorPose: Pose = { x: p.x + d.offset.x, y: p.y + d.offset.y, rot: a0.rot };
+    const group = groupOf(d);
+    const inGroup = new Set(d.ids);
+    /** Cards that move on their own: an attachment whose host moves too rides along (the reducer moves it). */
+    const own = insts.filter((c) => c.attachedTo === undefined || !inGroup.has(c.attachedTo));
     let actions: ActionDraft[];
     let predicted: Map<InstanceId, Pose> | null = null;
-    // Dropped onto another seat's attacker (or its blocker fan): a block (DESIGN "Combat and annotation", Block).
+    // Dropped onto another seat's attacker (or its blocker fan): a block (DESIGN "Combat and annotation", Block). The
+    // blockers are the grabbed card and the selection; their attachments come along (owner decisions, Combat).
+    const blockers = d.ids.filter((id) => id === group.anchor || group.reason[id] === 'selection');
     const under = d.external ? null : pick(d.last.x, d.last.y, new Set(d.ids));
     // Dropped back inside its own fan with nothing under the pointer: a reorder (or nothing), not an unblock.
-    const attacker = (under ? fanAttacker(state, under.id) : null) ?? (d.external ? null : fanUnder(state, d.ids, p, combatCtx));
-    const plan = attacker ? blockPlan(state, d.ids, attacker, p, combatCtx) : null;
+    const attacker = (under ? fanAttacker(state, under.id) : null) ?? (d.external ? null : fanUnder(state, blockers, p, combatCtx));
+    const plan = attacker ? blockPlan(state, blockers, attacker, p, combatCtx) : null;
     if (plan) {
       if (plan.actions.length === 0) return back();
       predicted = new Map();
@@ -1202,22 +1552,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return;
     }
     if (d.temp) {
-      actions = tempMoveActions(insts, d.start, anchorPose, { newId });
+      actions = tempMoveActions(own, d.start, anchorPose, { newId });
       predicted = offsetPoses(d, anchorPose);
     } else {
-      const dest = destinationAt({ x: anchorPose.x, y: anchorPose.y }, insts[0]!);
-      const dragged = new Set(d.ids);
-      const snapCards: SnapCard[] = [];
-      for (const rc of rcards.values()) {
-        if (dragged.has(rc.id) || rc.place.kind !== 'free' || rc.place.fanned) continue;
-        const sl = seatLayoutOf(state, layout, rc.inst.controller);
-        // Drawn pose: a tapped card's extents are those of the turned card.
-        snapCards.push({ id: rc.id, pose: rc.place.rest, frameDeg: sl?.angle ?? 0, ...(rc.inst.pile ? { pile: rc.inst.pile } : {}) });
-      }
-      const result: DropResult = resolveDrop(
-        { pose: anchorPose, cursor: p, single: d.ids.length === 1, ctrl, frameDeg: dest?.frameDeg ?? 0, extent: groupExtent(d) },
-        { table: dropTable(layout), cards: snapCards, targets: targets() },
-      );
+      const r = resolveFor(d, ctrl);
+      if (!r) return back();
+      const { result, dest } = r;
       lastDrop = result;
       // An item's card dropped back into the lane moves to the slot under the pointer (DESIGN "The effect stack",
       // Resolving 4: items can be reordered by hand).
@@ -1227,20 +1567,22 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         const to = slotAt(layout.stackLane, viewerAngle(state, layout, viewerSeat), p, state.stack.length);
         if (!item || state.stack.indexOf(item) === to) return back();
         for (const id of d.ids) {
-          const r = rcards.get(id);
-          if (r) r.localUntil = now + EXPECT_MS;
+          const r2 = rcards.get(id);
+          if (r2) r2.localUntil = now + EXPECT_MS;
         }
         back();
         dispatch([{ type: 'stackReorder', item: item.id, index: to }]);
         return;
       }
       if (result.kind !== 'zone' && !dest) return back();
-      actions = dropActions(state, insts, d.start, result, dest ?? { zone: insts[0]!.zone, controller: insts[0]!.controller }, {
+      // The carry group lands as one gesture (scene/carry.ts; PLAN Milestone 6, owner decisions).
+      actions = carryDropActions(state, group, d.start, result, dest ?? { zone: insts[0]!.zone, controller: insts[0]!.controller }, {
         newId,
-        keepPile: d.keepPile,
         presentation: (z) => presentationOf(opts.game, state!, z),
       });
-      if (result.kind !== 'zone') predicted = offsetPoses(d, result.pose);
+      if (result.kind === 'tuck') predicted = new Map([[anchorInst.id, tuckDrawn(anchorInst, result.pose)]]);
+      else if (result.kind === 'align' || result.kind === 'free') predicted = rigidPoses(group, d.start, result.pose);
+      else if (result.kind !== 'zone') predicted = offsetPoses(d, result.pose);
     }
     if (actions.length === 0) return back();
     // Drag poses are drawn poses; the state stores tapped cards without their tap turn.
@@ -1333,9 +1675,22 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
       return;
     }
-    if (gesture) return;
+    if (gesture || clipDrag) return;
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
     if (e.button === 1) e.preventDefault();
+    // A clip lies over the cards (M6-P1): a left press may pick it up, a right press opens its menu (onContextMenu).
+    const clip = e.button === 1 ? null : clipUnder(e.clientX, e.clientY);
+    if (clip) {
+      menuPending = null;
+      if (e.button !== 0) return;
+      gesture = { kind: 'press', pointerId: e.pointerId, button: 0, card: null, item: null, x0: e.clientX, y0: e.clientY, shift: e.shiftKey, alt: e.altKey, pileGrab: false, clip };
+      try {
+        canvas.setPointerCapture(e.pointerId);
+      } catch {
+        // Synthetic events without an active pointer cannot be captured.
+      }
+      return;
+    }
     const rc = pick(e.clientX, e.clientY);
     // Right button: a press on a public card may become a line (right-drag); on empty table in the ego rig a
     // right-drag pitches; elsewhere it is the context menu alone.
@@ -1344,6 +1699,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const pileGrab = !!rc && rc.inst.pile?.kind === 'squared' && onPileBadge(rc, e.clientX, e.clientY);
     const item = rc ? null : (markerAt(screenToTable(e.clientX, e.clientY))?.item.id ?? null);
     gesture = { kind: 'press', pointerId: e.pointerId, button: e.button, card: rc?.id ?? null, item, x0: e.clientX, y0: e.clientY, shift: e.shiftKey, alt: e.altKey, pileGrab };
+    // Holding the left button still where cards overlap clips them (M6-P1).
+    if (e.button === 0 && rc && !e.shiftKey && !e.altKey) startHold(e.pointerId, e.clientX, e.clientY);
     try {
       canvas.setPointerCapture(e.pointerId);
     } catch {
@@ -1408,6 +1765,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (touchInput.take(e)) return;
     if (drag && e.pointerId === drag.pointerId && !drag.external) {
       drag.last = { x: e.clientX, y: e.clientY };
+      drag.ctrl = e.ctrlKey;
+      return;
+    }
+    if (clipDrag && e.pointerId === clipDrag.pointerId && !clipDrag.external) {
+      clipDrag.last = { x: e.clientX, y: e.clientY };
+      dirty = true;
       return;
     }
     if (gesture?.kind === 'line' && e.pointerId === gesture.pointerId) {
@@ -1427,16 +1790,25 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return;
     }
     if (!gesture) {
-      const rc = pick(e.clientX, e.clientY);
+      const clip = clipUnder(e.clientX, e.clientY);
+      setHoverClip(clip);
+      const rc = clip ? null : pick(e.clientX, e.clientY);
       setHover(rc?.id ?? null);
-      setHoverItem(itemAt(e.clientX, e.clientY, rc));
+      setHoverItem(clip ? null : itemAt(e.clientX, e.clientY, rc));
       return;
     }
     if (e.pointerId !== ('pointerId' in gesture ? gesture.pointerId : -1)) return;
     if (gesture.kind === 'press') {
       const g = gesture;
       const moved = Math.hypot(e.clientX - g.x0, e.clientY - g.y0);
-      if (moved < DRAG_THRESHOLD_PX) return;
+      if (moved < Math.max(DRAG_THRESHOLD_PX, CLIP.holdSlopPx)) return;
+      cancelHold();
+      if (g.clip) {
+        // A clip picked up: it follows the pointer until released (M6-P1).
+        startClipDrag(g.pointerId, g.clip, e.clientX, e.clientY, false);
+        gesture = { kind: 'drag' };
+        return;
+      }
       const rc = g.card ? rcards.get(g.card) : null;
       if (g.button === 2 && !rc && !g.badge && rig.rig() === 'ego') {
         menuPending = null;
@@ -1462,6 +1834,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (g.button === 0 && rc && startCardDrag(rc, g.pointerId, g.x0, g.y0, g.alt, g.pileGrab)) {
         gesture = { kind: 'drag' };
         drag!.last = { x: e.clientX, y: e.clientY };
+        drag!.ctrl = e.ctrlKey;
         setHover(null);
         return;
       }
@@ -1529,6 +1902,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       release(e);
       return;
     }
+    if (clipDrag && e.pointerId === clipDrag.pointerId && !clipDrag.external) {
+      clipDrag.last = { x: e.clientX, y: e.clientY };
+      finishClipDrag();
+      gesture = null;
+      release(e);
+      return;
+    }
+    if (clipHold?.pointerId === e.pointerId) cancelHold();
     const g = gesture;
     if (!g || ('pointerId' in g && g.pointerId !== e.pointerId)) return;
     gesture = null;
@@ -1562,6 +1943,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         if (g.card) opts.events.inspect?.(g.card);
         return;
       }
+      // A click on a clip is not a click on the table (double-click removes it).
+      if (g.clip) return;
       clickAt(e.clientX, e.clientY, g.card, g.item, g.shift);
     } else if (g.kind === 'pan') {
       const s = g.samples;
@@ -1620,6 +2003,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     if (drag && drag.pointerId === e.pointerId) finishDrag(false, true);
     if (itemDrag && itemDrag.pointerId === e.pointerId) finishItemDrag(true);
+    if (clipDrag && clipDrag.pointerId === e.pointerId && !clipDrag.external) finishClipDrag(true);
+    if (clipHold?.pointerId === e.pointerId) cancelHold();
     if (gesture?.kind === 'marquee') marqueeEl.style.display = 'none';
     if (gesture?.kind === 'line') dirty = true;
     if (gesture?.kind === 'line' || (gesture?.kind === 'press' && gesture.badge)) stackBadge.trackLine(null);
@@ -1631,7 +2016,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   // --- Touch (DESIGN "Input and interaction design", Touch; "Camera and navigation", Navigation gestures; M5-P1) -------
   /** What the one-finger gesture under way holds. */
   let touchHold:
-    | { kind: 'card' | 'item' | 'line' }
+    | { kind: 'card' | 'item' | 'line' | 'clip' }
     | { kind: 'pan'; last: ScreenPoint; samples: { x: number; y: number; t: number }[] }
     | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number; base: InstanceId[] }
     | null = null;
@@ -1639,6 +2024,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let touchTableMenu: ScreenPoint | null = null;
   /** The radial menu this scene opened for a long-press (closed again when the finger goes on to draw a line). */
   let touchRadial = false;
+  /** A long-press on a clip opened its menu: the finger lifting or dragging on draws no line. */
+  let touchClipMenu = false;
   /** The one-finger touch started on an item of the far-zoom badge's list (scene/stack-badge.ts onTouch). */
   let touchBadge: { item: StackItemId; lastY: number } | null = null;
 
@@ -1687,18 +2074,25 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     switch (g.kind) {
       case 'tap': {
+        if (clipUnder(g.at.x, g.at.y, true)) return;
         const rc = pick(g.at.x, g.at.y);
         const item = rc ? null : (markerAt(screenToTable(g.at.x, g.at.y))?.item.id ?? null);
         clickAt(g.at.x, g.at.y, rc?.id ?? null, item, false);
         return;
       }
       case 'doubleTap':
-        doubleAt(g.at.x, g.at.y);
+        doubleAt(g.at.x, g.at.y, true);
         return;
       case 'twoFingerDoubleTap':
         controls.fit(true);
         return;
       case 'longPress': {
+        const clip = clipUnder(g.at.x, g.at.y, true);
+        if (clip) {
+          touchClipMenu = true;
+          opts.events.clipMenu?.(clip, g.at);
+          return;
+        }
         const rc = pick(g.at.x, g.at.y);
         if (!rc) {
           touchTableMenu = g.at;
@@ -1736,6 +2130,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const h = touchHold;
     if (g.phase === 'start') {
       touchTableMenu = null;
+      const clip = clipUnder(g.start.x, g.start.y, true);
+      if (clip) {
+        startClipDrag(-1, clip, g.at.x, g.at.y, false);
+        touchHold = { kind: 'clip' };
+        touchInput.capture();
+        return;
+      }
       const rc = pick(g.start.x, g.start.y);
       const pileGrab = !!rc && rc.inst.pile?.kind === 'squared' && onPileBadge(rc, g.start.x, g.start.y);
       if (rc && startCardDrag(rc, -1, g.start.x, g.start.y, false, pileGrab)) {
@@ -1761,6 +2162,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (!h) return;
     if (g.phase === 'move') {
       if (h.kind === 'card' && drag) drag.last = { x: g.at.x, y: g.at.y };
+      else if (h.kind === 'clip' && clipDrag) clipDrag.last = { x: g.at.x, y: g.at.y };
       else if (h.kind === 'item' && itemDrag) itemDrag.last = { x: g.at.x, y: g.at.y };
       else if (h.kind === 'pan') {
         rig.panBy(g.at.x - h.last.x, g.at.y - h.last.y);
@@ -1776,6 +2178,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (h.kind === 'card' && drag) {
       drag.last = { x: g.at.x, y: g.at.y };
       finishDrag(false, cancel);
+    } else if (h.kind === 'clip' && clipDrag) {
+      clipDrag.last = { x: g.at.x, y: g.at.y };
+      finishClipDrag(cancel);
     } else if (h.kind === 'item' && itemDrag) {
       itemDrag.last = { x: g.at.x, y: g.at.y };
       finishItemDrag(cancel);
@@ -1791,6 +2196,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   /** Long-press then drag: from a card a connection line (the radial menu closes), from empty table a marquee. */
   function touchLine(g: Extract<TouchGesture, { kind: 'longPressDrag' }>): void {
     const h = touchHold;
+    if (g.phase === 'start' && touchClipMenu) return;
     if (g.phase === 'start') {
       if (touchRadial) {
         touchRadial = false;
@@ -1861,6 +2267,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (touchInput.active()) return;
     touchBadge = null;
     touchRadial = false;
+    touchClipMenu = false;
     const at = touchTableMenu;
     touchTableMenu = null;
     if (at && touchHold === null) opts.events.contextMenu?.(null, at);
@@ -1877,8 +2284,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
    * opens a pile; Touch: double-tap taps the card; "Camera and navigation": double-click or double-tap on empty space
    * beside a card zooms to it).
    */
-  function doubleAt(x: number, y: number): void {
+  function doubleAt(x: number, y: number, touch = false): void {
     if (!state) return;
+    // Double-click (double-tap) on a clip takes it off (M6-P1).
+    const clip = clipUnder(x, y, touch);
+    if (clip) {
+      dispatch([{ type: 'clipRemove', clip }]);
+      return;
+    }
     const rc = pick(x, y);
     if (!rc) {
       // Double-click on empty space beside a card zooms to it (DESIGN "Camera and navigation").
@@ -1926,6 +2339,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     e.preventDefault();
     // Some browsers fire a context menu on a long touch: touch has its own long-press (the radial menu).
     if (touchInput.recent()) return;
+    // A clip's own menu (M6-P1: "its context menu (right-click, long-press) Remove clip").
+    const clip = clipUnder(e.clientX, e.clientY);
+    if (clip && gesture?.kind !== 'line') {
+      menuPending = null;
+      opts.events.clipMenu?.(clip, { x: e.clientX, y: e.clientY });
+      return;
+    }
     const rc = pick(e.clientX, e.clientY);
     // Some platforms ask on press (macOS), others on release (Windows, Linux): right-drag draws a line instead.
     if (gesture?.kind === 'press' && gesture.button === 2) {
@@ -1957,6 +2377,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   function onPointerLeave(): void {
     if (!gesture) {
+      setHoverClip(null);
       setHover(null);
       setHoverItem(null);
     }
@@ -1964,16 +2385,33 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   // External drag (from the HUD's hand fan) listens on window.
   function onWindowMove(e: PointerEvent): void {
-    if (drag?.external && e.pointerId === drag.pointerId) drag.last = { x: e.clientX, y: e.clientY };
+    if (drag?.external && e.pointerId === drag.pointerId) {
+      drag.last = { x: e.clientX, y: e.clientY };
+      drag.ctrl = e.ctrlKey;
+    }
+    // A clip dragged out of the HUD's tray (M6-P1).
+    if (clipDrag?.external && e.pointerId === clipDrag.pointerId) {
+      clipDrag.last = { x: e.clientX, y: e.clientY };
+      dirty = true;
+    }
   }
   function onWindowUp(e: PointerEvent): void {
     if (drag?.external && e.pointerId === drag.pointerId) {
       drag.last = { x: e.clientX, y: e.clientY };
       finishDrag(e.ctrlKey, e.type === 'pointercancel');
     }
+    if (clipDrag?.external && e.pointerId === clipDrag.pointerId) {
+      clipDrag.last = { x: e.clientX, y: e.clientY };
+      finishClipDrag(e.type === 'pointercancel');
+    }
   }
   function onKey(e: KeyboardEvent): void {
     if (e.key === 'Escape' && drag) finishDrag(false, true);
+    if (e.key === 'Escape' && clipDrag) {
+      finishClipDrag(true);
+      if (gesture?.kind === 'drag') gesture = null;
+    }
+    if (e.key === 'Escape' && clipHold) cancelHold();
     if (e.key === 'Escape' && gesture?.kind === 'line') {
       // Escape abandons a line being drawn; the release then does nothing.
       menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
@@ -2177,6 +2615,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     touch: { gestures: () => recentGestures(), radial: () => null, thumbBar: () => [] },
     // The far-zoom stack badge (M5-P7).
     stackBadge: () => stackBadge.state(),
+    // Paperclips, the hold ring, the drag group and the drop preview (M6-P1).
+    clips: () => clipDebug(),
   };
   registerDebug(debugParts);
 
@@ -2396,6 +2836,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       swapBack(oldBack);
       cards.setBackground(theme.tokens.colours.surface);
       markMaterial.color.set(theme.tokens.colours.border);
+      styleOverlays();
       ghostLayer.setOpacity(theme.cardDressing.ghost.opacity);
       rig.inertiaMs = theme.motion.panInertiaMs;
       // The theme's camera defaults: its ego parameters and bird's-eye tilt, and its preferred rig unless the viewer chose one.
@@ -2470,6 +2911,16 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         drag!.pointerId = activePointer ?? -1;
       }
     },
+    startClipDrag(x, y) {
+      if (!state || drag || clipDrag) return;
+      startClipDrag(activePointer ?? -1, null, x, y, true);
+    },
+    cardsAt(x, y) {
+      return cardsUnder(x, y).map((c) => c.id);
+    },
+    clipAt(x, y) {
+      return clipUnder(x, y);
+    },
     worldToScreen,
     screenToTable(x, y) {
       return screenToTable(x, y);
@@ -2510,6 +2961,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       lineView.dispose();
       ghostLayer.dispose();
       markerLayer.dispose();
+      clipView.dispose();
+      previewLayer.dispose();
+      ringEl.remove();
+      glyphEl.remove();
       captionLayer.dispose();
       markGeometry.dispose();
       markMaterial.dispose();

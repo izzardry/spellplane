@@ -356,6 +356,11 @@ export function describe(a: Action, d: Describers): Seg[] | null {
       return [t('attaches '), card(a.card), t(' to '), card(a.to)];
     case 'detach':
       return [t('detaches '), card(a.card)];
+    // M6-P1: paperclips are public and logged with who clipped or unclipped (PLAN Milestone 6, owner decisions).
+    case 'clipAdd':
+      return [t('clips '), ...joinCards(Array.isArray(a.cards) ? a.cards.map((id) => card(id)) : []), t(' together')];
+    case 'clipRemove':
+      return [t('takes a paperclip off')];
     case 'pile':
       return a.pile ? [t(a.pile.kind === 'cascade' ? 'cascades ' : 'piles '), card(a.card)] : [t('takes '), card(a.card), t(' out of its pile')];
     case 'tidy':

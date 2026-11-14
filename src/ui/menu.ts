@@ -32,6 +32,9 @@ export const CARD_MENU: readonly ActionId[] = [
   'ability',
   'attack',
   'attackNoTap',
+  // M6-P1: attach / detach and clip / remove clip, labelled by state (Commands.menuLabel).
+  'attach',
+  'clip',
   'toGraveyard',
   'toExile',
   'toHand',
@@ -54,7 +57,7 @@ function labelOf(keymap: Keymap, action: ActionId): string {
  * named counters). `runOn` runs an action with the card as the hovered card.
  */
 export function cardMenu(card: CardInstance, keymap: Keymap, commands: Commands, runOn: (action: ActionId) => void): MenuEntry[] {
-  const entries: MenuEntry[] = CARD_MENU.filter((a) => commands.applies(a, card)).map((a) => ({ id: a, label: labelOf(keymap, a), key: keyLabel(keymap, a), run: () => runOn(a) }));
+  const entries: MenuEntry[] = CARD_MENU.filter((a) => commands.applies(a, card)).map((a) => ({ id: a, label: commands.menuLabel(a, card) ?? labelOf(keymap, a), key: keyLabel(keymap, a), run: () => runOn(a) }));
   if (commands.applies('ability', card)) entries.splice(entries.findIndex((e) => e.id === 'ability') + 1, 0, { id: 'trigger', label: 'Add trigger', key: null, run: () => commands.trigger(card.id) });
   if (commands.applies('counterAdd', card)) {
     for (const kind of COUNTER_KINDS.slice(1)) entries.push({ id: `counter:${kind}`, label: `Add ${kind} counter`, key: null, run: () => commands.counter(card.id, kind, 1) });
