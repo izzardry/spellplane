@@ -74,7 +74,7 @@ import type { NetEngine, PrivateChannel, ResumePoint, Unsubscribe } from '../net
 import type { LogRecord, TableStore } from '../store/types';
 import { DRY_CID, FACE_DOWN_KINDS, faceDownAllowed, placementOf, putBack, reRevealDraft, referencedCard, sameOrder, SESSION_ONLY, turnsPublic, turnsUpOnMove, withProof } from './effects';
 import { localNonces, type NonceStore } from './nonces';
-import { TablePersistence } from './persist';
+import { aloneInRoom, TablePersistence } from './persist';
 import { randomId, randomSalt } from './secrecy';
 import { identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recoveryProblem, type RecoveryOwed, type SessionRecovery } from './resume';
 import { reconcileSecrets, type LibraryPlacement } from './secrets';
@@ -384,6 +384,7 @@ class NetTable implements NetSession, SessionRecovery {
       snapshotSeq,
       lastSeq,
       protocol: this.savedProtocol,
+      holdSnapshot: () => aloneInRoom(this.engine),
     });
   }
 
@@ -1001,7 +1002,11 @@ class NetTable implements NetSession, SessionRecovery {
    * After a reload: the undo stack the stored log leaves (core/undo.ts undoStackFromLog), from the stored snapshot on,
    * so Ctrl+Z goes on taking back this player's own most recent actions (DESIGN "Turn flow and confirmation", Undo).
    * Actions inside the snapshot are past undoing. A draw goes back on top of the library; another card returns to the
-   * hand at its end (the hand's order before it is not in the log).
+   * hand at its end (the hand's order before it is not in the log). A card the undone action took from inside or from
+   * the bottom of the own library also goes back on top (core/undo.ts `opposite` returns a card to a hidden zone at
+   * 'top'): the private library order before each step is not in the log or the secret store, so after a reload the
+   * card cannot go back to its old place as it does before one (libraryBefore). Not a leak: no other peer sees the
+   * private order.
    */
   private restoreUndo(snapshot: TableState, snapshotSeq: number): void {
     const log = this.entries.flatMap((e) => (e.kind === 'action' && e.seq > snapshotSeq ? [{ ...e.action, seq: e.seq } as Action] : []));

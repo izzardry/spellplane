@@ -44,7 +44,8 @@ import { DRY_CID, faceDownAllowed, placementOf, putBack, reRevealDraft, referenc
 import { SNAPSHOT_EVERY, TablePersistence } from './persist';
 import { commitFor, orderHash, randomId, randomSalt, shuffledOrder, shuffleSeed } from './secrecy';
 import { emptySecrets, reconcileSecrets, type LibraryPlacement } from './secrets';
-import type { ChatChannel } from '../net/messages';
+import { PROTOCOL_VERSION, type ChatChannel } from '../net/messages';
+import { roomVersionNotice } from '../net/version';
 import type { Presence } from '../net/types';
 import { NULL_PRESENCE } from './presence';
 import type { DeckImport, LookedCard, NetStatusListener, SessionListener, SessionNetStatus, SoloSessionOptions, TableSession } from './types';
@@ -143,7 +144,8 @@ class Solo implements SoloSession {
       protocol: init.protocol,
     });
     // After a reload Ctrl+Z goes on taking back the own most recent actions, from the stored snapshot on (M5-P6,
-    // core/undo.ts undoStackFromLog). A draw goes back on top of the library; another card returns to the hand's end.
+    // core/undo.ts undoStackFromLog). A draw goes back on top of the library; another card returns to the hand's end,
+    // and a card taken from inside or the bottom of the library goes back on top too (its old place is not stored).
     const log = this.entries.flatMap((e) => (e.kind === 'action' && e.seq > init.snapshotSeq ? [{ ...e.action, seq: e.seq } as Action] : []));
     if (log.length > 0) {
       const base = init.snapshot.seq === init.snapshotSeq ? init.snapshot : { ...init.snapshot, seq: init.snapshotSeq };
@@ -621,6 +623,10 @@ export async function createSoloSession(opts: SoloSessionOptions): Promise<SoloS
     const short = problem !== null || state.seq !== loaded.table.lastSeq;
     if (problem) entries.push({ kind: 'system', seq: state.seq, at: Date.now(), level: 'warn', text: `Restored up to action ${state.seq}: ${problem}` });
     else if (short) entries.push({ kind: 'system', seq: state.seq, at: Date.now(), level: 'warn', text: `Restored up to action ${state.seq} of ${loaded.table.lastSeq}` });
+    // A save that a newer Spellplane wrote (another tab after an update) may hold actions this page cannot apply: say
+    // so, as the networked session does (net/version.ts; PLAN Milestone 5, owner decisions, Version mismatch).
+    const newer = roomVersionNotice(loaded.table.protocol !== undefined ? { protocol: loaded.table.protocol } : {}, PROTOCOL_VERSION);
+    if (newer !== null) entries.push({ kind: 'system', seq: state.seq, at: Date.now(), level: 'warn', text: newer });
     // A short restore starts a new timeline at the restored seq: store it as the base, so the stored log past it is
     // never replayed again (new writes overwrite it, and replay stops at the new lastSeq).
     if (short) session.saveBase();

@@ -13,7 +13,7 @@ import { LoopbackNetwork } from '../../../src/net/loopback';
 import { liveIdentity } from '../../../src/session/live-identity';
 import { exposedFromLog, freshNetTable } from '../../../src/session/net';
 import { localNonces, memoryNonces } from '../../../src/session/nonces';
-import { SNAPSHOT_EVERY, TablePersistence } from '../../../src/session/persist';
+import { aloneInRoom, SNAPSHOT_EVERY, SNAPSHOT_HOLD_LIMIT, TablePersistence } from '../../../src/session/persist';
 import { KillableTransport, SilentTransport, UnreachableTransport } from '../../../src/session/transports';
 import type { IdentityRecord, IdentityStore } from '../../../src/store/types';
 import { closeStores, stores } from './helpers';
@@ -43,12 +43,51 @@ function steps(state: TableState, n: number): { action: Action; after: TableStat
 const SECRETS: SecretStore = { seat: 's0', identities: {}, libraryOrder: [], hand: [], audit: [], received: {} };
 
 describe('session/persist.ts TablePersistence', () => {
-  async function saver(start: TableState) {
+  async function saver(start: TableState, holdSnapshot?: () => boolean) {
     const s = await stores();
     const errors: string[] = [];
-    const p = new TablePersistence({ store: s.tables, roomId: 'room-1', roomKey: 'key', seat: () => 's0', onError: (t) => errors.push(t), now: () => 1, snapshot: start, snapshotSeq: start.seq, lastSeq: start.seq });
+    const p = new TablePersistence({ store: s.tables, roomId: 'room-1', roomKey: 'key', seat: () => 's0', onError: (t) => errors.push(t), now: () => 1, snapshot: start, snapshotSeq: start.seq, lastSeq: start.seq, ...(holdSnapshot ? { holdSnapshot } : {}) });
     return { s, p, errors };
   }
+
+  it('holds the periodic snapshot while the page is alone in the room and makes it at the first write with a peer back (M5-P6)', async () => {
+    const start = table();
+    let alone = true;
+    const { s, p } = await saver(start, () => alone);
+    p.saveBase(start, SECRETS);
+    const run = steps(start, SNAPSHOT_EVERY + 10);
+    for (const { action, after } of run.slice(0, SNAPSHOT_EVERY + 5)) p.saveAction(action, after, SECRETS);
+    await p.whenSaved();
+    let loaded = (await s.tables.loadTable('room-1'))!;
+    // The stored log still covers the whole stretch played alone: a reload finds every own action of it.
+    expect(loaded.table).toMatchObject({ lastSeq: SNAPSHOT_EVERY + 5, snapshotSeq: 0 });
+    expect(loaded.log.map((r) => r.seq)).toEqual(run.slice(0, SNAPSHOT_EVERY + 5).map((x) => x.action.seq));
+    alone = false;
+    p.saveAction(run[SNAPSHOT_EVERY + 5]!.action, run[SNAPSHOT_EVERY + 5]!.after, SECRETS);
+    await p.whenSaved();
+    loaded = (await s.tables.loadTable('room-1'))!;
+    expect(loaded.table).toMatchObject({ lastSeq: SNAPSHOT_EVERY + 6, snapshotSeq: SNAPSHOT_EVERY + 6 });
+    // Then the usual rhythm again: the next snapshot at the next multiple, not earlier.
+    for (const { action, after } of run.slice(SNAPSHOT_EVERY + 6)) p.saveAction(action, after, SECRETS);
+    await p.whenSaved();
+    expect((await s.tables.loadTable('room-1'))!.table).toMatchObject({ lastSeq: SNAPSHOT_EVERY + 10, snapshotSeq: SNAPSHOT_EVERY + 6 });
+  });
+
+  it('a held snapshot is made once the stored tail reaches SNAPSHOT_HOLD_LIMIT', async () => {
+    const start = table();
+    const { s, p } = await saver(start, () => true);
+    p.saveBase(start, SECRETS);
+    for (const { action, after } of steps(start, SNAPSHOT_HOLD_LIMIT + 3)) p.saveAction(action, after, SECRETS);
+    await p.whenSaved();
+    expect((await s.tables.loadTable('room-1'))!.table).toMatchObject({ lastSeq: SNAPSHOT_HOLD_LIMIT + 3, snapshotSeq: SNAPSHOT_HOLD_LIMIT });
+  });
+
+  it('aloneInRoom: no other peer connected (none, all away, or still in the handshake)', () => {
+    const peer = (status: 'handshake' | 'connected' | 'away') => ({ transportId: 't', peerId: 'p', nickname: 'P', seat: null, role: 'player' as const, status, lastSeq: 0 });
+    expect(aloneInRoom({ peers: () => [] })).toBe(true);
+    expect(aloneInRoom({ peers: () => [peer('away'), peer('handshake')] })).toBe(true);
+    expect(aloneInRoom({ peers: () => [peer('away'), peer('connected')] })).toBe(false);
+  });
 
   it('writes each following action with the record unchanged, and rebases every SNAPSHOT_EVERY actions', async () => {
     const start = table();

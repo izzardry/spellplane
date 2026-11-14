@@ -100,16 +100,27 @@ const DUTY_RECORDS: ReadonlySet<string> = new Set(['away', 'sequencerClaim']);
 export const NACK_DUPLICATE = 'duplicate';
 
 /**
- * Whether a stored action was this identity's own (M5-P6: solo actions survive a reload after a disconnect): its `by`
- * is the seat this identity holds in `state` (only the browser holding a seat's key pair proposes for it, net/sequencer.ts
- * senderSeat), or it took a chair for this identity; never a record the sequencer makes of its own view (`away`,
- * `sequencerClaim`, `commitClose`, `draftTimeout`, a `respond` timeout), which another sequencer derives afresh.
+ * The cids of a stored tail's actions that were this identity's own (M5-P6: solo actions survive a reload after a
+ * disconnect): an action whose `by` is the seat this identity held when it was sequenced (only the browser holding a
+ * seat's key pair proposes for it, net/sequencer.ts senderSeat), or a `seatTake` of a chair for this identity; never a
+ * record the sequencer makes of its own view (`away`, `sequencerClaim`, `commitClose`, `draftTimeout`, a `respond`
+ * timeout), which another sequencer derives afresh. The seat is followed through the tail from the one held in `start`,
+ * so a chair taken over from an earlier holder (review M5-P6 round 3) does not make that holder's actions own.
  */
-function ownRecord(a: Action, state: TableState, peerId: string): boolean {
-  if (DUTY_RECORDS.has(a.type) || a.type === 'commitClose' || a.type === 'draftTimeout' || (a.type === 'respond' && a.response === 'timeout')) return false;
-  if (a.type === 'seatTake') return a.peer === peerId;
-  const seat = seatOfPeer(state, peerId);
-  return seat !== null && a.by === seat;
+export function ownOfTail(start: TableState, tail: readonly Action[], peerId: string): string[] {
+  let seat = seatOfPeer(start, peerId);
+  const own: string[] = [];
+  for (const a of tail) {
+    const duty = DUTY_RECORDS.has(a.type) || a.type === 'commitClose' || a.type === 'draftTimeout' || (a.type === 'respond' && a.response === 'timeout');
+    if (a.type === 'seatTake') {
+      if (a.peer === peerId) {
+        own.push(a.cid);
+        seat = a.seat;
+      }
+    } else if (!duty && seat !== null && a.by === seat) own.push(a.cid);
+    if (a.type === 'seatLeave' && a.seat === seat) seat = null;
+  }
+  return own;
 }
 
 /** Wire messages the debug log keeps (a ring: the oldest are overwritten). */
@@ -248,6 +259,14 @@ class Engine implements NetEngine {
   /** The peer whose history replaces this replica's after a fork; own actions of the abandoned part wait in lostOwn. */
   private adoptFrom: PeerId | null = null;
   private lostOwn: { action: Action; oldSeq: number }[] = [];
+  /**
+   * The seq of the restored save's snapshot this replica started from, until the sequencer's history is found to
+   * agree after it (or a snapshot replaces it); null for a start without a stored tail. Nothing below it can be
+   * compared, so a fork found at the first seq after it may lie inside the snapshot (a stretch played alone that the
+   * save's snapshot covers): the sequencer's snapshot is loaded then (review M5-P6 round 3) instead of rewinding to a
+   * state that may itself be forked, which surfaced only later as a hash mismatch taken for a reducer bug.
+   */
+  private restoredBase: number | null;
   private initialSynced = false;
   /**
    * Compare the overlap with the sequencer's history once it has taken over: after a change of sequencer 'next' until
@@ -310,11 +329,12 @@ class Engine implements NetEngine {
     const rnd = crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
     this.cidPrefix = `${opts.identity.peerId}.${rnd.toString(36)}.`;
     this.replica = new Replica(opts.game, opts.start.snapshot);
+    this.restoredBase = opts.start.tail.length ? opts.start.snapshot.seq : null;
     this.replica.onApply = (a) => this.onApplied(a);
     if (opts.start.tail.length) this.replica.load(opts.start.snapshot, opts.start.tail);
     // A reload (M5-P6): the stored log's own actions are this page's own again, so a part of them that the room's
     // history abandons (they were sequenced alone, after a real disconnect) is proposed again, as without the reload.
-    for (const a of opts.start.tail) if (ownRecord(a, this.replica.confirmed(), opts.identity.peerId)) this.noteOwn(a.cid);
+    for (const cid of ownOfTail(opts.start.snapshot.state, opts.start.tail, opts.identity.peerId)) this.noteOwn(cid);
     this.applied = [];
     this.lastView = this.replica.view();
     this.lastSeats = this.replica.confirmed().seats;
@@ -761,12 +781,14 @@ class Engine implements NetEngine {
       peerId: typeof said.peerId === 'string' ? said.peerId.slice(0, 128) : (known?.peerId ?? ''),
       nickname: typeof said.nickname === 'string' ? said.nickname.slice(0, 64) : (known?.nickname ?? ''),
     };
-    this.mismatches.delete(from);
+    // A refresh (a retried hello or bye) keeps the peer's place: the latest mismatch stays the latest peer to differ, so
+    // with two peers on other versions the notice does not switch between them as their messages come in.
     this.mismatches.set(from, m);
     if (!known || known.theirs !== m.theirs) this.system('warn', versionNotice(m));
     this.updateStatus();
   }
 
+  /** The mismatch with the peer that most recently came to differ (a refresh keeps its place; see onForeignVersion). */
   versionMismatch(): VersionMismatch | null {
     let last: VersionMismatch | null = null;
     for (const m of this.mismatches.values()) last = m;
@@ -1332,7 +1354,7 @@ class Engine implements NetEngine {
         return;
       }
       // Another history at this seq. The sequencer's wins (DESIGN: every peer applies the sequencer's order).
-      this.adopt(from, a.seq, `history diverged at seq ${a.seq}`);
+      this.forkAt(from, a.seq);
       return;
     }
     this.heardSequencer = true;
@@ -1495,6 +1517,7 @@ class Engine implements NetEngine {
       const forced = this.forced === from;
       this.replica.clearBuffer();
       this.replica.load(m.snapshot, m.tail);
+      this.restoredBase = null;
       this.myHashes.clear();
       this.forced = null;
       // Own actions of an abandoned history after the snapshot that its tail does not hold are proposed again;
@@ -1515,10 +1538,12 @@ class Engine implements NetEngine {
     for (const a of m.tail) {
       const mine = a.seq <= this.replica.seq() ? this.replica.at(a.seq) : undefined;
       if (mine && mine.cid !== a.cid) {
-        if (authoritative) return this.adopt(from, a.seq, `history diverged at seq ${a.seq}`);
+        if (authoritative) return this.forkAt(from, a.seq);
         // Another peer's diverging copy: none of it is taken.
         break;
       }
+      // The authoritative history agrees after the restored snapshot: the snapshot is a shared state.
+      if (mine && authoritative && this.restoredBase !== null && a.seq > this.restoredBase) this.restoredBase = null;
       this.replica.receive(a);
     }
     if (adopting) this.requeueLost(() => true);
@@ -1546,7 +1571,7 @@ class Engine implements NetEngine {
    * to rewind, load their snapshot. Own actions of the abandoned part that their history lacks are proposed again
    * (DESIGN: no acknowledged action is lost; the abandoned part was acknowledged by no one else).
    */
-  private adopt(to: PeerId, forkSeq: number, why: string): void {
+  private adopt(to: PeerId, forkSeq: number, why: string, belowBase = false): void {
     // A fork found again from the source this replica already adopts from lies at or below the point it rewound to
     // (an older fork the first one hid): it rewinds further (review M1-P1 retry round 1).
     if (this.mode === 'active' || !this.peerMap.has(to) || this.forced === to) return;
@@ -1568,7 +1593,7 @@ class Engine implements NetEngine {
     // Own hashes from the fork point on describe the abandoned history: the sequencer's hash of such a seq may arrive
     // before this replica re-applies it from the adopted history, and must not be compared with them.
     for (const seq of [...this.myHashes.keys()]) if (seq >= forkSeq) this.myHashes.delete(seq);
-    if (this.replica.rewind(forkSeq - 1) !== null) {
+    if (!belowBase && this.replica.rewind(forkSeq - 1) !== null) {
       this.requestSync(to, 'tail');
     } else {
       this.replica.forget(forkSeq);
@@ -1576,6 +1601,15 @@ class Engine implements NetEngine {
       this.requestSync(to, 'snapshot');
     }
     this.afterChange();
+  }
+
+  /**
+   * The sequencer's history (or that of the peer a claimant takes over from) differs at `seq`. At the first seq after
+   * an unverified restored snapshot the fork may lie inside it (see `restoredBase`): their snapshot replaces it.
+   */
+  private forkAt(to: PeerId, seq: number): void {
+    if (this.restoredBase !== null && seq === this.restoredBase + 1) this.adopt(to, seq, `history diverged at or before seq ${seq}`, true);
+    else this.adopt(to, seq, `history diverged at seq ${seq}`);
   }
 
   /** Own actions of abandoned history parts: `a` first, then those of `b` not in it. */

@@ -110,6 +110,19 @@ describe('engines and a page of another protocol version', () => {
     await until(() => a.engine.versionMismatch?.() == null && b.engine.versionMismatch?.() == null, 10_000, 'the notice to go');
   });
 
+  it('two pages of two other versions: the notice names the later one and does not switch as their hellos and byes repeat', async () => {
+    const sim = makeSim({ engines: 1, seats: 2, seed: 7, delay: { min: 5, max: 60 } });
+    const [a] = sim.peers as [SimPeer];
+    oldPage(sim.net, 'tv', PROTOCOL_VERSION - 1);
+    await until(() => a.engine.versionMismatch?.() != null && a.engine.versionMismatch!()!.nickname !== '', 20_000, 'the first mismatch');
+    oldPage(sim.net, 'tw', PROTOCOL_VERSION + 1, 'New Cid');
+    await until(() => a.engine.versionMismatch?.()?.theirs === PROTOCOL_VERSION + 1, 20_000, 'the second mismatch');
+    for (let i = 0; i < 40; i++) {
+      await vi.advanceTimersByTimeAsync(250);
+      expect(a.engine.versionMismatch?.(), `after ${(i + 1) * 250} ms`).toMatchObject({ theirs: PROTOCOL_VERSION + 1, nickname: 'New Cid' });
+    }
+  });
+
   it('peer loss: the mismatched page is killed and comes back; the notice follows its connection', async () => {
     const sim = makeSim({ engines: 1, seats: 2, seed: 6, delay: { min: 5, max: 60 } });
     const [a] = sim.peers as [SimPeer];

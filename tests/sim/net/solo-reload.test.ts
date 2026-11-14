@@ -13,8 +13,13 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Action } from '../../../src/core/actions';
+import type { TableState } from '../../../src/core/types';
 import type { SequencedAction } from '../../../src/net/messages';
+import { ownOfTail } from '../../../src/net/engine';
+import { applySequenced } from '../../../src/net/sequencer';
 import { AWAY_AFTER_MS } from '../../../src/net/types';
+import { aloneInRoom, SNAPSHOT_EVERY, TablePersistence } from '../../../src/session/persist';
+import type { LogRecord, TableRecord, TableStore } from '../../../src/store/types';
 import { agreed, baseTable, expectConverged, makeSim, until, type SimPeer } from './sim';
 
 vi.mock('../../../src/net/identity', async () => (await import('./fake-identity')).fakeIdentityModule);
@@ -123,4 +128,185 @@ describe('solo actions survive a reload after a real disconnect (M4 gate follow-
     expect(proposed.length).toBeGreaterThan(0);
     for (const x of proposed) expect(x.by).toBe(back.seat);
   }, 120_000);
+});
+
+/** A table store in memory: the record and the log as session/persist.ts writes them (what a reload reads back). */
+function memoryStore(): TableStore & { record: () => TableRecord | null; log: Map<number, LogRecord> } {
+  let record: TableRecord | null = null;
+  const log = new Map<number, LogRecord>();
+  const no = (): never => {
+    throw new Error('not used');
+  };
+  return {
+    record: () => record,
+    log,
+    saveAction(_roomId, entry, table) {
+      log.set(entry.seq, entry);
+      record = table;
+      return Promise.resolve();
+    },
+    saveSnapshot(table) {
+      record = table;
+      return Promise.resolve();
+    },
+    saveSecrets: () => Promise.resolve(),
+    loadTable: no,
+    loadLog: no,
+    listTables: no,
+    deleteTable: no,
+  };
+}
+
+/**
+ * The page's real save (session/net.ts): every action its engine reports sequenced goes through a TablePersistence,
+ * folded the way the session folds them, with the networked session's snapshot hold (`aloneInRoom`) or none.
+ */
+function persistFor(p: SimPeer, start: { seq: number; state: TableState }, hold: boolean) {
+  const store = memoryStore();
+  const saves = new TablePersistence({
+    store,
+    roomId: 'room',
+    roomKey: 'key',
+    seat: () => p.seat,
+    onError: (text) => {
+      throw new Error(text);
+    },
+    now: () => 0,
+    snapshot: start.state,
+    snapshotSeq: start.seq,
+    lastSeq: start.seq,
+    ...(hold ? { holdSnapshot: () => aloneInRoom(p.engine) } : {}),
+  });
+  let fold = start.state;
+  p.engine.onSequenced((a) => {
+    fold = a.seq === fold.seq + 1 ? applySequenced(fold, a) : p.engine.confirmedState();
+    saves.saveAction(a, fold, null);
+  });
+  /** What a reload reads: the record's snapshot and the stored log after it up to `lastSeq`. */
+  const load = async () => {
+    await saves.whenSaved();
+    const r = store.record()!;
+    const tail: SequencedAction[] = [];
+    for (let q = r.snapshotSeq + 1; q <= r.lastSeq; q++) tail.push(store.log.get(q)!.action as SequencedAction);
+    return { snapshot: { seq: r.snapshotSeq, state: r.snapshot! }, tail };
+  };
+  return { load };
+}
+
+describe('a solo stretch that crosses a periodic snapshot of the save (review M5-P6 round 3)', () => {
+  /**
+   * The save moves its snapshot every SNAPSHOT_EVERY actions. A stretch the page plays alone that crosses such a seq
+   * would leave its first actions inside the stored snapshot, where the reloaded engine cannot find them to propose
+   * again: the room's history would lose them. While no other peer is connected the save keeps its snapshot below the
+   * stretch (session/persist.ts `holdSnapshot`).
+   */
+  async function crossing(who: Who, seed: number, hold: boolean) {
+    const start = baseTable(3);
+    const sim = makeSim({ engines: 3, seats: 3, start, seed, delay: { min: 5, max: 40 } });
+    const cut = who === 'sequencer' ? sim.peers[0]! : sim.peers[1]!;
+    const save = persistFor(cut, start, hold);
+    await until(() => agreed(sim.peers), 20_000, 'connection');
+    const room = sim.peers.filter((p) => p !== cut);
+    // Play up to a few seqs below a snapshot seq, so the solo stretch crosses it.
+    for (let i = 0; cut.engine.seq() < SNAPSHOT_EVERY - 8; i++) {
+      for (const p of sim.peers) p.engine.propose(life(p, `${p.peerId}-before-${i}`, 0));
+      await vi.advanceTimersByTimeAsync(60);
+    }
+    await expectConverged(sim.peers);
+    sim.net.kill(tid(cut));
+    await vi.advanceTimersByTimeAsync(AWAY_AFTER_MS + 2000);
+    const alone: Action[] = Array.from({ length: 12 }, (_, i) => life(cut, `alone-${i + 1}`, -1));
+    for (const x of alone) {
+      expect(cut.engine.propose(x)).toBe(true);
+      await vi.advanceTimersByTimeAsync(30);
+    }
+    await until(() => alone.every((x) => cut.acked.has(x.cid)), 20_000, 'the solo actions to be sequenced alone');
+    const seqs = alone.map((x) => [...cut.log.values()].find((s) => s.cid === x.cid)!.seq);
+    // The snapshot seq falls inside the stretch, after its first action.
+    expect(seqs[0]! < SNAPSHOT_EVERY && SNAPSHOT_EVERY <= seqs.at(-1)!, `stretch ${seqs[0]}..${seqs.at(-1)}`).toBe(true);
+    for (let i = 0; i < 12; i++) {
+      for (const p of room) p.engine.propose(life(p, `${p.peerId}-room-${i}`, 0));
+      await vi.advanceTimersByTimeAsync(60);
+    }
+    await expectConverged(room);
+    const saved = await save.load();
+    cut.engine.leave();
+    return { sim, cut, room, alone, seqs, saved };
+  }
+
+  it('without the hold the stored snapshot lands inside the stretch (the case this guards)', async () => {
+    const { saved, seqs } = await crossing('follower', 3, false);
+    expect(saved.snapshot.seq).toBe(SNAPSHOT_EVERY);
+    expect(saved.snapshot.seq).toBeGreaterThanOrEqual(seqs[0]!);
+  }, 120_000);
+
+  it('a save whose snapshot does cover part of the stretch: the fork is found at the snapshot, not later as a reducer bug', async () => {
+    // A save written without the hold (or by a page that noticed the cut-off only after the snapshot): the reloaded
+    // engine cannot compare anything below its restored snapshot, so a fork at the first seq after it loads the
+    // sequencer's snapshot at once. The solo actions after the stored snapshot still reach the room; those inside it
+    // cannot be told apart from the rest of the snapshot (the hold above keeps them out of it).
+    for (const seed of [3, 8]) {
+      const { sim, cut, room, alone, seqs, saved } = await crossing('follower', seed, false);
+      expect(saved.snapshot.seq).toBe(SNAPSHOT_EVERY);
+      const back = sim.add(cut.index, saved.snapshot, 'player', saved.tail);
+      const everyone = [...room, back];
+      await until(() => agreed(everyone), 30_000, 'back at the table');
+      const after = alone.filter((_, i) => seqs[i]! > saved.snapshot.seq);
+      expect(after.length).toBeGreaterThan(0);
+      await until(() => after.every((x) => [...everyone[0]!.log.values()].some((s) => s.cid === x.cid) || back.rolledBack.has(x.cid)), 30_000, 'the solo actions to be answered');
+      await expectConverged(everyone);
+      const history = [...everyone[0]!.log.values()];
+      for (const x of after) expect(history.filter((s) => s.cid === x.cid).length, `seed ${seed}: ${x.cid} sequenced once`).toBe(1);
+      expect(back.system.some((t) => /diverged at or before seq/.test(t)), `seed ${seed}: ${back.system.join(' | ')}`).toBe(true);
+      expect(back.system.some((t) => /hash mismatch/i.test(t)), `seed ${seed}: ${back.system.join(' | ')}`).toBe(false);
+    }
+  }, 240_000);
+
+  it.each(['follower', 'sequencer'] as Who[])('the %s page keeps its snapshot below the stretch, and after a reload every solo action reaches the room', async (who) => {
+    for (const seed of [3, 8]) {
+      const { sim, cut, room, alone, seqs, saved } = await crossing(who, seed, true);
+      expect(saved.snapshot.seq, `seed ${seed}`).toBeLessThan(seqs[0]!);
+      const back = sim.add(cut.index, saved.snapshot, 'player', saved.tail);
+      const everyone = [...room, back];
+      await until(() => agreed(everyone), 30_000, 'back at the table');
+      await until(() => alone.every((x) => [...everyone[0]!.log.values()].some((s) => s.cid === x.cid) || back.rolledBack.has(x.cid)), 30_000, 'the solo actions to be answered');
+      await expectConverged(everyone);
+      const history = [...everyone[0]!.log.values()];
+      for (const x of alone) expect(history.filter((s) => s.cid === x.cid).length, `seed ${seed}: ${x.cid} sequenced once`).toBe(1);
+      expect(everyone[0]!.engine.confirmedState().seats[back.seat]!.life, `seed ${seed}`).toBe(20 - alone.length);
+      // Nothing was taken for a reducer bug: the fork was found where it lies.
+      expect(back.system.some((t) => /hash mismatch/i.test(t)), `seed ${seed}: ${back.system.join(' | ')}`).toBe(false);
+    }
+  }, 240_000);
+});
+
+describe('which stored actions are this identity’s own after a reload (net/engine.ts ownOfTail)', () => {
+  const start = baseTable(3).state;
+  const me = start.seats.s1!.peer!;
+  const a = (x: object): Action => x as Action;
+
+  it('actions of the seat it holds, never the sequencer’s records of its own view', () => {
+    const tail = [
+      a({ type: 'life', by: 's1', cid: 'mine', seat: 's1', delta: -1 }),
+      a({ type: 'life', by: 's0', cid: 'theirs', seat: 's0', delta: -1 }),
+      a({ type: 'away', by: 's1', cid: 'duty', seat: 's0', away: true }),
+      a({ type: 'sequencerClaim', by: 's1', cid: 'claim' }),
+    ];
+    expect(ownOfTail(start, tail, me)).toEqual(['mine']);
+  });
+
+  it('a chair taken over from an earlier holder: only what follows its own seatTake is its own', () => {
+    // The identity starts without a seat; s2's holder plays, leaves, and this identity takes s2.
+    const free = structuredClone(start);
+    delete free.seats.s1!.peer;
+    const tail = [
+      a({ type: 'life', by: 's2', cid: 'before', seat: 's2', delta: -1 }),
+      a({ type: 'seatLeave', by: 's2', cid: 'leave', seat: 's2' }),
+      a({ type: 'seatTake', by: 's2', cid: 'take', seat: 's2', name: 'Me', colour: 2, peer: me }),
+      a({ type: 'life', by: 's2', cid: 'after', seat: 's2', delta: -1 }),
+      a({ type: 'seatLeave', by: 's2', cid: 'gone', seat: 's2' }),
+      a({ type: 'life', by: 's2', cid: 'later', seat: 's2', delta: -1 }),
+    ];
+    expect(ownOfTail(free, tail, me)).toEqual(['take', 'after', 'gone']);
+  });
 });

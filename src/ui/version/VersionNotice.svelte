@@ -9,7 +9,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { versionAdvice, versionNotice, type VersionMismatch } from '../../net/version';
-  import type { TableSession } from '../../session/types';
+  import type { NetSession, TableSession } from '../../session/types';
   import { hide, isHidden, learnPeer, type HiddenMismatch } from './dismiss';
 
   let { session }: { session: TableSession } = $props();
@@ -21,11 +21,11 @@
   let hidden = $state.raw<HiddenMismatch | null>(null);
   const key = (m: VersionMismatch): string => `${m.peerId}|${m.theirs}`;
 
+  /** A networked session (session/types.ts NetSession): the one with an engine; the solo table has none. */
+  const isNet = (s: TableSession): s is NetSession => 'engine' in s;
+
   function read(): void {
-    // TableSession has no typed version API yet (session/types.ts is a contract file): the networked session's engine
-    // is read where it has one.
-    const engine = (session as Partial<{ engine: { versionMismatch?(): VersionMismatch | null } }>).engine;
-    const next = engine?.versionMismatch?.() ?? null;
+    const next = isNet(session) ? (session.engine.versionMismatch?.() ?? null) : null;
     hidden = learnPeer(hidden, next);
     if (next === null ? mismatch !== null : mismatch === null || key(next) !== key(mismatch) || next.nickname !== mismatch.nickname) mismatch = next;
   }
