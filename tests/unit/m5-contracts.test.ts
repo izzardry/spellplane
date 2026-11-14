@@ -19,7 +19,7 @@ import { RADIAL_SLOTS, THUMB_BAR, TOUCH_TARGET_PX } from '../../src/ui/touch/act
 import { FOCUS_KEYS, WCAG_AA, moveFocus } from '../../src/ui/a11y/index';
 import { updateMayApply } from '../../src/ui/update';
 import { indicatorLabel } from '../../src/ui/voice/labels';
-import { roomProtocol, versionAdvice, versionNotice } from '../../src/net/version';
+import { roomProtocol } from '../../src/net/version';
 import { PROTOCOL_VERSION } from '../../src/net/messages';
 import { CARD_BACK_HOST, officialCardBackUrl } from '../../src/data/back';
 import { DEFAULT_TALK, type LocalStores } from '../../src/store/index';
@@ -27,7 +27,6 @@ import { createHoldAloneGate } from '../../src/voice/hold';
 import { TALK_HOLD_ALONE_MS } from '../../src/voice/types';
 import { SW_MESSAGE, UPDATE_NOTICE, WEB_APP_MANIFEST } from '../../src/util/pwa';
 import { SPECTATOR_ACTIONS } from '../../src/net/roles';
-import { runSoak } from '../sim/soak/harness';
 
 const notImplemented = (pkg: string) => new RegExp(`not implemented: ${pkg}`);
 const table = () => createTable({ game: mtg, format: '1v1', seats: [{ name: 'A', colour: 0 }, { name: 'B', colour: 1 }] });
@@ -128,16 +127,11 @@ describe('M5-P5 settings, card back, keymap', () => {
 });
 
 describe('M5-P6 protocol version', () => {
-  it('reads rooms saved before M5 as protocol 1 and stubs the notice', () => {
+  // The notice and the soak harness are implemented (M5-P6): tests/unit/net/version.test.ts, tests/sim/soak.test.ts.
+  it('reads rooms saved before M5 as protocol 1; M5 speaks protocol 2', () => {
     expect(roomProtocol({})).toBe(1);
     expect(roomProtocol({ protocol: 2 })).toBe(2);
-    expect(PROTOCOL_VERSION).toBe(1);
-    const m = { mine: 1, theirs: 2, peerId: '', nickname: '' };
-    expect(() => versionAdvice(m)).toThrow(notImplemented('M5-P6'));
-    expect(() => versionNotice(m)).toThrow(notImplemented('M5-P6'));
-  });
-  it('stubs the soak harness', async () => {
-    await expect(runSoak({ peers: 4, actions: 10, seed: 1 })).rejects.toThrow(notImplemented('M5-P6'));
+    expect(PROTOCOL_VERSION).toBe(2);
   });
 });
 

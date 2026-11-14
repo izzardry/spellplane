@@ -6,12 +6,14 @@
  * Writes run strictly in order on one promise chain. The table record always names a snapshot and the seq it was
  * taken at, and `lastSeq`; a restore replays the stored log between them, so the stored log between `snapshotSeq` and
  * `lastSeq` must be the current timeline. Whenever that could be in doubt, the record moves its snapshot (a rebase):
- * every SNAPSHOT_EVERY actions, after a failed write (the stored log has a hole), when an action does not follow the
+ * every SNAPSHOT_EVERY actions (held while a networked page plays with no peer connected: `holdSnapshot`), after a failed write (the stored log has a hole), when an action does not follow the
  * last stored one (a networked replica that caught up from a snapshot, or rewound to another history), and when the
  * state handed in is already past the action (several actions applied in one step).
  */
 import type { Action } from '../core/actions';
 import type { SecretStore, SeatId, TableState } from '../core/types';
+import { PROTOCOL_VERSION } from '../net/messages';
+import type { PeerInfo } from '../net/types';
 import type { LogRecord, TableRecord, TableStore } from '../store/types';
 
 /** A snapshot of the table goes into the table record every this many actions (DESIGN "Specification: network protocol and secrecy", Sync). */
@@ -34,6 +36,35 @@ export interface TablePersistenceOptions {
   lastSeq: number;
   /** Writes start after this settles (the queue of a save this one replaces); it never rejects. */
   after?: Promise<void>;
+  /**
+   * The protocol version of the stored record this save continues (`TableRecord.protocol`), if any. A higher one than
+   * this page's is kept, so a room a newer Spellplane played keeps saying so after an older page saved it.
+   */
+  protocol?: number | undefined;
+  /**
+   * Whether the periodic snapshot waits (M5-P6, solo actions survive a reload after a disconnect): true while this
+   * page plays on with no other peer connected. Its actions then may be sequenced by itself alone and later abandoned
+   * for the room's history; a reloaded page proposes again only the own actions it finds in the stored log after the
+   * snapshot (net/engine.ts), so the snapshot stays below such a stretch and the periodic rebase is made at the first
+   * action written while a peer is connected again, or once the stored tail reaches SNAPSHOT_HOLD_LIMIT. Default:
+   * never held (the solo table).
+   */
+  holdSnapshot?: () => boolean;
+}
+
+/**
+ * The longest stored tail a held periodic snapshot allows (see `holdSnapshot`): as far back as a replica can rewind to
+ * a fork point (net/sequencer.ts REWIND_EVERY * REWIND_KEEP); an older fork is repaired from the sequencer's snapshot,
+ * where the stored own actions before it could not be told apart anyway.
+ */
+export const SNAPSHOT_HOLD_LIMIT = 3 * SNAPSHOT_EVERY;
+
+/**
+ * The networked session's `holdSnapshot`: no other peer is connected (none, or all of them away), so what this page
+ * sequences now may be a stretch it plays alone that the room's history abandons later.
+ */
+export function aloneInRoom(engine: { peers(): readonly PeerInfo[] }): boolean {
+  return !engine.peers().some((p) => p.status === 'connected');
 }
 
 function errorText(e: unknown): string {
@@ -53,12 +84,17 @@ export class TablePersistence {
   /** The state the last forced snapshot was taken from (see `saveAction`). */
   private lastState: TableState | null = null;
   private secretsQueued: SecretStore | null = null;
+  /** A periodic snapshot fell due while held (see `holdSnapshot`): the next write that is not held makes it. */
+  private due = false;
+  /** Seq of the snapshot the queued writes leave in the record (queued, not necessarily written yet). */
+  private baseSeq: number;
 
   constructor(private readonly o: TablePersistenceOptions) {
     this.writes = o.after ?? Promise.resolve();
     this.snapshot = o.snapshot;
     this.snapshotSeq = o.snapshotSeq;
     this.lastSeq = o.lastSeq;
+    this.baseSeq = o.snapshotSeq;
   }
 
   /** Resolves once every write queued so far has finished (immediately without a store). */
@@ -80,9 +116,17 @@ export class TablePersistence {
     // The state the last rebase stored, handed in again for an earlier action of the same step: that action is
     // inside the snapshot already, so only its log line is written and the record stays where it is.
     const covered = state === this.lastState && seq <= state.seq;
-    const forced = !covered && (seq !== this.lastSeq + 1 || state.seq !== seq || seq % SNAPSHOT_EVERY === 0);
-    if (!covered) this.lastSeq = state.seq;
-    if (forced) this.lastState = state;
+    const periodic = seq % SNAPSHOT_EVERY === 0 || this.due;
+    const held = periodic && state.seq - this.baseSeq < SNAPSHOT_HOLD_LIMIT && (this.o.holdSnapshot?.() ?? false);
+    const forced = !covered && (seq !== this.lastSeq + 1 || state.seq !== seq || (periodic && !held));
+    if (!covered) {
+      this.lastSeq = state.seq;
+      this.due = !forced && periodic && held;
+    }
+    if (forced) {
+      this.lastState = state;
+      this.baseSeq = state.seq;
+    }
     const lastSeq = this.lastSeq;
     this.writes = this.writes
       .then(async () => {
@@ -106,6 +150,8 @@ export class TablePersistence {
     if (!store) return;
     this.lastSeq = state.seq;
     this.lastState = null;
+    this.baseSeq = state.seq;
+    this.due = false;
     this.writes = this.writes
       .then(async () => {
         await store.saveSnapshot(this.record(state, state, state.seq, state.seq, this.o.now()), secrets);
@@ -151,6 +197,10 @@ export class TablePersistence {
       seat: this.o.seat(),
       stage: state.stage,
       updatedAt: at,
+      // The room records the highest protocol version it was played with (PLAN Milestone 5, owner decisions, Version
+      // mismatch; net/version.ts roomProtocol, roomVersionNotice): an older page saving a room a newer one wrote never
+      // lowers it, so the notice comes again at every reload instead of once.
+      protocol: Math.max(this.o.protocol ?? PROTOCOL_VERSION, PROTOCOL_VERSION),
     };
   }
 }

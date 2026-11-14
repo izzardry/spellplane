@@ -51,7 +51,7 @@ import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard 
 import { TextLayer, type TextSpec } from './text';
 import { recentGestures, TouchPointers } from './input/pointers';
 import type { TouchGesture } from './input/touch';
-import { TEXTURE_CAP_BYTES, tierForScreenHeight } from './textures';
+import { FACE_BUDGET_HEADROOM, TEXTURE_CAP_BYTES, tierForScreenHeight } from './textures';
 import type {
   CameraPose,
   CameraRig,
@@ -206,8 +206,6 @@ const ZONE_LABEL_SIZE = 5.5;
 const ZONE_LABEL_MIN_PX = 9;
 const ZONE_LABEL_MAX_SCALE = 3;
 /** Stroke widths of ghost outlines and displacement markers, CSS px. */
-/** Room kept free under the texture cap for render targets that come and go (a resize, a quality change), bytes. */
-const FACE_BUDGET_HEADROOM = 16 * 1024 * 1024;
 /** Least on-screen width of the hover outline, CSS px. */
 const HOVER_MIN_PX = 1.5;
 const GHOST_WIDTH_PX = 1;

@@ -187,10 +187,11 @@ describe('pass driver over a state that jumped ahead', () => {
     expect(draftOf(s).packs[id]!.count).toBe(0);
     h.jump(s);
     h.driver.drive();
-    // Only the own pick is in the pool; the pack is no longer held, and nothing is sent to a seat that moved on.
+    // Only the own pick is in the pool; the pack is no longer held (only its handed-on copy, kept while the draft runs:
+    // M5-P6), and nothing is sent to a seat that moved on.
     expect(h.secrets().draft!.held[POOL_KEY]!.map((c) => c.instanceId)).toEqual([cards[2]!.instanceId]);
     expect(h.secrets().pool).toHaveLength(1);
-    expect(Object.keys(h.secrets().draft!.held)).toEqual([POOL_KEY]);
+    expect(Object.keys(h.secrets().draft!.held).sort()).toEqual([POOL_KEY, SENT_PREFIX + id].sort());
     expect(h.sent).toEqual([]);
     h.driver.dispose();
   });

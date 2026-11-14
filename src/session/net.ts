@@ -58,7 +58,7 @@ import {
 } from '../core/secrets';
 import type { CardRef, Format, InstanceId, LogEntry, PackId, Pose, RngPurpose, SeatColourIndex, SecretStore, SeatId, ShuffleId, TableState, ZoneId } from '../core/types';
 import { isUndoable, type UndoableAction } from '../core/actions';
-import { undoPlan, type UndoReveal } from '../core/undo';
+import { builtOn, changedObjects, namesAny, undoPlan, undoStackFromLog, type OthersChange, type UndoReveal } from '../core/undo';
 import type { CardData } from '../data/types';
 import type { PackSeed } from '../draft/types';
 import { draftCardsOver } from '../net/draftcards';
@@ -67,12 +67,14 @@ import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
 import { createPrivateChannel } from '../net/private';
 import { spectatorRevealSender } from '../net/roles';
+import { PROTOCOL_VERSION } from '../net/messages';
 import { applySequenced, seatOfPeer } from '../net/sequencer';
+import { roomVersionNotice, versionNotice } from '../net/version';
 import type { NetEngine, PrivateChannel, ResumePoint, Unsubscribe } from '../net/types';
 import type { LogRecord, TableStore } from '../store/types';
 import { DRY_CID, FACE_DOWN_KINDS, faceDownAllowed, placementOf, putBack, reRevealDraft, referencedCard, sameOrder, SESSION_ONLY, turnsPublic, turnsUpOnMove, withProof } from './effects';
 import { localNonces, type NonceStore } from './nonces';
-import { TablePersistence } from './persist';
+import { aloneInRoom, TablePersistence } from './persist';
 import { randomId, randomSalt } from './secrecy';
 import { identitiesFromLog, lostHiddenCards, owedOn, parseRecoveryOwed, recoveryProblem, type RecoveryOwed, type SessionRecovery } from './resume';
 import { reconcileSecrets, type LibraryPlacement } from './secrets';
@@ -165,7 +167,14 @@ interface UndoEntry {
   reveals: UndoReveal[];
   hand: InstanceId[];
   library: InstanceId[];
+  /** What the action changed on the table (core/undo.ts changedObjects): another seat that changed it since built on it. */
+  changed: string[];
 }
+
+/** Other seats' changes kept for the built-on check (M5-P6), at most this many (older ones are long past any undo). */
+const KEEP_OTHERS = 2000;
+/** The author of a change a catch-up from a snapshot skipped unseen (noteOthers): another seat, unknown which. */
+const UNKNOWN_SEAT = '';
 
 type PrivateLists = Pick<SecretStore, 'identities' | 'libraryOrder' | 'hand' | 'audit'>;
 
@@ -243,6 +252,8 @@ class NetTable implements NetSession, SessionRecovery {
   private readonly listeners = new Set<SessionListener>();
   private readonly netListeners = new Set<NetStatusListener>();
   private undoStack: UndoEntry[] = [];
+  /** Other seats' sequenced actions and what they changed, oldest first (core/undo.ts builtOn; M5-P6). */
+  private othersChanged: OthersChange[] = [];
   /** Own ids whose identity someone other than the owner saw since they were issued (core/secrets.ts disclosedBy). */
   private readonly exposed: Set<InstanceId>;
   /** Own randomness proposals by cid, for the integrity check when they come back sequenced. */
@@ -278,6 +289,8 @@ class NetTable implements NetSession, SessionRecovery {
   private driveQueued = false;
   private netQueued = false;
   private lastSeat: SeatId;
+  /** The stored record's protocol version at open (the save keeps a higher one: session/persist.ts). */
+  private readonly savedProtocol: number | undefined;
   private disposed = false;
   /** Subscriptions to the current engine and its pair channel. */
   private readonly unsubs: Unsubscribe[] = [];
@@ -308,8 +321,9 @@ class NetTable implements NetSession, SessionRecovery {
     private readonly makeEngine: (start: ResumePoint) => NetEngine,
     private readonly opts: NetSessionOptions,
     private readonly internals: NetSessionInternals,
-    init: { secrets: SecretStore; entries: LogEntry[]; snapshot: TableState; snapshotSeq: number; lastSeq: number },
+    init: { secrets: SecretStore; entries: LogEntry[]; snapshot: TableState; snapshotSeq: number; lastSeq: number; protocol?: number | undefined },
   ) {
+    this.savedProtocol = init.protocol;
     this.eng = engine;
     this.roomId = opts.roomId;
     this.peerId = opts.identity.peerId;
@@ -327,6 +341,7 @@ class NetTable implements NetSession, SessionRecovery {
       this.sec.seat,
     );
     this.saves = this.persistence(init.snapshot, init.snapshotSeq, init.lastSeq);
+    this.restoreUndo(init.snapshot, init.snapshotSeq);
     this.attach(engine);
     this.eveningImpl = new Evening(this.draftPort());
   }
@@ -368,6 +383,8 @@ class NetTable implements NetSession, SessionRecovery {
       snapshot,
       snapshotSeq,
       lastSeq,
+      protocol: this.savedProtocol,
+      holdSnapshot: () => aloneInRoom(this.engine),
     });
   }
 
@@ -922,6 +939,20 @@ class NetTable implements NetSession, SessionRecovery {
     let k = 1;
     if (top.group !== undefined) while (k < this.undoStack.length && this.undoStack[this.undoStack.length - 1 - k]!.group === top.group) k++;
     const batch = this.undoStack.slice(this.undoStack.length - k).reverse();
+    // Another player acted on what this step changed since: undoing it would take their change back too (DESIGN "Turn
+    // flow and confirmation": personal undo, no table-wide rewind). The step is refused and leaves the stack, so the
+    // next Ctrl+Z goes on with the player's older actions (M5-P6).
+    const others = this.othersChanged.filter((o) => o.by !== this.seat);
+    for (const e of batch) {
+      const seq = this.seqOfOwn(e.cid);
+      const other = builtOn({ seq, changed: e.changed }, others);
+      if (other !== null) {
+        this.undoStack = this.undoStack.slice(0, this.undoStack.length - k);
+        this.warn(`Cannot undo: ${other.by === UNKNOWN_SEAT ? 'another player' : this.seatName(other.by)} has acted on ${this.objectName(other.object)} since`);
+        this.notify();
+        return false;
+      }
+    }
     const group = batch.length > 1 ? randomId('g') : undefined;
     const undos = batch.map((e): ActionDraft => ({ type: 'undo', of: e.cid, inverse: e.inverse, ...(group ? { group } : {}) }));
     // Dry run on the view first: a group is undone completely or not at all.
@@ -930,6 +961,10 @@ class NetTable implements NetSession, SessionRecovery {
       const dry = { ...u, by: this.seat, cid: DRY_CID, seq: s.seq + 1 } as Action;
       const next = reduce(s, dry);
       if (next === s) {
+        // The step can never apply again as the table now stands (another player's change it cannot compose with,
+        // such as their item pushed on top of an own stack item): it leaves the stack like a built-on step, so the
+        // next Ctrl+Z goes on with older own actions instead of refusing again and again.
+        this.undoStack = this.undoStack.slice(0, this.undoStack.length - k);
         this.warn(`Cannot undo: ${explain(s, dry) ?? 'refused'}`);
         this.notify();
         return false;
@@ -959,6 +994,92 @@ class NetTable implements NetSession, SessionRecovery {
     });
     this.notify();
     return true;
+  }
+
+  // --- Undo hardening (M5-P6) -------------------------------------------------------------------------------
+
+  /**
+   * After a reload: the undo stack the stored log leaves (core/undo.ts undoStackFromLog), from the stored snapshot on,
+   * so Ctrl+Z goes on taking back this player's own most recent actions (DESIGN "Turn flow and confirmation", Undo).
+   * Actions inside the snapshot are past undoing. A draw goes back on top of the library; another card returns to the
+   * hand at its end (the hand's order before it is not in the log). A card the undone action took from inside or from
+   * the bottom of the own library also goes back on top (core/undo.ts `opposite` returns a card to a hidden zone at
+   * 'top'): the private library order before each step is not in the log or the secret store, so after a reload the
+   * card cannot go back to its old place as it does before one (libraryBefore). Not a leak: no other peer sees the
+   * private order.
+   */
+  private restoreUndo(snapshot: TableState, snapshotSeq: number): void {
+    const log = this.entries.flatMap((e) => (e.kind === 'action' && e.seq > snapshotSeq ? [{ ...e.action, seq: e.seq } as Action] : []));
+    if (log.length === 0) return;
+    const base = snapshot.seq === snapshotSeq ? snapshot : { ...snapshot, seq: snapshotSeq };
+    const { stack, others } = undoStackFromLog(base, log, this.sec.seat);
+    this.othersChanged = others.slice(-KEEP_OTHERS);
+    this.undoStack = stack.map((e) => ({
+      cid: e.cid,
+      ...(e.group !== undefined ? { group: e.group } : {}),
+      inverse: e.inverse,
+      reveals: e.reveals,
+      hand: [],
+      library: e.drew !== undefined ? [e.drew] : [],
+      changed: e.changed,
+    }));
+  }
+
+  /**
+   * Keep what another seat's sequenced action changed (builtOn). A rewound or skipped stretch (a catch-up from a
+   * snapshot, or another history adopted) drops what it replaced and counts as one change of everything it changed, at
+   * its first seq: by the first other seat among the actions it reports (they follow at once, unfolded), or by an
+   * unknown other seat when a snapshot skipped them unseen. A stretch of own actions only is no other's change.
+   */
+  private noteOthers(action: SequencedAction, prior: TableState, next: TableState, exact: boolean): void {
+    if (!exact) {
+      const replayed = next === prior && action.seq <= prior.seq;
+      const lump = this.othersChanged.at(-1);
+      if (replayed && lump !== undefined && lump.seq < action.seq && lump.by === this.seat && action.by !== this.seat) {
+        // Another seat's action inside the stretch (own entries in othersChanged are such stretches only).
+        this.othersChanged[this.othersChanged.length - 1] = { ...lump, by: action.by };
+      }
+      this.othersChanged = this.othersChanged.filter((o) => o.seq < action.seq);
+      if (next === prior) return;
+      const changed = changedObjects(prior, next);
+      if (changed.length === 0) return;
+      const seq = Math.min(action.seq, prior.seq + 1);
+      const skipped = action.seq > prior.seq + 1;
+      const by = action.by !== this.seat ? action.by : skipped ? UNKNOWN_SEAT : this.seat;
+      this.othersChanged = this.othersChanged.filter((o) => o.seq < seq);
+      this.othersChanged.push({ seq, by, changed });
+      return;
+    }
+    if (action.by === this.seat || next === prior) return;
+    const changed = changedObjects(prior, next);
+    if (changed.length === 0) return;
+    this.othersChanged.push({ seq: action.seq, by: action.by, changed });
+    if (this.othersChanged.length > KEEP_OTHERS) this.othersChanged.splice(0, this.othersChanged.length - KEEP_OTHERS);
+  }
+
+  /** The seq an own action was sequenced at (latest), or undefined while it is pending. */
+  private seqOfOwn(cid: string): number | undefined {
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const e = this.entries[i]!;
+      if (e.kind === 'action' && e.action.cid === cid) return e.seq;
+    }
+    return undefined;
+  }
+
+  private seatName(seat: string): string {
+    const s = this.engine.confirmedState().seats[seat];
+    return s?.name ? s.name : seat;
+  }
+
+  /** How the undo refusal names an object (core/undo.ts changedObjects keys). */
+  private objectName(key: string): string {
+    if (key === 'turn') return 'the turn';
+    if (key.startsWith('line:')) return 'a line';
+    if (key.startsWith('item:')) return 'the stack';
+    const id = key.slice('card:'.length);
+    const ref = this.engine.confirmedState().cards[id]?.identity;
+    const name = ref ? this.cardData(ref)?.name : undefined;
+    return name ? name : 'that card';
   }
 
   // --- Internals: proposing ----------------------------------------------------------------------------------
@@ -1029,6 +1150,7 @@ class NetTable implements NetSession, SessionRecovery {
         reveals: plan.reveals,
         hand: [...handBefore],
         library: [...libraryBefore],
+        changed: changedObjects(before, reduce(before, { ...action, seq: before.seq + 1 } as Action)),
       });
     }
     this.followView(this.engine.state(), placementOf(action));
@@ -1173,6 +1295,7 @@ class NetTable implements NetSession, SessionRecovery {
       next = this.engine.confirmedState();
     }
     this.fold = next;
+    this.noteOthers(action, prior, next, exact);
     if (exact) for (const id of disclosedBy(this.sec, prior, action, next)) this.exposed.add(id);
     else if (next !== prior) {
       // A catch-up from a snapshot or a rewound history skipped the actions in between, and with them any reveal, look
@@ -1267,10 +1390,8 @@ class NetTable implements NetSession, SessionRecovery {
       return;
     }
     // Undo steps that name a retired id can never apply again; left on the stack they would block every later undo.
-    this.undoStack = this.undoStack.filter((e) => {
-      const text = canonicalJson(e.inverse);
-      return !retired.some((id) => text.includes(id));
-    });
+    const gone = new Set(retired);
+    this.undoStack = this.undoStack.filter((e) => !namesAny(e.inverse, gone));
     this.notify();
   }
 
@@ -1638,6 +1759,10 @@ class NetTable implements NetSession, SessionRecovery {
       await this.until(() => this.peerConnected(), () => null, lone, 'a peer').catch(() => undefined);
       if (this.disposed) throw new Error('The session is closed');
     }
+    // The only browsers in the room run another protocol version: say so (both versions and what to do) instead of
+    // sitting down at a table of its own that nobody else can join (PLAN Milestone 5, owner decisions, Version mismatch).
+    const mismatch = this.engine.versionMismatch?.() ?? null;
+    if (!this.createdHere && mismatch !== null && !this.peerConnected()) throw new Error(versionNotice(mismatch));
     await this.until(
       () => {
         const st = this.engine.status();
@@ -1713,6 +1838,7 @@ class NetTable implements NetSession, SessionRecovery {
     this.sec = emptySecretStore(this.sec.seat);
     this.entries = this.entries.filter((e) => e.kind === 'system');
     this.undoStack = [];
+    this.othersChanged = [];
     this.exposed.clear();
     for (const m of [this.sentRandomness, this.privateBefore, this.turnUpAfter, this.turnUpDue, this.turnUpRefusals, this.reRevealAfter, this.revealsDue, this.refused, this.roundRefusals]) m.clear();
     this.reRevealDue = [];
@@ -1939,7 +2065,7 @@ class NetTable implements NetSession, SessionRecovery {
 }
 
 /** The stored copy of the room, if any (DESIGN "Multiplayer architecture", Resume: the own save is the starting point). */
-async function loadSaved(store: TableStore | undefined, roomId: string): Promise<{ start: ResumePoint; secrets: SecretStore | null; entries: LogEntry[]; snapshotSeq: number } | null> {
+async function loadSaved(store: TableStore | undefined, roomId: string): Promise<{ start: ResumePoint; secrets: SecretStore | null; entries: LogEntry[]; snapshotSeq: number; protocol: number | undefined } | null> {
   if (!store) return null;
   const loaded = await store.loadTable(roomId);
   if (!loaded || !loaded.table.snapshot || loaded.table.roomKey === '') return null;
@@ -1961,7 +2087,7 @@ async function loadSaved(store: TableStore | undefined, roomId: string): Promise
     log = loaded.log;
   }
   const entries: LogEntry[] = log.filter((r) => r.seq <= seq).map((r) => ({ kind: 'action', seq: r.seq, at: r.at, action: r.action }));
-  return { start: { snapshot: { seq: table.snapshotSeq, state: snapshot }, tail }, secrets: loaded.secrets, entries, snapshotSeq: table.snapshotSeq };
+  return { start: { snapshot: { seq: table.snapshotSeq, state: snapshot }, tail }, secrets: loaded.secrets, entries, snapshotSeq: table.snapshotSeq, protocol: table.protocol };
 }
 
 /**
@@ -1992,12 +2118,16 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
     });
   const engine = makeEngine(start);
   const seat0 = seatOfPeer(engine.confirmedState(), opts.identity.peerId) ?? 's0';
+  // A save that a newer Spellplane wrote may hold actions this page cannot apply: say so (net/version.ts).
+  const newer = saved ? roomVersionNotice({ ...(saved.protocol !== undefined ? { protocol: saved.protocol } : {}) }, PROTOCOL_VERSION) : null;
+  const entries: LogEntry[] = [...(saved?.entries ?? []), ...(newer !== null ? [{ kind: 'system' as const, seq: engine.confirmedState().seq, at: (opts.now ?? Date.now)(), level: 'warn' as const, text: newer }] : [])];
   const session = new NetTable(engine, makeEngine, opts, internals, {
     secrets: saved?.secrets ?? emptySecretStore(seat0),
-    entries: saved?.entries ?? [],
+    entries,
     snapshot: start.snapshot.state,
     snapshotSeq: start.snapshot.seq,
     lastSeq: engine.confirmedState().seq,
+    protocol: saved?.protocol,
   });
   if (opts.voice) {
     const port = { engine: () => session.engine, transport: transports.current, state: () => session.getState(), subscribe: session.subscribe.bind(session) };

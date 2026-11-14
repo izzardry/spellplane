@@ -1,12 +1,13 @@
 /** The pair scan of the shared leak scanner (tests/leak/leak.ts): ids next to identities, old ids next to new ones. */
 import { describe, expect, it } from 'vitest';
 import { scanPairs } from '../../leak/leak';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 const PAIRS = [{ pair: ['c1', 'bolt'] as [string, string], why: 'mapping' as const }];
 
 describe('leak pair scan', () => {
   it('finds an id next to its Scryfall id in a message, a card record or a keyed record', () => {
-    const reveal = { v: 1, t: 'seq', action: { type: 'reveal', instanceId: 'c1', ref: { sid: 'bolt' }, salt: 's' } };
+    const reveal = { v: PROTOCOL_VERSION, t: 'seq', action: { type: 'reveal', instanceId: 'c1', ref: { sid: 'bolt' }, salt: 's' } };
     const card = { cards: { c1: { id: 'c1', identity: { sid: 'bolt' } } } };
     const received = { received: { c1: { card: { sid: 'bolt' }, salt: 's', from: 's0' } } };
     const tuple = { leak: [['c1', 'bolt']] };

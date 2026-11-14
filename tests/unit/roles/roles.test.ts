@@ -32,6 +32,7 @@ import { createSequencer } from '../../../src/net/sequencer';
 import type { PeerInfo } from '../../../src/net/types';
 import { baseTable, libraryIds } from '../../sim/net/sim';
 import { TEST_GAME } from '../core/helpers';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 const { state } = baseTable(2);
 const VIEWER = 'abcdef0123456789';
@@ -225,9 +226,9 @@ describe('spectatorsOf and the pair-channel route', () => {
   });
 
   it('routes only a targeted reveal, only to that spectator’s own unseated page', () => {
-    const reveal: PrivateMessage = { v: 1, t: 'reveal', instanceId: 'x', ref: { sid: 's' }, salt: 'salt', purpose: 'revealTo', about: 'cid' };
+    const reveal: PrivateMessage = { v: PROTOCOL_VERSION, t: 'reveal', instanceId: 'x', ref: { sid: 's' }, salt: 'salt', purpose: 'revealTo', about: 'cid' };
     const look: PrivateMessage = { ...reveal, purpose: 'look' } as PrivateMessage;
-    const pack: PrivateMessage = { v: 1, t: 'pack', packId: 'p', cards: [] };
+    const pack: PrivateMessage = { v: PROTOCOL_VERSION, t: 'pack', packId: 'p', cards: [] };
     const viv = peer(VIEWER, 'Viv', 'spectator');
     expect(spectatorRoute(ME, viv, false, reveal)).toBe(true);
     expect(spectatorRoute(ME, viv, false, look)).toBe(false);
@@ -266,7 +267,7 @@ describe('spectatorRevealsOver: a spectator takes a reveal only with the revealT
       for (const l of listeners.state) l(current);
     };
     const prv = (card: RevealedCard, about: string, from: SeatId | null = 's1', purpose: 'revealTo' | 'look' = 'revealTo', peerId = 'x'): void => {
-      for (const l of listeners.prv) l({ v: 1, t: 'reveal', ...card, purpose, about }, { seat: from, peerId });
+      for (const l of listeners.prv) l({ v: PROTOCOL_VERSION, t: 'reveal', ...card, purpose, about }, { seat: from, peerId });
     };
     return { cards, got, sequenced, prv, setState: (st: TableState) => (current = st) };
   }

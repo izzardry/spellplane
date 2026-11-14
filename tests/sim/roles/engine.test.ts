@@ -12,6 +12,7 @@ import type { PrivateMessage } from '../../../src/net/messages';
 import { spectatorsOf } from '../../../src/net/roles';
 import { scan } from '../../leak/scan';
 import { agreed, expectConverged, libraryIds, makeSim, until, type SimPeer } from '../net/sim';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
@@ -26,7 +27,7 @@ afterEach(() => {
 
 const tid = (p: SimPeer): string => p.transport.selfId;
 const secret = { instanceId: libraryIds(1)[5]!, ref: { sid: 'secret-sid-777' }, salt: 'secret-salt-777' };
-const reveal = (about: string): PrivateMessage => ({ v: 1, t: 'reveal', ...secret, purpose: 'revealTo', about });
+const reveal = (about: string): PrivateMessage => ({ v: PROTOCOL_VERSION, t: 'reveal', ...secret, purpose: 'revealTo', about });
 
 /** Players peer1 and peer2 (seats s1, s2); spectator pages under peer4 (no chair) and peer0 (s0's key pair); s3's peer is absent. */
 async function room(seed: number) {
@@ -68,7 +69,7 @@ describe('spectators on the engine', () => {
     // Not to an unknown spectator, not as anything but a targeted reveal, and a chair whose key pair only watches has no page.
     expect(b.engine.sendPrivate(spectatorIdOf('peer9'), reveal('r2'))).toBe(false);
     expect(b.engine.sendPrivate(spectatorIdOf('peer4'), { ...reveal('r3'), purpose: 'look' } as PrivateMessage)).toBe(false);
-    expect(b.engine.sendPrivate(spectatorIdOf('peer4'), { v: 1, t: 'pack', packId: 'p', cards: [secret] })).toBe(false);
+    expect(b.engine.sendPrivate(spectatorIdOf('peer4'), { v: PROTOCOL_VERSION, t: 'pack', packId: 'p', cards: [secret] })).toBe(false);
     // A spectator whose key pair holds a chair is not a target either: the chair's identities belong to its player page.
     expect(b.engine.sendPrivate(spectatorIdOf('peer0'), reveal('r7'))).toBe(false);
     expect(b.engine.sendPrivate('s3', reveal('r4'))).toBe(false);
@@ -90,7 +91,7 @@ describe('spectators on the engine', () => {
     const seen: (string | null)[] = [];
     b.engine.onPrivate((_m, from) => seen.push(from.seat));
     // holder's key pair is s0's: anything it sends on prv arrives without a seat.
-    holder.transport.send('prv', { v: 1, t: 'lookReq', lookId: 'l1', zone: 'library:s1', count: 2 } as never, tid(b));
+    holder.transport.send('prv', { v: PROTOCOL_VERSION, t: 'lookReq', lookId: 'l1', zone: 'library:s1', count: 2 } as never, tid(b));
     await vi.advanceTimersByTimeAsync(1000);
     expect(seen).toEqual([null]);
   });

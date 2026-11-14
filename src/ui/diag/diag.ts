@@ -4,6 +4,7 @@
  * connection: no relay fallback, failures are said plainly). Diagnostics rooms carry only the two messages below on
  * `ctl`; they never meet a table's engine because their ids start with `diag-` (M1-P5 decision). Implementer: M1-P5.
  */
+import { PROTOCOL_VERSION } from '../../net/messages';
 import type { Message, PeerId, Transport } from '../../net/transport';
 import { REMEDIES } from '../lobby/connectivity';
 import { cryptoBytes, randomRoomId, randomRoomKey } from '../lobby/room';
@@ -71,7 +72,7 @@ export function runDiag(props: DiagProps, opts: { timeoutMs?: number; pingMs?: n
     const id = nextId++;
     const at = props.now();
     sent.set(id, { to, at });
-    const msg: DiagPing = { v: 1, t: 'diagPing', id, at };
+    const msg: DiagPing = { v: PROTOCOL_VERSION, t: 'diagPing', id, at };
     transport.send('ctl', msg, to);
   };
 
@@ -116,7 +117,7 @@ export function runDiag(props: DiagProps, opts: { timeoutMs?: number; pingMs?: n
     t.on('ctl', (msg, from) => {
       if (stopped) return;
       if (msg.t === 'diagPing' && typeof msg.id === 'number' && typeof msg.at === 'number') {
-        const pong: DiagPong = { v: 1, t: 'diagPong', id: msg.id, at: msg.at };
+        const pong: DiagPong = { v: PROTOCOL_VERSION, t: 'diagPong', id: msg.id, at: msg.at };
         t.send('ctl', pong, from);
       } else if (msg.t === 'diagPong' && typeof msg.id === 'number' && typeof msg.at === 'number') {
         const to = sent.get(msg.id)?.to;

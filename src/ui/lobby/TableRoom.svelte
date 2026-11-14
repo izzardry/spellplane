@@ -19,6 +19,7 @@
   import Hints from '../storage/Hints.svelte';
   import UpdateNotice from '../storage/UpdateNotice.svelte';
   import type { AppUpdate } from '../update';
+  import VersionNotice from '../version/VersionNotice.svelte';
 
   let props: LobbyProps & { createScene: CreateTableScene; faces: FaceSource; cardData: CardDataSource; settings?: SettingsStore | undefined; sets?: SetDataSource | undefined; update?: AppUpdate | undefined } = $props();
   let stage = $state(untrack(() => props.session.getState().stage));
@@ -38,3 +39,4 @@
 <!-- M5-P3: a new version waits for the lobby (never mid-game), and the Home Screen hint shows in the lobby only, away from play. -->
 <UpdateNotice update={props.update} place={{ route: 'room', stage }} />
 {#if stage === 'lobby'}<Hints settings={props.settings} hints={['installHomeScreen']} placement="corner" />{/if}
+<VersionNotice session={props.session} />

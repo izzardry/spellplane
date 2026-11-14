@@ -1,10 +1,11 @@
 /** The shared leak scan finds forbidden strings anywhere in what a peer could have seen (tests/leak/scan.ts; CLAUDE.md). */
 import { describe, expect, it } from 'vitest';
 import { scan } from '../../leak/scan';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 describe('leak scan', () => {
   it('finds a forbidden id at any depth, in values, keys and substrings', () => {
-    const msg = { v: 1, t: 'reveal', cards: [{ instanceId: 'c1', ref: { sid: 'secret-sid' } }] };
+    const msg = { v: PROTOCOL_VERSION, t: 'reveal', cards: [{ instanceId: 'c1', ref: { sid: 'secret-sid' } }] };
     const state = { cards: { 'secret-sid-key': { n: 1 } }, note: 'look: secret-sid!' };
     expect(scan([msg, state], ['secret-sid'])).toEqual([
       { index: 0, path: '$.cards[0].ref.sid', token: 'secret-sid' },

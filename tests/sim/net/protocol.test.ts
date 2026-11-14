@@ -366,7 +366,7 @@ describe('fork repair and state hashes', () => {
     await until(() => got.some((m) => m.t === 'hello'), 2000, 'its hello');
     const nonce = (got.find((m) => m.t === 'hello') as Extract<WireMessage, { t: 'hello' }>).nonce;
     const me = fakeNetIdentity('peer0');
-    const send = (ch: 'ctl' | 'act', m: object): void => r.send(ch, { v: 1, ...m } as unknown as Message, 'tc');
+    const send = (ch: 'ctl' | 'act', m: object): void => r.send(ch, { v: PROTOCOL_VERSION, ...m } as unknown as Message, 'tc');
     send('ctl', { t: 'hello', peerId: 'peer0', pubKey: me.pubKey, nickname: 'S', seat: 's0', role: 'player', lastSeq: 2 * HASH_EVERY - 1, nonce: 'n-r' });
     send('ctl', { t: 'welcome', peerId: 'peer0', sig: await me.sign(handshakeText(ROOM, boundNonce(nonce, 'tr', 'tc'), 'peer0')), sequencer: 'peer0', seq: 2 * HASH_EVERY - 1 });
     await until(() => got.some((m) => m.t === 'syncReq'), 3000, 'the first catch-up request');
@@ -523,8 +523,8 @@ describe('pair channel and presence', () => {
     c.engine.onPrivate(() => cGot++);
     const card = libraryIds(0)[5]!;
     const secret = { instanceId: card, ref: { sid: 'secret-sid-123' }, salt: 'secret-salt-xyz' };
-    expect(a.engine.sendPrivate('s1', { v: 1, t: 'reveal', ...secret, purpose: 'revealTo', about: 'cid-1' })).toBe(true);
-    expect(a.engine.sendPrivate('s3', { v: 1, t: 'reveal', ...secret, purpose: 'revealTo', about: 'cid-2' })).toBe(false); // nobody holds s3
+    expect(a.engine.sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'reveal', ...secret, purpose: 'revealTo', about: 'cid-1' })).toBe(true);
+    expect(a.engine.sendPrivate('s3', { v: PROTOCOL_VERSION, t: 'reveal', ...secret, purpose: 'revealTo', about: 'cid-2' })).toBe(false); // nobody holds s3
     await vi.advanceTimersByTimeAsync(500);
     expect(got).toEqual([{ seat: 's0', peerId: 'peer0', t: 'reveal' }]);
     expect(cGot).toBe(0);

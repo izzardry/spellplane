@@ -34,6 +34,7 @@ import { privateChannelOver, type PrivateChannelHost } from '../../src/net/priva
 import type { PeerInfo, PrivateChannel, Unsubscribe } from '../../src/net/types';
 import { reconcileSecrets } from '../../src/session/secrets';
 import type { Disclosure } from './leak';
+import { PROTOCOL_VERSION } from '../../src/net/messages';
 
 const RESEND_MS = 300;
 const HEARTBEAT_MS = 500;
@@ -96,7 +97,7 @@ export class MiniPeer {
 
   async join(): Promise<void> {
     await this.transport.join('room', 'key');
-    if (this.isSequencer) this.hb = setInterval(() => this.transport.send('ctl', { v: 1, t: 'hb', seq: this.state.seq, sequencer: this.peerId }), HEARTBEAT_MS);
+    if (this.isSequencer) this.hb = setInterval(() => this.transport.send('ctl', { v: PROTOCOL_VERSION, t: 'hb', seq: this.state.seq, sequencer: this.peerId }), HEARTBEAT_MS);
   }
 
   leave(): void {
@@ -121,7 +122,7 @@ export class MiniPeer {
   propose(action: Action): Promise<string | null> {
     return new Promise((resolve) => {
       if (this.isSequencer) return resolve(this.sequence(action, this.seatId));
-      const send = (): void => this.transport.send('act', { v: 1, t: 'propose', cid: action.cid, action }, this.sequencerId);
+      const send = (): void => this.transport.send('act', { v: PROTOCOL_VERSION, t: 'propose', cid: action.cid, action }, this.sequencerId);
       const timer = setInterval(send, RESEND_MS);
       this.pending.set(action.cid, { action, resolve, timer });
       send();
@@ -149,7 +150,7 @@ export class MiniPeer {
     const why = explain(this.state, stamped);
     if (why !== null) return why;
     this.apply(stamped);
-    this.transport.send('act', { v: 1, t: 'seq', seq: stamped.seq, cid: stamped.cid, action: stamped });
+    this.transport.send('act', { v: PROTOCOL_VERSION, t: 'seq', seq: stamped.seq, cid: stamped.cid, action: stamped });
     return null;
   }
 
@@ -195,14 +196,14 @@ export class MiniPeer {
     if (m.t === 'propose' && this.isSequencer) {
       const seat = this.seatOfPeer(from);
       const dup = this.byCid.get(m.action.cid);
-      if (dup) return this.transport.send('act', { v: 1, t: 'seq', seq: dup.seq, cid: dup.cid, action: dup }, from);
+      if (dup) return this.transport.send('act', { v: PROTOCOL_VERSION, t: 'seq', seq: dup.seq, cid: dup.cid, action: dup }, from);
       const why = this.sequence(m.action, seat);
-      if (why !== null) this.transport.send('act', { v: 1, t: 'nack', cid: m.cid, reason: why }, from);
+      if (why !== null) this.transport.send('act', { v: PROTOCOL_VERSION, t: 'nack', cid: m.cid, reason: why }, from);
     } else if (m.t === 'seq' && !this.isSequencer) {
       if (m.seq <= this.state.seq) return;
       this.buffer.set(m.seq, m.action);
       this.drain();
-      if (this.buffer.size > 0) this.transport.send('ctl', { v: 1, t: 'syncReq', haveSeq: this.state.seq }, this.sequencerId);
+      if (this.buffer.size > 0) this.transport.send('ctl', { v: PROTOCOL_VERSION, t: 'syncReq', haveSeq: this.state.seq }, this.sequencerId);
     } else if (m.t === 'nack') {
       const p = this.pending.get(m.cid);
       if (!p) return;
@@ -215,9 +216,9 @@ export class MiniPeer {
   private onCtl(m: WireMessage, from: string): void {
     this.received.push({ channel: 'ctl', msg: m });
     if (m.t === 'hb' && !this.isSequencer && m.seq > this.state.seq) {
-      this.transport.send('ctl', { v: 1, t: 'syncReq', haveSeq: this.state.seq }, this.sequencerId);
+      this.transport.send('ctl', { v: PROTOCOL_VERSION, t: 'syncReq', haveSeq: this.state.seq }, this.sequencerId);
     } else if (m.t === 'syncReq' && this.isSequencer) {
-      for (const a of this.sequenced.filter((x) => x.seq > m.haveSeq)) this.transport.send('act', { v: 1, t: 'seq', seq: a.seq, cid: a.cid, action: a }, from);
+      for (const a of this.sequenced.filter((x) => x.seq > m.haveSeq)) this.transport.send('act', { v: PROTOCOL_VERSION, t: 'seq', seq: a.seq, cid: a.cid, action: a }, from);
     }
   }
 

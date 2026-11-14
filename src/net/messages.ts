@@ -1,6 +1,6 @@
 /**
  * The wire protocol (docs/DESIGN.md "Specification: network protocol and secrecy"; "Multiplayer architecture"; "Data
- * model and protocol": what is and is not an action). Every message is a plain JSON object `{v: 1, t: <type>, ...}`
+ * model and protocol": what is and is not an action). Every message is a plain JSON object `{v: PROTOCOL_VERSION, t: <type>, ...}`
  * and travels on exactly one Transport channel (MESSAGE_CHANNEL). Contracts: M1-C. Implementers: M1-P1 (ctl, act,
  * pres), M1-P2 (prv, net/private.ts), M2-P2 (`pack`), M3-P2 (`teamHand`, `teamChat`).
  *
@@ -12,10 +12,18 @@ import type { RevealedCard } from '../core/commit';
 import type { Anchor, InstanceId, PackId, Pose, SeatId, ShuffleId, TableState, ZoneId } from '../core/types';
 import type { Channel, Message } from './transport';
 
-/** Protocol version in every envelope; peers with another `v` are refused with a visible notice (DESIGN "Specification: network protocol and secrecy"). */
-export const PROTOCOL_VERSION = 1 as const;
+/**
+ * Protocol version in every envelope; peers with another `v` are refused with a visible notice (DESIGN "Specification:
+ * network protocol and secrecy"; net/version.ts). 1: M0-M4. 2: M5 (the `auditPublish` action, which a version-1
+ * reducer refuses; M5-P6 bumped it, decision M5-C).
+ */
+export const PROTOCOL_VERSION = 2 as const;
 
-/** Trystero app id; the room key is the password that encrypts signalling (DESIGN "Specification: network protocol and secrecy", Room). */
+/**
+ * Trystero app id; the room key is the password that encrypts signalling (DESIGN "Specification: network protocol and
+ * secrecy", Room). It stays the same across protocol versions, so pages of different versions still meet and can show
+ * the version-mismatch notice instead of never finding each other (net/version.ts).
+ */
 export const APP_ID = 'spellplane-v1';
 
 /** The envelope of message type `T` with payload `P` (DESIGN "Specification: network protocol and secrecy"). A type alias, so it is assignable to transport's Message. */
@@ -236,8 +244,8 @@ export function handshakeText(roomId: string, nonce: string, signerPeerId: strin
 }
 
 /**
- * The typed message if `raw` has a known type for `channel` and protocol version 1, else null (DESIGN "Specification:
- * network protocol and secrecy": every message is `{v: 1, t, ...}`). Checks the envelope only; M1-P1 validates the
+ * The typed message if `raw` has a known type for `channel` and this page's protocol version, else null (DESIGN "Specification:
+ * network protocol and secrecy": every message is `{v, t, ...}`). Checks the envelope only; M1-P1 validates the
  * payload fields before use.
  */
 export function asWireMessage(channel: Channel, raw: unknown): WireMessage | null {

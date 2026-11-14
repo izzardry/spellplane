@@ -16,6 +16,7 @@ import type { Message } from '../../../src/net/transport';
 import type { NetEngine, NetIdentity } from '../../../src/net/types';
 import { generateIdentity, toIdentityRecord } from '../../../src/store/identity';
 import { TEST_GAME } from '../core/helpers';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 const ROOM = 'amber-fox-93';
 const engines: NetEngine[] = [];
@@ -107,10 +108,10 @@ describe('hello handshake (real ECDSA P-256)', () => {
     await waitFor(() => raw.got.some((m) => m.t === 'hello'));
     const theirHello = raw.got.find((m) => m.t === 'hello') as Extract<WireMessage, { t: 'hello' }>;
     // Mallory replays the victim's public key and peer id, but signs with her own key.
-    raw.t.send('ctl', { v: 1, t: 'hello', peerId: victim.peerId, pubKey: victim.pubKey, nickname: 'Ben', seat: 's1', role: 'player', lastSeq: 0, nonce: 'n-m' } as Message, 'ta');
+    raw.t.send('ctl', { v: PROTOCOL_VERSION, t: 'hello', peerId: victim.peerId, pubKey: victim.pubKey, nickname: 'Ben', seat: 's1', role: 'player', lastSeq: 0, nonce: 'n-m' } as Message, 'ta');
     const sig = await thief.sign(handshakeText(ROOM, theirHello.nonce, victim.peerId));
     await sleep(50);
-    raw.t.send('ctl', { v: 1, t: 'welcome', peerId: victim.peerId, sig, sequencer: null, seq: 0 } as Message, 'ta');
+    raw.t.send('ctl', { v: PROTOCOL_VERSION, t: 'welcome', peerId: victim.peerId, sig, sequencer: null, seq: 0 } as Message, 'ta');
     await waitFor(() => raw.got.some((m) => m.t === 'bye'));
     expect(raw.got.find((m) => m.t === 'bye')).toMatchObject({ reason: 'badSignature' });
     expect(a.peers()).toEqual([expect.objectContaining({ status: 'handshake', peerId: '' })]);
@@ -125,7 +126,7 @@ describe('hello handshake (real ECDSA P-256)', () => {
     await a.join();
     const raw = rawPeer(net, 'tm');
     await waitFor(() => raw.got.some((m) => m.t === 'hello'));
-    raw.t.send('ctl', { v: 1, t: 'hello', peerId: '0123456789abcdef', pubKey: other.pubKey, nickname: 'X', seat: null, role: 'player', lastSeq: 0, nonce: 'n' } as Message, 'ta');
+    raw.t.send('ctl', { v: PROTOCOL_VERSION, t: 'hello', peerId: '0123456789abcdef', pubKey: other.pubKey, nickname: 'X', seat: null, role: 'player', lastSeq: 0, nonce: 'n' } as Message, 'ta');
     await waitFor(() => raw.got.some((m) => m.t === 'bye'));
     expect(raw.got.find((m) => m.t === 'bye')).toMatchObject({ reason: 'badSignature' });
     expect(raw.got.some((m) => m.t === 'welcome')).toBe(false);
@@ -139,15 +140,18 @@ describe('hello handshake (real ECDSA P-256)', () => {
     const raw = rawPeer(net, 'tm');
     await waitFor(() => raw.got.some((m) => m.t === 'hello'));
     const action = { type: 'life', by: 's0', cid: 'x', seat: 's0', delta: -20, seq: 1 };
-    raw.t.send('act', { v: 1, t: 'seq', seq: 1, cid: 'x', action } as unknown as Message, 'ta');
-    raw.t.send('ctl', { v: 1, t: 'syncRes', snapshot: null, tail: [action] } as unknown as Message, 'ta');
-    raw.t.send('act', { v: 1, t: 'propose', cid: 'y', action: { ...action, cid: 'y', seq: undefined } } as unknown as Message, 'ta');
+    raw.t.send('act', { v: PROTOCOL_VERSION, t: 'seq', seq: 1, cid: 'x', action } as unknown as Message, 'ta');
+    raw.t.send('ctl', { v: PROTOCOL_VERSION, t: 'syncRes', snapshot: null, tail: [action] } as unknown as Message, 'ta');
+    raw.t.send('act', { v: PROTOCOL_VERSION, t: 'propose', cid: 'y', action: { ...action, cid: 'y', seq: undefined } } as unknown as Message, 'ta');
     await sleep(100);
     expect(a.seq()).toBe(0);
     expect(a.state().seats.s0!.life).toBe(20);
   });
 
-  it('answers a peer of another protocol version with a version notice and shows it', async () => {
+  it.each([
+    { theirs: PROTOCOL_VERSION - 1, what: 'an older' },
+    { theirs: PROTOCOL_VERSION + 1, what: 'a newer' },
+  ])('answers $what peer (protocol $theirs) with a version notice and shows both versions', async ({ theirs }) => {
     const net = new LoopbackNetwork({ seed: 5 });
     const ia = await realIdentity('Anna');
     const a = engine(net, 'ta', ia, table([ia.peerId]));
@@ -156,11 +160,12 @@ describe('hello handshake (real ECDSA P-256)', () => {
     await a.join();
     const raw = rawPeer(net, 'tv');
     await waitFor(() => raw.got.some((m) => m.t === 'hello'));
-    raw.t.send('ctl', { v: 2, t: 'hello', peerId: 'abc', pubKey: 'k', nickname: 'Future', whatever: true } as unknown as Message, 'ta');
+    raw.t.send('ctl', { v: theirs, t: 'hello', peerId: 'abc', pubKey: 'k', nickname: 'Ben', whatever: true } as unknown as Message, 'ta');
     await waitFor(() => raw.got.some((m) => m.t === 'bye'));
-    expect(raw.got.find((m) => m.t === 'bye')).toEqual({ v: 1, t: 'bye', reason: 'version', version: 1 });
+    expect(raw.got.find((m) => m.t === 'bye')).toEqual({ v: PROTOCOL_VERSION, t: 'bye', reason: 'version', version: PROTOCOL_VERSION });
     expect(a.status()).toBe('versionMismatch');
-    expect(warnings.some((w) => /version 2/.test(w) && /version 1/.test(w))).toBe(true);
+    expect(a.versionMismatch?.()).toEqual({ mine: PROTOCOL_VERSION, theirs, peerId: 'abc', nickname: 'Ben' });
+    expect(warnings.some((w) => w.includes(`version ${theirs}`) && w.includes(`version ${PROTOCOL_VERSION}`) && w.includes('Ben'))).toBe(true);
   });
 
   it('shows the notice when a newer peer refuses this one', async () => {
@@ -170,8 +175,9 @@ describe('hello handshake (real ECDSA P-256)', () => {
     await a.join();
     const raw = rawPeer(net, 'tv');
     await waitFor(() => raw.got.some((m) => m.t === 'hello'));
-    raw.t.send('ctl', { v: 3, t: 'bye', reason: 'version', version: 3 } as unknown as Message, 'ta');
+    raw.t.send('ctl', { v: PROTOCOL_VERSION + 1, t: 'bye', reason: 'version', version: PROTOCOL_VERSION + 1 } as unknown as Message, 'ta');
     await waitFor(() => a.status() === 'versionMismatch');
+    expect(a.versionMismatch?.()).toEqual({ mine: PROTOCOL_VERSION, theirs: PROTOCOL_VERSION + 1, peerId: '', nickname: '' });
   });
 
   it('refuses a second page with the same identity', async () => {
@@ -204,7 +210,7 @@ describe('hello handshake (real ECDSA P-256)', () => {
     const annaHello = m.from.find((g) => g.from === 'ta' && g.m.t === 'hello')!.m as Extract<WireMessage, { t: 'hello' }>;
     const benHello = m.from.find((g) => g.from === 'tb' && g.m.t === 'hello')!.m as Extract<WireMessage, { t: 'hello' }>;
     // Mallory says hello to Ben with her own key but the nonce Anna sent her, so Ben signs Anna's challenge ...
-    m.t.send('ctl', { v: 1, t: 'hello', peerId: im.peerId, pubKey: im.pubKey, nickname: 'M', seat: null, role: 'player', lastSeq: 0, nonce: annaHello.nonce } as Message, 'tb');
+    m.t.send('ctl', { v: PROTOCOL_VERSION, t: 'hello', peerId: im.peerId, pubKey: im.pubKey, nickname: 'M', seat: null, role: 'player', lastSeq: 0, nonce: annaHello.nonce } as Message, 'tb');
     await waitFor(() => m.from.some((g) => g.from === 'tb' && g.m.t === 'welcome'));
     const benWelcome = m.from.find((g) => g.from === 'tb' && g.m.t === 'welcome')!.m;
     // ... and replays Ben's hello and that welcome to Anna.
@@ -220,12 +226,12 @@ describe('hello handshake (real ECDSA P-256)', () => {
     // A targeted reveal to Ben's seat reaches Ben and nothing of it reaches Mallory.
     const got: string[] = [];
     b.onPrivate((msg) => got.push(msg.t));
-    expect(a.sendPrivate('s1', { v: 1, t: 'reveal', instanceId: 'x1', ref: { sid: 'secret-sid-relay' }, salt: 'secret-salt-relay', purpose: 'revealTo', about: 'c1' })).toBe(true);
+    expect(a.sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'reveal', instanceId: 'x1', ref: { sid: 'secret-sid-relay' }, salt: 'secret-salt-relay', purpose: 'revealTo', about: 'c1' })).toBe(true);
     await waitFor(() => got.length > 0);
     await sleep(50);
     expect(scan([m.got], ['secret-sid-relay', 'secret-salt-relay'])).toEqual([]);
     // Mallory's proposals are not sequenced as Ben's seat.
-    m.t.send('act', { v: 1, t: 'propose', cid: 'm-1', action: { type: 'life', by: 's1', cid: 'm-1', seat: 's1', delta: -10 } } as unknown as Message, 'ta');
+    m.t.send('act', { v: PROTOCOL_VERSION, t: 'propose', cid: 'm-1', action: { type: 'life', by: 's1', cid: 'm-1', seat: 's1', delta: -10 } } as unknown as Message, 'ta');
     await sleep(100);
     expect(a.state().seats.s1!.life).toBe(20);
   });
