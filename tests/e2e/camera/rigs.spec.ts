@@ -385,7 +385,8 @@ test.describe('picking and theme defaults in the ego rig', () => {
     const inside = (await toScreen(page, { x: top.pose.x + 63 / 2 - 3, y: top.pose.y }, z))!;
     expect(await harness(page, 'cardAt', inside.x, inside.y)).toBe('s0-l32');
     const beyond = (await toScreen(page, { x: top.pose.x + 63 / 2 + 3, y: top.pose.y }, z))!;
-    expect(await harness(page, 'cardAt', beyond.x, beyond.y)).not.toMatch(/^s0-l/);
+    // Nothing (null) or another card, never a library card.
+    expect(String((await harness(page, 'cardAt', beyond.x, beyond.y)) ?? '')).not.toMatch(/^s0-l/);
   });
 
   test('asking for the rig already shown is no choice: a later theme switch still applies its preferred rig', async ({ page }) => {
