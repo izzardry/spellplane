@@ -65,18 +65,18 @@ describe('M5-P2 audit', () => {
     expect(SPECTATOR_ACTIONS).not.toContain('auditPublish');
     expect(JSON.parse(canonicalJson(a))).toEqual(a);
   });
-  it('the reducer accepts the record without changing the table beyond its seq', () => {
+  it('the reducer refuses a bundle of a game that was never played (M5-P2: published only after the game ended)', () => {
     const t = table();
     const next = reduce(t, { type: 'auditPublish', by: 's0', cid: 'c1', seq: t.seq + 1, bundle });
-    expect({ ...next, seq: t.seq }).toEqual(t);
+    expect(next).toBe(t);
   });
   it('labels a missing record neutrally', () => {
     expect(AUDIT_STATUS_TEXT.unverifiable).toBe('could not be checked: records missing');
   });
-  it('stubs name M5-P2', () => {
-    expect(() => auditGames([])).toThrow(notImplemented('M5-P2'));
-    expect(() => buildAuditBundle({ seat: 's0', identities: {}, libraryOrder: [], hand: [], audit: [], received: {} }, bundle.game, [])).toThrow(notImplemented('M5-P2'));
-    expect(() => verifyAudit({ seat: 's0', game: bundle.game, bundle, start: table(), log: [] })).toThrow(notImplemented('M5-P2'));
+  it('is implemented (M5-P2): no games in an empty log, an empty bundle from an empty store, a total verifier', () => {
+    expect(auditGames([])).toEqual([]);
+    expect(buildAuditBundle({ seat: 's0', identities: {}, libraryOrder: [], hand: [], audit: [], received: {} }, bundle.game, [])).toEqual({ seat: 's0', game: bundle.game, records: [] });
+    expect(verifyAudit({ seat: 's0', game: bundle.game, bundle, start: table(), log: [] }).status).toBe('verified');
   });
 });
 

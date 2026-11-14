@@ -7,6 +7,7 @@
   - draft: the draft HUD (ui/draft, M2-P4) over the session's DraftControls;
   - build: the builder (ui/builder, M2-P5 and M2-P6), with the evening bar (who is not Ready yet, a new draft);
   - match: the table HUD, with the evening bar (next game, new draft).
+  In every stage the audit panel (ui/audit, M5-P2) shows the verdicts of the games that ended.
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
@@ -23,6 +24,8 @@
   import Lobby from '../lobby/Lobby.svelte';
   import type { LobbyProps } from '../types';
   import EveningBar from './EveningBar.svelte';
+  import AuditPanel from '../audit/AuditPanel.svelte';
+  import { sessionAudit } from '../../session/audit';
   import LobbyDraft from './LobbyDraft.svelte';
 
   let props: LobbyProps & { createScene: CreateTableScene; faces: FaceSource; cardData: CardDataSource; settings?: SettingsStore | undefined; sets?: SetDataSource | undefined } = $props();
@@ -32,6 +35,8 @@
   const stage = $derived<StageId>(st.stage);
   const evening = $derived(props.session.evening);
   const draft = $derived(props.session.draft);
+  // The post-game audit of a networked session (M5-P2, session/audit.ts); none in solo play or for a spectator.
+  const audit = $derived(sessionAudit(props.session));
   // The viewer's theme (PLAN M4-P6), switchable mid-evening; Paper where no app shell provides the choice.
   const themeChoice = themeContext();
   let theme = $state.raw(themeChoice?.current() ?? paper);
@@ -73,6 +78,10 @@
     <div class="evening" class:in-match={stage === 'match'}>
       <EveningBar session={props.session} {evening} state={st} answer={stage !== 'match'} />
     </div>
+  {/if}
+  {#if audit}
+    <!-- The post-game audit (M5-P2): opens by itself when a game ends, in whatever stage follows. -->
+    <AuditPanel {audit} playing={stage === 'match'} />
   {/if}
 </div>
 

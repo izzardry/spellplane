@@ -86,6 +86,9 @@ import { mountCaptions } from './captions';
 import type { CaptionControls } from '../voice/types';
 import type { DraftControls } from '../draft/types';
 import { createSessionVoice, latestTransport } from './voice';
+import { attachAudit, gatedTransport, registerAuditDebug, SessionAudit } from './audit';
+import type { AuditControls } from '../net/audit';
+import type { Channel, Message } from '../net/transport';
 import type { VoiceControls } from '../voice/types';
 import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus, TeamControls } from './types';
 
@@ -314,6 +317,9 @@ class NetTable implements NetSession, SessionRecovery {
   private readonly teamView = new TeamView({ seat: () => this.seat, confirmedState: () => this.engine.confirmedState(), secrets: () => this.sec, now: () => this.now() });
   /** Dictation and captions (session/captions.ts, M3-P4); set once joined when the session has voice options. */
   captions?: CaptionControls;
+  /** The post-game audit (M5-P2, session/audit.ts). */
+  private readonly auditImpl: SessionAudit;
+  private readonly unregisterAuditDebug: () => void;
 
   constructor(
     engine: NetEngine,
@@ -344,6 +350,39 @@ class NetTable implements NetSession, SessionRecovery {
     this.restoreUndo(init.snapshot, init.snapshotSeq);
     this.attach(engine);
     this.eveningImpl = new Evening(this.draftPort());
+    this.auditImpl = new SessionAudit({
+      seat: () => this.engine.seat(),
+      secrets: () => this.sec,
+      pending: () => this.engine.pending(),
+      confirmed: () => this.engine.confirmedState(),
+      entries: () => this.entries,
+      propose: (draft) => this.propose(this.stamp(draft), false),
+      log: (level, text, afterSeq) => this.insertSystem(level, text, afterSeq),
+      now: () => this.now(),
+      changed: () => this.notify(),
+      peers: () => this.engine.peers(),
+      sequencer: () => this.engine.sequencerId(),
+      isSequencer: () => this.engine.isSequencer(),
+      inStep: () => this.engine.status() === 'connected',
+    });
+    this.auditImpl.rebuild([freshNetTable(opts.game, opts.format ?? '1v1'), init.snapshot], init.entries, engine.confirmedState());
+    this.unregisterAuditDebug = registerAuditDebug(this.auditImpl);
+    attachAudit(this, this.auditImpl);
+  }
+
+  /** The post-game audit (M5-P2): verdicts per game and seat, the own published bundles. */
+  get audit(): AuditControls {
+    return this.auditImpl;
+  }
+
+  /** A message the engine sends, through the audit's check of own `auditPublish` proposals (session/audit.ts). */
+  auditOutgoing(channel: Channel, msg: Message): Message {
+    return this.auditImpl.outgoing(channel, msg);
+  }
+
+  /** A message the engine receives, shown to the audit first (heartbeats acknowledge a game's end, session/audit.ts). */
+  auditIncoming(channel: Channel, from: string, msg: Message): void {
+    this.auditImpl.incoming(channel, from, msg);
   }
 
   /** The draft and the builder (M2-P7); absent without set data. */
@@ -410,7 +449,10 @@ class NetTable implements NetSession, SessionRecovery {
         this.queueDrive();
         if (this.collision()) queueMicrotask(() => void this.rejoin());
       }),
-      engine.onSequencerChange(() => this.netChanged()),
+      engine.onSequencerChange(() => {
+        this.auditImpl.sequencerChanged();
+        this.netChanged();
+      }),
       // A reveal to named spectators (M3-P5, net/roles.ts).
       spectatorRevealSender(engine, () => this.sec),
       this.channel.onIdentity((card, from, verified) => {
@@ -501,6 +543,8 @@ class NetTable implements NetSession, SessionRecovery {
     if (this.disposed) return;
     this.disposed = true;
     this.eveningImpl?.dispose();
+    this.auditImpl.dispose();
+    this.unregisterAuditDebug();
     this.voiceImpl?.dispose();
     this.teamView.dispose();
     this.captions?.dispose();
@@ -1309,6 +1353,7 @@ class NetTable implements NetSession, SessionRecovery {
     this.entries.push({ kind: 'action', seq: action.seq, at: this.now(), action });
     this.saves.saveAction(action, next, this.sec);
     if (own) this.ownSequenced(action);
+    this.auditImpl.sequenced(action, prior, next, exact);
     // A public card of this seat back in its hand: the hand gets fresh opaque ids, so peers cannot link the card's
     // later reveal to this one (DESIGN "Table model", Hidden cards; decision M1-P2).
     const hand = zoneId('hand', this.sec.seat);
@@ -1421,7 +1466,8 @@ class NetTable implements NetSession, SessionRecovery {
     }
     const key = roundKey(action);
     if (key !== null) this.roundRefusals.set(key, (this.roundRefusals.get(key) ?? 0) + 1);
-    this.warn(`${action.type} refused: ${reason}`);
+    // A bundle the transport withheld (session/audit.ts) is rolled back without a word: nothing the player did was refused.
+    if (!this.auditImpl.refused(action)) this.warn(`${action.type} refused: ${reason}`);
     // Lost a chair to someone who sat down at the same moment: take the next free one (lobby only).
     if (action.type === 'seatTake' && !this.sitting && this.engine.seat() === null && this.engine.state().stage === 'lobby' && this.seatAttempts < SEAT_ATTEMPTS) {
       queueMicrotask(() => this.sitIfUnseated());
@@ -1534,6 +1580,7 @@ class NetTable implements NetSession, SessionRecovery {
       this.turnUpOwed(st, me);
       this.reissueHand();
       this.resumeRecovery();
+      this.auditImpl.drive();
     }
     this.settleWaiters();
   }
@@ -1851,6 +1898,7 @@ class NetTable implements NetSession, SessionRecovery {
     // The new save queue starts after the old one's last write, so a late write of the abandoned table never lands
     // over the new seq-0 record.
     this.saves = this.persistence(fresh, 0, 0, this.saves.whenSaved());
+    this.auditImpl.rebuild([fresh], [], this.eng.confirmedState(), true);
     this.attach(this.eng);
     this.system('info', `Another browser was already at this table: this browser left the table it had started alone and joins that one${readied ? ' (press Ready again)' : ''}.`);
     this.notify();
@@ -1878,6 +1926,15 @@ class NetTable implements NetSession, SessionRecovery {
 
   private system(level: 'info' | 'warn', text: string): void {
     this.entries.push({ kind: 'system', seq: this.engine.seq(), at: this.now(), level, text });
+  }
+
+  /** A system line placed after the entry of action `afterSeq` (and the system lines already after it), else at the end (M5-P2 audit verdicts). */
+  private insertSystem(level: 'info' | 'warn', text: string, afterSeq?: number): void {
+    const at = afterSeq === undefined ? -1 : this.entries.findLastIndex((e) => e.kind === 'action' && e.seq === afterSeq);
+    if (at < 0) return this.system(level, text);
+    let i = at + 1;
+    while (i < this.entries.length && this.entries[i]!.kind === 'system') i++;
+    this.entries.splice(i, 0, { kind: 'system', seq: afterSeq!, at: this.now(), level, text });
   }
 
   private lastWarning(): string {
@@ -2105,9 +2162,16 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
   const identity = await createNetIdentity(opts.identity.keyPair, opts.identity.peerId, opts.identity.nickname);
   if (signal?.aborted) throw cancelled();
   const transports = latestTransport(opts.transport);
+  // Every outgoing message passes the audit's check of own `auditPublish` proposals (session/audit.ts), once the session exists.
+  let gate: (channel: Channel, msg: Message) => Message = (_channel, msg) => msg;
+  let observe: (channel: Channel, from: string, msg: Message) => void = () => {};
   const makeEngine = (from: ResumePoint): NetEngine =>
     createNetEngine({
-      transport: transports.make(),
+      transport: gatedTransport(
+        transports.make(),
+        (channel, msg) => gate(channel, msg),
+        (channel, from, msg) => observe(channel, from, msg),
+      ),
       roomId: opts.roomId,
       roomKey: opts.roomKey,
       identity,
@@ -2129,6 +2193,8 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
     lastSeq: engine.confirmedState().seq,
     protocol: saved?.protocol,
   });
+  gate = (channel, msg) => session.auditOutgoing(channel, msg);
+  observe = (channel, from, msg) => session.auditIncoming(channel, from, msg);
   if (opts.voice) {
     const port = { engine: () => session.engine, transport: transports.current, state: () => session.getState(), subscribe: session.subscribe.bind(session) };
     session.voiceImpl = createSessionVoice({ ...port, subscribeNet: (l) => session.subscribeNet(() => l()) }, opts.voice);

@@ -454,6 +454,12 @@ export function describe(a: Action, d: Describers): Seg[] | null {
       return [t(a.settings.passTimerMs !== undefined ? `sets the pass timer to ${a.settings.passTimerMs === null ? 'off' : `${a.settings.passTimerMs / 1000} s`}` : 'changes the table settings')];
     case 'stageSet':
       return [t({ lobby: 'returns the table to the lobby', draft: 'starts the draft', build: 'starts deck building', match: 'starts the game' }[a.stage] ?? `moves the table to ${a.stage}`)];
+    case 'auditPublish': {
+      // M5-P2: the verdict follows as its own line (session/audit.ts); this one says what was published.
+      const game = typeof a.bundle?.game?.game === 'number' ? ` of game ${a.bundle.game.game}` : '';
+      const n = Array.isArray(a.bundle?.records) ? a.bundle.records.length : 0;
+      return [t(`publishes the audit records${game} (${plural(n, 'record')})`)];
+    }
     default:
       return null;
   }
