@@ -98,8 +98,20 @@ export class SessionAudit implements AuditControls {
   private rebuildQueued = false;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
+  /** Test builds only (the debug hook's `audit.tamper`): the next own bundle carries a rewritten library order. */
+  private tamperNext = false;
 
   constructor(private readonly port: AuditPort) {}
+
+  /**
+   * Test-only (M5 gate: "a tampered game shows a mismatch"; reached through the debug hook, which production builds
+   * do not have): the next bundle this browser publishes reports its first shuffle's resulting library order with the
+   * top two cards swapped, as a browser that lied about its library order would. The other browsers' replay of the
+   * nonces then disagrees with it, and the audit reports a mismatch for this seat.
+   */
+  tamper(): void {
+    this.tamperNext = true;
+  }
 
   /**
    * Rebuild from a saved log: `bases` are the states a replay may start from (the room's seq-0 table, the latest saved
@@ -262,8 +274,10 @@ export class SessionAudit implements AuditControls {
         continue;
       }
       if (this.port.pending().some((a) => a.type === 'auditPublish' && a.bundle?.game?.game === n)) continue;
-      const bundle = buildAuditBundle(this.port.secrets(), g.game, g.log);
+      let bundle = buildAuditBundle(this.port.secrets(), g.game, g.log);
+      if (this.tamperNext) bundle = tampered(bundle);
       if (!this.port.propose({ type: 'auditPublish', bundle })) this.refusals.set(n, (this.refusals.get(n) ?? 0) + 1);
+      else this.tamperNext = false;
     }
     const key = held.join('|');
     if (key !== this.holdKey) {
@@ -442,9 +456,26 @@ export function gatedTransport(transport: Transport, gate: (channel: Channel, ms
   return t;
 }
 
-/** The debug hook's `audit` part (debug/types.ts AuditDebug) for a session's audit; the result unregisters it. */
-export function registerAuditDebug(audit: AuditControls): () => void {
-  const part = { verdicts: () => audit.verdicts(), published: () => audit.published() };
+/** A bundle whose first shuffle reports its top two cards swapped (SessionAudit.tamper; test builds only). */
+function tampered(bundle: AuditBundle): AuditBundle {
+  const i = bundle.records.findIndex((r) => r.kind === 'shuffle' && r.order.length >= 2);
+  if (i < 0) return bundle;
+  const records = bundle.records.map((r, k) => {
+    if (k !== i) return r;
+    const order = [...r.order];
+    [order[0], order[1]] = [order[1]!, order[0]!];
+    return { ...r, order };
+  });
+  return { ...bundle, records };
+}
+
+/**
+ * The debug hook's `audit` part (debug/types.ts AuditDebug) for a session's audit; the result unregisters it. With
+ * `tamper` the part also offers the test-only `tamper()` (SessionAudit.tamper; the hook exists in dev and test builds
+ * only).
+ */
+export function registerAuditDebug(audit: AuditControls, tamper?: () => void): () => void {
+  const part = { verdicts: () => audit.verdicts(), published: () => audit.published(), ...(tamper ? { tamper } : {}) };
   registerDebug({ audit: part });
   return () => {
     if (typeof window !== 'undefined' && window.__spellplane?.audit === part) delete window.__spellplane.audit;

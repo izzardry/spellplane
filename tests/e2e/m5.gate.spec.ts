@@ -806,7 +806,7 @@ test.describe('M5 gate @gate', () => {
         for (const p of both) expect(await hasPart(p.page, 'audit'), `${p.name}'s page has the audit part of the debug hook (M5-P2)`).toBe(true);
         for (const p of both) {
           await expect
-            .poll(async () => (await hook<{ game: number; seat: string; verdict: string }[]>(p.page, 'audit.verdicts')).filter((v) => v.game === game).map((v) => `${v.seat}:${v.verdict}`), { timeout: 20_000 })
+            .poll(async () => (await hook<{ game: number; seat: string; status: string }[]>(p.page, 'audit.verdicts')).filter((v) => v.game === game).map((v) => `${v.seat}:${v.status}`), { timeout: 20_000 })
             .toEqual(['s0:verified', 's1:verified']);
         }
         await expect(A.page.getByTestId('audit-panel')).toBeVisible();
@@ -845,6 +845,7 @@ test.describe('M5 gate @gate', () => {
     await step('a tampered game: a test-only hook rewrites Ann’s recorded library order; the audit after the game shows a mismatch for Ann', async () => {
       const tamper = await A.page.evaluate(() => typeof (window.__spellplane as unknown as { audit?: { tamper?: unknown } }).audit?.tamper === 'function');
       expect(tamper, 'a test-only hook to tamper with the recorded library order (__spellplane.audit.tamper; M5-P2)').toBe(true);
+      await A.page.evaluate(() => (window.__spellplane as unknown as { audit: { tamper(): void } }).audit.tamper());
     });
 
     // ---- Sealed, then Rochester -----------------------------------------------------------------------------------
@@ -868,6 +869,16 @@ test.describe('M5 gate @gate', () => {
       for (const p of both) await inStage(p.page, 'build');
       const packSize = picks.find((x) => x.seat === 's0')!.before.length;
       for (const p of both) await expect.poll(async () => (await secrets(p.page)).pool?.length ?? 0, { timeout: 20_000 }).toBe(6 * packSize);
+    });
+    await step('audit after the tampered game two: a mismatch for Ann, Ben verified, in the log and the audit panel', async () => {
+      for (const p of both) {
+        await expect
+          .poll(async () => (await hook<{ game: number; seat: string; status: string }[]>(p.page, 'audit.verdicts')).filter((v) => v.game === 2).map((v) => `${v.seat}:${v.status}`), { timeout: 20_000 })
+          .toEqual(['s0:mismatch', 's1:verified']);
+      }
+      await expect(A.page.getByTestId('audit-panel')).toBeVisible();
+      await expect(A.page.locator('[data-testid="audit-row"][data-seat="s0"]').last()).toHaveAttribute('data-status', 'mismatch');
+      await shot(A.page, 'M5', 'audit-panel-mismatch', project);
     });
     if (!sealedOk) return finish();
 

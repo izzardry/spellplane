@@ -89,6 +89,8 @@ export class TableRig {
   private egoKeep: TablePoint[] = [];
   /** How the default ego seat is moved for this viewport and HUD (ego.ts egoFrameFor; M5 owner decision "ego framing"). */
   egoFrame: EgoFrame = NO_EGO_FRAME;
+  /** What the framing was last computed for (it is recomputed only when one of these changes). */
+  private egoFrameKey = '';
   private tilt: number;
   private active: CameraRig;
   private egoAnim: { from: EgoNav; to: EgoNav; start: number; dur: number } | null = null;
@@ -576,6 +578,10 @@ export class TableRig {
 
   /** Recompute the ego framing; the navigation keeps its values (re-clamped to the moved seat's limits). */
   private reframeEgo(): void {
+    const i = this.bird.insets;
+    const key = JSON.stringify([this.egoParams, this.table, this.angle, this.seatLateral, this.viewport.w, this.viewport.h, i.top, i.right, i.bottom, i.left, this.egoKeep]);
+    if (key === this.egoFrameKey) return;
+    this.egoFrameKey = key;
     const f = egoFrameFor(this.egoParams, this.table, this.angle, this.seatLateral, this.viewport, this.bird.insets, this.egoKeep);
     if (Math.abs(f.pull - this.egoFrame.pull) < 0.5 && Math.abs(f.shift - this.egoFrame.shift) < 0.5) return;
     this.egoFrame = f;
@@ -592,6 +598,7 @@ export class TableRig {
     this.bird.setTable(table, angle, frame);
     this.seatLateral = lateral;
     this.egoFrame = NO_EGO_FRAME;
+    this.egoFrameKey = '';
     this.lateral = lateral;
     this.reframeEgo();
     this.sw = null;
@@ -603,6 +610,7 @@ export class TableRig {
   setTheme(ego: Partial<EgoRigParams> | undefined, tiltDeg: number | undefined): void {
     this.egoParams = { ...DEFAULT_EGO_RIG, ...(ego ?? {}) };
     this.egoFrame = NO_EGO_FRAME;
+    this.egoFrameKey = '';
     this.lateral = this.seatLateral;
     this.reframeEgo();
     this.nav = clampEgoNav(this.egoReach(), this.nav);

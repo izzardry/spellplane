@@ -366,7 +366,7 @@ class NetTable implements NetSession, SessionRecovery {
       inStep: () => this.engine.status() === 'connected',
     });
     this.auditImpl.rebuild([freshNetTable(opts.game, opts.format ?? '1v1'), init.snapshot], init.entries, engine.confirmedState());
-    this.unregisterAuditDebug = registerAuditDebug(this.auditImpl);
+    this.unregisterAuditDebug = registerAuditDebug(this.auditImpl, () => this.auditImpl.tamper());
     attachAudit(this, this.auditImpl);
   }
 

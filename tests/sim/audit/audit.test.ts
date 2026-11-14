@@ -120,6 +120,19 @@ describe('the post-game audit on a simulated network', () => {
     expect(g.a.log().find((e) => e.kind === 'system' && e.text.startsWith('Audit of game 1: Ben'))).toMatchObject({ level: 'warn' });
   });
 
+  it('the test-only tamper hook (debug hook audit.tamper; M5 gate) makes the published library order disagree: a mismatch for that seat', async () => {
+    const network = net({ seed: 21 });
+    const g = await startGame(network, browsers);
+    // As the gate does through window.__spellplane.audit.tamper on Anna's page.
+    (g.a as unknown as { auditImpl: { tamper(): void } }).auditImpl.tamper();
+    await endGame(g);
+    await verdictsIn([g.a, g.b]);
+    for (const s of [g.a, g.b]) {
+      expect(verdictOf(s, 's1')).toMatchObject({ status: 'verified' });
+      expect(verdictOf(s, 's0')!.status).toBe('mismatch');
+    }
+  });
+
   it('detects a draw that was not the top card of the committed order, naming expected and drawn card', async () => {
     const network = net({ seed: 22 });
     const g = await startGame(network, browsers);
