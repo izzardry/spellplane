@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { Action } from '../../../src/core/actions';
 import { reduce } from '../../../src/core/reducer';
 import type { TableState } from '../../../src/core/types';
-import { builtOn, changedObjects, inverse, undoKey, undoStackFromLog } from '../../../src/core/undo';
+import { builtOn, changedObjects, inverse, namesAny, undoKey, undoStackFromLog } from '../../../src/core/undo';
 import { act, ok, P, play, readyTable } from '../core/helpers';
 
 /** Sequence `actions` onto `start`, stamping seqs; returns the log and the end state. */
@@ -122,6 +122,48 @@ describe('undoStackFromLog: the undo stack after a reload', () => {
     const d3 = act('draw', { instanceId: lib[2]! });
     const { log: l2 } = sequence(start, [tap, mull, d1, d2, d3]);
     expect(undoStackFromLog(start, l2, 's0').stack.map((e) => e.cid)).toEqual([d3.cid]);
+  });
+
+  it('the mulligan’s draws stay off even when own actions are sequenced while its shuffle settles (a nonce, a chat, a tap)', () => {
+    // session/net.ts mulligan: the draws come once the shuffle has settled, and the stack is cleared after them, so
+    // nothing own sequenced in between (the nonce for an opponent's concurrent mulligan shuffle is the usual case at
+    // game start) can be undone either; a reload must not change that (DESIGN "Turn flow and confirmation", Undo).
+    const start = base();
+    const mull = act('mulligan', { count: 1 });
+    const lib = reduce(start, { ...mull, seq: start.seq + 1 } as Action).zones['library:s0']!.ids;
+    const d1 = act('draw', { instanceId: lib[0]!, group: 'gm' });
+    const d2 = act('draw', { instanceId: lib[1]!, group: 'gm' });
+    const nonce = act('shuffleNonce', { sid: 'sh-s1', nonce: 'n' });
+    const chat = act('chat', { text: 'gl hf', channel: 'table' });
+    const tap = act('tap', { card: 'a00', tapped: true });
+    expect(undoStackFromLog(start, stamped(start, [mull, d1, d2]), 's0').stack).toEqual([]);
+    expect(undoStackFromLog(start, stamped(start, [mull, nonce, d1, d2]), 's0').stack).toEqual([]);
+    expect(undoStackFromLog(start, stamped(start, [mull, nonce, chat, tap, d1, d2]), 's0').stack).toEqual([]);
+    // After the group, the player's own steps count again.
+    const tap2 = act('tap', { card: 'a01', tapped: true });
+    expect(undoStackFromLog(start, stamped(start, [mull, nonce, d1, d2, tap2]), 's0').stack.map((e) => e.cid)).toEqual([tap2.cid]);
+  });
+
+  it('a solo shuffle of a one-card zone is a barrier too (the live solo table clears its stack at every shuffle)', () => {
+    let start = base();
+    const lib = start.zones['library:s0']!.ids;
+    const draws = lib.slice(0, -1).map((id) => act('draw', { instanceId: id }));
+    start = sequence(start, draws).end;
+    expect(start.zones['library:s0']!.ids).toHaveLength(1);
+    const tap = act('tap', { card: 'a00', tapped: true });
+    const one = act('reorder', { zone: 'library:s0', count: 1, orderHash: 'h' });
+    const log = stamped(start, [tap, one]);
+    expect(undoStackFromLog(start, log, 's0', { soloShuffles: true }).stack).toEqual([]);
+    expect(undoStackFromLog(start, log, 's0').stack.map((e) => e.cid)).toEqual([tap.cid]);
+  });
+
+  it('a re-issue retires whole ids only: a step naming c12 survives the retirement of c1', () => {
+    const ids = new Set(['c1']);
+    expect(namesAny({ type: 'move', card: 'c12', to: 'hand:s0' }, ids)).toBe(false);
+    expect(namesAny({ type: 'move', card: 'c1', to: 'hand:s0' }, ids)).toBe(true);
+    expect(namesAny({ type: 'tap', card: 'x', tapped: false, restore: { cards: { c1: { zone: [] } } } }, ids)).toBe(true);
+    expect(namesAny({ type: 'lineAdd', from: { kind: 'card', id: 'c1' } }, ids)).toBe(true);
+    expect(namesAny({ type: 'move', card: 'c1' }, new Set())).toBe(false);
   });
 
   it('a whole-zone private reorder clears the stack on the solo table only (its shuffle); in a networked log it is a scry', () => {

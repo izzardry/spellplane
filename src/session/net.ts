@@ -58,7 +58,7 @@ import {
 } from '../core/secrets';
 import type { CardRef, Format, InstanceId, LogEntry, PackId, Pose, RngPurpose, SeatColourIndex, SecretStore, SeatId, ShuffleId, TableState, ZoneId } from '../core/types';
 import { isUndoable, type UndoableAction } from '../core/actions';
-import { builtOn, changedObjects, undoPlan, undoStackFromLog, type OthersChange, type UndoReveal } from '../core/undo';
+import { builtOn, changedObjects, namesAny, undoPlan, undoStackFromLog, type OthersChange, type UndoReveal } from '../core/undo';
 import type { CardData } from '../data/types';
 import type { PackSeed } from '../draft/types';
 import { draftCardsOver } from '../net/draftcards';
@@ -289,6 +289,8 @@ class NetTable implements NetSession, SessionRecovery {
   private driveQueued = false;
   private netQueued = false;
   private lastSeat: SeatId;
+  /** The stored record's protocol version at open (the save keeps a higher one: session/persist.ts). */
+  private readonly savedProtocol: number | undefined;
   private disposed = false;
   /** Subscriptions to the current engine and its pair channel. */
   private readonly unsubs: Unsubscribe[] = [];
@@ -319,8 +321,9 @@ class NetTable implements NetSession, SessionRecovery {
     private readonly makeEngine: (start: ResumePoint) => NetEngine,
     private readonly opts: NetSessionOptions,
     private readonly internals: NetSessionInternals,
-    init: { secrets: SecretStore; entries: LogEntry[]; snapshot: TableState; snapshotSeq: number; lastSeq: number },
+    init: { secrets: SecretStore; entries: LogEntry[]; snapshot: TableState; snapshotSeq: number; lastSeq: number; protocol?: number | undefined },
   ) {
+    this.savedProtocol = init.protocol;
     this.eng = engine;
     this.roomId = opts.roomId;
     this.peerId = opts.identity.peerId;
@@ -380,6 +383,7 @@ class NetTable implements NetSession, SessionRecovery {
       snapshot,
       snapshotSeq,
       lastSeq,
+      protocol: this.savedProtocol,
     });
   }
 
@@ -956,6 +960,10 @@ class NetTable implements NetSession, SessionRecovery {
       const dry = { ...u, by: this.seat, cid: DRY_CID, seq: s.seq + 1 } as Action;
       const next = reduce(s, dry);
       if (next === s) {
+        // The step can never apply again as the table now stands (another player's change it cannot compose with,
+        // such as their item pushed on top of an own stack item): it leaves the stack like a built-on step, so the
+        // next Ctrl+Z goes on with older own actions instead of refusing again and again.
+        this.undoStack = this.undoStack.slice(0, this.undoStack.length - k);
         this.warn(`Cannot undo: ${explain(s, dry) ?? 'refused'}`);
         this.notify();
         return false;
@@ -1377,10 +1385,8 @@ class NetTable implements NetSession, SessionRecovery {
       return;
     }
     // Undo steps that name a retired id can never apply again; left on the stack they would block every later undo.
-    this.undoStack = this.undoStack.filter((e) => {
-      const text = canonicalJson(e.inverse);
-      return !retired.some((id) => text.includes(id));
-    });
+    const gone = new Set(retired);
+    this.undoStack = this.undoStack.filter((e) => !namesAny(e.inverse, gone));
     this.notify();
   }
 
@@ -2116,6 +2122,7 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
     snapshot: start.snapshot.state,
     snapshotSeq: start.snapshot.seq,
     lastSeq: engine.confirmedState().seq,
+    protocol: saved?.protocol,
   });
   if (opts.voice) {
     const port = { engine: () => session.engine, transport: transports.current, state: () => session.getState(), subscribe: session.subscribe.bind(session) };

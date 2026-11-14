@@ -179,6 +179,15 @@ describe('sessions and a page of another protocol version', () => {
     const again = await open(network, anna, { createdHere: true });
     const line = again.log().find((e) => e.kind === 'system' && e.text.includes(`version ${PROTOCOL_VERSION + 1}`));
     expect(line && line.kind === 'system' ? line.text : '').toContain(`version ${PROTOCOL_VERSION}`);
+    // This older page saves on: the record keeps the newer version, so the next reload says so again (never a silent
+    // failure after one save).
+    again.dispatch({ type: 'chat', text: 'still here', channel: 'table' });
+    await settle(again.whenSaved(), 10_000, 'the second save');
     again.leave();
+    expect((await anna.stores.tables.loadTable(ROOM))!.table.protocol).toBe(PROTOCOL_VERSION + 1);
+    const third = await open(network, anna, { createdHere: true });
+    const warned = third.log().filter((e) => e.kind === 'system' && e.text.includes(`version ${PROTOCOL_VERSION + 1}`));
+    expect(warned.length).toBeGreaterThan(0);
+    third.leave();
   });
 });

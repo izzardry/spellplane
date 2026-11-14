@@ -164,6 +164,28 @@ describe('undo of an action another player already built on', () => {
     expect(undos(b)).toHaveLength(1);
   });
 
+  it('a step the table no longer takes (another player’s item pushed on top of the own one) leaves the stack too', async () => {
+    const t = await table(2, 9);
+    const [a, b] = t.s as [NetTable, NetTable];
+    const [mine] = await lands(t, a, 1);
+    const [theirs] = await lands(t, b, 1);
+    a.dispatch({ type: 'tap', card: mine!, tapped: true });
+    a.dispatch({ type: 'stackPush', item: 'si-anna', kind: 'ability', source: mine! });
+    await waitConverged(t.s);
+    // Ben's push changes only his own item, so nobody built on Anna's push; but her push can only be taken back from
+    // the top of the stack, which it no longer is.
+    b.dispatch({ type: 'stackPush', item: 'si-ben', kind: 'ability', source: theirs! });
+    await waitConverged(t.s);
+    expect(a.undo()).toBe(false);
+    expect(warnings(a).at(-1)).toMatch(/^Cannot undo: /);
+    // The refused step is gone: the next Ctrl+Z takes back the tap instead of refusing again.
+    expect(a.canUndo()).toBe(true);
+    expect(a.undo()).toBe(true);
+    await waitConverged(t.s);
+    expect(b.engine.confirmedState().cards[mine!]!.tapped).toBe(false);
+    expect(b.engine.confirmedState().stack.map((i) => i.id)).toEqual(['si-anna', 'si-ben']);
+  });
+
   it('a change this page only received inside a catch-up from a snapshot still counts', async () => {
     const t = await table(2, 11);
     const [a, b] = t.s as [NetTable, NetTable];

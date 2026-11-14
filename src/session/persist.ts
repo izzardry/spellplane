@@ -35,6 +35,11 @@ export interface TablePersistenceOptions {
   lastSeq: number;
   /** Writes start after this settles (the queue of a save this one replaces); it never rejects. */
   after?: Promise<void>;
+  /**
+   * The protocol version of the stored record this save continues (`TableRecord.protocol`), if any. A higher one than
+   * this page's is kept, so a room a newer Spellplane played keeps saying so after an older page saved it.
+   */
+  protocol?: number | undefined;
 }
 
 function errorText(e: unknown): string {
@@ -152,9 +157,10 @@ export class TablePersistence {
       seat: this.o.seat(),
       stage: state.stage,
       updatedAt: at,
-      // The room records the protocol version this browser plays it with (PLAN Milestone 5, owner decisions, Version
-      // mismatch; net/version.ts roomProtocol, roomVersionNotice).
-      protocol: PROTOCOL_VERSION,
+      // The room records the highest protocol version it was played with (PLAN Milestone 5, owner decisions, Version
+      // mismatch; net/version.ts roomProtocol, roomVersionNotice): an older page saving a room a newer one wrote never
+      // lowers it, so the notice comes again at every reload instead of once.
+      protocol: Math.max(this.o.protocol ?? PROTOCOL_VERSION, PROTOCOL_VERSION),
     };
   }
 }

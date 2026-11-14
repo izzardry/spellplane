@@ -99,6 +99,8 @@ interface Init {
   entries: LogEntry[];
   snapshot: TableState;
   snapshotSeq: number;
+  /** The stored record's protocol version (session/persist.ts keeps a higher one). */
+  protocol?: number | undefined;
 }
 
 export { putBack };
@@ -138,6 +140,7 @@ class Solo implements SoloSession {
       snapshot: init.snapshot,
       snapshotSeq: init.snapshotSeq,
       lastSeq: init.state.seq,
+      protocol: init.protocol,
     });
     // After a reload Ctrl+Z goes on taking back the own most recent actions, from the stored snapshot on (M5-P6,
     // core/undo.ts undoStackFromLog). A draw goes back on top of the library; another card returns to the hand's end.
@@ -613,6 +616,7 @@ export async function createSoloSession(opts: SoloSessionOptions): Promise<SoloS
       entries,
       snapshot: loaded.table.snapshot ?? base,
       snapshotSeq: loaded.table.snapshot ? loaded.table.snapshotSeq : 0,
+      protocol: loaded.table.protocol,
     });
     const short = problem !== null || state.seq !== loaded.table.lastSeq;
     if (problem) entries.push({ kind: 'system', seq: state.seq, at: Date.now(), level: 'warn', text: `Restored up to action ${state.seq}: ${problem}` });

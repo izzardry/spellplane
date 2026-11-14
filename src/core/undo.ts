@@ -516,15 +516,20 @@ export function undoStackFromLog(start: TableState, log: readonly Action[], seat
       if (a.type !== 'shuffleDone' && a.type !== 'shuffleNonce' && a.type !== 'reorder') recoveryLeft = undefined;
     }
     if (a.type === 'draw' && owed !== undefined) {
-      // The first draw after it starts them: a group of draws, or one draw alone.
+      // The first draw after it starts them: a group of draws, or one draw alone. The networked session draws them only
+      // once its shuffle has settled, and own actions sequenced meanwhile (a nonce for another seat's shuffle, a
+      // response, a chat line, even a tap) are cleared with them when it clears its stack after the draws
+      // (session/net.ts mulligan): so the stack is cleared here too.
       if (owed === null) {
+        stack = [];
         owed = a.group ?? '';
         if (owed === '') owed = undefined;
         continue;
       }
       if (a.group === owed) continue;
       owed = undefined;
-    } else if (a.type !== 'shuffleDone' && a.type !== 'reorder') {
+    } else if (owed !== null && a.type !== 'shuffleDone' && a.type !== 'reorder') {
+      // A started group of the mulligan's draws ends at any other own action; one not started yet is still owed.
       owed = undefined;
     }
     if (a.type === 'undo') {
@@ -532,16 +537,15 @@ export function undoStackFromLog(start: TableState, log: readonly Action[], seat
       continue;
     }
     // The solo table's shuffle is a private reorder of the whole zone (session/solo.ts shuffleNow): a barrier too.
-    if (opts.soloShuffles === true && a.type === 'reorder' && a.reissue === undefined && a.count > 1 && a.count === (before.zones[a.zone]?.ids.length ?? -1)) {
+    // A one-card or empty zone's shuffle counts too (the live solo session clears its stack at every shuffle); no other
+    // solo reorder covers a whole one-card zone, since putting its only card on top or at the bottom changes nothing.
+    if (opts.soloShuffles === true && a.type === 'reorder' && a.reissue === undefined && a.count === (before.zones[a.zone]?.ids.length ?? -1)) {
       stack = [];
       continue;
     }
     if (a.type === 'reorder' && a.reissue !== undefined) {
-      const retired = before.zones[a.zone]?.ids ?? [];
-      stack = stack.filter((e) => {
-        const text = canonicalJson(e.inverse);
-        return !retired.some((id) => text.includes(id));
-      });
+      const retired = new Set(before.zones[a.zone]?.ids ?? []);
+      stack = stack.filter((e) => !namesAny(e.inverse, retired));
       continue;
     }
     if (!isUndoable(a)) continue;
@@ -559,4 +563,20 @@ export function undoStackFromLog(start: TableState, log: readonly Action[], seat
     });
   }
   return { stack, others };
+}
+
+/**
+ * Whether `inverse` names any of `ids` as a whole string value anywhere in it (its card, item, anchors, restore patch
+ * keys and values): the steps a re-issuing reorder retires (`undoStackFromLog`, session/net.ts). A whole-value match,
+ * so retiring `c1` keeps a step that names `c12`. Pure.
+ */
+export function namesAny(inverse: unknown, ids: ReadonlySet<string>): boolean {
+  if (ids.size === 0) return false;
+  const walk = (v: unknown): boolean => {
+    if (typeof v === 'string') return ids.has(v);
+    if (Array.isArray(v)) return v.some(walk);
+    if (v !== null && typeof v === 'object') return Object.entries(v).some(([k, x]) => ids.has(k) || walk(x));
+    return false;
+  };
+  return walk(inverse);
 }
