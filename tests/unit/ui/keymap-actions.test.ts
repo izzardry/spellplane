@@ -59,8 +59,19 @@ const S: Record<ActionId, Scenario> = {
   zoomTo: { setup: { hovered: 'bf1' }, expect: (r) => expect(r.scene.calls).toEqual([{ method: 'camera.zoomTo', args: ['bf1'] }]) },
   // M6-C: keyboard routes whose packages implement them (PLAN Milestone 6).
   place: pending('M6-P6'),
-  attach: pending('M6-P1'),
-  clip: pending('M6-P1'),
+  // M6-P1: O picks the hovered card up for attaching (a second O on the host attaches it; tests/unit/attach/keys.test.ts).
+  attach: {
+    setup: { hovered: 'bf1' },
+    expect: (r) => {
+      expect(drafts(r)).toEqual([]);
+      expect(r.ui).toEqual([{ hook: 'notify', args: ['Attach to…: point at (or focus) the host and press the Attach key again'] }]);
+    },
+  },
+  // M6-P1: Shift+P clips the selection together (anchored on the hovered card, between the two cards).
+  clip: {
+    setup: { hovered: 'bf1', selection: ['bf1', 'dfc'] },
+    expect: (r) => expect(drafts(r)).toEqual([{ type: 'clipAdd', clip: 'clip1', cards: ['bf1', 'dfc'], anchor: { card: 'bf1', x: 100, y: 0 } }]),
+  },
   hide: pending('M6-P3'),
   toCommand: pending('M6-P3'),
   exileFaceDown: pending('M6-P3'),

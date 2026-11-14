@@ -12,6 +12,7 @@ import { parseZoneId } from '../core/ids';
 import type { CardInstance, InstanceId, LogEntry, Pose, SeatId, StackItem, StackItemId, TableState, ZoneId } from '../core/types';
 import type { ActionId, GameDefinition } from '../games/types';
 import { hoveredStackItem } from '../scene/stack';
+import { clipForCards, clipHere, clipsHolding, type ClipCard } from '../scene/clips';
 import type { TableScene } from '../scene/types';
 import type { TableSession } from '../session/types';
 import { ASK_LABEL_MAX, blockingHolder, pendingAbout, roundPassed as coreRoundPassed } from '../core/reducer/confirm';
@@ -138,6 +139,11 @@ const isPublicZone = (state: TableState, c: CardInstance): boolean => state.zone
 /** Executes keymap actions against the session and scene (DESIGN "Input and interaction design"). */
 export class Commands {
   private pendingForce: { item: StackItemId; at: number } | null = null;
+  /**
+   * Cards waiting for a host after the attach key (M6-P1; PLAN Milestone 6, owner decisions, Tuck, by keyboard): the
+   * next press of the key on another card attaches them to it; any other action forgets them.
+   */
+  private pendingAttach: InstanceId[] | null = null;
 
   constructor(private readonly host: CommandHost) {}
 
@@ -199,6 +205,10 @@ export class Commands {
       case 'attackNoTap':
       case 'ability':
         return bf;
+      // M6-P1: attach (or detach) and clip (or unclip) battlefield cards (PLAN Milestone 6, owner decisions).
+      case 'attach':
+      case 'clip':
+        return bf && pub;
       case 'flip':
         // F on an own hand card puts it onto the own battlefield face down (DESIGN "Table model", Face-down on the
         // battlefield; "Card manipulation": F flips face down): the identity stays in this browser.
@@ -253,6 +263,7 @@ export class Commands {
     const st = this.state;
     const me = this.me;
     const scene = this.host.scene();
+    if (action !== 'attach') this.pendingAttach = null;
     const forCards = (fn: (c: CardInstance) => ActionDraft | null) =>
       this.dispatchAll(
         this.targets()
@@ -362,6 +373,12 @@ export class Commands {
         if (c) this.host.ui.inspect(c.id);
         return;
       }
+      case 'attach':
+        this.attachKey();
+        return;
+      case 'clip':
+        this.clipKey();
+        return;
       // --- Zones
       case 'toGraveyard':
       case 'toExile': {
@@ -510,6 +527,107 @@ export class Commands {
       case 'help':
         this.host.ui.toggleCheatSheet();
         return;
+    }
+  }
+
+  /**
+   * The attach key (M6-P1; DECISIONS [M6-C]: a toggle): on attached cards it detaches them; otherwise it picks the
+   * cards up for attaching, and the next press on another battlefield card attaches them to it, tucked behind it
+   * (DESIGN "Card manipulation", Attach). Every step is logged as attach or detach.
+   */
+  private attachKey(): void {
+    const st = this.state;
+    const pending = this.pendingAttach;
+    const targets = this.targets().filter((c) => this.applies('attach', c));
+    if (pending) {
+      this.pendingAttach = null;
+      const host = this.hoveredCard();
+      if (!host || !this.applies('attach', host) || pending.includes(host.id)) {
+        this.host.ui.notify('Attach cancelled');
+        return;
+      }
+      const drafts: ActionDraft[] = [];
+      for (const id of pending) {
+        const c = st.cards[id];
+        if (!c || !this.applies('attach', c)) continue;
+        if (c.zone !== host.zone) drafts.push({ type: 'move', card: c.id, to: host.zone, pile: null, controller: c.controller });
+        drafts.push({ type: 'attach', card: c.id, to: host.id });
+      }
+      this.dispatchAll(drafts);
+      return;
+    }
+    if (targets.length === 0) return;
+    if (targets.every((c) => c.attachedTo !== undefined)) {
+      this.dispatchAll(targets.map((c) => ({ type: 'detach', card: c.id })));
+      return;
+    }
+    this.pendingAttach = targets.filter((c) => c.attachedTo === undefined).map((c) => c.id);
+    this.host.ui.notify('Attach to…: point at (or focus) the host and press the Attach key again');
+  }
+
+  /**
+   * The clip key (M6-P1; PLAN Milestone 6, owner decisions, Paperclips, Keyboard): on a clipped card it takes its clips
+   * off; else it clips the selection together, or the card with the cards it overlaps.
+   */
+  private clipKey(): void {
+    const st = this.state;
+    const view = this.host.view();
+    const card = this.hoveredCard();
+    if (card && this.applies('clip', card)) {
+      const held = clipsHolding(st, card.id);
+      if (held.length) {
+        this.dispatchAll(held.map((c) => ({ type: 'clipRemove', clip: c.id })));
+        return;
+      }
+    }
+    this.clipTogether(card?.id ?? null, view.selection);
+  }
+
+  /** Clip the selection together, or `card` with the cards it overlaps (the Clip key and "Clip together"). */
+  clipTogether(card: InstanceId | null, selection: readonly InstanceId[]): void {
+    const made = clipForCards(this.state, card, selection);
+    if (!made) {
+      this.host.ui.notify('Nothing to clip: select two or more cards on the battlefield, or point at overlapping cards');
+      return;
+    }
+    this.host.session.dispatch({ type: 'clipAdd', clip: this.host.newId('clip'), cards: made.cards, anchor: made.anchor });
+  }
+
+  /**
+   * Clip the cards under a point (the touch full menu's and the context menu's "Clip here"): `under` the cards there,
+   * top first (TableScene.cardsAt), `at` the table point. False when that clips nothing new.
+   */
+  clipHere(under: readonly InstanceId[], at: { x: number; y: number }): boolean {
+    const st = this.state;
+    const cards: ClipCard[] = [];
+    for (const id of under) {
+      const c = st.cards[id];
+      if (!c || !this.applies('clip', c)) continue;
+      cards.push({ id, pose: { ...c.pose, rot: (c.pose.rot + (c.tapped ? 90 : 0)) % 360 }, tapped: c.tapped });
+    }
+    const made = clipHere(st, cards, at);
+    if (!made) return false;
+    this.host.session.dispatch({ type: 'clipAdd', clip: this.host.newId('clip'), cards: made.cards, anchor: made.anchor });
+    return true;
+  }
+
+  /** Take every clip holding `card` off (its context menu's "Remove clip"). */
+  unclip(card: InstanceId): void {
+    this.dispatchAll(clipsHolding(this.state, card).map((c) => ({ type: 'clipRemove', clip: c.id })));
+  }
+
+  /** The label a state-dependent card action shows in a menu (DECISIONS [M6-C]: menus label the toggles by state), or null. */
+  menuLabel(action: ActionId, card: CardInstance): string | null {
+    const sel = this.host.view().selection;
+    switch (action) {
+      case 'attach':
+        if (this.pendingAttach && !this.pendingAttach.includes(card.id)) return 'Attach here';
+        return card.attachedTo !== undefined ? 'Detach' : 'Attach to…';
+      case 'clip':
+        if (clipsHolding(this.state, card.id).length) return 'Remove clip';
+        return sel.length >= 2 && sel.includes(card.id) ? 'Clip together' : 'Clip to overlapping cards';
+      default:
+        return null;
     }
   }
 

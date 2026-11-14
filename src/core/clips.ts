@@ -75,14 +75,87 @@ export interface DragGroup {
 export interface CarryOptions {
   /** The current multi-selection; when the anchor is in it, every selected battlefield card moves too, each with its riders. */
   selection?: readonly InstanceId[];
+  /**
+   * Whether pile riders come along (default true). False for temporary moves (Alt+drag, attack, block): a card displaced
+   * temporarily leaves its pile singly, as before M6, so Settle never has to rebuild a pile; attachments and clipped
+   * cards still travel with it (PLAN Milestone 6, owner decisions, Combat and Settle). Added by M6-P1.
+   */
+  piles?: boolean;
 }
 
+const own = <T>(rec: Readonly<Record<string, T>>, key: string): T | undefined => (Object.hasOwn(rec, key) ? rec[key] : undefined);
+
+/** Whether a card is on a battlefield (a public zone of kind 'battlefield'). */
+function onBattlefield(state: TableState, c: CardInstance): boolean {
+  const z = own(state.zones, c.zone);
+  return !!z && z.visibility === 'public' && z.kind === 'battlefield';
+}
+
+const byIdOrder = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
 /**
- * The cards a drag of `anchor` carries (PLAN Milestone 6, owner decisions, Carry rule and Paperclips). Implementer:
- * M6-P1. Stub (M6-C): the anchor alone (no card when it does not exist); the scene keeps its M5 pile grab until M6-P1
- * replaces both.
+ * The cards a drag of `anchor` carries (PLAN Milestone 6, owner decisions, Carry rule and Paperclips): the anchor; with
+ * it, when it is part of the selection, every selected battlefield card; and, recursively from every card taken, the
+ * cards cascaded on top of it (later in its cascade; from the bottom card, the whole pile; in a squared pile the cards
+ * above it), every card attached to it, and every card clipped to it. Only battlefield cards ride along; a card
+ * elsewhere (hand, stack, a pile zone) moves alone. Pure and deterministic. Implementer: M6-P1.
  */
-export function carryGroup(state: TableState, anchor: InstanceId, _opts: CarryOptions = {}): DragGroup {
-  const card: CardInstance | undefined = Object.hasOwn(state.cards, anchor) ? state.cards[anchor] : undefined;
-  return { anchor, cards: card ? [anchor] : [], reason: {}, leavesPile: null, leavesHost: null };
+export function carryGroup(state: TableState, anchor: InstanceId, opts: CarryOptions = {}): DragGroup {
+  const card = own(state.cards, anchor);
+  if (!card) return { anchor, cards: [], reason: {}, leavesPile: null, leavesHost: null };
+  if (!onBattlefield(state, card)) return { anchor, cards: [anchor], reason: {}, leavesPile: null, leavesHost: null };
+  const all = Object.keys(state.cards).sort(byIdOrder).map((id) => state.cards[id]!);
+  const piles = new Map<PileId, CardInstance[]>();
+  const hosted = new Map<InstanceId, InstanceId[]>();
+  for (const c of all) {
+    if (!onBattlefield(state, c)) continue;
+    if (c.pile) piles.set(c.pile.id, [...(piles.get(c.pile.id) ?? []), c]);
+    if (c.attachedTo !== undefined) hosted.set(c.attachedTo, [...(hosted.get(c.attachedTo) ?? []), c.id]);
+  }
+  for (const ms of piles.values()) ms.sort((a, b) => a.pile!.index - b.pile!.index || byIdOrder(a.id, b.id));
+  const clips = Object.keys(state.clips ?? {})
+    .sort(byIdOrder)
+    .map((id) => state.clips![id]!);
+
+  const taken = new Set<InstanceId>([anchor]);
+  const reason: Record<InstanceId, CarryReason> = {};
+  const queue: InstanceId[] = [anchor];
+  const add = (id: InstanceId, why: CarryReason): void => {
+    if (taken.has(id)) return;
+    const c = own(state.cards, id);
+    if (!c || !onBattlefield(state, c)) return;
+    taken.add(id);
+    reason[id] = why;
+    queue.push(id);
+  };
+  if (opts.selection?.includes(anchor)) for (const id of [...opts.selection].sort(byIdOrder)) add(id, 'selection');
+  for (let i = 0; i < queue.length; i++) {
+    const c = state.cards[queue[i]!]!;
+    if (opts.piles !== false && c.pile) {
+      for (const m of piles.get(c.pile.id) ?? []) if (m.pile!.index > c.pile.index) add(m.id, c.pile.kind === 'cascade' ? 'cascade' : 'squared');
+    }
+    for (const a of hosted.get(c.id) ?? []) add(a, 'attached');
+    for (const clip of clips) if (clip.cards.includes(c.id)) for (const o of clip.cards) add(o, 'clip');
+  }
+
+  const zoneRank = new Map<InstanceId, [string, number]>();
+  for (const id of taken) {
+    const c = state.cards[id]!;
+    zoneRank.set(id, [c.zone, own(state.zones, c.zone)?.ids.indexOf(id) ?? -1]);
+  }
+  const rest = [...taken]
+    .filter((id) => id !== anchor)
+    .sort((a, b) => {
+      const ra = zoneRank.get(a)!;
+      const rb = zoneRank.get(b)!;
+      return byIdOrder(ra[0], rb[0]) || ra[1] - rb[1] || byIdOrder(a, b);
+    });
+  const base = card.pile ? (piles.get(card.pile.id) ?? [])[0] : undefined;
+  return {
+    anchor,
+    cards: [anchor, ...rest],
+    reason,
+    leavesPile: card.pile && base && !taken.has(base.id) ? card.pile.id : null,
+    leavesHost: card.attachedTo !== undefined && !taken.has(card.attachedTo) ? card.attachedTo : null,
+  };
 }

@@ -543,11 +543,40 @@
   });
 
   // --- Menus ----------------------------------------------------------------------------------------------------
-  function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false) {
+  function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false, point: { x: number; y: number } | null = keyboard ? null : { x, y }) {
     const c = card ? st.cards[card] : undefined;
     menu = c
-      ? { title: focusName(c.id), entries: cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), x, y, keyboard }
+      ? { title: focusName(c.id), entries: [...cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), ...clipHereEntry(c.id, point)], x, y, keyboard }
       : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y, keyboard };
+  }
+  /**
+   * "Clip here" where the menu's point (the right-click, or the long-press that opened the touch radial menu) covers two
+   * or more battlefield cards (M6-P1; PLAN Milestone 6, owner decisions, Paperclips: the touch full menu offers it).
+   */
+  function clipHereEntry(card: InstanceId, point: { x: number; y: number } | null): MenuEntry[] {
+    if (!point || spectating || !scene?.cardsAt) return [];
+    const under = scene.cardsAt(point.x, point.y);
+    // Only for a menu of a table card at that point (not a hand card shown over the table).
+    if (under.length < 2 || !under.includes(card)) return [];
+    const at = scene.screenToTable(point.x, point.y);
+    if (!at) return [];
+    return [{ id: 'clipHere', label: 'Clip here', key: null, run: () => void commands.clipHere(under, at) }];
+  }
+  /** Where the long-press that opened the radial menu was: its full menu offers "Clip here" there (M6-P1). */
+  let radialPoint: { x: number; y: number } | null = null;
+  /** A paperclip's own menu (right-click or long-press on it): remove it (M6-P1). */
+  function openClipMenu(clip: string, at: { x: number; y: number }): void {
+    radial = null;
+    const c = st.clips?.[clip];
+    if (!c || spectating) return;
+    menu = { title: `Paperclip: ${c.cards.map((id) => nameOf(id)).join(', ')}`, entries: [{ id: 'removeClip', label: 'Remove clip', key: null, run: () => session.dispatch({ type: 'clipRemove', clip }) }], x: at.x, y: at.y, keyboard: false };
+  }
+  /** The clip tray (M6-P1): a press on it hands a new paperclip to the table, which follows the pointer until dropped. */
+  function clipTrayDown(e: PointerEvent): void {
+    if (e.button !== 0 || !scene?.startClipDrag) return;
+    e.preventDefault();
+    menu = null;
+    scene.startClipDrag(e.clientX, e.clientY);
   }
   /**
    * The context menu from the keyboard (DESIGN "Input and interaction design": every action has a context-menu route,
@@ -1024,6 +1053,7 @@
         events: {
           hover: (id) => (sceneHover = id),
           contextMenu: (id, at) => openMenu(id, at.x, at.y),
+          clipMenu: (clip, at) => openClipMenu(clip, at),
           inspect: (id) => hooks.inspect(id),
           pileOpen: (id) => {
             const kind = id.split(':')[0];
@@ -1036,6 +1066,7 @@
           radialMenu: (id, at) => {
             menu = null;
             radial = id && !spectating && st.cards[id] ? { card: id, at: { x: at.x, y: at.y } } : null;
+            if (radial) radialPoint = { ...radial.at };
           },
         },
       });
@@ -1131,6 +1162,13 @@
         <button type="button" data-testid="open-deck-import" onclick={() => (deckOpen = !deckOpen)}>Import deck</button>
         <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
+        {#if !spectating}
+          <!-- The clip tray (M6-P1): drag a paperclip from here onto overlapping cards. -->
+          <button type="button" class="clip-tray" data-testid="clip-tray" title="Drag a paperclip onto overlapping cards" onpointerdown={clipTrayDown}
+            ><svg width="12" height="16" viewBox="0 0 12 22" aria-hidden="true"><path d="M4 7v9a2 2 0 0 0 4 0V5a3 3 0 0 0-6 0v12a4 4 0 0 0 8 0V7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+            Clip</button
+          >
+        {/if}
         <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye')}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
         <button type="button" data-testid="open-settings" aria-pressed={settingsOpen} aria-expanded={settingsOpen} aria-label="Settings" title="Settings" onclick={() => (settingsOpen ? (settingsOpen = false) : openSettings())}>⚙</button>
@@ -1382,7 +1420,7 @@
       insets={radialInsets}
       applies={(a) => !!radial && radialApplies(radial.card, a)}
       onrun={(card, a) => runOn(card, a)}
-      onmore={(card, x, y) => openMenu(card, x, y)}
+      onmore={(card, x, y) => openMenu(card, x, y, false, radialPoint)}
       onclose={() => (radial = null)}
     />
   {/if}
@@ -1624,6 +1662,13 @@
   }
   .voice-row {
     position: relative;
+  }
+  .clip-tray {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    touch-action: none;
+    cursor: grab;
   }
   .theme-anchor {
     position: relative;

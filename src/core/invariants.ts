@@ -122,6 +122,22 @@ export function checkInvariants(state: TableState): string[] {
     }
   }
 
+  // Paperclips (M6-P1): two or more distinct, sorted battlefield cards; the anchor on one of them; never an empty map.
+  if (state.clips !== undefined) {
+    if (Object.keys(state.clips).length === 0) bad('clips is kept as an empty map');
+    for (const [key, c] of Object.entries(state.clips)) {
+      if (c.id !== key) bad(`clip ${key} has id ${c.id}`);
+      if (c.cards.length < 2) bad(`clip ${c.id} holds fewer than two cards`);
+      for (let i = 1; i < c.cards.length; i++) if (!(c.cards[i - 1]! < c.cards[i]!)) bad(`clip ${c.id} cards are not sorted and distinct`);
+      for (const id of c.cards) {
+        const cc = card(id);
+        if (!cc || !isPublic(cc.zone) || zones[cc.zone]!.kind !== 'battlefield') bad(`clip ${c.id} holds ${id}, which is not on a battlefield`);
+      }
+      if (!c.cards.includes(c.anchor.card)) bad(`clip ${c.id} is anchored on ${c.anchor.card}, not one of its cards`);
+      if (!Object.hasOwn(state.seats, c.by)) bad(`clip ${c.id} was made by unknown seat ${c.by}`);
+    }
+  }
+
   // Turn marker.
   if (!Number.isInteger(state.turn.number) || state.turn.number < 1) bad(`turn number ${state.turn.number} is not a positive integer`);
   if (!Object.hasOwn(state.seats, state.turn.active) && !Object.hasOwn(state.teams, state.turn.active)) bad(`active ${state.turn.active} is neither a seat nor a team`);

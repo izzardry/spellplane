@@ -75,8 +75,24 @@ const S: Record<ActionId, Scenario> = {
   zoomTo: { hover: 'bf1', check: expectScene('camera.zoomTo', ['bf1']) },
   // M6-C: keyboard routes whose packages implement them (PLAN Milestone 6).
   place: { pending: 'M6-P6' },
-  attach: { pending: 'M6-P1' },
-  clip: { pending: 'M6-P1' },
+  // M6-P1: O on an attached card detaches it; Shift+P on a clipped card takes its clip off (both toggles; the other
+  // halves are in tests/e2e/attach and tests/unit/attach/keys.test.ts).
+  attach: {
+    hover: 'bf1',
+    setup: () =>
+      window.__uiHarness!.update((s) => {
+        s.cards.bf1!.attachedTo = 'dfc';
+      }),
+    check: expectDraft({ type: 'detach', card: 'bf1' }),
+  },
+  clip: {
+    hover: 'bf1',
+    setup: () =>
+      window.__uiHarness!.update((s) => {
+        s.clips = { k1: { id: 'k1', cards: ['bf1', 'dfc'], anchor: { card: 'bf1', x: 0, y: 0 }, by: 's1' } };
+      }),
+    check: expectDraft({ type: 'clipRemove', clip: 'k1' }),
+  },
   hide: { pending: 'M6-P3' },
   toCommand: { pending: 'M6-P3' },
   exileFaceDown: { pending: 'M6-P3' },

@@ -15,6 +15,7 @@ import type { CoreGameSpec, Format, SeatColourIndex, TableState, Team, Zone } fr
 import { DEFAULT_TABLE_SETTINGS } from '../types';
 import { seatIdOf, zoneId } from '../ids';
 import * as cards from './cards';
+import * as clips from './clips';
 import * as confirm from './confirm';
 import { Draft } from './draft';
 import * as drafting from './drafting';
@@ -130,8 +131,9 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   auditPublish: audit.auditPublish,
   // Added by M6-C; refused until their packages land: clips (M6-P1, core/reducer/clips.ts), line labels and applying a
   // seat-shuffle or first-player round (M6-P3).
-  clipAdd: pending('M6-P1'),
-  clipRemove: pending('M6-P1'),
+  // M6-P1: paperclips (clips.ts); cards leaving the battlefield leave their clips after every step (`step`).
+  clipAdd: clips.clipAdd,
+  clipRemove: clips.clipRemove,
   lineLabel: pending('M6-P3'),
   rngApply: pending('M6-P3'),
 };
@@ -189,6 +191,8 @@ function step(state: TableState, action: Action): Step {
     secret.checkSeatLeave(state, action);
     const d = new Draft(state);
     handle(d, action);
+    // A card that left the battlefield leaves its clips, however it left (M6-P1, clips.ts).
+    clips.pruneClips(d);
     const changed = d.finish(action.seq);
     // A round completed by this step (whatever the action) is sealed in it (M1-P2, secret.ts).
     const next = changed === state ? changed : secret.sealCompleteRounds(changed, action.seq ?? state.seq + 1);

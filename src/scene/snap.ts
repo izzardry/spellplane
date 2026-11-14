@@ -8,12 +8,15 @@
  *      join or create a cascade below it (offset 14 mm toward the owner).
  *   3a. Bottom edge within the upper third of another card and horizontally overlapping by at least half: tuck behind
  *      it at the attachment tuck offset and attach to it (PLAN Milestone 6, owner decisions, Tuck; core/geometry.ts
- *      TUCK_RULE). Contract added by M6-C; M6-P1 applies it in resolveDrop.
+ *      TUCK_RULE). Contract added by M6-C; M6-P1 applies it in resolveDrop: the host is the card the bottom edge lands on,
+ *      or, when that card is itself tucked behind a host, that host (the drop joins the fan of attachments); the pose is
+ *      the next free attachment slot (core/reducer tuckPose), computed from the host's stored pose like the reducer.
  *   4. Any edge within 12 mm of a neighbour's edge plus the 6 mm gap: align to it.
  *   5. Otherwise the free position, clamped to the table.
  * Holding Ctrl skips rules 2 to 4.
  */
-import { GEOMETRY } from '../core/geometry';
+import { GEOMETRY, TUCK_RULE } from '../core/geometry';
+import { tuckPose } from '../core/reducer';
 import type { InstanceId, PileRef, Pose, ZoneId } from '../core/types';
 import type { Rect } from '../games/types';
 import { cardHalfExtents, normDeg, pointInRect, rot2 } from './math';
@@ -25,6 +28,10 @@ export interface SnapCard {
   pose: Pose;
   pile?: PileRef;
   frameDeg: number;
+  /** The card it is attached to (rule 3a: a drop on a tucked card joins its host's fan). Added by M6-P1. */
+  attachedTo?: InstanceId;
+  /** Drawn turned by the tap (rule 3a computes the tuck slot from the stored pose, as the reducer does). Added by M6-P1. */
+  tapped?: boolean;
 }
 
 /** A rule-1 drop target: a zone pile footprint, the stack lane, an avatar disc, or an area zone (the command zone). */
@@ -197,6 +204,9 @@ export function resolveDrop(input: DropInput, ctx: DropContext): DropResult {
       if (squared) return { ...squared, pose: clampP(squared.pose) };
       const cascade = ruleCascade(p, ctx.cards);
       if (cascade) return { ...cascade, pose: clampP(cascade.pose) };
+      // Rule 3a: the tuck slot is where the reducer puts the attachment, never clamped away from its host.
+      const tuck = ruleTuck(p, ctx.cards);
+      if (tuck) return tuck;
     }
     const align = ruleAlign(p, input.frameDeg, ctx.cards);
     if (align) return { ...align, pose: clampP(align.pose) };
@@ -255,6 +265,36 @@ function ruleCascade(p: Pose, cards: readonly SnapCard[]): Extract<DropResult, {
     below: c.id,
     pile: c.pile && c.pile.kind === 'cascade' ? c.pile : null,
   };
+}
+
+/**
+ * Rule 3a (PLAN Milestone 6, owner decisions, Tuck): the dragged card's bottom edge in the upper third of another card,
+ * overlapping it horizontally by at least half the dragged card's width. The nearest such card wins; a tucked card
+ * stands for its host (the attachment joins the host's fan, behind the attachments it has).
+ */
+export function ruleTuck(p: Pose, cards: readonly SnapCard[]): Extract<DropResult, { rule: '3a' }> | null {
+  const byId = new Map(cards.map((c) => [c.id, c]));
+  let best: { c: SnapCard; d: number } | null = null;
+  for (const c of cards) {
+    const f = c.frameDeg;
+    const [dx, dy] = rot2(p.x - c.pose.x, p.y - c.pose.y, -f);
+    const de = cardHalfExtents(p.rot, f);
+    const te = cardHalfExtents(c.pose.rot, f);
+    const bottom = dy - de.hh;
+    const top = te.hh;
+    if (bottom > top + 1e-9 || bottom < top - 2 * te.hh * TUCK_RULE.band - 1e-9) continue;
+    const overlap = Math.min(dx + de.hw, te.hw) - Math.max(dx - de.hw, -te.hw);
+    if (overlap < 2 * de.hw * TUCK_RULE.minOverlap - 1e-9) continue;
+    const d = Math.hypot(dx, top - bottom);
+    if (!best || d < best.d) best = { c, d };
+  }
+  if (!best) return null;
+  // The host: up the attachment chain to the card that is not tucked behind another (bounded against cycles).
+  let host = best.c;
+  for (let guard = 0; host.attachedTo !== undefined && byId.has(host.attachedTo) && guard < cards.length; guard++) host = byId.get(host.attachedTo)!;
+  const k = cards.filter((c) => c.attachedTo === host.id).length + 1;
+  const stored: Pose = { x: host.pose.x, y: host.pose.y, rot: host.tapped ? normDeg(host.pose.rot - 90) : host.pose.rot };
+  return { rule: '3a', kind: 'tuck', pose: tuckPose(stored, k), host: host.id };
 }
 
 interface Box {
