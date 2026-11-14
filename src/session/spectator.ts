@@ -23,6 +23,9 @@
  *   architecture", Resume: "Reloading or reopening the link rejoins the same seat by key pair").
  * - Presence: a spectator's cursor and drags are not shown to the table (they are the players' intent, DESIGN "Other
  *   players' cursors"); its typing indicator is.
+ * - Voice: a listen-only session (PLAN Milestone 5, owner decisions: "Spectators listen"; M5-P7): it plays the
+ *   players' open voice, never asks for a microphone and never sends a stream; team talk never reaches it (the
+ *   players' pages enable a spectator's connection for open talk only, voice/mic.ts).
  */
 import type { Action, ActionDraft } from '../core/actions';
 import { emptySecretStore, pruneReceived, receiveIdentity } from '../core/secrets';
@@ -34,8 +37,9 @@ import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
 import { roleProblem, spectatorChatName, spectatorRevealsOver, SPECTATOR_DEFAULT_NAME } from '../net/roles';
 import type { NetEngine, Presence, Unsubscribe } from '../net/types';
-import type { CaptionControls } from '../voice/types';
+import type { CaptionControls, VoiceControls } from '../voice/types';
 import { watchCaptions } from './captions';
+import { createSessionVoice } from './voice';
 import { freshNetTable } from './net';
 import { randomId } from './secrecy';
 import type { DeckImport, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
@@ -79,6 +83,8 @@ export class SpectatorTable implements NetSession {
   private readonly name: string;
   /** The players' captions, shown and never dictated (session/captions.ts watchCaptions); set once joined with voice options. */
   captions?: CaptionControls;
+  /** The listen-only voice session (M5-P7); set when joined with voice options. */
+  voice?: VoiceControls;
 
   constructor(
     readonly engine: NetEngine,
@@ -176,6 +182,7 @@ export class SpectatorTable implements NetSession {
     if (this.disposed) return;
     this.disposed = true;
     this.captions?.dispose();
+    this.voice?.dispose();
     for (const u of this.unsubs.splice(0)) u();
     this.engine.leave();
     this.notifyNet();
@@ -357,8 +364,9 @@ export class SpectatorTable implements NetSession {
 export async function openSpectatorSession(opts: NetSessionOptions, signal?: AbortSignal): Promise<SpectatorTable> {
   const identity = await createNetIdentity(opts.identity.keyPair, opts.identity.peerId, opts.identity.nickname);
   if (signal?.aborted) throw new Error('Joining the table was cancelled');
+  const transport = opts.transport();
   const engine = createNetEngine({
-    transport: opts.transport(),
+    transport,
     roomId: opts.roomId,
     roomKey: opts.roomKey,
     identity,
@@ -368,6 +376,11 @@ export async function openSpectatorSession(opts: NetSessionOptions, signal?: Abo
     ...(opts.now ? { now: opts.now } : {}),
   });
   const session = new SpectatorTable(engine, opts);
+  if (opts.voice) {
+    // Listen-only from the start, so the players' audio that arrives while joining is played (M5-P7).
+    const port = { engine: () => engine, transport: () => transport, state: () => session.getState(), subscribe: (l: (s: TableState) => void) => session.subscribe(l) };
+    session.voice = createSessionVoice({ ...port, subscribeNet: (l) => session.subscribeNet(() => l()) }, opts.voice, { listenOnly: true });
+  }
   try {
     await new Promise<void>((resolve, reject) => {
       const onAbort = (): void => reject(new Error('Joining the table was cancelled'));

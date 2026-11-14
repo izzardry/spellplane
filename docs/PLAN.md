@@ -497,5 +497,5 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M5-P4 Accessibility
 - [x] M5-P5 Finish
 - [ ] M5-P6 Hardening
-- [ ] M5-P7 Table and voice decisions
+- [x] M5-P7 Table and voice decisions
 - [ ] M5-G Gate and owner playtest

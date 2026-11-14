@@ -12,7 +12,8 @@ import type { ActionId, TableLayout } from '../../../src/games/types';
 import { mtg } from '../../../src/games/mtg/index';
 import { BirdseyeRig } from '../../../src/scene/camera';
 import { lineKindFor } from '../../../src/scene/combat';
-import { AVATAR_SPOT_R, fitFrame, markings, viewerAngle } from '../../../src/scene/layout';
+import { AVATAR_SPOT_R, cameraTable, fitFrame, markings, viewerAngle } from '../../../src/scene/layout';
+import { tableCorners } from '../../../src/scene/camera/table';
 import { STUB_LEN, avatarAt, drawnLines, lineDrafts, opponentCount, type AnchorResolver } from '../../../src/scene/lines';
 import { forward } from '../../../src/scene/math';
 import { Commands, type UiHooks } from '../../../src/ui/commands';
@@ -216,8 +217,10 @@ describe('the camera: own seat at the bottom, seat keys and fitting', () => {
     const { s, layout } = table(f);
     for (const me of seatsOf(f)) {
       const angle = viewerAngle(s, layout, me);
-      const rig = new BirdseyeRig(layout.table, vp, angle);
-      rig.setTable(layout.table, angle, fitFrame(s, layout, me));
+      // The camera's table: turned to the viewer at the three-player table (M5-P7), the layout's table elsewhere.
+      const camTable = cameraTable(layout, angle);
+      const rig = new BirdseyeRig(camTable, vp, angle);
+      rig.setTable(camTable, angle, fitFrame(s, layout, me));
       const own = layout.seats[s.seats[me]!.index]!;
       const ownY = rig.tableToScreen(own.territory).y;
       for (const o of layout.seats) {
@@ -225,13 +228,10 @@ describe('the camera: own seat at the bottom, seat keys and fitting', () => {
         expect(rig.tableToScreen(o.territory).y, `${f} viewer ${me}, seat ${o.index}`).toBeLessThanOrEqual(ownY + 1e-6);
       }
       expect(ownY).toBeGreaterThan(vp.h / 2);
-      for (const [x, y] of [
-        [-1, -1],
-        [1, -1],
-        [1, 1],
-        [-1, 1],
-      ] as const) {
-        const p = rig.tableToScreen({ x: (x * layout.table.w) / 2, y: (y * layout.table.d) / 2 });
+      // The table as this viewer's camera sees it, and every territory, lie on screen.
+      const territoryCorners = layout.seats.flatMap((sl) => tableCorners({ w: sl.territory.w, d: sl.territory.d, rot: sl.territory.rot }).map((c) => ({ x: c.x + sl.territory.x, y: c.y + sl.territory.y })));
+      for (const q of [...tableCorners(camTable), ...territoryCorners]) {
+        const p = rig.tableToScreen(q);
         expect(p.x).toBeGreaterThanOrEqual(-1e-6);
         expect(p.x).toBeLessThanOrEqual(vp.w + 1e-6);
         expect(p.y).toBeGreaterThanOrEqual(-1e-6);

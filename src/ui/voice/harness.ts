@@ -3,7 +3,8 @@
  * Mounts the real HUD over a fake four-seat Two-Headed Giant session (you are Anna in s0, teamed with Ben in s1 against
  * Cara and Dan) whose voice is the real controller (voice/mic.ts) on the page's real `navigator.mediaDevices`, with a
  * fake transport of three connections that records the streams added to each. Playwright presses the real talk keys
- * and reads `window.__voiceHarness`.
+ * and reads `window.__voiceHarness`. `&watcher=1` adds a fourth connection, Vera, a spectator (M5-P7: spectators hear
+ * open talk only, never team talk).
  */
 import { mount as mountSvelte } from 'svelte';
 import type { SeatId, TableState, TeamId } from '../../core/types';
@@ -52,11 +53,14 @@ declare global {
   }
 }
 
-const PEERS: PeerInfo[] = [
+const PLAYERS: PeerInfo[] = [
   { transportId: 't-ben', peerId: 'peer-ben', nickname: 'Ben', seat: 's1', role: 'player', status: 'connected', lastSeq: 0 },
   { transportId: 't-cara', peerId: 'peer-cara', nickname: 'Cara', seat: 's2', role: 'player', status: 'connected', lastSeq: 0 },
   { transportId: 't-dan', peerId: 'peer-dan', nickname: 'Dan', seat: 's3', role: 'player', status: 'connected', lastSeq: 0 },
 ];
+/** A spectator's connection (`&watcher=1`; M5-P7). */
+const WATCHER: PeerInfo = { transportId: 't-vera', peerId: 'peer-vera', nickname: 'Vera', seat: null, role: 'spectator', status: 'connected', lastSeq: 0 };
+const PEERS: PeerInfo[] = typeof location !== 'undefined' && new URLSearchParams(location.search).get('watcher') === '1' ? [...PLAYERS, WATCHER] : PLAYERS;
 
 /** The fake session with the peers of a four-seat table and a real voice controller. */
 class VoiceSession extends FakeSession {

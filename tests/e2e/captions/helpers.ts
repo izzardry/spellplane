@@ -32,11 +32,15 @@ export async function say(page: Page, text: string, final = true): Promise<boole
 /** Talk mode for the tests: push-to-talk with dictation and no live audio; the back mouse button (3) is a talk button too. */
 export const DICTATE_KEY: TalkSettings = { gate: 'ptt', voice: false, dictation: true, muted: false, mouseButton: 3 };
 
-/** Hold the talk key (V) on `page`, outside any text field, so dictation listens. */
+/**
+ * Hold the talk key (Ctrl since M5: PLAN Milestone 5, owner decisions, Talk key) on `page`, outside any text field, and
+ * wait until dictation listens (it opens after Ctrl was held alone for about 200 ms).
+ */
 export async function holdTalk(page: Page): Promise<void> {
   await page.bringToFront();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur?.());
-  await page.keyboard.down('v');
+  await page.keyboard.down('Control');
+  await expect.poll(() => page.evaluate(() => window.__spellplane?.voice?.talk().dictation ?? 'off')).not.toBe('off');
 }
 
 /** Store a setting in the profile's IndexedDB (as the settings panel would), before the table opens. */

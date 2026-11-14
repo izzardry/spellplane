@@ -1363,14 +1363,14 @@ async function matrix(browser: Browser, browserName: string, info: TestInfo): Pr
     }
     await ben();
     await B.page.mouse.move(700, 420);
-    await B.page.keyboard.down('v');
+    await B.page.keyboard.down('Control');
     await expect(A.page.locator('[data-testid="avatar"][data-seat="s1"]')).toHaveAttribute('data-speaking', 'true', { timeout: 15_000 });
   });
   if (voiceOk) {
     await captureAll('10-speaking', atRest);
-    await step('speaking: Ben releases V', async () => {
+    await step('speaking: Ben releases Ctrl', async () => {
       await B.page.bringToFront();
-      await B.page.keyboard.up('v');
+      await B.page.keyboard.up('Control');
       await expect(A.page.locator('[data-testid="avatar"][data-seat="s1"]')).toHaveAttribute('data-speaking', 'false');
     });
   }

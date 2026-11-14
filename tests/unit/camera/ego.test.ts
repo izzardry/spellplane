@@ -1,9 +1,11 @@
 // PLAN M4-P1 acceptance: "the ego camera never passes below the table edge". DESIGN "Camera and navigation", Ego
 // perspective: a perspective camera at the player's seat, tilted roughly 35° below horizontal; the player can lean
 // (pan), dolly (zoom) and pitch within limits; the camera never goes below the table edge or behind the seat.
-// "Specification: geometry, layout and motion", Camera rigs: field of view 45°, 260 behind the viewer's table edge and
-// 620 above the table, pitched 35°, pitch adjustable between 25° and 60°. Limits beyond the spec: DEFAULT_EGO_RIG
-// (DECISIONS [M4-C]).
+// "Specification: geometry, layout and motion", Camera rigs: field of view 45°, behind the viewer's table edge and above
+// the table, pitched 35°, pitch adjustable between 25° and 60°. Limits beyond the spec: DEFAULT_EGO_RIG (DECISIONS
+// [M4-C]). PLAN Milestone 5, owner decisions, Ego framing: the seat is pulled back and raised (CAMERA.ego: 900 behind
+// the edge, 860 up instead of the spec's 260 and 620; M5-P7) so the own piles and battlefield row show; the tests read
+// the values from CAMERA.ego.
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { clampEgoNav, defaultEgoNav, egoLimitsFor, egoPose, egoSeat, halfDepth, halfWidth, maxDollyAt } from '../../../src/scene/camera/ego';
@@ -11,9 +13,13 @@ import { basis, dot, sub } from '../../../src/scene/camera/pose';
 import type { TableRig } from '../../../src/scene/camera/rig';
 import { forward } from '../../../src/scene/math';
 import { DEFAULT_EGO_RIG, type CameraPose } from '../../../src/scene/types';
+import { CAMERA } from '../../../src/core/geometry';
 import { TABLES, VP, makeRig, px, screenOf } from './helpers';
 
 const P = DEFAULT_EGO_RIG;
+/** The ego seat's distance behind the edge and height (CAMERA.ego; M5-P7's framing). */
+const BEHIND = CAMERA.ego.behindEdge;
+const UP = CAMERA.ego.height;
 
 /** How far the camera is in front of the seat along the viewer's forward axis (negative: behind the seat). */
 function aheadOfSeat(pose: CameraPose, angle: number, table: { w: number; d: number }): number {
@@ -23,24 +29,24 @@ function aheadOfSeat(pose: CameraPose, angle: number, table: { w: number; d: num
 }
 
 describe('ego rig pose', () => {
-  it('sits 260 behind the viewer\'s table edge, 620 above the table, pitched 35°, with a 45° field of view', () => {
+  it('sits behind the viewer\'s table edge, above the table, pitched 35°, with a 45° field of view', () => {
     const pose = egoPose(P, TABLES['1v1'], 0, defaultEgoNav(P));
     expect(pose.fovDeg).toBe(45);
     expect(pose.pitchDeg).toBe(35);
     expect(pose.position[0]).toBeCloseTo(0, 9);
-    expect(pose.position[1]).toBeCloseTo(-550 - 260, 9);
-    expect(pose.position[2]).toBeCloseTo(620, 9);
-    // The view ray hits the table 620 / tan 35° ahead of the seat.
-    expect(pose.target[1]).toBeCloseTo(-810 + 620 / Math.tan((35 * Math.PI) / 180), 6);
+    expect(pose.position[1]).toBeCloseTo(-550 - BEHIND, 9);
+    expect(pose.position[2]).toBeCloseTo(UP, 9);
+    // The view ray hits the table height / tan 35° ahead of the seat.
+    expect(pose.target[1]).toBeCloseTo(-550 - BEHIND + UP / Math.tan((35 * Math.PI) / 180), 6);
     expect(pose.target[2]).toBe(0);
   });
 
   it('stands behind each viewer\'s own edge, whatever their seat', () => {
     for (const [angle, table, expected] of [
-      [180, TABLES['1v1'], [0, 810]],
-      [90, TABLES.ffa4, [-1160, 0]],
-      [270, TABLES.ffa4, [1160, 0]],
-      [0, TABLES['2hg'], [0, -810]],
+      [180, TABLES['1v1'], [0, 550 + BEHIND]],
+      [90, TABLES.ffa4, [-900 - BEHIND, 0]],
+      [270, TABLES.ffa4, [900 + BEHIND, 0]],
+      [0, TABLES['2hg'], [0, -550 - BEHIND]],
     ] as const) {
       const pose = egoPose(P, table, angle, defaultEgoNav(P));
       expect(pose.position[0]).toBeCloseTo(expected[0], 6);
@@ -73,13 +79,13 @@ describe('ego rig pose', () => {
 });
 
 describe('ego limits', () => {
-  it('clamps pitch to 25°..60°, lean to ±400 and dolly to 0..700 above the minimum height', () => {
+  it('clamps pitch to 25°..60°, lean to ±400 and dolly to 0..1200 above the minimum height', () => {
     expect(clampEgoNav(P, { lean: 9999, dolly: 9999, pitchDeg: 89 })).toEqual({ lean: 400, dolly: maxDollyAt(P, 60), pitchDeg: 60 });
     expect(clampEgoNav(P, { lean: -9999, dolly: -50, pitchDeg: 0 })).toEqual({ lean: -400, dolly: 0, pitchDeg: 25 });
     expect(clampEgoNav(P, { lean: NaN, dolly: NaN, pitchDeg: NaN })).toEqual(defaultEgoNav(P));
-    // At 35° the dolly limit is the rig's 700; at 60° the minimum height binds first.
-    expect(maxDollyAt(P, 35)).toBe(700);
-    expect(maxDollyAt(P, 60)).toBeCloseTo((620 - 120) / Math.sin(Math.PI / 3), 9);
+    // At 35° the dolly limit is the rig's 1200; at 60° the minimum height binds first.
+    expect(maxDollyAt(P, 35)).toBe(1200);
+    expect(maxDollyAt(P, 60)).toBeCloseTo((UP - 120) / Math.sin(Math.PI / 3), 9);
   });
 
   it('never below the table edge, never behind the seat, for any navigation (property)', () => {
@@ -301,7 +307,8 @@ describe('ego navigation gestures', () => {
     expect(Math.hypot(far.x, far.y)).toBeGreaterThan(1e5);
     // A point behind the camera is off screen.
     const pose = rig.pose();
-    const behind = { x: pose.position[0] - 500, y: pose.position[1] };
+    // (Far enough behind that even from the raised seat it lies behind the camera's plane.)
+    const behind = { x: pose.position[0] - 2000, y: pose.position[1] };
     expect(rig.depthOf(behind)).toBeLessThan(0);
     expect(rig.shows(behind)).toBe(false);
     expect(dot([1, 0, 0], [1, 0, 0])).toBe(1);
@@ -315,13 +322,13 @@ describe('per-point scale (texture tiers by on-screen height)', () => {
     const ego = makeRig({ rig: 'ego' });
     const centre = ego.pose().target;
     expect(ego.pxPerMmAt({ x: centre[0], y: centre[1] })).toBeCloseTo(ego.pxPerMm(), 9);
-    const near = ego.pxPerMmAt({ x: 0, y: -200 });
+    const near = ego.pxPerMmAt({ x: 0, y: -450 });
     const far = ego.pxPerMmAt({ x: 0, y: 420 });
     expect(near).toBeGreaterThan(ego.pxPerMm());
     expect(far).toBeLessThan(ego.pxPerMm());
     // A card's size on screen scales with 1 / depth.
-    expect(near / far).toBeCloseTo(ego.depthOf({ x: 0, y: 420 }) / ego.depthOf({ x: 0, y: -200 }), 9);
+    expect(near / far).toBeCloseTo(ego.depthOf({ x: 0, y: 420 }) / ego.depthOf({ x: 0, y: -450 }), 9);
     // Behind the camera: no size.
-    expect(ego.pxPerMmAt({ x: 0, y: -2000 })).toBe(0);
+    expect(ego.pxPerMmAt({ x: 0, y: -4000 })).toBe(0);
   });
 });

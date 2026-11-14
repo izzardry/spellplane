@@ -19,7 +19,7 @@ import type { CardInstance, CardRef, InstanceId, PileId, Pose, SeatId, TableStat
 import type { GameDefinition, Rect, SeatLayout, TableLayout } from '../games/types';
 import { BACK_KEY, faceKey } from './faces-key';
 import { CARD_H, CARD_W, normDeg, rectPoint, rot2 } from './math';
-import type { ZoneTarget } from './snap';
+import type { DropTable, ZoneTarget } from './snap';
 import type { ViewState } from './types';
 
 export type PlacementKind = 'free' | 'pile' | 'stack' | 'hand' | 'area';
@@ -79,14 +79,45 @@ export function seatLayoutOf(state: TableState, layout: TableLayout, seat: SeatI
   return s ? (layout.seats[s.index] ?? null) : null;
 }
 
+/** Whether every seat of a layout sits at a right angle (all formats but the three-player table; M5-P7). */
+export function rightAngled(layout: TableLayout): boolean {
+  return layout.seats.every((s) => normDeg(s.angle) % 90 === 0);
+}
+
+/**
+ * The table as the viewer's camera sees it (scene/camera/table.ts): the layout's table, except where the seats do not
+ * sit at right angles (the three-player table, seats at 0°, 120° and 240°; PLAN Milestone 5, owner decisions,
+ * M5-P7): there every viewer's camera gets the same rectangle turned to their own seat, so the fit, the ego seat
+ * behind the near edge and the reach are the same from every seat (DECISIONS [M5-P7]).
+ */
+export function cameraTable(layout: TableLayout, angle: number): { w: number; d: number; rot?: number } {
+  if (rightAngled(layout) || normDeg(angle) === 0) return { w: layout.table.w, d: layout.table.d };
+  return { w: layout.table.w, d: layout.table.d, rot: normDeg(angle) };
+}
+
+/**
+ * The area drops are clamped to (scene/snap.ts DropTable): the layout's table, and where the camera's table is turned
+ * to each viewer (cameraTable: the three-player table) the intersection of every seat's turned table, so a card, token
+ * or die never lands where one viewer's fitted view would hide it (the intersection holds every territory). M5-P7.
+ */
+export function dropTable(layout: TableLayout): DropTable {
+  if (rightAngled(layout)) return { w: layout.table.w, d: layout.table.d };
+  return { w: layout.table.w, d: layout.table.d, turns: [...new Set(layout.seats.map((s) => normDeg(s.angle)))] };
+}
+
 /**
  * The box the fitted view frames (DESIGN "Camera and navigation": the screen-anchored layer never covers the table's
  * content): the table plus the hand rows of card backs the scene draws outside its edges for every seat but the
  * viewer's and empty chairs (PLAN M1-P5: the opponent's hand as card backs), so the fitted view shows how many cards
  * each hand holds.
- * Axis-aligned in table space; centre and size in mm.
+ * Axis-aligned in table space, centre and size in mm; where the camera's table is turned to the viewer (cameraTable:
+ * the three-player table), the box is taken in the viewer's frame and turned with it (`rot`), so every viewer's fit is
+ * the same (M5-P7).
  */
-export function fitFrame(state: TableState | null, layout: TableLayout, viewerSeat: SeatId | null): { x: number; y: number; w: number; d: number } {
+export function fitFrame(state: TableState | null, layout: TableLayout, viewerSeat: SeatId | null): { x: number; y: number; w: number; d: number; rot?: number } {
+  const turn = cameraTable(layout, viewerAngle(state, layout, viewerSeat)).rot ?? 0;
+  // Into the frame the box is axis-aligned in (the canonical frame, or the viewer's when the camera table is turned).
+  const local = (x: number, y: number): [number, number] => (turn ? rot2(x, y, -turn) : [x, y]);
   let x0 = -layout.table.w / 2;
   let x1 = layout.table.w / 2;
   let y0 = -layout.table.d / 2;
@@ -98,18 +129,20 @@ export function fitFrame(state: TableState | null, layout: TableLayout, viewerSe
       // Empty chairs (the solo table's second seat) hold no hand to show.
       if (!sl || sl === own || (seat.name === '' && seat.peer === undefined)) continue;
       const r = sl.zones.handRow;
-      const a = (r.rot * Math.PI) / 180;
+      const [cx, cy] = local(r.x, r.y);
+      const a = ((r.rot - turn) * Math.PI) / 180;
       const c = Math.abs(Math.cos(a));
       const sn = Math.abs(Math.sin(a));
       const hw = (c * r.w + sn * r.d) / 2;
       const hd = (sn * r.w + c * r.d) / 2;
-      x0 = Math.min(x0, r.x - hw);
-      x1 = Math.max(x1, r.x + hw);
-      y0 = Math.min(y0, r.y - hd);
-      y1 = Math.max(y1, r.y + hd);
+      x0 = Math.min(x0, cx - hw);
+      x1 = Math.max(x1, cx + hw);
+      y0 = Math.min(y0, cy - hd);
+      y1 = Math.max(y1, cy + hd);
     }
   }
-  return { x: (x0 + x1) / 2, y: (y0 + y1) / 2, w: x1 - x0, d: y1 - y0 };
+  const [x, y] = turn ? rot2((x0 + x1) / 2, (y0 + y1) / 2, turn) : [(x0 + x1) / 2, (y0 + y1) / 2];
+  return { x, y, w: x1 - x0, d: y1 - y0, ...(turn ? { rot: turn } : {}) };
 }
 
 /** The viewer's seat angle (spectators see seat 0's view). */
@@ -345,7 +378,8 @@ const circleSegments = (c: { x: number; y: number }, r: number, out: number[], n
 export function markings(layout: TableLayout, game: GameDefinition, angle: number, seatsInUse: number, names: readonly string[] = []): Marking {
   const segments: number[] = [];
   const labels: Marking['labels'] = [];
-  rectSegments({ x: 0, y: 0, w: layout.table.w, d: layout.table.d, rot: 0 }, segments);
+  // The table's edge as this viewer's camera and theme see it (turned to the viewer at the three-player table; M5-P7).
+  rectSegments({ x: 0, y: 0, w: layout.table.w, d: layout.table.d, rot: cameraTable(layout, angle).rot ?? 0 }, segments);
   const label = (s: string) => s.toUpperCase();
   layout.seats.slice(0, Math.max(1, seatsInUse)).forEach((sl, i) => {
     rectSegments(sl.territory, segments);

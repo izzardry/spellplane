@@ -182,7 +182,9 @@ export const DEFAULT_EGO_RIG: EgoRigParams = {
   minPitchDeg: CAMERA.ego.minPitchDeg,
   maxPitchDeg: CAMERA.ego.maxPitchDeg,
   leanMm: 400,
-  maxDollyMm: 700,
+  // From the raised seat (M5-P7) a dolly of 1200 along the 35° view ray still comes down to about 170 mm, as close as
+  // the spec's seat came with 700.
+  maxDollyMm: 1200,
   minHeight: 120,
 };
 
@@ -379,9 +381,12 @@ export interface TableScene {
  * Far-zoom stack (DESIGN "The effect stack", Reading it: "at far zoom it collapses to a count badge that expands on
  * hover"; "Camera and navigation", Level of detail; PLAN Milestone 5, owner decisions, Far-zoom stack: expands on hover,
  * or on tap on touch). The lane collapses while a stack card would be drawn shorter than this on screen, CSS px (its
- * title bar is then too small to read). Value chosen by M5-C; M5-P7 may tune it. Added by M5-C.
+ * title bar is then too small to read). Value chosen by M5-C (72); tuned by M5-P7 to 36: the fitted three- and
+ * four-player views draw stack cards at about 25 px (the M3 gate's unreadable stack) and collapse, while the fitted 1v1
+ * and Two-Headed Giant views (about 40-44 px at 1440 × 900 and on the iPad), where the gates of M1 to M4 draw lines
+ * from stack items, keep the lane (DECISIONS [M5-P7]). Added by M5-C.
  */
-export const STACK_COLLAPSE_CARD_PX = 72;
+export const STACK_COLLAPSE_CARD_PX = 36;
 
 /** The stack's far-zoom badge for the debug hook (`stackBadge()`; PLAN Milestone 5, owner decisions, Far-zoom stack). Added by M5-C; M5-P7. */
 export interface StackBadgeState {

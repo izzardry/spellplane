@@ -44,17 +44,34 @@ export function insideTable(layout: TableLayout, r: Rect): boolean {
   return b.minX >= -hw && b.maxX <= hw && b.minY >= -hd && b.maxY <= hd;
 }
 
+/** Whether `inner` lies inside `outer` (oriented rectangles: every corner of `inner` inside `outer`, M5-P7's 120° seats). */
 export function inside(outer: Rect, inner: Rect): boolean {
-  const o = box(outer);
-  const i = box(inner);
-  return i.minX >= o.minX - EPS && i.maxX <= o.maxX + EPS && i.minY >= o.minY - EPS && i.maxY <= o.maxY + EPS;
+  const t = (outer.rot * Math.PI) / 180;
+  const c = Math.cos(t);
+  const s = Math.sin(t);
+  return corners(inner).every((p) => {
+    // Into outer's own frame (inverse of `corners`).
+    const dx = p.x - outer.x;
+    const dy = p.y - outer.y;
+    const u = dx * c - dy * s;
+    const v = dx * s + dy * c;
+    return Math.abs(u) <= outer.w / 2 + EPS && Math.abs(v) <= outer.d / 2 + EPS;
+  });
 }
 
-/** Positive-area overlap (layout rotations are multiples of 90°, so boxes are exact); touching edges is not overlap. */
+/** Positive-area overlap of two oriented rectangles (separating axes); touching edges is not overlap. */
 export function overlaps(a: Rect, b: Rect): boolean {
-  const p = box(a);
-  const q = box(b);
-  return Math.min(p.maxX, q.maxX) - Math.max(p.minX, q.minX) > EPS && Math.min(p.maxY, q.maxY) - Math.max(p.minY, q.minY) > EPS;
+  const ca = corners(a);
+  const cb = corners(b);
+  const axes = [ca, cb].flatMap((cs) => [0, 1].map((i) => ({ x: cs[i + 1]!.x - cs[i]!.x, y: cs[i + 1]!.y - cs[i]!.y })));
+  for (const ax of axes) {
+    const n = Math.hypot(ax.x, ax.y) || 1;
+    const proj = (cs: { x: number; y: number }[]) => cs.map((p) => (p.x * ax.x + p.y * ax.y) / n);
+    const pa = proj(ca);
+    const pb = proj(cb);
+    if (Math.min(Math.max(...pa), Math.max(...pb)) - Math.max(Math.min(...pa), Math.min(...pb)) <= EPS) return false;
+  }
+  return true;
 }
 
 /** A seat's zone piles and command area (inside its territory). */

@@ -116,7 +116,9 @@ describe('quality levels', () => {
 
 describe('camera rig contracts', () => {
   it('ego defaults follow the geometry spec', () => {
-    expect(DEFAULT_EGO_RIG).toMatchObject({ fovDeg: 45, behindEdge: 260, height: 620, pitchDeg: 35, minPitchDeg: 25, maxPitchDeg: 60 });
+    // The seat is pulled back and raised by the owner's M5 decision (ego framing shows the own piles; M5-P7); the field
+    // of view, pitch and pitch limits stay the spec's.
+    expect(DEFAULT_EGO_RIG).toMatchObject({ fovDeg: 45, behindEdge: 900, height: 860, pitchDeg: 35, minPitchDeg: 25, maxPitchDeg: 60 });
     expect(DEFAULT_EGO_RIG.fovDeg).toBe(CAMERA.ego.fovDeg);
   });
 });

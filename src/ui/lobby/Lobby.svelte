@@ -69,7 +69,10 @@
   const layout = $derived(game.layout(st.format));
   const viewerAngle = $derived(mySeat ? (layout.seats[st.seats[mySeat]?.index ?? 0]?.angle ?? 0) : 0);
   const MARGIN = 110;
-  const box = $derived(((viewerAngle / 90) % 2 === 1 ? { w: layout.table.d, d: layout.table.w } : { w: layout.table.w, d: layout.table.d }));
+  // The table as this viewer sees it; at the three-player table (seats at 120°, M5-P7) the drawn table is turned
+  // with the viewer like the camera's (scene/layout.ts cameraTable), so every chair sees the same shape.
+  const rightAngled = $derived(layout.seats.every((s) => s.angle % 90 === 0));
+  const box = $derived(!rightAngled ? { w: layout.table.w, d: layout.table.d } : (viewerAngle / 90) % 2 === 1 ? { w: layout.table.d, d: layout.table.w } : { w: layout.table.w, d: layout.table.d });
   const outer = $derived({ w: box.w + 2 * MARGIN, d: box.d + 2 * MARGIN });
   function place(x: number, y: number): { left: number; top: number } {
     const p = toViewerFrame({ x, y, rot: 0 }, viewerAngle);
@@ -78,10 +81,12 @@
   const territories = $derived(
     layout.seats.map((s) => {
       const r = toViewerFrame({ x: s.territory.x, y: s.territory.y, rot: s.territory.rot }, viewerAngle);
-      const turned = Math.round(r.rot / 90) % 2 === 1;
+      // A right-angle turn swaps width and depth; any other turn (the three-player seats) is drawn turned.
+      const right = Math.abs(r.rot / 90 - Math.round(r.rot / 90)) < 1e-6;
+      const turned = right && Math.round(r.rot / 90) % 2 === 1;
       const w = turned ? s.territory.d : s.territory.w;
       const d = turned ? s.territory.w : s.territory.d;
-      return { index: s.index, x: r.x - w / 2, y: -r.y - d / 2, w, d };
+      return { index: s.index, x: r.x - w / 2, y: -r.y - d / 2, w, d, rot: right ? 0 : r.rot, cx: r.x, cy: -r.y };
     }),
   );
   /** The teams' joint territories (games/types.ts TeamLayout; M3-P2). */
@@ -280,7 +285,7 @@
           {/each}
           {#each territories as t (t.index)}
             {@const seat = Object.values(st.seats).find((s) => s.index === t.index)}
-            <rect class="territory" x={t.x} y={t.y} width={t.w} height={t.d} rx="8" style={seat && list.find((c) => c.seat === seat.id)?.occupied ? `stroke: ${seatColours[seat.colour]?.colour}` : ''} />
+            <rect class="territory" x={t.x} y={t.y} width={t.w} height={t.d} rx="8" transform={t.rot ? `rotate(${t.rot} ${t.cx} ${t.cy})` : undefined} style={seat && list.find((c) => c.seat === seat.id)?.occupied ? `stroke: ${seatColours[seat.colour]?.colour}` : ''} />
           {/each}
         </svg>
         {#each list as c (c.seat)}

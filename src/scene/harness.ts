@@ -5,7 +5,7 @@
  *
  * URL: `?harness=scene&scenario=demo|bench|empty&viewer=s0|s1|none`. `bench` renders 300 cards.
  * Multi-seat tables (M3-P1): `&format=ffa3|ffa4|2hg&viewer=s0..s3` lays out the Magic table of that format with every
- * chair taken (scenario ignored).
+ * chair taken (scenario ignored). `&rig=ego` opens in the ego rig at its default view (M5-P7's ego framing).
  * Keys: 0 fit, Home or 1 own side, 2, 3, 4 the seats clockwise from the viewer, P switches the camera rig (M4-P1),
  * Escape closes an opened pile.
  * Test API: window.__spellplane (state, dispatch, cards, camera, lines, frameStats) and window.__sceneHarness.
@@ -21,6 +21,7 @@ import { TABLE_FORMAT_SEATS } from '../core/teams';
 import { mtgLayout } from '../games/mtg/layout';
 import { buildFormatState, buildHarnessState, harnessFaces, harnessGame, harnessLayout, harnessPrivateFaces, harnessReduce, type HarnessScenario } from './harness-fixture';
 import type { DropResult } from './snap';
+import { hoveredStackItem } from './stack';
 import { createTableScene, type SceneDebugCard } from './table-scene';
 import type { CameraRig, ScreenPoint, TablePoint, TableScene, ViewState } from './types';
 
@@ -49,6 +50,8 @@ export interface SceneHarnessApi {
   hold(on: boolean): void;
   /** Switch to Paper with this preferred camera rig (a theme switch: its default rig applies until the viewer chose one). */
   themeWithRig(rig: CameraRig): void;
+  /** The stack item the scene reports as hovered (scene/stack.ts hoveredStackItem: the lane or the badge's list). */
+  stackHover(): string | null;
   /** Dispose the scene (leak checks). */
   dispose(): void;
 }
@@ -104,7 +107,9 @@ export function mount(target: HTMLElement): void {
   };
   const log = (type: string) => (...args: unknown[]) => events.push({ type, args: JSON.parse(JSON.stringify(args)) as unknown[] });
 
+  const startRig = params.get('rig') === 'ego' ? ('ego' as const) : params.get('rig') === 'birdseye' ? ('birdseye' as const) : null;
   const scene = createTableScene(host, {
+    ...(startRig ? { rig: startRig } : {}),
     game,
     layout,
     viewerSeat,
@@ -183,6 +188,7 @@ export function mount(target: HTMLElement): void {
       }
     },
     themeWithRig: (rig) => scene.setTheme({ ...paper, camera: { ...paper.camera, defaultRig: rig } }),
+    stackHover: () => hoveredStackItem(scene),
     dispose: () => scene.dispose(),
   };
 }

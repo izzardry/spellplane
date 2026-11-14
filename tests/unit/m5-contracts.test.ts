@@ -148,7 +148,8 @@ describe('M5-P7 table and voice', () => {
     expect(isModifierChord({ key: 'v' })).toBe(false);
     expect(isModifierChord({ key: 'Control', shift: true })).toBe(false);
     expect(TALK_HOLD_ALONE_MS).toBe(200);
-    expect(() => createHoldAloneGate()).toThrow(notImplemented('M5-P7'));
+    // Implemented by M5-P7 (tests/unit/voice/hold.test.ts).
+    expect(createHoldAloneGate().state()).toBe('idle');
   });
   it('labels the spectator listen-only indicator', () => {
     expect(indicatorLabel('listening', DEFAULT_TALK, 'Ctrl')).toBe('Listening');

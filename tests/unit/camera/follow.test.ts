@@ -78,7 +78,8 @@ describe('bird\'s-eye behaviour under the rig controller', () => {
     rig.setTable({ w: 1800, d: 1800 }, 90, { x: 0, y: 0, w: 1800, d: 1800 });
     expect(rig.blendState()).toBeNull();
     expect(rig.rig()).toBe('ego');
-    expect(rig.pose().position[0]).toBeCloseTo(-1160, 6);
+    // 900 + CAMERA.ego.behindEdge (M5-P7's framing: 900).
+    expect(rig.pose().position[0]).toBeCloseTo(-1800, 6);
   });
 });
 

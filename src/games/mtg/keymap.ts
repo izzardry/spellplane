@@ -2,7 +2,7 @@
  * The canonical default keymap (DESIGN "Input and interaction design": this table is authoritative where another
  * section differs). Real data, owned by M0-C; M0-P4 binds it and offers remapping.
  */
-import type { ActionId, KeyBinding, KeyChord, KeyContext, KeyTrigger, Keymap } from '../types';
+import { CTRL_KEY_CHORD, type ActionId, type KeyBinding, type KeyChord, type KeyContext, type KeyTrigger, type Keymap } from '../types';
 
 function b(group: KeyBinding['group'], action: ActionId, label: string, chord: KeyChord, opts: { context?: KeyContext; trigger?: KeyTrigger } = {}): KeyBinding {
   return { action, chord, context: opts.context ?? 'table', trigger: opts.trigger ?? 'press', group, label };
@@ -65,9 +65,10 @@ export const MTG_KEYMAP: Keymap = [
   b('Table', 'rollDie', 'Roll die', k('i', { ctrl: true })),
   b('Table', 'flipCoin', 'Flip coin', k('i', { ctrl: true, shift: true })),
   b('Table', 'undo', 'Undo', k('z', { ctrl: true })),
-  // Talk
-  b('Talk', 'talk', 'Talk (hold)', k('v'), { trigger: 'hold' }),
-  b('Talk', 'teamTalk', 'Team talk (hold)', k('v', { shift: true }), { trigger: 'hold' }),
+  // Talk: Ctrl, either key, held alone for TALK_HOLD_ALONE_MS (PLAN Milestone 5, owner decisions, Talk key; M5-P7);
+  // Shift held first makes it team talk. Read by ui/voice/input.ts under the hold-alone rule, not by the KeyEngine.
+  b('Talk', 'talk', 'Talk (hold)', { ...CTRL_KEY_CHORD }, { trigger: 'hold' }),
+  b('Talk', 'teamTalk', 'Team talk (hold)', { ...CTRL_KEY_CHORD, shift: true }, { trigger: 'hold' }),
   b('Talk', 'mute', 'Mute', k('m')),
   b('Talk', 'focusChat', 'Focus chat', k('Enter')),
   // View
@@ -81,9 +82,23 @@ export const MTG_KEYMAP: Keymap = [
   b('View', 'help', 'Cheat sheet', k('?')),
 ];
 
-/** Canonical text of a chord, e.g. 'Ctrl+Shift+I', for cheat sheets and duplicate checks (DESIGN "Input and interaction design"). */
+/** How a bare modifier key is named in labels (the talk key is "Ctrl", either key; M5-P7). */
+const MODIFIER_NAMES: Readonly<Record<string, string>> = { Control: 'Ctrl', Shift: 'Shift', Alt: 'Alt' };
+
+/**
+ * Canonical text of a chord, e.g. 'Ctrl+Shift+I', for cheat sheets and duplicate checks (DESIGN "Input and interaction
+ * design"). The bare Control key reads "Ctrl" (the talk key, PLAN Milestone 5 owner decisions), Shift held with it
+ * "Shift+Ctrl" (team talk: Shift first, then Ctrl).
+ */
 export function chordToString(c: KeyChord): string {
   const parts: string[] = [];
+  const bare = MODIFIER_NAMES[c.key];
+  if (bare !== undefined) {
+    if (c.shift && c.key !== 'Shift') parts.push('Shift');
+    if (c.alt && c.key !== 'Alt') parts.push('Alt');
+    parts.push(bare);
+    return parts.join('+');
+  }
   if (c.ctrl) parts.push('Ctrl');
   if (c.alt) parts.push('Alt');
   if (c.shift) parts.push('Shift');

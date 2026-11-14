@@ -56,18 +56,8 @@ function insideTable(layout: TableLayout, r: Rect): boolean {
   return b.minX >= -hw && b.maxX <= hw && b.minY >= -hd && b.maxY <= hd;
 }
 
-function inside(outer: Rect, inner: Rect): boolean {
-  const o = box(outer);
-  const i = box(inner);
-  return i.minX >= o.minX - EPS && i.maxX <= o.maxX + EPS && i.minY >= o.minY - EPS && i.maxY <= o.maxY + EPS;
-}
-
-/** Positive-area overlap; touching edges is not overlap. All layout rotations are multiples of 90°, so boxes are exact. */
-function overlaps(a: Rect, b: Rect): boolean {
-  const p = box(a);
-  const q = box(b);
-  return Math.min(p.maxX, q.maxX) - Math.max(p.minX, q.minX) > EPS && Math.min(p.maxY, q.maxY) - Math.max(p.minY, q.minY) > EPS;
-}
+// Oriented-rectangle tests: since M5-P7 the three-player seats sit at 120°, so axis-aligned boxes are no longer exact.
+import { inside, overlaps } from '../layout/geometry';
 
 /** Everything a seat places inside its territory, in the canonical frame. */
 function territoryPieces(seat: SeatLayout): { name: string; rect: Rect }[] {
@@ -364,7 +354,8 @@ describe('the territory and anchors are canonical-frame positions in plain JSON'
 
 describe('multi-seat layouts follow the spec table (settled by M3-P1; its own tests are in tests/unit/layout)', () => {
   const cases: { format: Format; table: { w: number; d: number }; angles: number[]; laneDepth: number }[] = [
-    { format: 'ffa3', table: { w: 2000, d: 1300 }, angles: [0, 180, 180], laneDepth: 320 },
+    // Owner decision for M5 (M5-P7): opponents top-left and top-right from every seat, so the seats sit at 120°.
+    { format: 'ffa3', table: { w: 2000, d: 1800 }, angles: [0, 120, 240], laneDepth: 320 },
     { format: 'ffa4', table: { w: 1800, d: 1800 }, angles: [0, 90, 180, 270], laneDepth: 320 },
     { format: '2hg', table: { w: 2200, d: 1100 }, angles: [0, 0, 180, 180], laneDepth: 220 },
   ];
@@ -400,12 +391,12 @@ describe('multi-seat layouts follow the spec table (settled by M3-P1; its own te
     expect(c.minY).toBeCloseTo(d.minY);
   });
 
-  it('three players: seat 0 spans the near edge, seats 1 and 2 share the far edge 1000 wide each, top-left then top-right', () => {
+  it('three players: three equal territories round the table, seat 1 top-left then seat 2 top-right (M5-P7)', () => {
     const l = mtg.layout('ffa3');
     const [s0, s1, s2] = l.seats as [SeatLayout, SeatLayout, SeatLayout];
-    expect(s0.territory.w).toBe(2000);
-    expect(s1.territory.w).toBe(1000);
-    expect(s2.territory.w).toBe(1000);
+    expect(s0.territory.w).toBe(1100);
+    expect(s1.territory.w).toBe(1100);
+    expect(s2.territory.w).toBe(1100);
     expect(s1.territory.x).toBeLessThan(0);
     expect(s2.territory.x).toBeGreaterThan(0);
   });

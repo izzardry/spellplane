@@ -32,6 +32,7 @@ import {
   type TableSize,
 } from './ego';
 import { basis, dot, poseAt, poseDist, posePxPerMm, projectPoint, rayDir, sub, targetFor, unprojectToTable, type Viewport } from './pose';
+import { clampToTable, onCameraTable, tableCorners } from './table';
 
 /** Largest bird's-eye tilt a theme may ask for (DESIGN: Dusk is "slightly tilted"). */
 export const MAX_BIRDSEYE_TILT_DEG = 30;
@@ -229,10 +230,12 @@ export class TableRig {
   /** Near and far depths of the table, its frame and a little height (for the camera's clip planes). */
   depthRange(pose: CameraPose = this.pose()): { min: number; max: number } {
     const f = this.bird.frame;
-    const x0 = Math.min(-this.table.w / 2, f.x - f.w / 2);
-    const x1 = Math.max(this.table.w / 2, f.x + f.w / 2);
-    const y0 = Math.min(-this.table.d / 2, f.y - f.d / 2);
-    const y1 = Math.max(this.table.d / 2, f.y + f.d / 2);
+    // The canonical box around the table and the frame (either may be turned: the three-player table, M5-P7).
+    const pts = [...tableCorners(this.table), ...tableCorners({ w: f.w, d: f.d, ...(f.rot ? { rot: f.rot } : {}) }).map((p) => ({ x: p.x + f.x, y: p.y + f.y }))];
+    const x0 = Math.min(...pts.map((p) => p.x));
+    const x1 = Math.max(...pts.map((p) => p.x));
+    const y0 = Math.min(...pts.map((p) => p.y));
+    const y1 = Math.max(...pts.map((p) => p.y));
     let min = Infinity;
     let max = -Infinity;
     for (const x of [x0, x1]) {
@@ -367,8 +370,6 @@ export class TableRig {
     const solve = (a: TablePoint, s: ScreenPoint) => targetFor(this.birdPitch(), dist, b.fovDeg, this.angle, this.viewport, a, s);
     const a = this.screenToTable(x, y);
     let t = solve(a, { x, y });
-    const hw = this.table.w / 2;
-    const hd = this.table.d / 2;
     // A centre a switch left beyond the edge: the cursor's table point holds (BirdseyeRig.zoomAt).
     const kept = !b.onTable({ x: b.view.cx, y: b.view.cy }) && b.onTable(a);
     if (kept && t) {
@@ -376,9 +377,9 @@ export class TableRig {
       b.view = b.clampView(v, v);
       return;
     }
-    if (t && (Math.abs(t.x) > hw || Math.abs(t.y) > hd)) {
+    if (t && !onCameraTable(t, this.table)) {
       // Over the surround near an edge: pivot on the nearest table point, as the straight-down rig does.
-      const q = { x: clamp(a.x, -hw, hw), y: clamp(a.y, -hd, hd) };
+      const q = clampToTable(a, this.table);
       t = solve(q, this.tableToScreen(q));
     }
     b.view = b.clampView({ cx: t?.x ?? b.view.cx, cy: t?.y ?? b.view.cy, dist, angle: b.view.angle }, b.view);
@@ -434,11 +435,9 @@ export class TableRig {
       // viewer left: a table point the ego view shows is always held. The next pan or zoom only brings the centre back
       // toward the table (BirdseyeRig.clampView with `keep`) (DECISIONS [M4-P1]).
       const b = this.bird;
-      const hw = this.table.w / 2;
-      const hd = this.table.d / 2;
       const at = (dist: number) => targetFor(this.birdPitch(), dist, b.fovDeg, this.angle, vp, table, screen);
-      const onTable = (t: TablePoint | null) => t !== null && Math.abs(t.x) <= hw + 1e-6 && Math.abs(t.y) <= hd + 1e-6;
-      const pointOnTable = Math.abs(table.x) <= hw && Math.abs(table.y) <= hd;
+      const onTable = (t: TablePoint | null) => t !== null && onCameraTable(t, this.table, 1e-6);
+      const pointOnTable = onCameraTable(table, this.table);
       let dist = clamp(b.view.dist, b.minDist(), b.maxDist());
       let t = at(dist);
       if (!onTable(t) && pointOnTable && onTable(at(b.minDist()))) {

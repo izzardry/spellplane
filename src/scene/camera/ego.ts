@@ -11,6 +11,7 @@
 import { DEG, clamp, forward } from '../math';
 import type { CameraPose, EgoRigParams, ScreenPoint, TablePoint, Vec3 } from '../types';
 import { add, basis, len, posePxPerMm, projectPoint, sub, unprojectToTable, type Viewport } from './pose';
+import { onCameraTable, type CameraTable } from './table';
 
 /** Where the viewer has leaned, dollied and pitched the ego rig (DESIGN "Camera and navigation", Navigation gestures). Added by M4-C. */
 export interface EgoNav {
@@ -22,7 +23,8 @@ export interface EgoNav {
   pitchDeg: number;
 }
 
-export type TableSize = { w: number; d: number };
+/** The table as the rigs see it: a rectangle centred on the table centre, turned by `rot` (scene/camera/table.ts; M5-P7). */
+export type TableSize = CameraTable;
 
 /** The ego rig at the seat: no lean, no dolly, the default pitch. */
 export function defaultEgoNav(params: EgoRigParams): EgoNav {
@@ -31,13 +33,13 @@ export function defaultEgoNav(params: EgoRigParams): EgoNav {
 
 /** Half the table's extent along the viewer's forward axis (the distance from the centre to the viewer's edge). */
 export function halfDepth(table: TableSize, angleDeg: number): number {
-  const f = forward(angleDeg);
+  const f = forward(angleDeg - (table.rot ?? 0));
   return (Math.abs(f.x) * table.w + Math.abs(f.y) * table.d) / 2;
 }
 
 /** Half the table's extent along the viewer's right axis. */
 export function halfWidth(table: TableSize, angleDeg: number): number {
-  const f = forward(angleDeg);
+  const f = forward(angleDeg - (table.rot ?? 0));
   return (Math.abs(f.y) * table.w + Math.abs(f.x) * table.d) / 2;
 }
 
@@ -269,7 +271,7 @@ export function egoNavForAnchor(params: EgoRigParams, table: TableSize, angleDeg
 export function egoSwitchNav(params: EgoRigParams, table: TableSize, angleDeg: number, lateral: number, vp: Viewport, a: TablePoint, s: ScreenPoint): { nav: EgoNav; err: number } {
   let best = egoNavForAnchor(params, table, angleDeg, lateral, vp, a, s, 0);
   // A point over the surround stays outside the guarantee (DECISIONS [M4-P1]): no landing beyond the limits for it.
-  if (Math.abs(a.x) > table.w / 2 || Math.abs(a.y) > table.d / 2) return best;
+  if (!onCameraTable(a, table)) return best;
   for (const reach of SWITCH_REACH) {
     if (best.err <= ANCHOR_TOL_PX) break;
     const wide: EgoRigParams = {
