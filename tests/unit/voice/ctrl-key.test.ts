@@ -6,14 +6,15 @@
  * key is released on window blur and ignored while a text field has focus; Shift plus the talk key is team talk; a
  * note field takes the held key for dictation.
  *
- * The real voice controller (voice/mic.ts) on a fake host, wired by ui/voice/input.ts to a fake window with an injected
- * clock and timers.
+ * The real voice controller (voice/mic.ts) on a fake host, wired to a fake window with an injected clock and timers as
+ * the HUD wires it (ui/Hud.svelte): attachTalkInput for focus and the mouse button, and attachModifierTalkActions running
+ * the talk actions through runTalkAction (the HUD's hooks.voice).
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import { MTG_KEYMAP, chordToString } from '../../../src/games/mtg/keymap';
 import { CTRL_KEY_CHORD, isModifierChord, type KeyChord } from '../../../src/games/types';
 import { applyOverrides, cheatSheet, findBinding, keyLabel, KeyEngine, matchesChord } from '../../../src/ui/keymap';
-import { attachTalkInput, type TalkInputOptions } from '../../../src/ui/voice/input';
+import { attachModifierTalkActions, attachTalkInput, runTalkAction, type TalkInputOptions } from '../../../src/ui/voice/input';
 import { indicatorLabel } from '../../../src/ui/voice/labels';
 import { createVoiceWith } from '../../../src/voice/mic';
 import { DEFAULT_TALK } from '../../../src/store/types';
@@ -61,13 +62,17 @@ function fakeWindow() {
     },
     clearTimer: (h) => timers.delete(h as number),
   };
-  return { win, doc, fire, advance, seams, pendingTimers: () => timers.size };
+  /** Move the clock without running due timers (an event that arrives before a due timer's callback). */
+  const skew = (ms: number) => {
+    now += ms;
+  };
+  return { win, doc, fire, advance, skew, seams, pendingTimers: () => timers.size };
 }
 
 const ctrlDown = (code = 'ControlLeft', mods: Record<string, unknown> = {}) => ({ key: 'Control', code, ctrlKey: true, ...mods });
 const ctrlUp = (code = 'ControlLeft') => ({ key: 'Control', code, ctrlKey: false });
 
-async function setup(opts: { format?: Parameters<typeof table>[0]; talkChord?: () => KeyChord | null } = {}) {
+async function setup(opts: { format?: Parameters<typeof table>[0]; talkChord?: () => KeyChord | null; teamTalkChord?: () => KeyChord | null } = {}) {
   const fake = new FakeHost({ state: table(opts.format ?? '2hg', 't1'), seat: 's0' });
   const voice = createVoiceWith(fake.host(), { meter: null, presence: fake.presenceSeam() });
   await settle();
@@ -76,10 +81,25 @@ async function setup(opts: { format?: Parameters<typeof table>[0]; talkChord?: (
   const holds: HoldAloneState[] = [];
   const states: TalkState[] = [];
   voice.subscribe((s) => states.push(s));
-  const stop = attachTalkInput(voice, w.win as unknown as Window, { ...w.seams, ...(opts.talkChord ? { talkChord: opts.talkChord } : {}), onHold: (s) => holds.push(s) });
+  const win = w.win as unknown as Window;
+  const offInput = attachTalkInput(voice, win);
+  /** The talk actions the modifier key ran, as the HUD's hooks.voice gets them. */
+  const runs: string[] = [];
+  const offModifier = attachModifierTalkActions(
+    win,
+    (action, phase) => {
+      runs.push(`${action}:${phase}`);
+      runTalkAction(voice, action, phase, w.doc as unknown as Document);
+    },
+    { ...w.seams, ...(opts.talkChord ? { talkChord: opts.talkChord } : {}), ...(opts.teamTalkChord ? { teamTalkChord: opts.teamTalkChord } : {}), onHold: (s) => holds.push(s) },
+  );
+  const stop = () => {
+    offModifier();
+    offInput();
+  };
   /** Did any audio or caption ever open since the start? */
   const anythingSent = () => states.some((s) => s.audio !== 'off' || s.dictation !== 'off');
-  return { fake, voice, stop, holds, states, anythingSent, ...w };
+  return { fake, voice, stop, holds, states, runs, anythingSent, ...w };
 }
 
 describe('the default talk key is Ctrl', () => {
@@ -249,6 +269,95 @@ describe('chords stay shortcuts', () => {
     expect(voice.state().audio).toBe('all');
     fire(win, 'keyup', ctrlUp());
     expect(voice.state().audio).toBe('off');
+  });
+});
+
+describe('stale pointers and late timers', () => {
+  it('a press whose pointerup never arrived (a native select popup) stops counting once the pointer moves with no button', async () => {
+    const { win, fire, advance, voice, holds } = await setup();
+    fire(win, 'pointerdown', { pointerId: 1, button: 0, buttons: 1 });
+    // No pointerup: the popup took it. The mouse moves on with no button down.
+    fire(win, 'pointermove', { pointerId: 1, buttons: 0 });
+    fire(win, 'keydown', ctrlDown());
+    expect(holds.at(-1)).toBe('pending');
+    advance(200);
+    expect(voice.state().audio).toBe('all');
+    fire(win, 'keyup', ctrlUp());
+  });
+
+  it('a move with a button still down keeps the Ctrl-drag a shortcut', async () => {
+    const { win, fire, advance, anythingSent } = await setup();
+    fire(win, 'pointerdown', { pointerId: 1, button: 0, buttons: 1 });
+    fire(win, 'pointermove', { pointerId: 1, buttons: 1 });
+    fire(win, 'keydown', ctrlDown());
+    advance(1000);
+    expect(anythingSent()).toBe(false);
+  });
+
+  it('a key that arrives after the hold time but before the timer ran starts talk once', async () => {
+    const { win, fire, advance, skew, runs, voice, pendingTimers } = await setup();
+    fire(win, 'keydown', ctrlDown());
+    skew(250);
+    fire(win, 'keydown', { key: 'z', code: 'KeyZ', ctrlKey: true });
+    expect(voice.state().audio).toBe('all');
+    expect(pendingTimers()).toBe(0);
+    advance(500);
+    expect(runs).toEqual(['talk:start']);
+    fire(win, 'keyup', ctrlUp());
+    expect(runs).toEqual(['talk:start', 'talk:end']);
+  });
+});
+
+describe('the team talk binding', () => {
+  it('Shift then Ctrl runs teamTalk start and end, as the HUD shows "Team talk"', async () => {
+    const { win, fire, advance, runs } = await setup();
+    fire(win, 'keydown', { key: 'Shift', code: 'ShiftLeft', shiftKey: true });
+    fire(win, 'keydown', ctrlDown('ControlLeft', { shiftKey: true }));
+    advance(200);
+    fire(win, 'keyup', ctrlUp());
+    expect(runs).toEqual(['teamTalk:start', 'teamTalk:end']);
+  });
+
+  it('talk remapped to a letter: Shift+Ctrl still team talks, Ctrl alone stays a plain modifier', async () => {
+    const { voice, win, fire, advance, runs } = await setup({ talkChord: () => ({ key: 'v' }) });
+    fire(win, 'keydown', ctrlDown());
+    advance(500);
+    fire(win, 'keyup', ctrlUp());
+    expect(runs).toEqual([]);
+    fire(win, 'keydown', { key: 'Shift', code: 'ShiftLeft', shiftKey: true });
+    fire(win, 'keydown', ctrlDown('ControlLeft', { shiftKey: true }));
+    advance(200);
+    expect(voice.state().audio).toBe('team');
+    fire(win, 'keyup', ctrlUp());
+    expect(runs).toEqual(['teamTalk:start', 'teamTalk:end']);
+  });
+
+  it('team talk remapped to a letter: Shift+Ctrl is a chord (a shortcut), Ctrl alone still talks to everyone', async () => {
+    const { voice, win, fire, advance, runs, anythingSent } = await setup({ teamTalkChord: () => ({ key: 'b' }) });
+    fire(win, 'keydown', { key: 'Shift', code: 'ShiftLeft', shiftKey: true });
+    fire(win, 'keydown', ctrlDown('ControlLeft', { shiftKey: true }));
+    advance(1000);
+    fire(win, 'keyup', ctrlUp());
+    expect(anythingSent()).toBe(false);
+    fire(win, 'keydown', ctrlDown());
+    advance(200);
+    expect(voice.state().audio).toBe('all');
+    fire(win, 'keyup', ctrlUp());
+    expect(runs).toEqual(['talk:start', 'talk:end']);
+  });
+
+  it('team talk remapped to Shift+Alt: Shift then Alt team talks, Shift then Ctrl is a chord', async () => {
+    const { voice, win, fire, advance, runs } = await setup({ teamTalkChord: () => ({ key: 'Alt', shift: true }) });
+    fire(win, 'keydown', { key: 'Shift', code: 'ShiftLeft', shiftKey: true });
+    fire(win, 'keydown', ctrlDown('ControlLeft', { shiftKey: true }));
+    advance(500);
+    fire(win, 'keyup', ctrlUp());
+    expect(runs).toEqual([]);
+    fire(win, 'keydown', { key: 'Alt', code: 'AltLeft', altKey: true, shiftKey: true });
+    advance(200);
+    expect(voice.state().audio).toBe('team');
+    fire(win, 'keyup', { key: 'Alt', code: 'AltLeft' });
+    expect(runs).toEqual(['teamTalk:start', 'teamTalk:end']);
   });
 });
 

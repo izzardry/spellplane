@@ -21,6 +21,7 @@ import { TABLE_FORMAT_SEATS } from '../core/teams';
 import { mtgLayout } from '../games/mtg/layout';
 import { buildFormatState, buildHarnessState, harnessFaces, harnessGame, harnessLayout, harnessPrivateFaces, harnessReduce, type HarnessScenario } from './harness-fixture';
 import type { DropResult } from './snap';
+import { hoveredStackItem } from './stack';
 import { createTableScene, type SceneDebugCard } from './table-scene';
 import type { CameraRig, ScreenPoint, TablePoint, TableScene, ViewState } from './types';
 
@@ -49,6 +50,8 @@ export interface SceneHarnessApi {
   hold(on: boolean): void;
   /** Switch to Paper with this preferred camera rig (a theme switch: its default rig applies until the viewer chose one). */
   themeWithRig(rig: CameraRig): void;
+  /** The stack item the scene reports as hovered (scene/stack.ts hoveredStackItem: the lane or the badge's list). */
+  stackHover(): string | null;
   /** Dispose the scene (leak checks). */
   dispose(): void;
 }
@@ -185,6 +188,7 @@ export function mount(target: HTMLElement): void {
       }
     },
     themeWithRig: (rig) => scene.setTheme({ ...paper, camera: { ...paper.camera, defaultRig: rig } }),
+    stackHover: () => hoveredStackItem(scene),
     dispose: () => scene.dispose(),
   };
 }

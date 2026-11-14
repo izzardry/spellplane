@@ -36,6 +36,12 @@ export interface StackBadgeOptions {
   colours: () => StackBadgeColours;
   /** The badge expanded or collapsed (the scene redraws). */
   onChange?: () => void;
+  /**
+   * The pointer entered (an item id) or left (null) an item of the expanded list: the scene treats it as the hovered
+   * stack item, so its source and targets light up and the HUD's item keys (note, copy, ping) reach it (DESIGN "The
+   * effect stack", Reading it: "Hovering an item highlights its source and targets").
+   */
+  onHoverItem?: (item: string | null) => void;
 }
 
 /** What the scene hands the badge each frame. */
@@ -51,11 +57,17 @@ export class StackBadgeView {
   readonly el: HTMLDivElement;
   private readonly button: HTMLButtonElement;
   private readonly panel: HTMLDivElement;
+  /** Transparent strip over the gap between the badge and the list, so a pointer crossing it stays on the badge. */
+  private readonly bridge: HTMLDivElement;
   private collapsed = false;
   private count = 0;
   private hovering = false;
   private pinned = false;
+  /** Keyboard focus is inside the badge (Tab): it expands like hover. */
+  private focused = false;
   private itemsKey = '';
+  /** The list item under the pointer (reported through onHoverItem). */
+  private hoverItem: string | null = null;
   /** Loaded faces by face key (an image, or a drawn placeholder canvas); each row shows a copy. */
   private readonly faceCache = new Map<string, HTMLElement>();
   private disposed = false;
@@ -77,7 +89,9 @@ export class StackBadgeView {
     this.panel.setAttribute('data-testid', 'stack-badge-items');
     this.panel.setAttribute('role', 'list');
     Object.assign(this.panel.style, { position: 'absolute', display: 'none', left: '100%', top: '50%', marginLeft: '10px', overflow: 'auto', borderRadius: '6px', padding: '8px' });
-    this.el.append(this.button, this.panel);
+    this.bridge = document.createElement('div');
+    Object.assign(this.bridge.style, { position: 'absolute', display: 'none', width: '12px', background: 'transparent' });
+    this.el.append(this.button, this.bridge, this.panel);
     host.appendChild(this.el);
 
     this.el.addEventListener('pointerenter', (e) => {
@@ -90,15 +104,22 @@ export class StackBadgeView {
       this.hovering = false;
       this.render();
     });
-    // A tap toggles (touch has no hover); a click pins it open for mouse and keyboard users too.
+    // A tap toggles (touch has no hover); a click pins it open for mouse and keyboard users too. Closing by a click also
+    // drops the focus the press gave the button (Chromium focuses a clicked button, WebKit does not).
     this.button.addEventListener('click', () => {
-      this.pinned = !this.pinned;
+      const wasOpen = this.pinned;
+      this.pinned = !wasOpen;
+      if (wasOpen) this.focused = false;
       this.render();
     });
-    this.button.addEventListener('keydown', (e) => {
-      if (e.key !== 'Escape' || !this.pinned) return;
-      this.pinned = false;
-      e.stopPropagation();
+    // Keyboard focus (Tab) expands it like hover; focus leaving the badge collapses it.
+    this.el.addEventListener('focusin', () => {
+      this.focused = true;
+      this.render();
+    });
+    this.el.addEventListener('focusout', (e) => {
+      if (this.el.contains(e.relatedTarget as Node | null)) return;
+      this.focused = false;
       this.render();
     });
     // A tap or click anywhere else closes a pinned badge.
@@ -107,12 +128,26 @@ export class StackBadgeView {
       this.pinned = false;
       this.render();
     };
+    // Escape closes a badge opened by a click, tap or focus wherever the keyboard focus is (WebKit leaves a tapped
+    // button unfocused), and goes no further.
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || !this.collapsed || !(this.pinned || this.focused)) return;
+      this.pinned = false;
+      this.focused = false;
+      e.stopPropagation();
+      e.preventDefault();
+      this.render();
+    };
     document.addEventListener('pointerdown', onDown, true);
-    this.offDoc = () => document.removeEventListener('pointerdown', onDown, true);
+    document.addEventListener('keydown', onKey, true);
+    this.offDoc = () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
   }
 
   get expanded(): boolean {
-    return this.collapsed && (this.hovering || this.pinned);
+    return this.collapsed && (this.hovering || this.pinned || this.focused);
   }
 
   /** Show, move or hide the badge for this frame. */
@@ -124,6 +159,7 @@ export class StackBadgeView {
     if (!this.collapsed) {
       this.hovering = false;
       this.pinned = false;
+      this.focused = false;
     }
     if (f.at) {
       this.el.style.left = `${f.at.x}px`;
@@ -165,6 +201,9 @@ export class StackBadgeView {
       boxShadow: '0 1px 4px rgba(0,0,0,0.25)',
     });
     this.panel.style.display = expanded ? 'block' : 'none';
+    this.bridge.style.display = expanded ? 'block' : 'none';
+    // A list that closes (or is refilled without the hovered item) leaves no item hovered.
+    if (this.hoverItem !== null && (!expanded || ![...this.panel.children].some((r) => r.getAttribute('data-item') === this.hoverItem))) this.setHoverItem(null);
     Object.assign(this.panel.style, { background: c.surface, border: `1px solid ${c.border}`, color: c.fg, font: `12px/1.3 ${c.font}` });
     if (expanded) this.place();
   }
@@ -191,6 +230,8 @@ export class StackBadgeView {
     const want = top - shown / 2;
     const clamped = Math.max(8, Math.min(hostH - 8 - shown, want));
     this.panel.style.top = `${clamped - top + 22}px`;
+    // The gap the pointer crosses on its way to the list, from the badge's edge to the list's.
+    Object.assign(this.bridge.style, { left: right ? '100%' : 'auto', right: right ? 'auto' : '100%', top: `${Math.min(0, clamped - top + 22)}px`, height: `${Math.max(44, clamped - top + 22 + shown) - Math.min(0, clamped - top + 22)}px` });
   }
 
   private fill(items: BadgeItem[]): void {
@@ -215,8 +256,18 @@ export class StackBadgeView {
         Object.assign(note.style, { position: 'absolute', left: `${LABEL_W + BADGE_CARD_W + 6}px`, top: '2px', width: `${LABEL_W - 6}px`, overflowWrap: 'anywhere' });
         row.append(note);
       }
+      row.addEventListener('pointerenter', () => this.setHoverItem(it.item));
+      row.addEventListener('pointerleave', () => {
+        if (this.hoverItem === it.item) this.setHoverItem(null);
+      });
       this.panel.append(row);
     });
+  }
+
+  private setHoverItem(item: string | null): void {
+    if (item === this.hoverItem) return;
+    this.hoverItem = item;
+    this.opts.onHoverItem?.(item);
   }
 
   /** The face drawn whole at the card's aspect (63 : 88): an image, a drawn placeholder, or a plain back. */
@@ -258,6 +309,7 @@ export class StackBadgeView {
   }
 
   dispose(): void {
+    this.setHoverItem(null);
     this.disposed = true;
     this.offDoc();
     this.el.remove();

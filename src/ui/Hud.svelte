@@ -43,14 +43,14 @@
   import TurnStrip from './TurnStrip.svelte';
   import TalkIndicator from './voice/TalkIndicator.svelte';
   import VoicePanel from './voice/VoicePanel.svelte';
-  import { attachModifierTalk, attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
+  import { attachModifierTalkActions, attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
   import Speech from './settings/Speech.svelte';
   import ThemePicker from './settings/Theme.svelte';
   import { themeContext } from './settings/theme';
   import { ViewSettings, type ViewPrefs } from './settings/view';
   import { cuesFor, soundModeOf, soundOn, ThemeSoundPlayer, type SoundMode } from './sound';
   import { fieldDictation, sceneCaptions } from './settings/captions';
-  import type { Caption } from '../voice/types';
+  import type { Caption, HoldAloneState } from '../voice/types';
 
   let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
 
@@ -123,6 +123,8 @@
   let logOpen = $state(true);
   let preview = $state<{ card: InstanceId; x: number; y: number } | null>(null);
   let voice = $state<{ talking: 'talk' | 'teamTalk' | null; muted: boolean }>({ talking: null, muted: false });
+  /** The modifier talk key's hold-alone state (shown on the talk indicator as data-hold). */
+  let talkHold = $state<HoldAloneState>('idle');
   /** Live voice of a networked table (M3-P3); the solo table and the harness have none. */
   const liveVoice = untrack(() => session.voice);
   let voicePanel = $state(false);
@@ -710,21 +712,11 @@
       pendingChat = prunePending(pendingChat, log);
     });
     // The talk key's focus rules and the talk mouse button (M3-P3), and the speaking rings.
-    const voiceOff = liveVoice ? attachTalkInput(liveVoice, window, { modifier: false }) : null;
-    // The Ctrl talk key under the hold-alone rule (M5-P7), on the talk binding with the player's remappings: it runs the
-    // talk actions like any talk key once it counts (the KeyEngine never matches a bare modifier).
-    let modifierTalk: 'talk' | 'teamTalk' = 'talk';
-    const modifierOff = attachModifierTalk(
-      window,
-      {
-        start: (team) => {
-          modifierTalk = team ? 'teamTalk' : 'talk';
-          hooks.voice(modifierTalk, 'start');
-        },
-        end: () => hooks.voice(modifierTalk, 'end'),
-      },
-      { talkChord: () => keymap.find((b) => b.action === 'talk' && b.context === 'table')?.chord ?? null },
-    );
+    const voiceOff = liveVoice ? attachTalkInput(liveVoice, window) : null;
+    // The Ctrl talk key under the hold-alone rule (M5-P7), on the talk and team talk bindings with the player's
+    // remappings: it runs the talk actions like any talk key once it counts (the KeyEngine never matches a bare modifier).
+    const chordOf = (action: 'talk' | 'teamTalk') => keymap.find((b) => b.action === action && b.context === 'table')?.chord ?? null;
+    const modifierOff = attachModifierTalkActions(window, (action, phase) => hooks.voice(action, phase), { talkChord: () => chordOf('talk'), teamTalkChord: () => chordOf('teamTalk'), onHold: (h) => (talkHold = h) });
     const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
     captionList = session.captions?.captions() ?? [];
     const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
@@ -855,7 +847,7 @@
              its layout and the avatar column below stays short. A spectator only sees captions. -->
         <div class="toolbar voice-row">
           {#if liveVoice}
-            <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
+            <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} hold={talkHold} ontogglepanel={() => (voicePanel = !voicePanel)} />
           {/if}
           {#if session.captions && !spectating}
             <button

@@ -7,7 +7,7 @@
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import type { TalkIndicatorState } from '../../voice/types';
+  import type { HoldAloneState, TalkIndicatorState } from '../../voice/types';
   import type { TalkIndicatorProps } from '../types';
   import { indicatorLabel } from './labels';
 
@@ -17,7 +17,10 @@
     muteKey = 'M',
     panelOpen = false,
     ontogglepanel,
+    hold = 'idle',
   }: TalkIndicatorProps & {
+    /** Where a held modifier talk key stands under the hold-alone rule (ui/voice/input.ts), shown as `data-hold`. */
+    hold?: HoldAloneState;
     /** The talk key's label from the keymap. */
     talkKey?: string;
     muteKey?: string;
@@ -59,7 +62,7 @@
   const label = $derived(indicatorLabel(shown, settings, talkKey));
 </script>
 
-<div class="talk" data-testid="talk-indicator" data-state={shown} data-gate={settings.gate} role="group" aria-label="Voice">
+<div class="talk" data-testid="talk-indicator" data-state={shown} data-gate={settings.gate} data-hold={hold} role="group" aria-label="Voice">
   <span class="state {shown}" data-testid="talk-state" aria-live="polite" title={label}>
     <span class="dot" aria-hidden="true"></span>{label}
   </span>

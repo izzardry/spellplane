@@ -15,12 +15,17 @@ import { stateHash } from '../../../src/core/hash';
 import type { Pose, SeatId, TableState } from '../../../src/core/types';
 import { fromViewerFrame, toViewerFrame } from '../../../src/games/frame';
 import { mtg } from '../../../src/games/mtg/index';
-import type { TableLayout } from '../../../src/games/types';
+import type { Rect, TableLayout } from '../../../src/games/types';
 import { TableRig, lateralOf } from '../../../src/scene/camera/rig';
-import { cameraTable, fitFrame, placeCards, rightAngled, viewerAngle } from '../../../src/scene/layout';
+import { GEOMETRY } from '../../../src/core/geometry';
+import { tableCorners } from '../../../src/scene/camera/table';
+import { cameraTable, dropTable, fitFrame, markings, placeCards, rightAngled, viewerAngle } from '../../../src/scene/layout';
+import { cardCorners } from '../../../src/scene/math';
+import { clampToTable } from '../../../src/scene/snap';
+import { fitInsets } from '../../../src/ui/hand';
 import { EGO_FRAMING_VIEWPORTS, type ViewState } from '../../../src/scene/types';
 import { play, readyTable } from '../core/helpers';
-import { insideTable } from './geometry';
+import { inside, insideTable } from './geometry';
 
 const SEATS: SeatId[] = ['s0', 's1', 's2'];
 const VIEW: ViewState = { selection: [], hovered: null, privateFaces: {}, reducedMotion: true, pings: [], openPile: null };
@@ -155,6 +160,95 @@ describe('three players: a table saved with the earlier geometry still loads', (
     for (const viewer of [...SEATS, null]) {
       const placed = placeCards(s, VIEW, { game: mtg, layout, viewerSeat: viewer });
       for (const seat of SEATS) for (let k = 0; k < 2; k++) expect(placed.get(`${'abc'[SEATS.indexOf(seat)]}0${k}`)?.rest).toEqual(old[seat]![k]);
+    }
+  });
+});
+
+describe('three players: what is drawn, where drops land and what is fitted are the same for every viewer', () => {
+  const { s, layout } = threePlayers();
+  const area = dropTable(layout);
+  const card = (p: Pose): Rect => ({ ...p, w: GEOMETRY.card.w, d: GEOMETRY.card.h });
+  /** Whether a card lies on every seat's turned table (the drop area: the intersection of the three). */
+  const onEveryTable = (r: Rect) => layout.seats.every((sl) => inside({ x: 0, y: 0, w: layout.table.w, d: layout.table.d, rot: sl.angle }, r));
+  /** Drops pushed far out in 72 directions, each clamped to the drop area. */
+  const clampedDrops = (rot: number): Pose[] =>
+    Array.from({ length: 72 }, (_, i) => {
+      const a = (i * 5 * Math.PI) / 180;
+      return clampToTable({ x: Math.cos(a) * 3000, y: Math.sin(a) * 3000, rot }, area);
+    });
+
+  it('the drop area is the intersection of the three turned tables; right-angled tables keep their own rectangle', () => {
+    expect(area).toEqual({ w: 2000, d: 1800, turns: [0, 120, 240] });
+    for (const f of ['1v1', 'ffa4', '2hg'] as const) expect(dropTable(mtg.layout(f))).toEqual({ ...mtg.layout(f).table });
+  });
+
+  it('holds every territory, pile and command area, so no seat loses room', () => {
+    for (const sl of layout.seats) {
+      expect(onEveryTable(sl.territory)).toBe(true);
+      expect(onEveryTable(sl.zones.command)).toBe(true);
+      for (const k of ['library', 'graveyard', 'exile'] as const) expect(onEveryTable(card(sl.zones[k]))).toBe(true);
+    }
+  });
+
+  it('a drop outside it is clamped onto every turned table; a drop inside stays where it is', () => {
+    for (const rot of [0, 90, 120, 240, 45]) {
+      for (const p of clampedDrops(rot)) expect(onEveryTable(card(p)), `${p.x}, ${p.y} at ${rot}`).toBe(true);
+    }
+    // Seat 0 dropping just right of its territory, where seats 1 and 2 used to see nothing (x 700, y -800).
+    const right = clampToTable({ x: 700, y: -800, rot: 0 }, area);
+    expect(onEveryTable(card(right))).toBe(true);
+    expect(right).not.toEqual({ x: 700, y: -800, rot: 0 });
+    const inner = { x: 120, y: -340, rot: 30 };
+    expect(clampToTable(inner, area)).toEqual(inner);
+    // Clamping again changes nothing.
+    for (const p of clampedDrops(0)) {
+      const q = clampToTable(p, area);
+      expect(q.x).toBeCloseTo(p.x, 6);
+      expect(q.y).toBeCloseTo(p.y, 6);
+    }
+  });
+
+  for (const vp of EGO_FRAMING_VIEWPORTS) {
+    it(`at ${vp.width}x${vp.height} every viewer's fitted view shows the whole drawn table and every clamped drop, clear of the HUD`, () => {
+      const [top, right, bottom, left] = fitInsets(vp.height, false).split(' ').map(Number) as [number, number, number, number];
+      const safe = { x0: left - 0.5, x1: vp.width - right + 0.5, y0: top - 0.5, y1: vp.height - bottom + 0.5 };
+      const shown: { x: number; y: number }[][] = [];
+      for (const viewer of SEATS) {
+        const angle = viewerAngle(s, layout, viewer);
+        const sl = layout.seats[s.seats[viewer]!.index]!;
+        const r = new TableRig({ table: cameraTable(layout, angle), viewport: { w: vp.width, h: vp.height }, angle, inertiaMs: 325, rig: 'birdseye', lateral: lateralOf(sl.territory, sl.angle) });
+        r.setInsets({ top, right, bottom, left });
+        r.setTable(cameraTable(layout, angle), angle, fitFrame(s, layout, viewer), lateralOf(sl.territory, sl.angle));
+        // The drawn table: the theme's surface and the outline are turned with the camera's table (M5-P7).
+        const drawn = tableCorners(cameraTable(layout, angle));
+        const drops = clampedDrops(angle).flatMap((p) => cardCorners(p));
+        const pts = [...drawn, ...drops].map((p) => r.tableToScreen(p));
+        pts.forEach((p, i) => {
+          expect(p.x, `viewer ${viewer}, point ${i}`).toBeGreaterThanOrEqual(safe.x0);
+          expect(p.x, `viewer ${viewer}, point ${i}`).toBeLessThanOrEqual(safe.x1);
+          expect(p.y, `viewer ${viewer}, point ${i}`).toBeGreaterThanOrEqual(safe.y0);
+          expect(p.y, `viewer ${viewer}, point ${i}`).toBeLessThanOrEqual(safe.y1);
+        });
+        shown.push(drawn.map((p) => r.tableToScreen(p)));
+      }
+      // The drawn table falls on the same pixels from every seat.
+      for (const v of shown.slice(1)) v.forEach((p, i) => {
+        expect(p.x).toBeCloseTo(shown[0]![i]!.x, 2);
+        expect(p.y).toBeCloseTo(shown[0]![i]!.y, 2);
+      });
+    });
+  }
+
+  it("the table outline among the markings is the viewer's turned table", () => {
+    for (const viewer of SEATS) {
+      const angle = viewerAngle(s, layout, viewer);
+      const m = markings(layout, mtg, angle, 3);
+      const want = tableCorners(cameraTable(layout, angle));
+      const first = [0, 1, 2, 3].map((k) => ({ x: m.segments[k * 4]!, y: m.segments[k * 4 + 1]! }));
+      first.forEach((p, i) => {
+        expect(p.x).toBeCloseTo(want[i]!.x, 6);
+        expect(p.y).toBeCloseTo(want[i]!.y, 6);
+      });
     }
   });
 });

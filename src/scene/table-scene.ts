@@ -38,7 +38,7 @@ import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
 import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
 import { dropActions, tapActions, tempMoveActions, toStoredPoses } from './gestures';
-import { LAYER, cameraTable, compareSort, displayedRot, dropTargets, faceOf, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
+import { LAYER, cameraTable, compareSort, displayedRot, dropTable, dropTargets, faceOf, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
@@ -256,6 +256,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return { fg: c.fg, surface: theme.tokens.hud?.panel ?? c.surface, border: theme.tokens.hud?.panelBorder ?? c.border, pending: theme.cardDressing.pending.colour, font: theme.tokens.type.family };
     },
     onChange: () => (dirty = true),
+    // An item hovered in the expanded list is the hovered stack item, as one hovered in the lane (M5-P7).
+    onHoverItem: (item) => setHoverItem(item),
   });
   /** The lane is drawn as the badge this frame (far zoom; scene/stack.ts stackCollapsed). */
   let stackFolded = false;
@@ -299,7 +301,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   });
   insetObserver.observe(host, { attributes: true, attributeFilter: ['data-fit-insets'] });
 
-  const placement = (): ThemePlacement => ({ table: layout.table, viewerAngle: viewerAngle(state, layout, viewerSeat), reducedMotion: view.reducedMotion });
+  // The theme's table surface is turned with the camera's table (the three-player table; scene/layout.ts cameraTable),
+  // so every viewer sees the same upright table (M5-P7).
+  const placement = (): ThemePlacement => {
+    const angle = viewerAngle(state, layout, viewerSeat);
+    const turn = cameraTable(layout, angle).rot ?? 0;
+    return { table: layout.table, viewerAngle: angle, reducedMotion: view.reducedMotion, ...(turn ? { tableRot: turn } : {}) };
+  };
   const runtime = new ThemeRuntime(renderer, scene, camera, { post: true, overlay, glow: () => [lineView.lines.object, lineView.pingRings] }, theme, placement(), opts.quality ?? 'high');
   let built = placement();
 
@@ -1154,7 +1162,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
       const result: DropResult = resolveDrop(
         { pose: anchorPose, cursor: p, single: d.ids.length === 1, ctrl, frameDeg: dest?.frameDeg ?? 0, extent: groupExtent(d) },
-        { table: layout.table, cards: snapCards, targets: targets() },
+        { table: dropTable(layout), cards: snapCards, targets: targets() },
       );
       lastDrop = result;
       // An item's card dropped back into the lane moves to the slot under the pointer (DESIGN "The effect stack",
@@ -2031,7 +2039,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (formatLayout) layout = formatLayout;
       // The theme is built for the table size, the viewer's seat (lights stand behind their edge) and reduced motion.
       const want = placement();
-      if (want.table !== built.table || want.viewerAngle !== built.viewerAngle || want.reducedMotion !== built.reducedMotion) rebuildTheme(want);
+      if (want.table !== built.table || want.viewerAngle !== built.viewerAngle || want.reducedMotion !== built.reducedMotion || want.tableRot !== built.tableRot) rebuildTheme(want);
       if (formatLayout || prevState === null || Object.keys(prevState.seats).length !== Object.keys(next.seats).length) {
         rig.setTable(cameraTable(layout, viewerAngle(state, layout, viewerSeat)), viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
         rebuildMarkings();

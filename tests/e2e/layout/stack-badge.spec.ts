@@ -73,10 +73,39 @@ test.describe('far zoom with a mouse', () => {
     await expect(page.getByTestId('stack-badge-items')).toBeVisible();
     await expectReadableItems(page);
 
+    // Hovering an item in the list makes it the hovered stack item (its source and targets light up; the HUD's N, X
+    // and I reach it), as hovering it in the lane does; leaving the list clears it.
+    // Across the gap to the list at the badge's height (the pointer stays on the badge), then up to the oldest item.
+    const list = (await page.getByTestId('stack-badge-items').boundingBox())!;
+    const towardList = list.x > at.x ? list.x + 3 : list.x + list.width - 3;
+    await page.mouse.move(towardList, at.y, { steps: 8 });
+    await expect.poll(async () => (await badge(page)).expanded).toBe(true);
+    const row = (await page.getByTestId('stack-badge-item').nth(0).boundingBox())!;
+    await page.mouse.move(towardList, row.y + 12, { steps: 3 });
+    await page.mouse.move(row.x + row.width / 2, row.y + 12, { steps: 3 });
+    await expect.poll(() => page.evaluate(() => window.__sceneHarness!.stackHover())).toBe('i1');
+
     // Leaving collapses it again.
     await page.mouse.move(40, 40, { steps: 4 });
     await expect.poll(async () => (await badge(page)).expanded).toBe(false);
     await expect(page.getByTestId('stack-badge-items')).toBeHidden();
+    expect(await page.evaluate(() => window.__sceneHarness!.stackHover())).toBeNull();
+
+    // A click pins it open after the pointer leaves; Escape closes it wherever the keyboard focus is (WebKit does not
+    // focus a clicked button).
+    await page.mouse.move(at.x, at.y, { steps: 4 });
+    await page.mouse.click(at.x, at.y);
+    await page.mouse.move(40, 40, { steps: 4 });
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await expect.poll(async () => (await badge(page)).expanded).toBe(true);
+    await page.keyboard.press('Escape');
+    await expect.poll(async () => (await badge(page)).expanded).toBe(false);
+
+    // Keyboard focus expands it like hover; focus leaving collapses it.
+    await page.getByTestId('stack-badge-count').focus();
+    await expect.poll(async () => (await badge(page)).expanded).toBe(true);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await expect.poll(async () => (await badge(page)).expanded).toBe(false);
 
     // Zooming in on the lane brings it back; fitting again collapses it.
     await page.evaluate(({ x, y }) => window.__sceneHarness!.camera.zoomAt(x, y, 3), at);
@@ -115,6 +144,12 @@ test.describe('far zoom on touch', () => {
     await page.getByTestId('stack-badge-count').tap();
     await expect.poll(async () => (await badge(page)).expanded).toBe(true);
     await page.getByTestId('stack-badge-count').tap();
+    await expect.poll(async () => (await badge(page)).expanded).toBe(false);
+    // A badge opened by a tap closes with Escape (a hardware keyboard), though the tapped button has no focus.
+    await page.getByTestId('stack-badge-count').tap();
+    await expect.poll(async () => (await badge(page)).expanded).toBe(true);
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press('Escape');
     await expect.poll(async () => (await badge(page)).expanded).toBe(false);
   });
 });

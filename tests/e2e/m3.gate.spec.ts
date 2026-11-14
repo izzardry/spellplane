@@ -615,8 +615,11 @@ test.describe('M3 gate @gate', () => {
         await B.page.keyboard.press('KeyM');
         await expect(indicator(B.page)).toHaveAttribute('data-state', 'muted');
         await B.page.keyboard.down('Control');
+        // Wait until the held Ctrl has counted as talk (the hold-alone rule, M5-P7), then check that nothing opened.
+        await expect(indicator(B.page)).toHaveAttribute('data-hold', 'talking');
         await frames(B.page);
         expect(await openTo(B.page)).toEqual([]);
+        await expect(indicator(B.page)).toHaveAttribute('data-state', 'muted');
         await talkShot('muted');
         await B.page.keyboard.up('Control');
         await B.page.keyboard.press('KeyM');

@@ -24,6 +24,14 @@ import { isTextEntry } from '../keymap';
 
 const CAPTURE: AddEventListenerOptions = { capture: true };
 
+/** The default team talk chord: Shift held first, then Ctrl (games/mtg/keymap.ts). */
+const TEAM_CTRL_CHORD: KeyChord = { ...CTRL_KEY_CHORD, shift: true };
+
+/** Whether a chord is Shift with a bare modifier (Shift+Ctrl, Shift+Alt): the team talk form of a modifier talk key. */
+export function isShiftModifierChord(c: KeyChord): boolean {
+  return (c.key === 'Control' || c.key === 'Alt') && !!c.shift && !c.ctrl && !c.alt;
+}
+
 /** Marks a card note or stack note field: the held talk key dictates into it (DESIGN "Chat and voice", Notes by voice). */
 export const NOTE_FIELD_ATTR = 'data-note-field';
 
@@ -68,6 +76,12 @@ export interface TalkInputOptions {
    * Default: Ctrl (CTRL_KEY_CHORD).
    */
   talkChord?: () => KeyChord | null;
+  /**
+   * The team talk binding's chord now. When it is Shift with a bare modifier (default Shift+Ctrl), Shift held before
+   * that modifier makes a held-alone press team talk, whatever the talk binding is; otherwise Shift held first makes the
+   * modifier a chord (a shortcut), and the KeyEngine handles a team talk letter key. Default: Shift+Ctrl.
+   */
+  teamTalkChord?: () => KeyChord | null;
   /** How long the modifier must be held alone (default TALK_HOLD_ALONE_MS). */
   holdMs?: number;
   /** Clock in ms (default performance.now or Date.now). */
@@ -101,11 +115,16 @@ export function attachModifierTalk(win: Window, handlers: ModifierTalkHandlers, 
   const setTimer = opts.setTimer ?? ((fn: () => void, ms: number) => win.setTimeout(fn, ms));
   const clearTimer = opts.clearTimer ?? ((h: unknown) => win.clearTimeout(h as number));
   const talkChord = opts.talkChord ?? (() => CTRL_KEY_CHORD);
+  const teamTalkChord = opts.teamTalkChord ?? (() => TEAM_CTRL_CHORD);
   /** The physical keys of the talk modifier held now (ControlLeft, ControlRight): released when the last goes up. */
   const heldKeys = new Set<string>();
   /** The modifier being held as the talk key ('Control'), or null. */
   let heldMod: string | null = null;
-  /** Pointers (mouse buttons, fingers, pens) down now: Ctrl pressed during a drag modifies that drag. */
+  /**
+   * Pointers (mouse buttons, fingers, pens) down now: Ctrl pressed during a drag modifies that drag. A pointer whose
+   * pointerup never reached the window (a click that opened a native select popup) is dropped by its next move or press
+   * that reports no button down.
+   */
   const pointers = new Set<number>();
   let timer: unknown = null;
   let reported: HoldAloneState = 'idle';
@@ -123,6 +142,11 @@ export function attachModifierTalk(win: Window, handlers: ModifierTalkHandlers, 
   const modifier = (): string | null => {
     const c = talkChord();
     return c && isModifierChord(c) ? c.key : null;
+  };
+  /** The modifier the team talk binding names with Shift (Shift+Ctrl), or null. */
+  const teamModifier = (): string | null => {
+    const c = teamTalkChord();
+    return c && isShiftModifierChord(c) ? c.key : null;
   };
   /** Leave the hold: a talking key ends; a pending or shortcut one just stops. */
   const release = (): void => {
@@ -143,22 +167,33 @@ export function attachModifierTalk(win: Window, handlers: ModifierTalkHandlers, 
   const other = (): void => {
     if (gate.state() !== 'pending') return;
     const st = gate.other(now());
+    // The hold time had passed before the timer ran: talk now, and only once.
+    stopTimer();
     if (st === 'talking') onTick();
-    else stopTimer();
     report();
   };
   const onKeyDown = (e: KeyboardEvent): void => {
-    const mod = heldMod ?? modifier();
-    if (mod !== null && e.key === mod) {
+    if (heldMod !== null && e.key === heldMod) {
       heldKeys.add(e.code || e.key);
-      if (heldMod !== null || e.repeat) return;
-      heldMod = mod;
-      gate.down(now(), mod !== 'Shift' && !!e.shiftKey);
-      // Held together with Alt or Meta, or pressed while a pointer is down (a Ctrl-drag), it is a chord at once.
-      if ((e.altKey && mod !== 'Alt') || e.metaKey || pointers.size > 0) gate.other(now());
-      else timer = setTimer(onTick, holdMs);
-      report();
       return;
+    }
+    if (heldMod === null && !e.repeat) {
+      const talkMod = modifier();
+      const teamMod = teamModifier();
+      const shift = e.key !== 'Shift' && !!e.shiftKey;
+      // Team talk: Shift held first, then the team binding's modifier. Talk: the talk binding's modifier.
+      const team = shift && teamMod !== null && e.key === teamMod;
+      if (team || (talkMod !== null && e.key === talkMod)) {
+        heldKeys.add(e.code || e.key);
+        heldMod = e.key;
+        gate.down(now(), team);
+        // Held together with Alt or Meta, with Shift that makes no team talk, or pressed while a pointer is down (a
+        // Ctrl-drag), it is a chord at once.
+        if ((e.altKey && e.key !== 'Alt') || e.metaKey || (shift && !team) || pointers.size > 0) gate.other(now());
+        else timer = setTimer(onTick, holdMs);
+        report();
+        return;
+      }
     }
     // Any other key while it waits, Shift included (Ctrl+Shift+I; team talk is Shift held first), makes it a shortcut.
     if (heldMod !== null) other();
@@ -176,6 +211,10 @@ export function attachModifierTalk(win: Window, handlers: ModifierTalkHandlers, 
   };
   const onPointerUp = (e: PointerEvent): void => {
     pointers.delete(e.pointerId ?? 0);
+  };
+  // A move with no button down: that pointer is up, whether or not its pointerup arrived.
+  const onPointerMove = (e: PointerEvent): void => {
+    if (e.buttons === 0) pointers.delete(e.pointerId ?? 0);
   };
   const onWheel = (): void => other();
   const onBlur = (e: Event): void => {
@@ -197,11 +236,13 @@ export function attachModifierTalk(win: Window, handlers: ModifierTalkHandlers, 
   win.addEventListener('pointerdown', onPointerDown, CAPTURE);
   win.addEventListener('pointerup', onPointerUp, CAPTURE);
   win.addEventListener('pointercancel', onPointerUp, CAPTURE);
+  win.addEventListener('pointermove', onPointerMove, CAPTURE);
   win.addEventListener('wheel', onWheel, CAPTURE);
   win.addEventListener('blur', onBlur);
   win.addEventListener('focusin', onFocusIn);
   doc.addEventListener('visibilitychange', onVisibility);
   return () => {
+    win.removeEventListener('pointermove', onPointerMove, CAPTURE);
     win.removeEventListener('keydown', onKeyDown, CAPTURE);
     win.removeEventListener('keyup', onKeyUp, CAPTURE);
     win.removeEventListener('pointerdown', onPointerDown, CAPTURE);
@@ -216,31 +257,35 @@ export function attachModifierTalk(win: Window, handlers: ModifierTalkHandlers, 
 }
 
 /**
- * Follow window focus, text and note field focus, page visibility, the talk mouse button and (unless `modifier` is
- * false: the HUD wires it through its own talk actions) a modifier talk key (Ctrl by default) for `voice`. Returns the
- * function that stops it.
+ * The modifier talk keys as the HUD's talk actions (M5-P7): `run('talk' | 'teamTalk', 'start')` once the modifier was
+ * held alone (Shift held first and a Shift+modifier team binding: 'teamTalk'), and the same action's 'end' on release,
+ * exactly as a letter talk key from the KeyEngine runs them (the HUD's `hooks.voice`, which calls runTalkAction).
+ * `talkChord` and `teamTalkChord` read the bindings with the player's remappings. Returns the function that stops it.
  */
-export function attachTalkInput(voice: VoiceControls, win: Window = window, opts: TalkInputOptions & { modifier?: boolean } = {}): () => void {
+export function attachModifierTalkActions(win: Window, run: (action: 'talk' | 'teamTalk', phase: 'start' | 'end') => void, opts: TalkInputOptions = {}): () => void {
+  let action: 'talk' | 'teamTalk' = 'talk';
+  return attachModifierTalk(
+    win,
+    {
+      start: (team) => {
+        action = team ? 'teamTalk' : 'talk';
+        run(action, 'start');
+      },
+      end: () => run(action, 'end'),
+    },
+    opts,
+  );
+}
+
+/**
+ * Follow window focus, text and note field focus, page visibility and the talk mouse button for `voice`. The modifier
+ * talk key is wired separately (attachModifierTalkActions), through the HUD's talk actions. Returns the function that
+ * stops it.
+ */
+export function attachTalkInput(voice: VoiceControls, win: Window = window): () => void {
   const doc = win.document;
   const fromFocus = (el: unknown): void => voice.focus(focusKind(el));
   fromFocus(doc.activeElement);
-
-  // The modifier talk key under the hold-alone rule (M5-P7): what has focus decides between a caption, a note field
-  // and nothing (a chat field), as for any talk key.
-  const offModifier =
-    opts.modifier === false
-      ? null
-      : attachModifierTalk(
-          win,
-          {
-            start: (team) => {
-              fromFocus(doc.activeElement);
-              voice.keyDown(team);
-            },
-            end: () => voice.keyUp(),
-          },
-          opts,
-        );
 
   const onBlur = (e: Event): void => {
     if (e.target === win) voice.focus({ window: false });
@@ -286,7 +331,6 @@ export function attachTalkInput(voice: VoiceControls, win: Window = window, opts
   win.addEventListener('auxclick', onAux, CAPTURE);
   doc.addEventListener('visibilitychange', onVisibility);
   return () => {
-    offModifier?.();
     win.removeEventListener('blur', onBlur);
     win.removeEventListener('focus', onFocus);
     win.removeEventListener('focusin', onFocusIn);

@@ -19,7 +19,7 @@ import type { CardInstance, CardRef, InstanceId, PileId, Pose, SeatId, TableStat
 import type { GameDefinition, Rect, SeatLayout, TableLayout } from '../games/types';
 import { BACK_KEY, faceKey } from './faces-key';
 import { CARD_H, CARD_W, normDeg, rectPoint, rot2 } from './math';
-import type { ZoneTarget } from './snap';
+import type { DropTable, ZoneTarget } from './snap';
 import type { ViewState } from './types';
 
 export type PlacementKind = 'free' | 'pile' | 'stack' | 'hand' | 'area';
@@ -93,6 +93,16 @@ export function rightAngled(layout: TableLayout): boolean {
 export function cameraTable(layout: TableLayout, angle: number): { w: number; d: number; rot?: number } {
   if (rightAngled(layout) || normDeg(angle) === 0) return { w: layout.table.w, d: layout.table.d };
   return { w: layout.table.w, d: layout.table.d, rot: normDeg(angle) };
+}
+
+/**
+ * The area drops are clamped to (scene/snap.ts DropTable): the layout's table, and where the camera's table is turned
+ * to each viewer (cameraTable: the three-player table) the intersection of every seat's turned table, so a card, token
+ * or die never lands where one viewer's fitted view would hide it (the intersection holds every territory). M5-P7.
+ */
+export function dropTable(layout: TableLayout): DropTable {
+  if (rightAngled(layout)) return { w: layout.table.w, d: layout.table.d };
+  return { w: layout.table.w, d: layout.table.d, turns: [...new Set(layout.seats.map((s) => normDeg(s.angle)))] };
 }
 
 /**
@@ -368,7 +378,8 @@ const circleSegments = (c: { x: number; y: number }, r: number, out: number[], n
 export function markings(layout: TableLayout, game: GameDefinition, angle: number, seatsInUse: number, names: readonly string[] = []): Marking {
   const segments: number[] = [];
   const labels: Marking['labels'] = [];
-  rectSegments({ x: 0, y: 0, w: layout.table.w, d: layout.table.d, rot: 0 }, segments);
+  // The table's edge as this viewer's camera and theme see it (turned to the viewer at the three-player table; M5-P7).
+  rectSegments({ x: 0, y: 0, w: layout.table.w, d: layout.table.d, rot: cameraTable(layout, angle).rot ?? 0 }, segments);
   const label = (s: string) => s.toUpperCase();
   layout.seats.slice(0, Math.max(1, seatsInUse)).forEach((sl, i) => {
     rectSegments(sl.territory, segments);
