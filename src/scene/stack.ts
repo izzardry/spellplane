@@ -26,7 +26,7 @@ import { GEOMETRY } from '../core/geometry';
 import { pendingAbout } from '../core/reducer/confirm';
 import type { CardRef, InstanceId, Pose, StackItem, StackItemId, TableState } from '../core/types';
 import type { Rect } from '../games/types';
-import type { CardDressing } from '../themes/types';
+import type { CardDressing, SeatGlyph } from '../themes/types';
 import type { DebugParts } from '../util/debug';
 import { CARD_H, CARD_W, pointInCard, rot2 } from './math';
 import { STACK_COLLAPSE_CARD_PX, type TablePoint } from './types';
@@ -214,6 +214,10 @@ export interface BadgeItem {
   kindLabel: string;
   /** The controller's seat colour (CSS). */
   colour: string;
+  /** The controller's seat glyph beside the colour (nothing depends on hue alone), null when unknown. */
+  glyph: SeatGlyph | null;
+  /** The controller's name, for assistive technology ('' when unknown). */
+  controller: string;
   note: string | null;
   pending: boolean;
   /** The face it shows (the spell, or a marker's source), null for a face this viewer cannot see. */
@@ -223,10 +227,16 @@ export interface BadgeItem {
 }
 
 /** The expanded badge's items: the lane's entries, newest (top of the stack) first, as this viewer may see them. */
-export function badgeItems(entries: readonly StackEntry[], face: (id: InstanceId) => { ref: CardRef | null; faceIndex: 0 | 1 }, colour: (seat: string) => string): BadgeItem[] {
+export function badgeItems(
+  entries: readonly StackEntry[],
+  face: (id: InstanceId) => { ref: CardRef | null; faceIndex: 0 | 1 },
+  colour: (seat: string) => string,
+  seat: (seat: string) => { glyph: SeatGlyph | null; name: string } = () => ({ glyph: null, name: '' }),
+): BadgeItem[] {
   return [...entries].reverse().map((e) => {
     const f = e.face ? face(e.face) : { ref: null, faceIndex: 0 as const };
-    return { item: e.item.id, number: e.number, kindLabel: e.kindLabel, colour: colour(e.item.controller), note: e.item.note ?? null, pending: e.pending, ref: f.ref, faceIndex: f.faceIndex, marker: e.marker };
+    const who = seat(e.item.controller);
+    return { item: e.item.id, number: e.number, kindLabel: e.kindLabel, colour: colour(e.item.controller), glyph: who.glyph, controller: who.name, note: e.item.note ?? null, pending: e.pending, ref: f.ref, faceIndex: f.faceIndex, marker: e.marker };
   });
 }
 

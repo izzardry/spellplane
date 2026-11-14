@@ -80,6 +80,22 @@ describe('conflicts', () => {
     for (const key of FOCUS_KEYS) expect(keys.remap('tap', 'table', { key })).toMatchObject({ ok: false, reason: 'reserved' });
   });
 
+  it('refuses the context-menu keys (Shift+F10, the menu key) in every context, with a message saying why', () => {
+    const { keys } = fresh();
+    for (const context of ['table', 'prompt'] as const) {
+      const action = context === 'table' ? 'tap' : 'confirmOk';
+      for (const chord of [{ key: 'F10', shift: true }, { key: 'ContextMenu' }]) {
+        const r = keys.remap(action, context, chord);
+        expect(r).toMatchObject({ ok: false, reason: 'reserved', fixed: true });
+        expect(remapMessage(r)).toMatch(/opens the context menu.*cannot be given to another action/);
+      }
+    }
+    expect(remapMessage(keys.remap('tap', 'table', { key: 'F10', shift: true }))).toMatch(/^Shift\+F10 /);
+    // F10 alone and Ctrl+Shift+F10 stay free.
+    expect(keys.remap('tap', 'table', { key: 'F10' })).toEqual({ ok: true });
+    expect(keys.remap('flip', 'table', { key: 'F10', shift: true, ctrl: true })).toEqual({ ok: true });
+  });
+
   it('swapping gives each action the other one\'s key', () => {
     const { keys } = fresh();
     expect(keys.swap('tap', 'table', { key: 'g' })).toEqual({ ok: true });

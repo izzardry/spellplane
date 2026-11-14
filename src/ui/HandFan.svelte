@@ -206,7 +206,7 @@
 
 <svelte:window onpointermove={move} onpointerup={up} onpointercancel={up} onpointerdowncapture={pressElsewhere} />
 
-<div class="hand" class:touch data-testid="hand" aria-label="Your hand" data-scroll={touchFan ? Math.round(touchFan.scroll) : 0} data-max-scroll={touchFan ? Math.round(touchFan.maxScroll) : 0}>
+<div class="hand" class:touch data-testid="hand" role="group" aria-label="Your hand" data-scroll={touchFan ? Math.round(touchFan.scroll) : 0} data-max-scroll={touchFan ? Math.round(touchFan.maxScroll) : 0}>
   {#each ids as id, i (id)}
     {@const box = boxes[i]}
     {#if box}

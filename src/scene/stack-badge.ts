@@ -11,6 +11,7 @@
  */
 import type { CardRef } from '../core/types';
 import type { FaceSource } from '../data/types';
+import { glyphStyle } from './captions';
 import { faceKey } from './faces-key';
 import { drawPlaceholderFace } from './placeholder';
 import { stackBadgeText, type BadgeItem } from './stack';
@@ -191,7 +192,7 @@ export class StackBadgeView {
       this.el.style.left = `${f.at.x}px`;
       this.el.style.top = `${f.at.y}px`;
     }
-    const key = JSON.stringify(f.items.map((i) => [i.item, i.number, i.kindLabel, i.colour, i.note, i.pending, i.ref?.sid ?? null, i.faceIndex]));
+    const key = JSON.stringify(f.items.map((i) => [i.item, i.number, i.kindLabel, i.colour, i.glyph, i.controller, i.note, i.pending, i.ref?.sid ?? null, i.faceIndex]));
     if (key !== this.itemsKey) {
       this.itemsKey = key;
       this.fill(f.items);
@@ -305,6 +306,22 @@ export class StackBadgeView {
       const label = document.createElement('span');
       label.textContent = `${it.number} ${it.kindLabel.toUpperCase()}`;
       Object.assign(label.style, { position: 'absolute', left: '0', top: '2px', width: `${LABEL_W - 6}px`, textAlign: 'right', color: it.colour, fontWeight: '600', letterSpacing: '0.04em' });
+      // The controller by shape as well as hue (DESIGN "Input and interaction design", Accessibility): the seat glyph
+      // of the avatars and the log, in the seat colour, and the controller's name for assistive technology.
+      if (it.glyph) {
+        const glyph = document.createElement('i');
+        glyph.setAttribute('aria-hidden', 'true');
+        glyph.setAttribute('data-testid', 'stack-badge-glyph');
+        glyph.setAttribute('data-glyph', it.glyph);
+        Object.assign(glyph.style, { display: 'inline-block', width: '10px', height: '10px', marginRight: '4px', verticalAlign: '-1px', boxSizing: 'border-box', ...glyphStyle(it.glyph) });
+        label.prepend(glyph);
+      }
+      if (it.controller) {
+        const who = document.createElement('span');
+        who.textContent = `, ${it.controller}`;
+        Object.assign(who.style, { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clipPath: 'inset(50%)', whiteSpace: 'nowrap' });
+        label.append(who);
+      }
       const face = this.faceEl(it.ref, it.faceIndex);
       Object.assign(face.style, { position: 'absolute', left: `${LABEL_W}px`, top: '0', width: `${BADGE_CARD_W}px`, height: `${BADGE_CARD_PX}px`, borderRadius: '6px', outline: `2px solid ${it.colour}`, outlineOffset: '0' });
       row.append(label, face);

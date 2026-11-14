@@ -27,6 +27,7 @@ export async function seriousViolations(page: Page, include?: string): Promise<A
   let builder = new AxeBuilder({ page });
   if (include) builder = builder.include(include);
   const result = await builder.analyze();
+  logIncompleteContrast(result.incomplete, include);
   return result.violations
     .filter((v) => v.impact === 'serious' || v.impact === 'critical')
     .map((v) => ({ id: v.id, impact: v.impact, help: v.help, nodes: v.nodes.slice(0, 12).map((n) => `${n.target.join(' ')} — ${n.failureSummary?.split('\n').slice(1).join(' ').trim() ?? ''}`) }));
@@ -79,4 +80,47 @@ export async function sealedBuilder(a: Page, b: Page): Promise<void> {
   if ((await a.getByTestId('builder').getAttribute('data-view')) !== 'list') await a.getByTestId('view-list').click();
   await expect(a.getByTestId('builder')).toHaveAttribute('data-view', 'list');
   await expect(a.getByTestId('builder-list-host')).toBeVisible();
+}
+
+/**
+ * axe's `incomplete` colour-contrast results (text over an image, a gradient, a translucent or overlapping background:
+ * axe cannot compute the ratio and asks for a human check). They do not fail the test (M5 review), but are printed, so
+ * every run shows what still needs a look.
+ */
+function logIncompleteContrast(incomplete: Awaited<ReturnType<AxeBuilder['analyze']>>['incomplete'], include?: string): void {
+  const contrast = incomplete.filter((r) => r.id === 'color-contrast' || r.id === 'color-contrast-enhanced');
+  for (const r of contrast) {
+    for (const n of r.nodes) {
+      const why = [...n.any, ...n.all, ...n.none].map((c) => c.message).filter(Boolean).join(' ');
+      console.log(`[axe incomplete ${r.id}${include ? ` in ${include}` : ''}] ${n.target.join(' ')} — ${why}`);
+    }
+  }
+}
+
+/**
+ * A page of another protocol version in `page`'s room, as tests/e2e/hardening/version.spec.ts starts one: a script on
+ * the local transport that says hello with its own `v` and answers any hello of another version with a version bye.
+ */
+export async function otherVersion(page: Page, roomId: string, v: number, nickname: string): Promise<void> {
+  await page.evaluate(
+    ([room, version, name]) => {
+      const bc = new BroadcastChannel(`spellplane-room-${room as string}`);
+      const me = `old-${Math.random().toString(36).slice(2, 8)}`;
+      const hello = (to?: string): void =>
+        bc.postMessage({ k: 'msg', from: me, ...(to ? { to } : {}), channel: 'ctl', msg: { v: version, t: 'hello', peerId: `peer-${me}`, pubKey: 'pk', nickname: name, seat: null, role: 'player', lastSeq: 0, nonce: 'n' } });
+      bc.onmessage = (e: MessageEvent<{ k: string; from: string; to?: string; msg?: { t?: string; v?: number } }>) => {
+        const f = e.data;
+        if (f.from === me || (f.to && f.to !== me)) return;
+        if (f.k === 'hello') {
+          bc.postMessage({ k: 'here', from: me, to: f.from });
+          hello(f.from);
+        }
+        if (f.k === 'msg' && f.msg?.t === 'hello' && f.msg.v !== version) bc.postMessage({ k: 'msg', from: me, to: f.from, channel: 'ctl', msg: { v: version, t: 'bye', reason: 'version', version } });
+      };
+      bc.postMessage({ k: 'hello', from: me });
+      hello();
+      setInterval(() => bc.postMessage({ k: 'beat', from: me }), 1000);
+    },
+    [roomId, v, nickname] as const,
+  );
 }

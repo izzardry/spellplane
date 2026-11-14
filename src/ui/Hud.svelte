@@ -25,7 +25,7 @@
   import { addPending, LogWatch, prunePending } from './chat/watch';
   import { inZoneKind, layoutOf } from './geometry';
   import { fitInsets as fitInsetsFor, handOrder } from './hand';
-  import { applyOverrides, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS } from './keymap';
+  import { applyOverrides, isMenuKey, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS } from './keymap';
   import { cardMenu, tableMenu, type MenuEntry } from './menu';
   import type { HudProps } from './props';
   import Avatar from './Avatar.svelte';
@@ -457,14 +457,16 @@
       commands.untapAndDraw();
       return;
     }
-    if (isMenuKey(e) && !menu && !ownsArrows(e.target)) {
+    // The context-menu key or Shift+F10 (the platform keys for a context menu, ui/keymap.ts MENU_KEYS; M5-P4).
+    if (isMenuKey(e) && !menu && !radial && !ownsArrows(e.target)) {
       e.preventDefault();
       openKeyMenu();
       return;
     }
     const move = focusMoveOf(e);
-    // The cheat sheet covers the table: arrows and Page keys do not move a focus the player cannot see under it.
-    if (move && !menu && !cheatOpen && !ownsArrows(e.target)) {
+    // The cheat sheet covers the table: arrows and Page keys do not move a focus the player cannot see under it; while
+    // the radial menu is open they are its own (M5 review).
+    if (move && !menu && !radial && !cheatOpen && !ownsArrows(e.target)) {
       e.preventDefault();
       moveKeyFocus(move);
       return;
@@ -546,11 +548,6 @@
     menu = c
       ? { title: focusName(c.id), entries: cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), x, y, keyboard }
       : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y, keyboard };
-  }
-  /** The context-menu key or Shift+F10 (the platform keys for a context menu; M5-P4). */
-  function isMenuKey(e: KeyboardEvent): boolean {
-    if (e.ctrlKey || e.altKey || e.metaKey) return false;
-    return (e.key === 'ContextMenu' && !e.shiftKey) || (e.key === 'F10' && e.shiftKey);
   }
   /**
    * The context menu from the keyboard (DESIGN "Input and interaction design": every action has a context-menu route,
@@ -824,14 +821,25 @@
     const active = typeof document === 'undefined' ? null : document.activeElement;
     if (mirrorEl && active !== mirrorEl && (!active || active === document.body || (sceneHost?.contains(active) ?? false))) mirrorEl.focus({ preventScroll: true });
   }
-  /** Keys the focused element uses itself: arrows in a select, slider, menu, list box or grid are not card focus. */
+  /** HUD panels whose controls keep the arrow and Page keys while they hold DOM focus (ownsArrows). */
+  const ARROW_PANELS = ['settings', 'audit-panel', 'theme-settings', 'voice-panel', 'deck-import', 'token-search', 'reveal-to', 'log-lines', 'cheat-sheet']
+    .map((id) => `[data-testid="${id}"]`)
+    .concat('.theme-pop', '.voice-pop')
+    .join(', ');
+  /**
+   * Keys the focused element uses itself: arrows in a select, slider, menu, list box or grid are not card focus, nor
+   * are they inside a dialog or a HUD panel (M5 review: the settings panel, the audit panel, the theme popover, a
+   * prompt), where they belong to the panel's controls or scroll it.
+   */
   function ownsArrows(t: EventTarget | null): boolean {
     const el = t as HTMLElement | null;
     if (!el?.closest) return false;
     if (el.tagName === 'SELECT' || (el.tagName === 'INPUT' && ['range', 'radio', 'number'].includes((el as HTMLInputElement).type))) return true;
     if (el.closest('[role="menu"], [role="menubar"], [role="listbox"], [role="slider"], [role="radiogroup"], [role="tablist"], [role="grid"], [role="tree"]')) return true;
-    // Scrollable HUD regions scroll with arrows and Page keys when they hold DOM focus: the log lines, the cheat sheet.
-    return !!el.closest('[data-testid="log-lines"], [data-testid="cheat-sheet"]');
+    if (el.closest('dialog, [role="dialog"], [role="alertdialog"]')) return true;
+    // HUD panels (their roots), and the scrollable regions that scroll with arrows and Page keys when they hold DOM
+    // focus: the log lines, the cheat sheet.
+    return !!el.closest(ARROW_PANELS);
   }
   // The table changed: focus stays on its card, or passes to the card that took its place (ui/a11y keepFocus).
   $effect(() => {
@@ -853,6 +861,10 @@
       }
     });
   });
+  /** The last input wins: any press on the table (a click, the start of a box selection) ends the keyboard focus (M5 review). */
+  function pressOnTable(): void {
+    if (focus) setFocus(null, false);
+  }
   /** The last input wins: a pointer moved onto a card hands the keys back to hover (window pointermove, after the scene's hover). */
   function pointerTakesOver(): void {
     if (focus && hovered !== null && hovered !== focus.card && Math.hypot(pointer.x - focusPointer.x, pointer.y - focusPointer.y) > 4) focus = null;
@@ -1101,7 +1113,7 @@
 <svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncView()} />
 
 <div class="root" class:touch-ui={touchUi} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
-  <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
+  <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost} onpointerdowncapture={pressOnTable}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
   <Flashes
     {watch}

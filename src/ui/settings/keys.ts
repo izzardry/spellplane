@@ -11,7 +11,8 @@
  * - a chord another action of the same context holds is a conflict: refused and reported with that action's name; the
  *   player may then swap the two keys;
  * - keys the HUD reserves outside the keymap (ui/keymap.ts RESERVED_KEYS, the untap offer) and the arrow and page keys
- *   (keyboard focus, ui/a11y; DECISIONS [M5-C]) are refused;
+ *   (keyboard focus, ui/a11y; DECISIONS [M5-C]) and the context-menu keys (the context-menu key, Shift+F10; ui/keymap.ts
+ *   MENU_KEYS) are refused;
  * - a bare modifier (Ctrl, Shift or Alt alone, games/types.ts isModifierChord) is accepted only for the talk key, which
  *   opens under the hold-alone rule (voice/types.ts TALK_HOLD_ALONE_MS): any other action on a bare modifier would fire
  *   on the first key of every shortcut;
@@ -19,7 +20,7 @@
  */
 import { isModifierChord, type ActionId, type KeyBinding, type KeyChord, type KeyContext, type Keymap } from '../../games/types';
 import type { KeymapOverride, SettingsStore } from '../../store/types';
-import { applyOverrides, chordFromEvent, chordToString, cheatSheet, findConflict, normalizeKey, reservedConflict, sameChord, validOverrides, type KeyInput } from '../keymap';
+import { applyOverrides, chordFromEvent, chordToString, cheatSheet, findConflict, MENU_KEYS, normalizeKey, reservedConflict, sameChord, validOverrides, type KeyInput } from '../keymap';
 
 /** Actions a bare modifier may be bound to (PLAN Milestone 5, owner decisions, Talk key; DECISIONS [M5-C] CTRL_KEY_CHORD). */
 export const MODIFIER_KEY_ACTIONS: readonly ActionId[] = ['talk'];
@@ -36,8 +37,8 @@ export type RemapResult =
   | { ok: true }
   /** Another action of the same context holds the chord. */
   | { ok: false; reason: 'conflict'; chord: KeyChord; holder: { action: ActionId; context: KeyContext; label: string } }
-  /** The HUD keeps the chord for itself (untap offer, keyboard focus). */
-  | { ok: false; reason: 'reserved'; chord: KeyChord; label: string }
+  /** The HUD keeps the chord for itself (untap offer, keyboard focus, the context-menu keys). */
+  | { ok: false; reason: 'reserved'; chord: KeyChord; label: string; fixed?: boolean }
   /** A bare modifier for an action that cannot open on one. */
   | { ok: false; reason: 'modifier'; chord: KeyChord }
   /** The action has no binding in that context (nothing to remap). */
@@ -51,7 +52,7 @@ export function remapMessage(r: RemapResult): string | null {
     case 'conflict':
       return `${key} is already “${r.holder.label}”.`;
     case 'reserved':
-      return `${key} is already “${r.label}”.`;
+      return r.fixed ? `${key} always ${r.label} and cannot be given to another action.` : `${key} is already “${r.label}”.`;
     case 'modifier':
       return `${key} alone can only be the talk key: as the first key of every shortcut it would fire too often. Hold it with another key instead.`;
     case 'unknown':
@@ -76,6 +77,11 @@ export interface KeyRow {
 
 function reservedFocusKey(chord: KeyChord): boolean {
   return FOCUS_KEYS.includes(chord.key);
+}
+
+/** The context-menu key and Shift+F10 open the focused card's menu (ui/keymap.ts MENU_KEYS); they stay with it. */
+function reservedMenuKey(chord: KeyChord): boolean {
+  return MENU_KEYS.some((m) => sameChord(m, chord));
 }
 
 /** The keymap's rows grouped as in the cheat sheet (DESIGN canonical keymap order), with their defaults. */
@@ -105,6 +111,7 @@ export function checkRemap(keymap: Keymap, action: ActionId, context: KeyContext
   const reserved = reservedConflict(chord, context);
   if (reserved) return { ok: false, reason: 'reserved', chord, label: reserved };
   if (reservedFocusKey(chord)) return { ok: false, reason: 'reserved', chord, label: 'Move keyboard focus' };
+  if (reservedMenuKey(chord)) return { ok: false, reason: 'reserved', chord, label: 'opens the context menu of the focused card (the platform\'s menu key)', fixed: true };
   const holder = findConflict(keymap, chord, context, action);
   if (holder) return { ok: false, reason: 'conflict', chord, holder: { action: holder.action, context: holder.context, label: holder.label } };
   return { ok: true };

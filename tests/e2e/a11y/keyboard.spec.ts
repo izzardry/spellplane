@@ -257,6 +257,46 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     await expect.poll(() => focus(page)).toEqual({ zone: 'hand:s0', card: 'h1' });
   });
 
+  test('a press on the table (a click, a Shift-drag box selection) ends the keyboard focus (M5 review)', async ({ page }) => {
+    await openHud(page);
+    await hoverNothing(page);
+    // An empty spot of the table: on the scene host, on no card and no HUD control.
+    const spot = await page.evaluate(() => {
+      const host = document.querySelector('[data-testid="scene-host"]')!;
+      for (let y = 140; y < 500; y += 20)
+        for (let x = 400; x < 1000; x += 20) {
+          const el = document.elementFromPoint(x, y);
+          if (el && host.contains(el) && !el.closest('[data-card]')) return { x, y };
+        }
+      return null;
+    });
+    expect(spot).not.toBeNull();
+    for (const shift of [false, true]) {
+      await page.keyboard.press('ArrowRight');
+      await expect.poll(() => focus(page)).not.toBeNull();
+      if (shift) await page.keyboard.down('Shift');
+      await page.mouse.move(spot!.x, spot!.y);
+      await page.mouse.down();
+      await expect.poll(() => focus(page)).toBeNull();
+      await page.mouse.move(spot!.x + 40, spot!.y + 30, { steps: 3 });
+      await page.mouse.up();
+      if (shift) await page.keyboard.up('Shift');
+      expect(await focus(page)).toBeNull();
+    }
+  });
+
+  test('arrows and Page keys in the settings panel stay in the panel (M5 review)', async ({ page }) => {
+    await openHud(page);
+    await hoverNothing(page);
+    await page.getByTestId('open-settings').click();
+    await expect(page.getByTestId('settings')).toBeVisible();
+    // A plain button of the panel (the close button) holds DOM focus: not a tab list, nor a text field.
+    await page.getByTestId('settings-close').focus();
+    for (const key of ['ArrowDown', 'ArrowRight', 'PageDown']) await page.keyboard.press(key);
+    expect(await focus(page)).toBeNull();
+    expect(await active(page)).toBe('settings-close');
+  });
+
   // Tab is the "next phase" key, so the mirror is reached with the arrow keys or by a screen reader moving its focus there
   // (programmatic focus, as here), not by pressing Tab.
   test('arrows in a text field stay in the field; focusing the table mirror puts focus on the first card', async ({ page }) => {

@@ -1042,7 +1042,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (!c) return { ref: null, faceIndex: 0 };
       const f = faceOf(c, view);
       return { ref: f.ref, faceIndex: f.faceIndex };
-    }, seatColour) : [];
+    }, seatColour, (seat) => {
+      const c = st.seats[seat]?.colour ?? 0;
+      return { glyph: (theme.tokens.colours.seats[c] ?? theme.tokens.colours.seats[0])?.glyph ?? null, name: st.seats[seat]?.name || seat };
+    }) : [];
     stackBadge.update({ collapsed: stackFolded, count: st?.stack.length ?? 0, at: onScreen ? at : null, items });
   }
 

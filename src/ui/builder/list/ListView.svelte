@@ -114,7 +114,7 @@
         <h3>{g.label} <span class="muted">{g.count}</span></h3>
         <ul>
           {#each g.rows as row (row.key)}
-            <li class="row" data-testid="list-row" data-sid={row.ref.sid} data-foil={row.ref.foil ? 'true' : undefined} data-count={row.count} class:loading={!row.known}>
+            <li class="row" data-testid="list-row" data-sid={row.ref.sid} data-foil={row.ref.foil ? 'true' : undefined} data-count={row.count} class:loading={!row.known} aria-busy={row.known ? undefined : 'true'}>
               <button type="button" class="main" title={fromDeck ? 'Move one to the pool' : 'Move one to the deck'} onclick={(e) => move(row, fromDeck, e.shiftKey)}>
                 <!-- The accessible name starts with the action and contains the visible text (WCAG 2.5.3, M5-P4). -->
                 <span class="sr-only">{fromDeck ? 'Move one to the pool' : 'Move one to the deck'}: </span>
@@ -322,8 +322,12 @@
     align-items: stretch;
     gap: 2px;
   }
-  .row.loading {
-    opacity: 0.6;
+  /* A row whose card data is still loading keeps full-contrast text (Paper meets WCAG AA throughout, M5 review): its
+     name is set in italics with a dotted underline instead of being dimmed. */
+  .row.loading .name {
+    font-style: italic;
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
   }
   .main {
     flex: 1;

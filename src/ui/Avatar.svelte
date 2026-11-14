@@ -186,14 +186,12 @@
     font: var(--sp-font-size-small, 12px) / 1.4 var(--sp-font, system-ui);
     pointer-events: auto;
   }
+  /* Away (M5 review): the "away" label, a dashed frame and a dashed seat stripe mark it, and the text turns the muted
+     colour at full opacity (Paper: #5f5f5f on white, 6.4:1), so life and counters stay readable (WCAG AA) while
+     the avatar is plainly not the others'. */
   .avatar.away {
     border-style: dashed;
-    border-left-style: solid;
     color: var(--sp-muted, #5f5f5f);
-  }
-  .avatar.away .life,
-  .avatar.away .counters {
-    opacity: 0.6;
   }
   .away-tag {
     background: var(--sp-fg, #111);
