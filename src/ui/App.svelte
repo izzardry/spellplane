@@ -21,6 +21,7 @@
   import { HintController } from './hints/hints';
   import SettingsPage from './settings/SettingsPage.svelte';
   import UpdateNotice from './storage/UpdateNotice.svelte';
+  import OfflineNotice from './storage/OfflineNotice.svelte';
   import type { UpdatePlace } from './update';
   import type { Stage } from '../core/types';
   import { installReducedMotionCss } from './a11y/motion';
@@ -69,6 +70,7 @@
 <svelte:window onhashchange={() => (route = parseRoute(location.hash))} />
 
 {#if route.name !== 'room'}<UpdateNotice update={props.update} place={updatePlace} />{/if}
+<OfflineNotice />
 
 {#if !ready && waitsForStoredTheme(route)}
   <!-- Reading the stored theme before a table builds its scene: a moment, at most a few seconds (ui/settings/theme.ts).

@@ -21,6 +21,10 @@ import {
   egoAimNav,
   egoFitNav,
   egoFrameDist,
+  egoFrameFor,
+  egoPulled,
+  NO_EGO_FRAME,
+  type EgoFrame,
   egoLimitsFor,
   egoLimitsWith,
   egoPanNav,
@@ -77,7 +81,14 @@ export class TableRig {
   /** The theme's ego parameters; `ego` widens their lean to the table and seat. */
   egoParams: EgoRigParams;
   nav: EgoNav;
+  /** The ego seat's place along the viewer's right axis: the seat's own, plus the framing's shift. */
   lateral: number;
+  /** The seat's own lateral place (setTable). */
+  private seatLateral: number;
+  /** Table points the default ego view keeps clear of the HUD: the viewer's territory, piles and command area. */
+  private egoKeep: TablePoint[] = [];
+  /** How the default ego seat is moved for this viewport and HUD (ego.ts egoFrameFor; M5 owner decision "ego framing"). */
+  egoFrame: EgoFrame = NO_EGO_FRAME;
   private tilt: number;
   private active: CameraRig;
   private egoAnim: { from: EgoNav; to: EgoNav; start: number; dur: number } | null = null;
@@ -89,6 +100,7 @@ export class TableRig {
     this.bird = new BirdseyeRig(o.table, o.viewport, o.angle, o.inertiaMs);
     this.egoParams = { ...DEFAULT_EGO_RIG, ...(o.ego ?? {}) };
     this.lateral = o.lateral ?? 0;
+    this.seatLateral = this.lateral;
     this.nav = defaultEgoNav(this.ego);
     this.tilt = clamp(o.tiltDeg ?? 0, 0, MAX_BIRDSEYE_TILT_DEG);
     this.active = o.rig;
@@ -96,7 +108,7 @@ export class TableRig {
 
   /** The ego rig's limits on this table from this seat (the lean reaches the table's far side edge). */
   get ego(): EgoRigParams {
-    return egoLimitsFor(this.egoParams, this.table, this.angle, this.lateral);
+    return egoLimitsFor(egoPulled(this.egoParams, this.egoFrame.pull), this.table, this.angle, this.lateral);
   }
 
   get viewport(): Viewport {
@@ -543,10 +555,32 @@ export class TableRig {
 
   resize(vp: Viewport): void {
     this.bird.resize(vp);
+    this.reframeEgo();
   }
 
   setInsets(insets: Insets): void {
     this.bird.setInsets(insets);
+    this.reframeEgo();
+  }
+
+  /**
+   * The table points the default ego view must show clear of the HUD's screen layer (the viewer's territory, pile column
+   * and command area): the ego seat is pulled back and shifted for this viewport until they do (ego.ts egoFrameFor).
+   */
+  setEgoKeep(points: readonly TablePoint[]): void {
+    const same = points.length === this.egoKeep.length && points.every((p, i) => p.x === this.egoKeep[i]!.x && p.y === this.egoKeep[i]!.y);
+    if (same) return;
+    this.egoKeep = points.map((p) => ({ x: p.x, y: p.y }));
+    this.reframeEgo();
+  }
+
+  /** Recompute the ego framing; the navigation keeps its values (re-clamped to the moved seat's limits). */
+  private reframeEgo(): void {
+    const f = egoFrameFor(this.egoParams, this.table, this.angle, this.seatLateral, this.viewport, this.bird.insets, this.egoKeep);
+    if (Math.abs(f.pull - this.egoFrame.pull) < 0.5 && Math.abs(f.shift - this.egoFrame.shift) < 0.5) return;
+    this.egoFrame = f;
+    this.lateral = this.seatLateral + f.shift;
+    this.nav = clampEgoNav(this.egoReach(), this.nav);
   }
 
   setFrame(frame: FrameBox): void {
@@ -556,7 +590,10 @@ export class TableRig {
   /** A new table or viewer seat: both rigs start over (fitted bird's-eye, ego at the seat); a blend is cut. */
   setTable(table: TableSize, angle: number, frame: FrameBox, lateral = 0): void {
     this.bird.setTable(table, angle, frame);
+    this.seatLateral = lateral;
+    this.egoFrame = NO_EGO_FRAME;
     this.lateral = lateral;
+    this.reframeEgo();
     this.sw = null;
     this.stop();
     this.nav = defaultEgoNav(this.ego);
@@ -565,6 +602,9 @@ export class TableRig {
   /** A theme's camera defaults: ego parameter overrides and bird's-eye tilt (the navigation is re-clamped). */
   setTheme(ego: Partial<EgoRigParams> | undefined, tiltDeg: number | undefined): void {
     this.egoParams = { ...DEFAULT_EGO_RIG, ...(ego ?? {}) };
+    this.egoFrame = NO_EGO_FRAME;
+    this.lateral = this.seatLateral;
+    this.reframeEgo();
     this.nav = clampEgoNav(this.egoReach(), this.nav);
     this.tilt = clamp(tiltDeg ?? 0, 0, MAX_BIRDSEYE_TILT_DEG);
   }

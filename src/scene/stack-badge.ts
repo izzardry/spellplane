@@ -42,6 +42,11 @@ export interface StackBadgeOptions {
    * effect stack", Reading it: "Hovering an item highlights its source and targets").
    */
   onHoverItem?: (item: string | null) => void;
+  /**
+   * A right press (mouse or pen) on an item of the expanded list: the scene starts a connection line from that stack
+   * item, as from its card in the lane (DESIGN "Combat and annotation"; "The effect stack": lines from stack items).
+   */
+  onLinePress?: (item: string, e: PointerEvent) => void;
 }
 
 /** What the scene hands the badge each frame. */
@@ -123,9 +128,12 @@ export class StackBadgeView {
       this.render();
     });
     // A tap or click anywhere else closes a pinned badge.
-    const onDown = (e: PointerEvent): void => {
-      if (!this.pinned || this.el.contains(e.target as Node | null)) return;
+    const onDown = (e: Event): void => {
+      if (!(this.pinned || this.hovering) || this.el.contains(e.target as Node | null)) return;
+      // A press elsewhere also ends a hover a tap left behind (WebKit reports a tap's compatibility hover as a mouse
+      // that never leaves).
       this.pinned = false;
+      this.hovering = false;
       this.render();
     };
     // Escape closes a badge opened by a click, tap or focus wherever the keyboard focus is (WebKit leaves a tapped
@@ -138,10 +146,18 @@ export class StackBadgeView {
       e.preventDefault();
       this.render();
     };
+    // The platform's own menu never opens over the badge: a right press there draws a line (scene) instead.
+    this.el.addEventListener('contextmenu', (e) => e.preventDefault());
+    // Touch presses are watched as touches and mouse presses too: some WebKit builds (Linux) deliver an emulated tap
+    // as touch and compatibility mouse events without a pointerdown.
     document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('touchstart', onDown, true);
+    document.addEventListener('mousedown', onDown, true);
     document.addEventListener('keydown', onKey, true);
     this.offDoc = () => {
       document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('touchstart', onDown, true);
+      document.removeEventListener('mousedown', onDown, true);
       document.removeEventListener('keydown', onKey, true);
     };
   }
@@ -174,6 +190,29 @@ export class StackBadgeView {
     if (this.expanded !== was) this.opts.onChange?.();
   }
 
+  /**
+   * A connection line is being drawn (the scene holds the pointer, so the badge gets no hover events): the badge
+   * expands while the line's end is over it, so a line can end at an item of the list, and collapses when it leaves.
+   * `null` ends the tracking.
+   */
+  trackLine(at: ScreenPoint | null): void {
+    if (this.disposed || !this.collapsed) return;
+    const el = at && typeof document.elementFromPoint === 'function' ? document.elementFromPoint(at.x, at.y) : null;
+    const over = !!el && this.el.contains(el);
+    if (over === this.hovering) return;
+    this.hovering = over;
+    this.render();
+    this.opts.onChange?.();
+  }
+
+  /** The stack item of the expanded list under a client point (a line's end), or null. */
+  itemAt(x: number, y: number): string | null {
+    if (!this.expanded || typeof document.elementFromPoint !== 'function') return null;
+    const el = document.elementFromPoint(x, y);
+    const row = el instanceof Element && this.panel.contains(el) ? el.closest('[data-line-item]') : null;
+    return row?.getAttribute('data-line-item') ?? null;
+  }
+
   /** The debug hook's view of the badge (scene/types.ts StackBadgeState). */
   state(): StackBadgeState {
     return { count: this.count, collapsed: this.collapsed, expanded: this.expanded, screen: this.collapsed ? this.button.getBoundingClientRect() : null };
@@ -185,9 +224,14 @@ export class StackBadgeView {
     this.el.style.display = this.collapsed ? 'block' : 'none';
     this.el.setAttribute('data-expanded', String(expanded));
     this.button.setAttribute('aria-expanded', String(expanded));
-    this.button.setAttribute('aria-label', stackBadgeText(this.count));
-    this.button.title = stackBadgeText(this.count);
-    this.button.textContent = String(this.count);
+    // Rendered every frame: touch the button's text only when it changes. Replacing the text node under a pressed
+    // pointer every frame keeps WebKit from delivering the click (Linux CI).
+    const label = stackBadgeText(this.count);
+    if (this.button.getAttribute('aria-label') !== label) {
+      this.button.setAttribute('aria-label', label);
+      this.button.title = label;
+    }
+    if (this.button.textContent !== String(this.count)) this.button.textContent = String(this.count);
     Object.assign(this.button.style, {
       minWidth: '44px',
       height: '44px',
@@ -243,6 +287,7 @@ export class StackBadgeView {
       row.setAttribute('role', 'listitem');
       row.setAttribute('data-testid', 'stack-badge-item');
       row.setAttribute('data-item', it.item);
+      row.setAttribute('data-line-item', it.item);
       Object.assign(row.style, { position: 'absolute', left: '8px', top: `${8 + i * BADGE_STEP_PX}px`, width: `${BADGE_CARD_W + 2 * LABEL_W}px`, height: `${BADGE_CARD_PX}px` });
       const label = document.createElement('span');
       label.textContent = `${it.number} ${it.kindLabel.toUpperCase()}`;
@@ -257,6 +302,11 @@ export class StackBadgeView {
         row.append(note);
       }
       row.addEventListener('pointerenter', () => this.setHoverItem(it.item));
+      row.addEventListener('pointerdown', (e) => {
+        if (e.button !== 2 || e.pointerType === 'touch' || !this.opts.onLinePress) return;
+        e.preventDefault();
+        this.opts.onLinePress(it.item, e);
+      });
       row.addEventListener('pointerleave', () => {
         if (this.hoverItem === it.item) this.setHoverItem(null);
       });

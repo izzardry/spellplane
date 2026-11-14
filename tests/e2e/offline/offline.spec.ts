@@ -9,6 +9,7 @@ import { expect, test } from '@playwright/test';
 import type { SecretStore, TableState } from '../../../src/core/types';
 import { hook } from '../helpers/app';
 import { appUrl, call, decklist, fixturesScript, freshProfile, noNetwork, waitForSession, waitForWorker } from './helpers';
+import { OFFLINE_NOTICE } from '../../../src/ui/storage/offline';
 
 test('after one online visit the app loads offline and resumes the saved solo table: same state hash, same hidden cards', async ({ context, page }, info) => {
   const outside = await noNetwork(context);
@@ -43,6 +44,12 @@ test('after one online visit the app loads offline and resumes the saved solo ta
   expect(await hook<SecretStore>(page, 'secrets')).toEqual(secrets);
   expect((await hook<TableState>(page, 'state')).cards[hand[0]!]).toMatchObject({ zone: 'battlefield:s0', tapped: true, face: 'up' });
   expect(await page.evaluate(() => navigator.onLine)).toBe(false);
+  // The player is told the app is offline (gate M5-G: the offline banner), and the notice goes when the network is back.
+  await expect(page.getByTestId('offline-notice')).toHaveText(OFFLINE_NOTICE);
+  await context.setOffline(false);
+  await expect(page.getByTestId('offline-notice')).toHaveCount(0);
+  await context.setOffline(true);
+  await expect(page.getByTestId('offline-notice')).toBeVisible();
 
   // Play goes on offline and is saved like before.
   await call(page, 'draw', 1);

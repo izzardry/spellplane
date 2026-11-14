@@ -185,7 +185,7 @@ interface ItemDrag {
 }
 
 type Gesture =
-  | { kind: 'press'; pointerId: number; button: number; card: InstanceId | null; item: StackItemId | null; x0: number; y0: number; shift: boolean; alt: boolean; pileGrab: boolean }
+  | { kind: 'press'; pointerId: number; button: number; card: InstanceId | null; item: StackItemId | null; x0: number; y0: number; shift: boolean; alt: boolean; pileGrab: boolean; badge?: boolean }
   | { kind: 'pan'; pointerId: number; last: { x: number; y: number }; samples: { x: number; y: number; t: number }[] }
   | { kind: 'marquee'; pointerId: number; x0: number; y0: number; x1: number; y1: number; base: InstanceId[] }
   | { kind: 'line'; pointerId: number }
@@ -261,6 +261,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     onChange: () => (dirty = true),
     // An item hovered in the expanded list is the hovered stack item, as one hovered in the lane (M5-P7).
     onHoverItem: (item) => setHoverItem(item),
+    // A right press on an item of the expanded list starts a line from that stack item (startBadgeLine below).
+    onLinePress: (item, e) => startBadgeLine(item, e),
   });
   /** The lane is drawn as the badge this frame (far zoom; scene/stack.ts stackCollapsed). */
   let stackFolded = false;
@@ -288,6 +290,23 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const viewerLateral = (st: TableState | null): number => {
     const sl = st ? seatLayoutOf(st, layout, viewerSeat) : null;
     return sl ? lateralOf(sl.territory, sl.angle) : 0;
+  };
+  /**
+   * What the default ego view keeps clear of the HUD (PLAN M5 owner decision "Ego framing shows your own piles"): the
+   * corners of the viewer's territory, pile column (library, graveyard, exile) and command area.
+   */
+  const egoKeepOf = (st: TableState | null): TablePoint[] => {
+    const sl = st ? seatLayoutOf(st, layout, viewerSeat) : null;
+    if (!sl) return [];
+    const cornersOf = (r: { x: number; y: number; w: number; d: number; rot: number }) =>
+      [
+        [-1, -1],
+        [1, -1],
+        [1, 1],
+        [-1, 1],
+      ].map(([u, v]) => rectPoint(r, (u! * r.w) / 2, (v! * r.d) / 2));
+    const pile = (p: Pose) => cornersOf({ ...p, w: CARD_W, d: CARD_H });
+    return [...cornersOf(sl.territory), ...pile(sl.zones.library), ...pile(sl.zones.graveyard), ...pile(sl.zones.exile), ...cornersOf(sl.zones.command)];
   };
   // The HUD tells the scene which screen edges its screen-anchored layer covers through the host's
   // `data-fit-insets="top right bottom left"` (CSS px); fitting the table keeps the table clear of them.
@@ -419,6 +438,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     reduced,
     // A stack item's lines start at its visible title strip (scene/stack.ts itemAnchor), a marker's in its own slot.
     stackEnd: (item) => {
+      // A collapsed lane's items all stand at the badge, at the lane's centre (M5-P7 far-zoom stack).
+      if (stackFolded && entries.some((x) => x.item.id === item)) return { point: { x: layout.stackLane.x, y: layout.stackLane.y }, shape: { kind: 'point' } };
       const e = entries.find((x) => x.item.id === item);
       return e ? { point: itemAnchor(entryPose(e)), shape: { kind: 'point' } } : null;
     },
@@ -1325,6 +1346,24 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
   }
 
+  /**
+   * A right press on an item of the far-zoom badge's list (scene/stack-badge.ts): a press gesture as on the item's card
+   * in the lane, so dragging it draws a line from that stack item (DESIGN "Combat and annotation"; the collapsed lane
+   * draws no cards to start from).
+   */
+  function startBadgeLine(item: StackItemId, e: PointerEvent): void {
+    if (gesture || !stackFolded) return;
+    const entry = entries.find((x) => x.item.id === item);
+    if (!entry) return;
+    menuPending = null;
+    gesture = { kind: 'press', pointerId: e.pointerId, button: 2, card: entry.item.card ?? null, item, x0: e.clientX, y0: e.clientY, shift: e.shiftKey, alt: e.altKey, pileGrab: false, badge: true };
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // Synthetic events without an active pointer cannot be captured.
+    }
+  }
+
   /** The anchor a right-drag from this card draws from (scene/lines.ts lineSourceOf). */
   const lineSource = (rc: RCard) => (state ? lineSourceOf(state, rc.id) : null);
 
@@ -1334,6 +1373,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
    * player), or a seat's avatar spot on the table.
    */
   function lineTargetAt(x: number, y: number, exclude: InstanceId) {
+    // An item of the far-zoom badge's expanded list (M5-P7): the collapsed lane's items are reached there.
+    const listed = stackBadge.itemAt(x, y);
+    if (listed && state?.stack.some((i) => i.id === listed)) return { kind: 'stackItem' as const, id: listed };
     const seat = seatElementAt(x, y);
     if (seat) return seat;
     const rc = pick(x, y, new Set([exclude]));
@@ -1367,6 +1409,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const dr = lineView.draft;
       if (dr) {
         dr.cur = screenToTable(e.clientX, e.clientY);
+        stackBadge.trackLine({ x: e.clientX, y: e.clientY });
         dr.target = lineTargetAt(e.clientX, e.clientY, dr.sourceCard);
         dr.shift = e.shiftKey;
       }
@@ -1390,7 +1433,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const moved = Math.hypot(e.clientX - g.x0, e.clientY - g.y0);
       if (moved < DRAG_THRESHOLD_PX) return;
       const rc = g.card ? rcards.get(g.card) : null;
-      if (g.button === 2 && !rc && rig.rig() === 'ego') {
+      if (g.button === 2 && !rc && !g.badge && rig.rig() === 'ego') {
         menuPending = null;
         gesture = { kind: 'pitch', pointerId: g.pointerId, last: { x: e.clientX, y: e.clientY } };
         rig.pitchBy((e.clientY - g.y0) * PITCH_DEG_PER_PX);
@@ -1399,9 +1442,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         return;
       }
       if (g.button === 2) {
-        const source = rc ? lineSource(rc) : null;
+        // From the badge's list the source is the stack item itself (a marker has no card).
+        const source = g.badge && g.item ? { kind: 'stackItem' as const, id: g.item } : rc ? lineSource(rc) : null;
+        const sourceCard = rc?.id ?? g.card ?? g.item;
         menuPending = null;
-        lineView.draft = source && rc ? { pointerId: g.pointerId, source, sourceCard: rc.id, target: lineTargetAt(e.clientX, e.clientY, rc.id), cur: screenToTable(e.clientX, e.clientY), shift: e.shiftKey || g.shift } : null;
+        if (g.badge) stackBadge.trackLine({ x: e.clientX, y: e.clientY });
+        lineView.draft = source && sourceCard ? { pointerId: g.pointerId, source, sourceCard, target: lineTargetAt(e.clientX, e.clientY, sourceCard), cur: screenToTable(e.clientX, e.clientY), shift: e.shiftKey || g.shift } : null;
         gesture = lineView.draft ? { kind: 'line', pointerId: g.pointerId } : null;
         if (!gesture) release(e);
         setHover(null);
@@ -1491,6 +1537,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
       const dr = lineView.draft;
       dispatch(lineView.finish(dr ? lineTargetAt(e.clientX, e.clientY, dr.sourceCard) : null, e.shiftKey, newId));
+      stackBadge.trackLine(null);
       dirty = true;
       return;
     }
@@ -2266,6 +2313,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (want.table !== built.table || want.viewerAngle !== built.viewerAngle || want.reducedMotion !== built.reducedMotion || want.tableRot !== built.tableRot) rebuildTheme(want);
       if (formatLayout || prevState === null || Object.keys(prevState.seats).length !== Object.keys(next.seats).length) {
         rig.setTable(cameraTable(layout, viewerAngle(state, layout, viewerSeat)), viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
+        rig.setEgoKeep(egoKeepOf(state));
         rebuildMarkings();
       } else if (prevState.seats !== next.seats) {
         // A chair taken or left changes which hand rows the fitted view must show, and the names at the avatar spots.
@@ -2302,6 +2350,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       viewerSeat = seat;
       rebuildTheme(placement());
       rig.setTable(cameraTable(layout, viewerAngle(state, layout, viewerSeat)), viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
+      rig.setEgoKeep(egoKeepOf(state));
       rebuildMarkings();
       relayout(performance.now());
     },

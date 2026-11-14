@@ -8,6 +8,7 @@
   one click away; it steps aside while a match is played. Not modal. Implementer: M5-P2.
 -->
 <script lang="ts">
+  import SeatGlyph from '../a11y/SeatGlyph.svelte';
   import { onMount, untrack } from 'svelte';
   import { AUDIT_STATUS_TEXT } from '../../core/audit';
   import { verifiedDetail, type AuditControls, type AuditGameView, type AuditSeatView } from '../../net/audit';
@@ -65,7 +66,7 @@
         {#each shown.seats as s (s.seat)}
           <li data-testid="audit-row" data-seat={s.seat} data-status={s.verdict?.status ?? 'pending'} class={s.verdict?.status ?? 'pending'}>
             <div class="line">
-              <span class="swatch" style="background: var(--sp-seat-{s.colour}, #888)" aria-hidden="true"></span>
+              <span class="swatch" style="background: var(--sp-seat-{s.colour}, #888)" aria-hidden="true"></span><SeatGlyph colour={s.colour} />
               <span class="name">{s.name}</span>
               <span class="status" data-testid="audit-status">{status(s)}</span>
             </div>

@@ -33,7 +33,8 @@
   .notice {
     position: fixed;
     left: 50%;
-    top: calc(8px + env(safe-area-inset-top, 0px));
+    /* Below the turn strip (two rows on a tablet), never over the phases (M5 gate). */
+    top: calc(104px + env(safe-area-inset-top, 0px));
     transform: translateX(-50%);
     max-width: calc(100vw - 24px);
     padding: 6px 12px;

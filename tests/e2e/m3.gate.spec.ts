@@ -210,6 +210,15 @@ async function stackStrip(page: Page, card: string): Promise<{ x: number; y: num
   await sceneIdle(page);
   const e = (await lane(page)).find((x) => x.face === card);
   if (!e) throw new Error(`stack entry for ${card} is not drawn`);
+  // At far zoom the lane is drawn as the count badge (M5 owner decision "Far-zoom stack"): hover it, and the item's
+  // title strip in the expanded list is where a line starts or ends.
+  const badge = await page.evaluate(() => window.__spellplane!.stackBadge?.() ?? null);
+  if (badge?.collapsed && badge.screen) {
+    await page.mouse.move(badge.screen.x + badge.screen.width / 2, badge.screen.y + badge.screen.height / 2);
+    await expect.poll(() => page.evaluate(() => window.__spellplane!.stackBadge?.()?.expanded ?? false)).toBe(true);
+    const row = (await page.locator(`[data-testid="stack-badge-item"][data-item="${e.item}"]`).boundingBox({ timeout: 5000 }))!;
+    return { x: row.x + row.width / 2 + 20, y: row.y + 12 };
+  }
   const full = e.screen.height / e.scale;
   return { x: e.screen.x + e.screen.width / 2, y: e.screen.y + (full * 9) / 88 };
 }

@@ -19,7 +19,7 @@ import { TableRig, lateralOf } from '../../../src/scene/camera/rig';
 import { cameraTable } from '../../../src/scene/layout';
 import { forward } from '../../../src/scene/math';
 import { DEFAULT_EGO_RIG, EGO_FRAMING_VIEWPORTS } from '../../../src/scene/types';
-import { FIT_INSET } from '../../../src/ui/hand';
+import { FIT_INSET, fitInsets } from '../../../src/ui/hand';
 
 const LAYOUTS: { name: string; layout: TableLayout }[] = [
   ...(['1v1', 'ffa3', 'ffa4', '2hg'] as Format[]).map((f) => ({ name: f, layout: mtgLayout(f) })),
@@ -139,5 +139,52 @@ describe("within DESIGN's limits", () => {
     for (let i = 0; i < 40; i++) rig.zoomAt(597, 417, 1.5);
     expect(rig.pose().position[2]).toBeGreaterThanOrEqual(DEFAULT_EGO_RIG.minHeight - 1e-6);
     expect(rig.nav.dolly).toBeLessThanOrEqual(DEFAULT_EGO_RIG.maxDollyMm + 1e-6);
+  });
+});
+
+/**
+ * M5 gate: on screen means visible. The HUD's screen layer covers the left avatar column, the open log on the right,
+ * the toolbar and the hand fan (ui/hand.ts fitInsets, handed to the rig as the scene host's fit insets); the default
+ * ego view pulls the seat back and shifts it sideways until the own pieces clear them, and changes nothing where they
+ * already do.
+ */
+describe('the default ego view keeps the own piles clear of the HUD', () => {
+  for (const { name, layout } of LAYOUTS) {
+    for (const seat of layout.seats) {
+      for (const vp of EGO_FRAMING_VIEWPORTS) {
+        for (const thumb of [0, 64]) {
+          it(`${name}, seat ${seat.index}, ${vp.width}x${vp.height}${thumb ? ', thumb bar' : ''}`, () => {
+            const rig = egoRig(layout, seat, vp);
+            const [top, right, bottom, left] = fitInsets(vp.height, true, false, thumb).split(' ').map(Number) as [number, number, number, number];
+            rig.setInsets({ top, right, bottom, left });
+            rig.setEgoKeep(ownPieces(seat).flatMap((p) => corners(p.rect)));
+            for (const piece of ownPieces(seat)) {
+              for (const p of corners(piece.rect)) {
+                const s = rig.tableToScreen(p);
+                expect(rig.depthOf(p), piece.name).toBeGreaterThan(0);
+                expect(s.x, `${piece.name} x`).toBeGreaterThanOrEqual(left);
+                expect(s.x, `${piece.name} x`).toBeLessThanOrEqual(vp.width - right);
+                expect(s.y, `${piece.name} y`).toBeGreaterThanOrEqual(top);
+                expect(s.y, `${piece.name} y`).toBeLessThanOrEqual(vp.height - bottom);
+              }
+            }
+            // Still the ego rig's look: pitch and field of view kept, the camera above and behind the own edge.
+            expect(rig.pose().pitchDeg).toBe(35);
+            expect(rig.pose().fovDeg).toBe(45);
+            expect(rig.pose().position[2]).toBeGreaterThanOrEqual(CAMERA.ego.height - 1e-6);
+          });
+        }
+      }
+    }
+  }
+
+  it('changes nothing when the HUD covers none of the own pieces', () => {
+    const layout = mtgLayout('1v1');
+    const seat = layout.seats[0]!;
+    const rig = egoRig(layout, seat, EGO_FRAMING_VIEWPORTS[0]!);
+    const before = rig.pose();
+    rig.setEgoKeep(ownPieces(seat).flatMap((p) => corners(p.rect)));
+    expect(rig.egoFrame).toEqual({ pull: 0, shift: 0 });
+    expect(rig.pose()).toEqual(before);
   });
 });
