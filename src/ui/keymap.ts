@@ -109,6 +109,17 @@ export function findConflict(keymap: Keymap, chord: KeyChord, context: KeyContex
  */
 export const RESERVED_KEYS: readonly { chord: KeyChord; context: KeyContext; label: string }[] = [{ chord: { key: 'u' }, context: 'table', label: 'Untap all and draw (when offered)' }];
 
+/**
+ * The platform keys that open a context menu (the context-menu key, Shift+F10): the HUD opens the keyboard-focused
+ * card's menu on them in every context (DECISIONS [M5-P4]), so they are not remappable either (M5 review).
+ */
+export const MENU_KEYS: readonly KeyChord[] = [{ key: 'ContextMenu' }, { key: 'F10', shift: true }];
+
+/** Whether a key event is one of the context-menu keys (Meta never matches, as for every chord). */
+export function isMenuKey(e: KeyInput): boolean {
+  return MENU_KEYS.some((c) => matchesChord(c, e));
+}
+
 /** The reserved key's label when `chord` is reserved in `context`, else null. */
 export function reservedConflict(chord: KeyChord, context: KeyContext): string | null {
   return RESERVED_KEYS.find((r) => r.context === context && sameChord(r.chord, chord))?.label ?? null;
