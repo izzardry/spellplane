@@ -2444,11 +2444,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const pressHold = attachPressHold(canvas, { kind: pressKind, onChange: (phase, kind) => opts.events.pressHold?.(phase, kind) });
   /** What the press under way is doing (SceneEvents.pressHold's kind). */
   function pressKind(): TablePressKind {
+    if (clipHold || clipDrag) return 'clip';
     if (drag || itemDrag) return 'card';
     if (lineView.draft) return 'line';
-    if (touchHold) return touchHold.kind === 'pan' ? 'camera' : touchHold.kind === 'marquee' ? 'marquee' : touchHold.kind === 'line' ? 'line' : 'card';
+    if (touchHold) return touchHold.kind === 'pan' ? 'camera' : touchHold.kind === 'marquee' ? 'marquee' : touchHold.kind === 'line' ? 'line' : touchHold.kind === 'clip' ? 'clip' : 'card';
     const g = gesture;
     if (!g) return 'other';
+    if (g.kind === 'held') return 'clip';
     if (g.kind === 'pan' || g.kind === 'pitch') return 'camera';
     if (g.kind === 'marquee' || g.kind === 'line') return g.kind;
     if (g.kind === 'drag') return 'card';
