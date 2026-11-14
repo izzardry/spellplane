@@ -12,8 +12,10 @@
  * - Only into a history in which every player has seen the game end: the bundle shows the library orders, and a
  *   history may be abandoned for one in which the game is still being played (DESIGN "Resume and failure handling":
  *   later arrivals reconcile to the copy with the highest sequence number; a player cut off just before the end plays
- *   on alone). So a bundle is proposed only once every other player of the game who still holds a chair acknowledged
- *   the game's end in this browser's history (`acks`): its heartbeat names the sequencer this browser follows, in step,
+ *   on alone). So a bundle is proposed only once every other seat that holds a chair acknowledged the game's end in
+ *   this browser's history (`acks`), whether or not it played the game (a peer who sat down mid-match without a deck
+ *   sequences like any other, so it may hold a history in which the game goes on; the verdicts still cover only the
+ *   game's players): its heartbeat names the sequencer this browser follows, in step,
  *   at a seq at or after the end and not ahead of this browser (a peer further ahead may hold another history), or
  *   its own bundle of the game is sequenced here. Every history that can win a reconciliation then holds the end. A
  *   player who answered nothing (the pass timer answered for them) acknowledges like any other; one who left before
@@ -25,13 +27,15 @@
  *   abandoned history's own actions again after adopting another one, net/engine.ts requeueLost): `outgoing` replaces
  *   such a bundle by a withheld stub every reducer refuses, so the proposal is rolled back without its records.
  * - Verdicts: net/audit.ts AuditLedger, fed with every sequenced action; one log line per verdict (a mismatch as a
- *   warning), placed after the seat's `auditPublish`, and the audit panel (ui/audit) through `AuditControls`.
+ *   warning), placed after the seat's `auditPublish`, and the audit panel (ui/audit) through `AuditControls`. The line
+ *   of a seat without a bundle (the wait ran out on this browser's clock) says the records are missing so far: a bundle
+ *   published later is still checked and gets a line of its own, so peers may differ in that line, never in a verdict.
  * - A reload, a rewind to another history or a catch-up rebuilds the ledger from the saved log, replayed from the
  *   room's seq-0 table or the latest saved snapshot; the replay must end on the confirmed state, else (a log with a gap)
  *   the ledger drops the games it can no longer follow and only later games are audited.
  */
 import type { Action, ActionDraft } from '../core/actions';
-import { buildAuditBundle, type AuditBundle, type AuditVerdict } from '../core/audit';
+import { AUDIT_STATUS_TEXT, buildAuditBundle, type AuditBundle, type AuditVerdict } from '../core/audit';
 import { canonicalJson } from '../core/hash';
 import { explain } from '../core/reducer/index';
 import type { LogEntry, SecretStore, SeatId, TableState } from '../core/types';
@@ -222,17 +226,19 @@ export class SessionAudit implements AuditControls {
   }
 
   /**
-   * The other players of `g` who still hold a chair and have not acknowledged the game's end in this browser's
-   * history (see the module comment); the own bundle waits for them.
+   * The other seats that hold a chair now and have not acknowledged the game's end in this browser's history (see the
+   * module comment); the own bundle waits for them. Every chair counts, not only the game's players: a peer who sat down
+   * in a free chair without a deck sequences like any other and may hold a history in which the game is still on.
    */
   private blockers(g: LedgerGame, me: SeatId): SeatId[] {
     const st = this.port.confirmed();
-    return g.players.filter((p) => {
-      if (p === me || g.bundles.has(p)) return false;
-      const seat = st.seats[p];
-      if (!seat || seat.name.trim() === '') return false;
-      return (this.acks.get(p) ?? -1) < g.game.toSeq;
-    });
+    return Object.values(st.seats)
+      .filter((seat) => {
+        if (seat.id === me || seat.name.trim() === '' || g.bundles.has(seat.id)) return false;
+        return (this.acks.get(seat.id) ?? -1) < g.game.toSeq;
+      })
+      .sort((x, y) => x.index - y.index)
+      .map((seat) => seat.id);
   }
 
   /** Whether this browser may still publish its own bundle of `g` (it played the game, has not published, not given up). */
@@ -307,7 +313,10 @@ export class SessionAudit implements AuditControls {
         const key = `${g.game.game}|${seat}|${b ? b.seq : 'none'}`;
         if (this.logged.has(key)) continue;
         this.logged.add(key);
-        this.port.log(v.status === 'mismatch' ? 'warn' : 'info', verdictLine(v, g.names[seat]?.name || seat), b?.seq);
+        const name = g.names[seat]?.name || seat;
+        // Without a bundle the line is provisional: a bundle that arrives later is still checked (and logged).
+        const line = b ? verdictLine(v, name) : `Audit of game ${v.game}: ${name} — ${AUDIT_STATUS_TEXT.unverifiable} (none published so far; records published later are still checked)`;
+        this.port.log(v.status === 'mismatch' ? 'warn' : 'info', line, b?.seq);
       }
       if (this.ledger.waiting(g, now)) next = Math.min(next ?? Infinity, g.endedAt + AUDIT_WAIT_MS);
     }
@@ -356,7 +365,7 @@ export class SessionAudit implements AuditControls {
       if (!g || !this.canPublish(g, me)) return view;
       const st = this.port.confirmed();
       const held = this.blockers(g, me).map((p) => {
-        const name = g.names[p]?.name || p;
+        const name = st.seats[p]?.name.trim() || g.names[p]?.name || p;
         return st.seats[p]?.away === true ? `${name} (away)` : name;
       });
       const note = held.length > 0 ? `Published once ${list(held)} ${held.length === 1 ? 'has' : 'have'} the game's end` : undefined;

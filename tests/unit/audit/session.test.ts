@@ -125,7 +125,7 @@ describe('the session’s audit', () => {
     const g = endedAlone();
     const f = fixture(g, { now: AUDIT_WAIT_MS + 1 });
     f.rebuild();
-    expect(f.lines).toEqual(['Audit of game 1: Ben — could not be checked: records missing (No audit records were published (the player left early or lost the save).)']);
+    expect(f.lines).toEqual(['Audit of game 1: Ben — could not be checked: records missing (none published so far; records published later are still checked)']);
     f.audit.drive();
     expect(f.lines).toHaveLength(1);
     expect(f.audit.verdicts().map((v) => v.seat)).toEqual(['s1']);

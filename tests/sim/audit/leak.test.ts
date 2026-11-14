@@ -11,9 +11,10 @@
  * - after game two started: Anna's game-one nonces and orders are public now, and nothing else is: no identity or salt
  *   of a card that stayed hidden in either game, no nonce or re-issue link of game two. The published bundle itself holds
  *   no identity or salt, and names no card of game two.
- * A negative control shows the scan is not vacuous. Two fork scenarios: a player cut off who ends the game alone in a
- * history that loses, and (three players) a player cut off right after agreeing to "Next game?" who plays on alone
- * in a history that wins; neither history carries anybody's records.
+ * A negative control shows the scan is not vacuous. Three fork scenarios: a player cut off who ends the game alone in a
+ * history that loses; (three players) a player cut off right after agreeing to "Next game?" who plays on alone in a
+ * history that wins; and a peer who sat down mid-match without a deck (no player of the game, but a chair, so a
+ * sequencer of its own when cut off) who plays on alone in a history that wins. No history carries anybody's records.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { auditGames, buildAuditBundle, type AuditBundle } from '../../../src/core/audit';
@@ -24,8 +25,8 @@ import type { Channel, Message, MessageHandler, PeerHandler, PeerId, Transport }
 import { forbiddenFor, leakScan } from '../../leak/leak';
 import { scan } from '../../leak/scan';
 import { AUDIT_WAIT_MS } from '../../../src/net/audit';
-import { stageIs } from '../flow/evening';
-import { closeAll, FAKE_TIMERS, net, observedBy, settle, trackDisclosures, until, waitConverged, type Browser, type NetTable } from '../session/harness';
+import { EVENING_OPTS, stageIs } from '../flow/evening';
+import { browser, closeAll, FAKE_TIMERS, fixtureDeck, net, observedBy, open, settle, trackDisclosures, until, waitConverged, type Browser, type NetTable } from '../session/harness';
 import { endGame, isLand, playMiddle, startGame, startThree, verdictOf, verdictsIn } from './game';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
@@ -267,6 +268,98 @@ describe('shared leak test: the post-game audit', () => {
         expect(scan(observed, nonces)).toEqual([]);
         expect(JSON.stringify(observed)).not.toContain('auditPublish');
       }
+    }
+  });
+  it('a peer who sat down mid-match without a deck holds a chair: cut off, playing on alone in a history that wins, nobody published to anybody', async () => {
+    const network = net({ seed: 3 });
+    const A = await browser('anna', 'peer-a', 'Anna', 2);
+    const B = await browser('ben', 'peer-b', 'Ben', 5);
+    const C = await browser('cara', 'peer-c', 'Cara', 7);
+    browsers.push(A, B, C);
+    await open(network, A, {}, { ...EVENING_OPTS, format: 'ffa3' });
+    await open(network, B, {}, { ...EVENING_OPTS, format: 'ffa3' });
+    const [a, b] = [A.session!, B.session!];
+    await waitConverged([a, b], 'two seated');
+    a.evening!.setLobby({ draft: null, sets: ['M19'], pickTimer: false });
+    await settle(a.importDeck(await fixtureDeck('gw-m19-60.txt')), 30_000, 'Anna ready');
+    await settle(b.importDeck(await fixtureDeck('ur-m19-60.mtga.txt')), 30_000, 'Ben ready');
+    a.evening!.start();
+    await until(() => [a, b].every((s) => s.engine.confirmedState().stage === 'match'), 60_000, 'the match');
+    await settle(Promise.all([a.shuffle(), b.shuffle()]), 60_000, 'both shuffles');
+    await settle(a.draw(7));
+    await settle(b.draw(7));
+    await waitConverged([a, b], 'opening hands');
+
+    // Cara opens the link mid-match and takes the free chair; she has no deck, so she is no player of game one.
+    let cutC: Cuttable | null = null;
+    await open(network, C, {}, { ...EVENING_OPTS, format: 'ffa3', transport: () => (cutC = new Cuttable(network.create('peer-c'))) });
+    const c = C.session!;
+    await waitConverged([a, b, c], 'three seated');
+    expect(c.seat).toBe('s2');
+    expect(a.audit!.games()).toEqual([]);
+
+    // Cara's link goes silent; Anna and Ben end the game ("Next game", the pass timer answers for Cara).
+    cutC!.cut = true;
+    await until(() => a.engine.confirmedState().seats.s2!.away === true, 30_000, 'Cara away for Anna');
+    const ending = a.evening!.propose('nextGame');
+    await until(() => b.engine.confirmedState().confirm?.label === 'Next game?', 10_000, 'the question');
+    b.dispatch({ type: 'respond', round: b.engine.confirmedState().confirm!.id, seat: 's1', response: 'ok' });
+    expect(await settle(ending, 120_000, 'the next game')).toBe(true);
+    await until(() => [a, b].every((s) => s.engine.confirmedState().stage === 'build'), 60_000, 'the end for Anna and Ben');
+    await vi.advanceTimersByTimeAsync(AUDIT_WAIT_MS + 1000);
+    // Cara never reported the end: Anna and Ben hold their records, and their rows say for whom.
+    const published = (s: NetTable): Action[] => s.log().flatMap((e) => (e.kind === 'action' && e.action.type === 'auditPublish' ? [e.action] : []));
+    expect(published(a)).toEqual([]);
+    expect(published(b)).toEqual([]);
+    expect(a.audit!.games()[0]!.seats.map((x) => x.seat)).toEqual(['s0', 's1']);
+    expect(a.audit!.games()[0]!.seats.find((x) => x.seat === 's0')!.note).toBe("Published once Cara (away) has the game's end");
+    expect(b.audit!.games()[0]!.seats.find((x) => x.seat === 's1')!.note).toBe("Published once Cara (away) has the game's end");
+
+    // Cara, alone, sequences and plays on in game one; her history grows longer.
+    await until(() => c.engine.isSequencer(), 30_000, 'Cara sequencing alone');
+    for (let i = 0; i < 80; i++) {
+      c.dispatch({ type: 'chat', text: `hi ${i}`, channel: 'table' });
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    c.dispatch({ type: 'ask', round: 'r-cara-attacks', label: 'Attacks?' });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(c.engine.seq()).toBeGreaterThan(a.engine.seq());
+
+    // The link is back: Cara's history wins; Anna's "Next game?" is asked again there and Cara holds.
+    network.kill('peer-c');
+    cutC!.cut = false;
+    await vi.advanceTimersByTimeAsync(100);
+    network.revive('peer-c');
+    await until(() => c.engine.confirmedState().confirm?.label === 'Next game?', 60_000, 'the question again in Cara’s history');
+    const round = c.engine.confirmedState().confirm!.id;
+    c.dispatch({ type: 'respond', round, seat: 's2', response: 'hold' });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await waitConverged([a, b, c], 'Cara’s history');
+    for (const s of [a, b, c]) expect(s.engine.confirmedState().stage).toBe('match');
+    // Nobody received anybody's audit records.
+    const noncesOf = (s: NetTable): string[] => s.secrets().audit.map((r) => (r.kind === 'shuffle' ? r.ownerNonce : r.nonce));
+    for (const [owner, others] of [
+      [a, [B, C]],
+      [b, [A, C]],
+    ] as const) {
+      const nonces = noncesOf(owner);
+      expect(nonces.length).toBeGreaterThan(0);
+      for (const o of others) {
+        const observed = await observedBy(network, o);
+        expect(scan(observed, nonces)).toEqual([]);
+        expect(JSON.stringify(observed)).not.toContain('auditPublish');
+      }
+    }
+
+    // Cara lets the question pass: the game ends in the shared history, Anna and Ben publish, and all three browsers
+    // verify both (Cara acknowledged the end, though she has no records of her own).
+    c.dispatch({ type: 'respond', round, seat: 's2', response: 'release' });
+    c.dispatch({ type: 'respond', round, seat: 's2', response: 'ok' });
+    await until(() => [a, b, c].every((s) => s.engine.confirmedState().stage === 'build'), 60_000, 'the end of the game');
+    await verdictsIn([a, b, c]);
+    for (const s of [a, b, c]) {
+      expect(verdictOf(s, 's0')!.status).toBe('verified');
+      expect(verdictOf(s, 's1')!.status).toBe('verified');
     }
   });
 });

@@ -212,7 +212,7 @@ describe('the post-game audit on a simulated network', () => {
     expect(g.a.audit!.games()[0]!.seats.find((x) => x.seat === 's0')).toMatchObject({ verdict: null, note: "Published once Ben (away) has the game's end" });
     expect(g.a.audit!.verdicts().map((v) => v.seat)).toEqual(['s1']);
     expect(verdictOf(g.a, 's1')).toMatchObject({ status: 'unverifiable', reason: 'recordsMissing', checked: 0 });
-    expect(auditLines(g.a)).toEqual(['Audit of game 1: Ben — could not be checked: records missing (No audit records were published (the player left early or lost the save).)']);
+    expect(auditLines(g.a)).toEqual(['Audit of game 1: Ben — could not be checked: records missing (none published so far; records published later are still checked)']);
 
     // Ben comes back with his save: his browser publishes the records it kept, and once his browser reports the end in
     // Anna's history she publishes hers; both verdicts become the real ones.
