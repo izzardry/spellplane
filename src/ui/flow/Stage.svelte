@@ -130,12 +130,17 @@
     transform: translateX(-50%);
     bottom: 12px;
   }
-  /* In a match the bar sits in the bottom-left corner, below the own avatar and clear of the hand fan. */
+  /* In a match the bar sits in the bottom-left corner, below the own avatar, within the avatars' column (ui/hand.ts
+     FIT_INSET.avatars, 190 px) so it stays clear of the hand fan: its buttons wrap rather than reach the fan (M5 gate). */
   .evening.in-match {
     left: 12px;
     transform: none;
     bottom: 12px;
-    max-width: min(320px, calc(50vw - 24px));
+    max-width: 166px;
+  }
+  .evening.in-match :global([data-testid='evening-bar']) {
+    max-width: 166px;
+    box-sizing: border-box;
   }
   .unavailable {
     margin: 48px auto;

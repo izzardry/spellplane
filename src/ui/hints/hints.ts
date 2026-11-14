@@ -25,6 +25,11 @@ export interface HintContext {
   voice: boolean;
   /** A spectator: no hover keys, no talking. */
   spectator?: boolean;
+  /**
+   * A table in a room with other players (an evening): the welcome's "import a deck to try it alone" does not fit there
+   * (M5 gate), so it waits for the start page or the solo table.
+   */
+  networked?: boolean;
 }
 
 /** The next hint to show, or null: the first not yet seen that fits the page. */
@@ -32,7 +37,7 @@ export function nextHint(seen: readonly string[], ctx: HintContext): FirstRunHin
   const fits = (id: FirstRunHint): boolean => {
     switch (id) {
       case 'welcome':
-        return true;
+        return !(ctx.where === 'table' && ctx.networked);
       case 'tableKeys':
         return ctx.where === 'table' && !ctx.touch && !ctx.spectator;
       case 'touchGestures':
@@ -45,7 +50,7 @@ export function nextHint(seen: readonly string[], ctx: HintContext): FirstRunHin
 }
 
 /** A hint's title and text, naming the player's keys (`key(action)` gives its label, or null when unbound). */
-export function hintText(id: FirstRunHint, key: (action: ActionId) => string | null): { title: string; text: string } {
+export function hintText(id: FirstRunHint, key: (action: ActionId) => string | null, touch = false): { title: string; text: string } {
   const k = (a: ActionId, fallback: string): string => key(a) ?? fallback;
   switch (id) {
     case 'welcome':
@@ -64,6 +69,13 @@ export function hintText(id: FirstRunHint, key: (action: ActionId) => string | n
         text: 'Tap selects, double-tap taps a card, long-press opens its actions, long-press and drag draws a line. Two fingers move the camera.',
       };
     case 'talkKey':
+      // A touch screen has no talk key to hold: the thumb bar's Talk button is the route (DESIGN "Input and
+      // interaction design", Touch; M5 gate).
+      if (touch)
+        return {
+          title: 'Talk',
+          text: 'Touch and hold Talk in the bar at the bottom to talk to the table; let go to stop.',
+        };
       return {
         title: 'Talk',
         text: `Hold ${k('talk', 'the talk key')} to talk to the table; a quick ${k('talk', 'press')} with another key stays a shortcut. ${k('mute', 'M')} mutes you.`,
@@ -92,6 +104,11 @@ export class HintController {
     ctx: HintContext,
   ) {
     this.ctx = { ...ctx };
+  }
+
+  /** Whether the page is on a touch screen (the hint texts name touch routes then). */
+  get touch(): boolean {
+    return this.ctx.touch;
   }
 
   /** The hint to show now, or null. */

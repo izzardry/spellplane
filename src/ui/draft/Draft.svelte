@@ -12,6 +12,7 @@
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
+  import { touchDevice } from '../touch/device';
   import type { CardRef, InstanceId, TableState } from '../../core/types';
   import type { DraftPrivateView } from '../../draft/types';
   import { mtg } from '../../games/index';
@@ -51,7 +52,9 @@
   const clock = new SeqClock();
   clock.observe(untrack(() => st.seq), Date.now());
 
-  const status = $derived(draftStatus(st, pv, me));
+  /** A touch screen: the prompt names taps (ui/touch/device.ts). */
+  const touchScreen = touchDevice();
+  const status = $derived(draftStatus(st, pv, me, touchScreen));
   const chips = $derived(seatChips(st, pv, me));
   const remaining = $derived(pv.timer ? remainingMs(pv.timer, clock, now) : null);
   const need = $derived(pv.pack ? picksNeeded(pv.picks, pv.pack.cards.length) : 0);

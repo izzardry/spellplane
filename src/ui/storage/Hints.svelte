@@ -9,6 +9,7 @@
   import { onMount } from 'svelte';
   import { isStoragePersisted, requestPersistentStorage } from '../../store/persist';
   import type { HintId, SettingsStore } from '../../store/types';
+  import { storageHintsShown } from './showing.svelte';
   import { HOME_SCREEN_HINT, pageHintEnv, PERSIST_HINT, showHomeScreenHint, showPersistHint, withSeen, type HintEnv } from './hints';
 
   let {
@@ -52,7 +53,16 @@
   }
 
   const homeScreen = $derived(seen !== null && hints.includes('installHomeScreen') && showHomeScreenHint(env, seen));
-  const persist = $derived(seen !== null && persistState !== null && hints.includes('persistStorage') && showPersistHint(persistState, seen));
+  // One hint at a time: the storage prompt waits for the Home Screen hint to be answered.
+  const persist = $derived(!homeScreen && seen !== null && persistState !== null && hints.includes('persistStorage') && showPersistHint(persistState, seen));
+  // The welcome hint (ui/hints) waits while one of these shows.
+  $effect(() => {
+    const n = (homeScreen ? 1 : 0) + (persist ? 1 : 0);
+    storageHintsShown.count += n;
+    return () => {
+      storageHintsShown.count -= n;
+    };
+  });
 </script>
 
 {#if homeScreen}

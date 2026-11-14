@@ -1528,6 +1528,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (!g || ('pointerId' in g && g.pointerId !== e.pointerId)) return;
     gesture = null;
     release(e);
+    // A right press on the far-zoom badge's list that never became a line lets the list go (scene/stack-badge.ts).
+    if (g.kind === 'press' && g.badge) stackBadge.trackLine(null);
     if (g.kind === 'pitch') {
       // The context menu some platforms fire on release does not open after a pitch.
       menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
@@ -1613,6 +1615,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (itemDrag && itemDrag.pointerId === e.pointerId) finishItemDrag(true);
     if (gesture?.kind === 'marquee') marqueeEl.style.display = 'none';
     if (gesture?.kind === 'line') dirty = true;
+    if (gesture?.kind === 'line' || (gesture?.kind === 'press' && gesture.badge)) stackBadge.trackLine(null);
     lineView.draft = null;
     gesture = null;
     menuPending = null;

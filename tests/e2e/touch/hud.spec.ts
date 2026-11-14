@@ -32,6 +32,18 @@ test.describe('on an iPad', () => {
     expect(barBox.y + barBox.height).toBeLessThanOrEqual(hand!.y + 1);
   });
 
+  test('Draw N works without a keyboard: the field has a Draw button (no return key needed)', async ({ page }, info) => {
+    const { hand } = await tableWithCards(page, info, { battlefield: 0, hand: 1 });
+    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').tap();
+    await expect(page.getByTestId('pile-viewer')).toHaveAttribute('data-kind', 'library');
+    await page.getByTestId('pile-viewer').getByRole('button', { name: /^Draw N/ }).tap();
+    await expect(page.getByTestId('draw-n-input')).toBeVisible();
+    await page.getByTestId('draw-n-input').fill('3');
+    await page.getByTestId('draw-n-go').tap();
+    await expect.poll(async () => (await hook<{ hand: string[] }>(page, 'secrets')).hand.length).toBe(hand.length + 3);
+    await expect(page.getByTestId('draw-n')).toHaveCount(0);
+  });
+
   test('Attack sends the tapped (selected) creature forward and taps it; Settle brings it home', async ({ page }, info) => {
     const { bf } = await tableWithCards(page, info);
     const c = centre(await card(page, bf[1]!));

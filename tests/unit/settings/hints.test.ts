@@ -102,3 +102,19 @@ describe('HintController', () => {
     expect(h.current()).toBe('tableKeys');
   });
 });
+
+describe('M5 gate: hints that fit the evening and the touch screen', () => {
+  it('the welcome ("import a deck to try it alone") waits for the start page or the solo table, not a networked evening', () => {
+    expect(nextHint([], { where: 'table', touch: true, voice: true, networked: true })).toBe('touchGestures');
+    expect(nextHint([], { where: 'table', touch: false, voice: true, networked: true })).toBe('tableKeys');
+    expect(nextHint([], { where: 'table', touch: false, voice: false })).toBe('welcome');
+    expect(nextHint([], { where: 'start', touch: true, voice: false, networked: true })).toBe('welcome');
+  });
+
+  it('on a touch screen the talk hint names the thumb bar, not a key', () => {
+    const touch = hintText('talkKey', () => 'Ctrl', true);
+    expect(touch.text).not.toMatch(/Ctrl|key/i);
+    expect(touch.text).toContain('Talk');
+    expect(hintText('talkKey', () => 'Ctrl').text).toContain('Hold Ctrl');
+  });
+});

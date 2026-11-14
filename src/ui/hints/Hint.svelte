@@ -14,7 +14,7 @@
   }: {
     hints: HintController;
     keyOf?: (action: ActionId) => string | null;
-    /** 'corner': fixed at the bottom right of the screen; 'inline': in the page flow. */
+    /** 'corner': fixed at the top centre of the screen, below the turn strip; 'inline': in the page flow. */
     placement?: 'corner' | 'inline';
   } = $props();
 
@@ -25,7 +25,7 @@
     hint = hints.current();
     return off;
   });
-  const shown = $derived(hint ? hintText(hint, keyOf) : null);
+  const shown = $derived(hint ? hintText(hint, keyOf, hints.touch) : null);
 </script>
 
 {#if hint && shown}
@@ -55,8 +55,11 @@
   .hint.corner {
     position: fixed;
     z-index: 60;
-    right: max(8px, env(safe-area-inset-right));
-    bottom: max(8px, env(safe-area-inset-bottom));
+    /* Top centre, below the turn strip and the notices: clear of the hand fan, the log, the toolbar and the avatars
+       (M5 gate); over the far side of the table, which stays live under it. */
+    left: 50%;
+    transform: translateX(-50%);
+    top: calc(140px + env(safe-area-inset-top, 0px));
     /* Never blocking: only the button takes pointer events. */
     pointer-events: none;
   }

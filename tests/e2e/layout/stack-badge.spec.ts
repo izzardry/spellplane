@@ -118,6 +118,28 @@ test.describe('far zoom with a mouse', () => {
     await expect.poll(async () => (await badge(page)).collapsed).toBe(true);
   });
 
+  test('a target line starts and ends at items of the expanded list (DESIGN: lines from and to stack items)', async ({ page }) => {
+    await openWithStack(page);
+    await expect.poll(async () => (await badge(page)).collapsed).toBe(true);
+    const at = centreOf((await badge(page)).screen!);
+    await page.mouse.move(at.x, at.y, { steps: 4 });
+    await expect.poll(async () => (await badge(page)).expanded).toBe(true);
+    const rowOf = async (item: string) => (await page.locator(`[data-testid="stack-badge-item"][data-item="${item}"]`).boundingBox())!;
+    const from = await rowOf('i3');
+    const to = await rowOf('i1');
+    const targets = () =>
+      page.evaluate(() => Object.values(window.__spellplane!.state!().lines).filter((l) => l.kind === 'target').map((l) => ({ from: l.from, to: l.to })));
+    // Right-drag from the ability (i3) to the first spell (i1), both in the list: one target line between the items.
+    await page.mouse.move(from.x + from.width / 2 + 20, from.y + 12, { steps: 2 });
+    await page.mouse.down({ button: 'right' });
+    await page.mouse.move(to.x + to.width / 2 + 20, (from.y + to.y) / 2 + 12, { steps: 4 });
+    await page.mouse.move(to.x + to.width / 2 + 20, to.y + 12, { steps: 4 });
+    await page.mouse.up({ button: 'right' });
+    await expect.poll(targets).toEqual([{ from: { kind: 'stackItem', id: 'i3' }, to: { kind: 'stackItem', id: 'i1' } }]);
+    // No context menu of the browser's own over the badge.
+    await expect(page.getByTestId('stack-badge')).toBeVisible();
+  });
+
   test('an empty stack shows no badge', async ({ page }) => {
     await page.goto(`./?${new URLSearchParams({ faces: 'placeholder', harness: 'scene', format: 'ffa4', viewer: 's0' }).toString()}`);
     await expect.poll(() => page.evaluate(() => window.__sceneHarness?.ready() ?? false), { timeout: 30_000 }).toBe(true);

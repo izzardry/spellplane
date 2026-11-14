@@ -462,6 +462,16 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
       }
       if (press?.dragging && press.grabs?.length) endDrag();
       press = null;
+      // A finger that lifts is gone from the table: no cursor stays where it last touched (M5 gate; a mouse rests).
+      // The drag end's echo still waits for the next cursor (as for a resting mouse).
+      if (pointer?.touch && fingers.size === 0 && last.at) {
+        last = { at: null, over: null };
+        channel.cursor(null, null);
+        if (resend) {
+          clearInterval(resend);
+          resend = null;
+        }
+      }
     },
     leave() {
       if (!press) cursor(null, null);

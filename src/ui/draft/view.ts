@@ -158,7 +158,7 @@ function names(state: TableState, seats: readonly SeatId[], self: SeatId): strin
 }
 
 /** The status line for this seat (DESIGN "Pre-game", Drafting interaction). */
-export function draftStatus(state: TableState, view: DraftPrivateView, self: SeatId): DraftStatus {
+export function draftStatus(state: TableState, view: DraftPrivateView, self: SeatId, touch = false): DraftStatus {
   const draft = state.draft;
   const format = view.format ?? draft?.settings.format ?? null;
   const settings = draft?.settings;
@@ -190,7 +190,12 @@ export function draftStatus(state: TableState, view: DraftPrivateView, self: Sea
   else if (format === 'winston') prompt = myTurn ? 'Your turn: take this pile, or add a card to it and look at the next.' : others.length ? `${names(state, others, self)} ${others.length === 1 ? 'is' : 'are'} looking at a pile.` : 'Waiting…';
   else if (view.pack && (!view.pack.public || myTurn)) {
     const need = picksNeeded(view.picks, packCards);
-    if (confirmable) prompt = need === 1 ? 'Click the marked card again or press Enter to take it.' : `Click a marked card again or press Enter to take these ${need}.`;
+    // A touch screen names taps and no keyboard (DESIGN "Input and interaction design", Touch; M5 gate).
+    if (touch) {
+      if (confirmable) prompt = need === 1 ? 'Tap the marked card again to take it.' : `Tap a marked card again to take these ${need}.`;
+      else if (need === 1) prompt = 'Tap a card to mark it, tap it again to take it.';
+      else prompt = `Mark ${need} cards (${marked.length} marked), then tap a marked card again.`;
+    } else if (confirmable) prompt = need === 1 ? 'Click the marked card again or press Enter to take it.' : `Click a marked card again or press Enter to take these ${need}.`;
     else if (need === 1) prompt = 'Click a card to mark it, click again or press Enter to confirm.';
     else prompt = `Mark ${need} cards (${marked.length} marked), then click a marked card again or press Enter.`;
   } else if (view.pack?.public) prompt = others.length ? `${names(state, others, self)} ${others.length === 1 ? 'is' : 'are'} picking.` : 'Waiting…';

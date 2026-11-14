@@ -22,6 +22,7 @@
   import SettingsPage from './settings/SettingsPage.svelte';
   import UpdateNotice from './storage/UpdateNotice.svelte';
   import OfflineNotice from './storage/OfflineNotice.svelte';
+  import { storageHintsShown } from './storage/showing.svelte';
   import type { UpdatePlace } from './update';
   import type { Stage } from '../core/types';
   import { installReducedMotionCss } from './a11y/motion';
@@ -98,7 +99,7 @@
 {:else}
   <main class="sp-page" style={cssVars} data-testid="route-{route.name === 'diagJoin' ? 'diag' : route.name}">
     {#if route.name === 'lobby'}
-      <Hint hints={startHints} placement="inline" />
+      {#if storageHintsShown.count === 0}<Hint hints={startHints} placement="inline" />{/if}
       <StartRoute start={props.start} />
       <p class="links"><a href="#/settings" data-testid="link-settings">Settings</a> · <a href="#/about" data-testid="link-about">About Spellplane</a></p>
     {:else if route.name === 'settings'}

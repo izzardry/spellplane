@@ -68,6 +68,11 @@ export class StackBadgeView {
   private count = 0;
   private hovering = false;
   private pinned = false;
+  /**
+   * A line started at an item of the list: the list stays open while the line's end is over the badge (the scene takes
+   * the pointer, which reports leaving the badge at once).
+   */
+  private lineHold = false;
   /** Keyboard focus is inside the badge (Tab): it expands like hover. */
   private focused = false;
   private itemsKey = '';
@@ -163,7 +168,7 @@ export class StackBadgeView {
   }
 
   get expanded(): boolean {
-    return this.collapsed && (this.hovering || this.pinned || this.focused);
+    return this.collapsed && (this.hovering || this.pinned || this.focused || this.lineHold);
   }
 
   /** Show, move or hide the badge for this frame. */
@@ -173,6 +178,7 @@ export class StackBadgeView {
     this.collapsed = f.collapsed && f.at !== null;
     this.count = f.count;
     if (!this.collapsed) {
+      this.lineHold = false;
       this.hovering = false;
       this.pinned = false;
       this.focused = false;
@@ -196,11 +202,14 @@ export class StackBadgeView {
    * `null` ends the tracking.
    */
   trackLine(at: ScreenPoint | null): void {
-    if (this.disposed || !this.collapsed) return;
+    if (this.disposed) return;
     const el = at && typeof document.elementFromPoint === 'function' ? document.elementFromPoint(at.x, at.y) : null;
     const over = !!el && this.el.contains(el);
-    if (over === this.hovering) return;
+    const hold = this.lineHold && over;
+    if (over === this.hovering && hold === this.lineHold) return;
     this.hovering = over;
+    this.lineHold = hold;
+    if (!this.collapsed) return;
     this.render();
     this.opts.onChange?.();
   }
@@ -305,6 +314,7 @@ export class StackBadgeView {
       row.addEventListener('pointerdown', (e) => {
         if (e.button !== 2 || e.pointerType === 'touch' || !this.opts.onLinePress) return;
         e.preventDefault();
+        this.lineHold = true;
         this.opts.onLinePress(it.item, e);
       });
       row.addEventListener('pointerleave', () => {

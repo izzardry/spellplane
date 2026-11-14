@@ -17,6 +17,7 @@
   import { checkDeck, parsePlainList, type CheckedDeck } from '../deck';
   import type { LobbyProps } from '../types';
   import { ConnectivityCheck, type ConnectivityReport } from './connectivity';
+  import { EMPTY_STATES } from '../empty/states';
   import { pastedDeckId, readyVerdict } from './ready';
   import SpectatorPanel from './SpectatorPanel.svelte';
   import { chairChoice, chairs, colourClash, colourTakenBy, hostSeat, nicknameProblem, normaliseNickname, pickColour, readiness, seatOf, startProblem, SEAT_COLOURS, teamGroups } from './seats';
@@ -267,11 +268,12 @@
   {#if report.problems.length}
     <section class="problems" role="alert" data-testid="connectivity-problem">
       {#each report.problems as p (p.kind + (p.peer ?? ''))}
-        <p>{p.text}</p>
+        <!-- The shared empty and error states (ui/empty/states.ts) title the relay and no-peer cases. -->
+        <p>{#if p.kind === 'relays'}<strong>{EMPTY_STATES.relayUnreachable.title}.</strong> {:else if p.kind === 'alone'}<strong>{EMPTY_STATES.noPeers.title}.</strong> {/if}{p.text}</p>
       {/each}
     </section>
   {:else if report.notice}
-    <p class="notice" role="status" data-testid="connectivity-waiting">{report.notice}</p>
+    <p class="notice" role="status" data-testid="connectivity-waiting"><strong>{EMPTY_STATES.noPeers.title}.</strong> {report.notice}</p>
   {/if}
 
   <div class="cols">

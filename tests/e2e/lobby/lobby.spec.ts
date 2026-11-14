@@ -247,6 +247,8 @@ test.describe('connectivity failure (DESIGN "Multiplayer architecture": no relay
     // Nobody else is in the seats: the friend may not have opened the link yet, so this is not a failure yet.
     const waiting = page.getByTestId('connectivity-waiting');
     await expect(waiting).toContainText('Waiting for another player to open the link');
+    // Titled as the shared empty state (ui/empty/states.ts noPeers).
+    await expect(waiting).toContainText('No other players connected');
     await expect(waiting).toHaveAttribute('role', 'status');
     await expect(page.getByTestId('connectivity-problem')).toHaveCount(0);
     await page.clock.fastForward(110_000);
@@ -268,6 +270,7 @@ test.describe('connectivity failure (DESIGN "Multiplayer architecture": no relay
     await expect(page.getByTestId('room-joining')).toBeVisible();
     await page.clock.fastForward(16_000);
     await expect(page.getByTestId('connectivity-problem')).toContainText('cannot reach the public signalling relays');
+    await expect(page.getByTestId('connectivity-problem')).toContainText('Relays unreachable');
   });
 
   test('a link with a malformed key is refused plainly', async ({ page }, info) => {

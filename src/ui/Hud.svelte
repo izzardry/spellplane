@@ -142,6 +142,8 @@
   let note = $state<{ target: { card: InstanceId } | { item: StackItemId }; x: number; y: number; text: string } | null>(null);
   /** The inline count prompt for draw N (Shift+D) and mill N (table menu). */
   let drawN = $state<{ text: string; what: 'draw' | 'mill' } | null>(null);
+  /** A pointer is down inside the draw-N field (its button): the input's blur does not close it. */
+  let drawPress = false;
   /** The inline Ask field (K): an optional short label, Enter asks (M1-P3). */
   let askField = $state<{ text: string } | null>(null);
   let askInput = $state<HTMLInputElement | undefined>();
@@ -154,7 +156,20 @@
   /** A touch screen (or a finger touched the page): the thumb bar shows and the hand fan scrolls (ui/touch/device.ts). */
   let touchUi = $state(touchDevice());
   let untapOffer = $state(false);
-  let logOpen = $state(true);
+  /**
+   * Below this width (a tablet held upright) the log starts hidden, so the table, the turn strip and the toolbar are
+   * not crowded under it (M5 gate, iPad portrait); the Log tab opens it. Crossing the width (turning the tablet) opens
+   * or hides it again.
+   */
+  const NARROW_HUD_PX = 900;
+  let logOpen = $state(untrack(() => vw) >= NARROW_HUD_PX);
+  let narrowWas = untrack(() => vw) < NARROW_HUD_PX;
+  $effect(() => {
+    const narrow = vw < NARROW_HUD_PX;
+    if (narrow === narrowWas) return;
+    narrowWas = narrow;
+    logOpen = !narrow;
+  });
   let preview = $state<{ card: InstanceId; x: number; y: number } | null>(null);
   let voice = $state<{ talking: 'talk' | 'teamTalk' | null; muted: boolean }>({ talking: null, muted: false });
   /** The modifier talk key's hold-alone state (shown on the talk indicator as data-hold). */
@@ -189,7 +204,7 @@
   /** First-run hints (M5-P5, ui/hints): one at a time, bottom right, never blocking. */
   const hints = new HintController(
     untrack(() => settings),
-    { where: 'table', touch: isTouchDevice(), voice: untrack(() => !!session.voice), spectator: untrack(() => session.role === 'spectator') },
+    { where: 'table', touch: isTouchDevice(), voice: untrack(() => !!session.voice), spectator: untrack(() => session.role === 'spectator'), networked: untrack(() => !!session.voice) },
   );
   /** A save that failed for lack of space (M5-P5 storage full): from the log, or a quota error anywhere on the page. */
   let quotaError = $state(false);
@@ -1085,7 +1100,7 @@
 />
 <svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncView()} />
 
-<div class="root" style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
+<div class="root" class:touch-ui={touchUi} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
   <Flashes
@@ -1424,8 +1439,19 @@
   {/if}
 
   {#if drawN}
-    <div class="inline draw-n" data-testid="draw-n">
-      <label>{drawN.what === 'mill' ? 'Mill how many?' : 'Draw how many?'} <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => (drawN = null)} /></label>
+    <!-- A press inside (the Draw button on a touch screen, which has no Enter key) keeps the field open. -->
+    <div
+      class="inline draw-n"
+      data-testid="draw-n"
+      role="group"
+      onpointerdown={() => (drawPress = true)}
+      onpointerup={() => {
+        drawPress = false;
+        if (drawN) queueMicrotask(() => drawInput?.focus());
+      }}
+    >
+      <label>{drawN.what === 'mill' ? 'Mill how many?' : 'Draw how many?'} <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" enterkeyhint="go" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => !drawPress && (drawN = null)} /></label>
+      <button type="button" data-testid="draw-n-go" onclick={() => submitDrawN()}>{drawN.what === 'mill' ? 'Mill' : 'Draw'}</button>
     </div>
   {/if}
 
@@ -1617,6 +1643,12 @@
     font-family: var(--sp-font-mono, monospace);
     opacity: 0.7;
   }
+  /* A touch screen has no keyboard to press: the toolbar names no keys there (M5 gate; the cheat sheet still lists them
+     for a hardware keyboard). */
+  .touch-ui .toolbar kbd,
+  .touch-ui .top-centre :global(kbd) {
+    display: none;
+  }
   .chip {
     border: 1px solid var(--sp-fg, #111);
     border-radius: 999px;
@@ -1668,6 +1700,12 @@
     right: 8px;
     bottom: calc(22vh + 16px);
     display: flex;
+  }
+  /* An upright tablet: the thumb bar spans under the log, so the log (its chat input) ends above it (M5 gate). */
+  @media (max-width: 1000px) {
+    .touch-ui .right {
+      bottom: calc(22vh + 16px + 64px);
+    }
   }
   .own-avatar {
     position: absolute;

@@ -288,8 +288,26 @@ describe('the presence tracker (pointer input to cursor and drag messages)', () 
     tracker.up(finger(1));
     expect(gs.map((g) => g.kind)).toContain('longPressDrag');
     expect(drags()).toEqual([]);
-    // The finger's position still travels as the cursor.
-    expect(sent.filter((m) => m.t === 'cursor').length).toBe(6);
+    // The finger's position still travels as the cursor, and is cleared when the finger lifts.
+    expect(sent.filter((m) => m.t === 'cursor' && (m.v as { at: unknown }).at !== null).length).toBe(6);
+    expect(sent.at(-1)).toEqual({ t: 'cursor', v: { at: null, over: null } });
+  });
+
+  it('a lifted finger leaves no cursor behind on the others\' tables; a mouse button release keeps the cursor (M5 gate)', () => {
+    const { tracker, sent } = setup();
+    tracker.down(100, 50, 0, finger(1));
+    tracker.move(110, 50, true, finger(1));
+    tracker.down(200, 50, 0, finger(2));
+    tracker.up(finger(2));
+    // One finger still down: its cursor stays.
+    expect(sent.at(-1)).toEqual({ t: 'cursor', v: { at: { x: 110, y: -50 }, over: null } });
+    tracker.up(finger(1));
+    expect(sent.at(-1)).toEqual({ t: 'cursor', v: { at: null, over: null } });
+    const mouse = setup();
+    mouse.tracker.move(100, 50, true);
+    mouse.tracker.down(100, 50, 0);
+    mouse.tracker.up();
+    expect(mouse.sent).toEqual([{ t: 'cursor', v: { at: { x: 100, y: -50 }, over: null } }]);
   });
 
   it('a finger dragging a card shows it where the scene draws it, from the move the scene starts its drag on', () => {

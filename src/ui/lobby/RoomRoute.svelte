@@ -8,6 +8,7 @@
   from the fragment.
 -->
 <script lang="ts">
+  import { EMPTY_STATES } from '../empty/states';
   import type { NetSession, TableSession } from '../../session/types';
   import type { DeckStore, IdentityStore } from '../../store/types';
   import type { AppProps, RoomLink } from '../types';
@@ -126,7 +127,7 @@
       <p role="alert">This is not a valid table link: the key at its end should be 22 letters, digits, dashes or underscores. Ask for the link again.</p>
     {:else if joinState === 'joining'}
       <p role="status" data-testid="room-joining">{watching ? 'Joining the table as a spectator…' : 'Joining the table…'}</p>
-      {#if joinSlow}<p role="alert" data-testid="connectivity-problem">{RELAYS_TEXT}</p>{/if}
+      {#if joinSlow}<p role="alert" data-testid="connectivity-problem"><strong>{EMPTY_STATES.relayUnreachable.title}.</strong> {RELAYS_TEXT}</p>{/if}
       {#if !watching}<p><a href={watchHash} data-testid="watch-instead">Watch without taking a chair</a></p>{/if}
     {:else if joinState === 'failed'}
       <p role="alert" data-testid="room-error">Could not join this table: {error}</p>
