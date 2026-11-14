@@ -456,9 +456,10 @@ export function gatedTransport(transport: Transport, gate: (channel: Channel, ms
   return t;
 }
 
-/** A bundle whose first shuffle reports its top two cards swapped (SessionAudit.tamper; test builds only). */
+/** A bundle whose first shuffle (or else first reorder) reports its top two cards swapped (SessionAudit.tamper; test builds only). */
 function tampered(bundle: AuditBundle): AuditBundle {
-  const i = bundle.records.findIndex((r) => r.kind === 'shuffle' && r.order.length >= 2);
+  let i = bundle.records.findIndex((r) => r.kind === 'shuffle' && r.order.length >= 2);
+  if (i < 0) i = bundle.records.findIndex((r) => r.order.length >= 2);
   if (i < 0) return bundle;
   const records = bundle.records.map((r, k) => {
     if (k !== i) return r;

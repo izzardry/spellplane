@@ -846,6 +846,14 @@ test.describe('M5 gate @gate', () => {
       const tamper = await A.page.evaluate(() => typeof (window.__spellplane as unknown as { audit?: { tamper?: unknown } }).audit?.tamper === 'function');
       expect(tamper, 'a test-only hook to tamper with the recorded library order (__spellplane.audit.tamper; M5-P2)').toBe(true);
       await A.page.evaluate(() => (window.__spellplane as unknown as { audit: { tamper(): void } }).audit.tamper());
+      // Ann shuffles in game two (touch), so her bundle has a library order to misreport.
+      await front(A);
+      await openLibrary(A);
+      const before = (await secrets(A.page)).libraryOrder;
+      await viewerButton(A.page, /^Shuffle/).tap();
+      await expect.poll(async () => (await secrets(A.page)).libraryOrder).not.toEqual(before);
+      await closeViewer(A.page);
+      await converged([A.page, B.page]);
     });
 
     // ---- Sealed, then Rochester -----------------------------------------------------------------------------------

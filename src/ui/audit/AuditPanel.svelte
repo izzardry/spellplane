@@ -14,8 +14,12 @@
   import { verifiedDetail, type AuditControls, type AuditGameView, type AuditSeatView } from '../../net/audit';
   import { gamesSeen } from './panel';
 
-  /** `playing`: a match is on; the panel and its button step aside (the verdicts stay in the log). */
-  let { audit, playing = false }: { audit: AuditControls; playing?: boolean } = $props();
+  /**
+   * `playing`: a match is on; the panel and its button step aside (the verdicts stay in the log). `lobby`: the table is
+   * in its lobby, whose settings column fills the top right; the panel docks at the bottom right instead (M5 gate: it
+   * covered the packs field on the iPad).
+   */
+  let { audit, playing = false, lobby = false }: { audit: AuditControls; playing?: boolean; lobby?: boolean } = $props();
 
   let games = $state.raw<AuditGameView[]>(untrack(() => audit.games()));
   // A game that ended before this page opened (a reload) does not pop the panel up again.
@@ -56,7 +60,7 @@
 
 {#if shown && !playing}
   {#if open}
-    <section class="audit" aria-label="Audit" data-testid="audit-panel" data-game={shown.game.game}>
+    <section class="audit" class:docked={lobby} aria-label="Audit" data-testid="audit-panel" data-game={shown.game.game}>
       <header>
         <h2>Audit of game {shown.game.game}</h2>
         <button type="button" class="close" aria-label="Close the audit" data-testid="audit-close" onclick={() => (open = false)}>×</button>
@@ -121,6 +125,11 @@
     border-radius: var(--sp-radius-lg, 8px);
     background: var(--sp-surface, #fff);
     box-shadow: 0 2px 10px rgb(0 0 0 / 0.2);
+  }
+  .audit.docked {
+    top: auto;
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    max-height: 36vh;
   }
   header {
     display: flex;

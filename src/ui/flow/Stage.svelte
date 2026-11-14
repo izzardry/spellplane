@@ -81,7 +81,7 @@
   {/if}
   {#if audit}
     <!-- The post-game audit (M5-P2): opens by itself when a game ends, in whatever stage follows. -->
-    <AuditPanel {audit} playing={stage === 'match'} />
+    <AuditPanel {audit} playing={stage === 'match'} lobby={stage === 'lobby'} />
   {/if}
 </div>
 
