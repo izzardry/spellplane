@@ -21,7 +21,7 @@ import {
   reorderInZone,
   setPose,
 } from './place';
-import { byId, checkId, checkInt, checkPileRef, checkPose, checkRef, checkString, isObj, normRot, pileMemberPose, q, reject, samePose, tuckPose } from './util';
+import { byId, checkId, checkInt, checkPileRef, checkPose, checkRef, checkString, isObj, normRot, pileMemberPose, q, reject, samePose, tuckPose, tuckSlot } from './util';
 
 function optPose(v: unknown): Pose | undefined {
   return v === undefined ? undefined : checkPose(v);
@@ -173,9 +173,19 @@ export function attach(d: Draft, a: ActionOf<'attach'>): void {
   const pose = optPose(a.pose);
   leavePile(d, c.id);
   const others = attachments(d, host.id).filter((x) => x.id !== c.id);
-  const k = others.length + 1;
+  // The first free slot (M6.1): not on any card already tucked behind the host, chained attachments included.
+  const taken: Pose[] = [];
+  const tucked = new Set<InstanceId>([c.id]);
+  const todo = others.map((x) => x.id);
+  while (todo.length) {
+    const id = todo.pop()!;
+    if (tucked.has(id)) continue;
+    tucked.add(id);
+    taken.push(d.cards.need(id).pose);
+    for (const x of attachments(d, id)) todo.push(x.id);
+  }
   d.cards.w(c.id).attachedTo = host.id;
-  setPose(d, c.id, pose ?? tuckPose(host.pose, k));
+  setPose(d, c.id, pose ?? tuckPose(host.pose, tuckSlot(host.pose, taken)));
   // Tucked behind its host, behind the attachments it already has (PLAN Milestone 6, owner decisions, Tuck: "Further
   // attachments fan behind the previous one").
   const z = d.zones.need(c.zone);

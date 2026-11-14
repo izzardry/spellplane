@@ -31,7 +31,7 @@ import { Rejection, checkId, isObj, reject } from './util';
 import * as zones from './zones';
 
 export { STACK_ZONE, ZONE_KIND, HIDDEN_POSE } from './place';
-export { cardAxes, pileMemberPose, tuckPose } from './util';
+export { cardAxes, pileMemberPose, tuckPose, tuckSlot } from './util';
 
 /** A seat to create at table start (DESIGN "Players, seats and formats"). */
 export interface SeatInit {
