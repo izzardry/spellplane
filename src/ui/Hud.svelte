@@ -195,8 +195,11 @@
   const typingAt = $derived(typingSeats(typers));
   function refreshTypers(): void {
     const peers = session.netStatus().peers;
-    typers = typersOf(session.presence.peers(), st, me, peers, Date.now());
-    watching = new Set(peers.filter((p) => p.role === 'spectator' && p.status !== 'handshake' && p.peerId).map((p) => p.peerId)).size;
+    const next = typersOf(session.presence.peers(), st, me, peers, Date.now());
+    // Presence fires on every throttled cursor and drag message: keep the same array unless who is typing changed.
+    if (JSON.stringify(next) !== JSON.stringify(typers)) typers = next;
+    const w = new Set(peers.filter((p) => p.role === 'spectator' && p.status !== 'handshake' && p.peerId).map((p) => p.peerId)).size;
+    if (w !== watching) watching = w;
   }
   /** Dictated captions (M3-P4, session.captions) and the speech settings panel. */
   let captionList = $state.raw<Caption[]>([]);
