@@ -199,6 +199,25 @@ describe('clipped groups', () => {
     }
   });
 
+  it('a clip across two battlefields: dragged within one, every card stays in its own battlefield and hands', () => {
+    let s = base();
+    s = play(s, 'b00', P(0, 200, 180), 's1');
+    s = ok(s, act('clipAdd', { clip: 'k1', cards: ['a00', 'b00'], anchor: { card: 'a00', x: 0, y: 40 } }));
+    const { state } = dropGroup(s, 'b00', { rule: 5, kind: 'free', pose: P(50, 250, 180) }, { zone: 'battlefield:s1', controller: 's1' });
+    expect(card(state, 'a00')).toMatchObject({ zone: 'battlefield:s0', controller: 's0', pose: P(50, -150) });
+    expect(card(state, 'b00')).toMatchObject({ zone: 'battlefield:s1', pose: P(50, 250, 180) });
+  });
+
+  it('tapped cards keep their tap and land where they were drawn (the stored pose has no tap turn)', () => {
+    let s = base();
+    s = ok(s, act('tap', { card: 'a00', tapped: true }));
+    s = ok(s, act('attach', { card: 'a01', to: 'a00' }));
+    s = ok(s, act('clipAdd', { clip: 'k1', cards: ['a00', 'a02'], anchor: { card: 'a00', x: 0, y: 0 } }));
+    const { state } = dropGroup(s, 'a02', { rule: 5, kind: 'free', pose: P(400, -100) });
+    expect(card(state, 'a00')).toMatchObject({ tapped: true, pose: P(100, -100) });
+    expect(card(state, 'a01')).toMatchObject({ attachedTo: 'a00', pose: P(110, -90) });
+  });
+
   it('dropping a clipped group on the graveyard takes every card there; the clip goes with them', () => {
     let s = base();
     s = ok(s, act('clipAdd', { clip: 'k1', cards: ['a00', 'a01'], anchor: { card: 'a00', x: 31, y: 0 } }));

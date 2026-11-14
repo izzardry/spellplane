@@ -106,9 +106,30 @@ export function carryDropActions(
   // Rules 4 and 5: the group moves rigidly.
   const poses = rigidPoses(group, start, result.pose);
   const inG = new Set(group.cards);
-  const same = (c: CardInstance) => c.zone === dest.zone;
   const baseOf = new Map<string, InstanceId>();
   for (const c of Object.values(state.cards)) if (c.pile?.index === 0) baseOf.set(c.pile.id, c.id);
+  // Where each card ends up: the anchor and the selection in the battlefield the drop lands in (as before M6); a card
+  // riding along (clipped, cascaded, attached) stays in its own battlefield while the anchor stays in its own, and goes
+  // with the anchor when it crosses into another. An attachment and a pile member always go where their host or pile
+  // base goes.
+  const crossing = anchor.zone !== dest.zone;
+  const targetMemo = new Map<InstanceId, string>();
+  const target = (c: CardInstance, depth = 0): string => {
+    const known = targetMemo.get(c.id);
+    if (known !== undefined) return known;
+    let t: string;
+    const host = c.attachedTo !== undefined && inG.has(c.attachedTo) ? cardOf(c.attachedTo) : undefined;
+    const base = c.pile && c.pile.id !== group.leavesPile ? baseOf.get(c.pile.id) : undefined;
+    if (host && depth < 64) t = target(host, depth + 1);
+    else if (base !== undefined && base !== c.id && inG.has(base) && depth < 64) t = target(cardOf(base)!, depth + 1);
+    else if (crossing || c.id === group.anchor || group.reason[c.id] === 'selection' || (c.pile?.id === group.leavesPile && group.leavesPile !== null)) t = dest.zone;
+    else t = c.zone;
+    targetMemo.set(c.id, t);
+    return t;
+  };
+  /** The anchor and the selection take the territory's controller, as before M6; riders change hands only with a battlefield. */
+  const leads = (c: CardInstance) => c.id === group.anchor || group.reason[c.id] === 'selection';
+  const controllerFor = (c: CardInstance, to: string) => (to === c.zone && !leads(c) ? {} : c.controller !== dest.controller ? { controller: dest.controller } : {});
   const anchorPile = anchor.pile;
   const split = group.leavesPile !== null && insts.filter((c) => c.pile?.id === group.leavesPile).length >= 2 ? opts.newId('pile') : null;
   const out: ActionDraft[] = [];
@@ -117,12 +138,13 @@ export function carryDropActions(
     const c = cardOf(id)!;
     const pose = poses.get(id);
     if (!pose) continue;
+    const to = target(c);
     const host = c.attachedTo !== undefined ? cardOf(c.attachedTo) : undefined;
     if (host && inG.has(host.id)) {
       // An attachment rides on its host: the host's move takes it along in the same battlefield; across battlefields
       // the host's move detaches it, so it follows and is attached again.
-      if (same(c) && same(host)) continue;
-      out.push({ type: 'move', card: id, to: dest.zone, pose, pile: null, ...(c.controller !== dest.controller ? { controller: dest.controller } : {}) });
+      if (c.zone === to && host.zone === to) continue;
+      out.push({ type: 'move', card: id, to, pose, pile: null, ...controllerFor(c, to) });
       reattach.push({ type: 'attach', card: id, to: host.id, pose: stored(c, pose) });
       continue;
     }
@@ -132,23 +154,17 @@ export function carryDropActions(
       if (c.pile.id === group.leavesPile) {
         pile = split ? { id: split, index: c.pile.index - (anchorPile?.index ?? 0), kind: c.pile.kind } : null;
       } else if (base !== undefined && inG.has(base)) {
-        // The whole pile moves: by its bottom card (members follow), members re-join to rise in the draw order.
+        // The whole pile moves: by its bottom card (members follow), members re-join to rise in the draw order; across
+        // battlefields the bottom card takes the pile along.
         if (id === base) pile = undefined;
-        else if (!same(c) || !same(cardOf(base)!)) continue;
+        else if (c.zone !== to) continue;
         else pile = c.pile;
       }
     }
-    const unchanged = same(c) && near(c.pose, stored(c, pose)) && (pile === undefined ? true : (c.pile?.id ?? null) === (pile?.id ?? null)) && c.controller === dest.controller;
+    const unchanged = c.zone === to && near(c.pose, stored(c, pose)) && (pile === undefined ? true : (c.pile?.id ?? null) === (pile?.id ?? null)) && !('controller' in controllerFor(c, to));
     if (unchanged) continue;
-    out.push({
-      type: 'move',
-      card: id,
-      to: dest.zone,
-      pose,
-      ...(pile === undefined ? {} : { pile }),
-      ...(c.controller !== dest.controller ? { controller: dest.controller } : {}),
-    });
-    if (id === group.anchor && group.leavesHost !== null && same(c)) out.push({ type: 'detach', card: id });
+    out.push({ type: 'move', card: id, to, pose, ...(pile === undefined ? {} : { pile }), ...controllerFor(c, to) });
+    if (id === group.anchor && group.leavesHost !== null && c.zone === to) out.push({ type: 'detach', card: id });
   }
   return grouped([...out, ...reattach]);
 }
