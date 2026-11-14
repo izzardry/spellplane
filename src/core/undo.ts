@@ -233,6 +233,16 @@ function opposite(before: TableState, after: TableState, a: UndoableAction): Und
       const l = before.lines[a.line]!;
       return { ...base, by: l.by, type: 'lineAdd', line: l.id, kind: l.kind, from: l.from, to: l.to, ...(l.label !== undefined ? { label: l.label } : {}) };
     }
+    // Added by M6-C (natural opposites; the restore steps for a clip's `by` and for clips a move dissolved are M6-P1's,
+    // RestorePatch.clips; a label's are M6-P3's).
+    case 'clipAdd':
+      return { ...base, type: 'clipRemove', clip: a.clip };
+    case 'clipRemove': {
+      const c = before.clips && Object.hasOwn(before.clips, a.clip) ? before.clips[a.clip] : undefined;
+      return c ? { ...base, type: 'clipAdd', clip: c.id, cards: [...c.cards], anchor: { ...c.anchor } } : null;
+    }
+    case 'lineLabel':
+      return { ...base, type: 'lineLabel', line: a.line, label: (Object.hasOwn(before.lines, a.line) ? before.lines[a.line]?.label : undefined) ?? '' };
     case 'phaseSet':
       return { ...base, type: 'phaseSet', phase: before.turn.phase };
     case 'turnPass':

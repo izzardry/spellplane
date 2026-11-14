@@ -7,6 +7,7 @@
 import type { DBSchema } from 'idb';
 import type { Action } from '../core/actions';
 import type { CardRef, DeckBuild, DraftFormat, SecretStore, SeatId, SetCode, Stage, TableState } from '../core/types';
+import { DEFAULT_DIE_SIDES } from '../core/objects';
 
 /** `identity` store, key 'me' (DESIGN "Local persistence"): key pair, nickname, preferred seat colour. */
 export interface IdentityRecord {
@@ -101,6 +102,17 @@ export interface Settings {
    * Home Screen hint and the storage-persistence prompt), so each shows once. Ids this build does not know are ignored.
    */
   hintsSeen: HintId[];
+  /**
+   * Added by M6-C. "Talk while I hold or drag" (Voice section, off by default; DESIGN "Chat and voice", Talk modes; PLAN
+   * Milestone 6, owner decisions, Hold-to-talk): at a table with voice, a mouse-button or finger press on the table held
+   * longer than HOLD_PRESS_TALK_MS (scene/types.ts) talks as push-to-talk until release. Implementer: M6-P2.
+   */
+  talkWhileHolding: boolean;
+  /**
+   * Added by M6-C. The die Ctrl+I rolls, as sides (DESIGN "Card manipulation", Other table objects: "Dice (any size)";
+   * core/objects.ts DIE_SIDES offers the sizes). Implementer: M6-P3.
+   */
+  dieSides: number;
 }
 
 /** Which card back to draw (DESIGN "Card data and images", Card back). Added by M5-C. */
@@ -132,6 +144,8 @@ export const DEFAULT_SETTINGS: Settings = {
   sound: 'theme',
   cardBack: 'spellplane',
   hintsSeen: [],
+  talkWhileHolding: false,
+  dieSides: DEFAULT_DIE_SIDES,
 };
 
 /** `settings` store record, keyed by name (DESIGN "Local persistence"). */
@@ -191,6 +205,14 @@ export interface DeckRecord {
   pool?: DeckBuild;
   /** Added by M2-C. Where a drafted pool came from: the format and the set per pack. */
   origin?: { format: DraftFormat; sets: SetCode[] };
+  /**
+   * Added by M6-C. The `Commander` section (DESIGN "Specification: card data, packs and draft formats", Decklist grammar;
+   * GAPS 16: parsed, then dropped): kept with the deck, listed apart from `main`; at the table the commander starts in
+   * the command zone. Absent on decks saved before M6 means none. Implementer: M6-P5 (keeping it), M6-P3 (the command zone).
+   */
+  commander?: CardRef[];
+  /** Added by M6-C. The `Companion` section (as `commander`): kept with the deck, outside the game until brought in. Implementer: M6-P5. */
+  companion?: CardRef[];
 }
 
 /** Format tag of an exported deck library file (DESIGN "Pre-game", Local deck library: exportable and importable as files). Added by M2-C. */

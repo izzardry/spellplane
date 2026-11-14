@@ -27,6 +27,11 @@ export const MTG_KEYMAP: Keymap = [
   b('Card', 'ping', 'Ping (double press)', k('i'), { trigger: 'double' }),
   b('Card', 'zoomTo', 'Zoom to card or pile', k('z')),
   b('Card', 'inspect', 'Inspect (hold)', k(' '), { trigger: 'hold' }),
+  // M6-C: keyboard routes for placing, attaching, clipping and hiding (PLAN Milestone 6; DECISIONS [M6-C] lists the keys).
+  b('Card', 'place', 'Pick up and move', k('m', { shift: true })),
+  b('Card', 'attach', 'Attach to… / detach', k('o')),
+  b('Card', 'clip', 'Clip / remove clip', k('p', { shift: true })),
+  b('Card', 'hide', 'Hide (face down, identity kept private)', k('w', { shift: true })),
   // Zones
   b('Zones', 'toGraveyard', 'To graveyard', k('g')),
   b('Zones', 'toExile', 'To exile', k('e')),
@@ -34,6 +39,8 @@ export const MTG_KEYMAP: Keymap = [
   b('Zones', 'toLibraryTop', 'To library top', k('l')),
   b('Zones', 'toLibraryBottom', 'To library bottom', k('l', { shift: true })),
   b('Zones', 'cast', 'Cast to stack', k('c')),
+  b('Zones', 'toCommand', 'To command zone', k('c', { shift: true })),
+  b('Zones', 'exileFaceDown', 'Exile face down', k('e', { shift: true })),
   // Library
   b('Library', 'draw', 'Draw', k('d')),
   b('Library', 'drawN', 'Draw N', k('d', { shift: true })),
@@ -43,6 +50,9 @@ export const MTG_KEYMAP: Keymap = [
   b('Combat', 'attack', 'Attack', k('a')),
   b('Combat', 'attackNoTap', 'Attack without tapping', k('a', { shift: true })),
   b('Combat', 'settle', 'Settle (bring back)', k('b')),
+  b('Combat', 'tempMove', 'Temporary move', k('m', { alt: true })),
+  b('Combat', 'line', 'Draw a line to…', k('l', { alt: true })),
+  b('Combat', 'mark', 'Draw a persistent mark to…', k('l', { alt: true, shift: true })),
   // Stack
   b('Stack', 'ability', 'Add ability or trigger', k('q')),
   b('Stack', 'resolve', 'Resolve top', k('r')),
@@ -65,6 +75,8 @@ export const MTG_KEYMAP: Keymap = [
   b('Table', 'rollDie', 'Roll die', k('i', { ctrl: true })),
   b('Table', 'flipCoin', 'Flip coin', k('i', { ctrl: true, shift: true })),
   b('Table', 'undo', 'Undo', k('z', { ctrl: true })),
+  b('Table', 'stickyNote', 'Sticky note', k('n', { shift: true })),
+  b('Table', 'counterObject', 'Counter object (emblem, monarch…)', k('x', { shift: true })),
   // Talk: Ctrl, either key, held alone for TALK_HOLD_ALONE_MS (PLAN Milestone 5, owner decisions, Talk key; M5-P7);
   // Shift held first makes it team talk. Read by ui/voice/input.ts under the hold-alone rule, not by the KeyEngine.
   b('Talk', 'talk', 'Talk (hold)', { ...CTRL_KEY_CHORD }, { trigger: 'hold' }),

@@ -13,6 +13,9 @@ import type {
   Anchor,
   CardInstance,
   CardRef,
+  Clip,
+  ClipAnchor,
+  ClipId,
   ConfirmResponse,
   Format,
   InstanceId,
@@ -34,6 +37,7 @@ import type {
   Stage,
   StackItem,
   StackItemId,
+  TableObjectKind,
   TableSettings,
   TeamId,
   ZoneId,
@@ -97,6 +101,8 @@ export interface RestorePatch {
   /** Draw order of public zones. */
   zones?: Record<ZoneId, RestoreStep<InstanceId[]>>;
   lines?: Record<LineId, RestoreStep<Line>>;
+  /** Added by M6-C. Paperclips (PLAN Milestone 6, owner decisions, Paperclips: "Adding and removing a clip are undoable"); M6-P1 builds and applies these steps. */
+  clips?: Record<ClipId, RestoreStep<Clip>>;
   /** The whole stack, bottom to top. */
   stack?: RestoreStep<StackItem[]>;
   turn?: { number: RestoreStep<number> };
@@ -133,12 +139,25 @@ export type DetachAction = A<'detach', { card: InstanceId; pose?: Pose }>;
 export type PileAction = A<'pile', { card: InstanceId; pile: PileRef | null; pose?: Pose }>;
 /** Tidy a seat's battlefield to the poses the client computed from the layout (DESIGN "Card manipulation", Tidy). */
 export type TidyAction = A<'tidy', { seat: SeatId; poses: Record<InstanceId, Pose> }>;
-/** Create a token (Scryfall token `ref`) or a table object without identity (`label`: counter object, sticky note) (DESIGN "Card manipulation"). */
-export type CreateTokenAction = A<'createToken', { card: InstanceId; zone: ZoneId; pose: Pose; ref?: CardRef; label?: string; controller?: SeatId }>;
+/**
+ * Create a token (Scryfall token `ref`) or a table object without identity (`label`: counter object, sticky note) (DESIGN
+ * "Card manipulation"). `object` (added by M6-C; reducer: M6-P3) marks a table object (core/types.ts TableObjectKind):
+ * it needs `label` and no `ref`, and may go to a battlefield or a command zone.
+ */
+export type CreateTokenAction = A<'createToken', { card: InstanceId; zone: ZoneId; pose: Pose; ref?: CardRef; label?: string; controller?: SeatId; object?: TableObjectKind }>;
 /** Token copy of a public card next to it (DESIGN "Card manipulation", X). */
 export type CopyAction = A<'copy', { card: InstanceId; of: InstanceId; pose: Pose }>;
 /** Remove a card from the game (tokens leaving the battlefield, sticky notes) (DESIGN "Data model and protocol"). */
 export type RemoveAction = A<'remove', { card: InstanceId }>;
+/**
+ * Put a paperclip on the cards under one point (DESIGN "Card manipulation", Clip; PLAN Milestone 6, owner decisions,
+ * Paperclips): `cards` two or more battlefield cards (any order; the reducer stores them sorted), `anchor` where the clip
+ * lies; the clip's `by` is the action's. Public, logged, undoable; anyone may clip any battlefield card. Added by M6-C;
+ * reducer: M6-P1 (core/reducer/clips.ts).
+ */
+export type ClipAddAction = A<'clipAdd', { clip: ClipId; cards: InstanceId[]; anchor: ClipAnchor }>;
+/** Take a paperclip off (DESIGN "Card manipulation", Clip: double-click, drag it off, its menu or the Clip key). Anyone may; logged, undoable. Added by M6-C; reducer: M6-P1. */
+export type ClipRemoveAction = A<'clipRemove', { clip: ClipId }>;
 
 // --- Zone and secrecy (DESIGN "Table model", "Specification: network protocol and secrecy") -------
 
@@ -234,6 +253,12 @@ export type StackReorderAction = A<'stackReorder', { item: StackItemId; index: n
 export type LineAddAction = A<'lineAdd', { line: LineId; kind: LineKind; from: Anchor; to: Anchor; label?: string }>;
 /** Remove a line (DESIGN "Combat and annotation"). */
 export type LineRemoveAction = A<'lineRemove', { line: LineId }>;
+/**
+ * Set or change a line's short label after it was drawn; empty text clears it (DESIGN "Combat and annotation",
+ * Connection lines: "carry an optional short label"). Anyone may label any line; logged, undoable. Added by M6-C;
+ * reducer: M6-P3 (at most LINE_LABEL_MAX characters, core/objects.ts).
+ */
+export type LineLabelAction = A<'lineLabel', { line: LineId; label: string }>;
 /** Flash a card, stack item or avatar for everyone; leaves no state (DESIGN "Combat and annotation", Ping). */
 export type PingAction = A<'ping', { target: Anchor }>;
 
@@ -243,8 +268,12 @@ export type PingAction = A<'ping', { target: Anchor }>;
 export type PhaseSetAction = A<'phaseSet', { phase: PhaseId }>;
 /** Pass the turn to `to`; clears every seat's auto-pass (DESIGN "Turn flow and confirmation"). */
 export type TurnPassAction = A<'turnPass', { to: SeatId | TeamId }>;
-/** Start a confirmation round manually or about a stack item (DESIGN "Turn flow and confirmation", Confirmation rounds). */
-export type AskAction = A<'ask', { round: RoundId; about?: StackItemId; label?: string }>;
+/**
+ * Start a confirmation round manually or about a stack item (DESIGN "Turn flow and confirmation", Confirmation rounds).
+ * `consent` (added by M6-C; reducer: M6-P4) opens a consent round (core/types.ts ConfirmRound.consent): no timer, only
+ * every player's OK passes it ("New draft?").
+ */
+export type AskAction = A<'ask', { round: RoundId; about?: StackItemId; label?: string; consent?: true }>;
 /** Answer a round for `seat`: ok, hold, release (of a hold), or timeout (emitted by the sequencer) (DESIGN "Specification: network protocol and secrecy", Timers). */
 export type RespondAction = A<'respond', { round: RoundId; seat: SeatId; response: ConfirmResponse | 'release' }>;
 /** Toggle the acting seat's "pass until end of turn" (DESIGN "Turn flow and confirmation", Auto-pass). */
@@ -275,6 +304,14 @@ export type ReadyAction = A<'ready', { commits: string[]; instanceIds: InstanceI
 export type RngCommitAction = A<'rngCommit', { rid: RngId; purpose: RngPurpose; n: number; h: string }>;
 /** Reveal the committed nonce (Public randomness 3). */
 export type RngRevealAction = A<'rngReveal', { rid: RngId; nonce: string }>;
+/**
+ * Apply a finished public-randomness round whose purpose changes the table (DESIGN "Players, seats and formats": "a
+ * random seat shuffle … and a public random first player"): 'seatShuffle' permutes the seated players over the taken
+ * chairs by `seatPermutation(result, seated count)`, in the lobby only; 'firstPlayer' makes the `result`-th seated seat
+ * (seat-index order) the active one (core/objects.ts). Anyone may send it once the round has its result; a round is
+ * applied at most once. Not undoable (randomness). Added by M6-C; reducer: M6-P3.
+ */
+export type RngApplyAction = A<'rngApply', { rid: RngId }>;
 /**
  * The sequencer's clock closes a commit window `COMMIT_WINDOW_MS` after the round started (Public randomness 2:
  * peers that do not commit within 3 s are excluded; Secret shuffle 2: likewise for peer nonces). Added by M1-C;
@@ -431,7 +468,11 @@ export type Action =
   | FormatSetAction
   | RecoverAction
   | RecoverCommitAction
-  | AuditPublishAction;
+  | AuditPublishAction
+  | ClipAddAction
+  | ClipRemoveAction
+  | LineLabelAction
+  | RngApplyAction;
 
 /** The `type` tag of an action (DESIGN "Data model and protocol"). */
 export type ActionType = Action['type'];
@@ -517,6 +558,12 @@ export const ACTION_FAMILIES: Readonly<Record<ActionType, ActionFamily>> = {
   recover: 'zone',
   recoverCommit: 'zone',
   auditPublish: 'meta',
+  // Added by M6-C (PLAN Milestone 6): clips are card-family table objects, a label belongs to its line, applying a
+  // random round belongs with the round.
+  clipAdd: 'card',
+  clipRemove: 'card',
+  lineLabel: 'lines',
+  rngApply: 'randomness',
 };
 
 /** Every action type, in declaration order (DESIGN "Data model and protocol"). */
@@ -557,6 +604,10 @@ export const UNDOABLE_TYPES = [
   'turnPass',
   'life',
   'playerCounter',
+  // Added by M6-C: PLAN Milestone 6, owner decisions, Paperclips ("Adding and removing a clip are undoable"); a label is an annotation like a line.
+  'clipAdd',
+  'clipRemove',
+  'lineLabel',
 ] as const satisfies readonly ActionType[];
 
 /** An action whose type can be undone (DESIGN "Turn flow and confirmation", Undo). */

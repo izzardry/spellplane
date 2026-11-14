@@ -36,6 +36,8 @@ const CHANGED: Settings = {
   sound: 'off',
   cardBack: 'official',
   hintsSeen: ['welcome', 'installHomeScreen'],
+  talkWhileHolding: true,
+  dieSides: 20,
 };
 
 describe('settings', () => {

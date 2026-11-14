@@ -121,6 +121,12 @@ export interface DeckEntry {
    */
   foil?: true;
   section: DeckSection;
+  /**
+   * Added by M6-C. The printing chosen in the printing chooser (DESIGN "Card data and images": a printing per card;
+   * GAPS 14): wins over `set` and `collectorNumber` when resolving, and is written back into the list as its set code
+   * and collector number on export. Implementer: M6-P5.
+   */
+  sid?: ScryfallId;
   /** 1-based source line. */
   line: number;
   /** The source line as pasted, for error reports (added by M0-P2, additive). */
@@ -178,6 +184,11 @@ export interface CardDataSource {
   searchTokens(query: string): Promise<CardData[]>;
   /** Tokens linked from the card's `all_parts` (DESIGN "Card data and images", Tokens). */
   relatedTokens(card: CardData): Promise<CardData[]>;
+  /**
+   * Every printing of the card (same oracle id), newest first, for the printing chooser (DESIGN "Card data and images";
+   * GAPS 14; PLAN M6-P5). Added by M6-C, optional so existing sources compile; implementer: M6-P5 (fixtures only in tests).
+   */
+  printings?(card: CardData): Promise<CardData[]>;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -3,7 +3,7 @@
  * "Specification: geometry, layout and motion": Tables and seats; "Input and interaction design": keymap).
  * games/ may import core/ and util/ only, so card data is described structurally here.
  */
-import type { CardInstance, CoreGameSpec, Format, PhaseSpec, Pose, StackItem, ZoneId, ZoneSpec } from '../core/types';
+import type { CardInstance, CoreGameSpec, Format, PhaseSpec, Pose, StackItem, TableObjectKind, ZoneId, ZoneSpec } from '../core/types';
 import type { TextureSource } from '../util/texture';
 
 export type { ZoneSpec, PhaseSpec, TextureSource };
@@ -79,7 +79,12 @@ export interface DestinationCard {
   type_line: string;
 }
 
-/** Keymap action ids: the actions of the canonical default keymap (DESIGN "Input and interaction design"). */
+/**
+ * Keymap action ids: the actions of the canonical default keymap (DESIGN "Input and interaction design"). M6-C added the
+ * keyboard routes PLAN Milestone 6 needs (GAPS 2, 3, 17, 24; owner decisions: attach and clips), each bound in
+ * games/mtg/keymap.ts to a chord no other action uses: place, tempMove, line, mark, attach, clip, toCommand,
+ * exileFaceDown, hide, stickyNote, counterObject.
+ */
 export type ActionId =
   // Card
   | 'tap'
@@ -95,6 +100,14 @@ export type ActionId =
   | 'ping'
   | 'zoomTo'
   | 'inspect'
+  /** M6-C (M6-P6): pick the card up and place it with the arrow keys; Enter drops with snapping, Esc cancels (GAPS 17: place freely). */
+  | 'place'
+  /** M6-C (M6-P1): attach the card to a host chosen with the focus keys and Enter; on an attached card, detach it (owner decisions, Tuck). */
+  | 'attach'
+  /** M6-C (M6-P1): clip the selection together, or the card with the cards it overlaps; on a clipped card, remove its clip (owner decisions, Paperclips). */
+  | 'clip'
+  /** M6-C (M6-P3): turn a public card face down and drop its identity from shared state (`hide`: morph, manifest; GAPS 24). */
+  | 'hide'
   // Zones
   | 'toGraveyard'
   | 'toExile'
@@ -102,6 +115,10 @@ export type ActionId =
   | 'toLibraryTop'
   | 'toLibraryBottom'
   | 'cast'
+  /** M6-C (M6-P3): to the owner's command zone (GAPS 2). */
+  | 'toCommand'
+  /** M6-C (M6-P3): to the owner's exile face down; the identity stays with the exiling player (DESIGN "Table model": Exile; GAPS 24). */
+  | 'exileFaceDown'
   // Library
   | 'draw'
   | 'drawN'
@@ -111,6 +128,12 @@ export type ActionId =
   | 'attack'
   | 'attackNoTap'
   | 'settle'
+  /** M6-C (M6-P6): a temporary move with the arrow keys, as Alt+drag (DESIGN "Combat and annotation", Temporary move; GAPS 17). */
+  | 'tempMove'
+  /** M6-C (M6-P6): draw a line from the card to a target chosen with the focus keys and Enter, as right-drag (GAPS 17). */
+  | 'line'
+  /** M6-C (M6-P6): the same for a persistent mark, as Shift+right-drag (GAPS 17). */
+  | 'mark'
   // Stack
   | 'ability'
   | 'resolve'
@@ -130,6 +153,10 @@ export type ActionId =
   | 'rollDie'
   | 'flipCoin'
   | 'undo'
+  /** M6-C (M6-P3): put a text sticky note on the own battlefield (DESIGN "Card manipulation", Other table objects; GAPS 3). */
+  | 'stickyNote'
+  /** M6-C (M6-P3): put a counter object (emblem, monarch, initiative, day/night) on the table (GAPS 3). */
+  | 'counterObject'
   // Talk
   | 'talk'
   | 'teamTalk'
@@ -194,6 +221,18 @@ export interface KeyBinding {
 /** A keymap: all bindings; no chord twice within one context (DESIGN "Input and interaction design"). */
 export type Keymap = readonly KeyBinding[];
 
+/**
+ * A table object a game offers by name (DESIGN "Card manipulation", Other table objects: "a generic counter object for
+ * emblems, monarch, initiative or day/night"; core/types.ts TableObjectKind). Added by M6-C; the HUD offers these and a
+ * free name (M6-P3).
+ */
+export interface TableObjectPreset {
+  kind: TableObjectKind;
+  label: string;
+  /** Where it goes by default: a seat's command zone (emblems) or the table near the seat (monarch, day/night). */
+  zone: 'command' | 'battlefield';
+}
+
 /** A game definition (DESIGN "Specification: code interfaces"). Extends the engine's CoreGameSpec (id, zones, phases, startingLife). */
 export interface GameDefinition extends CoreGameSpec {
   zones: ZoneSpec[];
@@ -207,4 +246,6 @@ export interface GameDefinition extends CoreGameSpec {
    */
   defaultDestination(item: StackItem, card?: DestinationCard, instance?: CardInstance): ZoneId | null;
   keymap: Keymap;
+  /** Added by M6-C. Named table objects the HUD offers (TableObjectPreset); absent means only free names. Implementer: M6-P3. */
+  tableObjects?: readonly TableObjectPreset[];
 }
