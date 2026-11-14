@@ -111,6 +111,11 @@ export class HintController {
     return this.ctx.touch;
   }
 
+  /** Whether what this browser has seen was read (`load`); until then no hint shows. */
+  get loaded(): boolean {
+    return this.ready;
+  }
+
   /** The hint to show now, or null. */
   current(): FirstRunHint | null {
     return this.ready ? nextHint(this.seen, this.ctx) : null;
