@@ -126,7 +126,20 @@ export type AuditUnverifiableReason = 'recordsMissing';
 
 /** The audit's verdict on one seat for one game (PLAN M5-P2: "a per-player verdict and any mismatch"). Added by M5-C. */
 export type AuditVerdict =
-  | { seat: SeatId; game: number; status: 'verified'; shuffles: number; draws: number }
+  | {
+      seat: SeatId;
+      game: number;
+      status: 'verified';
+      shuffles: number;
+      /** Draws checked against a committed order. */
+      draws: number;
+      /**
+       * Every draw from the seat's library in the game (M5 review): more than `draws` when some came while the order was
+       * not committed (before the first shuffle, after a mulligan or an unplaced arrival); the panel then says
+       * "k of n draws checked" without the ✓.
+       */
+      drawn: number;
+    }
   | { seat: SeatId; game: number; status: 'mismatch'; mismatches: AuditMismatch[] }
   | {
       seat: SeatId;
@@ -310,9 +323,11 @@ export function buildAuditBundle(secrets: SecretStore, game: AuditGame, log: rea
 
 /**
  * The library order the audit follows through a public action that is not the seat's own shuffle or reorder: cards
- * that left drop out; a single card the seat itself put on top or at the bottom (`toZone`, or the undo of a draw)
- * goes there, as the owner's browser places it. Any other arrival (a mulligan, another seat's move, an unplaced card)
- * leaves the order uncommitted: null until the next shuffle or reorder, and draws in between are not checked.
+ * that left drop out; a single card the seat itself put into its library (`toZone`, or the undo of a draw) goes to the
+ * bottom when the action says 'bottom' and on top otherwise ('top' or 'any'), as the owner's browser places it
+ * (session/effects.ts placementOf; DECISIONS [M5-review]: an 'any' must not stop the order being followed). Any other
+ * arrival (a mulligan, another seat's move, several cards at once) leaves the order uncommitted: null until the next
+ * shuffle or reorder, and draws in between are not checked (the verdict then says how many were).
  */
 function followLibrary(order: InstanceId[], prior: TableState, next: TableState, a: Action, lib: ZoneId, seat: SeatId): InstanceId[] | null {
   const now = new Set(own(next.zones, lib)?.ids ?? []);
@@ -322,9 +337,34 @@ function followLibrary(order: InstanceId[], prior: TableState, next: TableState,
   if (arrived.length === 0) return kept;
   const placed = a.type === 'undo' ? a.inverse : a;
   if (a.by === seat && arrived.length === 1 && placed.type === 'toZone' && placed.card === arrived[0] && placed.to === lib) {
-    if (placed.position === 'top') return [placed.card, ...kept];
-    if (placed.position === 'bottom') return [...kept, placed.card];
+    return placed.position === 'bottom' ? [...kept, placed.card] : [placed.card, ...kept];
   }
+  return null;
+}
+
+/**
+ * Why a private reorder of `count` cards of the library could not have given `after` from the committed `before`
+ * (DESIGN "Specification: network protocol and secrecy", private reorder; DECISIONS [M5-review]), or null when it
+ * could. The honest client sends `count` 1 and moves one card (scry or surveil to the top or bottom, a card put on
+ * top or at the bottom after a search, an undo putting a card back): at most one card changes place. A reorder of
+ * more cards claims "the top `count`, looked at and rearranged": every card below them keeps its position (no card
+ * from deeper in the library reaches the top), and every card that changed place was looked at before (`seen`: the
+ * seat's logged looks at its library since its last shuffle), so a reorder of the whole library is not a shuffle.
+ */
+function reorderProblem(before: readonly InstanceId[], after: readonly InstanceId[], count: number, seen: ReadonlySet<InstanceId>): string | null {
+  const k = Math.max(0, count);
+  const moved = movedCards(before, after);
+  if (k >= 1 && moved <= 1) return null;
+  if (k <= 1) return `a reorder of ${k} ${k === 1 ? 'card' : 'cards'} moved ${moved} cards of the library.`;
+  const was = new Map(before.map((id, i) => [id, i] as const));
+  const up = after.slice(0, k).findIndex((id) => (was.get(id) ?? -1) >= k);
+  if (up >= 0) {
+    const id = after[up]!;
+    return `a reorder of the top ${k} cards put ${shortId(id)}, which lay at position ${was.get(id)! + 1}, at position ${up + 1}.`;
+  }
+  if (!sameList(before.slice(k), after.slice(k))) return `a reorder of the top ${k} cards changed the library below them: ${firstDifference(before, after)}.`;
+  const unseen = before.slice(0, k).filter((id, i) => after[i] !== id && !seen.has(id)).length;
+  if (unseen > 0) return `a reorder of the top ${k} cards rearranged ${unseen} ${unseen === 1 ? 'card' : 'cards'} nobody had looked at (the player's looks at the library since the shuffle show fewer).`;
   return null;
 }
 
@@ -343,16 +383,17 @@ function nth(n: number): string {
  *   sequenced `shuffleNonce`s in seat order ('nonces'); Fisher-Yates over the zone's sorted ids from
  *   `SHA-256(ownerNonce + peer nonces)` gives the recorded order, and a re-issue's old ids map onto the new ones as the
  *   seed orders them ('order', 'reissue'); the recorded order and nonce hash to the public `orderHash` ('orderHash');
- * - every own `reorder`: the record lists the zone's cards and hashes to the public `orderHash`; a reorder of `count`
- *   cards moves at most `count` cards of the library, and a re-issue renames the cards in place;
+ * - every own `reorder`: the record lists the zone's cards and hashes to the public `orderHash`; a reorder of the
+ *   library moves one card or rearranges only its top `count` cards, those the seat looked at (`reorderProblem`), and
+ *   a re-issue renames the cards in place;
  * - every `draw` from the seat's library while its order is committed: the drawn id is the top of that order ('draw',
  *   with the expected and the drawn id). The order is committed from a shuffle or reorder on, and followed through
- *   draws, cards leaving, and cards the seat itself put on top or at the bottom; it is unknown (draws unchecked) after a
- *   mulligan or any other unplaced arrival until the next shuffle or reorder.
+ *   draws, cards leaving, and single cards the seat itself put into the library (at the bottom for 'bottom', else on
+ *   top); it is unknown (draws unchecked) after a mulligan or any other arrival until the next shuffle or reorder.
  * A public shuffle or reorder without a record is 'unrecorded' (a mismatch) unless the bundle says it is incomplete;
  * then it is unchecked, and so is everything when no bundle arrived. The verdict: 'mismatch' when any record exists and
  * disagrees, else 'unverifiable' (reason 'recordsMissing') when records are missing, else 'verified' with the numbers
- * of shuffles and draws checked. Pure, deterministic and total. Implementer: M5-P2. Added by M5-C.
+ * of shuffles and draws checked and of all draws. Pure, deterministic and total. Implementer: M5-P2. Added by M5-C.
  */
 export function verifyAudit(input: AuditInput): AuditVerdict {
   try {
@@ -390,6 +431,8 @@ function verify(input: AuditInput): AuditVerdict {
   let draws = 0;
   let drawn = 0;
   let order: InstanceId[] | null = null;
+  /** Cards of the committed library order the seat looked at since its last shuffle of it (reorderProblem). */
+  const seen = new Set<InstanceId>();
   let s = start;
 
   const unrecorded = (seq: number, ref: ShuffleId | ZoneId, what: string): void => {
@@ -441,7 +484,10 @@ function verify(input: AuditInput): AuditVerdict {
         shuffles++;
       }
       // Draws are checked against the order the public hash committed to (a stacked order is one mismatch, not one per draw).
-      if (round.zone === lib) order = listed && hashOk ? [...rec.order] : null;
+      if (round.zone === lib) {
+        order = listed && hashOk ? [...rec.order] : null;
+        seen.clear();
+      }
       continue;
     }
 
@@ -469,16 +515,20 @@ function verify(input: AuditInput): AuditVerdict {
         else if (a.zone === lib && order !== null && !sameList(rec.reissue.before, order)) add('reissue', `the re-issue moved cards: ${firstDifference(order, rec.reissue.before)}.`);
       } else {
         if (rec.reissue) add('reissue', 'the record claims a re-issue the table never saw.');
-        // Only the cards looked at move: at most `count` of them change place.
+        // One card moves, or only the top `count` cards are rearranged (reorderProblem).
         if (a.zone === lib && order !== null && listed) {
-          const moved = movedCards(order, rec.order);
-          if (moved > Math.max(0, a.count)) add('order', `a reorder of ${a.count} ${a.count === 1 ? 'card' : 'cards'} moved ${moved} cards of the library.`);
+          const problem = reorderProblem(order, rec.order, a.count, seen);
+          if (problem !== null) add('order', problem);
         }
       }
       mismatches.push(...found);
       if (found.length === 0) checked++;
       if (a.zone === lib) order = listed && hashOk ? [...rec.order] : null;
       continue;
+    }
+
+    if (mine && a.type === 'lookAt' && a.zone === lib && a.card === undefined && order !== null) {
+      for (const id of order.slice(0, Math.max(0, a.count))) seen.add(id);
     }
 
     if (a.type === 'draw' && own(prior.cards, a.instanceId)?.zone === lib) {
@@ -509,5 +559,5 @@ function verify(input: AuditInput): AuditVerdict {
     const detail = `${checked} of ${total} shuffles and reorders checked; the rest could not be checked (no record of ${which}); ${draws} of ${drawn} ${drawn === 1 ? 'draw' : 'draws'} checked.`;
     return { seat, game: g, status: 'unverifiable', reason: 'recordsMissing', detail, checked };
   }
-  return { seat, game: g, status: 'verified', shuffles, draws };
+  return { seat, game: g, status: 'verified', shuffles, draws, drawn };
 }

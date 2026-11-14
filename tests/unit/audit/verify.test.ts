@@ -9,6 +9,7 @@ import { auditSeats, verifyAudit, type AuditBundle, type AuditVerdict, type Publ
 import type { Action } from '../../../src/core/actions';
 import { orderHash, shuffleOutcome, shuffleSeed } from '../../../src/core/rng';
 import type { ShuffleRecord } from '../../../src/core/types';
+import { partlyChecked, verdictLine, verdictText } from '../../../src/net/audit';
 import { AuditTable } from './helpers';
 
 const mismatchKinds = (v: AuditVerdict): string[] => (v.status === 'mismatch' ? v.mismatches.map((m) => m.kind) : []);
@@ -80,8 +81,8 @@ describe('verifyAudit on an honest game', () => {
     g.endMatch();
     const a = verifyAudit(g.input('s0'));
     const b = verifyAudit(g.input('s1'));
-    expect(a).toEqual({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 9 });
-    expect(b).toEqual({ seat: 's1', game: 1, status: 'verified', shuffles: 2, draws: 10 });
+    expect(a).toEqual({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 9, drawn: 9 });
+    expect(b).toEqual({ seat: 's1', game: 1, status: 'verified', shuffles: 2, draws: 10, drawn: 10 });
     // Deterministic, and the input is not changed.
     const inp = g.input('s1');
     const frozen = structuredClone(inp);
@@ -103,24 +104,60 @@ describe('verifyAudit on an honest game', () => {
     g.follow('s0', 'top');
     g.draw('s0', 2);
     g.endMatch();
-    expect(verifyAudit(g.input('s0'))).toEqual({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 10 });
+    expect(verifyAudit(g.input('s0'))).toEqual({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 10, drawn: 10 });
   });
 
-  it('does not check draws whose order nobody committed to (after a mulligan, before the first shuffle): no false mismatch', () => {
+  it('does not check draws whose order nobody committed to (after a mulligan, before the first shuffle): no false mismatch, but counted', () => {
     const g = new AuditTable();
     g.startMatch();
     // Ben draws from the unshuffled deck order; Anna mulligans (the hand goes back unplaced) and draws again unshuffled.
     g.draw('s1', 2);
     g.shuffle('s0', 'sh-a1');
     g.draw('s0', 7);
-    for (const id of [...g.t.secrets.s0!.hand]) g.t.apply('s0', { type: 'toZone', card: id, to: 'library:s0', position: 'any' });
+    g.t.apply('s0', { type: 'mulligan', count: 1 });
     g.follow('s0');
     // Anna's client keeps the returned cards wherever; the table cannot know, so these draws are not checked.
     g.t.secrets.s0 = { ...g.t.secrets.s0!, libraryOrder: [...g.library('s0')].reverse() };
     g.draw('s0', 3);
     g.endMatch();
-    expect(verifyAudit(g.input('s0'))).toEqual({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 7 });
-    expect(verifyAudit(g.input('s1'))).toEqual({ seat: 's1', game: 1, status: 'verified', shuffles: 0, draws: 0 });
+    const a = verifyAudit(g.input('s0'));
+    const b = verifyAudit(g.input('s1'));
+    expect(a).toEqual({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 7, drawn: 10 });
+    expect(b).toEqual({ seat: 's1', game: 1, status: 'verified', shuffles: 0, draws: 0, drawn: 2 });
+    // The verdict says how many draws were checked, and the panel shows no ✓ (partlyChecked).
+    expect(verdictText(a)).toBe('verified: 1 shuffle and 7 of 10 draws checked; 3 drawn while the library order was not committed');
+    expect(a.status === 'verified' && partlyChecked(a)).toBe(true);
+    expect(verdictText(b)).toBe('verified: 0 shuffles and 0 of 2 draws checked; 2 drawn while the library order was not committed');
+  });
+
+  it('a card put into the library with position "any" goes on top, as the owner\'s browser places it: the order stays committed', () => {
+    const g = opened();
+    const back = g.t.secrets.s0!.hand[0]!;
+    g.t.apply('s0', { type: 'toZone', card: back, to: 'library:s0', position: 'any' });
+    g.follow('s0');
+    expect(g.library('s0')[0]).toBe(back);
+    g.draw('s0', 3);
+    g.endMatch();
+    expect(verifyAudit(g.input('s0'))).toEqual({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 10, drawn: 10 });
+  });
+
+  it('only rearranging the top of the library and moving single cards (scry, surveil, search, undo) passes', () => {
+    const g = opened();
+    // Scry 3 as the honest client does it: one reorder of one card per card sent to the bottom or kept on top.
+    const lib = g.library('s0');
+    g.reorder('s0', [...lib.slice(1), lib[0]!], 1);
+    const lib2 = g.library('s0');
+    g.reorder('s0', [lib2[1]!, lib2[0]!, ...lib2.slice(2)], 1);
+    // The last card put on top after a search (one card from the bottom).
+    const lib3 = g.library('s0');
+    g.reorder('s0', [lib3.at(-1)!, ...lib3.slice(0, -1)], 1);
+    // A look at the top three, then a reorder of those three only (no card below them moves).
+    g.t.apply('s0', { type: 'lookAt', zone: 'library:s0', count: 3 });
+    const lib4 = g.library('s0');
+    g.reorder('s0', [lib4[2]!, lib4[0]!, lib4[1]!, ...lib4.slice(3)], 3);
+    g.draw('s0', 4);
+    g.endMatch();
+    expect(verifyAudit(g.input('s0'))).toEqual({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 11, drawn: 11 });
   });
 });
 
@@ -209,6 +246,87 @@ describe('verifyAudit finds records that disagree', () => {
     const v = verifyAudit(h.input('s0'));
     expect(mismatchKinds(v)).toEqual(['order']);
     expect(v.status === 'mismatch' && v.mismatches[0]!.detail).toMatch(/a reorder of 1 card moved 2 cards of the library/);
+  });
+
+  it('a "reorder" of the whole library that stacks it is a mismatch, not a shuffle (M5 review)', () => {
+    const g = opened();
+    // A modified client sends a reorder with count = library size and an order it chose (the reverse of the committed one).
+    const lib = g.library('s0');
+    const stacked = [...lib].reverse();
+    g.reorder('s0', stacked, lib.length);
+    const fake = g.log.at(-1)!;
+    expect(fake).toMatchObject({ type: 'reorder', count: lib.length });
+    g.draw('s0', 5);
+    g.endMatch();
+    const v = verifyAudit(g.input('s0'));
+    expect(mismatchKinds(v)).toEqual(['order']);
+    expect(v.status === 'mismatch' && v.mismatches[0]).toMatchObject({ seq: fake.seq, ref: 'library:s0' });
+    expect(v.status === 'mismatch' && v.mismatches[0]!.detail).toBe(
+      `Reorder of library:s0 (action ${fake.seq}): a reorder of the top ${lib.length} cards rearranged ${lib.filter((id, i) => stacked[i] !== id).length} cards nobody had looked at (the player's looks at the library since the shuffle show fewer).`,
+    );
+    // The log does not call it a shuffle either (ui/describe.ts; tests/unit/ui/hud-logic.test.ts).
+  });
+
+  it('a reorder of the top N after a look at fewer cards is a mismatch; after a look at N it passes', () => {
+    const run = (looked: number): AuditVerdict => {
+      const g = opened();
+      g.t.apply('s0', { type: 'lookAt', zone: 'library:s0', count: looked });
+      const lib = g.library('s0');
+      g.reorder('s0', [...lib.slice(0, 4)].reverse().concat(lib.slice(4)), 4);
+      g.draw('s0', 1);
+      g.endMatch();
+      return verifyAudit(g.input('s0'));
+    };
+    expect(mismatchKinds(run(2))).toEqual(['order']);
+    expect(run(4)).toMatchObject({ status: 'verified', draws: 8, drawn: 8 });
+  });
+
+  it('a reorder of the top N that pulls a card up from below them is a mismatch', () => {
+    const g = opened();
+    const lib = g.library('s0');
+    // "Look at the top 3, rearrange them" but the bottom card ends up on top and the third card goes to the bottom.
+    g.reorder('s0', [lib.at(-1)!, lib[0]!, lib[1]!, ...lib.slice(3, -1), lib[2]!], 3);
+    g.draw('s0', 1);
+    g.endMatch();
+    const v = verifyAudit(g.input('s0'));
+    expect(mismatchKinds(v)).toEqual(['order']);
+    expect(v.status === 'mismatch' && v.mismatches[0]!.detail).toMatch(new RegExp(`a reorder of the top 3 cards put ${lib.at(-1)!.slice(0, 8)}…, which lay at position ${lib.length}, at position 1\\.$`));
+  });
+
+  it('a card put back with position "any" does not stop the order being followed: a draw from the bottom afterwards is caught (M5 review)', () => {
+    const g = opened();
+    // A modified client returns a hand card with 'any' (the honest UI never sends it; the honest session puts it on top) ...
+    const back = g.t.secrets.s0!.hand[0]!;
+    g.t.apply('s0', { type: 'toZone', card: back, to: 'library:s0', position: 'any' });
+    g.follow('s0');
+    // ... and then draws the bottom card of its committed order three times.
+    const taken: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const bottom = g.library('s0').at(-1)!;
+      g.t.apply('s0', { type: 'draw', instanceId: bottom });
+      g.follow('s0');
+      taken.push(bottom);
+    }
+    g.endMatch();
+    const v = verifyAudit(g.input('s0'));
+    expect(mismatchKinds(v)).toEqual(['draw', 'draw', 'draw']);
+    expect(v.status === 'mismatch' && v.mismatches[0]!.detail).toContain(`took ${taken[0]!.slice(0, 8)}…`);
+    expect(v.status === 'mismatch' && v.mismatches[0]!.detail).toContain(`the top of the committed library was ${back.slice(0, 8)}…`);
+  });
+
+  it('a seat that never shuffled and picked its draws is not shown with a ✓: 0 of 7 draws checked', () => {
+    const g = new AuditTable();
+    g.startMatch();
+    g.shuffle('s1', 'sh-b1');
+    for (let i = 0; i < 7; i++) {
+      g.t.apply('s0', { type: 'draw', instanceId: g.library('s0').at(-1)! });
+      g.follow('s0');
+    }
+    g.endMatch();
+    const v = verifyAudit(g.input('s0'));
+    expect(v).toEqual({ seat: 's0', game: 1, status: 'verified', shuffles: 0, draws: 0, drawn: 7 });
+    expect(v.status === 'verified' && partlyChecked(v)).toBe(true);
+    expect(verdictLine(v, 'Anna')).toBe('Audit of game 1: Anna — verified: 0 shuffles and 0 of 7 draws checked; 7 drawn while the library order was not committed');
   });
 
   it('a re-issue whose old ids are not mapped as the seed orders them', () => {
@@ -312,7 +430,7 @@ describe('buildAuditBundle', () => {
     const game2 = g.games()[1]!;
     const b2 = g.bundle('s0', game2);
     expect(b2.records.map((r) => (r.kind === 'shuffle' ? r.sid : r.kind))).toEqual(['sh-a9']);
-    expect(verifyAudit(g.input('s0', b2, game2))).toEqual({ seat: 's0', game: 2, status: 'verified', shuffles: 1, draws: 0 });
+    expect(verifyAudit(g.input('s0', b2, game2))).toEqual({ seat: 's0', game: 2, status: 'verified', shuffles: 1, draws: 0, drawn: 0 });
     // Game two's ids are new: nothing published for game one names a card of game two.
     const ids1 = new Set(b1.records.flatMap((r) => [...r.order, ...(r.reissue?.before ?? [])]));
     expect(Object.keys(g.state.cards).length).toBe(0);

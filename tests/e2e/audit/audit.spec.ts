@@ -74,11 +74,13 @@ test('a two-player game ends in the audit panel: both players verified on both p
     await expect(panel.locator('[data-testid="audit-row"][data-seat="s0"]')).toContainText('Anna');
     await expect(panel.locator('[data-testid="audit-row"][data-seat="s0"]')).toContainText('1 shuffle and 8 draws checked');
     await expect(panel.locator('[data-testid="audit-row"][data-seat="s1"]')).toContainText('1 shuffle and 7 draws checked');
+    // Every draw was checked: no row is marked as checked in part (M5 review).
+    await expect(panel.locator('[data-testid="audit-row"][data-partial]')).toHaveCount(0);
   }
   const va = await verdicts(a);
   expect(va).toEqual([
-    { seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 8 },
-    { seat: 's1', game: 1, status: 'verified', shuffles: 1, draws: 7 },
+    { seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 8, drawn: 8 },
+    { seat: 's1', game: 1, status: 'verified', shuffles: 1, draws: 7, drawn: 7 },
   ]);
   expect(await verdicts(b)).toEqual(va);
   const [pa, pb] = [await published(a), await published(b)];

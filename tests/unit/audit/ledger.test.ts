@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Action } from '../../../src/core/actions';
 import { reduce } from '../../../src/core/reducer';
-import { AUDIT_WAIT_MS, AuditLedger, verdictLine, verdictText } from '../../../src/net/audit';
+import { AUDIT_WAIT_MS, AuditLedger, partlyChecked, verdictLine, verdictText } from '../../../src/net/audit';
 import { AuditTable } from './helpers';
 
 /** Feed `ledger` the log of `g` from `from` on (as net/sequencer.ts applySequenced does: a refused action only moves seq). */
@@ -99,10 +99,15 @@ describe('the audit ledger', () => {
   });
 
   it('words every verdict for the log and the panel', () => {
-    expect(verdictText({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 7 })).toBe('verified: 1 shuffle and 7 draws checked');
-    expect(verdictLine({ seat: 's0', game: 2, status: 'verified', shuffles: 2, draws: 1 }, 'Anna')).toBe('Audit of game 2: Anna — verified: 2 shuffles and 1 draw checked');
-    // A seat that never shuffled and never drew from a committed order: the status word alone would overstate it.
-    expect(verdictText({ seat: 's0', game: 1, status: 'verified', shuffles: 0, draws: 0 })).toBe('verified: nothing to check (no shuffle and no draw from a committed order)');
+    expect(verdictText({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 7, drawn: 7 })).toBe('verified: 1 shuffle and 7 draws checked');
+    expect(verdictLine({ seat: 's0', game: 2, status: 'verified', shuffles: 2, draws: 1, drawn: 1 }, 'Anna')).toBe('Audit of game 2: Anna — verified: 2 shuffles and 1 draw checked');
+    // A seat that never shuffled and never drew: the status word alone would overstate it.
+    expect(verdictText({ seat: 's0', game: 1, status: 'verified', shuffles: 0, draws: 0, drawn: 0 })).toBe('verified: nothing to check (no shuffle and no draw from a committed order)');
+    // Draws that came while the library order was not committed are counted, not hidden behind "verified" (M5 review).
+    expect(verdictText({ seat: 's0', game: 1, status: 'verified', shuffles: 1, draws: 5, drawn: 8 })).toBe('verified: 1 shuffle and 5 of 8 draws checked; 3 drawn while the library order was not committed');
+    expect(verdictText({ seat: 's0', game: 1, status: 'verified', shuffles: 0, draws: 0, drawn: 7 })).toBe('verified: 0 shuffles and 0 of 7 draws checked; 7 drawn while the library order was not committed');
+    expect(partlyChecked({ draws: 5, drawn: 8 })).toBe(true);
+    expect(partlyChecked({ draws: 8, drawn: 8 })).toBe(false);
     expect(
       verdictText({
         seat: 's1',
