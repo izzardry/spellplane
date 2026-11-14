@@ -5,6 +5,7 @@
   filters and chat tabs and the `[[card name]]` previews live in ui/chat/.
 -->
 <script lang="ts">
+  import { onDestroy, untrack } from 'svelte';
   import type { ChatTab, TimelineFilter } from '../core/log';
   import type { InstanceId } from '../core/types';
   import type { CardDataSource, FaceSource } from '../data/types';
@@ -12,6 +13,8 @@
   import ChatLines from './chat/ChatLines.svelte';
   import FilterBar from './chat/FilterBar.svelte';
   import { CardNameResolver } from './chat/names';
+  import { TypingSender, type Typer } from './chat/typing';
+  import TypingLine from './chat/TypingLine.svelte';
   import type { LogLine } from './describe';
 
   let {
@@ -24,6 +27,8 @@
     faces = null,
     back = null,
     tabs = ['table'],
+    typers = [],
+    ontyping,
   }: {
     lines: LogLine[];
     open: boolean;
@@ -37,6 +42,10 @@
     back?: TextureSource | null;
     /** Chat tabs to offer (M1-P6); 'table' only by default. */
     tabs?: ChatTab[];
+    /** Added by M6-P2: who is typing that this viewer may see (ui/chat/typing.ts typersOf). */
+    typers?: Typer[];
+    /** Added by M6-P2: announce this field's typing on presence (Presence.typing); absent at the solo table. */
+    ontyping?: (channel: ChatTab | null) => void;
   } = $props();
 
   let text = $state('');
@@ -44,10 +53,25 @@
   let filter = $state<TimelineFilter>('all');
   let tab = $state<ChatTab>('table');
   const resolver = $derived(cardData ? new CardNameResolver(cardData) : null);
-  // A tab that disappears (a team dissolved) falls back to the table tab.
+  /**
+   * The tabs offered: a tab that disappears (a team dissolved, the last spectator left) stays while the field holds a
+   * draft written on it, so Enter never sends that draft to another audience (M6-P2); once it is sent or emptied the
+   * tab goes and the field falls back to the table tab.
+   */
+  const shownTabs = $derived(tabs.includes(tab) || !text.trim() ? tabs : [...tabs, tab]);
   $effect(() => {
-    if (!tabs.includes(tab)) tab = 'table';
+    if (!shownTabs.includes(tab)) tab = 'table';
   });
+  /** This field's typing indicator (M6-P2): announced while it holds text, on the tab it would go to. */
+  const typing = new TypingSender({ send: (channel) => ontyping?.(channel) });
+  // Another tab while typing: the indicator follows it (and stops on the team tab, which is never announced).
+  $effect(() => {
+    const t = tab;
+    untrack(() => {
+      if (typing.channel() !== null) typing.input(text, t);
+    });
+  });
+  onDestroy(() => typing.dispose());
 
   /** Focus the chat field (Enter with no prompt showing, DESIGN "Input and interaction design"). */
   export function focusChat() {
@@ -58,13 +82,14 @@
     const t = text.trim();
     if (t) onchat(t, tab);
     text = '';
+    typing.stop();
   }
 </script>
 
 <aside class="log" class:closed={!open} data-testid="log" aria-label="Log and chat">
   <header>
     <h2>Log</h2>
-    {#if open}<FilterBar bind:filter bind:tab {tabs} />{/if}
+    {#if open}<FilterBar bind:filter bind:tab tabs={shownTabs} />{/if}
     <button type="button" onclick={ontoggle} aria-expanded={open}>{open ? 'Hide' : 'Log'}</button>
   </header>
   {#if open}
@@ -78,6 +103,8 @@
     maxlength="500"
     placeholder={tab === 'table' ? 'Chat (Enter), [[card name]] previews' : `${tab === 'team' ? 'Team' : 'Spectator'} chat (Enter)`}
     aria-label="Chat message"
+    oninput={(e) => typing.input(e.currentTarget.value, tab)}
+    onblur={() => typing.stop()}
     onkeydown={(e) => {
       if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
         e.preventDefault();
@@ -85,6 +112,7 @@
       } else if (e.key === 'Escape') input?.blur();
     }}
   />
+  <TypingLine {typers} {tab} tabs={shownTabs} />
 </aside>
 
 <style>

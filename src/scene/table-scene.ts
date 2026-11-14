@@ -52,6 +52,7 @@ import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { badgeItems, drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackCollapsed, stackEntries, stackSlotPose, type DebugStackEntry, type StackEntry } from './stack';
 import { StackBadgeView } from './stack-badge';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
+import { attachPressHold } from './press-hold';
 import { TextLayer, type TextSpec } from './text';
 import { recentGestures, TouchPointers } from './input/pointers';
 import type { TouchGesture } from './input/touch';
@@ -77,6 +78,7 @@ import type {
   TablePoint3,
   TableScene,
   TableSceneOptions,
+  TablePressKind,
   ViewState,
 } from './types';
 
@@ -2437,6 +2439,22 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   addEventListener('pointerup', onWindowUp);
   addEventListener('pointercancel', onWindowUp);
   addEventListener('keydown', onKey);
+  // Held table presses for "Talk while I hold or drag" (M6-P2, scene/press-hold.ts): any press on the canvas held past
+  // HOLD_PRESS_TALK_MS, whatever it does, reported with what it is doing then.
+  const pressHold = attachPressHold(canvas, { kind: pressKind, onChange: (phase, kind) => opts.events.pressHold?.(phase, kind) });
+  /** What the press under way is doing (SceneEvents.pressHold's kind). */
+  function pressKind(): TablePressKind {
+    if (drag || itemDrag) return 'card';
+    if (lineView.draft) return 'line';
+    if (touchHold) return touchHold.kind === 'pan' ? 'camera' : touchHold.kind === 'marquee' ? 'marquee' : touchHold.kind === 'line' ? 'line' : 'card';
+    const g = gesture;
+    if (!g) return 'other';
+    if (g.kind === 'pan' || g.kind === 'pitch') return 'camera';
+    if (g.kind === 'marquee' || g.kind === 'line') return g.kind;
+    if (g.kind === 'drag') return 'card';
+    if (g.button === 2) return g.card || g.item ? 'line' : 'camera';
+    return g.card || g.item ? 'card' : g.shift ? 'marquee' : 'camera';
+  }
   const resizeObserver = new ResizeObserver(() => resize());
   resizeObserver.observe(host);
   resize();
@@ -2909,6 +2927,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (startCardDrag(rc, -1, x, y, false, false, true)) {
         drag!.added = added;
         drag!.pointerId = activePointer ?? -1;
+        // A card dragged out of the hand or a pile viewer is a table press from here on ("Talk while I hold or drag",
+        // M6-P2): timed from its press on the HUD, ended by that pointer's release.
+        if (activePointer !== null && pressedPointers.has(activePointer)) pressHold.adopt(activePointer, performance.now() - activePointerAt);
       }
     },
     startClipDrag(x, y) {
@@ -2928,6 +2949,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     debug,
     dispose() {
       disposed = true;
+      pressHold.dispose();
       touchInput.reset();
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();
@@ -2982,8 +3004,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   // The HUD's drag starts with its own pointerdown; remember that pointer so its moves and release reach us.
   let activePointer: number | null = null;
+  /** When the active pointer went down (performance.now()). */
+  let activePointerAt = 0;
   function trackPointer(e: PointerEvent): void {
     activePointer = e.pointerId;
+    activePointerAt = performance.now();
     pressedPointers.add(e.pointerId);
   }
   function releasePointer(e: PointerEvent): void {

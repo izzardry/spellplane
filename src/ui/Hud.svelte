@@ -22,6 +22,7 @@
   import { parsePlainList } from './deck';
   import { logLines } from './describe';
   import Flashes from './chat/Flashes.svelte';
+  import { typersOf, typingSeats, type Typer } from './chat/typing';
   import { addPending, LogWatch, prunePending } from './chat/watch';
   import { inZoneKind, layoutOf } from './geometry';
   import { fitInsets as fitInsetsFor, handOrder } from './hand';
@@ -44,6 +45,7 @@
   import TalkIndicator from './voice/TalkIndicator.svelte';
   import VoicePanel from './voice/VoicePanel.svelte';
   import { attachModifierTalkActions, attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
+  import { PressTalk } from './voice/press';
   import Speech from './settings/Speech.svelte';
   import ThemePicker from './settings/Theme.svelte';
   import { themeContext } from './settings/theme';
@@ -125,6 +127,8 @@
   /** Hand a drag out of the hand fan or a pile viewer to the scene, and show it to the others (M1-P5 presence). */
   function dragOut(id: InstanceId, x: number, y: number): void {
     if (!scene) return;
+    // The drag becomes a table press ("Talk while I hold or drag", M6-P2): captions said meanwhile attach to this card.
+    pressTalk.dragOut(id);
     scene.startDrag(id, x, y);
     presence?.beginExternalDrag(id, x, y);
   }
@@ -182,6 +186,18 @@
     return !!peer && speaking[peer] === true;
   };
   let logPanel = $state<LogPanel | undefined>();
+  /**
+   * Who is typing (M6-P2, GAPS 22; ui/chat/typing.ts): other peers' presence, shown beside the chat field and on their
+   * avatars. Spectators' names come from their connections' nicknames; `watching` counts the spectators connected now.
+   */
+  let typers = $state.raw<Typer[]>([]);
+  let watching = $state(0);
+  const typingAt = $derived(typingSeats(typers));
+  function refreshTypers(): void {
+    const peers = session.netStatus().peers;
+    typers = typersOf(session.presence.peers(), st, me, peers, Date.now());
+    watching = new Set(peers.filter((p) => p.role === 'spectator' && p.status !== 'handshake' && p.peerId).map((p) => p.peerId)).size;
+  }
   /** Dictated captions (M3-P4, session.captions) and the speech settings panel. */
   let captionList = $state.raw<Caption[]>([]);
   let speechOpen = $state(false);
@@ -723,8 +739,17 @@
       soloShuffles,
     }),
   );
-  /** Chat tabs (DESIGN "Chat and voice", Text chat): the team tab when the own seat has a team. */
-  const chatTabs = $derived<ChatTab[]>(st.seats[me]?.team ? ['table', 'team'] : ['table']);
+  /**
+   * Chat tabs (DESIGN "Chat and voice", Text chat: table, team and spectator tabs): the team tab when the own seat has a
+   * team; the spectator tab for a spectator, and for players while someone watches or once the timeline holds a
+   * spectator line (M6-P2, GAPS 22).
+   */
+  const spectatorLines = $derived(entries.some((e) => e.kind === 'action' && e.action.type === 'chat' && e.action.channel === 'spectator'));
+  const chatTabs = $derived<ChatTab[]>([
+    'table',
+    ...(st.seats[me]?.team && !spectating ? (['team'] as const) : []),
+    ...(spectating || watching > 0 || spectatorLines ? (['spectator'] as const) : []),
+  ]);
   function sendChat(text: string, channel: ChatTab) {
     const a = session.chat(text, channel);
     followTeam();
@@ -934,8 +959,10 @@
   // The hovered card or stack item is a caption's anchor (DESIGN "Chat and voice", Placement: "last acted on or is
   // hovering"). A stack marker (an ability or trigger) has no card: the scene reports it on its own.
   let captionHover = '';
-  function syncCaptionHover(card: InstanceId | null): void {
+  function syncCaptionHover(hoveredCard: InstanceId | null): void {
     if (!session.captions) return;
+    // A held press that talks keeps its card as the anchor while it drags it (M6-P2, ui/voice/press.ts).
+    const card = pressTalk.anchorCard() ?? hoveredCard;
     const item = card ? null : hoveredStackItem(scene);
     const anchor: Anchor | null = card ? { kind: 'card', id: card } : item ? { kind: 'stackItem', id: item } : null;
     const key = anchor ? `${anchor.kind}:${anchor.id}` : '';
@@ -946,6 +973,12 @@
   $effect(() => {
     const h = hovered;
     untrack(() => syncCaptionHover(h));
+  });
+  /** "Talk while I hold or drag" (M6-P2): the scene's held table presses open the mic; captions attach to the pressed card. */
+  const pressTalk = new PressTalk({
+    voice: liveVoice,
+    cardAt: (x, y) => scene?.cardAt(x, y) ?? null,
+    onAnchor: () => syncCaptionHover(hovered),
   });
   /** While the note field has focus, dictation goes into it (DESIGN "Chat and voice", Notes by voice). */
   function dictateNote(on: boolean): void {
@@ -1029,6 +1062,13 @@
     const chordOf = (action: 'talk' | 'teamTalk') => keymap.find((b) => b.action === action && b.context === 'table')?.chord ?? null;
     const modifierOff = attachModifierTalkActions(window, (action, phase) => hooks.voice(action, phase), { talkChord: () => chordOf('talk'), teamTalkChord: () => chordOf('teamTalk'), onHold: (h) => (talkHold = h) });
     const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
+    // Who is typing (M6-P2): presence, the connections (spectators' nicknames) and the seats (names, teams).
+    refreshTypers();
+    const typingOff = session.presence.subscribe(() => refreshTypers());
+    const typingNetOff = session.subscribeNet(() => refreshTypers());
+    const typingStateOff = session.subscribe(() => refreshTypers());
+    // A typing peer that went silent (a lost stop) drops out after TYPING_STALE_MS even if nothing else changes.
+    const typingTimer = setInterval(() => typers.length > 0 && refreshTypers(), 1000);
     captionList = session.captions?.captions() ?? [];
     const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
     void settings
@@ -1063,6 +1103,7 @@
             else openPile = openPile === id ? null : id;
           },
           selectionChange: (ids) => (selection = [...ids]),
+          pressHold: (phase, kind) => pressTalk.hold(phase, kind),
           radialMenu: (id, at) => {
             menu = null;
             radial = id && !spectating && st.cards[id] ? { card: id, at: { x: at.x, y: at.y } } : null;
@@ -1100,6 +1141,11 @@
       unsubView();
       view.dispose();
       voiceOff?.();
+      typingOff();
+      typingNetOff();
+      typingStateOff();
+      clearInterval(typingTimer);
+      pressTalk.dispose();
       modifierOff();
       speakOff?.();
       teamUnsub?.();
@@ -1144,7 +1190,10 @@
 <svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncView()} />
 
 <div class="root" class:touch-ui={touchUi} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
-  <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost} onpointerdowncapture={pressOnTable}></div>
+  <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost} onpointerdowncapture={(e) => {
+      pressOnTable();
+      pressTalk.down(e.clientX, e.clientY);
+    }}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
   <Flashes
     {watch}
@@ -1214,6 +1263,7 @@
           me={false}
           active={st.turn.active === seat.id || st.turn.active === seat.team}
           speaking={speaks(seat.id)}
+          typing={typingAt.has(seat.id)}
           responding={st.confirm?.holder === seat.id}
           asking={asking(seat.id)}
           glyph={glyphOf(seat.colour)}
@@ -1267,6 +1317,8 @@
         {faces}
         {back}
         tabs={chatTabs}
+        {typers}
+        ontyping={(channel) => session.presence.typing(channel)}
         onhovercard={(card, x, y) => {
           preview = card ? { card, x, y } : null;
           hudHover = card;
