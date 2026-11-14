@@ -148,13 +148,16 @@ test.describe('first-run hints', () => {
   test('the start page welcomes a new player once', async ({ page }) => {
     await openApp(page, { hash: '/lobby' });
     const hint = page.getByTestId('hint');
-    // One hint at a time (M5 gate): where the browser can be asked to keep the data, that prompt comes first.
-    const persist = page.getByTestId('hint-persist');
-    await expect(hint.or(persist)).toBeVisible();
-    if ((await persist.count()) > 0) {
+    // One hint at a time (M5 gate): where the browser can be asked to keep the data, that prompt comes first. The page
+    // decides which one once every source has loaded (ui/lobby/start-hint.ts); wait for that decision, not for a hint.
+    const decided = page.getByTestId('start-hints');
+    await expect(decided).toHaveAttribute('data-start-hint', /^(persistStorage|welcome)$/);
+    if ((await decided.getAttribute('data-start-hint')) === 'persistStorage') {
       await expect(hint).toHaveCount(0);
-      await persist.getByTestId('hint-persist-later').click();
+      await page.getByTestId('hint-persist').getByTestId('hint-persist-later').click();
+      await expect(decided).toHaveAttribute('data-start-hint', 'welcome');
     }
+    await expect(page.getByTestId('hint-persist')).toHaveCount(0);
     await expect(hint).toHaveAttribute('data-hint', 'welcome');
     await hint.getByTestId('hint-dismiss').click();
     await expect(hint).toHaveCount(0);
@@ -179,7 +182,7 @@ test.describe('first-run hints', () => {
     await expect.poll(async () => ((await stored()) as string[] | null)?.includes('welcome') ?? false).toBe(true);
     await page.reload();
     await expect(page.getByTestId('route-lobby')).toBeVisible();
-    await page.waitForTimeout(300);
+    await expect(page.getByTestId('start-hints')).toHaveAttribute('data-start-hint', 'none');
     await expect(page.getByTestId('hint')).toHaveCount(0);
   });
 });

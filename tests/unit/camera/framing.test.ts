@@ -9,15 +9,18 @@
  * The real rig (scene/camera/rig.ts) at its default ego view, for every format and every seat, as the table scene
  * builds it (the camera's table, the seat angle and the seat's offset).
  */
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { CAMERA, GEOMETRY, SCREEN_LAYER } from '../../../src/core/geometry';
 import type { Format } from '../../../src/core/types';
 import { mtgLayout, soloLayout } from '../../../src/games/mtg/layout';
 import type { Rect, SeatLayout, TableLayout } from '../../../src/games/types';
 import { egoSeat } from '../../../src/scene/camera/ego';
+import { projectPoint } from '../../../src/scene/camera/pose';
 import { TableRig, lateralOf } from '../../../src/scene/camera/rig';
 import { cameraTable } from '../../../src/scene/layout';
 import { forward } from '../../../src/scene/math';
+import type { CameraRig, ScreenPoint, TablePoint } from '../../../src/scene/types';
 import { DEFAULT_EGO_RIG, EGO_FRAMING_VIEWPORTS } from '../../../src/scene/types';
 import { FIT_INSET, fitInsets } from '../../../src/ui/hand';
 
@@ -186,5 +189,114 @@ describe('the default ego view keeps the own piles clear of the HUD', () => {
     rig.setEgoKeep(ownPieces(seat).flatMap((p) => corners(p.rect)));
     expect(rig.egoFrame).toEqual({ pull: 0, shift: 0 });
     expect(rig.pose()).toEqual(before);
+  });
+});
+
+/**
+ * Review fix (M5): like the bird's-eye rig, which re-fits only a fitted view, a HUD inset or viewport change reframes
+ * only the default ego view. An ego view the viewer navigated keeps its pose (opening the log does not move the table
+ * under them), and a rig switch keeps the cursor's table point under the cursor while the HUD changes mid-blend (DESIGN
+ * "Camera and navigation", Switching). A held-back change applies once the ego view is out of sight.
+ */
+describe('a HUD or viewport change reframes only the default ego view', () => {
+  const insets = (vh: number, log: boolean) => {
+    const [top, right, bottom, left] = fitInsets(vh, log, false).split(' ').map(Number) as [number, number, number, number];
+    return { top, right, bottom, left };
+  };
+  const keepOf = (seat: SeatLayout) => ownPieces(seat).flatMap((p) => corners(p.rect));
+  function framedRig(layout: TableLayout, seat: SeatLayout, vp: { width: number; height: number }, rig: CameraRig, log: boolean): TableRig {
+    const r = egoRig(layout, seat, vp);
+    if (rig !== 'ego') r.setRig(rig, 0, 0, null);
+    // As the table scene does: a new table (default ego view), then the HUD's insets and the own pieces.
+    r.setTable(r.table, r.angle, r.bird.frame, lateralOf(seat.territory, seat.angle));
+    r.setInsets(insets(vp.height, log));
+    r.setEgoKeep(keepOf(seat));
+    r.bird.view = r.bird.fitView();
+    return r;
+  }
+  const VP = { width: 1440, height: 900 };
+
+  it('the default ego view follows the log opening and closing, and stays the default view', () => {
+    const layout = mtgLayout('ffa4');
+    const r = framedRig(layout, layout.seats[0]!, VP, 'ego', false);
+    const before = r.pose();
+    r.setInsets(insets(VP.height, true));
+    expect(r.egoAtDefault()).toBe(true);
+    expect(r.egoFrame.shift).not.toBeCloseTo(0, 0);
+    expect(r.pose().position).not.toEqual(before.position);
+    r.setInsets(insets(VP.height, false));
+    expect(r.egoAtDefault()).toBe(true);
+    expect(r.pose().position.map((v) => Math.round(v * 1e6))).toEqual(before.position.map((v) => Math.round(v * 1e6)));
+  });
+
+  it('an ego view the viewer navigated stays put when the log opens or the window resizes', () => {
+    for (const { layout } of LAYOUTS) {
+      for (const seat of layout.seats) {
+        const r = framedRig(layout, seat, VP, 'ego', false);
+        r.panBy(120, -40);
+        expect(r.egoAtDefault()).toBe(false);
+        const before = r.pose();
+        r.setInsets(insets(VP.height, true));
+        expect(r.pose()).toEqual(before);
+        r.resize({ w: 1194, h: 834 });
+        r.resize({ w: VP.width, h: VP.height });
+        expect(r.pose()).toEqual(before);
+        // Out of sight in bird's-eye the held-back framing applies: back in ego, the seat is the one for the open log.
+        r.setRig('birdseye', 0, 0, null);
+        const fresh = framedRig(layout, seat, VP, 'ego', true);
+        expect(r.egoFrame).toEqual(fresh.egoFrame);
+        expect(r.lateral).toBeCloseTo(fresh.lateral, 9);
+      }
+    }
+  });
+
+  it('a new table or seat brings the default ego view, framed for the HUD it finds', () => {
+    const layout = mtgLayout('ffa4');
+    const seat = layout.seats[0]!;
+    const r = framedRig(layout, seat, VP, 'ego', false);
+    r.panBy(120, -40);
+    r.setInsets(insets(VP.height, true));
+    r.setTable(r.table, r.angle, r.bird.frame, lateralOf(seat.territory, seat.angle));
+    expect(r.egoAtDefault()).toBe(true);
+    expect(r.egoFrame).toEqual(framedRig(layout, seat, VP, 'ego', true).egoFrame);
+  });
+
+  const SEATS = LAYOUTS.flatMap(({ layout }) => layout.seats.map((seat) => ({ layout, seat })));
+  const unit = fc.noBias(fc.integer({ min: 0, max: 100_000 })).map((v) => v / 100_000);
+  const setup = fc.record({ i: fc.integer({ min: 0, max: SEATS.length - 1 }), vp: fc.constantFrom(...EGO_FRAMING_VIEWPORTS), log: fc.boolean(), to: fc.constantFrom<CameraRig>('ego', 'birdseye'), cursor: fc.record({ x: unit, y: unit }), at: fc.integer({ min: 0, max: 200 }).map((v) => v * 2) });
+  const screenOf = (r: TableRig, a: TablePoint, vp: { width: number; height: number }): ScreenPoint => {
+    const q = projectPoint(r.pose(), r.angle, { w: vp.width, h: vp.height }, [a.x, a.y, 0]);
+    return { x: q.x, y: q.y };
+  };
+
+  it('the HUD changing mid-switch keeps the cursor\'s table point under the cursor (within 2 px); a switch to ego lands still', () => {
+    let checked = 0;
+    fc.assert(
+      fc.property(setup, ({ i, vp, log, to, cursor, at }) => {
+        const { layout, seat } = SEATS[i]!;
+        const r = framedRig(layout, seat, vp, to === 'ego' ? 'birdseye' : 'ego', log);
+        const c = { x: cursor.x * vp.width, y: cursor.y * vp.height };
+        const a = r.screenToTableOrNull(c.x, c.y);
+        // The guarantee holds for table points (a cursor over the surround is outside it).
+        if (!a || Math.abs(a.x) > r.table.w / 2 || Math.abs(a.y) > r.table.d / 2 || r.table.rot) return;
+        checked++;
+        r.setRig(to, 0, 400, c);
+        let worst = 0;
+        for (let t = 0; t <= 404; t += 2) {
+          if (t === at) r.setInsets(insets(vp.height, !log));
+          r.step(t, 2);
+          // While the rigs blend; a switch to ego also after it (the ego view it lands on is not moved). A bird's-eye
+          // view takes the new insets after the blend as any bird's-eye view does (re-clamped, re-fitted when fitted).
+          const s = screenOf(r, a, vp);
+          if (r.switching || to === 'ego') worst = Math.max(worst, Number.isFinite(s.x) ? Math.hypot(s.x - c.x, s.y - c.y) : Infinity);
+        }
+        expect(worst).toBeLessThan(2);
+        // Once the blend is over the change applies: the bird's-eye rig has the new insets; the ego view the switch
+        // landed on is not the default one, so it keeps its pose (and its framing until it is out of sight).
+        expect(r.bird.insets).toEqual(insets(vp.height, !log));
+      }),
+      { numRuns: 400, seed: 5 },
+    );
+    expect(checked).toBeGreaterThan(100);
   });
 });

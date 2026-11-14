@@ -17,12 +17,10 @@
   import StartRoute from './lobby/StartRoute.svelte';
   import { parseRoute, type Route } from './routes';
   import About from './about/About.svelte';
-  import Hint from './hints/Hint.svelte';
   import { HintController } from './hints/hints';
   import SettingsPage from './settings/SettingsPage.svelte';
   import UpdateNotice from './storage/UpdateNotice.svelte';
   import OfflineNotice from './storage/OfflineNotice.svelte';
-  import { storageHintsShown } from './storage/showing.svelte';
   import type { UpdatePlace } from './update';
   import type { Stage } from '../core/types';
   import { installReducedMotionCss } from './a11y/motion';
@@ -38,7 +36,7 @@
   setThemeContext(choice);
   let theme = $state.raw<Theme>(choice.current());
   let ready = $state(false);
-  /** The welcome hint on the start page (M5-P5 first-run hints). */
+  /** The welcome hint on the start page (M5-P5 first-run hints); the start page decides when it shows (StartRoute). */
   const startHints = new HintController(untrack(() => props.settings), { where: 'start', touch: false, voice: false });
   void startHints.load();
   const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
@@ -99,8 +97,7 @@
 {:else}
   <main class="sp-page" style={cssVars} data-testid="route-{route.name === 'diagJoin' ? 'diag' : route.name}">
     {#if route.name === 'lobby'}
-      {#if storageHintsShown.count === 0}<Hint hints={startHints} placement="inline" />{/if}
-      <StartRoute start={props.start} />
+      <StartRoute start={props.start} welcome={startHints} />
       <p class="links"><a href="#/settings" data-testid="link-settings">Settings</a> · <a href="#/about" data-testid="link-about">About Spellplane</a></p>
     {:else if route.name === 'settings'}
       <SettingsPage settings={props.settings} keymap={props.game?.keymap ?? []} />

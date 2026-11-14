@@ -9,7 +9,6 @@
   import { onMount, untrack } from 'svelte';
   import { isStoragePersisted, requestPersistentStorage } from '../../store/persist';
   import type { HintId, SettingsStore } from '../../store/types';
-  import { storageHintsShown } from './showing.svelte';
   import { HOME_SCREEN_HINT, pageHintEnv, PERSIST_HINT, showHomeScreenHint, showPersistHint, withSeen, type HintEnv } from './hints';
 
   let {
@@ -17,7 +16,18 @@
     hints,
     placement = 'inline',
     env = pageHintEnv(),
-  }: { settings?: SettingsStore | undefined; hints: readonly ('installHomeScreen' | 'persistStorage')[]; placement?: 'inline' | 'corner'; env?: HintEnv } = $props();
+    onDecided,
+  }: {
+    settings?: SettingsStore | undefined;
+    hints: readonly ('installHomeScreen' | 'persistStorage')[];
+    placement?: 'inline' | 'corner';
+    env?: HintEnv;
+    /**
+     * Which of these hints shows (null: none), once decided; undefined while still reading what was answered or whether
+     * storage is kept. The start page shows one hint at a time and decides on its welcome from this (ui/lobby/StartRoute.svelte).
+     */
+    onDecided?: (shown: 'installHomeScreen' | 'persistStorage' | null | undefined) => void;
+  } = $props();
 
   let seen = $state<HintId[] | null>(null);
   let persistState = $state<{ supported: boolean; persisted: boolean } | null>(null);
@@ -55,16 +65,11 @@
   const homeScreen = $derived(seen !== null && hints.includes('installHomeScreen') && showHomeScreenHint(env, seen));
   // One hint at a time: the storage prompt waits for the Home Screen hint to be answered.
   const persist = $derived(!homeScreen && seen !== null && persistState !== null && hints.includes('persistStorage') && showPersistHint(persistState, seen));
-  // The welcome hint (ui/hints) waits while one of these shows.
+  // What shows, once decided: the start page's welcome (ui/hints) waits for it and shows only when none of these does.
   $effect(() => {
-    // Still reading what was answered (or whether storage is kept) counts too, so the welcome does not flash first.
     const deciding = seen === null || (hints.includes('persistStorage') && persistState === null);
-    const n = (homeScreen ? 1 : 0) + (persist ? 1 : 0) + (deciding ? 1 : 0);
-    // Written, never read, by this effect (reading the count would make it depend on its own write).
-    untrack(() => (storageHintsShown.count += n));
-    return () => {
-      untrack(() => (storageHintsShown.count -= n));
-    };
+    const shown = deciding ? undefined : homeScreen ? 'installHomeScreen' : persist ? 'persistStorage' : null;
+    untrack(() => onDecided?.(shown));
   });
 </script>
 

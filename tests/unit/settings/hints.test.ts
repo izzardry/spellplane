@@ -7,6 +7,7 @@ import { CTRL_KEY_CHORD } from '../../../src/games/types';
 import { MemorySettings } from '../../../src/ui/fakes';
 import { FIRST_RUN_HINTS, HintController, hintsSeenOf, hintText, nextHint } from '../../../src/ui/hints/hints';
 import { applyOverrides, keyLabel } from '../../../src/ui/keymap';
+import { startPageHint } from '../../../src/ui/lobby/start-hint';
 
 const table = { where: 'table' as const, touch: false, voice: false };
 
@@ -116,5 +117,29 @@ describe('M5 gate: hints that fit the evening and the touch screen', () => {
     expect(touch.text).not.toMatch(/Ctrl|key/i);
     expect(touch.text).toContain('Talk');
     expect(hintText('talkKey', () => 'Ctrl').text).toContain('Hold Ctrl');
+  });
+});
+
+// M5 review: the start page shows one hint at a time and decides which in one step, once the storage hints (M5-P3) and
+// the first-run hints have both read what was answered, so the welcome never flashes before a storage hint.
+describe('the start page decides on its one hint once both sources have loaded', () => {
+  const loaded = { loaded: true, hint: 'welcome' as const };
+  it('nothing while either source still loads', () => {
+    expect(startPageHint(undefined, loaded)).toBeUndefined();
+    expect(startPageHint(null, { loaded: false, hint: null })).toBeUndefined();
+    expect(startPageHint('persistStorage', { loaded: false, hint: null })).toBeUndefined();
+  });
+  it('a storage hint first; the welcome only when neither storage hint shows', () => {
+    expect(startPageHint('installHomeScreen', loaded)).toBe('installHomeScreen');
+    expect(startPageHint('persistStorage', loaded)).toBe('persistStorage');
+    expect(startPageHint(null, loaded)).toBe('welcome');
+    expect(startPageHint(null, { loaded: true, hint: null })).toBe('none');
+  });
+  it('the welcome controller reports when it has loaded', async () => {
+    const c = new HintController(new MemorySettings(), { where: 'start', touch: false, voice: false });
+    expect(c.loaded).toBe(false);
+    await c.load();
+    expect(c.loaded).toBe(true);
+    expect(startPageHint(null, { loaded: c.loaded, hint: c.current() })).toBe('welcome');
   });
 });

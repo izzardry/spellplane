@@ -97,6 +97,8 @@ export class TableRig {
   /** Ego pan inertia, navigation mm per ms. */
   private egoVel = { lean: 0, dolly: 0 };
   private sw: RigSwitch | null = null;
+  /** Insets the HUD set during a blend, applied when it ends (endSwitch). */
+  private pendingInsets: Insets | null = null;
 
   constructor(o: TableRigOptions) {
     this.bird = new BirdseyeRig(o.table, o.viewport, o.angle, o.inertiaMs);
@@ -317,7 +319,7 @@ export class TableRig {
     const sw = this.sw;
     if (sw) {
       sw.t = sw.dur > 0 ? clamp((now - sw.start) / sw.dur, 0, 1) : 1;
-      if (sw.t >= 1) this.sw = null;
+      if (sw.t >= 1) this.endSwitch();
       changed = true;
     }
     if (this.active === 'birdseye') return this.bird.step(now, dtMs) || changed;
@@ -472,6 +474,7 @@ export class TableRig {
     }
     this.active = rig;
     this.sw = dur > 0 ? { from, fromRig, toRig: rig, start: now, dur, t: 0, anchor: table ? { table, screen } : null } : null;
+    if (!this.sw) this.endSwitch();
   }
 
   /** Fit the whole table (key 0); in the ego rig: back at the seat, pitched to show the near and far edges. */
@@ -551,6 +554,21 @@ export class TableRig {
     const sw = this.sw;
     if (!sw) return;
     this.sw = dur > 0 ? { ...sw, from, start: now, dur, t: 0, anchor: null } : null;
+    if (!this.sw) this.endSwitch();
+  }
+
+  /**
+   * The blend is over (or cut): what the HUD changed during it applies now. Insets and the ego framing are held back
+   * while the rigs blend, so the cursor's table point stays under the cursor for the whole switch (DESIGN "Camera and
+   * navigation", Switching); afterwards the bird's-eye view takes them as it always does (re-clamped, re-fitted when
+   * fitted) and the ego view is reframed if it is the default one (reframeEgo).
+   */
+  private endSwitch(): void {
+    this.sw = null;
+    const insets = this.pendingInsets;
+    this.pendingInsets = null;
+    if (insets) this.bird.setInsets(insets);
+    this.reframeEgo();
   }
 
   // --- Viewport, table and theme ----------------------------------------------------------------------------------
@@ -560,7 +578,12 @@ export class TableRig {
     this.reframeEgo();
   }
 
+  /** The HUD's screen-layer insets; held back while the rigs blend (endSwitch). */
   setInsets(insets: Insets): void {
+    if (this.sw) {
+      this.pendingInsets = { ...insets };
+      return;
+    }
     this.bird.setInsets(insets);
     this.reframeEgo();
   }
@@ -576,17 +599,35 @@ export class TableRig {
     this.reframeEgo();
   }
 
-  /** Recompute the ego framing; the navigation keeps its values (re-clamped to the moved seat's limits). */
-  private reframeEgo(): void {
+  /**
+   * Whether the ego view on screen is still the default framing: the ego rig at rest at its seat, without a lean, dolly
+   * or pitch of the viewer's own (as BirdseyeRig.atFit tells the fitted view).
+   */
+  egoAtDefault(): boolean {
+    if (this.active !== 'ego' || this.sw || this.egoAnim || this.egoVel.lean !== 0 || this.egoVel.dolly !== 0) return false;
+    const d = defaultEgoNav(this.ego);
+    return Math.abs(this.nav.lean - d.lean) < 1e-6 && Math.abs(this.nav.dolly - d.dolly) < 1e-6 && Math.abs(this.nav.pitchDeg - d.pitchDeg) < 1e-6;
+  }
+
+  /**
+   * Recompute the ego framing for the viewport, the HUD's insets and the kept points. As the bird's-eye rig re-fits
+   * only a fitted view, this moves only an ego view that is still the default framing (and it stays the default); an
+   * ego view the viewer navigated keeps its pose, and a blend between the rigs keeps its anchor. The change is held
+   * back until the ego view is at its default, out of sight (bird's-eye) or the blend has ended (endSwitch). `force`
+   * (a new table, seat or theme) applies it at once, the navigation re-clamped to the moved seat's limits.
+   */
+  private reframeEgo(force = false): void {
     const i = this.bird.insets;
     const key = JSON.stringify([this.egoParams, this.table, this.angle, this.seatLateral, this.viewport.w, this.viewport.h, i.top, i.right, i.bottom, i.left, this.egoKeep]);
     if (key === this.egoFrameKey) return;
+    const atDefault = this.egoAtDefault();
+    if (!force && (this.sw || (this.active === 'ego' && !atDefault))) return;
     this.egoFrameKey = key;
     const f = egoFrameFor(this.egoParams, this.table, this.angle, this.seatLateral, this.viewport, this.bird.insets, this.egoKeep);
     if (Math.abs(f.pull - this.egoFrame.pull) < 0.5 && Math.abs(f.shift - this.egoFrame.shift) < 0.5) return;
     this.egoFrame = f;
     this.lateral = this.seatLateral + f.shift;
-    this.nav = clampEgoNav(this.egoReach(), this.nav);
+    this.nav = atDefault ? defaultEgoNav(this.ego) : clampEgoNav(this.egoReach(), this.nav);
   }
 
   setFrame(frame: FrameBox): void {
@@ -595,12 +636,15 @@ export class TableRig {
 
   /** A new table or viewer seat: both rigs start over (fitted bird's-eye, ego at the seat); a blend is cut. */
   setTable(table: TableSize, angle: number, frame: FrameBox, lateral = 0): void {
+    // A new table cuts a blend: insets it held back apply first.
+    if (this.pendingInsets) this.bird.setInsets(this.pendingInsets);
+    this.pendingInsets = null;
     this.bird.setTable(table, angle, frame);
     this.seatLateral = lateral;
     this.egoFrame = NO_EGO_FRAME;
     this.egoFrameKey = '';
     this.lateral = lateral;
-    this.reframeEgo();
+    this.reframeEgo(true);
     this.sw = null;
     this.stop();
     this.nav = defaultEgoNav(this.ego);
@@ -612,7 +656,7 @@ export class TableRig {
     this.egoFrame = NO_EGO_FRAME;
     this.egoFrameKey = '';
     this.lateral = this.seatLateral;
-    this.reframeEgo();
+    this.reframeEgo(true);
     this.nav = clampEgoNav(this.egoReach(), this.nav);
     this.tilt = clamp(tiltDeg ?? 0, 0, MAX_BIRDSEYE_TILT_DEG);
   }

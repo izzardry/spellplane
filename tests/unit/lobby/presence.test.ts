@@ -13,6 +13,7 @@ import {
   cardCorners,
   createPresenceLayer,
   createPresenceTracker,
+  DRAG_END_ECHO_MS,
   DRAG_LIFT,
   dragPoses,
   dragSet,
@@ -361,6 +362,45 @@ describe('the presence tracker (pointer input to cursor and drag messages)', () 
     tracker.move(45, 185, true, finger(1));
     tracker.up(finger(1));
     expect(drags()).toEqual([[{ id: 't1', pose: { x: 30, y: -185, rot: 0 } }], [{ id: 't1', pose: { x: 50, y: -185, rot: 0 } }], []]);
+  });
+
+  it('a finger that lifts after a drag says the drag end once more on its own timer (no resting cursor resends it)', () => {
+    const ends = (sent: { t: string; v: unknown }[]) => sent.filter((m) => m.t === 'drag' && (m.v as unknown[]).length === 0).length;
+    const { tracker, sent, setShown } = setup();
+    tracker.down(15, 185, 0, finger(1));
+    setShown([{ id: 't1', pose: { x: 35, y: -180, rot: 0 }, dragging: true }]);
+    tracker.move(30, 185, true, finger(1));
+    tracker.move(60, 155, true, finger(1));
+    setShown([{ id: 't1', pose: { x: 65, y: -150, rot: 0 } }]);
+    tracker.up(finger(1));
+    expect(ends(sent)).toBe(1);
+    expect(sent.at(-1)).toEqual({ t: 'cursor', v: { at: null, over: null } });
+    vi.advanceTimersByTime(DRAG_END_ECHO_MS);
+    expect(ends(sent)).toBe(2);
+    expect(DRAG_END_ECHO_MS).toBeLessThan(PRESENCE_RESEND_MS);
+    // Said twice, not more; a mouse drag end is also said twice within the resend period (with the resting cursor).
+    vi.advanceTimersByTime(PRESENCE_STALE_MS);
+    expect(ends(sent)).toBe(2);
+    const mouse = setup();
+    mouse.tracker.move(15, 185, true);
+    mouse.tracker.down(15, 185, 0);
+    mouse.tracker.move(25, 175, true);
+    mouse.tracker.up();
+    vi.advanceTimersByTime(PRESENCE_RESEND_MS);
+    expect(ends(mouse.sent)).toBe(2);
+  });
+
+  it('a new touch before the echo timer fires carries the echo with its cursor, once', () => {
+    const { tracker, sent, setShown } = setup();
+    tracker.down(15, 185, 0, finger(1));
+    setShown([{ id: 't1', pose: { x: 35, y: -180, rot: 0 }, dragging: true }]);
+    tracker.move(30, 185, true, finger(1));
+    setShown([{ id: 't1', pose: { x: 35, y: -180, rot: 0 } }]);
+    tracker.up(finger(1));
+    tracker.down(200, 50, 0, finger(2));
+    tracker.move(205, 50, true, finger(2));
+    vi.advanceTimersByTime(DRAG_END_ECHO_MS * 2);
+    expect(sent.filter((m) => m.t === 'drag').map((m) => (m.v as unknown[]).length)).toEqual([1, 0, 0]);
   });
 
   it('a library card handed out by a pile viewer is never shown (its id would leak the library order)', () => {
