@@ -810,7 +810,7 @@ Twenty-eight decisions were settled in the interview on 10 November 2026; the th
 | Undo | Personal undo of own actions only | No table-wide rewind, which would require every browser to roll back its secrets. |
 | Small pods | Humans only, adapted formats | Configurable packs and picks per pass, Pick-Two, Winston and Grid for two players. No bots. |
 | Card pools | Any real set with realistic packs, and sealed | Cube and physical-pack entry are out of scope for now. |
-| Deck builder | Both a builder table and a list view | The table is the default; the list is for quick edits and tablets. |
+| Deck builder | A dedicated full-screen deck builder mode (owner decision, M7): search or pool grid, deck list, stats, sample hand | Replaces the M2 builder table and list view as the main way to build; see PLAN Milestone 7, A7. |
 | Deck sources | Pasted decklists, search-and-build, local deck library | Constructed play is supported alongside limited. |
 | Voice | Live push-to-talk, a turn mic that opens on the player's own turn, and dictation | Voice and dictation are modes of one talk key and can run together. |
 | Speech-to-text | Browser built-in by default, local model optional | Instant where supported; the opt-in model covers Firefox and privacy. |

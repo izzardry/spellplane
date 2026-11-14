@@ -340,6 +340,118 @@ M6 closes the gaps between DESIGN and the build found by the post-M5 design audi
 
 **Gate M6-G:** an M1-style two-player game, mouse on one page and touch on the other. It includes Auras and Equipment attached by tuck and carried through an attack and Settle, a clipped group moved by each of its cards and unclipped, the command zone with an emblem, a d20 and a sticky note, a constructed deck built from search with chosen printings and a Companion, a public reveal that fails its commitment (shown to both), and hold-to-talk. Plus gates M0–M5 stay green. **Owner playtest:** attach and clips in a real game.
 
+## Milestone 7: Look, feel and a deck builder mode
+
+**Owner brief (14 Nov 2026).** After trying the live M5 build, the owner's verdict:
+- **Looks.** The game looks ugly.
+- **Ease of use.** The UI and UX are not intuitive.
+- **Safari speed.** Safari renders it very slowly (under 20 fps by eye), while Chrome is acceptable.
+
+M7 is entirely about polish: a well-designed, intuitive UI and UX. Deck building needs much more support, in a dedicated deck builder mode of its own. The model is Hearthstone's: a full-screen mode just for decks. That means the idea, not that game's look.
+
+The owner wants to go through every aspect one by one, design and critique it, and iterate quickly, without hours-long test and release cycles. These are owner decisions: binding, and DESIGN is updated as each aspect is approved.
+
+### How M7 runs (different from M0–M6)
+
+M7 is **not one unattended workflow run**. The owner stays in the loop and the work goes one aspect at a time:
+
+1. **Critique.** Screenshots of the current state, what is wrong with it, and why, measured against the principles below.
+2. **Options.** Two or three concrete directions as rendered mockups on one page, side by side. The owner picks one or critiques.
+3. **Build on the preview.** The chosen direction is built, and the owner looks at it live within minutes.
+4. **Adjust.** Repeat until the owner says the aspect is done.
+5. **Release.** Approved aspects go to `main` in batches (the release train).
+
+**Fast feedback, three speeds:**
+
+| Speed | What | Checks before the owner sees it |
+| --- | --- | --- |
+| Seconds | **Live view:** `pnpm dev` with hot reload on the owner's Mac. With `--host`, the iPad on the same Wi-Fi sees it too. A sandbox route opens straight into a table with a fixture deck, so there is always something to look at; two tabs with `?transport=local` give a two-player table. | none (it is a working copy) |
+| Minutes | **Preview URL:** a `preview` branch deployed beside the live site at `/spellplane/preview/`. `deploy.yml` builds both into the one static Pages artifact. For Safari, the iPad, other machines and sharing. | `pnpm check` plus the specs of the touched area |
+| Release | **`main`:** a batch of approved aspects | full `pnpm check`, `pnpm e2e`, gates M0–M6, a screenshot set, CI |
+
+- Agents and workflows may still do the building. The owner's critique, not a gate run, decides when an aspect is done.
+- Long test runs never block a look at the preview.
+- Each aspect's before and after screenshots and the owner's verdict go into `docs/gates/M7.md`.
+- Each approved choice gets a line in DECISIONS (`[M7 owner]`).
+
+### Principles every aspect is judged against
+
+- **Obvious first use.** A newcomer can start a solo game, play a land, draw, tap and attack without reading anything. Every gesture has a visible affordance or a hint at the moment it matters.
+- **Calm table.** The cards are the focus. The HUD is quiet, grouped and labelled, and shows only what the current moment needs. Rare tools live one step away, not on the main toolbar.
+- **One design system.**
+  - Colour, type scale, spacing, radius, elevation, icons and motion all come from shared tokens and components (buttons, panels, menus, popovers, toasts, dialogs).
+  - Nothing is styled ad hoc.
+  - Themes change materials and mood, not layout or controls.
+- **Fast everywhere.** Measured, not judged by eye:
+  - at least 50 fps in Safari on the owner's Mac, in every theme, at a four-player table;
+  - 60 fps in Chrome;
+  - a smooth iPad;
+  - no frame over 50 ms while dragging.
+- **Mouse, touch and keyboard stay equal**, and accessibility (contrast, focus, nothing by hue alone) is kept through the redesign.
+- **Hard rules unchanged.** Card faces are shown whole and only scaled uniformly, never recoloured, cropped or distorted. No bundled card data; search and images come from Scryfall at runtime.
+
+### Aspects (proposed order; the owner may reorder)
+
+| # | Aspect | Scope |
+| --- | --- | --- |
+| A0 | **Safari performance** | First, because judging the look at under 20 fps is pointless. See the steps below the table. |
+| A1 | **Visual direction and design system** | Two or three directions shown as the same table screen and start page. The owner picks one. It then becomes tokens and components: palette per theme, type scale, spacing, one consistent icon set (an openly licensed set, recorded in DECISIONS), buttons, panels, menus, toasts and motion rules. |
+| A2 | **First run and start page** | What a newcomer sees. Start solo, host or join, import a deck. Empty states and the very first table with tips at the right moment. |
+| A3 | **Lobby and table setup** | Seats, format, invite link, ready state, and what happens while waiting. |
+| A4 | **Table HUD** | Toolbar (fewer, grouped, labelled), life and counters, player panels, zone counts (library, graveyard, exile), log and chat, the hand. How gestures are discovered: affordances, hover hints, a gesture sheet. |
+| A5 | **Card handling feel** | Drag, snap and tuck previews, tap, zoom and inspect, menus, clips. The same model for mouse and touch. |
+| A6 | **Draft screens** | Pick view, pack passing, timer, pool view. |
+| A7 | **Deck builder mode** | See the specification below. |
+| A8 | **Settings, menus, dialogs, notifications** | One pattern for each. |
+| A9 | **Sound and motion** | Easing, durations, feedback sounds; the theme mood. |
+| A10 | **Accessibility pass** | The new design checked again with axe, contrast, focus order, and hue independence. |
+
+**A0 steps:**
+- An on-screen fps and frame-time meter (a URL flag and a setting), so the owner can report numbers instead of impressions.
+- Profiling in Safari's Web Inspector on the owner's Mac.
+- Suspects to measure:
+  - full Retina pixel ratio;
+  - the lit post-processing and shadows;
+  - rendering every frame while nothing moves;
+  - CSS `backdrop-filter` and blur over the WebGL canvas;
+  - large DOM overlays and per-frame DOM writes.
+- Remedies:
+  - render on demand;
+  - adaptive resolution;
+  - quality tiers with a sensible Safari default;
+  - cheaper HUD CSS.
+
+### A7 Deck builder mode
+
+The builder is a full-screen mode of its own. It opens from the start page, from the deck library, from a deck in the lobby, and between games for limited pools. It replaces M2's builder table and list view and M6-P5's standalone builder as the main way to build. M6-P5's search and printing chooser are reused.
+
+- **Collection and search pane.**
+  - **Search.** Search by name and text through Scryfall at runtime, cached in IndexedDB.
+  - **Filters.** Filters are chips: colour and colour identity, mana value, type, rarity, set, format legality, and keyword.
+  - **Sort and size.** Sort by mana value, name, colour or type. A grid of whole card images at a readable size, with hover or long-press zoom.
+  - **Limited.** For limited, the pool replaces search, plus basic lands.
+- **Deck pane.**
+  - **List.** The deck as a list grouped by type or by mana value, with counts and +/–.
+  - **Moving cards.** Drag and drop between grid and deck, with click, tap and keyboard equivalents.
+  - **Boards and slots.** Sideboard and a maybe-board, Commander and Companion slots, and a printing per card.
+- **Stats.** The mana curve; colour pips against land sources; the type breakdown; the card count against the format's target (40, 60 or 100); format legality notes. These are warnings only: the game enforces no rules, so nothing is ever blocked.
+- **Tools.**
+  - a sample hand (draw 7, mulligan, draw next);
+  - a basic land helper (counts suggested from pips);
+  - import and export in common text formats;
+  - the deck library as deck boxes with a cover card, duplicate, notes and tags;
+  - the last edits undoable.
+- **Look.** Its own design under A1. It does not copy any existing game's screens or art.
+
+### Interplay with M6
+
+- **The releases.**
+  - **M6.1** (attach and clips) and **M6.2** (hold-to-talk and chat) are released first.
+  - **M6.3**, the rest of the gap list, continues in the background, and its results land on `main` when green.
+- **M7's starting point.** M7 starts from `main` after M6.1 and M6.2. Where M7 redesigns a surface that M6.3 also touches (the HUD, the builder), the M7 design wins, and M6.3's function is kept.
+
+**Progress items** (in the list below): M7-A0 … M7-A10, plus one line per release train.
+
 ## Quality gates
 
 Four layers of checking stand between an agent's code and the owner's playtest, each catching what the one before cannot.
@@ -559,3 +671,14 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M6-P6 Every action, every route
 - [ ] M6-P7 Lines and stack visuals
 - [ ] M6-G Gate and owner playtest
+- [ ] M7-A0 Safari performance
+- [ ] M7-A1 Visual direction and design system
+- [ ] M7-A2 First run and start page
+- [ ] M7-A3 Lobby and table setup
+- [ ] M7-A4 Table HUD
+- [ ] M7-A5 Card handling feel
+- [ ] M7-A6 Draft screens
+- [ ] M7-A7 Deck builder mode
+- [ ] M7-A8 Settings, menus, dialogs, notifications
+- [ ] M7-A9 Sound and motion
+- [ ] M7-A10 Accessibility pass

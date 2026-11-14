@@ -1282,3 +1282,10 @@ One line per decision the design did not fix. Format: `- [package] decision — 
 - [M6-P2] The press kind 'clip' is not reported yet: a press held still on overlapping cards reports 'card' until M6-P1's hold-to-clip path can tell it apart; nothing but the caption anchor reads the kind, and it wants the card either way — reason: the hold ring belongs to M6-P1.
 - [M6-P2] Typing on the unreliable presence channel: while the field holds text and keys are typed, its tab is announced again every 2 s (TYPING_REFRESH_MS), a stop is sent once more 2 s later, and a receiver drops a peer's typing after 6 s without any presence from it (TYPING_STALE_MS, checked every second while someone types) — reason: a lost stop must not leave the dots on, and a peer joining mid-sentence should see them.
 - [M6-P2] A chat tab that disappears (the last spectator left, a team dissolved) stays offered while the field holds a draft written on it; it goes once the draft is sent or emptied — reason: Enter must never send a draft to a different audience than the one it was written for.
+
+## M7 Look, feel and a deck builder mode
+
+- [M7 owner] M7 is entirely about polish: a well-designed, intuitive UI and UX, plus Safari performance — the owner judged the M5 build ugly, unintuitive and under 20 fps in Safari (14 Nov 2026)
+- [M7 owner] Deck building gets a dedicated full-screen deck builder mode (the idea of Hearthstone's, not its look) — the builder table and list view are not enough
+- [M7 owner] M7 runs owner-in-the-loop, one aspect at a time (critique, options, build on a preview, adjust), with a live dev view and a preview URL; full test runs only for release trains to main — the owner wants to iterate quickly, without hours-long test and release cycles
+- [M7 main] A0 Safari performance comes first, measured with an on-screen frame meter — judging the look at under 20 fps is pointless, and numbers beat impressions
