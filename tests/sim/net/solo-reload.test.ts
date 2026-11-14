@@ -310,3 +310,103 @@ describe('which stored actions are this identity’s own after a reload (net/eng
     expect(ownOfTail(free, tail, me)).toEqual(['take', 'after', 'gone']);
   });
 });
+
+describe('a solo stretch right after the stored snapshot, the room below or past its next periodic snapshot (review M5-P6 merged)', () => {
+  /**
+   * The page saves its periodic snapshot at SNAPSHOT_EVERY while connected, is cut off right after it and plays alone
+   * from the next seq; the room plays on, below or past its own next periodic snapshot. After a reload the first
+   * divergent seq is the first after the restored snapshot, so the engine loads the sequencer's snapshot (it cannot
+   * tell that fork from one inside its own snapshot). Every solo action is proposed again however far past them the
+   * sequencer's snapshot lies: before the fix only those after it were, so a room past 2 * SNAPSHOT_EVERY lost them all.
+   */
+  async function baseFork(who: Who, seed: number, roomRounds: number, early: (cut: SimPeer, room: SimPeer[]) => Promise<Action[]> = () => Promise.resolve([])) {
+    const start = baseTable(3);
+    const sim = makeSim({ engines: 3, seats: 3, start, seed, delay: { min: 5, max: 40 } });
+    const cut = who === 'sequencer' ? sim.peers[0]! : sim.peers[1]!;
+    const save = persistFor(cut, start, true);
+    await until(() => agreed(sim.peers), 20_000, 'connection');
+    const room = sim.peers.filter((p) => p !== cut);
+    let i = 0;
+    while (cut.engine.seq() < SNAPSHOT_EVERY - 3) {
+      for (const p of sim.peers) p.engine.propose(life(p, `${p.peerId}-before-${i}`, 0));
+      i++;
+      await vi.advanceTimersByTimeAsync(60);
+    }
+    await expectConverged(sim.peers);
+    // Land exactly on the periodic snapshot seq, written while connected.
+    const third = sim.peers[2]!;
+    while (third.engine.seq() < SNAPSHOT_EVERY) {
+      third.engine.propose(life(third, `exact-${i++}`, 0));
+      await vi.advanceTimersByTimeAsync(200);
+      await expectConverged(sim.peers);
+    }
+    expect(cut.engine.seq()).toBe(SNAPSHOT_EVERY);
+    const first = await early(cut, room);
+    sim.net.kill(tid(cut));
+    await vi.advanceTimersByTimeAsync(AWAY_AFTER_MS + 2000);
+    const alone: Action[] = Array.from({ length: 6 }, (_, k) => life(cut, `alone-${k + 1}`, -1));
+    for (const x of alone) {
+      expect(cut.engine.propose(x)).toBe(true);
+      await vi.advanceTimersByTimeAsync(30);
+    }
+    await until(() => [...first, ...alone].every((x) => cut.acked.has(x.cid)), 20_000, 'the solo actions to be sequenced alone');
+    for (let r = 0; r < roomRounds; r++) {
+      for (const p of room) p.engine.propose(life(p, `${p.peerId}-room-${r}`, 0));
+      await vi.advanceTimersByTimeAsync(60);
+    }
+    await expectConverged(room);
+    const saved = await save.load();
+    expect(saved.snapshot.seq).toBe(SNAPSHOT_EVERY);
+    cut.engine.leave();
+    const back = sim.add(cut.index, saved.snapshot, 'player', saved.tail);
+    const everyone = [...room, back];
+    await until(() => agreed(everyone), 30_000, 'back at the table');
+    await until(() => alone.every((x) => [...everyone[0]!.log.values()].some((s) => s.cid === x.cid) || back.rolledBack.has(x.cid)), 30_000, 'the solo actions to be answered');
+    await vi.advanceTimersByTimeAsync(5000);
+    await expectConverged(everyone);
+    return { back, room, alone, first, everyone, roomSeq: room[0]!.engine.seq() };
+  }
+
+  it.each([
+    { who: 'follower' as Who, rounds: 20, where: 'below' },
+    { who: 'follower' as Who, rounds: 110, where: 'past' },
+    { who: 'sequencer' as Who, rounds: 20, where: 'below' },
+    { who: 'sequencer' as Who, rounds: 110, where: 'past' },
+  ])('the $who page gets every solo action into the room, the room $where its next periodic snapshot', async ({ who, rounds, where }) => {
+    for (const seed of [3, 5, 8]) {
+      const { back, room, alone, everyone, roomSeq } = await baseFork(who, seed, rounds);
+      if (where === 'past') expect(roomSeq, `seed ${seed}`).toBeGreaterThan(2 * SNAPSHOT_EVERY);
+      else expect(roomSeq, `seed ${seed}`).toBeLessThan(2 * SNAPSHOT_EVERY);
+      const history = [...everyone[0]!.log.values()];
+      for (const x of alone) {
+        expect(history.filter((s) => s.cid === x.cid).length, `seed ${seed}: ${x.cid} sequenced once`).toBe(1);
+        expect(back.rolledBack.has(x.cid), `seed ${seed}: ${x.cid} not refused`).toBe(false);
+      }
+      expect(everyone[0]!.engine.confirmedState().seats[back.seat]!.life, `seed ${seed}`).toBe(20 - alone.length);
+      for (const p of room) for (let r = 0; r < rounds; r++) expect(history.some((s) => s.cid === `${p.peerId}-room-${r}`)).toBe(true);
+      expect(back.system.some((t) => /hash mismatch/i.test(t)), `seed ${seed}: ${back.system.join(' | ')}`).toBe(false);
+    }
+  }, 600_000);
+
+  it('an own action the room sequenced but the page never heard back is proposed again and not applied twice', async () => {
+    // The follower proposes `heard-not`; the sequencer sequences it, but its seq never reaches the follower, which is
+    // cut off right then and sequences it again alone. The sequencer's snapshot holds it, so the reloaded page proposes
+    // its abandoned copy again, and the sequencer's cid memory answers that it is already sequenced.
+    for (const seed of [3, 5, 8]) {
+      const { back, alone, first, everyone } = await baseFork('follower', seed, 110, async (cut, room) => {
+        const x = life(cut, 'heard-not', -1);
+        cut.transport.dropIn = (_ch, msg) => (msg as { t?: string; cid?: string }).t === 'seq' && (msg as { cid?: string }).cid === x.cid;
+        expect(cut.engine.propose(x)).toBe(true);
+        await until(() => [...room[0]!.log.values()].some((s) => s.cid === x.cid), 5_000, 'the room to sequence it', 1);
+        return [x];
+      });
+      const history = [...everyone[0]!.log.values()];
+      // The scenario held: the reloaded page did propose its abandoned copy again.
+      const proposed = back.engine.messages().filter((r) => r.dir === 'out' && r.msg.t === 'propose').map((r) => (r.msg as unknown as { action: Action }).action.cid);
+      expect(proposed, `seed ${seed}`).toContain('heard-not');
+      for (const x of [...first, ...alone]) expect(history.filter((s) => s.cid === x.cid).length, `seed ${seed}: ${x.cid} sequenced once`).toBe(1);
+      expect(back.rolledBack.size, `seed ${seed}`).toBe(0);
+      expect(everyone[0]!.engine.confirmedState().seats[back.seat]!.life, `seed ${seed}`).toBe(20 - alone.length - 1);
+    }
+  }, 300_000);
+});

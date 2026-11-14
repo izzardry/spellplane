@@ -159,6 +159,18 @@ interface PeerEntry {
   counterAt: number;
 }
 
+/**
+ * An own action of a history part this replica gave up, waiting to be proposed again once the replacing history is
+ * loaded. `abandoned`: given up after a fork found by cid (adopt), so the replacing history does not hold it at
+ * `oldSeq`; false for a resync after a state-hash mismatch, where the histories may agree and it may well be inside the
+ * sequencer's snapshot at that very seq.
+ */
+interface LostOwn {
+  action: Action;
+  oldSeq: number;
+  abandoned: boolean;
+}
+
 /** A proposal the sequencer holds until its `prev` is sequenced or refused. */
 interface Held {
   from: PeerId;
@@ -258,7 +270,7 @@ class Engine implements NetEngine {
   private forced: PeerId | null = null;
   /** The peer whose history replaces this replica's after a fork; own actions of the abandoned part wait in lostOwn. */
   private adoptFrom: PeerId | null = null;
-  private lostOwn: { action: Action; oldSeq: number }[] = [];
+  private lostOwn: LostOwn[] = [];
   /**
    * The seq of the restored save's snapshot this replica started from, until the sequencer's history is found to
    * agree after it (or a snapshot replaces it); null for a start without a stored tail. Nothing below it can be
@@ -1520,9 +1532,14 @@ class Engine implements NetEngine {
       this.restoredBase = null;
       this.myHashes.clear();
       this.forced = null;
-      // Own actions of an abandoned history after the snapshot that its tail does not hold are proposed again;
-      // older ones may be inside the snapshot, where their cids cannot be told apart, so they are not.
-      if (forced || adopting) this.requeueLost((x) => x.oldSeq > m.snapshot!.seq);
+      // Own actions of a history given up after a fork that the loaded tail does not hold are proposed again, however
+      // far below the snapshot they lay (review M5-P6 merged: a reloaded page that loads the sequencer's latest periodic
+      // snapshot lost every solo action below it). The fork says the snapshot's history does not hold them at their
+      // old seqs; one it holds at another seq (sequenced there too, its seq never heard of) is answered as already
+      // sequenced by the sequencer's cid memory (REMEMBER_CIDS), and one that no longer applies is refused by its check
+      // (rolled back, as any refused proposal). After a state-hash mismatch the histories may agree, so a retained own
+      // action at or below the snapshot is taken to be inside it and is not proposed again.
+      if (forced || adopting) this.requeueLost((x) => x.abandoned || x.oldSeq > m.snapshot!.seq);
       if (this.mode === 'claiming') this.claimChecked = from;
       this.afterChange();
       this.checkClaim();
@@ -1587,7 +1604,7 @@ class Engine implements NetEngine {
     // earlier abandoned part still waiting (another fork found before this one was repaired) are kept, oldest first.
     this.lostOwn = this.mergeLost(
       this.lostOwn,
-      abandoned.filter((a) => this.ownCids.has(a.cid) && !DUTY_RECORDS.has(a.type)).map(({ seq, ...rest }) => ({ action: rest as Action, oldSeq: seq })),
+      abandoned.filter((a) => this.ownCids.has(a.cid) && !DUTY_RECORDS.has(a.type)).map(({ seq, ...rest }) => ({ action: rest as Action, oldSeq: seq, abandoned: true })),
     );
     this.adoptFrom = to;
     // Own hashes from the fork point on describe the abandoned history: the sequencer's hash of such a seq may arrive
@@ -1612,14 +1629,19 @@ class Engine implements NetEngine {
     else this.adopt(to, seq, `history diverged at seq ${seq}`);
   }
 
-  /** Own actions of abandoned history parts: `a` first, then those of `b` not in it. */
-  private mergeLost(a: readonly { action: Action; oldSeq: number }[], b: readonly { action: Action; oldSeq: number }[]): { action: Action; oldSeq: number }[] {
+  /**
+   * Own actions of abandoned history parts: `a` first, then those of `b` not in it. An action found abandoned by either
+   * stays abandoned (a fork showed that the replacing history does not hold it at its old seq).
+   */
+  private mergeLost(a: readonly LostOwn[], b: readonly LostOwn[]): LostOwn[] {
+    const later = new Map(b.map((x) => [x.action.cid, x]));
+    const kept = a.map((x) => (later.get(x.action.cid)?.abandoned && !x.abandoned ? { ...x, abandoned: true } : x));
     const seen = new Set(a.map((x) => x.action.cid));
-    return [...a, ...b.filter((x) => !seen.has(x.action.cid))];
+    return [...kept, ...b.filter((x) => !seen.has(x.action.cid))];
   }
 
   /** After adopting another history: propose again the abandoned own actions it lacks (and `keep` allows). */
-  private requeueLost(keep: (x: { action: Action; oldSeq: number }) => boolean): void {
+  private requeueLost(keep: (x: LostOwn) => boolean): void {
     const lost = this.lostOwn.filter((x) => keep(x) && this.replica.seqOf(x.action.cid) === undefined).map((x) => x.action);
     this.lostOwn = [];
     this.adoptFrom = null;
@@ -1636,7 +1658,7 @@ class Engine implements NetEngine {
     const retained = this.replica.forget(0);
     this.lostOwn = this.mergeLost(
       this.lostOwn,
-      retained.filter((a) => this.ownCids.has(a.cid) && !DUTY_RECORDS.has(a.type)).map(({ seq, ...rest }) => ({ action: rest as Action, oldSeq: seq })),
+      retained.filter((a) => this.ownCids.has(a.cid) && !DUTY_RECORDS.has(a.type)).map(({ seq, ...rest }) => ({ action: rest as Action, oldSeq: seq, abandoned: false })),
     );
     this.forced = to;
     this.replica.clearBuffer();
