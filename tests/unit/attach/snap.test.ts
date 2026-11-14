@@ -47,6 +47,15 @@ describe('rule 3a: tuck', () => {
     expect(tuckPose({ x: 100, y: -200, rot: 0 }, 2)).toEqual({ x: 120, y: -180, rot: 0 });
   });
 
+  it('the preview takes the first free slot, as the reducer does (M6.1): a gap left by a detached card, past chained ones', () => {
+    // Slot 1 left free (its card was detached), slot 2 held: the drop goes into slot 1.
+    const gap = [card('host', 0, 0), card('a2', 20, 20, 0, { attachedTo: 'host' })];
+    expect(resolveDrop(drop(5, bottomAt(10)), ctx(gap))).toMatchObject({ kind: 'tuck', host: 'host', pose: { x: 10, y: 10, rot: 0 } });
+    // a1 in slot 1 with its own attachment y at the host's slot 2: the drop goes into slot 3.
+    const chain = [card('host', 0, 0), card('a1', 10, 10, 0, { attachedTo: 'host' }), card('y', 20, 20, 0, { attachedTo: 'a1' })];
+    expect(resolveDrop(drop(5, bottomAt(10)), ctx(chain))).toMatchObject({ kind: 'tuck', host: 'host', pose: { x: 30, y: 30, rot: 0 } });
+  });
+
   it('a drop on the strip of a tucked card peeking out joins its host\'s fan', () => {
     const cards = [card('host', 0, 0), card('aura', 10, 10, 0, { attachedTo: 'host' })];
     // Bottom edge 3 mm under the Aura's top edge: above the host's own top edge.
