@@ -5,6 +5,7 @@
   filters and chat tabs and the `[[card name]]` previews live in ui/chat/.
 -->
 <script lang="ts">
+  import { onDestroy, untrack } from 'svelte';
   import type { ChatTab, TimelineFilter } from '../core/log';
   import type { InstanceId } from '../core/types';
   import type { CardDataSource, FaceSource } from '../data/types';
@@ -12,6 +13,8 @@
   import ChatLines from './chat/ChatLines.svelte';
   import FilterBar from './chat/FilterBar.svelte';
   import { CardNameResolver } from './chat/names';
+  import { TypingSender, type Typer } from './chat/typing';
+  import TypingLine from './chat/TypingLine.svelte';
   import type { LogLine } from './describe';
 
   let {
@@ -24,6 +27,8 @@
     faces = null,
     back = null,
     tabs = ['table'],
+    typers = [],
+    ontyping,
   }: {
     lines: LogLine[];
     open: boolean;
@@ -37,6 +42,10 @@
     back?: TextureSource | null;
     /** Chat tabs to offer (M1-P6); 'table' only by default. */
     tabs?: ChatTab[];
+    /** Added by M6-P2: who is typing that this viewer may see (ui/chat/typing.ts typersOf). */
+    typers?: Typer[];
+    /** Added by M6-P2: announce this field's typing on presence (Presence.typing); absent at the solo table. */
+    ontyping?: (channel: ChatTab | null) => void;
   } = $props();
 
   let text = $state('');
@@ -48,6 +57,16 @@
   $effect(() => {
     if (!tabs.includes(tab)) tab = 'table';
   });
+  /** This field's typing indicator (M6-P2): announced while it holds text, on the tab it would go to. */
+  const typing = new TypingSender({ send: (channel) => ontyping?.(channel) });
+  // Another tab while typing: the indicator follows it (and stops on the team tab, which is never announced).
+  $effect(() => {
+    const t = tab;
+    untrack(() => {
+      if (typing.channel() !== null) typing.input(text, t);
+    });
+  });
+  onDestroy(() => typing.stop());
 
   /** Focus the chat field (Enter with no prompt showing, DESIGN "Input and interaction design"). */
   export function focusChat() {
@@ -58,6 +77,7 @@
     const t = text.trim();
     if (t) onchat(t, tab);
     text = '';
+    typing.stop();
   }
 </script>
 
@@ -78,6 +98,8 @@
     maxlength="500"
     placeholder={tab === 'table' ? 'Chat (Enter), [[card name]] previews' : `${tab === 'team' ? 'Team' : 'Spectator'} chat (Enter)`}
     aria-label="Chat message"
+    oninput={(e) => typing.input(e.currentTarget.value, tab)}
+    onblur={() => typing.stop()}
     onkeydown={(e) => {
       if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
         e.preventDefault();
@@ -85,6 +107,7 @@
       } else if (e.key === 'Escape') input?.blur();
     }}
   />
+  <TypingLine {typers} {tab} {tabs} />
 </aside>
 
 <style>

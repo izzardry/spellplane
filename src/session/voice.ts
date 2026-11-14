@@ -9,7 +9,7 @@ import type { TableState } from '../core/types';
 import type { PeerId, Transport } from '../net/transport';
 import type { NetEngine, PeerPresence, Presence, Unsubscribe } from '../net/types';
 import { registerDebug } from '../util/debug';
-import { createVoiceWith } from '../voice/mic';
+import { createVoiceWith, pressTalking } from '../voice/mic';
 import type { VoiceControls, VoiceHost } from '../voice/types';
 import type { VoiceSessionOptions } from './types';
 
@@ -119,6 +119,8 @@ function registerVoiceDebug(voice: VoiceControls): void {
   registerDebug({
     voice: {
       talk: () => voice.state(),
+      // M6-P2: a held table press is talking ("Talk while I hold or drag").
+      pressHeld: () => pressTalking(voice),
       indicator: () => voice.indicator(),
       tracks: () => voice.tracks(),
     },

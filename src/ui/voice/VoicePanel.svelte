@@ -6,7 +6,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import type { PeerInfo } from '../../net/types';
-  import { chosenDevice } from '../../voice/mic';
+  import { chosenDevice, setTalkWhileHolding, talkWhileHolding } from '../../voice/mic';
   import type { PeerAudioSetting, TalkSettings } from '../../voice/types';
   import type { VoicePanelProps } from '../types';
   import { GATES, TALK_BUTTONS } from './labels';
@@ -19,12 +19,15 @@
   let audio = $state<Record<string, PeerAudioSetting>>({});
   let devices = $state.raw<MediaDeviceInfo[]>([]);
   let device = $state('');
+  /** "Talk while I hold or drag" (M6-P2). */
+  let holdTalk = $state(untrack(() => talkWhileHolding(voice)));
   /** A spectator's listen-only session (M5-P7). */
   const listening = untrack(() => voice.indicator() === 'listening');
 
   function refresh(): void {
     talk = voice.talk();
     device = chosenDevice(voice) ?? '';
+    holdTalk = talkWhileHolding(voice);
     joined = voice.joined;
     // One row per player: a peer connected twice (a stale connection) is listed once.
     peers = session.netStatus().peers.filter((p, i, all) => p.peerId && all.findIndex((q) => q.peerId === p.peerId) === i);
@@ -109,6 +112,21 @@
       {/each}
     </select>
   </label>
+  <label class="check" title="Any press on the table held longer than a moment (dragging a card, a line, a box or the view, or holding to clip) talks until you let go; quick clicks and taps never do.">
+    <input
+      type="checkbox"
+      data-testid="talk-while-holding"
+      checked={holdTalk}
+      onchange={(e) => {
+        holdTalk = e.currentTarget.checked;
+        void setTalkWhileHolding(voice, holdTalk);
+        // A focused checkbox is no text field, but the table's keys and presses should not wait on it.
+        e.currentTarget.blur();
+      }}
+    />
+    Talk while I hold or drag
+  </label>
+
   {#if !joined}<p class="hint">Join voice to hear the table and to choose a named microphone.</p>{/if}
 
   <label class="row">
@@ -224,6 +242,12 @@
   }
   input[type='range'] {
     width: 90px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 4px 0;
   }
   .hint {
     color: var(--sp-muted, #5f5f5f);

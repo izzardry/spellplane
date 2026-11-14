@@ -73,13 +73,23 @@
 
   // Off the table: the stored talk mode and talk button, which a table's voice session reads when it starts.
   let storedTalk = $state<TalkSettings>({ ...DEFAULT_TALK });
+  /** "Talk while I hold or drag" (Settings.talkWhileHolding, off by default; M6-P2). */
+  let storedHoldTalk = $state(false);
   onMount(() => {
     if (voice || !settings) return;
     void settings
       .get('talk')
       .then((t) => (storedTalk = { ...DEFAULT_TALK, ...t }))
       .catch(() => {});
+    void settings
+      .get('talkWhileHolding')
+      .then((v) => (storedHoldTalk = v === true))
+      .catch(() => {});
   });
+  function setStoredHoldTalk(on: boolean): void {
+    storedHoldTalk = on;
+    void settings?.set('talkWhileHolding', on).catch(() => {});
+  }
   function setStoredTalk(patch: Partial<TalkSettings>): void {
     storedTalk = { ...storedTalk, ...patch };
     void settings?.set('talk', storedTalk).catch(() => {});
@@ -125,6 +135,10 @@
             <select value={String(storedTalk.mouseButton)} onchange={(e) => setStoredTalk({ mouseButton: (e.currentTarget as HTMLSelectElement).value === 'null' ? null : Number((e.currentTarget as HTMLSelectElement).value) })}>
               {#each TALK_BUTTONS as b (String(b.button))}<option value={String(b.button)}>{b.label}</option>{/each}
             </select>
+          </label>
+          <label class="hold">
+            <span><input type="checkbox" data-testid="talk-while-holding" checked={storedHoldTalk} onchange={(e) => setStoredHoldTalk((e.currentTarget as HTMLInputElement).checked)} /> Talk while I hold or drag</span>
+            <small class="muted">Any press on the table held longer than a moment (dragging a card, a line, a box or the view, or holding to clip) talks until you let go; quick clicks and taps never do.</small>
           </label>
           <p class="muted">{talkKey ? `Hold ${talkKey} to talk (change it under Keys).` : 'The talk key is under Keys.'} The microphone, its device and each player's volume are chosen at a table, after joining voice.</p>
         </div>
@@ -243,6 +257,11 @@
     display: flex;
     gap: 8px;
     align-items: baseline;
+  }
+  .hold {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
   .muted,
   small {

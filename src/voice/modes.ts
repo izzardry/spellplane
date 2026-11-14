@@ -11,6 +11,10 @@
  *    mic is open to everyone, and never captions (a caption is public). Without a teammate it opens nothing, so words
  *    meant for a partner never reach the table.
  * 4. The held talk key opens audio to everyone (voice on) and captions (dictation on).
+ * 4a. A held table press under "Talk while I hold or drag" (`pressHeld`; PLAN Milestone 6, owner decisions,
+ *    Hold-to-talk) counts as the talk key held: audio to everyone and captions, never team talk. It counts only while the
+ *    window has focus and no text or note field has focus (never while typing in a field), and a held team key wins
+ *    over it (DECISIONS [M6-P2]).
  * 5. Otherwise the gate decides: the open mic sends audio always; the turn mic sends audio and captions for the whole
  *    own turn (the team's turn in Two-Headed Giant). Dictation follows the key or the turn mic only (DESIGN table:
  *    "While the talk key is held, or for the whole own turn when combined with Turn mic").
@@ -24,6 +28,7 @@ export const talkState: TalkStateFn = (i: TalkInputs): TalkState => {
   if (s.muted) return { ...TALK_CLOSED, muted: true };
   const canAudio = s.voice && i.micReady;
   const keyLive = i.keyHeld && i.windowFocus && !i.textFocus;
+  const pressLive = i.pressHeld === true && i.windowFocus && !i.textFocus && !i.noteFocus;
 
   // The gate without the key: open mic always, turn mic for the own turn.
   const gateAudio = canAudio && (s.gate === 'open' || (s.gate === 'turn' && i.ownTurn));
@@ -39,7 +44,7 @@ export const talkState: TalkStateFn = (i: TalkInputs): TalkState => {
     if (!i.hasTeammate || !canAudio) return close(gateAudio, false, gateReason);
     return { audio: 'team', dictation: 'off', reason: 'key', muted: false };
   }
-  if (keyLive) {
+  if (keyLive || pressLive) {
     const audio = canAudio ? 'all' : 'off';
     const dictation = s.dictation ? 'caption' : 'off';
     if (audio === 'off' && dictation === 'off') return close(gateAudio, gateCaption, gateReason);

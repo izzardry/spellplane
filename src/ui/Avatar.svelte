@@ -14,6 +14,7 @@
     responding,
     asking = false,
     speaking = false,
+    typing = false,
     glyph,
     zones,
     onlife,
@@ -32,6 +33,8 @@
     asking?: boolean;
     /** Added by M3-P3: this player is speaking; the avatar shows a speaking ring (DESIGN "Chat and voice", Live voice). */
     speaking?: boolean;
+    /** Added by M6-P2: this player is typing a chat line the viewer may see (GAPS 22, ui/chat/typing.ts). */
+    typing?: boolean;
     glyph: string;
     zones: { id: ZoneId; label: string; count: number }[];
     onlife: (delta: number) => void;
@@ -85,6 +88,7 @@
   class:speaking
   class:compact
   data-speaking={speaking ? 'true' : 'false'}
+  data-typing={typing ? 'true' : 'false'}
   data-testid="avatar"
   data-seat={seat.id}
   data-line-seat={seat.id}
@@ -101,6 +105,7 @@
     {#if active}<span class="tag" title="Active player">turn</span>{/if}
     {#if responding}<span class="tag" data-testid="responding">responding</span>{/if}
     {#if asking}<span class="tag asking" data-testid="asking">asks</span>{/if}
+    {#if typing}<span class="tag typing" data-testid="avatar-typing" title="Typing a chat line" aria-label="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>{/if}
     {#if seat.autoPass}<span class="tag" title="Passing until end of turn">auto-pass</span>{/if}
     {#if compact && !readonly}<button type="button" class="add-small" aria-label="Add a counter" title="Add a counter" data-testid="add-counter" onclick={() => (newCounter = '')}>+</button>{/if}
   </header>
@@ -192,6 +197,41 @@
   .avatar.away {
     border-style: dashed;
     color: var(--sp-muted, #5f5f5f);
+  }
+  /* Typing (M6-P2): three dots in a tag, a shape rather than a hue; they pulse unless motion is reduced. */
+  .typing {
+    display: inline-flex;
+    gap: 2px;
+    align-items: center;
+  }
+  .typing .dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: sp-typing 1.2s infinite ease-in-out;
+  }
+  .typing .dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .typing .dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+  /* A bounce, not a fade: the avatar marks no state by dimming (M5 review). */
+  @keyframes sp-typing {
+    0%,
+    80%,
+    100% {
+      transform: translateY(0);
+    }
+    40% {
+      transform: translateY(-2px);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .typing .dot {
+      animation: none;
+    }
   }
   .away-tag {
     background: var(--sp-fg, #111);
