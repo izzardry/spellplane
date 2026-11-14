@@ -491,7 +491,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M4-P6 Theme switcher and conformance
 - [x] M4-G Gate (owner playtest pending)
 - [x] M5-C Contracts
-- [ ] M5-P1 Touch
+- [x] M5-P1 Touch
 - [ ] M5-P2 Audit
 - [x] M5-P3 Offline and storage
 - [ ] M5-P4 Accessibility

@@ -48,7 +48,7 @@ describe('M5-P1 touch', () => {
   it('orders its thresholds sensibly and names its package in the stub', () => {
     expect(TOUCH.longPressMs).toBeGreaterThan(TOUCH.tapMaxMs);
     expect(TOUCH.doubleTapPx).toBeGreaterThan(TOUCH.slopPx);
-    expect(() => createTouchRecognizer(() => undefined)).toThrow(notImplemented('M5-P1'));
+    expect(createTouchRecognizer(() => undefined).fingers()).toBe(0);
   });
 });
 

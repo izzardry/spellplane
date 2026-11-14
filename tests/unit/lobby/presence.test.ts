@@ -25,6 +25,7 @@ import {
   type RemotePresence,
   type ShownCard,
 } from '../../../src/scene/presence';
+import { createTouchRecognizer, type TouchGesture } from '../../../src/scene/input/touch';
 import { act, freshTable, sit } from './helpers';
 
 const style = { colourOf: (seat: string | null) => (seat === 's0' ? '#00f' : seat === 's1' ? '#f00' : '#777'), labelOf: (p: RemotePresence) => p.seat ?? '?' };
@@ -265,6 +266,83 @@ describe('the presence tracker (pointer input to cursor and drag messages)', () 
     tracker.move(320, 350, false);
     tracker.up();
     expect(drags()).toEqual([[{ id: 'lib2', pose: { x: 300, y: -400, rot: 0 } }], [{ id: 'lib2', pose: { x: 320, y: -350, rot: 0 } }], []]);
+  });
+
+  // Fingers (M5-P1; DESIGN "Input and interaction design", Touch: long-press then drag draws a line; two-finger gestures
+  // always drive the camera). A finger reports button 0 like a left press, but not every finger slide drags its card.
+  const finger = (id: number) => ({ id, touch: true });
+
+  it('a finger held on a card then slid (a line) sends no drag: the scene does not drag the card', () => {
+    const { tracker, sent, drags } = setup();
+    // Fed as the page does, alongside the recogniser: long-press, then slide 180 px towards another card.
+    const gs: TouchGesture[] = [];
+    const r = createTouchRecognizer((g) => gs.push(g));
+    r.down({ id: 1, x: 15, y: 185, t: 0 });
+    tracker.down(15, 185, 0, finger(1));
+    r.tick(600);
+    for (let i = 1; i <= 6; i++) {
+      r.move({ id: 1, x: 15 + i * 30, y: 185, t: 600 + i * 16 });
+      tracker.move(15 + i * 30, 185, true, finger(1));
+    }
+    r.up({ id: 1, x: 195, y: 185, t: 800 });
+    tracker.up(finger(1));
+    expect(gs.map((g) => g.kind)).toContain('longPressDrag');
+    expect(drags()).toEqual([]);
+    // The finger's position still travels as the cursor.
+    expect(sent.filter((m) => m.t === 'cursor').length).toBe(6);
+  });
+
+  it('a finger dragging a card shows it where the scene draws it, from the move the scene starts its drag on', () => {
+    const { tracker, drags, setShown } = setup();
+    tracker.down(15, 185, 0, finger(1));
+    // Past the presence threshold but within the recogniser's slop: the scene has not picked the card up yet.
+    tracker.move(23, 185, true, finger(1));
+    expect(drags()).toEqual([]);
+    // The scene drags t1 now; it follows the finger (drawn 5 px right of and 5 px above the finger's table point).
+    setShown([{ id: 't1', pose: { x: 35, y: -180, rot: 0 }, dragging: true }]);
+    tracker.move(30, 185, true, finger(1));
+    tracker.move(60, 155, true, finger(1));
+    tracker.up(finger(1));
+    expect(drags()).toEqual([[{ id: 't1', pose: { x: 35, y: -180, rot: 0 } }], [{ id: 't1', pose: { x: 65, y: -150, rot: 0 } }], []]);
+  });
+
+  it('a pinch whose fingers land on a card never shows a drag of it', () => {
+    // First finger on empty table, the second on the card.
+    const a = setup();
+    a.tracker.down(300, 300, 0, finger(1));
+    a.tracker.down(15, 185, 0, finger(2));
+    for (let i = 1; i <= 6; i++) {
+      a.tracker.move(300 + i * 20, 300, true, finger(1));
+      a.tracker.move(15 - i * 20, 185, true, finger(2));
+    }
+    a.tracker.up(finger(1));
+    a.tracker.up(finger(2));
+    expect(a.drags()).toEqual([]);
+    // First finger on the card, the second beside it before the card was picked up.
+    const b = setup();
+    b.tracker.down(15, 185, 0, finger(1));
+    b.tracker.down(95, 185, 0, finger(2));
+    for (let i = 1; i <= 6; i++) {
+      b.tracker.move(15 - i * 20, 185, true, finger(1));
+      b.tracker.move(95 + i * 20, 185, true, finger(2));
+    }
+    b.tracker.up(finger(2));
+    b.tracker.move(-200, 185, true, finger(1));
+    b.tracker.up(finger(1));
+    expect(b.drags()).toEqual([]);
+  });
+
+  it('a second finger during a card drag the scene holds leaves the drag running until the dragging finger lifts', () => {
+    const { tracker, drags, setShown } = setup();
+    tracker.down(15, 185, 0, finger(1));
+    setShown([{ id: 't1', pose: { x: 30, y: -185, rot: 0 }, dragging: true }]);
+    tracker.move(25, 185, true, finger(1));
+    tracker.down(300, 300, 0, finger(2));
+    tracker.move(320, 300, true, finger(2));
+    tracker.up(finger(2));
+    tracker.move(45, 185, true, finger(1));
+    tracker.up(finger(1));
+    expect(drags()).toEqual([[{ id: 't1', pose: { x: 30, y: -185, rot: 0 } }], [{ id: 't1', pose: { x: 50, y: -185, rot: 0 } }], []]);
   });
 
   it('a library card handed out by a pile viewer is never shown (its id would leak the library order)', () => {

@@ -48,6 +48,8 @@ import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackEntries, type DebugStackEntry, type StackEntry } from './stack';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
 import { TextLayer, type TextSpec } from './text';
+import { recentGestures, TouchPointers } from './input/pointers';
+import type { TouchGesture } from './input/touch';
 import { TEXTURE_CAP_BYTES, tierForScreenHeight } from './textures';
 import type {
   CameraPose,
@@ -184,7 +186,6 @@ type Gesture =
   | { kind: 'marquee'; pointerId: number; x0: number; y0: number; x1: number; y1: number; base: InstanceId[] }
   | { kind: 'line'; pointerId: number }
   | { kind: 'drag' }
-  | { kind: 'pinch' }
   /** Right-drag on empty table in the ego rig: pitch (DESIGN "Camera and navigation", Navigation gestures). */
   | { kind: 'pitch'; pointerId: number; last: { x: number; y: number } };
 
@@ -212,7 +213,6 @@ const GHOST_WIDTH_PX = 1;
 const MARKER_WIDTH_PX = 2;
 /** After a right-drag drew a line, the context menu that some platforms fire on release is ignored this long, ms. */
 const MENU_SUPPRESS_MS = 400;
-const TOUCH_THRESHOLD_PX = 8;
 /** Right-drag pitch in the ego rig: degrees per CSS px dragged (down looks further down). */
 const PITCH_DEG_PER_PX = 0.2;
 /** A followed stack item counts as on screen when its centre is at least this far inside the viewport, CSS px. */
@@ -358,8 +358,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let gesture: Gesture | null = null;
   /** Pointers pressed anywhere on the page (the follow options wait for their release). */
   const pressedPointers = new Set<number>();
-  const touches = new Map<number, { x: number; y: number }>();
-  let pinch: { d: number; cx: number; cy: number } | null = null;
+  /** Fingers on the canvas become gestures (scene/input/touch.ts; M5-P1); mouse and pen keep the handlers below. */
+  const touchInput = new TouchPointers((g) => onTouchGesture(g));
   let dirty = true;
   let frame = 0;
   let stats: FrameStats = { drawCalls: 0, textureBytes: 0, frameMs: 0 };
@@ -839,6 +839,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     // The browser hands out the next animation frame once the last drawn one is done, GPU work included.
     if (drewLastTick) frameCost = now - drewAt;
     drewLastTick = false;
+    touchInput.tick(now);
     let changed = rig.step(now, dt);
     if (pendingFollow.length && !holding()) {
       const reqs = pendingFollow;
@@ -1233,16 +1234,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   // --- Pointer input ------------------------------------------------------------------------------------------------
   function onPointerDown(e: PointerEvent): void {
-    if (e.pointerType === 'touch') {
-      touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-      if (touches.size === 2) {
-        // Two fingers always drive the camera: abandon any one-finger gesture.
-        if (drag) finishDrag(false, true);
-        gesture = { kind: 'pinch' };
-        pinch = pinchOf();
+    if (touchInput.take(e)) {
+      if (touchInput.recognizer.fingers() > 1) touchSecondFinger({ x: e.clientX, y: e.clientY });
+      try {
         canvas.setPointerCapture(e.pointerId);
-        return;
+      } catch {
+        // Synthetic events without an active pointer cannot be captured.
       }
+      return;
     }
     if (gesture) return;
     if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
@@ -1294,26 +1293,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return Math.hypot(p.x - (pose.x + bx), p.y - (pose.y + by)) <= 8;
   }
 
-  function pinchOf(): { d: number; cx: number; cy: number } | null {
-    const pts = [...touches.values()];
-    if (pts.length < 2) return null;
-    const [a, b] = pts as [{ x: number; y: number }, { x: number; y: number }];
-    return { d: Math.hypot(a.x - b.x, a.y - b.y), cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2 };
-  }
-
   function onPointerMove(e: PointerEvent): void {
-    if (e.pointerType === 'touch' && touches.has(e.pointerId)) touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (gesture?.kind === 'pinch') {
-      const next = pinchOf();
-      if (pinch && next && pinch.d > 0) {
-        const c = toCanvas(next.cx, next.cy);
-        rig.panBy(next.cx - pinch.cx, next.cy - pinch.cy);
-        rig.zoomAt(c.x, c.y, next.d / pinch.d);
-        dirty = true;
-      }
-      pinch = next;
-      return;
-    }
+    if (touchInput.take(e)) return;
     if (drag && e.pointerId === drag.pointerId && !drag.external) {
       drag.last = { x: e.clientX, y: e.clientY };
       return;
@@ -1343,7 +1324,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (gesture.kind === 'press') {
       const g = gesture;
       const moved = Math.hypot(e.clientX - g.x0, e.clientY - g.y0);
-      if (moved < (e.pointerType === 'touch' ? TOUCH_THRESHOLD_PX : DRAG_THRESHOLD_PX)) return;
+      if (moved < DRAG_THRESHOLD_PX) return;
       const rc = g.card ? rcards.get(g.card) : null;
       if (g.button === 2 && !rc && rig.rig() === 'ego') {
         menuPending = null;
@@ -1402,7 +1383,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
   }
 
-  function showMarquee(g: Extract<Gesture, { kind: 'marquee' }>): void {
+  function showMarquee(g: { x0: number; y0: number; x1: number; y1: number }): void {
     const hr = host.getBoundingClientRect();
     Object.assign(marqueeEl.style, {
       display: 'block',
@@ -1414,12 +1395,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   function onPointerUp(e: PointerEvent): void {
-    if (e.pointerType === 'touch') touches.delete(e.pointerId);
-    if (gesture?.kind === 'pinch') {
-      if (touches.size === 0) {
-        gesture = null;
-        pinch = null;
-      } else pinch = pinchOf();
+    if (touchInput.take(e)) {
+      release(e);
+      touchReleased();
       return;
     }
     if (drag && e.pointerId === drag.pointerId && !drag.external) {
@@ -1464,36 +1442,47 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         if (g.card) opts.events.inspect?.(g.card);
         return;
       }
-      if (g.card) {
-        if (g.shift) setSelection(view.selection.includes(g.card) ? view.selection.filter((id) => id !== g.card) : [...view.selection, g.card]);
-        else if (!view.selection.includes(g.card) || view.selection.length > 1) setSelection([g.card]);
-      } else {
-        if (!g.shift && view.selection.length) setSelection([]);
-        // A tap on a seat's avatar spot goes to that seat (DESIGN "Camera and navigation": go to another seat, tap an avatar).
-        const seat = g.item ? null : lineView.avatarAt(screenToTable(e.clientX, e.clientY));
-        if (seat?.kind === 'seat') controls.goToSeat(seat.id);
-      }
+      clickAt(e.clientX, e.clientY, g.card, g.item, g.shift);
     } else if (g.kind === 'pan') {
       const s = g.samples;
       const first = s[0]!;
       const last = s[s.length - 1]!;
       const dt = last.t - first.t;
       if (!reduced() && dt > 0 && performance.now() - last.t < 80) rig.fling((last.x - first.x) / dt, (last.y - first.y) / dt);
-    } else if (g.kind === 'marquee') {
-      marqueeEl.style.display = 'none';
-      const x0 = Math.min(g.x0, g.x1);
-      const x1 = Math.max(g.x0, g.x1);
-      const y0 = Math.min(g.y0, g.y1);
-      const y1 = Math.max(g.y0, g.y1);
-      const hit = order.filter((rc) => {
-        if (rc.place.kind !== 'free') return false;
-        const r = screenRect(rc);
-        return r.right >= x0 && r.left <= x1 && r.bottom >= y0 && r.top <= y1;
-      });
-      const ids = [...g.base];
-      for (const rc of hit) if (!ids.includes(rc.id)) ids.push(rc.id);
-      setSelection(ids);
+    } else if (g.kind === 'marquee') finishMarquee(g);
+  }
+
+  /**
+   * A click or tap (DESIGN "Card manipulation"; "Input and interaction design", Touch: tap selects): a card becomes the
+   * selection (Shift adds or removes it), empty table clears it, and a seat's avatar spot goes to that seat (DESIGN
+   * "Camera and navigation": go to another seat, tap an avatar).
+   */
+  function clickAt(x: number, y: number, card: InstanceId | null, item: StackItemId | null, shift: boolean): void {
+    if (card) {
+      if (shift) setSelection(view.selection.includes(card) ? view.selection.filter((id) => id !== card) : [...view.selection, card]);
+      else if (!view.selection.includes(card) || view.selection.length > 1) setSelection([card]);
+    } else {
+      if (!shift && view.selection.length) setSelection([]);
+      const seat = item ? null : lineView.avatarAt(screenToTable(x, y));
+      if (seat?.kind === 'seat') controls.goToSeat(seat.id);
     }
+  }
+
+  /** Select the free cards a marquee touches, added to those selected when it started. */
+  function finishMarquee(g: { x0: number; y0: number; x1: number; y1: number; base: InstanceId[] }): void {
+    marqueeEl.style.display = 'none';
+    const x0 = Math.min(g.x0, g.x1);
+    const x1 = Math.max(g.x0, g.x1);
+    const y0 = Math.min(g.y0, g.y1);
+    const y1 = Math.max(g.y0, g.y1);
+    const hit = order.filter((rc) => {
+      if (rc.place.kind !== 'free') return false;
+      const r = screenRect(rc);
+      return r.right >= x0 && r.left <= x1 && r.bottom >= y0 && r.top <= y1;
+    });
+    const ids = [...g.base];
+    for (const rc of hit) if (!ids.includes(rc.id)) ids.push(rc.id);
+    setSelection(ids);
   }
 
   function release(e: PointerEvent): void {
@@ -1505,23 +1494,226 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   function onPointerCancel(e: PointerEvent): void {
-    touches.delete(e.pointerId);
+    if (touchInput.take(e)) {
+      touchReleased(true);
+      return;
+    }
     if (drag && drag.pointerId === e.pointerId) finishDrag(false, true);
     if (itemDrag && itemDrag.pointerId === e.pointerId) finishItemDrag(true);
     if (gesture?.kind === 'marquee') marqueeEl.style.display = 'none';
     if (gesture?.kind === 'line') dirty = true;
     lineView.draft = null;
     gesture = null;
-    pinch = null;
     menuPending = null;
   }
 
+  // --- Touch (DESIGN "Input and interaction design", Touch; "Camera and navigation", Navigation gestures; M5-P1) -------
+  /** What the one-finger gesture under way holds. */
+  let touchHold:
+    | { kind: 'card' | 'item' | 'line' }
+    | { kind: 'pan'; last: ScreenPoint; samples: { x: number; y: number; t: number }[] }
+    | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number; base: InstanceId[] }
+    | null = null;
+  /** A long-press on empty table: the table menu opens when the finger lifts, unless it drags a marquee instead. */
+  let touchTableMenu: ScreenPoint | null = null;
+  /** The radial menu this scene opened for a long-press (closed again when the finger goes on to draw a line). */
+  let touchRadial = false;
+
+  function onTouchGesture(g: TouchGesture): void {
+    switch (g.kind) {
+      case 'tap': {
+        const rc = pick(g.at.x, g.at.y);
+        const item = rc ? null : (markerAt(screenToTable(g.at.x, g.at.y))?.item.id ?? null);
+        clickAt(g.at.x, g.at.y, rc?.id ?? null, item, false);
+        return;
+      }
+      case 'doubleTap':
+        doubleAt(g.at.x, g.at.y);
+        return;
+      case 'twoFingerDoubleTap':
+        controls.fit(true);
+        return;
+      case 'longPress': {
+        const rc = pick(g.at.x, g.at.y);
+        if (!rc) {
+          touchTableMenu = g.at;
+          return;
+        }
+        if (opts.events.radialMenu) {
+          touchRadial = true;
+          opts.events.radialMenu(rc.id, g.at);
+        } else opts.events.contextMenu?.(rc.id, g.at);
+        return;
+      }
+      case 'drag':
+        return touchDrag(g);
+      case 'longPressDrag':
+        return touchLine(g);
+      case 'twoFinger': {
+        touchTableMenu = null;
+        if (g.phase === 'start') rig.stop();
+        if (g.phase !== 'start' && g.phase !== 'move') return;
+        // Two-finger vertical drag pitches in the ego rig (pitch is ego only; in bird's-eye it pans like any two-finger drag).
+        if (g.mode === 'pitch' && rig.rig() === 'ego') rig.pitchBy(g.pan.dy * PITCH_DEG_PER_PX);
+        else {
+          rig.panBy(g.pan.dx, g.pan.dy);
+          const c = toCanvas(g.centre.x, g.centre.y);
+          if (g.scale !== 1) rig.zoomAt(c.x, c.y, g.scale);
+        }
+        dirty = true;
+        return;
+      }
+    }
+  }
+
+  /** One finger dragging: a card moves (with its pile or the selection), a stack marker moves, else the table pans. */
+  function touchDrag(g: Extract<TouchGesture, { kind: 'drag' }>): void {
+    const h = touchHold;
+    if (g.phase === 'start') {
+      touchTableMenu = null;
+      const rc = pick(g.start.x, g.start.y);
+      const pileGrab = !!rc && rc.inst.pile?.kind === 'squared' && onPileBadge(rc, g.start.x, g.start.y);
+      if (rc && startCardDrag(rc, -1, g.start.x, g.start.y, false, pileGrab)) {
+        drag!.last = { x: g.at.x, y: g.at.y };
+        touchHold = { kind: 'card' };
+        touchInput.capture();
+        return;
+      }
+      const item = rc ? null : markerAt(screenToTable(g.start.x, g.start.y));
+      if (item && startItemDrag(item.item.id, -1, g.start.x, g.start.y)) {
+        itemDrag!.last = { x: g.at.x, y: g.at.y };
+        touchHold = { kind: 'item' };
+        touchInput.capture();
+        dirty = true;
+        return;
+      }
+      rig.stop();
+      rig.panBy(g.at.x - g.start.x, g.at.y - g.start.y);
+      touchHold = { kind: 'pan', last: g.at, samples: [{ x: g.start.x, y: g.start.y, t: g.t }, { x: g.at.x, y: g.at.y, t: g.t }] };
+      dirty = true;
+      return;
+    }
+    if (!h) return;
+    if (g.phase === 'move') {
+      if (h.kind === 'card' && drag) drag.last = { x: g.at.x, y: g.at.y };
+      else if (h.kind === 'item' && itemDrag) itemDrag.last = { x: g.at.x, y: g.at.y };
+      else if (h.kind === 'pan') {
+        rig.panBy(g.at.x - h.last.x, g.at.y - h.last.y);
+        h.last = g.at;
+        h.samples.push({ x: g.at.x, y: g.at.y, t: g.t });
+        while (h.samples.length > 2 && g.t - h.samples[0]!.t > 100) h.samples.shift();
+      }
+      dirty = true;
+      return;
+    }
+    touchHold = null;
+    const cancel = g.phase === 'cancel';
+    if (h.kind === 'card' && drag) {
+      drag.last = { x: g.at.x, y: g.at.y };
+      finishDrag(false, cancel);
+    } else if (h.kind === 'item' && itemDrag) {
+      itemDrag.last = { x: g.at.x, y: g.at.y };
+      finishItemDrag(cancel);
+    } else if (h.kind === 'pan' && !cancel) {
+      const first = h.samples[0]!;
+      const last = h.samples[h.samples.length - 1]!;
+      const dt = last.t - first.t;
+      if (!reduced() && dt > 0 && g.t - last.t < 80) rig.fling((last.x - first.x) / dt, (last.y - first.y) / dt);
+    }
+    dirty = true;
+  }
+
+  /** Long-press then drag: from a card a connection line (the radial menu closes), from empty table a marquee. */
+  function touchLine(g: Extract<TouchGesture, { kind: 'longPressDrag' }>): void {
+    const h = touchHold;
+    if (g.phase === 'start') {
+      if (touchRadial) {
+        touchRadial = false;
+        opts.events.radialMenu?.(null, g.at);
+      }
+      if (touchTableMenu) {
+        touchTableMenu = null;
+        touchHold = { kind: 'marquee', x0: g.start.x, y0: g.start.y, x1: g.at.x, y1: g.at.y, base: [...view.selection] };
+        showMarquee(touchHold);
+        touchInput.capture();
+        return;
+      }
+      const rc = pick(g.start.x, g.start.y);
+      const source = rc ? lineSource(rc) : null;
+      if (!rc || !source) return;
+      lineView.draft = { pointerId: -1, source, sourceCard: rc.id, target: lineTargetAt(g.at.x, g.at.y, rc.id), cur: screenToTable(g.at.x, g.at.y), shift: false };
+      touchHold = { kind: 'line' };
+      touchInput.capture();
+      dirty = true;
+      return;
+    }
+    if (!h) return;
+    if (g.phase === 'move') {
+      if (h.kind === 'line' && lineView.draft) {
+        lineView.draft.cur = screenToTable(g.at.x, g.at.y);
+        lineView.draft.target = lineTargetAt(g.at.x, g.at.y, lineView.draft.sourceCard);
+      } else if (h.kind === 'marquee') {
+        h.x1 = g.at.x;
+        h.y1 = g.at.y;
+        showMarquee(h);
+      }
+      dirty = true;
+      return;
+    }
+    touchHold = null;
+    if (h.kind === 'line') {
+      const dr = lineView.draft;
+      if (g.phase === 'end' && dr) dispatch(lineView.finish(lineTargetAt(g.at.x, g.at.y, dr.sourceCard), false, newId));
+      else lineView.draft = null;
+    } else if (h.kind === 'marquee') {
+      if (g.phase === 'end') finishMarquee(h);
+      else marqueeEl.style.display = 'none';
+    }
+    dirty = true;
+  }
+
+  /**
+   * Another finger landed. Unless a captured drag ignores it, the touch is now a camera gesture (DESIGN "Input and
+   * interaction design", Touch: two-finger gestures always drive the camera): the radial menu a long-press opened
+   * closes, and the table menu a long-press on empty table would open when the fingers lift is dropped, even when the
+   * fingers then lift without moving.
+   */
+  function touchSecondFinger(at: ScreenPoint): void {
+    if (touchHold !== null && touchHold.kind !== 'pan') return;
+    touchTableMenu = null;
+    if (touchRadial) {
+      touchRadial = false;
+      opts.events.radialMenu?.(null, at);
+    }
+  }
+
+  /** After a finger lifted or was cancelled: a long-press on empty table opens the table menu once every finger is up. */
+  function touchReleased(cancel = false): void {
+    if (cancel) touchTableMenu = null;
+    if (touchInput.active()) return;
+    touchRadial = false;
+    const at = touchTableMenu;
+    touchTableMenu = null;
+    if (at && touchHold === null) opts.events.contextMenu?.(null, at);
+  }
+
   function onDoubleClick(e: MouseEvent): void {
+    // A double-tap was already handled as a touch gesture; the double-click some browsers synthesise from it is not.
+    if (touchInput.recent()) return;
+    doubleAt(e.clientX, e.clientY);
+  }
+
+  /**
+   * Double-click or double-tap (DESIGN "Input and interaction design": double-click taps a card, draws from a library and
+   * opens a pile; Touch: double-tap taps the card; "Camera and navigation": double-click or double-tap on empty space
+   * beside a card zooms to it).
+   */
+  function doubleAt(x: number, y: number): void {
     if (!state) return;
-    const rc = pick(e.clientX, e.clientY);
+    const rc = pick(x, y);
     if (!rc) {
       // Double-click on empty space beside a card zooms to it (DESIGN "Camera and navigation").
-      const p = screenToTable(e.clientX, e.clientY);
+      const p = screenToTable(x, y);
       let best: RCard | null = null;
       let bestD = 60;
       for (const r of rcards.values()) {
@@ -1563,6 +1755,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   function onContextMenu(e: MouseEvent): void {
     e.preventDefault();
+    // Some browsers fire a context menu on a long touch: touch has its own long-press (the radial menu).
+    if (touchInput.recent()) return;
     const rc = pick(e.clientX, e.clientY);
     // Some platforms ask on press (macOS), others on release (Windows, Linux): right-drag draws a line instead.
     if (gesture?.kind === 'press' && gesture.button === 2) {
@@ -1807,6 +2001,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     stack: () => stackDebug(),
     tableView: () => tableViewDebug(),
     captions: () => captionLayer.debug(),
+    // The touch part (M5-P1): the HUD replaces it with one that also knows its radial menu and thumb bar.
+    touch: { gestures: () => recentGestures(), radial: () => null, thumbBar: () => [] },
   };
   registerDebug(debugParts);
 
@@ -1853,7 +2049,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
    * the player is dragging"). Any pointer pressed anywhere on the page counts, a press on the table not yet past the
    * drag threshold and a hand-fan drag still in the HUD included.
    */
-  const holding = () => drag !== null || itemDrag !== null || gesture !== null || pressedPointers.size > 0;
+  const holding = () => drag !== null || itemDrag !== null || gesture !== null || pressedPointers.size > 0 || touchInput.active();
   let pendingFollow: FollowRequest[] = [];
   /** Ease to what the follow toggles ask for (DESIGN "Camera and navigation", Follow options). */
   function applyFollow(reqs: FollowRequest[]): void {
@@ -2095,6 +2291,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     debug,
     dispose() {
       disposed = true;
+      touchInput.reset();
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();
       insetObserver.disconnect();

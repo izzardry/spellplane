@@ -14,6 +14,21 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="theme-color" content="#111111" />
     <title>Spellplane</title>
+    <style>
+      /* iPad Safari (PLAN Milestone 5, owner decisions): no double-tap zoom (manipulation keeps pan and pinch for pages
+         that scroll), no pull-to-refresh or rubber-band bounce of the page, no font inflation, no grey tap flash. The
+         table's canvas, hand fan and radial menu take every touch themselves (touch-action: none). */
+      html {
+        touch-action: manipulation;
+        overscroll-behavior: none;
+        -webkit-text-size-adjust: 100%;
+        text-size-adjust: 100%;
+        -webkit-tap-highlight-color: transparent;
+      }
+      body {
+        overscroll-behavior: none;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>

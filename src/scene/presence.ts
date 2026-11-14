@@ -335,17 +335,28 @@ export function dragPoses(grabs: readonly Grab[], at: TablePoint): { id: Instanc
   return grabs.map((g) => ({ id: g.id, pose: { x: at.x + g.dx, y: at.y + g.dy, rot: g.rot } }));
 }
 
+/** Which pointer an event came from: its `pointerId`, and whether it is a finger (`pointerType === 'touch'`). */
+export interface PresencePointer {
+  id: number;
+  touch: boolean;
+}
+
 /**
  * This browser's presence as a state machine over pointer input in CSS px (the DOM wiring is `sendPresence`): the
  * cursor while over the table, the dragged cards while a drag runs (a press on a card past the drag threshold, or a
  * drag the HUD handed to the scene).
+ *
+ * Fingers (M5-P1; DESIGN "Input and interaction design", Touch): a finger that presses a card and moves does not always
+ * drag it (long-press then drag draws a line; two fingers drive the camera), so a touch press shows a drag only while
+ * the scene reports cards it drags. A second finger ends the press: two-finger gestures always drive the camera.
  */
 export interface PresenceTracker {
   /** A press on the scene host. */
-  down(x: number, y: number, button: number): void;
+  down(x: number, y: number, button: number, pointer?: PresencePointer): void;
   /** A pointer move anywhere; `overTable` when it is over the scene host. */
-  move(x: number, y: number, overTable: boolean): void;
-  up(): void;
+  move(x: number, y: number, overTable: boolean, pointer?: PresencePointer): void;
+  /** A pointer released or cancelled. */
+  up(pointer?: PresencePointer): void;
   /** The pointer left the scene host. */
   leave(): void;
   /** The HUD handed a drag of `card` to the scene at (x, y) (hand fan, pile viewer: `TableScene.startDrag`). */
@@ -354,7 +365,19 @@ export interface PresenceTracker {
 }
 
 export function createPresenceTracker(scene: PresenceScene, channel: Pick<PresenceChannel, 'cursor' | 'drag'>, opts: PresenceSenderOptions): PresenceTracker {
-  let press: { x: number; y: number; at: TablePoint; card: InstanceId | null; external: boolean; dragging: boolean; grabs: Grab[] | null } | null = null;
+  let press: {
+    x: number;
+    y: number;
+    at: TablePoint;
+    card: InstanceId | null;
+    external: boolean;
+    dragging: boolean;
+    grabs: Grab[] | null;
+    /** The finger that pressed (a touch press); null for a mouse or pen. */
+    finger: number | null;
+  } | null = null;
+  /** Fingers down on the scene host (touch pointer ids). */
+  const fingers = new Set<number>();
   let last: { at: { x: number; y: number } | null; over: InstanceId | null } = { at: null, over: null };
   let resend: ReturnType<typeof setInterval> | null = null;
   // Presence travels on the unreliable channel; a lost drag end would leave the ghost on the others' tables until it
@@ -387,6 +410,13 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
   };
   const sendDrag = (at: TablePoint): void => {
     if (!press) return;
+    if (press.finger !== null && press.grabs === null) {
+      // A finger shows only what the scene drags: none while it draws a line, a marquee or moves the camera. The scene
+      // starts its drag past its own slop, so the cards already follow the finger: they hang off where it is now.
+      const grabs = grabsOf(opts.state(), scene.debug.cards(), [], at, opts.seat, press.external);
+      if (!grabs.length) return;
+      press.grabs = grabs;
+    }
     press.grabs ??= grabsOf(opts.state(), scene.debug.cards(), press.card ? dragSet(press.card, opts.selection()) : [], press.at, opts.seat, press.external);
     if (!press.grabs.length) return;
     echoEnd = false;
@@ -394,13 +424,27 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
   };
 
   return {
-    down(x, y, button) {
+    down(x, y, button, pointer) {
+      if (pointer?.touch) {
+        fingers.add(pointer.id);
+        if (fingers.size > 1) {
+          // A second finger: a camera gesture (or a finger the scene ignores while it drags); never a drag of its card.
+          // A card drag the scene holds keeps running (it ignores further fingers); any other press ends here.
+          if (press && press.finger !== null && press.finger !== pointer.id && !scene.debug.cards().some((c) => c.dragging)) {
+            if (press.dragging && press.grabs?.length) endDrag();
+            press = null;
+          }
+          return;
+        }
+      }
       if (button !== 0) return;
       const card = scene.cardAt(x, y);
       const at = scene.screenToTable(x, y);
-      press = card && at ? { x, y, at, card, external: false, dragging: false, grabs: null } : null;
+      press = card && at ? { x, y, at, card, external: false, dragging: false, grabs: null, finger: pointer?.touch ? pointer.id : null } : null;
     },
-    move(x, y, overTable) {
+    move(x, y, overTable, pointer) {
+      // While several fingers are down only the pressing one (or, with none, the first) is followed.
+      if (pointer?.touch && fingers.size > 1 && (press?.finger ?? [...fingers][0]) !== pointer.id) return;
       if (!overTable && !press?.dragging) return;
       const at = scene.screenToTable(x, y);
       const p = at ? { x: at.x, y: at.y } : null;
@@ -410,7 +454,12 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
       press.dragging = true;
       sendDrag(at);
     },
-    up() {
+    up(pointer) {
+      if (pointer?.touch) {
+        fingers.delete(pointer.id);
+        // Another finger lifting leaves the pressing finger's drag running.
+        if (press && press.finger !== null && press.finger !== pointer.id) return;
+      }
       if (press?.dragging && press.grabs?.length) endDrag();
       press = null;
     },
@@ -421,7 +470,7 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
       const at = scene.screenToTable(x, y);
       if (!at) return;
       if (press?.dragging && press.grabs?.length) endDrag();
-      press = { x, y, at, card: null, external: true, dragging: true, grabs: null };
+      press = { x, y, at, card: null, external: true, dragging: true, grabs: null, finger: null };
       // The scene placed the card under the pointer (startDrag); its own drag set names it.
       press.grabs = grabsOf(opts.state(), scene.debug.cards(), [card], at, opts.seat, true).filter((g) => g.id === card);
       cursor({ x: at.x, y: at.y }, null);
@@ -430,6 +479,7 @@ export function createPresenceTracker(scene: PresenceScene, channel: Pick<Presen
     stop() {
       if (press?.dragging && press.grabs?.length) endDrag();
       press = null;
+      fingers.clear();
       cursor(null, null);
     },
   };
@@ -448,9 +498,10 @@ export interface PresenceHandle {
  */
 export function sendPresence(host: HTMLElement, scene: PresenceScene, channel: Pick<PresenceChannel, 'cursor' | 'drag'>, opts: PresenceSenderOptions): PresenceHandle {
   const tracker = createPresenceTracker(scene, channel, opts);
-  const move = (e: PointerEvent): void => tracker.move(e.clientX, e.clientY, e.target instanceof Node && host.contains(e.target));
-  const down = (e: PointerEvent): void => tracker.down(e.clientX, e.clientY, e.button);
-  const up = (): void => tracker.up();
+  const who = (e: PointerEvent): PresencePointer => ({ id: e.pointerId, touch: e.pointerType === 'touch' });
+  const move = (e: PointerEvent): void => tracker.move(e.clientX, e.clientY, e.target instanceof Node && host.contains(e.target), who(e));
+  const down = (e: PointerEvent): void => tracker.down(e.clientX, e.clientY, e.button, who(e));
+  const up = (e: PointerEvent): void => tracker.up(who(e));
   const leave = (): void => tracker.leave();
 
   window.addEventListener('pointermove', move);
