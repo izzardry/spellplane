@@ -93,7 +93,7 @@ Cards go anywhere in a player's territory, and the table helps by magnetic snapp
 
 - **Free drag** with pointer capture; the card lifts, casts a shadow (in lit themes) and follows with a light spring.
 - **Magnetic snapping.** Dropping near a card aligns to its edges with the standard gap. Dropping on a card's lower edge starts or extends a cascade pile, each card offset so title bars stay readable (lands, Auras under a creature). Dropping squarely on a card makes a squared pile with a count badge (tokens, library-like piles). Holding Ctrl disables snapping.
-- **Piles move as one** when dragged by their bottom card; any other card pulls out singly. Double-click a pile to fan it open in place.
+- **Piles carry like solitaire** (owner decision, M6): dragging a card carries every card riding on it, the cards cascaded on top of it and every card attached to it, so the bottom card moves the whole pile and a card in the middle takes the cards below it in the cascade. A card dragged on its own leaves its pile or host. Paperclipped cards move as one group whichever card is dragged. Double-click a pile to fan it open in place.
 - **Tidy (Y)** re-flows the player's own battlefield into neat rows, preserving piles and relative order. It is never automatic.
 - **Multi-select** by marquee drag on empty table or Shift+click. All actions apply to the selection; the selection shows a card count and summed power/toughness.
 
@@ -107,7 +107,8 @@ Cards go anywhere in a player's territory, and the table helps by magnetic snapp
 | Rotate 180° | Shift+T | Flip cards, "inverted" markers |
 | Counters | + / − | Generic +1/+1 by default; number keys pick a named counter type (loyalty, −1/−1, charge, custom) |
 | Note | N | A short text label on the card, typed or dictated |
-| Attach | Drop onto a card | Tucks under the host, moves with it, shows an attachment line when pulled apart |
+| Attach | Drop onto a card's upper third | Tucks behind the host (peeking out above its title bar) and moves with it; dragging it out alone detaches it (owner decision, M6) |
+| Clip | Hold 600 ms where cards overlap, drag a clip from the tray, or the Clip key | A paperclip pins the cards under it; dragging any clipped card moves the group; double-click or drag the clip off to remove it (owner decision, M6) |
 | Clone / token copy | X | Creates a token copy next to the card |
 | Create token | Ctrl+T | Search Scryfall tokens; "related tokens" of the hovered card listed first |
 | Peek | Alt+F | Look at a face-down card you are allowed to see; logged |
@@ -313,7 +314,7 @@ The table has live voice and dictated captions as two modes of the same talk key
 
 | Mode | What the others get | When the mic is open |
 | --- | --- | --- |
-| Push-to-talk voice | Live audio | While the talk key is held (default: hold V; configurable, including a mouse button) |
+| Push-to-talk voice | Live audio | While the talk key is held (default: Ctrl held alone, owner decision M5; configurable, including a mouse button). Optional "Talk while I hold or drag": any press held over 200 ms on the table talks until release (owner decision, M6) |
 | Turn mic | Live audio | Automatically for the whole of the player's own turn, so they can narrate their plays; outside their turn they fall back to push-to-talk. In Two-Headed Giant the active team's mics open. |
 | Open mic | Live audio | Always, with a mute toggle (M) |
 | Dictation | Text captions, no audio | While the talk key is held, or for the whole own turn when combined with Turn mic |
@@ -598,6 +599,7 @@ This section and the three after it fix the numbers and algorithms an implemente
 1. Over a zone pile (library, graveyard, exile), the stack lane or an avatar: the corresponding zone move.
 2. Centre within 12 of another card's centre: join or create a squared pile.
 3. Top edge within the lower third of another card and horizontally overlapping by at least half: join or create a cascade below it.
+   3a. Bottom edge within the upper third of another card and horizontally overlapping by at least half: tuck behind it at the attachment tuck offset and attach to it (owner decision, M6).
 4. Any edge within 12 of a neighbour's edge plus gap: align to it.
 5. Otherwise the free position, clamped to the table.
 

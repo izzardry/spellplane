@@ -2,7 +2,8 @@
 
 - **Live URL:** https://izzardry.github.io/spellplane/
 - **Repository:** github.com/izzardry/spellplane (public, MIT). `main` carries B0 and M0–M5. CI runs a check job plus Chromium and WebKit e2e in eight shards, and every push to `main` deploys to GitHub Pages.
-- **Plan:** every item in `docs/PLAN.md` is ticked. Each milestone gate is green with its owner playtest still pending. Nothing is parked or failing.
+- **Plan:** every M0–M5 item in `docs/PLAN.md` is ticked. Each milestone gate is green with its owner playtest still pending, and nothing is parked or failing.
+- **Not everything in DESIGN is built.** A design audit after M5 (`docs/gates/GAPS.md`) found gaps the gates never tested. The biggest: there is no way to attach a card, and the command zone cannot be used. Milestone 6 closes them.
 
 ## Milestones
 
@@ -53,7 +54,7 @@ The full log is `docs/DECISIONS.md`, about 1,200 lines. These are the ones that 
    - A modified client can move a single card to the top of its library without the audit proving it; everyone's log shows the move.
    - A cheater can mark their own records incomplete and get the neutral "could not be checked".
    - A table closed mid-match is not audited.
-   - Winston and Grid pack records are not replayed by any audit (M2).
+   - No audit replays draft pack records, for any format (M2; scheduled in M6-P4).
 2. **The sequencer is trusted for order (M1).** Actions are unsigned (DESIGN "Handshake"). The sequencer can mark a peer away and clear their chair before a shuffle commit; the log shows it, but nothing refuses it.
 3. **Identity (M1).** A player who clears all site data or switches device cannot reclaim their chair: the key pair is lost with the save. M5's backup file includes the identity as a JWK when tables are exported, which is the workaround.
 4. **Solo actions after a reload (M5).** These are lost only if already folded into a stored snapshot, after more than 600 actions alone or in the sequencer's first 6 s after a cut.
