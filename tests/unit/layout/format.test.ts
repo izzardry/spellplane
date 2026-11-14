@@ -94,6 +94,24 @@ describe('formatSet rebuilds the chairs, teams and life totals for the format', 
     expect(checkInvariants(s)).toEqual([]);
   });
 
+  it('clips made by a chair that goes are removed with it (M6.1); others stay', () => {
+    let s = sit(room('ffa3'), 's0', 'Anna', 0);
+    const card = (id: string, x: number) => ({ id, owner: 's0', controller: 's0', zone: 'battlefield:s0', face: 'up' as const, faceIndex: 0 as const, isToken: true, tokenLabel: id, tapped: false, pose: { x, y: 0, rot: 0 }, counters: {} });
+    s = {
+      ...s,
+      cards: { a: card('a', 0), b: card('b', 30), c: card('c', 60) },
+      zones: { ...s.zones, 'battlefield:s0': { ...s.zones['battlefield:s0']!, ids: ['a', 'b', 'c'] } as TableState['zones'][string] },
+      clips: {
+        k1: { id: 'k1', cards: ['a', 'b'], anchor: { card: 'a', x: 0, y: 0 }, by: 's2' },
+        k2: { id: 'k2', cards: ['b', 'c'], anchor: { card: 'b', x: 0, y: 0 }, by: 's0' },
+      },
+    };
+    expect(checkInvariants(s)).toEqual([]);
+    s = ok(s, formatSet('1v1'));
+    expect(Object.keys(s.clips ?? {})).toEqual(['k2']);
+    expect(checkInvariants(s)).toEqual([]);
+  });
+
   it('a format change and its replay give the same state hash (deterministic)', async () => {
     const base = sit(room('1v1'), 's0', 'Anna', 0);
     const a = formatSet('2hg', 30);
