@@ -6,6 +6,7 @@
  * ink. The DOM parts are also checked in the browser by axe (tests/e2e/a11y/axe.spec.ts); this covers what axe cannot
  * see: what the scene draws on the canvas.
  */
+import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { contrastRatio, hexToRgb } from '../../../src/themes/signals';
 import { paper, PAPER_SURROUND } from '../../../src/themes/paper/index';
@@ -60,5 +61,21 @@ describe('Paper non-text contrast (WCAG 1.4.11, 3:1)', () => {
   });
   it('seat colours (lines, avatars, glyphs) against the table', () => {
     for (const s of c.seats) expect(contrastRatio(s.colour, c.surface)).toBeGreaterThanOrEqual(WCAG_AA.nonText);
+  });
+});
+
+describe('states are not marked by dimming text (M5 review)', () => {
+  // A not-ready Resolve (thumb bar), an away player's life and counters and a builder row still loading were dimmed
+  // with opacity (#111 at 55 % was 4.17:1; the muted colour at 60 % 2.65:1). They are marked by a border, a pattern or
+  // the type style now; the text stays at full contrast.
+  it('the thumb bar, the avatar and the builder list set no opacity below 1', () => {
+    for (const f of ['src/ui/touch/ThumbBar.svelte', 'src/ui/Avatar.svelte', 'src/ui/builder/list/ListView.svelte']) {
+      const css = fs.readFileSync(f, 'utf8').split('<style>')[1] ?? '';
+      expect(css.match(/opacity:\s*0?\.\d+/g) ?? [], f).toEqual([]);
+    }
+  });
+  it("the away avatar's muted text and the key labels at 70 % keep 4.5:1 on the panel", () => {
+    expect(contrastRatio(c.muted, c.surface)).toBeGreaterThanOrEqual(WCAG_AA.text);
+    expect(contrastRatio(over(c.fg, 0.7, c.surface), c.surface)).toBeGreaterThanOrEqual(WCAG_AA.text);
   });
 });

@@ -72,8 +72,9 @@
     {:else}
       <button
         type="button"
-        class:dim={b.action === 'resolve' && !resolveLit}
+        class:waiting={b.action === 'resolve' && !resolveLit}
         data-testid="thumb-{b.action}"
+        data-ready={b.action === 'resolve' ? String(resolveLit) : undefined}
         title={k ? `${b.label} (${k})` : b.label}
         onclick={() => run(b.action, 'start')}>{b.label}</button
       >
@@ -106,8 +107,11 @@
     cursor: pointer;
     touch-action: manipulation;
   }
-  button.dim {
-    opacity: 0.55;
+  /* A Resolve that is not ready keeps full-contrast text (Paper meets WCAG AA throughout, M5 review): it is told apart
+     by a dashed border and normal weight instead of being dimmed; a ready one keeps the solid border and bold label. */
+  button.waiting {
+    border-style: dashed;
+    font-weight: 400;
   }
   button.hold.on {
     background: var(--sp-fg, #111);
