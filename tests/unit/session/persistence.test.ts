@@ -7,7 +7,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { stateHash } from '../../../src/core/hash';
 import { SNAPSHOT_EVERY } from '../../../src/session/index';
 import type { LoadedTable, LogRecord, SecretsRecord, TableRecord, TableStore } from '../../../src/store/types';
-import { createSoloSession } from '../../../src/session/index';
+import { createSoloSession, SOLO_ROOM } from '../../../src/session/index';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 import { mtg } from '../../../src/games/index';
 import { cardSource, closeStores, deckA, json, session, stores, withDeck } from './helpers';
 
@@ -44,6 +45,29 @@ describe('reload', () => {
     await again.draw();
     expect(again.secrets().hand).toContain(top);
     expect(again.getState().seq).toBe(s.getState().seq + 1);
+  });
+
+  it('a solo save a newer Spellplane wrote reopens with the version notice, never silently (M5-P6)', async () => {
+    const db = await stores();
+    const s = await session(db);
+    await s.whenSaved();
+    const loaded = (await db.tables.loadTable(SOLO_ROOM))!;
+    await db.tables.saveSnapshot({ ...loaded.table, protocol: PROTOCOL_VERSION + 1 }, loaded.secrets);
+    const again = await session(await reload(db.db.name));
+    const notices = again.log().filter((e) => e.kind === 'system' && e.level === 'warn' && /Version mismatch/.test(e.text));
+    expect(notices).toHaveLength(1);
+    // The record keeps the newer version (session/persist.ts), so the next reload says so again.
+    await again.whenSaved();
+    const later = await session(await reload(db.db.name));
+    expect(later.log().filter((e) => e.kind === 'system' && /Version mismatch/.test(e.text))).toHaveLength(1);
+  });
+
+  it('a solo save of this version reopens without a version notice', async () => {
+    const db = await stores();
+    const s = await session(db);
+    await s.whenSaved();
+    const again = await session(await reload(db.db.name));
+    expect(again.log().some((e) => e.kind === 'system' && /Version mismatch/.test(e.text))).toBe(false);
   });
 
   it('restores a fresh table with no deck', async () => {

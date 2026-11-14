@@ -9,3 +9,4 @@ export * from './faces';
 export * from './mtgjson';
 export * from './sets';
 export * from './packs';
+export * from './back';

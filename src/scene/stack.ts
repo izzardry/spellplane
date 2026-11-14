@@ -17,15 +17,19 @@
  * - Dropping an item's card back into the lane reorders it to the slot under the pointer (Resolving 4). A marker is not
  *   a card: it is hit-tested on its own (`entryAt`), the HUD's keys reach it through `hoveredStackItem`, and dragging it
  *   reorders it in the lane or, dropped outside, removes it (table-scene.ts).
+ * - Far zoom (DESIGN "The effect stack", Reading it: "at far zoom it collapses to a count badge that expands on hover";
+ *   PLAN Milestone 5, owner decisions, Far-zoom stack: on tap on touch; M5-P7): while a card in the lane would be drawn
+ *   shorter than STACK_COLLAPSE_CARD_PX the lane is not drawn and a badge with the item count stands at its centre;
+ *   hovering it (tapping it on touch) shows the items readably beside it (scene/stack-badge.ts).
  */
 import { GEOMETRY } from '../core/geometry';
 import { pendingAbout } from '../core/reducer/confirm';
-import type { InstanceId, Pose, StackItem, StackItemId, TableState } from '../core/types';
+import type { CardRef, InstanceId, Pose, StackItem, StackItemId, TableState } from '../core/types';
 import type { Rect } from '../games/types';
-import type { CardDressing } from '../themes/types';
+import type { CardDressing, SeatGlyph } from '../themes/types';
 import type { DebugParts } from '../util/debug';
 import { CARD_H, CARD_W, pointInCard, rot2 } from './math';
-import type { TablePoint } from './types';
+import { STACK_COLLAPSE_CARD_PX, type TablePoint } from './types';
 
 /** Outline width of a stack entry whose round is not waiting, mm. */
 export const ENTRY_OUTLINE_MM = 0.8;
@@ -187,6 +191,53 @@ export function hoverHighlights(state: TableState, item: StackItemId): InstanceI
     if (fromItem && l.to.kind === 'card' && state.cards[l.to.id]) out.add(l.to.id);
   }
   return [...out].sort();
+}
+
+/**
+ * Whether the lane collapses to its count badge (far zoom): there are items, and a card in the lane would be drawn
+ * shorter than `threshold` CSS px (0 or less: behind the camera, not drawn at all). M5-P7.
+ */
+export function stackCollapsed(count: number, laneCardPx: number, threshold: number = STACK_COLLAPSE_CARD_PX): boolean {
+  return count > 0 && Number.isFinite(laneCardPx) && laneCardPx < threshold;
+}
+
+/** The badge's accessible name: the number of items on the stack (DESIGN "The effect stack": "a count badge"). */
+export function stackBadgeText(count: number): string {
+  return count === 1 ? '1 item on the stack' : `${count} items on the stack`;
+}
+
+/** One item as the expanded badge lists it, newest first (M5-P7). */
+export interface BadgeItem {
+  item: StackItemId;
+  /** Counted from the bottom, as in the lane. */
+  number: number;
+  kindLabel: string;
+  /** The controller's seat colour (CSS). */
+  colour: string;
+  /** The controller's seat glyph beside the colour (nothing depends on hue alone), null when unknown. */
+  glyph: SeatGlyph | null;
+  /** The controller's name, for assistive technology ('' when unknown). */
+  controller: string;
+  note: string | null;
+  pending: boolean;
+  /** The face it shows (the spell, or a marker's source), null for a face this viewer cannot see. */
+  ref: CardRef | null;
+  faceIndex: 0 | 1;
+  marker: boolean;
+}
+
+/** The expanded badge's items: the lane's entries, newest (top of the stack) first, as this viewer may see them. */
+export function badgeItems(
+  entries: readonly StackEntry[],
+  face: (id: InstanceId) => { ref: CardRef | null; faceIndex: 0 | 1 },
+  colour: (seat: string) => string,
+  seat: (seat: string) => { glyph: SeatGlyph | null; name: string } = () => ({ glyph: null, name: '' }),
+): BadgeItem[] {
+  return [...entries].reverse().map((e) => {
+    const f = e.face ? face(e.face) : { ref: null, faceIndex: 0 as const };
+    const who = seat(e.item.controller);
+    return { item: e.item.id, number: e.number, kindLabel: e.kindLabel, colour: colour(e.item.controller), glyph: who.glyph, controller: who.name, note: e.item.note ?? null, pending: e.pending, ref: f.ref, faceIndex: f.faceIndex, marker: e.marker };
+  });
 }
 
 /** One entry of the lane as the debug hook reports it (PLAN M1-P3 browser tests). */

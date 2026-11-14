@@ -102,6 +102,8 @@
   }
   .log.closed {
     width: 200px;
+    /* Hidden, it is a small bar (header and chat input), not a full-height box over the table. */
+    align-self: flex-start;
   }
   header {
     display: flex;

@@ -24,6 +24,11 @@ export const WAITING_TEXT = `Waiting for another player to open the link. If som
 
 /** The relays that introduce browsers cannot be reached (joining never completes). */
 export const RELAYS_TEXT = `Spellplane cannot reach the public signalling relays that introduce browsers to each other. Check your internet connection. ${REMEDIES}`;
+/**
+ * The lobby's line for a version mismatch with every peer (M5-P6): the banner over the table (ui/version) names both
+ * versions and what to do (net/version.ts versionNotice).
+ */
+export const VERSION_TEXT = 'Another player runs a different version of Spellplane, so you cannot play together yet. The notice at the top names both versions and what to do.';
 
 /** One problem the lobby shows. */
 export interface ConnectivityProblem {
@@ -88,7 +93,7 @@ export class ConnectivityCheck {
       return done({
         overall: 'failed',
         pairs: [],
-        problems: [{ kind: 'version', text: 'Another player runs a different version of Spellplane. Everyone needs to reload the page to get the same version.' }],
+        problems: [{ kind: 'version', text: VERSION_TEXT }],
       });
     }
 

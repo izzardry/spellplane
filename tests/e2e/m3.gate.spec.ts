@@ -11,7 +11,7 @@
  *    Anna starts.
  * 2. Each page sees its own seat at the bottom; each teammate's page shows the partner's hand as a second fan.
  * 3. Voice: everyone clicks "Join voice"; Ben's talk-mode indicator goes through noMic, idle, live (V held), team
- *    (Shift+V held; only the teammate's connection opens), muted (M), turn mic (live for the own team's turn) and
+ *    (Shift then Ctrl held; only the teammate's connection opens), muted (M), turn mic (live for the own team's turn) and
  *    dictating.
  * 4. Turn 1 (team t0): Anna and Ben each play a land (drag from the hand) and a creature through the stack.
  *    Turn 2 (team t1): Cleo and Dan each play a land. Turn passes are Ctrl+Enter.
@@ -210,6 +210,15 @@ async function stackStrip(page: Page, card: string): Promise<{ x: number; y: num
   await sceneIdle(page);
   const e = (await lane(page)).find((x) => x.face === card);
   if (!e) throw new Error(`stack entry for ${card} is not drawn`);
+  // At far zoom the lane is drawn as the count badge (M5 owner decision "Far-zoom stack"): hover it, and the item's
+  // title strip in the expanded list is where a line starts or ends.
+  const badge = await page.evaluate(() => window.__spellplane!.stackBadge?.() ?? null);
+  if (badge?.collapsed && badge.screen) {
+    await page.mouse.move(badge.screen.x + badge.screen.width / 2, badge.screen.y + badge.screen.height / 2);
+    await expect.poll(() => page.evaluate(() => window.__spellplane!.stackBadge?.()?.expanded ?? false)).toBe(true);
+    const row = (await page.locator(`[data-testid="stack-badge-item"][data-item="${e.item}"]`).boundingBox({ timeout: 5000 }))!;
+    return { x: row.x + row.width / 2 + 20, y: row.y + 12 };
+  }
   const full = e.screen.height / e.scale;
   return { x: e.screen.x + e.screen.width / 2, y: e.screen.y + (full * 9) / 88 };
 }
@@ -587,26 +596,26 @@ test.describe('M3 gate @gate', () => {
       /** Seats (and 'spectator' for a spectator's connection) whose outgoing track is open. */
       const openTo = async (page: Page) => (await tracks(page)).filter((t) => t.enabled).map((t) => t.seat ?? 'spectator').sort();
       const players3 = async (page: Page) => (await openTo(page)).filter((s) => s !== 'spectator');
-      await step('voice: push-to-talk (hold V) opens Ben\'s track to everyone; releasing closes it', async () => {
+      await step('voice: push-to-talk (hold Ctrl) opens Ben\'s track to everyone; releasing closes it', async () => {
         await focus(B.page);
-        await B.page.keyboard.down('v');
+        await B.page.keyboard.down('Control');
         await expect(indicator(B.page)).toHaveAttribute('data-state', 'live');
         await expect.poll(() => players3(B.page)).toEqual(['s0', 's2', 's3']);
         await expect(A.page.locator('[data-testid="avatar"][data-seat="s1"]')).toHaveAttribute('data-speaking', 'true');
         await talkShot('live');
-        await B.page.keyboard.up('v');
+        await B.page.keyboard.up('Control');
         await expect(indicator(B.page)).toHaveAttribute('data-state', 'idle');
         await expect.poll(() => openTo(B.page)).toEqual([]);
       });
-      await step('voice: team talk (Shift+V) opens Ben\'s track to Anna only', async () => {
+      await step('voice: team talk (Shift, then Ctrl) opens Ben\'s track to Anna only', async () => {
         await focus(B.page);
         await B.page.keyboard.down('Shift');
-        await B.page.keyboard.down('v');
+        await B.page.keyboard.down('Control');
         await expect(indicator(B.page)).toHaveAttribute('data-state', 'team');
         await expect.poll(() => openTo(B.page)).toEqual(['s0']);
         expect(await talk(B.page)).toMatchObject({ audio: 'team' });
         await talkShot('team');
-        await B.page.keyboard.up('v');
+        await B.page.keyboard.up('Control');
         await B.page.keyboard.up('Shift');
         await expect.poll(() => openTo(B.page)).toEqual([]);
       });
@@ -614,11 +623,14 @@ test.describe('M3 gate @gate', () => {
         await focus(B.page);
         await B.page.keyboard.press('KeyM');
         await expect(indicator(B.page)).toHaveAttribute('data-state', 'muted');
-        await B.page.keyboard.down('v');
+        await B.page.keyboard.down('Control');
+        // Wait until the held Ctrl has counted as talk (the hold-alone rule, M5-P7), then check that nothing opened.
+        await expect(indicator(B.page)).toHaveAttribute('data-hold', 'talking');
         await frames(B.page);
         expect(await openTo(B.page)).toEqual([]);
+        await expect(indicator(B.page)).toHaveAttribute('data-state', 'muted');
         await talkShot('muted');
-        await B.page.keyboard.up('v');
+        await B.page.keyboard.up('Control');
         await B.page.keyboard.press('KeyM');
         await expect(indicator(B.page)).toHaveAttribute('data-state', 'idle');
       });
@@ -650,11 +662,11 @@ test.describe('M3 gate @gate', () => {
         await shot(B.page, 'M3', 'voice-panel-open', project);
         await B.page.getByTestId('voice-settings').click();
         await neutral(B.page);
-        await B.page.keyboard.down('v');
+        await B.page.keyboard.down('Control');
         await expect(indicator(B.page)).toHaveAttribute('data-state', 'dictating');
         expect(await openTo(B.page)).toEqual([]);
         await talkShot('dictating');
-        await B.page.keyboard.up('v');
+        await B.page.keyboard.up('Control');
         await B.page.getByTestId('voice-settings').click();
         await B.page.getByTestId('talk-voice').check();
         await B.page.getByTestId('talk-dictation').uncheck();
@@ -916,12 +928,12 @@ test.describe('M3 gate @gate', () => {
       await hoverTable(A.page, attacker);
       await A.page.keyboard.press('KeyI');
       await neutral(A.page);
-      await A.page.keyboard.down('v');
+      await A.page.keyboard.down('Control');
       await expect.poll(() => hook<string | null>(A.page, 'speech.engine')).toBe('fake');
       const text = 'swinging at both of you';
       await expect.poll(() => hook<boolean>(A.page, 'speech.say', 'swinging at', false)).toBe(true);
       await hook(A.page, 'speech.say', text, true);
-      await A.page.keyboard.up('v');
+      await A.page.keyboard.up('Control');
       // Every page at once: the final bubble fades a few seconds after the final result (scene/types.ts DebugCaption).
       await Promise.all(
         everyone().map((q) =>

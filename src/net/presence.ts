@@ -6,7 +6,7 @@
  * Implementer: M1-P1.
  */
 import type { Anchor, InstanceId, Pose, SeatId } from '../core/types';
-import type { ChatChannel, PresenceMessage } from './messages';
+import { PROTOCOL_VERSION, type ChatChannel, type PresenceMessage } from './messages';
 import type { PeerId } from './transport';
 import { PRESENCE_INTERVAL_MS, type PeerPresence, type Presence, type Unsubscribe } from './types';
 
@@ -32,26 +32,26 @@ export class PresenceChannel implements Presence {
   constructor(private readonly host: PresenceHost) {}
 
   cursor(at: { x: number; y: number } | null, over: InstanceId | null = null): void {
-    this.throttled('cursor', { v: 1, t: 'cursor', n: 0, at: at ? { x: at.x, y: at.y } : null, over });
+    this.throttled('cursor', { v: PROTOCOL_VERSION, t: 'cursor', n: 0, at: at ? { x: at.x, y: at.y } : null, over });
   }
 
   drag(cards: readonly { id: InstanceId; pose: Pose }[]): void {
-    const msg: PresenceMessage = { v: 1, t: 'drag', n: 0, cards: cards.map((c) => ({ id: c.id, pose: { x: c.pose.x, y: c.pose.y, rot: c.pose.rot } })) };
+    const msg: PresenceMessage = { v: PROTOCOL_VERSION, t: 'drag', n: 0, cards: cards.map((c) => ({ id: c.id, pose: { x: c.pose.x, y: c.pose.y, rot: c.pose.rot } })) };
     // The end of a drag is never held back, so no peer keeps drawing a ghost drag.
     if (cards.length === 0) this.flushNow('drag', msg);
     else this.throttled('drag', msg);
   }
 
   speaking(on: boolean): void {
-    this.emit({ v: 1, t: 'speaking', n: 0, on });
+    this.emit({ v: PROTOCOL_VERSION, t: 'speaking', n: 0, on });
   }
 
   typing(channel: ChatChannel | null): void {
-    this.emit({ v: 1, t: 'typing', n: 0, channel });
+    this.emit({ v: PROTOCOL_VERSION, t: 'typing', n: 0, channel });
   }
 
   captionInterim(text: string | null, anchor: Anchor | null = null): void {
-    this.emit({ v: 1, t: 'captionInterim', n: 0, text, anchor });
+    this.emit({ v: PROTOCOL_VERSION, t: 'captionInterim', n: 0, text, anchor });
   }
 
   peers(): PeerPresence[] {

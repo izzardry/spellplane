@@ -2,7 +2,8 @@
 // setting drops shadows and post-processing first. scene/theme-runtime.ts carries a theme in a surface.
 import * as THREE from 'three';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ThemeRuntime } from '../../../src/scene/theme-runtime';
+import { rot2 } from '../../../src/scene/math';
+import { ThemeRuntime, tableTurnMatrix } from '../../../src/scene/theme-runtime';
 import { paper } from '../../../src/themes/paper';
 import { litTestTheme } from '../../../src/themes/test-lit';
 import type { QualityLevel, SceneContext, Theme, ThemeInstance } from '../../../src/themes/types';
@@ -115,5 +116,33 @@ describe('ThemeRuntime', () => {
     rt.update(16);
     rt.dispose();
     expect(lights(scene)).toEqual([]);
+  });
+});
+
+describe('ThemeRuntime: a table turned to the viewer (three players, M5-P7)', () => {
+  it("builds the theme as for seat 0 and turns its objects with the camera's table; the light rig stands at the real seat", () => {
+    const table = { w: 2000, d: 1800 };
+    const turned = new THREE.Scene();
+    const lit = spyTheme(litTestTheme(), false);
+    const rt = new ThemeRuntime(fakeRenderer(), turned, new THREE.PerspectiveCamera(), { post: false }, lit.theme, { table, viewerAngle: 120, reducedMotion: false, tableRot: 120 }, 'high');
+    // The theme sees a viewer at 0°: it is built exactly as seat 0's.
+    expect(lit.contexts[0]!.viewerAngle).toBe(0);
+    const plane = turned.getObjectByName('test-lit-table') as THREE.Mesh;
+    turned.updateMatrixWorld(true);
+    // The plane's corner at table (1000, 900) in the theme's frame lands at that corner turned by 120°.
+    const corner = new THREE.Vector3(1000, 900, 0).applyMatrix4(plane.matrixWorld);
+    const [ex, ey] = rot2(1000, 900, 120);
+    expect(corner.x).toBeCloseTo(ex, 6);
+    expect(corner.y).toBeCloseTo(0, 6);
+    expect(corner.z).toBeCloseTo(-ey, 6);
+    // The light rig is the one a viewer at 120° gets without a turn.
+    const plain = new THREE.Scene();
+    new ThemeRuntime(fakeRenderer(), plain, new THREE.PerspectiveCamera(), { post: false }, litTestTheme(), { table, viewerAngle: 120, reducedMotion: false }, 'high');
+    const pos = (s: THREE.Scene) => lights(s).map((l) => l.position.toArray().map((v) => Math.round(v * 1000) / 1000));
+    expect(pos(turned)).toEqual(pos(plain));
+    // Every viewer's turned theme puts its objects where seat 0's untouched theme sees them in its own frame.
+    expect(tableTurnMatrix(0).equals(new THREE.Matrix4())).toBe(true);
+    rt.dispose();
+    expect(turned.getObjectByName('test-lit-table')).toBeUndefined();
   });
 });

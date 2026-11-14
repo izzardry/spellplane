@@ -16,6 +16,10 @@ Every file the app bundles or fetches for a theme is listed here (DESIGN "Themes
 | Asset | Used by | Kind | Source | Licence | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `src/scene/fonts/Roboto-Medium.ttf` | scene (SDF table text, every theme) | font | https://github.com/googlefonts/roboto | Apache-2.0 (`src/scene/fonts/Roboto-LICENSE.txt`) | Bundled so nothing is fetched at runtime; predates M4, not a theme asset |
+| `public/icons/icon-192.png` | web app manifest (installable app, M5-P3) | texture | https://github.com/izzardry/spellplane/blob/main/scripts/make-icons.mjs | MIT (this repository) | 192 × 192, drawn by `scripts/make-icons.mjs`: Spellplane's own neutral card-back motif, no Wizards marks |
+| `public/icons/icon-512.png` | web app manifest (installable app, M5-P3) | texture | https://github.com/izzardry/spellplane/blob/main/scripts/make-icons.mjs | MIT (this repository) | 512 × 512, drawn by `scripts/make-icons.mjs` |
+| `public/icons/icon-512-maskable.png` | web app manifest, maskable icon (M5-P3) | texture | https://github.com/izzardry/spellplane/blob/main/scripts/make-icons.mjs | MIT (this repository) | 512 × 512, full bleed with the mark in the safe zone, drawn by `scripts/make-icons.mjs` |
+| `public/icons/apple-touch-icon.png` | iOS Home Screen icon (`index.html`, M5-P3) | texture | https://github.com/izzardry/spellplane/blob/main/scripts/make-icons.mjs | MIT (this repository) | 180 × 180, opaque, drawn by `scripts/make-icons.mjs` |
 
 ## Paper
 

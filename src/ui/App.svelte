@@ -16,6 +16,14 @@
   import RoomRoute from './lobby/RoomRoute.svelte';
   import StartRoute from './lobby/StartRoute.svelte';
   import { parseRoute, type Route } from './routes';
+  import About from './about/About.svelte';
+  import { HintController } from './hints/hints';
+  import SettingsPage from './settings/SettingsPage.svelte';
+  import UpdateNotice from './storage/UpdateNotice.svelte';
+  import OfflineNotice from './storage/OfflineNotice.svelte';
+  import type { UpdatePlace } from './update';
+  import type { Stage } from '../core/types';
+  import { installReducedMotionCss } from './a11y/motion';
 
   let props: Partial<AppProps> = $props();
 
@@ -28,13 +36,28 @@
   setThemeContext(choice);
   let theme = $state.raw<Theme>(choice.current());
   let ready = $state(false);
+  /** The welcome hint on the start page (M5-P5 first-run hints); the start page decides when it shows (StartRoute). */
+  const startHints = new HintController(untrack(() => props.settings), { where: 'start', touch: false, voice: false });
+  void startHints.load();
   const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
   onMount(() => {
+    // Every animation cuts under prefers-reduced-motion, on every page of the app (M5-P4, ui/a11y/motion.ts).
+    installReducedMotionCss();
     registerThemeDebug(choice);
     const off = choice.subscribe((s) => (theme = s.theme));
     void choice.ready.then(() => (ready = true));
     return off;
   });
+  // Updates only between games (M5-P3, ui/storage/UpdateNotice.svelte): the pages without a table and the solo table
+  // here; a networked table shows its own notice with its stage (ui/lobby/TableRoom.svelte).
+  let soloStage = $state<Stage | null>(null);
+  $effect(() => {
+    const s = props.session;
+    if (!s) return;
+    soloStage = s.getState().stage;
+    return s.subscribe((st) => (soloStage = st.stage));
+  });
+  const updatePlace = $derived<UpdatePlace>(route.name === 'solo' ? { route: 'solo', stage: soloStage } : { route: route.name, stage: null });
   // The page itself (body background, scrollbars, form controls) follows the theme too.
   $effect(() => {
     const root = document.documentElement;
@@ -44,6 +67,9 @@
 </script>
 
 <svelte:window onhashchange={() => (route = parseRoute(location.hash))} />
+
+{#if route.name !== 'room'}<UpdateNotice update={props.update} place={updatePlace} />{/if}
+<OfflineNotice />
 
 {#if !ready && waitsForStoredTheme(route)}
   <!-- Reading the stored theme before a table builds its scene: a moment, at most a few seconds (ui/settings/theme.ts).
@@ -71,7 +97,12 @@
 {:else}
   <main class="sp-page" style={cssVars} data-testid="route-{route.name === 'diagJoin' ? 'diag' : route.name}">
     {#if route.name === 'lobby'}
-      <StartRoute start={props.start} />
+      <StartRoute start={props.start} welcome={startHints} />
+      <p class="links"><a href="#/settings" data-testid="link-settings">Settings</a> · <a href="#/about" data-testid="link-about">About Spellplane</a></p>
+    {:else if route.name === 'settings'}
+      <SettingsPage settings={props.settings} keymap={props.game?.keymap ?? []} />
+    {:else if route.name === 'about'}
+      <About />
     {:else if route.name === 'diag' || route.name === 'diagJoin'}
       <DiagRoute diag={props.diag} room={route.name === 'diagJoin' ? { roomId: route.room, roomKey: route.key } : null} />
     {:else}

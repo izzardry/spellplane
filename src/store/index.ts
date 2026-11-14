@@ -9,3 +9,5 @@ export * from './stores';
 export * from './persist';
 export * from './images';
 export * from './sets';
+export * from './quota';
+export * from './backup';

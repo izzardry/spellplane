@@ -9,6 +9,7 @@
  * secret shuffle, public randomness and verified reveals are M1-P2's (secret.ts). M1-P4 extends moveTemp and settle in temp.ts.
  */
 import { ACTION_FAMILIES, isUndoable, type Action, type ActionOf, type ActionType } from '../actions';
+import * as audit from './audit';
 import { checkInvariants } from '../invariants';
 import type { CoreGameSpec, Format, SeatColourIndex, TableState, Team, Zone } from '../types';
 import { DEFAULT_TABLE_SETTINGS } from '../types';
@@ -119,6 +120,8 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   formatSet: format.formatSet,
   recover: recovery.recover,
   recoverCommit: recovery.recoverCommit,
+  // M5-P2: a record of a game that has ended, in the published shape only (audit.ts; verdicts: core/audit.ts).
+  auditPublish: audit.auditPublish,
 };
 
 /**

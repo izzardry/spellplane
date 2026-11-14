@@ -13,6 +13,7 @@ import { qualityLevel, type QualityId, type QualityLevel, type SceneContext, typ
 import { applyLightShadows, CAST_SHADOW, createLightRig, keyLightOf, type LightRig } from './lights';
 import { createMaterialLibrary, keyLightUniform, type MaterialLibraryImpl } from './materials';
 import { createPostPipeline, type PostPipelineImpl } from './post';
+import { normDeg, rot2 } from './math';
 import { applyQuality, deviceLimits, effectiveQuality, type EffectiveQuality } from './quality';
 
 const TONE_MAPPING: Record<Theme['lighting']['toneMapping'], THREE.ToneMapping> = {
@@ -36,6 +37,20 @@ export interface ThemePlacement {
   table: { w: number; d: number };
   viewerAngle: number;
   reducedMotion: boolean;
+  /**
+   * Degrees clockwise the theme's table is turned about the table centre (absent: 0). The three-player table turns the
+   * camera's table to each viewer (scene/layout.ts cameraTable; M5-P7); the theme is then built as for a viewer at
+   * `viewerAngle - tableRot` and its objects turned by `tableRot`, so every viewer sees the same upright table. The
+   * light rig and the key light stand at `viewerAngle` as before, which is where the turned theme expects them.
+   */
+  tableRot?: number;
+}
+
+/** The turn of three's world (x = table x, y = up, z = -table y) that turns table points by `deg` clockwise (rot2). */
+export function tableTurnMatrix(deg: number): THREE.Matrix4 {
+  const [ax, ay] = rot2(1, 0, deg);
+  const [bx, by] = rot2(0, -1, deg);
+  return new THREE.Matrix4().makeBasis(new THREE.Vector3(ax, 0, -ay), new THREE.Vector3(0, 1, 0), new THREE.Vector3(bx, 0, -by));
 }
 
 export class ThemeRuntime {
@@ -115,6 +130,7 @@ export class ThemeRuntime {
       this.rig = createLightRig(t.lighting.lights, { viewerAngle: p.viewerAngle, table: p.table, reducedMotion: p.reducedMotion });
       this.scene.add(this.rig.object);
     }
+    const turn = normDeg(p.tableRot ?? 0);
     const ctx: SceneContext = {
       renderer: this.renderer,
       scene: this.scene,
@@ -123,10 +139,24 @@ export class ThemeRuntime {
       quality: this.level,
       reducedMotion: p.reducedMotion,
       materials: this.materials,
-      viewerAngle: p.viewerAngle,
+      viewerAngle: normDeg(p.viewerAngle - turn),
       ...(this.opts.post ? { post: this.post } : {}),
     };
+    const before = new Set(this.scene.children);
     this.instance = t.build(ctx);
+    if (turn) {
+      // Turn what the theme added about the table centre (its top-level objects stay the scene's children, so its own
+      // dispose still removes them); a light's target outside the scene graph turns with it.
+      const m = tableTurnMatrix(turn);
+      for (const o of this.scene.children) {
+        if (before.has(o)) continue;
+        o.applyMatrix4(m);
+        o.traverse((x) => {
+          const target = (x as THREE.Object3D & { target?: THREE.Object3D }).target;
+          if (target instanceof THREE.Object3D && !target.parent) target.applyMatrix4(m);
+        });
+      }
+    }
     this.applyShadows();
     const key = t.lighting.lit ? keyLightOf(t.lighting.lights, p.viewerAngle) : null;
     keyLightUniform(key, this.keyLight);

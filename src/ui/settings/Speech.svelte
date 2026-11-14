@@ -11,7 +11,7 @@
   import { engineStatement } from './captions';
 
   /** `top`: CSS px from the viewport top, below the HUD's Dictation button (the toolbar above it may wrap to two rows). */
-  let { captions, onclose, top }: SpeechSettingsProps & { onclose?: () => void; top?: number } = $props();
+  let { captions, onclose, top, embedded = false }: SpeechSettingsProps & { onclose?: () => void; top?: number; embedded?: boolean } = $props();
 
   let active = $state<SpeechEngineInfo>(untrack(() => captions.engine()));
   let lang = $state(untrack(() => captions.lang()));
@@ -98,7 +98,7 @@
   }
 </script>
 
-<section class="speech" data-testid="speech-settings" aria-label="Dictation settings" style={top !== undefined ? `top: ${top}px; max-height: calc(100vh - ${top + 48}px)` : undefined}>
+<section class="speech" class:embedded data-testid="speech-settings" aria-label="Dictation settings" style={top !== undefined ? `top: ${top}px; max-height: calc(100vh - ${top + 48}px)` : undefined}>
   <header>
     <h2>Dictation</h2>
     {#if onclose}<button type="button" class="x" onclick={onclose} aria-label="Close">×</button>{/if}
@@ -162,6 +162,12 @@
 </section>
 
 <style>
+  .speech.embedded {
+    position: static;
+    width: auto;
+    max-height: none;
+    overflow: visible;
+  }
   .speech {
     position: fixed;
     z-index: 70;

@@ -8,3 +8,6 @@ playwright-report/
 dist-test
 dev-dist
 coverage
+
+# agent worktrees
+.claude/worktrees/

@@ -11,6 +11,7 @@
 import { DEG, clamp, forward } from '../math';
 import type { CameraPose, EgoRigParams, ScreenPoint, TablePoint, Vec3 } from '../types';
 import { add, basis, len, posePxPerMm, projectPoint, sub, unprojectToTable, type Viewport } from './pose';
+import { onCameraTable, type CameraTable } from './table';
 
 /** Where the viewer has leaned, dollied and pitched the ego rig (DESIGN "Camera and navigation", Navigation gestures). Added by M4-C. */
 export interface EgoNav {
@@ -22,7 +23,8 @@ export interface EgoNav {
   pitchDeg: number;
 }
 
-export type TableSize = { w: number; d: number };
+/** The table as the rigs see it: a rectangle centred on the table centre, turned by `rot` (scene/camera/table.ts; M5-P7). */
+export type TableSize = CameraTable;
 
 /** The ego rig at the seat: no lean, no dolly, the default pitch. */
 export function defaultEgoNav(params: EgoRigParams): EgoNav {
@@ -31,13 +33,13 @@ export function defaultEgoNav(params: EgoRigParams): EgoNav {
 
 /** Half the table's extent along the viewer's forward axis (the distance from the centre to the viewer's edge). */
 export function halfDepth(table: TableSize, angleDeg: number): number {
-  const f = forward(angleDeg);
+  const f = forward(angleDeg - (table.rot ?? 0));
   return (Math.abs(f.x) * table.w + Math.abs(f.y) * table.d) / 2;
 }
 
 /** Half the table's extent along the viewer's right axis. */
 export function halfWidth(table: TableSize, angleDeg: number): number {
-  const f = forward(angleDeg);
+  const f = forward(angleDeg - (table.rot ?? 0));
   return (Math.abs(f.y) * table.w + Math.abs(f.x) * table.d) / 2;
 }
 
@@ -269,7 +271,7 @@ export function egoNavForAnchor(params: EgoRigParams, table: TableSize, angleDeg
 export function egoSwitchNav(params: EgoRigParams, table: TableSize, angleDeg: number, lateral: number, vp: Viewport, a: TablePoint, s: ScreenPoint): { nav: EgoNav; err: number } {
   let best = egoNavForAnchor(params, table, angleDeg, lateral, vp, a, s, 0);
   // A point over the surround stays outside the guarantee (DECISIONS [M4-P1]): no landing beyond the limits for it.
-  if (Math.abs(a.x) > table.w / 2 || Math.abs(a.y) > table.d / 2) return best;
+  if (!onCameraTable(a, table)) return best;
   for (const reach of SWITCH_REACH) {
     if (best.err <= ANCHOR_TOL_PX) break;
     const wide: EgoRigParams = {
@@ -312,4 +314,100 @@ export function egoPanNav(params: EgoRigParams, table: TableSize, angleDeg: numb
 /** Pitch the ego rig by `deg` (positive looks further down), within the limits. */
 export function egoPitchNav(params: EgoRigParams, nav: EgoNav, deg: number): EgoNav {
   return clampEgoNav(params, { ...nav, pitchDeg: nav.pitchDeg + deg });
+}
+
+/** Screen edges (CSS px) a HUD's screen-anchored layer covers (scene/camera/birdseye.ts Insets, repeated to keep ego.ts free of the bird's-eye rig). */
+export interface EgoInsets {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+/**
+ * How the default ego seat is moved for one viewport so the viewer's own area clears the HUD (PLAN Milestone 5, owner
+ * decisions, "Ego framing shows your own piles": the pile column, command area and battlefield row on screen at the
+ * default ego view; M5 gate fix). `pull` moves the seat back along the default view ray (mm), `shift` sideways along
+ * the viewer's right axis (mm). Pitch and field of view stay.
+ */
+export interface EgoFrame {
+  pull: number;
+  shift: number;
+}
+
+export const NO_EGO_FRAME: EgoFrame = { pull: 0, shift: 0 };
+
+/** The rig's parameters with the seat pulled back `pull` mm along its default view ray (the closest dolly still reaches as far). */
+export function egoPulled(params: EgoRigParams, pull: number): EgoRigParams {
+  if (!(pull > 0)) return params;
+  const p = params.pitchDeg * DEG;
+  return { ...params, behindEdge: params.behindEdge + pull * Math.cos(p), height: params.height + pull * Math.sin(p), maxDollyMm: params.maxDollyMm + pull };
+}
+
+/** Largest pull-back the framing tries, mm. */
+const EGO_FRAME_MAX_PULL = 4000;
+/** Px kept between the own area and the HUD's edge. */
+const EGO_FRAME_MARGIN_PX = 6;
+
+/**
+ * The smallest pull-back (and the sideways shift that centres the area in the free part of the screen) at which every
+ * point of `keep` (the viewer's territory, pile column and command area) projects inside the viewport less `insets`,
+ * at the default navigation. No change when the area already fits; the best effort at the largest pull when nothing
+ * fits (a viewport too small for any seat).
+ */
+export function egoFrameFor(params: EgoRigParams, table: TableSize, angleDeg: number, lateral: number, vp: Viewport, insets: EgoInsets, keep: readonly TablePoint[]): EgoFrame {
+  if (!keep.length) return NO_EGO_FRAME;
+  const free = { l: insets.left + EGO_FRAME_MARGIN_PX, r: vp.w - insets.right - EGO_FRAME_MARGIN_PX, t: insets.top + EGO_FRAME_MARGIN_PX, b: vp.h - insets.bottom - EGO_FRAME_MARGIN_PX };
+  if (free.r - free.l < 80 || free.b - free.t < 80) return NO_EGO_FRAME;
+  const extent = (f: EgoFrame) => {
+    const pr = egoLimitsFor(egoPulled(params, f.pull), table, angleDeg, lateral + f.shift);
+    const pose = egoPose(pr, table, angleDeg, defaultEgoNav(pr), lateral + f.shift);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const p of keep) {
+      const s = projectPoint(pose, angleDeg, vp, [p.x, p.y, 0]);
+      if (!Number.isFinite(s.x) || !Number.isFinite(s.y)) return null;
+      minX = Math.min(minX, s.x);
+      maxX = Math.max(maxX, s.x);
+      minY = Math.min(minY, s.y);
+      maxY = Math.max(maxY, s.y);
+    }
+    return { minX, maxX, minY, maxY };
+  };
+  const fits = (e: ReturnType<typeof extent>) => !!e && e.minX >= free.l && e.maxX <= free.r && e.minY >= free.t && e.maxY <= free.b;
+  if (fits(extent(NO_EGO_FRAME))) return NO_EGO_FRAME;
+  // The sideways shift that centres the area between the free edges at a pull (a few secant steps).
+  const centred = (pull: number): EgoFrame => {
+    let shift = 0;
+    const want = (free.l + free.r) / 2;
+    for (let i = 0; i < 5; i++) {
+      const a = extent({ pull, shift });
+      const b = extent({ pull, shift: shift + 10 });
+      if (!a || !b) break;
+      const midA = (a.minX + a.maxX) / 2;
+      const slope = ((b.minX + b.maxX) / 2 - midA) / 10;
+      if (Math.abs(slope) < 1e-6) break;
+      const step = (midA - want) / slope;
+      shift -= step;
+      if (Math.abs(midA - want) < 0.5) break;
+    }
+    return { pull, shift: Number.isFinite(shift) ? shift : 0 };
+  };
+  let lo = 0;
+  let hi = EGO_FRAME_MAX_PULL;
+  let best = centred(hi);
+  if (!fits(extent(best))) return best;
+  const atZero = centred(0);
+  if (fits(extent(atZero))) return atZero;
+  for (let i = 0; i < 18; i++) {
+    const mid = (lo + hi) / 2;
+    const f = centred(mid);
+    if (fits(extent(f))) {
+      hi = mid;
+      best = f;
+    } else lo = mid;
+  }
+  return best;
 }

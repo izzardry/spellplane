@@ -7,7 +7,12 @@
  * order, the seat keys 2–4 ("clockwise from you") and the draft's pass to the left all follow the seat index
  * (DECISIONS [M3-P1]):
  * - 1v1: near and far halves (solo goldfish is seat 0 of this table).
- * - Three players: seat 0 on the near edge at full width; seat 1 top-left, seat 2 top-right.
+ * - Three players: seated round the table at 0°, 120° and 240° (PLAN Milestone 5, owner decisions: "opponents top-left
+ *   and top-right from every seat", as DESIGN's format table says; M5-P7). Every viewer sees the same shape: themselves
+ *   at the bottom, the next seat clockwise at the top-left and the last at the top-right, each opponent's territory
+ *   turned toward the centre. The territories are 1100 × 440 (as in the four-player table), their centres 600 from the
+ *   table centre, so neighbouring territories keep a gap and the centre around the stack lane stays free; the table is
+ *   the 2000 × 1800 rectangle that holds every territory (DECISIONS [M5-P7]).
  * - Four players: one 1100 × 440 territory per side, bottom, left, top, right. The spec's 1100-wide territories centred
  *   on 1800-wide sides would overlap 90 × 90 at every corner, so each is shifted 90 toward its owner's right (a
  *   pinwheel): no overlap, the 920 × 920 centre stays free, and each corner keeps a 440 × 260 unused patch.
@@ -40,6 +45,11 @@ export const MTG_LAYOUT = {
   avatarRadius: 34,
   /** Four players: how far each 1100-wide territory is shifted toward its owner's right so the corners do not overlap. */
   ffa4Shift: 90,
+  /**
+   * Three players round the table at 0°, 120° and 240° (M5-P7): territory width, the distance of each territory's
+   * centre from the table centre, and the table that holds every territory.
+   */
+  ffa3: { width: 1100, centreDistance: 600, table: { w: 2000, d: 1800 } },
 } as const;
 
 /** Formats whose layout is provisional. Empty since M3-P1 settled the three-, four-seat and Two-Headed Giant tables. */
@@ -77,17 +87,13 @@ function tableSpec(format: Format): { table: { w: number; d: number }; centreBan
       };
     }
     case 'ffa3': {
-      // Seat 0 on the near edge at full width; seats 1 and 2 share the far edge, 1000 wide each, seat 1 top-left and
-      // seat 2 top-right as seen by seat 0 (clockwise order). Centre band 1300 - 2 x 440 = 420.
-      const y = 1300 / 2 - d / 2;
+      // Seats at 0°, 120° and 240°, clockwise: seat 1 top-left and seat 2 top-right as seen by seat 0, and the same
+      // shape from seats 1 and 2 (M5-P7). The free centre is the circle inside the three near-centre edges.
+      const r = MTG_LAYOUT.ffa3.centreDistance;
       return {
-        table: { w: 2000, d: 1300 },
-        centreBand: 1300 - 2 * d,
-        territories: [
-          { x: 0, y: -y, angle: 0, w: 2000, d },
-          { x: -500, y, angle: 180, w: 1000, d },
-          { x: 500, y, angle: 180, w: 1000, d },
-        ],
+        table: { ...MTG_LAYOUT.ffa3.table },
+        centreBand: 2 * (r - d / 2),
+        territories: [0, 120, 240].map((angle) => ({ ...seatLocalToTable({ x: 0, y: 0 }, angle, 0, -r), angle, w: MTG_LAYOUT.ffa3.width, d })),
       };
     }
     case 'ffa4': {

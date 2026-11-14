@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
+  import { touchDevice } from '../touch/device';
   import { canonicalJson } from '../../core/hash';
   import type { CardRef, DeckBuild, SetCode, TableState } from '../../core/types';
   import type { CardData, SetDataSource } from '../../data/types';
@@ -44,6 +45,8 @@
     sets?: SetDataSource | undefined;
     view?: BuilderViewKind;
   } = $props();
+  /** A touch screen: the help names fingers, not a mouse and keys (DESIGN "Input and interaction design", Touch). */
+  const touchScreen = touchDevice();
 
   const me = untrack(() => session.seat);
   const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
@@ -377,7 +380,11 @@
     {#if surfaceError}<p class="error" role="status">Builder table unavailable: {surfaceError}</p>{/if}
     {#if !build}<p class="empty" data-testid="builder-empty">No pool yet.</p>{/if}
     <p class="help">
-      Drag cards between the deck and the sideboard; double-click sends a card across. Shift+click or Shift+drag selects; Ctrl while dragging turns snapping off.
+      {#if touchScreen}
+        Drag cards with a finger between the deck and the sideboard; two fingers move the view.
+      {:else}
+        Drag cards between the deck and the sideboard; double-click sends a card across. Shift+click or Shift+drag selects; Ctrl while dragging turns snapping off.
+      {/if}
     </p>
   </aside>
 

@@ -2,21 +2,25 @@
   The talk-mode indicator (DESIGN "Chat and voice", Talk modes, Live voice; PLAN M3-G "talk-mode indicator states"):
   shows whether the mic is off, idle, live to everyone, live to the teammate only, dictating, or muted; a "Join voice"
   button acquires the microphone (the click also satisfies autoplay rules), a mute toggle (M), and the voice panel.
-  Implementer: M3-P3.
+  Implementer: M3-P3. A spectator's listen-only session (M5-P7) shows "Listening" only, with the panel for each
+  player's volume: no microphone to join, nothing to mute.
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import type { TalkIndicatorState } from '../../voice/types';
+  import type { HoldAloneState, TalkIndicatorState } from '../../voice/types';
   import type { TalkIndicatorProps } from '../types';
   import { indicatorLabel } from './labels';
 
   let {
     voice,
-    talkKey = 'V',
+    talkKey = 'Ctrl',
     muteKey = 'M',
     panelOpen = false,
     ontogglepanel,
+    hold = 'idle',
   }: TalkIndicatorProps & {
+    /** Where a held modifier talk key stands under the hold-alone rule (ui/voice/input.ts), shown as `data-hold`. */
+    hold?: HoldAloneState;
     /** The talk key's label from the keymap. */
     talkKey?: string;
     muteKey?: string;
@@ -58,16 +62,18 @@
   const label = $derived(indicatorLabel(shown, settings, talkKey));
 </script>
 
-<div class="talk" data-testid="talk-indicator" data-state={shown} data-gate={settings.gate} role="group" aria-label="Voice">
+<div class="talk" data-testid="talk-indicator" data-state={shown} data-gate={settings.gate} data-hold={hold} role="group" aria-label="Voice">
   <span class="state {shown}" data-testid="talk-state" aria-live="polite" title={label}>
     <span class="dot" aria-hidden="true"></span>{label}
   </span>
-  {#if !joined && settings.voice}
-    <button type="button" data-testid="voice-join" disabled={joining} onclick={join}>{joining ? 'Joining…' : 'Join voice'}</button>
+  {#if shown !== 'listening'}
+    {#if !joined && settings.voice}
+      <button type="button" data-testid="voice-join" disabled={joining} onclick={join}>{joining ? 'Joining…' : 'Join voice'}</button>
+    {/if}
+    <button type="button" data-testid="voice-mute" aria-pressed={settings.muted} onclick={() => voice.toggleMute()}>
+      {settings.muted ? 'Unmute' : 'Mute'} <kbd>{muteKey}</kbd>
+    </button>
   {/if}
-  <button type="button" data-testid="voice-mute" aria-pressed={settings.muted} onclick={() => voice.toggleMute()}>
-    {settings.muted ? 'Unmute' : 'Mute'} <kbd>{muteKey}</kbd>
-  </button>
   <button type="button" data-testid="voice-settings" aria-expanded={panelOpen} aria-label="Voice settings" onclick={() => ontogglepanel?.()}>⚙</button>
   {#if error}<span class="error" role="alert" data-testid="voice-error">{error}</span>{/if}
 </div>
@@ -130,6 +136,13 @@
   }
   .muted .dot {
     background: linear-gradient(45deg, transparent 40%, currentColor 40% 60%, transparent 60%);
+  }
+  /* Listen-only (a spectator): a ring with a solid centre, distinct from every talking state. */
+  .listening {
+    border-style: solid;
+  }
+  .listening .dot {
+    background: radial-gradient(circle, currentColor 35%, transparent 40%);
   }
   .noMic {
     color: var(--sp-muted, #5f5f5f);

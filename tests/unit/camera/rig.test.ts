@@ -37,7 +37,8 @@ describe('a card\'s on-screen height', () => {
 
   it('is 0 for a card behind the camera', () => {
     const rig = makeRig({ rig: 'ego' });
-    expect(rig.cardScreenHeight({ x: 0, y: -2000, rot: 0 })).toBe(0);
+    // Behind the camera's plane even from the raised ego seat (M5-P7).
+    expect(rig.cardScreenHeight({ x: 0, y: -4000, rot: 0 })).toBe(0);
   });
 });
 

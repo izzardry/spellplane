@@ -50,7 +50,12 @@ export interface CommandHost {
   session: TableSession;
   game: GameDefinition;
   scene(): TableScene | null;
-  view(): { hovered: InstanceId | null; selection: readonly InstanceId[] };
+  /**
+   * The card the keys act on and the selection. `keyFocus` (M5-P4): a keyboard card focus is set, so the keys act on
+   * the focused card only and a stack marker under a resting pointer never counts (DESIGN "Input and interaction
+   * design", Accessibility).
+   */
+  view(): { hovered: InstanceId | null; selection: readonly InstanceId[]; keyFocus?: boolean };
   ui: UiHooks;
   newId(prefix: string): string;
   now(): number;
@@ -161,7 +166,8 @@ export class Commands {
    * scene reports them on their own (scene/stack.ts hoveredStackItem). A spell in the lane is its hovered card.
    */
   private hoveredMarker(): StackItem | null {
-    if (this.host.view().hovered) return null;
+    const view = this.host.view();
+    if (view.hovered || view.keyFocus) return null;
     const id = hoveredStackItem(this.host.scene());
     const it = id ? this.state.stack.find((i) => i.id === id) : undefined;
     return it && it.card === undefined ? it : null;

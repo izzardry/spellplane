@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { PrivateMessage } from '../../../../src/net/messages';
 import { asDraftCards, draftCardsOver, MAX_DRAFT_CARDS } from '../../../../src/net/draftcards';
 import type { SeatId } from '../../../../src/core/types';
+import { PROTOCOL_VERSION } from '../../../../src/net/messages';
 
 function fakeEngine(seat: SeatId) {
   const sent: { to: SeatId; msg: PrivateMessage }[] = [];
@@ -37,7 +38,7 @@ describe('draftCards channel', () => {
     const e = fakeEngine('s0');
     const ch = draftCardsOver(e.host);
     expect(ch.send('s1', 'cid-7', [{ ...card, extra: 'x' } as typeof card])).toBe(true);
-    expect(e.sent).toEqual([{ to: 's1', msg: { v: 1, t: 'draftCards', about: 'cid-7', cards: [card] } }]);
+    expect(e.sent).toEqual([{ to: 's1', msg: { v: PROTOCOL_VERSION, t: 'draftCards', about: 'cid-7', cards: [card] } }]);
     expect(ch.send('s0', 'cid-7', [card])).toBe(false);
     expect(e.sent).toHaveLength(1);
   });
@@ -46,14 +47,14 @@ describe('draftCards channel', () => {
     const e = fakeEngine('s1');
     const got: unknown[] = [];
     const off = draftCardsOver(e.host).on((about, cards, from) => got.push({ about, cards, from }));
-    e.deliver({ v: 1, t: 'draftCards', about: 'a', cards: [card] }, 's0');
-    e.deliver({ v: 1, t: 'draftCards', about: 'b', cards: [card, { instanceId: 'c2', ref: { sid: 7 }, salt: 's' }] }, 's0');
-    e.deliver({ v: 1, t: 'draftCards', about: '', cards: [card] }, 's0');
-    e.deliver({ v: 1, t: 'draftCards', about: 'c', cards: [card] }, null);
-    e.deliver({ v: 1, t: 'pack', packId: 'p', cards: [card] }, 's0');
+    e.deliver({ v: PROTOCOL_VERSION, t: 'draftCards', about: 'a', cards: [card] }, 's0');
+    e.deliver({ v: PROTOCOL_VERSION, t: 'draftCards', about: 'b', cards: [card, { instanceId: 'c2', ref: { sid: 7 }, salt: 's' }] }, 's0');
+    e.deliver({ v: PROTOCOL_VERSION, t: 'draftCards', about: '', cards: [card] }, 's0');
+    e.deliver({ v: PROTOCOL_VERSION, t: 'draftCards', about: 'c', cards: [card] }, null);
+    e.deliver({ v: PROTOCOL_VERSION, t: 'pack', packId: 'p', cards: [card] }, 's0');
     expect(got).toEqual([{ about: 'a', cards: [card], from: 's0' }]);
     off();
-    e.deliver({ v: 1, t: 'draftCards', about: 'a', cards: [card] }, 's0');
+    e.deliver({ v: PROTOCOL_VERSION, t: 'draftCards', about: 'a', cards: [card] }, 's0');
     expect(got).toHaveLength(1);
   });
 

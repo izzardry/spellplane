@@ -1,6 +1,7 @@
 <!--
   The voice panel (DESIGN "Chat and voice", Talk modes, Live voice: talk mode, voice and dictation together, a personal
-  volume and mute control per other player; PLAN M3-P3 device picker). Implementer: M3-P3.
+  volume and mute control per other player; PLAN M3-P3 device picker). Implementer: M3-P3. A spectator's listen-only
+  session (M5-P7) has nothing to send: the panel shows only each player's volume and mute.
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
@@ -18,6 +19,8 @@
   let audio = $state<Record<string, PeerAudioSetting>>({});
   let devices = $state.raw<MediaDeviceInfo[]>([]);
   let device = $state('');
+  /** A spectator's listen-only session (M5-P7). */
+  const listening = untrack(() => voice.indicator() === 'listening');
 
   function refresh(): void {
     talk = voice.talk();
@@ -68,6 +71,7 @@
     <button type="button" class="close" aria-label="Close voice settings" onclick={() => onclose?.()}>×</button>
   </header>
 
+  {#if !listening}
   <fieldset>
     <legend>Talk mode</legend>
     {#each GATES as g (g.gate)}
@@ -118,6 +122,9 @@
       {/each}
     </select>
   </label>
+  {:else}
+    <p class="hint" data-testid="voice-listening">You are watching: you hear the players' open voice and never talk.</p>
+  {/if}
 
   <h3>Players</h3>
   {#if peers.length === 0}

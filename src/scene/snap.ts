@@ -54,7 +54,7 @@ export interface DropInput {
 }
 
 export interface DropContext {
-  table: { w: number; d: number };
+  table: DropTable;
   /** Cards on the battlefields, without the dragged ones. */
   cards: SnapCard[];
   targets: ZoneTarget[];
@@ -78,15 +78,88 @@ export function zoneTargetAt(p: TablePoint, targets: readonly ZoneTarget[]): Zon
   return null;
 }
 
+/**
+ * The area a drop may land in: the w × d table centred on the table centre, and, where seats do not sit at right
+ * angles (the three-player table, M5-P7), the same rectangle turned by each of `turns` degrees clockwise as well: the
+ * drop stays on the intersection of every viewer's turned table (scene/layout.ts dropTable), so no viewer's fitted view
+ * hides a card.
+ */
+export interface DropTable {
+  w: number;
+  d: number;
+  turns?: readonly number[];
+}
+
+/** Bounds of the centre in a frame turned by `turn` so the extent stays within the w × d box (lo > hi: none fits). */
+function frameBounds(table: DropTable, turn: number, e: Extent): { lo: [number, number]; hi: [number, number] } {
+  let minX = e.minX;
+  let maxX = e.maxX;
+  let minY = e.minY;
+  let maxY = e.maxY;
+  if (turn) {
+    // The extent's box as seen in the turned frame (its bounding box there).
+    minX = minY = Infinity;
+    maxX = maxY = -Infinity;
+    for (const [a, b] of [
+      [e.minX, e.minY],
+      [e.maxX, e.minY],
+      [e.maxX, e.maxY],
+      [e.minX, e.maxY],
+    ] as const) {
+      const [u, v] = rot2(a, b, -turn);
+      minX = Math.min(minX, u);
+      maxX = Math.max(maxX, u);
+      minY = Math.min(minY, v);
+      maxY = Math.max(maxY, v);
+    }
+  }
+  return { lo: [-table.w / 2 - minX, -table.d / 2 - minY], hi: [table.w / 2 - maxX, table.d / 2 - maxY] };
+}
+
+const clampAxis = (v: number, lo: number, hi: number) => (lo > hi ? 0 : Math.min(hi, Math.max(lo, v)));
+
 /** Clamp a pose so the dragged extent stays on the table (rule 5, also applied to snapped results). */
-export function clampToTable(pose: Pose, table: { w: number; d: number }, extent?: Extent): Pose {
+export function clampToTable(pose: Pose, table: DropTable, extent?: Extent): Pose {
   const e = extent ?? cardExtent(pose.rot);
-  const loX = -table.w / 2 - e.minX;
-  const hiX = table.w / 2 - e.maxX;
-  const loY = -table.d / 2 - e.minY;
-  const hiY = table.d / 2 - e.maxY;
-  const x = loX > hiX ? 0 : Math.min(hiX, Math.max(loX, pose.x));
-  const y = loY > hiY ? 0 : Math.min(hiY, Math.max(loY, pose.y));
+  const b0 = frameBounds(table, 0, e);
+  let x = clampAxis(pose.x, b0.lo[0], b0.hi[0]);
+  let y = clampAxis(pose.y, b0.lo[1], b0.hi[1]);
+  const turns = (table.turns ?? []).map(normDeg).filter((t) => t !== 0);
+  if (turns.length) {
+    const frames = [{ turn: 0, b: b0 }, ...turns.map((turn) => ({ turn, b: frameBounds(table, turn, e) }))];
+    const local = (turn: number): [number, number] => (turn ? rot2(x, y, -turn) : [x, y]);
+    const EPS = 1e-6;
+    const inside = () =>
+      frames.every(({ turn, b }) => {
+        const [u, v] = local(turn);
+        return (b.lo[0] > b.hi[0] ? Math.abs(u) <= EPS : u >= b.lo[0] - EPS && u <= b.hi[0] + EPS) && (b.lo[1] > b.hi[1] ? Math.abs(v) <= EPS : v >= b.lo[1] - EPS && v <= b.hi[1] + EPS);
+      });
+    // Projections onto each turned box in turn converge on the intersection (all convex, the centre in each).
+    for (let pass = 0; pass < 32 && !inside(); pass++) {
+      for (const { turn, b } of frames) {
+        const [u, v] = local(turn);
+        const q: [number, number] = [clampAxis(u, b.lo[0], b.hi[0]), clampAxis(v, b.lo[1], b.hi[1])];
+        [x, y] = turn ? rot2(q[0], q[1], turn) : q;
+      }
+    }
+    if (!inside()) {
+      // What is left of a slow convergence: pull the point toward the centre until it lies in every box.
+      let s = 1;
+      for (const { turn, b } of frames) {
+        const [u, v] = local(turn);
+        for (const [w, lo, hi] of [
+          [u, b.lo[0], b.hi[0]],
+          [v, b.lo[1], b.hi[1]],
+        ] as const) {
+          if (lo > hi) s = 0;
+          else if (w > hi) s = Math.min(s, Math.max(0, hi) / w);
+          else if (w < lo) s = Math.min(s, Math.min(0, lo) / w);
+        }
+      }
+      x *= s;
+      y *= s;
+    }
+  }
   return { x, y, rot: pose.rot };
 }
 

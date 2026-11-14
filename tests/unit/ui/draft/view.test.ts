@@ -95,6 +95,8 @@ describe('status line (DESIGN "Pre-game", Drafting interaction; Draft formats: d
     expect(draftStatus(table.state, sim.view('s0'), 's0')).toMatchObject({ prompt: 'Click a card to mark it, click again or press Enter to confirm.', confirmable: false, myTurn: true });
     sim.mark('s0', [id]);
     expect(draftStatus(table.state, sim.view('s0'), 's0')).toMatchObject({ prompt: 'Click the marked card again or press Enter to take it.', confirmable: true });
+    // On a touch screen the prompt names taps and no keyboard (M5 gate).
+    expect(draftStatus(table.state, sim.view('s0'), 's0', true)).toMatchObject({ prompt: 'Tap the marked card again to take it.', confirmable: true });
     const two = passDraft(['A', 'B', 'C', 'D'], { picks: 2, packs: 3 });
     const v = two.sim.view('s0');
     expect(draftStatus(two.table.state, v, 's0').title).toMatch(/^Pick-Two draft/);

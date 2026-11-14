@@ -158,6 +158,22 @@ export interface KeyChord {
   alt?: boolean;
 }
 
+/**
+ * The Control key itself as a chord: either Ctrl key (ControlLeft or ControlRight), held alone (PLAN Milestone 5, owner
+ * decisions, Talk key: "Ctrl, either key, instead of V"). A bare-modifier chord has `key` set to the modifier's
+ * KeyboardEvent.key ('Control', 'Shift', 'Alt') and no flags; it matches that key's own keydown although the event
+ * reports the modifier flag itself, and it is only used with trigger 'hold' under the hold-alone rule
+ * (voice/types.ts TALK_HOLD_ALONE_MS). Stored remappings (store/types.ts KeymapOverride) use the same shape, so older
+ * overrides of 'talk' (e.g. V) stay valid. Added by M5-C; M5-P7 makes it the default talk key, M5-P5's remapping UI
+ * offers it.
+ */
+export const CTRL_KEY_CHORD: KeyChord = { key: 'Control' };
+
+/** Whether a chord is a bare modifier (DESIGN "Input and interaction design"; PLAN Milestone 5, owner decisions, Talk key). Added by M5-C. */
+export function isModifierChord(c: KeyChord): boolean {
+  return (c.key === 'Control' || c.key === 'Shift' || c.key === 'Alt') && !c.ctrl && !c.shift && !c.alt;
+}
+
 /** Where a binding is live: on the table (hovered card or selection), or only while a confirmation prompt shows, which takes precedence (DESIGN "Input and interaction design"). */
 export type KeyContext = 'table' | 'prompt';
 

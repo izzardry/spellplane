@@ -15,6 +15,7 @@ import type { CoreGameSpec, SeatId, TableState } from '../../../src/core/types';
 import { LoopbackNetwork, type LoopbackOptions } from '../../../src/net/loopback';
 import type { NackMessage, ProposeMessage, SeqMessage, SequencedAction } from '../../../src/net/messages';
 import type { Message, Transport } from '../../../src/net/transport';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 export const GAME: CoreGameSpec = {
   id: 'test',
@@ -82,7 +83,7 @@ export class Peer {
     const cid = `${this.seat}-${++this.cid}`;
     const action = { ...draft, by: this.seat, cid } as Action;
     if (this.isSequencer) this.sequence(action, this.transport.selfId);
-    else this.transport.send('act', { v: 1, t: 'propose', cid, action } satisfies ProposeMessage, this.table.sequencer.transport.selfId);
+    else this.transport.send('act', { v: PROTOCOL_VERSION, t: 'propose', cid, action } satisfies ProposeMessage, this.table.sequencer.transport.selfId);
     return cid;
   }
 
@@ -109,13 +110,13 @@ export class Peer {
     const why = refusal(this.state, action);
     if (why !== null) {
       if (from === this.transport.selfId) this.nacks.push({ cid: action.cid, reason: why });
-      else this.transport.send('act', { v: 1, t: 'nack', cid: action.cid, reason: why } satisfies NackMessage, from);
+      else this.transport.send('act', { v: PROTOCOL_VERSION, t: 'nack', cid: action.cid, reason: why } satisfies NackMessage, from);
       return;
     }
     const seq = this.state.seq + 1;
     const stamped = { ...action, seq } as SequencedAction;
     this.applyOne(stamped);
-    this.transport.send('act', { v: 1, t: 'seq', seq, cid: stamped.cid, action: stamped } satisfies SeqMessage);
+    this.transport.send('act', { v: PROTOCOL_VERSION, t: 'seq', seq, cid: stamped.cid, action: stamped } satisfies SeqMessage);
   }
 
   private applyOne(a: SequencedAction): void {

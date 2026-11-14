@@ -22,10 +22,16 @@ export const GEOMETRY = {
   pileColumnGap: 12,
 } as const;
 
-/** Camera rig constants (DESIGN "Specification: geometry, layout and motion", Camera rigs). */
+/**
+ * Camera rig constants (DESIGN "Specification: geometry, layout and motion", Camera rigs). The ego seat is pulled back
+ * and raised from the spec's 260 behind the edge and 620 up to 900 and 860 (PLAN Milestone 5, owner decisions: "Ego
+ * framing shows your own piles": the own pile column and the whole battlefield row on screen at the default ego view at
+ * 1440 × 900 and on an iPad landscape viewport), keeping the spec's field of view, pitch and pitch limits (M5-P7;
+ * DECISIONS [M5-P7]).
+ */
 export const CAMERA = {
   birdseye: { fovDeg: 6 },
-  ego: { fovDeg: 45, behindEdge: 260, height: 620, pitchDeg: 35, minPitchDeg: 25, maxPitchDeg: 60 },
+  ego: { fovDeg: 45, behindEdge: 900, height: 860, pitchDeg: 35, minPitchDeg: 25, maxPitchDeg: 60 },
   blendMs: 400,
   fitMargin: 0.05,
   /** Closest zoom: one card fills this fraction of the viewport height. */

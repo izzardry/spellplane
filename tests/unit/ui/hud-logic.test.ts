@@ -336,7 +336,7 @@ describe('log lines (DESIGN "Turn flow and confirmation", Action log)', () => {
       expect(ls.map(text)).toEqual(['Anna casts Test Bear', 'Anna reveals Verdant Field', 'Anna taps Spark Jolt']);
     });
 
-    it('the M0 shuffle trace reads as a shuffle; a one-card private reorder names nothing; the match start reads plainly', () => {
+    it('the solo shuffle trace reads as a shuffle; a one-card private reorder names nothing; the match start reads plainly', () => {
       const { state } = tableWith(['Anna'], cards);
       const ls = logLines(
         [
@@ -344,9 +344,22 @@ describe('log lines (DESIGN "Turn flow and confirmation", Action log)', () => {
           entry(2, 0, { type: 'reorder', by: 's0', zone: 'library:s0', count: 60, orderHash: 'h' }),
           entry(3, 0, { type: 'reorder', by: 's0', zone: 'library:s0', count: 1, orderHash: 'h' }),
         ],
-        ctx(state),
+        { ...ctx(state), soloShuffles: true },
       );
       expect(ls.map(text)).toEqual(['Anna starts the game', 'Anna shuffles their library', 'Anna moves a card within their library']);
+    });
+
+    it('at a networked table a reorder never reads as a shuffle (M5 review): it names how many of the top it rearranged', () => {
+      const { state } = tableWith(['Anna'], cards);
+      const ls = logLines(
+        [
+          entry(1, 0, { type: 'reorder', by: 's0', zone: 'library:s0', count: 60, orderHash: 'h' }),
+          entry(2, 0, { type: 'reorder', by: 's0', zone: 'library:s0', count: 1, orderHash: 'h' }),
+          entry(3, 0, { type: 'reorder', by: 's0', zone: 'hand:s0', count: 3, orderHash: 'h', reissue: { ids: ['n1', 'n2', 'n3'], commits: ['c1', 'c2', 'c3'] } }),
+        ],
+        ctx(state),
+      );
+      expect(ls.map(text)).toEqual(['Anna reorders the top 60 cards of their library', 'Anna moves a card within their library', 'Anna rearranges their hand']);
     });
 
     it('names are frozen when a line is first written: a hidden move stays unnamed after the card turns public', () => {

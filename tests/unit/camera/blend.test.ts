@@ -162,9 +162,10 @@ describe('rig switch (P)', () => {
           for (const p of poses) expect(px(screenOf(p, seat.angle, a), s), `${seat.format} seat ${seat.seat}`).toBeLessThan(2);
         },
       ),
-      { numRuns: 1200 },
+      // The raised ego seat (M5-P7) shows the table smaller in the ego poses drawn here: more runs.
+      { numRuns: 1800 },
     );
-    // About a sixth of the draws give a cursor over the table that a bird's-eye view can show there.
+    // About a twelfth of the draws give a cursor over the table that a bird's-eye view can show there.
     expect(checked).toBeGreaterThan(100);
   });
 
@@ -199,7 +200,8 @@ describe('rig switch (P)', () => {
         expect(poses.at(-1)!.fovDeg).toBe(6);
         expect(poses.at(-1)!.pitchDeg).toBeCloseTo(90, 9);
       }),
-      { numRuns: 300 },
+      // The raised ego seat (M5-P7) shows the whole table smaller, so fewer draws land on it: more runs.
+      { numRuns: 600 },
     );
     expect(checked).toBeGreaterThan(50);
   });
@@ -219,24 +221,32 @@ describe('rig switch (P)', () => {
           checked++;
         }
       }
-      expect(checked, `${seat.format} seat ${seat.seat}`).toBeGreaterThan(150);
+      // The raised ego seat (M5-P7) shows the whole table, smaller: about a quarter of the grid lies on it.
+      expect(checked, `${seat.format} seat ${seat.seat}`).toBeGreaterThan(90);
     }
   });
 
   it('ego to bird\'s-eye zooms in only when the zoom the viewer left cannot hold the point', () => {
-    // Three players, seat 1: the ego seat stands 500 mm beside the centre line, so a point near the centre shows at the
-    // screen's left edge; the fitted bird's-eye would need its centre beyond the table to keep it there.
-    const seat = SEATS.find((x) => x.format === 'ffa3' && x.seat === 1)!;
-    const rig = makeRig({ ...seat, rig: 'ego' });
+    // One versus one, seat 0, the ego rig pitched steeply down (60°): a table point near the own edge shows at the
+    // screen's top-left corner, where the fitted bird's-eye would need its centre beyond the table to keep it. (Until
+    // M5 this case was the three-player seat 1 at its default ego view; since M5-P7 the three-player seats sit on the
+    // centre line at 120° and the raised ego seat frames the whole table, so the default view needs no zoom anywhere.)
+    const seat = SEATS.find((x) => x.format === '1v1' && x.seat === 0)!;
+    const steep = () => {
+      const r = makeRig({ ...seat, rig: 'ego' });
+      r.nav = clampEgoNav(r.ego, { lean: 0, dolly: 0, pitchDeg: 60 });
+      return r;
+    };
+    const rig = steep();
     const fitted = rig.bird.view.dist;
-    const s = { x: 20, y: 738 };
+    const s = { x: 124, y: 76 };
     const a = rig.screenToTableOrNull(s.x, s.y)!;
     expect(onTable(seat.table, a)).toBe(true);
     const { poses } = runSwitch(rig, 'birdseye', s);
     for (const p of poses) expect(px(screenOf(p, seat.angle, a), s)).toBeLessThan(2);
     expect(rig.bird.view.dist).toBeLessThan(fitted);
     // A point near the view centre needs no zoom.
-    const r2 = makeRig({ ...seat, rig: 'ego' });
+    const r2 = steep();
     runSwitch(r2, 'birdseye', { x: VP.w / 2, y: VP.h / 2 });
     expect(r2.bird.view.dist).toBeCloseTo(fitted, 6);
   });
@@ -271,9 +281,9 @@ describe('rig switch (P)', () => {
           expect(poses.at(-1)!.fovDeg).toBe(6);
         },
       ),
-      { numRuns: 1500 },
+      { numRuns: 2000 },
     );
-    // Leaned far out, much of the screen shows the surround: about a sixth of the draws put the cursor over the table.
+    // Leaned far out, much of the screen shows the surround: about a tenth of the draws put the cursor over the table.
     expect(checked).toBeGreaterThan(150);
   });
 
@@ -295,17 +305,19 @@ describe('rig switch (P)', () => {
         }
       }
     }
-    // Leaned all the way out beside the centre line (three players, Two-Headed Giant) little or none of the table shows.
-    expect(checked).toBeGreaterThan(2500);
+    // Leaned all the way out beside the centre line (Two-Headed Giant) little or none of the table shows; from the raised
+    // seat (M5-P7) the table is smaller on screen.
+    expect(checked).toBeGreaterThan(2000);
   });
 
   it('the reviewer\'s cases: ego leaned beyond the side edge on three-player, four-player and Two-Headed Giant tables', () => {
     const seatOf = (format: string, seat: number) => SEATS.find((x) => x.format === format && x.seat === seat)!;
     const cases = [
       { seat: seatOf('ffa3', 1), pan: -1500, s: { x: 36, y: 202 } },
-      { seat: seatOf('ffa4', 0), pan: -1500, s: { x: 396, y: 833 } },
-      { seat: seatOf('2hg', 0), pan: -800, s: { x: 252, y: 878 } },
-      { seat: seatOf('2hg', 1), pan: 800, s: { x: 972, y: 382 } },
+      // (M5-P7's raised ego seat: the point moved from 396, 833 to one this leaned view shows over the table.)
+      { seat: seatOf('ffa4', 0), pan: -1500, s: { x: 12, y: 276 } },
+      { seat: seatOf('2hg', 0), pan: -800, s: { x: 12, y: 276 } },
+      { seat: seatOf('2hg', 1), pan: 800, s: { x: 1044, y: 276 } },
     ];
     for (const c of cases) {
       const rig = makeRig({ ...c.seat, rig: 'ego' });

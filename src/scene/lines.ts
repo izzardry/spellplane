@@ -80,6 +80,11 @@ export interface DebugSeatView {
   avatar: TablePoint;
   /** The same points in viewport (client) px, or null while off the projection. */
   screen: { territory: TablePoint; avatar: TablePoint } | null;
+  /**
+   * The corners of the seat's territory (its battlefield row) and of its pile column (library, graveyard, exile) and
+   * command area in viewport (client) px, each null while behind the camera (M5-P7: the ego framing shows the own piles).
+   */
+  zones?: Record<'territory' | 'library' | 'graveyard' | 'exile' | 'command', (TablePoint | null)[]>;
 }
 
 /** The table as this viewer sees it (debug hook part `seatViews`). */

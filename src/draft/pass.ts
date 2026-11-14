@@ -18,9 +18,11 @@
  *   `REQUEST_MS` until they arrive; the copy is answered only to the holder of the pack's current visit.
  * - All of this follows from the pack's visits (core/reducer/pass.ts `packVisit`), not from the actions this browser
  *   happened to apply, so a snapshot, a reload or an outage never hands a pack to the wrong pool. A pick the timer took
- *   while the holder was away still reaches its pool: the copy of a pack's last visit is kept until the match starts (every
- *   deck is Ready then) or a new draft, since no acknowledgement says it arrived, and the holder asks for it in any
- *   later stage of the same draft.
+ *   while the holder was away still reaches its pool: the copy of a pack's last visit is kept until the match starts
+ *   (every deck is Ready then) or a new draft, since no acknowledgement says it arrived, and the holder asks for it in
+ *   any later stage of the same draft. While the draft runs every handed-on copy is kept: it brings a pack back when the
+ *   room's history turns out not to hold its pass (a split the room repaired by adopting another history, M5-P6; see
+ *   `reconcile`).
  * - Everything private (held packs, the pool with ids, handed-on copies, marks) is in the own SecretStore, so a
  *   reload in the middle of a pick shows the same pack with the same marks.
  */
@@ -29,7 +31,7 @@ import { passTarget, pickTimerMs, setForPack } from '../core/drafting';
 import { packCountAt, packVisit, packVisitor } from '../core/reducer/pass';
 import type { DraftPack, DraftState, InstanceId, PackId, PassDraftSettings, SeatId, TableState } from '../core/types';
 import { draftSecretsOf } from './open';
-import { addToPool, isPackKey, openHiddenPack, plainCard, poolCards, SENT_PREFIX, updateSecrets } from './secret';
+import { addToPool, isPackKey, openHiddenPack, plainCard, poolCards, SENT_PREFIX, unopenedGenerated, updateSecrets } from './secret';
 import type { CreateDraftDriver, DraftDriver, DraftPrivateView } from './types';
 
 /** How often a drafter asks again for a pack it holds without its cards (ms). */
@@ -97,8 +99,13 @@ export const createPassDriver: CreateDraftDriver = (host) => {
   const me = host.seat;
   let disposed = false;
   let opening = false;
-  /** Whether a remembered unopened pack was already offered once by this driver (a refused one is not offered again). */
-  let reused = false;
+  /**
+   * The remembered unopened packs this driver offered (draft/secret.ts unopenedGenerated): each once, so a refused one is
+   * not offered again. A pack whose `packOpen` is in a stretch of history the room abandoned is offered again (M5-P6):
+   * opening a new one instead would make its seed round the latest and the pack the engine proposes again unopenable,
+   * with its pick already in the pool.
+   */
+  const offered = new Set<PackId>();
   /** When each missing pack was first missed or last asked for (local clock). */
   const asked = new Map<PackId, number>();
   let retry: ReturnType<typeof setTimeout> | null = null;
@@ -123,9 +130,16 @@ export const createPassDriver: CreateDraftDriver = (host) => {
 
   /**
    * Bring the own secrets in step with the confirmed state, from the visits alone (so a snapshot or a reload that
-   * skipped actions changes nothing): resolve every own visit whose pick is taken (the marked cards, then the first
-   * ones), hand on every pack whose pass is sequenced (keeping a copy for a re-send), and forget a handed-on copy once
-   * the receiver's visit is over.
+   * skipped actions changes nothing): take back a handed-on pack whose pass the room's history does not hold (below),
+   * resolve every own visit whose pick is taken (the marked cards, then the first ones), and hand on every pack whose
+   * pass is sequenced (keeping a copy for a re-send until the draft is over).
+   *
+   * Abandoned history (M5-P6; M2 gate follow-up): a sequenced action can still be replaced when the room adopts
+   * another history after a split (net/engine.ts `adopt`), and the engine proposes this browser's own actions of the
+   * abandoned part again. A pass this driver already acted on may so be gone from the confirmed state: the pack is
+   * back with this drafter, or not even here yet. Its handed-on copy is then the pack as it was after the own pick
+   * (resolved into the pool already, so the pick proposed again takes nothing twice), and goes back to the held packs;
+   * the pass proposed again hands it on afresh. Copies are kept while the draft runs for that reason.
    */
   const reconcile = (): void => {
     const state = conf();
@@ -136,6 +150,24 @@ export const createPassDriver: CreateDraftDriver = (host) => {
       return;
     }
     const picks = picksOf(d);
+    for (const [key, cards] of Object.entries(held())) {
+      if (!key.startsWith(SENT_PREFIX)) continue;
+      const packId = key.slice(SENT_PREFIX.length);
+      const pack = packOf(d, packId);
+      // Not in the room's history (yet): its `packOpen` may be part of an abandoned stretch the engine proposes again,
+      // so the copy is kept while the draft runs (a finished draft drops it below).
+      if (pack === null) continue;
+      const from = sentVisit(d, pack, cards.length);
+      const cur = packVisit(d, pack);
+      // The pass is not in the room's history (any more): the pack is back with this drafter, or before it.
+      if (from !== null && (cur === null || cur.k <= from) && !Object.hasOwn(held(), packId)) {
+        updateSecrets(host, (ds) => {
+          const next = { ...ds.held, [packId]: cards };
+          delete next[key];
+          return { draft: { ...ds, held: next } };
+        });
+      }
+    }
     for (const [key, cards] of Object.entries(held())) {
       if (!isPackKey(key)) continue;
       const pack = packOf(d, key);
@@ -156,12 +188,24 @@ export const createPassDriver: CreateDraftDriver = (host) => {
       });
       if (cur.k === mine.j + 1) send(cur.holder, key, cards);
     }
-    for (const key of Object.keys(held())) {
-      if (!key.startsWith(SENT_PREFIX)) continue;
-      const pack = packOf(d, key.slice(SENT_PREFIX.length));
-      if (pack !== null && sentFor(d, pack, held()[key]!.length)) continue;
-      dropHeld(key);
+    // Once the draft is done no pass can be taken back any more: only the copy of a pack's last visit is still kept (its
+    // receiver may not have it yet).
+    if (d.done) {
+      for (const key of Object.keys(held())) {
+        if (!key.startsWith(SENT_PREFIX)) continue;
+        const pack = packOf(d, key.slice(SENT_PREFIX.length));
+        if (pack !== null && sentFor(d, pack, held()[key]!.length)) continue;
+        dropHeld(key);
+      }
     }
+  };
+
+  /** The own visit a handed-on copy of `count` cards of `pack` was passed on from, or null when it names none. */
+  const sentVisit = (d: DraftState, pack: DraftPack, count: number): number | null => {
+    const picks = picksOf(d);
+    const last = Math.ceil(pack.commitment.instanceIds.length / picks);
+    for (let j = last; j >= 0; j--) if (packVisitor(d, pack, j) === me && packCountAt(pack, picks, j + 1) === count && count > 0) return j;
+    return null;
   };
 
   /** Whether a handed-on copy of `count` cards is the pack as its current visit's holder got it from this browser. */
@@ -247,8 +291,9 @@ export const createPassDriver: CreateDraftDriver = (host) => {
 
   const open = async (round: number, set: string): Promise<void> => {
     opening = true;
-    const reuse = !reused;
-    reused = true;
+    const remembered = unopenedGenerated(host, host.confirmedState?.() ?? host.state(), set);
+    const reuse = remembered === null || !offered.has(remembered.packId);
+    if (remembered !== null) offered.add(remembered.packId);
     try {
       const still = (): boolean => {
         const d = passDraftOf(host.state());
@@ -303,6 +348,17 @@ export const createPassDriver: CreateDraftDriver = (host) => {
       if (c === null || v === null || v.done) return;
       // Open the own pack of the round (once the round has started in the confirmed state).
       if (!opening && c.round === v.round && !c.done && !Object.values(v.packs).some((p) => p.opener === me && p.number === v.round)) void open(v.round, setForPack(v.sets, v.round));
+      // A pick resolved on a history the room abandoned whose new proposal the room refused (another pack was ahead of
+      // it in this drafter's queue there): the pack came back resolved, and once it is at the front of the queue the
+      // pick is proposed again. It takes nothing more (its cards are in the pool already); the pass follows as usual.
+      const front = packOf(c, (c.queues[me] ?? [])[0] ?? '');
+      const resolved = front === null || !isPackKey(front.id) ? undefined : held()[front.id];
+      if (front !== null && resolved !== undefined && (v.queues[me] ?? [])[0] === front.id) {
+        const cur = packVisit(c, front);
+        if (cur !== null && cur.holder === me && !cur.picked && resolved.length < front.count && resolved.length === packCountAt(front, picksOf(c), cur.k + 1)) {
+          host.dispatch({ type: 'pick', packId: front.id, count: picksFor(c, front.count) });
+        }
+      }
       // Pass every resolved pack this drafter picked from (confirmed), unless the pass is already proposed.
       for (const pack of Object.values(c.packs)) {
         const cards = held()[pack.id];

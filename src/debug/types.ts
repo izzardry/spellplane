@@ -8,7 +8,13 @@ import type { DeckBuild, InstanceId, Line, Pose, SecretStore, TableState } from 
 import type { DraftPrivateView } from '../draft/types';
 import type { PeerId } from '../net/transport';
 import type { ConnectionStatus, NetMessageRecord, PeerInfo } from '../net/types';
-import type { DebugCaption, RenderDebug, RigDebug, Vec3 } from '../scene/types';
+import type { DebugCaption, RenderDebug, RigDebug, StackBadgeState, Vec3 } from '../scene/types';
+import type { TouchGesture } from '../scene/input/touch';
+import type { AuditBundle, AuditVerdict } from '../core/audit';
+import type { StorageStatus } from '../store/quota';
+import type { RadialMenuState, ThumbAction } from '../ui/touch/actions';
+import type { CardFocus } from '../ui/a11y/index';
+import type { UpdateStatus } from '../util/pwa';
 import type { ThemeId } from '../themes/types';
 import type { Caption, SpeechEngineId, TalkIndicatorState, TalkState, VoiceTrackState } from '../voice/types';
 
@@ -89,6 +95,52 @@ export interface ThemeDebug {
   loaded(): ThemeId[];
 }
 
+/**
+ * The touch part of the debug hook (DESIGN "Input and interaction design", Touch; PLAN M5-P1: gestures pass under
+ * Playwright's iPad emulation; M5-G: the evening on an emulated tablet using touch only). Added by M5-C; registered by
+ * M5-P1.
+ */
+export interface TouchDebug {
+  /** The last recognised gestures (at most 50), oldest first. */
+  gestures(): TouchGesture[];
+  /** The radial menu while it shows, else null. */
+  radial(): RadialMenuState | null;
+  /** The thumb action bar's buttons while it shows, else an empty list. */
+  thumbBar(): ThumbAction[];
+}
+
+/**
+ * The audit part of the debug hook (DESIGN "Multiplayer architecture", Audit; PLAN M5-P2 and M5-G: the audit after the
+ * evening). Added by M5-C; registered by M5-P2's session wiring.
+ */
+export interface AuditDebug {
+  /** Every verdict this page computed, oldest game first, seat order within a game. */
+  verdicts(): AuditVerdict[];
+  /** The bundles this page published. */
+  published(): AuditBundle[];
+}
+
+/**
+ * The storage and update part of the debug hook (PLAN M5-P3: offline and storage; PLAN Milestone 5, owner decisions:
+ * updates only between games, persistent storage). Added by M5-C; registered by M5-P3.
+ */
+export interface StorageDebug {
+  status(): Promise<StorageStatus>;
+  /** The service-worker update state ('current' in builds without a worker). */
+  update(): UpdateStatus;
+}
+
+/**
+ * The accessibility part of the debug hook (DESIGN "Input and interaction design", Accessibility; PLAN M5-P4). Added by
+ * M5-C; registered by M5-P4.
+ */
+export interface A11yDebug {
+  /** The card or zone with keyboard focus, or null. */
+  focus(): CardFocus | null;
+  /** The live region's announcements, oldest first. */
+  announcements(): string[];
+}
+
 /** The full debug hook (DESIGN "Specification: code interfaces"). */
 export interface SpellplaneDebug {
   state(): TableState;
@@ -111,6 +163,16 @@ export interface SpellplaneDebug {
   rig: RigDebug;
   /** Added by M4-C: per-viewer theme (registered by the theme switcher; M4-P6). */
   theme: ThemeDebug;
+  /** Added by M5-C: touch gestures, radial menu, thumb bar (M5-P1). */
+  touch: TouchDebug;
+  /** Added by M5-C: audit verdicts and published bundles (M5-P2). */
+  audit: AuditDebug;
+  /** Added by M5-C: storage use, persistence and the update state (M5-P3). */
+  storage: StorageDebug;
+  /** Added by M5-C: keyboard focus and live-region announcements (M5-P4). */
+  a11y: A11yDebug;
+  /** Added by M5-C: the far-zoom stack badge (registered by the table scene; M5-P7). */
+  stackBadge(): StackBadgeState;
 }
 
 // Types registerDebug (util/debug.ts) against SpellplaneDebug without util/ importing debug/.

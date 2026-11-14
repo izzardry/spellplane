@@ -2,9 +2,9 @@
  * PLAN M3-P3 in the real app on Chromium fake media: two pages on `?transport=local` (BroadcastChannel, distinct
  * profiles) join one table and start a game; each joins voice with a click. Every connection gets its own outgoing
  * track (BroadcastChannel carries no media, so the tracks are asserted through the debug hook's `voice.tracks()`, which
- * reads the real MediaStreamTrack of each connection). Push-to-talk opens it only while V is held and closes it on
- * window blur; the turn mic opens it exactly for the own turn as the shared turn marker moves; typing V in the chat
- * opens nothing (DESIGN "Chat and voice", Talk modes and Live voice; "Multiplayer architecture").
+ * reads the real MediaStreamTrack of each connection). Push-to-talk opens it only while Ctrl is held (since M5: PLAN
+ * Milestone 5, owner decisions, Talk key) and closes it on window blur; the turn mic opens it exactly for the own turn as
+ * the shared turn marker moves; typing V in the chat opens nothing (DESIGN "Chat and voice", Talk modes and Live voice; "Multiplayer architecture").
  */
 import { expect, test, type Page } from '@playwright/test';
 import type { TableState } from '../../../src/core/types';
@@ -63,20 +63,20 @@ test('two players join voice; push-to-talk, blur and the turn mic gate the track
   // Push-to-talk on Ann's page.
   await a.bringToFront();
   await toTable(a);
-  await a.keyboard.down('v');
+  await a.keyboard.down('Control');
   await expect.poll(() => enabled(a)).toEqual([true]);
   await expect(a.getByTestId('talk-indicator')).toHaveAttribute('data-state', 'live');
   // Ben's page heard of it on presence: Ann's avatar shows the speaking ring there.
   await expect(b.locator('[data-testid="avatar"][data-seat="s0"]')).toHaveAttribute('data-speaking', 'true');
-  await a.keyboard.up('v');
+  await a.keyboard.up('Control');
   await expect.poll(() => enabled(a)).toEqual([false]);
   await expect(b.locator('[data-testid="avatar"][data-seat="s0"]')).toHaveAttribute('data-speaking', 'false');
-  await a.keyboard.down('v');
+  await a.keyboard.down('Control');
   await expect.poll(() => enabled(a)).toEqual([true]);
   await a.evaluate(() => window.dispatchEvent(new FocusEvent('blur')));
   await expect.poll(() => enabled(a)).toEqual([false]);
   await a.evaluate(() => window.dispatchEvent(new FocusEvent('focus')));
-  await a.keyboard.up('v');
+  await a.keyboard.up('Control');
   expect(await enabled(a)).toEqual([false]);
 
   // Turn mic on both: exactly the active player's track is open, and it follows the turn.

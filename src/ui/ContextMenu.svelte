@@ -1,11 +1,24 @@
 <!--
   Context menu (DESIGN "Input and interaction design": every action is reachable from a context menu, and context
-  menus show the key beside each action).
+  menus show the key beside each action). Keyboard (WAI-ARIA menu pattern; M5-P4, DESIGN Accessibility: every card
+  action is reachable from the keyboard): opened from the keyboard it focuses its first entry; Up and Down move
+  (wrapping), Home and End go to the ends, Enter or Space runs the entry, Escape (the HUD's) and Tab close it, and on
+  close focus returns to the element that had it (the table's accessible mirror).
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { MenuEntry } from './menu';
+  import { safeAreaInsets } from './touch/device';
+  import { clampMenu } from './touch/fan';
 
-  let { title, entries, x, y, onclose }: { title: string; entries: MenuEntry[]; x: number; y: number; onclose: () => void } = $props();
+  let {
+    title,
+    entries,
+    x,
+    y,
+    autofocus = false,
+    onclose,
+  }: { title: string; entries: MenuEntry[]; x: number; y: number; /** Opened from the keyboard: focus the first entry. */ autofocus?: boolean; onclose: () => void } = $props();
 
   let el = $state<HTMLElement | undefined>();
   let pos = $state({ left: 0, top: 0 });
@@ -13,22 +26,78 @@
   $effect(() => {
     const w = el?.offsetWidth ?? 220;
     const h = el?.offsetHeight ?? 300;
-    pos = { left: Math.max(4, Math.min(x, window.innerWidth - w - 4)), top: Math.max(4, Math.min(y, window.innerHeight - h - 4)) };
+    // Inside the screen and clear of the iPad's safe-area insets (zero elsewhere; M5-P1).
+    pos = clampMenu(x, y, w, h, window.innerWidth, window.innerHeight, safeAreaInsets());
   });
 
   function outside(e: PointerEvent) {
     if (el && !el.contains(e.target as Node)) onclose();
   }
+
+  const items = (): HTMLElement[] => (el ? [...el.querySelectorAll<HTMLElement>('[role="menuitem"]')] : []);
+
+  // Focus in on open (from the keyboard), back out on close.
+  $effect(() => {
+    const active = document.activeElement;
+    const returnTo = active instanceof HTMLElement && active !== document.body ? active : null;
+    if (untrack(() => autofocus)) items()[0]?.focus({ preventScroll: true });
+    return () => {
+      const now = document.activeElement;
+      if (returnTo?.isConnected && (!now || now === document.body || (el?.contains(now) ?? false))) returnTo.focus({ preventScroll: true });
+    };
+  });
+
+  /** Up, Down, Home and End move between entries; Tab closes. Handled here, so the table keys never see them. */
+  function onkeydown(e: KeyboardEvent) {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      e.stopPropagation();
+      onclose();
+      return;
+    }
+    const list = items();
+    const n = list.length;
+    if (n === 0) return;
+    const i = list.indexOf(document.activeElement as HTMLElement);
+    const next = e.key === 'ArrowDown' ? (i + 1) % n : e.key === 'ArrowUp' ? (i <= 0 ? n - 1 : i - 1) : e.key === 'Home' ? 0 : e.key === 'End' ? n - 1 : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    list[next]!.focus({ preventScroll: true });
+  }
+
+  /** Arrow keys reach a menu opened with the mouse too: the first press moves focus into it. */
+  function onwindowkeydown(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey || !el || el.contains(document.activeElement)) return;
+    const list = items();
+    const target = e.key === 'ArrowDown' || e.key === 'Home' ? list[0] : e.key === 'ArrowUp' || e.key === 'End' ? list[list.length - 1] : undefined;
+    if (!target) return;
+    e.preventDefault();
+    target.focus({ preventScroll: true });
+  }
 </script>
 
-<svelte:window onpointerdown={outside} />
+<svelte:window onpointerdown={outside} onkeydown={onwindowkeydown} />
 
-<div class="menu" role="menu" aria-label={title} data-testid="context-menu" bind:this={el} style:left="{pos.left}px" style:top="{pos.top}px">
+<div
+  class="menu"
+  role="menu"
+  tabindex="-1"
+  aria-label={title}
+  data-testid="context-menu"
+  bind:this={el}
+  style:left="{pos.left}px"
+  style:top="{pos.top}px"
+  {onkeydown}
+  oncontextmenu={(e) => e.preventDefault()}
+>
   <div class="title">{title}</div>
   {#each entries as entry (entry.id)}
     <button
       type="button"
       role="menuitem"
+      tabindex="-1"
       data-action={entry.id}
       onclick={() => {
         onclose();
@@ -87,5 +156,12 @@
     font-family: var(--sp-font-mono, monospace);
     color: inherit;
     opacity: 0.75;
+  }
+  /* Thumb-sized entries on a touch screen (DESIGN "Input and interaction design", Touch; M5-P1). */
+  @media (any-pointer: coarse) {
+    button {
+      min-height: 44px;
+      align-items: center;
+    }
   }
 </style>

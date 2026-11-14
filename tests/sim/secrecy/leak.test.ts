@@ -20,6 +20,7 @@ import { privateReorder } from '../../../src/core/secrets';
 import { forbiddenFor, leakScan } from '../../leak/leak';
 import { until, type Player } from '../../leak/minitable';
 import type { RevealedCard } from '../../../src/core/commit';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 beforeEach(() => {
   // fake-indexeddb completes its requests with setImmediate, which stays real.
@@ -184,7 +185,7 @@ describe('leak test: a scripted two-seat game', () => {
     await b.peer.act({ type: 'lookAt', zone: 'hand:s0', count: 1, card: handCard });
     let peeked: RevealedCard[] | null = null;
     void b.channel.requestLook('s0', 'hand:s0', 1, handCard).then((r) => (peeked = r));
-    b.peer.sendPrivate('s0', { v: 1, t: 'lookReq', lookId: 'raw', zone: 'library:s0', count: 1, card: handCard });
+    b.peer.sendPrivate('s0', { v: PROTOCOL_VERSION, t: 'lookReq', lookId: 'raw', zone: 'library:s0', count: 1, card: handCard });
     await until(() => peeked !== null, 5_000, 'the refused peek');
     await vi.advanceTimersByTimeAsync(1_000);
     expect(peeked).toEqual([]);
@@ -285,7 +286,7 @@ describe('leak test: a scripted two-seat game', () => {
     const hidden = a.secrets.libraryOrder[5]!;
     const id = a.secrets.identities[hidden]!;
     // A buggy client sends a library card to B as if it were a look answer B never asked for.
-    a.peer.sendPrivate('s1', { v: 1, t: 'look', lookId: 'bogus', cards: [{ instanceId: hidden, ref: id.card, salt: id.salt }] });
+    a.peer.sendPrivate('s1', { v: PROTOCOL_VERSION, t: 'look', lookId: 'bogus', cards: [{ instanceId: hidden, ref: id.card, salt: id.salt }] });
     await vi.advanceTimersByTimeAsync(500);
     const report = leakScan({ observed: await observedByB(p), owner: { state: a.state, secrets: a.secrets }, disclosed: a.disclosed.s1 ?? [] });
     expect(report.tokens.map((h) => h.token)).toEqual(expect.arrayContaining([id.salt]));

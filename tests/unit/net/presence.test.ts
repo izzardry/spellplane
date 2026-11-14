@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PresenceMessage } from '../../../src/net/messages';
 import { PresenceChannel } from '../../../src/net/presence';
 import { PRESENCE_INTERVAL_MS, type PeerPresence } from '../../../src/net/types';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -71,23 +72,23 @@ describe('presence: receiving', () => {
     const seen: PeerPresence[][] = [];
     p.subscribe((peers) => seen.push(peers));
     const who = { peerId: 'peer1', seat: 's1' };
-    p.receive('t1', who, { v: 1, t: 'cursor', n: 2, at: { x: 5, y: 6 }, over: null });
-    p.receive('t1', who, { v: 1, t: 'cursor', n: 1, at: { x: 0, y: 0 }, over: null });
-    p.receive('t1', who, { v: 1, t: 'typing', n: 3, channel: 'table' });
-    p.receive('t1', who, { v: 1, t: 'drag', n: 4, cards: [{ id: 'c9', pose: { x: 1, y: 1, rot: 90 } }] });
-    p.receive('t1', who, { v: 1, t: 'speaking', n: 5, on: true });
-    p.receive('t1', who, { v: 1, t: 'captionInterim', n: 6, text: 'bolt', anchor: null });
+    p.receive('t1', who, { v: PROTOCOL_VERSION, t: 'cursor', n: 2, at: { x: 5, y: 6 }, over: null });
+    p.receive('t1', who, { v: PROTOCOL_VERSION, t: 'cursor', n: 1, at: { x: 0, y: 0 }, over: null });
+    p.receive('t1', who, { v: PROTOCOL_VERSION, t: 'typing', n: 3, channel: 'table' });
+    p.receive('t1', who, { v: PROTOCOL_VERSION, t: 'drag', n: 4, cards: [{ id: 'c9', pose: { x: 1, y: 1, rot: 90 } }] });
+    p.receive('t1', who, { v: PROTOCOL_VERSION, t: 'speaking', n: 5, on: true });
+    p.receive('t1', who, { v: PROTOCOL_VERSION, t: 'captionInterim', n: 6, text: 'bolt', anchor: null });
     expect(p.peers()).toEqual([
       expect.objectContaining({ peerId: 'peer1', seat: 's1', cursor: { x: 5, y: 6 }, typing: 'table', drag: [{ id: 'c9', pose: { x: 1, y: 1, rot: 90 } }], speaking: true, caption: { text: 'bolt', anchor: null } }),
     ]);
     expect(seen).toHaveLength(5);
-    p.receive('t1', who, { v: 1, t: 'captionInterim', n: 7, text: null, anchor: null });
+    p.receive('t1', who, { v: PROTOCOL_VERSION, t: 'captionInterim', n: 7, text: null, anchor: null });
     expect(p.peers()[0]!.caption).toBeNull();
   });
 
   it('forgets a peer that left and relabels one that changed seat', () => {
     const { p } = channel();
-    p.receive('t1', { peerId: 'peer1', seat: null }, { v: 1, t: 'cursor', n: 1, at: { x: 1, y: 1 }, over: null });
+    p.receive('t1', { peerId: 'peer1', seat: null }, { v: PROTOCOL_VERSION, t: 'cursor', n: 1, at: { x: 1, y: 1 }, over: null });
     p.relabel('t1', 'peer1', 's2');
     expect(p.peers()[0]!.seat).toBe('s2');
     p.forget('t1');
@@ -98,9 +99,9 @@ describe('presence: receiving', () => {
     const { p } = channel();
     const calls: number[] = [];
     const off = p.subscribe((peers) => calls.push(peers.length));
-    p.receive('t1', { peerId: 'a', seat: null }, { v: 1, t: 'speaking', n: 1, on: true });
+    p.receive('t1', { peerId: 'a', seat: null }, { v: PROTOCOL_VERSION, t: 'speaking', n: 1, on: true });
     off();
-    p.receive('t1', { peerId: 'a', seat: null }, { v: 1, t: 'speaking', n: 2, on: false });
+    p.receive('t1', { peerId: 'a', seat: null }, { v: PROTOCOL_VERSION, t: 'speaking', n: 2, on: false });
     expect(calls).toEqual([1]);
   });
 });

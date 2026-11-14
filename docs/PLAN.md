@@ -245,10 +245,49 @@ Tablet touch, the post-game audit, offline tolerance and accessibility, plus fix
 | M5-P4 Accessibility | Keyboard focus cycling through cards in a zone, log as a live region, seat patterns beside colours, AA contrast in Paper, reduced-motion audit. | `ui/a11y/*` | M4 |
 | M5-P5 Finish | Settings consolidation, key remapping UI, About panel with the Fan Content notice and Scryfall and MTGJSON credits, first-run hints, opt-in official card back, error and empty states everywhere. | `ui/settings/*`, `ui/about/*` | M4 |
 | M5-P6 Hardening | Undo edge cases, protocol version check with a clear mismatch message, long-session soak test, performance pass on texture eviction. | `core/undo.ts`, `net/version.ts`, `tests/sim/soak.test.ts` | M4 |
+| M5-P7 Table and voice decisions | The owner's M5 decisions on table layout, voice and camera: three-player layout from every seat, spectators listen, Ctrl as the talk key, ego framing that shows your piles, far-zoom stack badge. | `scene/layout*`, `ui/voice/*`, `scene/camera/ego.ts` | M4 |
+
+**Ownership within M5** *(M5-C)*: the shared shapes are `core/audit.ts` (bundle, verdict, game span) with the `auditPublish` action, `scene/input/touch.ts` (gesture recogniser), `ui/touch/actions.ts` (radial slots, thumb bar), `store/quota.ts`, `store/backup.ts` and the backup and `Settings` additions in `store/types.ts` (`cardBack`, `hintsSeen`, `TableRecord.protocol`), `util/pwa.ts` and `ui/update.ts` (manifest, worker messages, update policy), `ui/a11y/index.ts`, `net/version.ts` with `NetEngine.versionMismatch`, the voice additions (`TALK_HOLD_ALONE_MS`, `HoldAloneGate`, `VoiceHost.listenOnly`, the 'listening' indicator), `CTRL_KEY_CHORD` and `isModifierChord` in `games/types.ts`, the scene additions (`ViewState.focused`, `SceneEvents.radialMenu`, `TableScene.setCardBack`, `STACK_COLLAPSE_CARD_PX`, `StackBadgeState`, `EGO_FRAMING_VIEWPORTS`), `data/back.ts`, the debug parts `touch`, `audit`, `storage`, `a11y` and `stackBadge`, and `tests/sim/soak/harness.ts`. Stubs throw `not implemented: <package>`.
+- **M5-P1 Touch** owns `scene/input/*`, `ui/touch/*`, the touch pointer wiring in `scene/table-scene.ts` (pointerType 'touch' only; mouse and pen unchanged), `SceneEvents.radialMenu`, the `touch` debug part, the scrolling hand fan in `ui/HandFan.svelte`, and the iPad Safari tuning (no callout, magnifier, double-tap zoom or pull-to-refresh; safe-area insets) in `index.html` and the HUD shells.
+- **M5-P2 Audit** owns `core/audit.ts`, the `auditPublish` reducer checks, the session's publishing at game end and the verdict log lines (`session/*`, `ui/describe.ts`), `ui/audit/*`, the `audit` debug part and the audit scenario of the shared leak test.
+- **M5-P3 Offline and storage** owns `sw.ts`, `store/quota.ts`, `store/backup.ts`, the LRU in `store/images.ts`, `util/pwa.ts` values, the PWA config in `vite.config.ts`, `public/icons/*`, `ui/update.ts` and the HUD update notice, the hints `installHomeScreen` and `persistStorage`, the worker registration in `main.ts`, the `storage` debug part, and the behaviour of `data/` clients when Scryfall or MTGJSON is unreachable.
+- **M5-P4 Accessibility** owns `ui/a11y/*`, drawing `ViewState.focused` in the scene, the log's live region in `ui/chat/*`, seat patterns beside colours in the HUD, Paper's AA contrast (`themes/paper/*` tokens), the reduced-motion audit, the `a11y` debug part and the axe dev dependency.
+- **M5-P5 Finish** owns `ui/settings/*`, `ui/about/*`, the hints `welcome`, `tableKeys`, `touchGestures` and `talkKey`, the card back (`data/back.ts`, `TableScene.setCardBack`), the key-remapping UI (which must accept the bare Ctrl chord for talk), error and empty states, and Two-Headed Giant teams by chair.
+- **M5-P6 Hardening** owns `core/undo.ts`, `net/version.ts`, `NetEngine.versionMismatch` and the mismatch notice, writing `TableRecord.protocol`, the `PROTOCOL_VERSION` bump to 2 with the tests that write `v: 1`, `tests/sim/soak*`, the texture-eviction pass, solo actions surviving a reload after a disconnect, and the pass-draft driver ignoring abandoned history.
+- **M5-P7 Table and voice decisions** owns `scene/layout*` and the three-player geometry in `games/mtg/layout.ts`, `ui/voice/*`, `voice/hold.ts`, `VoiceHost.listenOnly` and spectator audio, the talk default in `games/mtg/keymap.ts` (Ctrl, labelled "Ctrl" by `chordToString`) and the cheat sheet, hint and label texts that name it, `scene/camera/ego.ts` with the values of `DEFAULT_EGO_RIG` and `CAMERA.ego`, the stack badge in `scene/stack.ts` and `scene/table-scene.ts`, and the `stackBadge` debug part.
+- **Shared files.** `ui/Hud.svelte`, `scene/table-scene.ts` and `main.ts` are touched by several packages: each changes only its own lines. The contract files are M5-C's; a package that needs a change there reports it.
 
 **Acceptance tests.** Touch gestures pass under Playwright's iPad emulation; the audit detects a tampered library order in a simulated game and passes an honest one; the app loads and resumes a saved table with the network disabled; axe reports no serious violations on lobby, table HUD and builder list; a 5,000-action soak on four simulated peers ends with equal hashes and bounded memory.
 
 **Gate M5-G:** the full evening from M2 on an emulated tablet using touch only, followed by the audit. **Owner playtest:** an evening on a real tablet.
+
+**Owner decisions for M5 (13 Nov 2026).** These answer the open questions from the M2-M4 gate reports and settle what M5 builds. Where they differ from DESIGN, they take precedence; record the resulting changes in `docs/DECISIONS.md`.
+
+- **Tablet: iPad with Safari.** The gate emulates an iPad in WebKit. Touch is tuned for iPad Safari: no text-selection callout or magnifier on long-press, no double-tap zoom, no pull-to-refresh, and safe-area insets respected.
+- **Three-player layout: opponents top-left and top-right from every seat,** as DESIGN's format table says. Seats 2 and 3 currently see one opponent beside them on their own edge; that changes so every viewer sees the same shape. (M5-P7)
+- **Spectators listen.** A spectator gets a listen-only voice session: they hear the table's open voice but never talk, and team-only talk never reaches them. (M5-P7)
+- **Talk key: Ctrl, either key, instead of V.** It never types into a note field.
+  - **Chords stay shortcuts.** The mic and dictation open only after Ctrl has been held alone for about 200 ms. A key or click during that time makes it a shortcut (Ctrl+Z, Ctrl+Enter, Ctrl+T, Ctrl+click), and no audio or caption is sent.
+  - **Other inputs.** The talk mouse button stays, and the key stays remappable in M5-P5's key-remapping UI. The cheat sheet, hints and labels say Ctrl.
+  - **Owners.** M5-P7 owns the talk input and the default; M5-P5 owns the remapping UI.
+- **Ego framing shows your own piles.** Wyrm and Stonetable keep ego as their default. The ego seat is reframed (pulled back, raised or widened, within DESIGN's limits) so your own pile column (library, graveyard, exile, command) and your whole battlefield row are on screen at the default ego view, at 1440x900 and on an iPad landscape viewport. (M5-P7)
+- **Far-zoom stack.** DESIGN's far-zoom behaviour for the stack (it collapses to a count badge that expands on hover, or on tap on touch) is built, because the fitted three- and four-player view made the stack unreadable (M3 gate). (M5-P7)
+- **Updates only between games.**
+  - **Applying an update.** The service worker installs a new version in the background, and the HUD shows "New version available: it applies after this game". The update is applied at the lobby, never mid-game.
+  - **Version mismatch.** A room records its protocol version. A peer on a different protocol version gets a clear message naming both versions and what to do (reload after the game, or wait for the table to update), never a silent failure. (M5-P3 owns the update; M5-P6 owns the version check.)
+- **Installable on iPad.** Safari deletes a site's storage after 7 days without a visit unless the site is on the Home Screen. Spellplane therefore:
+  - gets a web app manifest and icons (no Wizards marks) so it can be added to the Home Screen;
+  - shows a one-time hint on iPad and iPhone explaining why;
+  - requests persistent storage;
+  - lets decks and saved tables be exported to a file and imported again. (M5-P3)
+- **Audit: automatic at game end.**
+  - **When.** When a game ends ("Next game", or the evening ends), every browser publishes its nonces and order history automatically. Each player's verdict appears in the log and in an audit panel.
+  - **Missing records.** A player whose records are missing (left early, storage lost) is shown neutrally as "could not be checked: records missing", never as a mismatch. A mismatch is reserved for records that exist and disagree. (M5-P2)
+- **Long-press radial menu (eight slots):** tap/untap, flip face down/up, inspect, +1/+1 counter, to hand, to graveyard, exile, and put on the stack (cast or ability). Lines are drawn by long-press and drag (DESIGN). The thumb action bar keeps Attack, Settle, Resolve, Ask and Talk. (M5-P1)
+- **Folded into M5 from earlier gates:**
+  - M5-P6 makes solo actions survive a reload after a disconnect (M4 gate) and stops the pass-draft driver acting on abandoned history (M2 gate).
+  - M5-P5 forms Two-Headed Giant teams by chair when a room is created as Two-Headed Giant without passing through the lobby (M3 gate).
+- **Still open, for the owner playtest:** line styles per theme (Stonetable runes, Wyrm's flowing glow, dash patterns under glow), and "New draft?" passing on silence (M2 gate).
 
 ## Quality gates
 
@@ -451,10 +490,12 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M4-P5 Stonetable
 - [x] M4-P6 Theme switcher and conformance
 - [x] M4-G Gate (owner playtest pending)
-- [ ] M5-P1 Touch
-- [ ] M5-P2 Audit
-- [ ] M5-P3 Offline and storage
-- [ ] M5-P4 Accessibility
-- [ ] M5-P5 Finish
-- [ ] M5-P6 Hardening
-- [ ] M5-G Gate and owner playtest
+- [x] M5-C Contracts
+- [x] M5-P1 Touch
+- [x] M5-P2 Audit
+- [x] M5-P3 Offline and storage
+- [x] M5-P4 Accessibility
+- [x] M5-P5 Finish
+- [x] M5-P6 Hardening
+- [x] M5-P7 Table and voice decisions
+- [x] M5-G Gate (owner playtest pending)

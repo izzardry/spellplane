@@ -9,6 +9,7 @@ import { CAMERA, GEOMETRY } from '../../core/geometry';
 import type { Rect } from '../../games/types';
 import { DEG, clamp, rot2 } from '../math';
 import type { TablePoint } from '../types';
+import { clampToTable, fromTableLocal, onCameraTable, toTableLocal, type CameraTable } from './table';
 
 export interface CameraView {
   /** Table point at the centre of the view, mm. */
@@ -39,12 +40,14 @@ export interface Insets {
 
 export const NO_INSETS: Insets = { top: 0, right: 0, bottom: 0, left: 0 };
 
-/** An axis-aligned box in table space (mm): centre and size. */
+/** A box in table space (mm): centre and size, axis-aligned, or turned by `rot` degrees clockwise (M5-P7). */
 export interface FrameBox {
   x: number;
   y: number;
   w: number;
   d: number;
+  /** The box's turn; absent: axis-aligned in the canonical frame. The three-player table frames each viewer's view. */
+  rot?: number;
 }
 /** The framed area never shrinks below this fraction of the viewport in either direction, whatever the insets. */
 const MIN_SAFE_FRACTION = 0.4;
@@ -58,7 +61,7 @@ export const easeInOutCubic = (t: number): number => (t < 0.5 ? 4 * t * t * t : 
 export class BirdseyeRig {
   view: CameraView;
   viewport: Viewport;
-  table: { w: number; d: number };
+  table: CameraTable;
   /** Pan inertia velocity, mm per ms in table space. */
   velocity = { x: 0, y: 0 };
   inertiaMs: number;
@@ -70,9 +73,9 @@ export class BirdseyeRig {
   frame: FrameBox;
   private anim: { from: CameraView; to: CameraView; start: number; dur: number } | null = null;
 
-  constructor(table: { w: number; d: number }, viewport: Viewport, angle = 0, inertiaMs = 325) {
+  constructor(table: CameraTable, viewport: Viewport, angle = 0, inertiaMs = 325) {
     this.table = table;
-    this.frame = { x: 0, y: 0, w: table.w, d: table.d };
+    this.frame = { x: 0, y: 0, w: table.w, d: table.d, ...(table.rot ? { rot: table.rot } : {}) };
     this.viewport = viewport;
     this.inertiaMs = inertiaMs;
     this.view = { cx: 0, cy: 0, dist: 1, angle };
@@ -93,7 +96,7 @@ export class BirdseyeRig {
 
   /** The farthest zoom: the whole table (its frame) plus a 5% margin fits the viewport, clear of the insets. */
   maxDist(): number {
-    return Math.max(this.frameDist(this.frame.w, this.frame.d, 0), this.minDist());
+    return Math.max(this.frameDist(this.frame.w, this.frame.d, this.frame.rot ?? 0), this.minDist());
   }
 
   /** The part of the viewport not covered by the insets, CSS px. */
@@ -160,13 +163,18 @@ export class BirdseyeRig {
    */
   clampView(v: CameraView, keep?: { cx: number; cy: number }): CameraView {
     const dist = clamp(v.dist, this.minDist(), this.maxDist());
-    const hw = this.table.w / 2;
-    const hd = this.table.d / 2;
-    const x0 = keep ? Math.min(-hw, keep.cx) : -hw;
-    const x1 = keep ? Math.max(hw, keep.cx) : hw;
-    const y0 = keep ? Math.min(-hd, keep.cy) : -hd;
-    const y1 = keep ? Math.max(hd, keep.cy) : hd;
-    return { cx: clamp(v.cx, x0, x1), cy: clamp(v.cy, y0, y1), dist, angle: v.angle };
+    // In the table's own frame (the three-player table is turned to the viewer; M5-P7).
+    const t = this.table;
+    const hw = t.w / 2;
+    const hd = t.d / 2;
+    const k = keep ? toTableLocal({ x: keep.cx, y: keep.cy }, t) : null;
+    const x0 = k ? Math.min(-hw, k.x) : -hw;
+    const x1 = k ? Math.max(hw, k.x) : hw;
+    const y0 = k ? Math.min(-hd, k.y) : -hd;
+    const y1 = k ? Math.max(hd, k.y) : hd;
+    const c = toTableLocal({ x: v.cx, y: v.cy }, t);
+    const out = fromTableLocal({ x: clamp(c.x, x0, x1), y: clamp(c.y, y0, y1) }, t);
+    return { cx: out.x, cy: out.y, dist, angle: v.angle };
   }
 
   fitView(): CameraView {
@@ -212,7 +220,7 @@ export class BirdseyeRig {
 
   /** Whether a table point lies on the table (not over the surround). */
   onTable(p: TablePoint): boolean {
-    return Math.abs(p.x) <= this.table.w / 2 && Math.abs(p.y) <= this.table.d / 2;
+    return onCameraTable(p, this.table);
   }
 
   /**
@@ -233,9 +241,7 @@ export class BirdseyeRig {
       this.view = this.clampView(v, v);
       return;
     }
-    const hw = this.table.w / 2;
-    const hd = this.table.d / 2;
-    if (Math.abs(v.cx) > hw || Math.abs(v.cy) > hd) v = around({ x: clamp(q.x, -hw, hw), y: clamp(q.y, -hd, hd) });
+    if (!this.onTable({ x: v.cx, y: v.cy })) v = around(clampToTable(q, this.table));
     this.view = this.clampView(v, this.view);
   }
 
@@ -320,7 +326,7 @@ export class BirdseyeRig {
     this.view = wasFit ? this.fitView() : this.clampView(this.view, this.view);
   }
 
-  setTable(table: { w: number; d: number }, angle: number, frame: FrameBox = { x: 0, y: 0, w: table.w, d: table.d }): void {
+  setTable(table: CameraTable, angle: number, frame: FrameBox = { x: 0, y: 0, w: table.w, d: table.d, ...(table.rot ? { rot: table.rot } : {}) }): void {
     this.table = table;
     this.frame = frame;
     this.view = { ...this.view, angle };

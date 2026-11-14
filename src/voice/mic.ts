@@ -8,6 +8,12 @@
  * others: everyone for talk, the teammate's connection only for team talk (DECISIONS [M3-P3]). Opening and closing the
  * mic only flips `enabled` on those clones, so it is instant. The microphone's own track stays live for the level meter
  * behind the speaking ring.
+ *
+ * Spectators (PLAN Milestone 5, owner decisions: "Spectators listen"; M5-P7): a listen-only controller
+ * (`VoiceHost.listenOnly`) never asks for a microphone and never adds a stream, so nothing a spectator says can leave
+ * the page; it plays the players' incoming audio and its indicator is 'listening'. On a player's page a spectator's
+ * connection gets its own clone like any other, enabled only for audio to everyone ('all': push-to-talk, turn mic, open
+ * mic), never for team talk, so team-only audio never reaches a spectator (DECISIONS [M5-P7]).
  */
 import { isSeatActive, teammatesOf } from '../core/teams';
 import type { SeatId, TableState } from '../core/types';
@@ -64,6 +70,8 @@ export interface VoiceInternals {
 interface Outgoing {
   peerId: string;
   seat: SeatId | null;
+  /** A spectator's connection: open talk only, never team talk. */
+  spectator: boolean;
   track: MediaStreamTrack;
   stream: MediaStream;
 }
@@ -261,11 +269,14 @@ class Voice implements VoiceControls {
   private readonly listeners = new Set<(state: TalkState) => void>();
   private readonly unsubs: Unsubscribe[] = [];
   private disposed = false;
+  /** A spectator's listen-only session: no microphone, no outgoing audio, keys ignored. */
+  private readonly listenOnly: boolean;
 
   constructor(
     private readonly host: VoiceHost,
     private readonly internals: VoiceInternals,
   ) {
+    this.listenOnly = host.listenOnly === true;
     this.loaded = this.load().finally(() => {
       this.isLoaded = true;
     });
@@ -315,6 +326,11 @@ class Voice implements VoiceControls {
 
   join(): Promise<void> {
     if (this.disposed) return Promise.reject(new Error('Voice is closed'));
+    if (this.listenOnly) {
+      // A spectator's "join" only lets the players' audio start (the click satisfies autoplay rules); no microphone.
+      for (const i of this.inc.values()) i.player.resume?.();
+      return Promise.resolve();
+    }
     if (this.source) {
       for (const i of this.inc.values()) i.player.resume?.();
       return Promise.resolve();
@@ -403,6 +419,7 @@ class Voice implements VoiceControls {
   }
 
   async setDevice(deviceId: string | null): Promise<void> {
+    if (this.listenOnly) return;
     await this.loaded;
     const id = deviceId || null;
     this.chosenDevice = id;
@@ -443,6 +460,8 @@ class Voice implements VoiceControls {
   }
 
   keyDown(team: boolean): void {
+    // A spectator never talks.
+    if (this.listenOnly) return;
     // The talk key is ignored while a text field (not a note field) has focus, and while the window has none.
     if (this.textFocus || !this.windowFocus) return;
     this.keyHeld = true;
@@ -487,6 +506,7 @@ class Voice implements VoiceControls {
   }
 
   indicator(): TalkIndicatorState {
+    if (this.listenOnly) return 'listening';
     return talkIndicator(this.current, this.joined);
   }
 
@@ -580,7 +600,7 @@ class Voice implements VoiceControls {
    * the teammate's side from the incoming audio (DECISIONS [M3-C]).
    */
   private announce(): void {
-    const on = this.current.audio === 'all' && this.ownSpeaking();
+    const on = !this.listenOnly && this.current.audio === 'all' && this.ownSpeaking();
     if (on === this.announced) return;
     this.announced = on;
     this.host.presence.speaking(on);
@@ -641,9 +661,10 @@ class Voice implements VoiceControls {
       else {
         o.peerId = p.peerId;
         o.seat = this.seatOf(p, state);
+        o.spectator = p.role === 'spectator';
       }
     }
-    if (this.source) {
+    if (this.source && !this.listenOnly) {
       for (const p of peers) {
         // Audio goes to verified peers only (their hello carried the identity).
         if (!p.peerId || p.status === 'handshake' || this.out.has(p.transportId)) continue;
@@ -655,11 +676,11 @@ class Voice implements VoiceControls {
 
   private addOutgoing(p: PeerInfo, state: TableState): void {
     const source = this.source;
-    if (!source) return;
+    if (!source || this.listenOnly) return;
     const track = source.clone();
     track.enabled = false;
     const stream = new MediaStream([track]);
-    this.out.set(p.transportId, { peerId: p.peerId, seat: this.seatOf(p, state), track, stream });
+    this.out.set(p.transportId, { peerId: p.peerId, seat: this.seatOf(p, state), spectator: p.role === 'spectator', track, stream });
     try {
       this.host.transport.addStream?.(stream, p.transportId);
     } catch {
@@ -694,7 +715,8 @@ class Voice implements VoiceControls {
     const mates = own ? teammatesOf(state, seat) : [];
     // Turns exist in the match only: the lobby, the draft and deck building have no own turn (DECISIONS [M3-P3]).
     const inMatch = state.stage === 'match';
-    const next = talkState({
+    // A spectator's controller stays closed whatever its settings say.
+    const next = this.listenOnly ? TALK_CLOSED : talkState({
       settings: this.settings,
       keyHeld: this.keyHeld,
       teamKey: this.teamKey,
@@ -706,7 +728,8 @@ class Voice implements VoiceControls {
       micReady: this.joined,
     });
     for (const o of this.out.values()) {
-      const on = next.audio === 'all' || (next.audio === 'team' && o.seat !== null && mates.includes(o.seat));
+      // Team talk reaches the teammate's connection only: never another player's, never a spectator's.
+      const on = next.audio === 'all' || (next.audio === 'team' && !o.spectator && o.seat !== null && mates.includes(o.seat));
       if (o.track.enabled !== on) o.track.enabled = on;
     }
     const changed = !sameTalk(next, this.current);

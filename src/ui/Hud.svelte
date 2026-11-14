@@ -25,7 +25,7 @@
   import { addPending, LogWatch, prunePending } from './chat/watch';
   import { inZoneKind, layoutOf } from './geometry';
   import { fitInsets as fitInsetsFor, handOrder } from './hand';
-  import { applyOverrides, chordToString, findConflict, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS, reservedConflict, validOverrides } from './keymap';
+  import { applyOverrides, isMenuKey, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS } from './keymap';
   import { cardMenu, tableMenu, type MenuEntry } from './menu';
   import type { HudProps } from './props';
   import Avatar from './Avatar.svelte';
@@ -43,14 +43,34 @@
   import TurnStrip from './TurnStrip.svelte';
   import TalkIndicator from './voice/TalkIndicator.svelte';
   import VoicePanel from './voice/VoicePanel.svelte';
-  import { attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
+  import { attachModifierTalkActions, attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
   import Speech from './settings/Speech.svelte';
   import ThemePicker from './settings/Theme.svelte';
   import { themeContext } from './settings/theme';
   import { ViewSettings, type ViewPrefs } from './settings/view';
   import { cuesFor, soundModeOf, soundOn, ThemeSoundPlayer, type SoundMode } from './sound';
   import { fieldDictation, sceneCaptions } from './settings/captions';
-  import type { Caption } from '../voice/types';
+  import type { Caption, HoldAloneState } from '../voice/types';
+  import EmptyState from './empty/EmptyState.svelte';
+  import Hint from './hints/Hint.svelte';
+  import { HintController, isTouchDevice } from './hints/hints';
+  import { CardBackSetting, type CardBackState } from './settings/back';
+  import { KeymapSettings, remapMessage } from './settings/keys';
+  import type { SettingsSection } from './settings/sections';
+  import SettingsPanel from './settings/Settings.svelte';
+  import { isQuotaError, isStorageFullLine } from './settings/storage';
+  import { registerDebug } from '../util/debug';
+  import { recentGestures } from '../scene/input/pointers';
+  import RadialMenu from './touch/RadialMenu.svelte';
+  import ThumbBar from './touch/ThumbBar.svelte';
+  import { RADIAL_SLOTS, THUMB_BAR, type RadialMenuState } from './touch/actions';
+  import { blockPageGestures, safeAreaInsets, touchDevice } from './touch/device';
+  import { THUMB_BAR_SPACE_PX } from './touch/fan';
+  import { slotAction } from './touch/radial';
+  import { describeCard, describeFocus, focusCards, focusMoveOf, keepFocus, LogAnnouncements, moveFocus, zoneLabel, type CardFocus, type FocusMove } from './a11y/index';
+  import { pageAnnouncer } from './a11y/announcer';
+  import { installReducedMotionCss, prefersReducedMotion, watchReducedMotion } from './a11y/motion';
+  import FocusMirror from './a11y/FocusMirror.svelte';
 
   let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
 
@@ -79,9 +99,18 @@
   let sceneHover = $state<InstanceId | null>(null);
   let hudHover = $state<InstanceId | null>(null);
   const hovered = $derived(hudHover ?? sceneHover);
+  /** Keyboard card focus (DESIGN "Input and interaction design", Accessibility; PLAN M5-P4, ui/a11y): arrow keys move it. */
+  let focus = $state.raw<CardFocus | null>(null);
+  /**
+   * The card the keymap acts on: with a keyboard focus, its card, which is none on a zone without a focusable card (a
+   * library, an empty zone), so a resting pointer never acts behind the focus; without one, the hovered card.
+   */
+  const keyTarget = $derived(focus ? focus.card : hovered);
   let selection = $state.raw<InstanceId[]>([]);
   let pings = $state.raw<ActivePing[]>([]);
   let openPile = $state<string | null>(null);
+  /** The player's keymap (M5-P5, ui/settings/keys.ts): the settings panel, the cheat sheet and the keys share it. */
+  const keySettings = new KeymapSettings(untrack(() => game.keymap), untrack(() => settings));
   let overrides = $state.raw<KeymapOverride[]>([]);
   const keymap = $derived(applyOverrides(game.keymap, overrides));
   let vw = $state(typeof window === 'undefined' ? 1440 : window.innerWidth);
@@ -101,14 +130,15 @@
   }
   let sceneReady = $state(false);
   let sceneError = $state('');
-  const reducedMotion = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** The viewer's reduced-motion setting, followed live (M5-P4 reduced-motion audit; ui/a11y/motion.ts). */
+  let reducedMotion = $state(prefersReducedMotion());
 
   // --- Overlays ------------------------------------------------------------------------------------------------
   let cheatOpen = $state(false);
   let inspectId = $state<InstanceId | null>(null);
   let inspectRef = $state<CardRef | null>(null);
   let viewer = $state<{ zone: ZoneId; looked: LookedCard[] | null; looking: 'top' | 'search' | null; shuffleOnClose: boolean } | null>(null);
-  let menu = $state<{ title: string; entries: MenuEntry[]; x: number; y: number } | null>(null);
+  let menu = $state<{ title: string; entries: MenuEntry[]; x: number; y: number; keyboard: boolean } | null>(null);
   let note = $state<{ target: { card: InstanceId } | { item: StackItemId }; x: number; y: number; text: string } | null>(null);
   /** The inline count prompt for draw N (Shift+D) and mill N (table menu). */
   let drawN = $state<{ text: string; what: 'draw' | 'mill' } | null>(null);
@@ -119,10 +149,29 @@
   let tokenNear = $state<{ near: InstanceId | null } | null>(null);
   let deckOpen = $state(false);
   let toast = $state<{ text: string; id: number } | null>(null);
+  /** The long-press radial menu (M5-P1; DESIGN "Input and interaction design", Touch). */
+  let radial = $state<{ card: InstanceId; at: { x: number; y: number } } | null>(null);
+  /** A touch screen (or a finger touched the page): the thumb bar shows and the hand fan scrolls (ui/touch/device.ts). */
+  let touchUi = $state(touchDevice());
   let untapOffer = $state(false);
-  let logOpen = $state(true);
+  /**
+   * Below this width (a tablet held upright) the log starts hidden, so the table, the turn strip and the toolbar are
+   * not crowded under it (M5 gate, iPad portrait); the Log tab opens it. Crossing the width (turning the tablet) opens
+   * or hides it again.
+   */
+  const NARROW_HUD_PX = 900;
+  let logOpen = $state(untrack(() => vw) >= NARROW_HUD_PX);
+  let narrowWas = untrack(() => vw) < NARROW_HUD_PX;
+  $effect(() => {
+    const narrow = vw < NARROW_HUD_PX;
+    if (narrow === narrowWas) return;
+    narrowWas = narrow;
+    logOpen = !narrow;
+  });
   let preview = $state<{ card: InstanceId; x: number; y: number } | null>(null);
   let voice = $state<{ talking: 'talk' | 'teamTalk' | null; muted: boolean }>({ talking: null, muted: false });
+  /** The modifier talk key's hold-alone state (shown on the talk indicator as data-hold). */
+  let talkHold = $state<HoldAloneState>('idle');
   /** Live voice of a networked table (M3-P3); the solo table and the harness have none. */
   const liveVoice = untrack(() => session.voice);
   let voicePanel = $state(false);
@@ -142,6 +191,24 @@
   let drawInput = $state<HTMLInputElement | undefined>();
 
   const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
+  /** The settings panel (M5-P5, ui/settings/Settings.svelte); the theme popover below stays as its shortcut. */
+  let settingsOpen = $state(false);
+  let settingsSection = $state<SettingsSection>('display');
+  function openSettings(section: SettingsSection = 'display'): void {
+    settingsSection = section;
+    settingsOpen = true;
+    themeOpen = false;
+  }
+  /** First-run hints (M5-P5, ui/hints): one at a time, bottom right, never blocking. */
+  const hints = new HintController(
+    untrack(() => settings),
+    { where: 'table', touch: isTouchDevice(), voice: untrack(() => !!session.voice), spectator: untrack(() => session.role === 'spectator'), networked: untrack(() => !!session.voice) },
+  );
+  /** A save that failed for lack of space (M5-P5 storage full): from the log, or a quota error anywhere on the page. */
+  let quotaError = $state(false);
+  let storageFullDismissed = $state(false);
+  /** No deck dismissed by the player (M5-P5 empty states). */
+  let noDeckDismissed = $state(false);
   /** The viewer's theme picker (PLAN M4-P6): present when the app shell provides the choice, not in harness pages. */
   const themeChoice = themeContext();
   let themeOpen = $state(false);
@@ -192,7 +259,18 @@
     sceneTheme = t;
     scene.setTheme(t);
   });
-  const back = $derived(theme.cardDressing.back ?? game.cardBack);
+  // The viewer's card back (M5-P5, ui/settings/back.ts): the official back once chosen and loaded, else the theme's or game's.
+  const cardBack = new CardBackSetting({ settings: untrack(() => settings) });
+  let backState = $state.raw<CardBackState>(cardBack.state());
+  const back = $derived(backState.back ?? theme.cardDressing.back ?? game.cardBack);
+  /** The back the scene has (it starts with the theme's or game's). */
+  let handedBack: CardBackState['back'] = null;
+  $effect(() => {
+    const b = backState.back;
+    if (!sceneReady || !scene || b === handedBack) return;
+    handedBack = b;
+    scene.setCardBack?.(b);
+  });
   /**
    * Screen edges the screen-anchored layer covers, "top right bottom left" in CSS px, for the scene's fit (DESIGN
    * "Camera and navigation", Screen-anchored layer): the toolbar and turn strip row, the open log column, the hand fan
@@ -201,7 +279,21 @@
    */
   /** Two-Headed Giant: the teammate's fan sits above the own one (TeamHands below), and the table fit keeps it clear. */
   const teamFanShown = $derived(!!session.team && Object.keys(st.teams).length > 0);
-  const fitInsets = $derived(fitInsetsFor(vh, logOpen, teamFanShown));
+  /** The thumb action bar above the hand (touch screens; spectators act on nothing). */
+  const thumbShown = $derived(touchUi && untrack(() => session.role) !== 'spectator');
+  /** The device's safe-area insets (the iPad's home indicator and rounded corners; zeros elsewhere), read again on resize. */
+  const safeInsets = $derived.by(() => {
+    void vw;
+    void vh;
+    return safeAreaInsets();
+  });
+  const fitInsets = $derived(fitInsetsFor(vh, logOpen, teamFanShown, thumbShown ? THUMB_BAR_SPACE_PX : 0, safeInsets));
+  /** Bottom of the block above the hand (toast, offer, prompt): above the teammate's fan and the thumb bar when shown. */
+  const aboveHandBottom = $derived.by(() => {
+    const thumb = thumbShown ? THUMB_BAR_SPACE_PX : 0;
+    if (teamFanShown) return `${teamFanTop(vh) + 8 + thumb}px`;
+    return thumb ? `calc(22vh + ${16 + thumb}px)` : null;
+  });
 
   // --- Card identity as this browser may know it ----------------------------------------------------------------
   /** The face this viewer may see: public identity, else own hand or own face-down identity, else a targeted reveal. Never a library face. */
@@ -295,7 +387,14 @@
     session: untrack(() => session),
     game: untrack(() => game),
     scene: () => scene,
-    view: () => ({ hovered: forcedHover ?? hovered, selection }),
+    // The keyboard-focused card counts as hovered (DESIGN "Input and interaction design", Accessibility; M5-P4). With a
+    // keyboard focus the keys act on that card only: the selection counts only when it holds the card, and a focus on a
+    // zone without a focusable card gives no card (no selection, no stack marker under a resting pointer).
+    view: () => {
+      if (!focus) return { hovered: forcedHover ?? hovered, selection };
+      const card = forcedHover ?? focus.card;
+      return { hovered: card, selection: card !== null && selection.includes(card) ? selection : [], keyFocus: true };
+    },
     ui: hooks,
     newId: makeId,
     now: () => Date.now(),
@@ -326,8 +425,10 @@
    * dialog stay.
    */
   function closeTop(promptUp: boolean): boolean {
-    if (menu) menu = null;
+    if (radial) radial = null;
+    else if (menu) menu = null;
     else if (themeOpen) themeOpen = false;
+    else if (settingsOpen) settingsOpen = false;
     else if (revealTo) revealTo = null;
     else if (tokenNear) tokenNear = null;
     else if (inspectId) hooks.inspect(null);
@@ -335,6 +436,7 @@
     else if (promptUp) return false;
     else if (viewer) closeViewer();
     else if (deckOpen) deckOpen = false;
+    else if (focus) setFocus(null, false);
     else return false;
     return true;
   }
@@ -355,6 +457,20 @@
       commands.untapAndDraw();
       return;
     }
+    // The context-menu key or Shift+F10 (the platform keys for a context menu, ui/keymap.ts MENU_KEYS; M5-P4).
+    if (isMenuKey(e) && !menu && !radial && !ownsArrows(e.target)) {
+      e.preventDefault();
+      openKeyMenu();
+      return;
+    }
+    const move = focusMoveOf(e);
+    // The cheat sheet covers the table: arrows and Page keys do not move a focus the player cannot see under it; while
+    // the radial menu is open they are its own (M5 review).
+    if (move && !menu && !radial && !cheatOpen && !ownsArrows(e.target)) {
+      e.preventDefault();
+      moveKeyFocus(move);
+      return;
+    }
     if (engine.keydown(e, false)) e.preventDefault();
   }
   function isControl(t: EventTarget | null): boolean {
@@ -373,21 +489,12 @@
     if (isTextEntry(e.target)) engine.blur();
   }
 
-  // --- Remapping (persisted through settings) ---------------------------------------------------------------------
+  // --- Remapping (persisted through settings; M5-P5 ui/settings/keys.ts) -------------------------------------------
   function remap(action: ActionId, context: KeyContext, chord: KeyChord): string | null {
-    const clash = findConflict(keymap, chord, context, action)?.label ?? reservedConflict(chord, context);
-    if (clash) return `${chordToString(chord)} is already “${clash}”.`;
-    remapped = true;
-    overrides = [...overrides.filter((o) => !(o.action === action && o.context === context)), { action, context, chord }];
-    void settings?.set('keymap', overrides);
-    return null;
+    return remapMessage(keySettings.remap(action, context, chord));
   }
-  /** Set once the player remaps in this session, so a late settings load never overwrites it. */
-  let remapped = false;
   function resetKeys() {
-    remapped = true;
-    overrides = [];
-    void settings?.set('keymap', []);
+    keySettings.resetAll();
   }
 
   // --- Pile viewers -------------------------------------------------------------------------------------------------
@@ -436,9 +543,42 @@
   });
 
   // --- Menus ----------------------------------------------------------------------------------------------------
-  function openMenu(card: InstanceId | null, x: number, y: number) {
+  function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false) {
     const c = card ? st.cards[card] : undefined;
-    menu = c ? { title: nameOf(c.id), entries: cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), x, y } : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y };
+    menu = c
+      ? { title: focusName(c.id), entries: cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), x, y, keyboard }
+      : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y, keyboard };
+  }
+  /**
+   * The context menu from the keyboard (DESIGN "Input and interaction design": every action has a context-menu route,
+   * and every card action is reachable from the keyboard; M5-P4): for the keyboard-focused card (the table menu on a
+   * zone without one), else for the hovered card, beside the card; the menu takes focus and hands it back on close.
+   */
+  function openKeyMenu(): void {
+    const card = focus ? focus.card : hovered;
+    // The menu hands focus back to the element that had it: the mirror, so a screen reader follows the card again.
+    if (focus && mirrorEl && (document.activeElement === document.body || document.activeElement === null)) mirrorEl.focus({ preventScroll: true });
+    const at = menuAnchor(card);
+    openMenu(card, at.x, at.y, true);
+  }
+  /** Where a keyboard-opened menu stands: at the top right of the card (its focus ring, or its hand or pile element), else mid-screen or at the pointer. */
+  function menuAnchor(card: InstanceId | null): { x: number; y: number } {
+    if (card !== null && typeof document !== 'undefined') {
+      const sel = CSS.escape(card);
+      // The card itself before any other element naming it (a log line's card name comes earlier in the DOM).
+      const els = [
+        document.querySelector(`[data-testid="focus-ring"][data-focus-card="${sel}"] polygon`),
+        document.querySelector(`[data-testid="hand-card"][data-card="${sel}"]`),
+        document.querySelector(`[data-testid="pile-card"][data-card="${sel}"]`),
+        ...document.querySelectorAll(`[data-card="${sel}"]`),
+      ];
+      for (const el of els) {
+        const r = el?.getBoundingClientRect();
+        if (r && r.width > 0 && r.height > 0) return { x: Math.round(r.right), y: Math.round(r.top) };
+      }
+    }
+    if (!focus && pointerSeen) return { x: pointer.x, y: pointer.y };
+    return { x: Math.round(vw / 2), y: Math.round(vh / 2) };
   }
 
   /** Keyless library actions for the table menu (DESIGN "Card manipulation", Library actions: reveal top, mill N). */
@@ -544,12 +684,14 @@
    * Card names as each log line was first written (DESIGN "Table model", Hidden cards: a later reveal never names an
    * earlier hidden move); the watch fills in the names this browser could see just before each action (M1-P6).
    */
+  const soloShuffles = untrack(() => session.netStatus().mode === 'solo');
   const lines = $derived(
     logLines(mergeTimeline(entries, teamChat, pendingChat), {
       state: st,
       cardName: logName,
       phaseLabel: (id) => game.phases.find((p) => p.id === id)?.label ?? id,
       names: watch.names,
+      soloShuffles,
     }),
   );
   /** Chat tabs (DESIGN "Chat and voice", Text chat): the team tab when the own seat has a team. */
@@ -563,6 +705,9 @@
     else pendingChat = addPending(pendingChat, a, session.log(), Date.now());
   }
   const inspectCard = $derived<CardInstance | null>(inspectId ? (st.cards[inspectId] ?? null) : null);
+  /** No card of this player's anywhere on the table (M5-P5 empty states: no deck); not for a spectator or before the match. */
+  const noDeck = $derived(!spectating && !!st.seats[me] && st.stage === 'match' && !Object.values(st.cards).some((c) => c.owner === me));
+  const storageFull = $derived(quotaError || entries.some(isStorageFullLine));
   const keyOf = (a: ActionId, ctx: KeyContext = 'table') => keyLabel(keymap, a, ctx);
 
   // On Next turn, offer the new active player (or team) untap-and-draw; close the offer once the turn moves on
@@ -614,10 +759,146 @@
     if (live.length !== selection.length) selection = live;
   });
 
+  // --- Touch (M5-P1; DESIGN "Input and interaction design", Touch) ------------------------------------------------------
+  /** Whether a radial action applies to the menu's card (Commands.applies, as the context menu decides). */
+  function radialApplies(card: InstanceId, action: ActionId): boolean {
+    const c = st.cards[card];
+    return !!c && commands.applies(action, c);
+  }
+  // The menu closes when its card leaves the table.
+  $effect(() => {
+    if (radial && !st.cards[radial.card]) radial = null;
+  });
+  /** The debug hook's touch part (debug/types.ts TouchDebug). */
+  const touchDebug = {
+    gestures: () => recentGestures(),
+    radial: (): RadialMenuState | null => {
+      const r = radial;
+      if (!r) return null;
+      return {
+        card: r.card,
+        at: { ...r.at },
+        slots: RADIAL_SLOTS.map((slot) => ({
+          id: slot.id,
+          enabled: slotAction(slot, (a) => radialApplies(r.card, a)) !== null,
+          screen: document.querySelector(`[data-testid="radial-${slot.id}"]`)?.getBoundingClientRect() ?? new DOMRect(),
+        })),
+      };
+    },
+    thumbBar: () => (thumbShown ? [...THUMB_BAR] : []),
+  };
+  /** Safe-area insets the radial menu keeps clear of (read when it opens). */
+  const radialInsets = $derived(safeInsets);
+  // --- Keyboard card focus and the live region (DESIGN "Input and interaction design", Accessibility; PLAN M5-P4) ---
+  /** The focus order's viewer: the own seat, or none for a spectator (who starts at the stack). */
+  const a11yViewer = $derived(st.seats[me] ? me : null);
+  /** The focus order's extras: the hand's fan order, and the own library cards the pile viewer shows (Search, Look at top N). */
+  const focusOpts = $derived({ handOrder: hand, looked: viewer?.looked ? { zone: viewer.zone, ids: viewer.looked.map((l) => l.id) } : null });
+  /**
+   * A card's name for the focus and its menu: as `nameOf`, and a card of the own library the pile viewer shows by the
+   * identity this browser was shown (it stays in this browser: the mirror and the live region are local).
+   */
+  function focusName(id: InstanceId): string {
+    if (refOf(id)) return nameOf(id);
+    const ref = viewer?.looked?.find((l) => l.id === id)?.ref;
+    return ref ? (dataOf(ref)?.name ?? 'Card') : nameOf(id);
+  }
+  /** The focused zone's cards in focus order as last seen, so focus on a card that leaves passes to its neighbour. */
+  let focusOrder: InstanceId[] = [];
+  /** Where the pointer was when the keyboard last moved focus: a pointer that moves away onto a card takes over. */
+  let focusPointer = { x: 0, y: 0 };
+  const { announcer, release: releaseAnnouncer } = pageAnnouncer();
+  let mirrorEl = $state<HTMLElement | undefined>();
+  function setFocus(next: CardFocus | null, speak: boolean): void {
+    focus = next;
+    focusOrder = next ? focusCards(st, game, a11yViewer, next.zone, focusOpts) : [];
+    focusPointer = { x: pointer.x, y: pointer.y };
+    if (speak && next) announcer.focus(describeFocus(st, game, a11yViewer, next, focusName, focusOpts));
+  }
+  function moveKeyFocus(move: FocusMove): void {
+    setFocus(moveFocus(st, game, a11yViewer, focus, move, focusOpts), true);
+    // The mirror takes DOM focus, so a screen reader follows (unless a HUD control has it).
+    const active = typeof document === 'undefined' ? null : document.activeElement;
+    if (mirrorEl && active !== mirrorEl && (!active || active === document.body || (sceneHost?.contains(active) ?? false))) mirrorEl.focus({ preventScroll: true });
+  }
+  /** HUD panels whose controls keep the arrow and Page keys while they hold DOM focus (ownsArrows). */
+  const ARROW_PANELS = ['settings', 'audit-panel', 'theme-settings', 'voice-panel', 'deck-import', 'token-search', 'reveal-to', 'log-lines', 'cheat-sheet']
+    .map((id) => `[data-testid="${id}"]`)
+    .concat('.theme-pop', '.voice-pop')
+    .join(', ');
+  /**
+   * Keys the focused element uses itself: arrows in a select, slider, menu, list box or grid are not card focus, nor
+   * are they inside a dialog or a HUD panel (M5 review: the settings panel, the audit panel, the theme popover, a
+   * prompt), where they belong to the panel's controls or scroll it.
+   */
+  function ownsArrows(t: EventTarget | null): boolean {
+    const el = t as HTMLElement | null;
+    if (!el?.closest) return false;
+    if (el.tagName === 'SELECT' || (el.tagName === 'INPUT' && ['range', 'radio', 'number'].includes((el as HTMLInputElement).type))) return true;
+    if (el.closest('[role="menu"], [role="menubar"], [role="listbox"], [role="slider"], [role="radiogroup"], [role="tablist"], [role="grid"], [role="tree"]')) return true;
+    if (el.closest('dialog, [role="dialog"], [role="alertdialog"]')) return true;
+    // HUD panels (their roots), and the scrollable regions that scroll with arrows and Page keys when they hold DOM
+    // focus: the log lines, the cheat sheet.
+    return !!el.closest(ARROW_PANELS);
+  }
+  // The table changed: focus stays on its card, or passes to the card that took its place (ui/a11y keepFocus).
+  $effect(() => {
+    const s = st;
+    const opts = focusOpts;
+    untrack(() => {
+      if (!focus) return;
+      const next = keepFocus(s, game, a11yViewer, focus, focusOrder, opts);
+      const moved = next?.zone !== focus.zone || next?.card !== focus.card;
+      if (moved) focus = next;
+      focusOrder = next ? focusCards(s, game, a11yViewer, next.zone, opts) : [];
+      // The next key acts on another card: say which, after the log line of the move. That line is queued by the log
+      // effect below in this same update, so the focus waits for the update to settle, then follows the waiting lines.
+      if (moved && next) {
+        const text = describeFocus(s, game, a11yViewer, next, focusName, opts);
+        void tick().then(() => {
+          if (focus?.zone === next.zone && focus.card === next.card) announcer.focusAfterLog(text);
+        });
+      }
+    });
+  });
+  /** The last input wins: any press on the table (a click, the start of a box selection) ends the keyboard focus (M5 review). */
+  function pressOnTable(): void {
+    if (focus) setFocus(null, false);
+  }
+  /** The last input wins: a pointer moved onto a card hands the keys back to hover (window pointermove, after the scene's hover). */
+  function pointerTakesOver(): void {
+    if (focus && hovered !== null && hovered !== focus.card && Math.hypot(pointer.x - focusPointer.x, pointer.y - focusPointer.y) > 4) focus = null;
+  }
+  const focusText = $derived(focus ? describeFocus(st, game, a11yViewer, focus, focusName, focusOpts) : null);
+  const mirrorCards = $derived(focus ? focusCards(st, game, a11yViewer, focus.zone, focusOpts).map((id) => ({ id, text: describeCard(st, id, focusName), current: id === focus?.card })) : []);
+  // New log lines are announced once each, batched (ui/a11y/log.ts, announcer.ts).
+  const logAnnouncements = new LogAnnouncements(untrack(() => me));
+  $effect(() => {
+    const texts = logAnnouncements.next(lines);
+    untrack(() => {
+      for (const t of texts) announcer.announce(t);
+    });
+  });
+  // Prompts addressed to this player are assertive: a confirmation round to answer, the untap offer.
+  let promptSpoken: string | null = null;
+  $effect(() => {
+    const p = prompt;
+    if (!p || p.mode !== 'respond' || promptSpoken === p.round.id) return;
+    promptSpoken = p.round.id;
+    untrack(() => {
+      const asker = st.seats[p.round.askedBy]?.name || 'A player';
+      announcer.announce(`${asker} ${roundWhat(st, p.round, nameOf)}. ${keyOf('confirmOk', 'prompt') || 'Enter'}: OK. ${keyOf('confirmHold', 'prompt') || 'Escape'}: hold.`, 'assertive');
+    });
+  });
+  $effect(() => {
+    if (untapOffer) untrack(() => announcer.announce('Your turn. U: untap all and draw.', 'assertive'));
+  });
+
   // --- Scene ------------------------------------------------------------------------------------------------------
   $effect(() => {
     if (!sceneReady || !scene) return;
-    const view: ViewState = { selection: [...selection], hovered, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile, captions: sceneCaptions(captionList, st) };
+    // With a keyboard focus the keys act on the focused card, so the scene shows no hover outline on another (M5-P4).
+    const view: ViewState = { selection: [...selection], hovered: focus ? null : hovered, focused: focus?.card ?? null, privateFaces, reducedMotion, pings, openPile: viewer?.zone ?? openPile, captions: sceneCaptions(captionList, st) };
     scene.update(st, view);
   });
 
@@ -693,6 +974,9 @@
   }
 
   onMount(() => {
+    installReducedMotionCss();
+    const unwatchMotion = watchReducedMotion((v) => (reducedMotion = v));
+    registerDebug({ a11y: { focus: () => focus, announcements: () => announcer.history() } });
     seenLog = entries.length;
     watch.start(entries);
     followTeam();
@@ -710,7 +994,11 @@
       pendingChat = prunePending(pendingChat, log);
     });
     // The talk key's focus rules and the talk mouse button (M3-P3), and the speaking rings.
-    const voiceOff = liveVoice ? attachTalkInput(liveVoice) : null;
+    const voiceOff = liveVoice ? attachTalkInput(liveVoice, window) : null;
+    // The Ctrl talk key under the hold-alone rule (M5-P7), on the talk and team talk bindings with the player's
+    // remappings: it runs the talk actions like any talk key once it counts (the KeyEngine never matches a bare modifier).
+    const chordOf = (action: 'talk' | 'teamTalk') => keymap.find((b) => b.action === action && b.context === 'table')?.chord ?? null;
+    const modifierOff = attachModifierTalkActions(window, (action, phase) => hooks.voice(action, phase), { talkChord: () => chordOf('talk'), teamTalkChord: () => chordOf('teamTalk'), onHold: (h) => (talkHold = h) });
     const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
     captionList = session.captions?.captions() ?? [];
     const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
@@ -718,12 +1006,11 @@
       ?.get('sound')
       .then((m) => (soundMode = soundModeOf(m)))
       .catch(() => (soundMode = 'theme'));
-    void settings
-      ?.get('keymap')
-      .then((o) => {
-        if (!remapped) overrides = validOverrides(o);
-      })
-      .catch(() => {});
+    const unsubKeys = keySettings.subscribe((o) => (overrides = o));
+    void keySettings.load();
+    const unsubBack = cardBack.subscribe((s) => (backState = s));
+    void cardBack.refresh();
+    void hints.load();
     try {
       const layout = layoutOf(game, st);
       if (!layout) throw new Error('the game definition has no table layout yet');
@@ -746,10 +1033,15 @@
             else openPile = openPile === id ? null : id;
           },
           selectionChange: (ids) => (selection = [...ids]),
+          radialMenu: (id, at) => {
+            menu = null;
+            radial = id && !spectating && st.cards[id] ? { card: id, at: { x: at.x, y: at.y } } : null;
+          },
         },
       });
       sceneTheme = theme;
       sceneReady = true;
+      registerDebug({ touch: touchDebug });
       // The viewer's quality and follow toggles (Settings.quality, followStack, followActive).
       view.attach(scene);
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
@@ -763,11 +1055,21 @@
     } catch (e) {
       sceneError = e instanceof Error ? e.message : String(e);
     }
+    const unblock = blockPageGestures();
     return () => {
+      unblock();
+      const hook = window.__spellplane as Record<string, unknown> | undefined;
+      if (hook?.touch === touchDebug) delete hook.touch;
+      unwatchMotion();
+      releaseAnnouncer();
       unsub();
+      unsubKeys();
+      unsubBack();
+      cardBack.dispose();
       unsubView();
       view.dispose();
       voiceOff?.();
+      modifierOff();
       speakOff?.();
       teamUnsub?.();
       teamUnsub = null;
@@ -793,18 +1095,25 @@
   {onfocusin}
   {onclick}
   onblur={() => engine.blur()}
+  onunhandledrejection={(e) => {
+    if (isQuotaError(e.reason)) quotaError = true;
+  }}
   onfocus={() => syncView()}
+  onpointerdowncapture={(e) => {
+    if (e.pointerType === 'touch') touchUi = true;
+  }}
   onpointermove={(e) => {
     pointer.x = e.clientX;
     pointer.y = e.clientY;
     pointerSeen = true;
+    pointerTakesOver();
     syncCaptionHover(hovered);
   }}
 />
 <svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncView()} />
 
-<div class="root" style={cssVars} data-testid="hud" data-sound={soundState}>
-  <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost}></div>
+<div class="root" class:touch-ui={touchUi} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
+  <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost} onpointerdowncapture={pressOnTable}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
   <Flashes
     {watch}
@@ -824,6 +1133,7 @@
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
         <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye')}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
+        <button type="button" data-testid="open-settings" aria-pressed={settingsOpen} aria-expanded={settingsOpen} aria-label="Settings" title="Settings" onclick={() => (settingsOpen ? (settingsOpen = false) : openSettings())}>⚙</button>
         {#if themeChoice}
           <span class="theme-anchor" bind:this={themeAnchor}>
             <button type="button" data-testid="open-theme-settings" aria-pressed={themeOpen} aria-expanded={themeOpen} aria-label="Theme" title="Theme" onclick={() => (themeOpen = !themeOpen)}>◐</button>
@@ -840,7 +1150,7 @@
              its layout and the avatar column below stays short. A spectator only sees captions. -->
         <div class="toolbar voice-row">
           {#if liveVoice}
-            <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'V'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} ontogglepanel={() => (voicePanel = !voicePanel)} />
+            <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} hold={talkHold} ontogglepanel={() => (voicePanel = !voicePanel)} />
           {/if}
           {#if session.captions && !spectating}
             <button
@@ -948,7 +1258,18 @@
     {/if}
 
     <!-- Above the hand, centred (DESIGN "Specification: geometry, layout and motion", Screen layer); with a teammate's fan shown, above that fan too. -->
-    <div class="above-hand" data-testid="above-hand" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
+    {#if thumbShown}
+      <div class="thumbs" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
+        <ThumbBar run={(a, phase) => commands.run(a, phase)} keyOf={(a) => keyOf(a)} talking={voice.talking === 'talk'} {resolveLit} />
+      </div>
+    {/if}
+    <div class="above-hand" data-testid="above-hand" style:bottom={aboveHandBottom}>
+      {#if storageFull && !storageFullDismissed}
+        <div class="state"><EmptyState id="storageFull" action={{ label: 'Storage settings', run: () => openSettings('storage'), testid: 'empty-storage-settings' }} ondismiss={() => (storageFullDismissed = true)} /></div>
+      {/if}
+      {#if noDeck && !noDeckDismissed && !deckOpen}
+        <div class="state"><EmptyState id="noDeck" action={{ label: 'Import a deck', run: () => (deckOpen = true), testid: 'empty-import-deck' }} ondismiss={() => (noDeckDismissed = true)} /></div>
+      {/if}
       {#if toast}<p class="toast" role="status" data-testid="toast">{toast.text}</p>{/if}
       {#if untapOffer}
         <div class="offer" data-testid="untap-offer">
@@ -963,6 +1284,20 @@
           <button type="button" class="x" aria-label="Dismiss" onclick={() => (untapOffer = false)}>×</button>
         </div>
       {/if}
+      <FocusMirror
+        bind:el={mirrorEl}
+        text={focusText}
+        zone={focus ? zoneLabel(st, game, a11yViewer, focus.zone) : null}
+        cards={mirrorCards}
+        onfocusin={() => {
+          if (!focus) setFocus(moveFocus(st, game, a11yViewer, null, 'first', focusOpts), true);
+        }}
+        oncontextmenu={(e) => {
+          // The context-menu key's own event (some platforms send it after the keydown the HUD already handled).
+          e.preventDefault();
+          if (!menu) openKeyMenu();
+        }}
+      />
       {#if prompt}
         <ConfirmPrompt
           model={prompt}
@@ -985,7 +1320,8 @@
       {nameOf}
       {faces}
       {back}
-      {hovered}
+      hovered={keyTarget}
+      focused={focus?.card ?? null}
       {selection}
       {vw}
       {vh}
@@ -994,6 +1330,12 @@
       oninspect={(id) => hooks.inspect(id)}
       ondragout={(id, x, y) => dragOut(id, x, y)}
       onselect={(id) => (selection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id])}
+      touch={touchUi}
+      insets={safeInsets}
+      onradial={(id, x, y) => {
+        menu = null;
+        radial = id && !spectating ? { card: id, at: { x, y } } : null;
+      }}
     />
     {#if session.team && teamFanShown}
       <!-- Two-Headed Giant: the teammate's hand above the own fan (M3-P2, ui/hand/*). -->
@@ -1015,7 +1357,8 @@
         bind:shuffleOnClose={viewer.shuffleOnClose}
         {faces}
         {back}
-        {hovered}
+        hovered={keyTarget}
+        focused={focus?.card ?? null}
         {vw}
         {vh}
         keys={{ draw: keyOf('draw'), drawN: keyOf('drawN'), shuffle: keyOf('shuffle'), mulligan: keyOf('mulligan') }}
@@ -1029,8 +1372,23 @@
     {/if}
   {/if}
 
+  {#if radial}
+    <RadialMenu
+      card={radial.card}
+      title={nameOf(radial.card)}
+      at={radial.at}
+      {vw}
+      {vh}
+      insets={radialInsets}
+      applies={(a) => !!radial && radialApplies(radial.card, a)}
+      onrun={(card, a) => runOn(card, a)}
+      onmore={(card, x, y) => openMenu(card, x, y)}
+      onclose={() => (radial = null)}
+    />
+  {/if}
+
   {#if menu}
-    <ContextMenu title={menu.title} entries={menu.entries} x={menu.x} y={menu.y} onclose={() => (menu = null)} />
+    <ContextMenu title={menu.title} entries={menu.entries} x={menu.x} y={menu.y} autofocus={menu.keyboard} onclose={() => (menu = null)} />
   {/if}
 
   {#if note}
@@ -1077,12 +1435,26 @@
           onblur={() => (askField = null)}
         /></label
       >
+      <!-- Asks without a key (touch): the press keeps the field's focus, so its blur does not close it first. -->
+      <button
+        type="button"
+        data-testid="ask-submit"
+        onmousedown={(e) => e.preventDefault()}
+        onpointerdown={(e) => e.preventDefault()}
+        onclick={() => {
+          const text = askField?.text ?? '';
+          askField = null;
+          commands.ask(text);
+        }}>Ask</button
+      >
     </div>
   {/if}
 
   {#if drawN}
     <div class="inline draw-n" data-testid="draw-n">
-      <label>{drawN.what === 'mill' ? 'Mill how many?' : 'Draw how many?'} <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => (drawN = null)} /></label>
+      <label>{drawN.what === 'mill' ? 'Mill how many?' : 'Draw how many?'} <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" enterkeyhint="go" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => (drawN = null)} /></label>
+      <!-- The button for a screen without an Enter key (a tablet): its press keeps the focus in the field, whose blur would close it. -->
+      <button type="button" data-testid="draw-n-go" onmousedown={(e) => e.preventDefault()} onclick={() => submitDrawN()}>{drawN.what === 'mill' ? 'Mill' : 'Draw'}</button>
     </div>
   {/if}
 
@@ -1132,6 +1504,26 @@
     <Speech captions={session.captions} top={speechTop} onclose={() => (speechOpen = false)} />
   {/if}
 
+  {#if settingsOpen}
+    <SettingsPanel
+      {settings}
+      keys={keySettings}
+      {cardBack}
+      {themeChoice}
+      sound={{ mode: soundMode ?? 'theme', set: setSoundMode }}
+      view={{ prefs: viewPrefs, set: (name, value) => void view.set(name, value).catch(() => {}) }}
+      voice={liveVoice ?? undefined}
+      {session}
+      captions={spectating ? undefined : session.captions}
+      {storageFull}
+      section={settingsSection}
+      talkKey={keyOf('talk')}
+      onclose={() => (settingsOpen = false)}
+    />
+  {/if}
+
+  <Hint {hints} keyOf={(a) => keyOf(a)} />
+
   {#if cheatOpen}
     <CheatSheet {keymap} onremap={remap} onreset={resetKeys} onclose={() => (cheatOpen = false)} />
   {/if}
@@ -1161,6 +1553,11 @@
   .root {
     position: fixed;
     inset: 0;
+    /* iPad Safari (PLAN Milestone 5, owner decisions): no text-selection callout or magnifier on a long press at the
+       table; text fields keep selection. */
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
     color-scheme: var(--sp-hud-scheme, light);
     background: var(--sp-bg, #fff);
     color: var(--sp-fg, #111);
@@ -1177,9 +1574,17 @@
     text-align: center;
     color: var(--sp-muted, #5f5f5f);
   }
+  .root :global(input),
+  .root :global(textarea),
+  .root :global([contenteditable]) {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
   .layer {
     position: absolute;
-    inset: 0;
+    /* Inside the iPad's safe area (rounded corners, home indicator); zero elsewhere. */
+    inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
     pointer-events: none;
     font-size: var(--sp-font-size-small, 12px);
   }
@@ -1241,6 +1646,12 @@
     font-family: var(--sp-font-mono, monospace);
     opacity: 0.7;
   }
+  /* A touch screen has no keyboard to press: the toolbar names no keys there (M5 gate; the cheat sheet still lists them
+     for a hardware keyboard). */
+  .touch-ui .toolbar kbd,
+  .touch-ui .top-centre :global(kbd) {
+    display: none;
+  }
   .chip {
     border: 1px solid var(--sp-fg, #111);
     border-radius: 999px;
@@ -1267,12 +1678,12 @@
     border-radius: var(--sp-radius-md, 4px);
     padding: 2px 8px;
   }
-  .stack-chip button {
-    opacity: 0.55;
-  }
+  /* A Resolve that is not ready and Counter keep full-contrast text (Paper meets WCAG AA throughout); a lit Resolve
+     stands out by a heavier border in the foreground colour instead of the others being dimmed. */
   .stack-chip button.lit {
-    opacity: 1;
     border-color: var(--sp-fg, #111);
+    box-shadow: inset 0 0 0 1px var(--sp-fg, #111);
+    font-weight: 600;
   }
   .stack-chip .to {
     display: inline-flex;
@@ -1281,7 +1692,6 @@
     color: var(--sp-muted, #5f5f5f);
   }
   .stack-chip .to button {
-    opacity: 1;
     padding: 0 4px;
   }
   .stack-chip .to button.default {
@@ -1293,6 +1703,22 @@
     right: 8px;
     bottom: calc(22vh + 16px);
     display: flex;
+  }
+  /* A narrow screen (an upright tablet): the turn strip packs tighter, so it clears the toolbar and the log (M5 gate). */
+  @media (max-width: 1000px) {
+    .top-centre :global([data-testid='turn-strip']) {
+      gap: 4px;
+      padding: 4px 6px;
+    }
+    .top-centre :global([data-testid='turn-strip'] button) {
+      padding: 1px 3px;
+    }
+  }
+  /* An upright tablet: the thumb bar spans under the log, so the log (its chat input) ends above it (M5 gate). */
+  @media (max-width: 1000px) {
+    .touch-ui .right {
+      bottom: calc(22vh + 16px + 64px);
+    }
   }
   .own-avatar {
     position: absolute;
@@ -1310,6 +1736,19 @@
     flex-direction: column;
     align-items: center;
     gap: 6px;
+  }
+  .state {
+    max-width: min(440px, 90vw);
+  }
+  .state :global(button) {
+    pointer-events: auto;
+  }
+  .thumbs {
+    position: absolute;
+    z-index: 21;
+    left: 50%;
+    bottom: calc(22vh + 8px);
+    transform: translateX(-50%);
   }
   .toast {
     margin: 0;

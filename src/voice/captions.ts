@@ -66,6 +66,7 @@ const TRANSPARENT = new Set<Action['type']>([
   'sequencerClaim',
   'recover',
   'recoverCommit',
+  'auditPublish',
 ]);
 
 const cardAnchor = (id: InstanceId): Anchor => ({ kind: 'card', id });
