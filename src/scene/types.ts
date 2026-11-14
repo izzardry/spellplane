@@ -4,7 +4,8 @@
  * The scene is a pure view of TableState plus local ViewState; it changes shared state only through `dispatch`.
  */
 import type { ActionDraft } from '../core/actions';
-import type { Anchor, CardRef, DeckBuild, DraftCard, InstanceId, Line, PackId, PileId, Pose, SeatColourIndex, SeatId, TableState, ZoneId } from '../core/types';
+import type { Anchor, CardRef, ClipId, DeckBuild, DraftCard, InstanceId, Line, PackId, PileId, Pose, SeatColourIndex, SeatId, TableState, ZoneId } from '../core/types';
+import type { DragGroup } from '../core/clips';
 import type { CardData, FaceSource } from '../data/types';
 import type { GameDefinition, TableLayout, TextureSource } from '../games/types';
 import type { CardDressing, MaterialSpec, PostSettings, QualityId, QualityLevel, Theme, ThemeId } from '../themes/types';
@@ -104,7 +105,30 @@ export interface SceneEvents {
    * close the menu. Added by M5-C; M5-P1.
    */
   radialMenu?(card: InstanceId | null, at: ScreenPoint): void;
+  /**
+   * Hold-to-talk hook (DESIGN "Chat and voice", Talk modes: "Talk while I hold or drag"; PLAN Milestone 6, owner
+   * decisions, Hold-to-talk): 'start' once a mouse-button or finger press on the table has lasted HOLD_PRESS_TALK_MS
+   * without being released (card drags, line drags, box selection, camera drags, holding to clip), 'end' when that press
+   * ends (release, cancel, blur, pointer capture lost). Never for a quick click or tap, at most one 'start' per press,
+   * and an 'end' only after a 'start'. The HUD forwards it to VoiceControls.pressHeld when the setting is on. Added by
+   * M6-C; implementer: M6-P2 (scene/presence.ts and the press paths of scene/table-scene.ts).
+   */
+  pressHold?(phase: 'start' | 'end', kind: TablePressKind): void;
+  /**
+   * A clip's context menu was asked for (right-click or long-press on the clip; PLAN Milestone 6, owner decisions,
+   * Paperclips: "its context menu … Remove clip"). Added by M6-C; implementer: M6-P1.
+   */
+  clipMenu?(clip: ClipId, at: ScreenPoint): void;
 }
+
+/** What a held table press is doing (PLAN Milestone 6, owner decisions, Hold-to-talk). Added by M6-C. */
+export type TablePressKind = 'card' | 'line' | 'marquee' | 'camera' | 'clip' | 'other';
+
+/**
+ * A press on the table held at least this long talks under "Talk while I hold or drag"; quicker clicks and taps never
+ * do (PLAN Milestone 6, owner decisions, Hold-to-talk: "held longer than 200 ms"). Added by M6-C.
+ */
+export const HOLD_PRESS_TALK_MS = 200;
 
 /** Options for createTableScene (DESIGN "Specification: code interfaces"). */
 export interface TableSceneOptions {
@@ -341,6 +365,43 @@ export interface SceneDebugParts {
   frameStats(): FrameStats;
   /** Captions on screen (PLAN M3-P4). Added by M3-C; optional until M3-P4 draws them. */
   captions?(): DebugCaption[];
+  /** Added by M6-C: paperclips, the hold ring, the drag group and the drop preview (M6-P1). Optional until M6-P1 draws them. */
+  clips?(): ClipDebugState;
+}
+
+/**
+ * A paperclip as the debug hook reports it (PLAN Milestone 6, owner decisions, Paperclips). Added by M6-C; M6-P1.
+ */
+export interface DebugClip {
+  id: ClipId;
+  cards: InstanceId[];
+  /** Where the clip lies on the table (its centre, mm). */
+  at: { x: number; y: number };
+  /** Its screen rectangle; null while off screen. */
+  screen: DOMRect | null;
+}
+
+/**
+ * Where a drag in progress would land (PLAN Milestone 6, owner decisions, Preview: "the landing spot of every snap
+ * (pile, cascade, tuck) is shown as a ghost outline, and a tuck also shows a small attach glyph"). Added by M6-C; M6-P1.
+ */
+export interface DropPreview {
+  kind: 'squared' | 'cascade' | 'tuck';
+  /** The card the drop snaps to (the host of a tuck). */
+  target: InstanceId;
+  /** The ghost outline's pose. */
+  pose: Pose;
+}
+
+/** The clip part of the scene's debug parts (PLAN Milestone 6 acceptance: clips, carry and attach asserted through the hook). Added by M6-C; M6-P1. */
+export interface ClipDebugState {
+  clips: DebugClip[];
+  /** A press-and-hold in progress on an overlap: its progress 0..1 (the ring shows from CLIP.ringFromMs), else null. */
+  hold: { at: ScreenPoint; progress: number; cards: InstanceId[] } | null;
+  /** The group a drag in progress moves, else null. */
+  drag: DragGroup | null;
+  /** The snap the drag in progress would make, else null. */
+  preview: DropPreview | null;
 }
 
 /** A live table scene (DESIGN "Specification: code interfaces"; "Themes and rendering"). */
@@ -371,6 +432,16 @@ export interface TableScene {
   zoneAt(x: number, y: number): ZoneId | null;
   /** Take over a drag that started in the HUD (hand fan) at a screen point (DESIGN "Camera and navigation", Screen-anchored layer). */
   startDrag(card: InstanceId, x: number, y: number): void;
+  /**
+   * Take over a clip dragged out of the HUD's clip tray at a screen point (PLAN Milestone 6, owner decisions,
+   * Paperclips: "drag a clip from a clip tray button in the HUD toolbar onto an overlap"); dropped where two or more
+   * cards overlap it clips them, elsewhere it vanishes. Added by M6-C; implementer: M6-P1 (optional until it lands).
+   */
+  startClipDrag?(x: number, y: number): void;
+  /** Every card under a screen point, top first (the cards a clip there would pin). Added by M6-C; implementer: M6-P1. */
+  cardsAt?(x: number, y: number): InstanceId[];
+  /** The paperclip under a screen point, or null. Added by M6-C; implementer: M6-P1. */
+  clipAt?(x: number, y: number): ClipId | null;
   worldToScreen(p: TablePoint3): ScreenPoint | null;
   screenToTable(x: number, y: number): TablePoint | null;
   readonly debug: SceneDebugParts;

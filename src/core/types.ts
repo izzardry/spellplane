@@ -45,6 +45,8 @@ export type ShuffleId = string;
 export type PackId = string;
 /** A Scryfall card id (DESIGN "Specification: card data, packs and draft formats"). */
 export type ScryfallId = string;
+/** A paperclip's id (DESIGN "Card manipulation", Clip; PLAN Milestone 6, owner decisions, Paperclips). Added by M6-C; chosen by the dispatching client. */
+export type ClipId = string;
 
 // ---------------------------------------------------------------------------
 // Basics
@@ -192,6 +194,47 @@ export interface CardInstance {
   tokenLabel?: string;
   /** Set when a reveal did not match the owner's commitment (DESIGN "Specification: network protocol and secrecy"). */
   suspect?: boolean;
+  /**
+   * Added by M6-C. A table object that is not a card (DESIGN "Card manipulation", Other table objects: "a generic
+   * counter object for emblems, monarch, initiative or day/night … text sticky notes"); always with `isToken` and no
+   * identity. Absent for cards and tokens. Implementer: M6-P3.
+   */
+  object?: TableObjectKind;
+}
+
+/**
+ * The kinds of table object (DESIGN "Card manipulation", Other table objects). 'counter': a generic counter object
+ * named by `tokenLabel` (Emblem, Monarch, Initiative, Day/Night …) carrying ordinary `counters`. 'sticky': a text
+ * sticky note whose text is the card `note` (edited with N, logged like a note); its `tokenLabel` is 'Note'. Both are
+ * created with `createToken {label, object}` and leave the game with `remove`. Added by M6-C; implementer: M6-P3.
+ */
+export type TableObjectKind = 'counter' | 'sticky';
+
+/**
+ * Where a paperclip lies (PLAN Milestone 6, owner decisions, Paperclips: "a small paperclip object … lying over the
+ * overlap"): mm offset from the centre of `card`, in that card's stored frame (x along its width, y toward its top as
+ * `Pose.rot` turns it, before any tap turn), so the clip follows the card as the group moves. Added by M6-C.
+ */
+export interface ClipAnchor {
+  card: InstanceId;
+  x: number;
+  y: number;
+}
+
+/**
+ * A paperclip pinning the cards under one point into a rigid group (DESIGN "Card manipulation", Clip; PLAN Milestone
+ * 6, owner decisions, Paperclips): a public table object anyone may add or remove (logged, undoable). Rules (reducer:
+ * M6-P1): `cards` are two or more distinct battlefield cards (face-down included), sorted; the anchor card is one of
+ * them; a card that leaves the battlefield leaves every clip it is in (the anchor moves to another member at the same
+ * table point), and a clip left with fewer than `CLIP.minCards` cards disappears. A card may be in several clips:
+ * clips chain (core/clips.ts `clipGroup`). Added by M6-C.
+ */
+export interface Clip {
+  id: ClipId;
+  cards: InstanceId[];
+  anchor: ClipAnchor;
+  /** The seat that clipped it (log and hover). */
+  by: SeatId;
 }
 
 /** A public zone: everyone sees the members in order, bottom/back first (DESIGN "Table model"). For battlefields the order is draw order. */
@@ -282,6 +325,13 @@ export interface ConfirmRound {
    * from `startSeq`. Every client animates from the moment it applied that action; the sequencer's clock decides.
    */
   timerSeq?: number;
+  /**
+   * Added by M6-C. A consent round (PLAN Milestone 6, owner decisions: '"New draft?" needs consent. It passes only when
+   * every player answered yes; silence never wipes pools'): it has no pass timer (no `timeout` is ever emitted), a
+   * hold counts as no, and it passes only when every other participating seat answered 'ok' (core/stage.ts
+   * `consentGiven`). Set by `ask {consent: true}`. Implementer: M6-P4.
+   */
+  consent?: true;
 }
 
 /** A seat's deck commitment published on Ready (DESIGN "Specification: network protocol and secrecy", Commitments). */
@@ -295,7 +345,11 @@ export interface Commitment {
   atSeq: number;
 }
 
-/** Purpose of a public-randomness round (DESIGN "Specification: network protocol and secrecy", Public randomness). */
+/**
+ * Purpose of a public-randomness round (DESIGN "Specification: network protocol and secrecy", Public randomness). A
+ * die round's `n` is its number of sides (DESIGN "Card manipulation", Other table objects: "Dice (any size)"; core/objects.ts
+ * DIE_SIDES lists the offered sizes); 'firstPlayer' and 'seatShuffle' rounds take effect through `rngApply` (M6-C).
+ */
 export type RngPurpose = 'die' | 'coin' | 'firstPlayer' | 'seatShuffle';
 
 /** A public-randomness round in progress or finished (DESIGN "Specification: network protocol and secrecy", Public randomness). */
@@ -358,6 +412,12 @@ export interface TableState {
   /** Bottom to top. */
   stack: StackItem[];
   lines: Record<LineId, Line>;
+  /**
+   * Added by M6-C. Paperclips by id (DESIGN "Card manipulation", Clip; PLAN Milestone 6, owner decisions, Paperclips).
+   * Absent (never `{}` kept around: the reducer deletes the key when the last clip goes) means none, so tables saved
+   * before M6 hash as before. Implementer: M6-P1.
+   */
+  clips?: Record<ClipId, Clip>;
   turn: TurnState;
   confirm: ConfirmRound | null;
   commitments: Record<SeatId, Commitment>;

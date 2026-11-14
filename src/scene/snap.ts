@@ -6,6 +6,9 @@
  *   2. Centre within 12 mm of another card's centre: join or create a squared pile.
  *   3. Top edge within the lower third of another card and horizontally overlapping by at least half:
  *      join or create a cascade below it (offset 14 mm toward the owner).
+ *   3a. Bottom edge within the upper third of another card and horizontally overlapping by at least half: tuck behind
+ *      it at the attachment tuck offset and attach to it (PLAN Milestone 6, owner decisions, Tuck; core/geometry.ts
+ *      TUCK_RULE). Contract added by M6-C; M6-P1 applies it in resolveDrop.
  *   4. Any edge within 12 mm of a neighbour's edge plus the 6 mm gap: align to it.
  *   5. Otherwise the free position, clamped to the table.
  * Holding Ctrl skips rules 2 to 4.
@@ -24,11 +27,17 @@ export interface SnapCard {
   frameDeg: number;
 }
 
-/** A rule-1 drop target: a zone pile footprint, the stack lane or an avatar disc. */
+/** A rule-1 drop target: a zone pile footprint, the stack lane, an avatar disc, or an area zone (the command zone). */
 export interface ZoneTarget {
   zone: ZoneId;
   rect?: Rect;
   circle?: { x: number; y: number; r: number };
+  /**
+   * An area zone (DESIGN "Table model": Command / emblem area, "Small area beside the avatar"; GAPS 2: nothing can be
+   * put into it): a drop on `rect` moves the card into the zone and keeps its free pose there, clamped to the area
+   * (DropResult rule 1 `pose`). Added by M6-C; M6-P3 lists the command zones in scene/layout.ts dropTargets.
+   */
+  area?: true;
 }
 
 /** An axis-aligned box relative to the grabbed card's centre, canonical frame (the whole dragged group). */
@@ -61,9 +70,12 @@ export interface DropContext {
 }
 
 export type DropResult =
-  | { rule: 1; kind: 'zone'; zone: ZoneId }
+  /** `pose` (added by M6-C) is set for an area target (ZoneTarget.area): where the card lies in that zone. */
+  | { rule: 1; kind: 'zone'; zone: ZoneId; pose?: Pose }
   | { rule: 2; kind: 'squared'; pose: Pose; onto: InstanceId; pile: PileRef | null }
   | { rule: 3; kind: 'cascade'; pose: Pose; below: InstanceId; pile: PileRef | null }
+  /** Rule 3a (added by M6-C; M6-P1): tuck behind `host` at the `k`-th attachment slot (core/reducer tuckPose) and attach to it. */
+  | { rule: '3a'; kind: 'tuck'; pose: Pose; host: InstanceId }
   | { rule: 4; kind: 'align'; pose: Pose; to: InstanceId }
   | { rule: 5; kind: 'free'; pose: Pose };
 

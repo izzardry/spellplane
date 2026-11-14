@@ -15,9 +15,10 @@ import type { Channel, Message } from './transport';
 /**
  * Protocol version in every envelope; peers with another `v` are refused with a visible notice (DESIGN "Specification:
  * network protocol and secrecy"; net/version.ts). 1: M0-M4. 2: M5 (the `auditPublish` action, which a version-1
- * reducer refuses; M5-P6 bumped it, decision M5-C).
+ * reducer refuses; M5-P6 bumped it, decision M5-C). 3: M6 (`clipAdd`, `clipRemove`, `lineLabel`, `rngApply`, the
+ * consent round and table objects, which a version-2 reducer refuses; decision M6-C).
  */
-export const PROTOCOL_VERSION = 2 as const;
+export const PROTOCOL_VERSION = 3 as const;
 
 /**
  * Trystero app id; the room key is the password that encrypts signalling (DESIGN "Specification: network protocol and

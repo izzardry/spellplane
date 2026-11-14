@@ -289,6 +289,57 @@ Tablet touch, the post-game audit, offline tolerance and accessibility, plus fix
   - M5-P5 forms Two-Headed Giant teams by chair when a room is created as Two-Headed Giant without passing through the lobby (M3 gate).
 - **Still open, for the owner playtest:** line styles per theme (Stonetable runes, Wyrm's flowing glow, dash patterns under glow), and "New draft?" passing on silence (M2 gate).
 
+## Milestone 6: Design gaps, attach and clips
+
+M6 closes the gaps between DESIGN and the build found by the post-M5 design audit (`docs/gates/GAPS.md`) and adds the owner's attach, paperclip and hold-to-talk ideas. Nothing here changes the hard rules.
+
+| Package | Scope | Main files | Depends on |
+| --- | --- | --- | --- |
+| M6-P1 Attach, carry and clips | Tuck-behind attach by drop, solitaire carry for cascades and attachments, paperclips (create, show, carry, remove) by mouse, touch and keyboard; attachments travel with attacks and Settle | `scene/snap.ts`, `scene/clips.ts`, `core/reducer/cards.ts`, `core/reducer/clips.ts` | M5 |
+| M6-P2 Voice and chat gaps | Hold-to-talk option, typing indicator, spectator chat tab | `ui/voice/*`, `ui/chat/*`, `scene/presence.ts` | M5 |
+| M6-P3 Table objects | Command zone reachable, counter objects and sticky notes, dice of any size, selection summary, line labels, desktop Settle button, counter log merging, team-hand toggle, seat shuffle and random first player | `ui/*`, `games/mtg/*`, `core/reducer/*` | M5 |
+| M6-P4 Integrity and connectivity | Visible suspect cards, BitTorrent as a second signalling strategy, pack records in the audit for every format, explicit "New draft?" consent, an away drafter no longer freezing a timed draft where secrecy allows | `net/*`, `core/audit.ts`, `draft/*`, `session/*` | M5 |
+| M6-P5 Constructed decks | Printing chooser per card, a standalone deck builder with search, Commander and Companion sections kept | `ui/builder/*`, `ui/DeckImport.svelte`, `data/*` | M5 |
+| M6-P6 Every action, every route | Temporary moves and marks by touch; lines, marks, temporary moves, attach and clips from the keyboard; the pass timer during a game | `scene/table-scene.ts`, `ui/a11y/*`, `ui/touch/*`, `ui/Hud.svelte` | M5 |
+| M6-P7 Lines and stack visuals | Line styles per theme (ribbons, animation, ornaments, Paper's pulse), seat lines that do not rely on hue in lit themes, stack lane overflow, ability items in the far-zoom badge | `scene/lines.ts`, `themes/*`, `scene/stack*.ts` | M5 |
+
+**Ownership within M6** *(M6-C)*: the shared shapes are `Clip`, `ClipAnchor`, `TableState.clips`, `TableObjectKind` and `CardInstance.object`, `ConfirmRound.consent` (core/types.ts); the actions `clipAdd`, `clipRemove`, `lineLabel`, `rngApply`, `createToken.object`, `ask.consent` and `RestorePatch.clips` (core/actions.ts); `CLIP` and `TUCK_RULE` (core/geometry.ts); core/clips.ts (`clipsOf`, `clipGroup`, `DragGroup`, `carryGroup`); core/objects.ts (`DIE_SIDES`, `seatPermutation`, `firstPlayerOf`, `LINE_LABEL_MAX`); `consentGiven` (core/stage.ts); `PublishedPackRecord`, `AuditBundle.packs` and the 'pack' mismatch (core/audit.ts); the snap rule 3a (`DropResult` 'tuck') and area targets (`ZoneTarget.area`) in scene/snap.ts; `SceneEvents.pressHold` and `clipMenu`, `HOLD_PRESS_TALK_MS`, `TableScene.startClipDrag`, `cardsAt`, `clipAt` and the clip debug shapes (scene/types.ts, debug part `clips`); `TalkInputs.pressHeld` and `VoiceControls.pressHeld`; `Settings.talkWhileHolding` and `dieSides`; `DeckRecord.commander` and `companion`, `DeckEntry.sid`, `CardDataSource.printings`; `SIGNALLING_STRATEGIES` and `TrysteroOptions.strategies`; the eleven new keymap actions with their default keys and `TableObjectPreset` (games/types.ts, games/mtg/keymap.ts, games/mtg/objects.ts); `LineStyle.glowDash`; `PROTOCOL_VERSION` 3. Stubs refuse with `not implemented: <package>`; new keymap actions have pending scenarios in tests/unit/ui/keymap-actions.test.ts and tests/e2e/ui/keymap.spec.ts that their package replaces.
+- **M6-P1 Attach, carry and clips** owns core/reducer/clips.ts and the `clipAdd`/`clipRemove` cases, clips leaving with cards (core/reducer/cards.ts, zones.ts), the clip and attach restore steps in core/undo.ts and core/reducer/restore.ts, `carryGroup`, rule 3a in scene/snap.ts, scene/clips.ts, the drag, hold, tray and preview paths in scene/table-scene.ts, the `clips` debug part, and the keymap actions `attach` and `clip` (clips are public table objects: no hidden information).
+- **M6-P2 Voice and chat gaps** owns `SceneEvents.pressHold` in the scene's press paths, `VoiceControls.pressHeld` (voice/*), the Voice setting in ui/settings/*, the typing indicator and the spectator chat tab (ui/chat/*, scene/presence.ts).
+- **M6-P3 Table objects** owns the `lineLabel` and `rngApply` cases, table objects (`createToken.object`), the command-zone drop target (scene/layout.ts dropTargets), dice sizes, the selection summary display (core/selectors.ts `selectionSummary` exists), the desktop Settle button, counter log merging, the team-hand toggle (the existing `settings` action), the keymap actions `hide`, `toCommand`, `exileFaceDown`, `stickyNote`, `counterObject`, and the leak scenarios of `hide` and face-down exile.
+- **M6-P4 Integrity and connectivity** owns visible suspect cards, the 'torrent' strategy (net/trystero.ts), `AuditBundle.packs` with its leak scenario and shape check, `consentGiven` and the consent round in core/reducer/confirm.ts and core/stage.ts, and the away drafter.
+- **M6-P5 Constructed decks** owns `DeckEntry.sid`, `CardDataSource.printings`, `DeckRecord.commander`/`companion` and ui/builder/*, ui/DeckImport.svelte.
+- **M6-P6 Every action, every route** owns the keymap actions `place`, `tempMove`, `line`, `mark`, touch temporary moves and marks (ui/touch/*), and the in-game pass timer (the existing `settings` action) in ui/Hud.svelte.
+- **M6-P7 Lines and stack visuals** owns `LineStyle.glowDash` and the line styles in themes/*, scene/lines.ts, scene/stack*.ts.
+- **Shared files.** `ui/Hud.svelte`, `ui/commands.ts`, `scene/table-scene.ts` and `main.ts` are touched by several packages: each changes only its own lines. The contract files are M6-C's; a package that needs a change there reports it.
+
+**Owner decisions for M6 (14 Nov 2026).** Binding; where they differ from DESIGN they take precedence, and DESIGN is updated to match.
+
+- **Attach by overlap, like solitaire.** Cards attach by overlapping, and moving the card underneath drags along the cards on it. Concretely:
+  - **Carry rule.** Dragging a card carries every card riding on it: the cards cascaded on top of it (solitaire: dragging a card in a cascade takes it and the cards below it in the cascade; the bottom card still takes the whole pile) and every card attached to it, recursively. A card dragged on its own leaves its pile or its host; leaving a host is a detach and is logged.
+  - **Tuck (attach).** New drop rule, symmetric to the cascade rule: when the dragged card's bottom edge lies within the upper third of another card and they overlap horizontally by at least half, the dragged card tucks behind that card (the host) at the tuck offset (10 sideways, 10 up), peeking out above the host's title bar, and is attached to it (`attach`). Further attachments fan behind the previous one by the same offset. The host's face stays fully visible. Holding Ctrl skips it, as for the other snap rules.
+  - **Preview.** While dragging, the landing spot of every snap (pile, cascade, tuck) is shown as a ghost outline, and a tuck also shows a small attach glyph, so the player knows before releasing.
+  - **Combat and Settle.** Attachments travel with their host on attack and block moves and come back with it on Settle.
+- **Paperclips.** A clip pins together all cards lying under one point, so that dragging any of them moves the whole clipped group rigidly. It stays until the clip is removed.
+  - **Look.** A small paperclip object (about 12 × 32 mm) lying over the overlap, drawn in each theme's own material (Paper: a line drawing; lit themes: metal). It is an object on top of the cards, like a counter badge; it never tints, crops or distorts a face. Hovering a clip outlines the clipped cards.
+  - **Creating a clip.**
+    - Mouse: press and hold the left button without moving for 600 ms where two or more cards overlap; a ring fills from 200 ms on, and the clip snaps on with a short sound.
+    - Mouse and touch: drag a clip from a clip tray button in the HUD toolbar onto an overlap.
+    - Touch also: the radial menu's full menu (centre button) offers "Clip here" when the long-press point covers two or more cards.
+    - Keyboard: a "Clip" action (default key chosen by M6-P1 from the free keys, remappable) clips the selection together, or the focused card with the cards it overlaps; the context menu offers "Clip together" for a selection.
+  - **Removing a clip.** Double-click (double-tap) the clip, or drag it off the cards and drop it on empty table, or its context menu (right-click, long-press) "Remove clip", or the Clip key on a clipped card.
+  - **Rules.** Clips are public table objects anyone may add or remove (logged). Only battlefield cards can be clipped (face-down included). A card that leaves the battlefield leaves its clip; a clip with fewer than two cards disappears. Clips may chain: the dragged set is the connected group of clipped cards plus everything riding on them. Tapping, flipping and counters stay per card. Adding and removing a clip are undoable. A dragged group is one gesture, undone as one step.
+- **Hold-to-talk.** A setting "Talk while I hold or drag" (Voice section, off by default). When on, at a table with voice, any press of a mouse button or a finger on the table held longer than 200 ms (card drags, line drags, box selection, camera drags, holding to clip) opens the mic as push-to-talk until release; quick clicks and taps never do. Dictation captions attach to the dragged card as usual.
+- **"New draft?" needs consent.** It passes only when every player answered yes; silence never wipes pools (closes the M2 open question).
+
+**Acceptance tests.**
+- **Attach and carry:** drop a card on another's upper third and it tucks and attaches; dragging the host carries it; dragging it out detaches it. Dragging a middle cascade card carries the cards below it. An attacking creature takes its attachments, and Settle brings them back.
+- **Clips:** clips created by hold, by tray drag, by touch menu and by key; dragging any clipped card moves the group; double-click and drag-off removal; a clipped card going to the graveyard leaves the clip; undo restores clips.
+- **Hold-to-talk:** with the option on, a held drag talks (Chromium fake media) and a click does not.
+- **Every DESIGN gap marked for M6 in `docs/gates/GAPS.md`:** has a test.
+
+**Gate M6-G:** an M1-style two-player game, mouse on one page and touch on the other. It includes Auras and Equipment attached by tuck and carried through an attack and Settle, a clipped group moved by each of its cards and unclipped, the command zone with an emblem, a d20 and a sticky note, a constructed deck built from search with chosen printings and a Companion, a public reveal that fails its commitment (shown to both), and hold-to-talk. Plus gates M0–M5 stay green. **Owner playtest:** attach and clips in a real game.
+
 ## Quality gates
 
 Four layers of checking stand between an agent's code and the owner's playtest, each catching what the one before cannot.
@@ -499,3 +550,12 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M5-P6 Hardening
 - [x] M5-P7 Table and voice decisions
 - [x] M5-G Gate (owner playtest pending)
+- [ ] M6-C Contracts
+- [ ] M6-P1 Attach, carry and clips
+- [ ] M6-P2 Voice and chat gaps
+- [ ] M6-P3 Table objects
+- [ ] M6-P4 Integrity and connectivity
+- [ ] M6-P5 Constructed decks
+- [ ] M6-P6 Every action, every route
+- [ ] M6-P7 Lines and stack visuals
+- [ ] M6-G Gate and owner playtest

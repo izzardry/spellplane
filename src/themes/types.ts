@@ -184,6 +184,13 @@ export interface LineStyle {
   animation?: 'none' | 'flow' | 'flicker' | 'pulse';
   /** v2 (M4-C): ornament drawn along a ribbon (Wyrm embers, Stonetable runes); absent means 'plain'. */
   ornament?: 'plain' | 'embers' | 'runes';
+  /**
+   * Added by M6-C: whether the glow follows the dash pattern ('masked': gaps stay dark, so the seat's dash shape reads
+   * without its hue) or runs along the whole line ('continuous'); absent means 'continuous' (DESIGN "Input and
+   * interaction design", Accessibility: "Seat colours are paired with a shape or pattern (line dash …), so nothing
+   * depends on hue alone"; GAPS 20). Implementer: M6-P7 (lit themes set 'masked').
+   */
+  glowDash?: 'masked' | 'continuous';
 }
 
 /** A procedural sound (DESIGN "Themes and rendering", Sound). */

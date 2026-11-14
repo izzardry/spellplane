@@ -32,6 +32,8 @@ interface Scenario {
   seats?: string[];
   hold?: { during: Check; after: Check };
   check?: Check;
+  /** The package that implements this keymap action (added by M6-C with its default key); skipped until it lands. */
+  pending?: string;
 }
 
 const S: Record<ActionId, Scenario> = {
@@ -71,6 +73,18 @@ const S: Record<ActionId, Scenario> = {
   },
   ping: { hover: 'bf1', check: expectDraft({ type: 'ping', target: { kind: 'card', id: 'bf1' } }) },
   zoomTo: { hover: 'bf1', check: expectScene('camera.zoomTo', ['bf1']) },
+  // M6-C: keyboard routes whose packages implement them (PLAN Milestone 6).
+  place: { pending: 'M6-P6' },
+  attach: { pending: 'M6-P1' },
+  clip: { pending: 'M6-P1' },
+  hide: { pending: 'M6-P3' },
+  toCommand: { pending: 'M6-P3' },
+  exileFaceDown: { pending: 'M6-P3' },
+  tempMove: { pending: 'M6-P6' },
+  line: { pending: 'M6-P6' },
+  mark: { pending: 'M6-P6' },
+  stickyNote: { pending: 'M6-P3' },
+  counterObject: { pending: 'M6-P3' },
   inspect: {
     hover: 'dfc',
     hold: {
@@ -165,6 +179,7 @@ test.describe('canonical keymap in the browser (PLAN M0-P4)', () => {
   for (const b of MTG_KEYMAP) {
     test(`${chordToString(b.chord)} → ${b.action}${b.context === 'prompt' ? ' (prompt)' : ''}`, async ({ page }) => {
       const sc = S[b.action];
+      test.skip(!!sc.pending, `implemented by ${sc.pending ?? ''}`);
       const errors: string[] = [];
       page.on('pageerror', (e) => errors.push(e.message));
       await openHud(page, sc.seats ? { seats: sc.seats } : {});

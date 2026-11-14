@@ -8,7 +8,7 @@ import type { DeckBuild, InstanceId, Line, Pose, SecretStore, TableState } from 
 import type { DraftPrivateView } from '../draft/types';
 import type { PeerId } from '../net/transport';
 import type { ConnectionStatus, NetMessageRecord, PeerInfo } from '../net/types';
-import type { DebugCaption, RenderDebug, RigDebug, StackBadgeState, Vec3 } from '../scene/types';
+import type { ClipDebugState, DebugCaption, RenderDebug, RigDebug, StackBadgeState, Vec3 } from '../scene/types';
 import type { TouchGesture } from '../scene/input/touch';
 import type { AuditBundle, AuditVerdict } from '../core/audit';
 import type { StorageStatus } from '../store/quota';
@@ -61,6 +61,8 @@ export interface DraftDebug {
  */
 export interface VoiceDebug {
   talk(): TalkState;
+  /** Added by M6-C: a held table press is talking ("Talk while I hold or drag"; M6-P2). Optional until M6-P2 registers it. */
+  pressHeld?(): boolean;
   indicator(): TalkIndicatorState;
   /** Outgoing track state per connection. */
   tracks(): VoiceTrackState[];
@@ -173,6 +175,8 @@ export interface SpellplaneDebug {
   a11y: A11yDebug;
   /** Added by M5-C: the far-zoom stack badge (registered by the table scene; M5-P7). */
   stackBadge(): StackBadgeState;
+  /** Added by M6-C: paperclips, the hold ring, the drag group and the drop preview (registered by the table scene; M6-P1). */
+  clips(): ClipDebugState;
 }
 
 // Types registerDebug (util/debug.ts) against SpellplaneDebug without util/ importing debug/.

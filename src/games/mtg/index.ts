@@ -9,6 +9,7 @@ import { MTG_CARD_BACK } from './cardBack';
 import { mtgDefaultDestination } from './destination';
 import { MTG_KEYMAP } from './keymap';
 import { mtgLayout } from './layout';
+import { MTG_TABLE_OBJECTS } from './objects';
 import { MTG_PHASES, MTG_ZONES } from './zones';
 
 export { MTG_KEYMAP, chordToString } from './keymap';
@@ -16,6 +17,7 @@ export { MTG_CARD_BACK, drawCardBack } from './cardBack';
 export { MTG_LAYOUT, PROVISIONAL_FORMATS, isProvisionalLayout, mtgLayout, soloLayout } from './layout';
 export { MTG_PHASES, MTG_ZONES } from './zones';
 export { mtgDefaultDestination } from './destination';
+export { MTG_TABLE_OBJECTS } from './objects';
 
 /** Starting life: 20 each, or 30 per team in Two-Headed Giant (DESIGN "Players, seats and formats"). */
 export function mtgStartingLife(format: Format): number {
@@ -32,4 +34,5 @@ export const mtg: GameDefinition = {
   cardBack: MTG_CARD_BACK,
   defaultDestination: mtgDefaultDestination,
   keymap: MTG_KEYMAP,
+  tableObjects: MTG_TABLE_OBJECTS,
 };

@@ -53,6 +53,12 @@ type Handler<T extends ActionType> = (d: Draft, a: ActionOf<T>) => void;
 /** Public record only: valid when its references exist, no change to shared state. */
 const record = (): void => undefined;
 
+/** A contract stub: the action is refused, naming the package that implements its reducer case (M6-C). */
+const pending =
+  (pkg: string) =>
+  (): void =>
+    reject(`not implemented: ${pkg}`);
+
 const HANDLERS: { [T in ActionType]: Handler<T> } = {
   move: cards.move,
   moveTemp: temp.moveTemp,
@@ -122,6 +128,12 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   recoverCommit: recovery.recoverCommit,
   // M5-P2: a record of a game that has ended, in the published shape only (audit.ts; verdicts: core/audit.ts).
   auditPublish: audit.auditPublish,
+  // Added by M6-C; refused until their packages land: clips (M6-P1, core/reducer/clips.ts), line labels and applying a
+  // seat-shuffle or first-player round (M6-P3).
+  clipAdd: pending('M6-P1'),
+  clipRemove: pending('M6-P1'),
+  lineLabel: pending('M6-P3'),
+  rngApply: pending('M6-P3'),
 };
 
 /**

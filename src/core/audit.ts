@@ -26,7 +26,8 @@ import { zoneId } from './ids';
 import { bundleShapeProblem } from './reducer/audit';
 import { reduce } from './reducer/index';
 import { orderHash, shuffleOutcome, shufflePeerNonces, shuffleSeed } from './rng';
-import type { AuditRecord, InstanceId, ReorderRecord, SecretStore, SeatId, ShuffleId, ShuffleRecord, TableState, ZoneId } from './types';
+import type { RevealedCard } from './commit';
+import type { AuditRecord, InstanceId, PackId, ReorderRecord, SecretStore, SeatId, SetCode, ShuffleId, ShuffleRecord, TableState, ZoneId } from './types';
 
 /** The span of one finished game in the shared log (DESIGN "Multiplayer architecture", Audit: "at game end"). Added by M5-C. */
 export interface AuditGame {
@@ -68,6 +69,24 @@ export interface PublishedReorder {
   reissue?: PublishedReissue;
 }
 
+/**
+ * A generated draft pack's record as published for the audit (DESIGN "Specification: card data, packs and draft
+ * formats", Pack generation: the pack is generated from the secret-shuffle seed of round `sid` (purpose 'pack') and the
+ * set's booster data, so peers regenerate it and check each card against the `packOpen` commitments): core/types.ts
+ * PackRecord with the cards' salts, so every commitment can be checked. Added by M6-C; implementer: M6-P4.
+ */
+export interface PublishedPackRecord {
+  kind: 'pack';
+  packId: PackId;
+  sid: ShuffleId;
+  ownerNonce: string;
+  /** Peer nonces in seat order, as the opener folded them into the seed. */
+  peerNonces: string[];
+  set: SetCode;
+  /** The generated cards in pack order, with instance ids and salts (identities: published only once no longer secret). */
+  cards: RevealedCard[];
+}
+
 /** One published audit record (DESIGN "Multiplayer architecture", Audit: "nonces and order history"). Added by M5-C. */
 export type PublishedAuditRecord = PublishedShuffle | PublishedReorder;
 
@@ -81,6 +100,14 @@ export interface AuditBundle {
   game: AuditGame;
   /** The seat's shuffle and reorder records of this game, in the order they were made. */
   records: PublishedAuditRecord[];
+  /**
+   * Added by M6-C. The draft packs this seat generated (DESIGN "Specification: card data, packs and draft formats", Pack
+   * generation: "reproducible in the audit"; GAPS 12), in the bundle of the first game published after the draft's
+   * pools stopped being secret. Their cards are identities, so M6-P4 decides when that is (never while any pool from
+   * that draft may still be played hidden), adds the scenario to the shared leak test and widens the bundle's shape
+   * check; until then a bundle carrying `packs` is refused as malformed (core/reducer/audit.ts).
+   */
+  packs?: PublishedPackRecord[];
   /**
    * Set when this browser knows some records of the game are gone (local save lost and restored through the recovery
    * path, PLAN M5 owner decisions: "storage lost"). The records it still has are checked; the rest are unverifiable.
@@ -108,7 +135,9 @@ export type AuditMismatchKind =
   /** A public shuffle or reorder of the seat has no record although the bundle claims to be complete. */
   | 'unrecorded'
   /** The bundle is not well formed or names another seat or game. */
-  | 'malformed';
+  | 'malformed'
+  /** Added by M6-C (M6-P4): a published pack does not regenerate from its seed, or a card does not match its `packOpen` commitment. */
+  | 'pack';
 
 /** One disagreement between a seat's records and the public log (PLAN M5-P2: "show … any mismatch"). Added by M5-C. */
 export interface AuditMismatch {

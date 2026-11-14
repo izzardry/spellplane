@@ -25,6 +25,17 @@ export const SYNC_TAIL_LIMIT = 500;
 /** Presence (cursor, drag) is sent at most this often per sender; the last value always goes out (DESIGN "Multiplayer architecture": presence on the unreliable channel). Decision M1-C. */
 export const PRESENCE_INTERVAL_MS = 50;
 
+/**
+ * Signalling strategies a networked table tries, in order (DESIGN "Multiplayer architecture": "Peers discover each
+ * other with Trystero over public Nostr relays, with BitTorrent trackers as a second strategy"; "Technology stack").
+ * Added by M6-C; M6-P4 joins the room with each (net/trystero.ts `TrysteroOptions.strategies`) and tests them only with
+ * stubbed relays and trackers, never the network.
+ */
+export const SIGNALLING_STRATEGIES = ['nostr', 'torrent'] as const;
+
+/** One signalling strategy (DESIGN "Multiplayer architecture"; SIGNALLING_STRATEGIES). Added by M6-C. */
+export type SignallingStrategy = (typeof SIGNALLING_STRATEGIES)[number];
+
 /** Removes a listener (DESIGN "Specification: code interfaces"). */
 export type Unsubscribe = () => void;
 

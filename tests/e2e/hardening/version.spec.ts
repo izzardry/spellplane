@@ -7,6 +7,10 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { freshProfile, freshRoom, open, openTable } from '../lobby/helpers';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
+
+/** A newer protocol than this page's (M6-C: the bump to 3 moved "newer" from 3 to 4). */
+const NEWER = PROTOCOL_VERSION + 1;
 
 /** Start a page of protocol `v` in `page` (any page of the app's origin): it lives as long as that page does. */
 async function otherVersion(page: Page, roomId: string, v: number, nickname: string): Promise<void> {
@@ -40,11 +44,11 @@ test.describe('protocol version mismatch (M5-P6)', () => {
     await otherVersion(page, room.roomId, 1, 'Old Ben');
     const notice = page.getByTestId('version-mismatch');
     await expect(notice).toBeVisible({ timeout: 15_000 });
-    await expect(notice).toHaveAttribute('data-mine', '2');
+    await expect(notice).toHaveAttribute('data-mine', String(PROTOCOL_VERSION));
     await expect(notice).toHaveAttribute('data-theirs', '1');
     await expect(notice).toHaveAttribute('data-advice', 'waitForTable');
     await expect(notice).toContainText('Old Ben runs Spellplane protocol version 1');
-    await expect(notice).toContainText('this page runs protocol version 2');
+    await expect(notice).toContainText(`this page runs protocol version ${PROTOCOL_VERSION}`);
     await expect(notice).toContainText('wait for the table to update');
     // The lobby says why nobody joined, never a silent wait.
     await expect(page.getByTestId('connectivity-problem')).toContainText('different version of Spellplane');
@@ -56,12 +60,12 @@ test.describe('protocol version mismatch (M5-P6)', () => {
   test('a page that meets a newer one is told to reload after the game', async ({ page }, info) => {
     const room = freshRoom();
     await openTable(page, room, freshProfile(info, 'anna'));
-    await otherVersion(page, room.roomId, 3, 'Ben');
+    await otherVersion(page, room.roomId, NEWER, 'Ben');
     const notice = page.getByTestId('version-mismatch');
     await expect(notice).toBeVisible({ timeout: 15_000 });
     await expect(notice).toHaveAttribute('data-advice', 'reloadAfterGame');
-    await expect(notice).toContainText('version 3');
-    await expect(notice).toContainText('version 2');
+    await expect(notice).toContainText(`version ${NEWER}`);
+    await expect(notice).toContainText(`version ${PROTOCOL_VERSION}`);
     await expect(notice).toContainText('reload it after the game');
   });
 
@@ -77,7 +81,7 @@ test.describe('protocol version mismatch (M5-P6)', () => {
     const error = joiner.getByTestId('room-error');
     await expect(error).toBeVisible({ timeout: 20_000 });
     await expect(error).toContainText('Anna runs Spellplane protocol version 1');
-    await expect(error).toContainText('protocol version 2');
+    await expect(error).toContainText(`protocol version ${PROTOCOL_VERSION}`);
     await expect(error).toContainText('wait for the table to update');
     await expect(joiner.getByTestId('lobby')).toHaveCount(0);
     await context.close();
