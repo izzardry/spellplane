@@ -61,6 +61,13 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     const passed = (await page.getByTestId('a11y-mirror').getAttribute('data-focus-text'))!;
     expect(passed).toMatch(/\. Your battlefield, \d of \d$/);
     await expect.poll(async () => (await announcements(page)).includes(passed)).toBe(true);
+    // The log line of the move (what happened to the old card) is spoken before the new focus, not after it.
+    await expect
+      .poll(async () => {
+        const said = await announcements(page);
+        return said.slice(0, said.lastIndexOf(passed)).some((t) => /graveyard/i.test(t));
+      })
+      .toBe(true);
 
     // Escape leaves the focus; the scene stops drawing the ring.
     await page.keyboard.press('Escape');
@@ -206,6 +213,48 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     // The table keys still act on the focused card afterwards.
     await page.keyboard.press('KeyT');
     await expect.poll(async () => (await drafts(page)).at(-1)).toEqual({ type: 'tap', card: 'bf1', tapped: true });
+  });
+
+  test('a keyboard-opened menu stands beside the hand card, not beside a log line that names the same card', async ({ page }) => {
+    await openHud(page);
+    await hoverNothing(page);
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await expect.poll(() => focus(page)).toEqual({ zone: 'battlefield:s0', card: 'bf1' });
+    // H returns it to the hand: the log now has a line naming it, earlier in the DOM than the hand fan.
+    await page.keyboard.press('KeyH');
+    await expect.poll(async () => (await ui<{ cards: Record<string, { zone: string }> }>(page, 'state')).cards.bf1?.zone).toBe('hand:s0');
+    const logCard = page.locator('[data-testid="log"] [data-card="bf1"]').first();
+    await expect(logCard).toBeVisible();
+    await page.keyboard.press('ArrowUp');
+    await expect.poll(async () => (await focus(page))?.zone).toBe('hand:s0');
+    for (let i = 0; i < 10 && (await focus(page))?.card !== 'bf1'; i++) await page.keyboard.press('ArrowRight');
+    await expect.poll(() => focus(page)).toEqual({ zone: 'hand:s0', card: 'bf1' });
+    await page.keyboard.press('ContextMenu');
+    const menu = page.getByTestId('context-menu');
+    await expect(menu).toBeVisible();
+    const m = (await menu.boundingBox())!;
+    const hand = (await page.locator('[data-testid="hand-card"][data-card="bf1"]').boundingBox())!;
+    const log = (await logCard.boundingBox())!;
+    expect(Math.abs(m.x - (hand.x + hand.width))).toBeLessThan(Math.abs(m.x - (log.x + log.width)));
+    await page.keyboard.press('Escape');
+  });
+
+  test('arrows and Page keys leave the table focus alone while the cheat sheet is open or the log lines scroll', async ({ page }) => {
+    await openHud(page);
+    await hoverNothing(page);
+    await page.getByTestId('open-cheat-sheet').click();
+    await expect(page.getByTestId('cheat-sheet')).toBeVisible();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('PageDown');
+    expect(await focus(page)).toBeNull();
+    await page.keyboard.press('Escape');
+    await expect(page.getByTestId('cheat-sheet')).toHaveCount(0);
+    // A key pressed in the log lines (a scroller Chromium lets the keyboard focus) scrolls them instead.
+    for (const key of ['PageDown', 'ArrowDown']) await page.getByTestId('log-lines').dispatchEvent('keydown', { key, code: key, bubbles: true, cancelable: true });
+    expect(await focus(page)).toBeNull();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => focus(page)).toEqual({ zone: 'hand:s0', card: 'h1' });
   });
 
   // Tab is the "next phase" key, so the mirror is reached with the arrow keys or by a screen reader moving its focus there

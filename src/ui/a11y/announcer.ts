@@ -69,6 +69,15 @@ export class AnnounceQueue implements LiveAnnouncer {
     if (t) this.emit(t, 'polite');
   }
 
+  /**
+   * A focus passed on because its card left (the table changed, not a key press): the log lines waiting in the batch,
+   * which say what happened to the old card, are spoken first, then the new focus.
+   */
+  focusAfterLog(text: string): void {
+    this.flush();
+    this.focus(text);
+  }
+
   /** Speak what waits now. */
   flush(): void {
     if (this.timer !== null) this.timers.clear(this.timer);

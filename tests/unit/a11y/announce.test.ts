@@ -70,6 +70,18 @@ describe('AnnounceQueue (the page live region)', () => {
     ]);
   });
 
+  it('a passed-on focus is spoken after the log lines waiting in the batch, not before them', () => {
+    const { q, out, advance } = harness();
+    q.announce('Anna casts Shock');
+    q.focusAfterLog('Forest. Your hand, 1 of 6');
+    expect(out.map((o) => o.text)).toEqual(['Anna casts Shock', 'Forest. Your hand, 1 of 6']);
+    advance(ANNOUNCE.batchMs);
+    expect(out).toHaveLength(2);
+    // With nothing waiting it is spoken at once.
+    q.focusAfterLog('Plains. Your hand, 1 of 5');
+    expect(out.at(-1)).toEqual({ text: 'Plains. Your hand, 1 of 5', politeness: 'polite' });
+  });
+
   it('ignores empty text and keeps the last ANNOUNCE_HISTORY_MAX announcements for the debug hook', () => {
     const { q, advance } = harness();
     q.announce('   ');

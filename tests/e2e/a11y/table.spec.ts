@@ -46,7 +46,9 @@ test.describe('the focus ring on the table (PLAN M5-P4)', () => {
         const box = (await ring.locator('polygon').last().boundingBox())!;
         const host = (await page.getByTestId('scene-host').boundingBox())!;
         const r = { x: box.x - host.x, y: box.y - host.y, w: box.width, h: box.height };
-        return r.x <= card.x && r.y <= card.y && r.x + r.w >= card.x + card.width && r.y + r.h >= card.y + card.height && r.w < card.width * 1.5;
+        // "A little outside": the stand-off is max(2.5 mm, 7 px) a side plus the halo stroke, so at a small zoom (a card
+        // about 34 px wide in the overview) the ring is about 17 px wider than the card, which is more than half its width.
+        return r.x <= card.x && r.y <= card.y && r.x + r.w >= card.x + card.width && r.y + r.h >= card.y + card.height && r.w < card.width + 48;
       })
       .toBe(true);
     // The ring is drawn in the theme's focus colour, which is not the hover outline's. Paper's selection outline has the
@@ -63,6 +65,32 @@ test.describe('the focus ring on the table (PLAN M5-P4)', () => {
     await page.keyboard.press('Escape');
     await expect.poll(() => focus(page)).toBeNull();
     await expect(ring).toBeHidden();
+  });
+});
+
+test.describe('one target on screen (PLAN M5-P4)', () => {
+  test('while a keyboard focus is set the scene draws no hover outline on the card under the resting pointer', async ({ page }, info) => {
+    await soloTable(page, info);
+    await sceneReady(page);
+    const id = await castFirstByKeyboard(page);
+    const drawn = async () => (await hook<{ id: string; hovered: boolean; moving: boolean; screen: { x: number; y: number; width: number; height: number } }[]>(page, 'cards')).find((c) => c.id === id)!;
+    // The resolved card has come to rest on the battlefield before the pointer aims at it.
+    await expect.poll(async () => (await drawn()).moving).toBe(false);
+    // The pointer rests on the battlefield card: it takes over from the keyboard and the scene outlines it.
+    await page.keyboard.press('Escape');
+    await expect.poll(() => focus(page)).toBeNull();
+    const host = (await page.getByTestId('scene-host').boundingBox())!;
+    const r = (await drawn()).screen;
+    await page.mouse.move(host.x + r.x + r.width / 2, host.y + r.y + r.height / 2, { steps: 4 });
+    await expect.poll(async () => (await drawn()).hovered).toBe(true);
+    // A key moves the focus onto a hand card: the pointer has not moved, yet only the focused card is a target.
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(async () => (await focus(page))?.zone).toBe('hand:s0');
+    await expect.poll(async () => (await drawn()).hovered).toBe(false);
+    // Escape leaves the focus: the pointer's card is outlined again.
+    await page.keyboard.press('Escape');
+    await expect.poll(() => focus(page)).toBeNull();
+    await expect.poll(async () => (await drawn()).hovered).toBe(true);
   });
 });
 

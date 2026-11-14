@@ -95,6 +95,8 @@ export interface SceneDebugCard extends DebugCard {
   tilt: number;
   /** Drawn as a foil printing (sheen and badge) in the last frame (scene/foil.ts; DESIGN "Foils are marked with a subtle sheen and a badge"). */
   foil: boolean;
+  /** Drawn with the hover outline in the last frame (M5-P4: none on the pointer's card while a keyboard focus is set). */
+  hovered: boolean;
 }
 
 export type { SceneDebugLine };
@@ -689,6 +691,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const hoverWidth = (mm: number, cardPx: number): number => legibleOutlineMm(mm, cardPx, HOVER_MIN_PX);
   /** Foil cards drawn with the sheen and badge in the last frame (debug; the tick redraws them while the sheen drifts). */
   const foilsDrawn = new Set<InstanceId>();
+  /** Cards drawn with the hover outline in the last frame (selection outlines win the slot and are not counted). */
+  const hoversDrawn = new Set<InstanceId>();
   /** Whether a card shows a foil printing's face: public face up, or the owner's own dimmed view (local only). */
   const foilShown = (rc: RCard): boolean => rc.place.ref?.foil === true && rc.shownKey !== BACK_KEY && rc.shownKey === rc.place.key;
   /** A stable per-card phase offset of the sheen, so neighbouring foils shimmer out of step. */
@@ -722,6 +726,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const slotOf = new Map(entries.map((e) => [e.item.card ?? '', e]));
     const foilPhase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
     foilsDrawn.clear();
+    hoversDrawn.clear();
     let focusTarget: { card: InstanceId; corners: { x: number; y: number }[] } | null = null;
     for (const rc of order) {
       const pose = rc.motion.pose;
@@ -744,11 +749,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         // The ring stands off these corners by a gap that keeps it apart from a selection outline (focus-ring.ts).
         focusTarget = { card: rc.id, corners: cardCorners(pose).map((p) => rig.tableToScreen(p, z, cam)) };
       }
-      const hov = view.hovered === rc.id || hovered === rc.id || lit.has(rc.id);
+      // While a keyboard focus is set the keys act on the focused card, so the card under a resting pointer draws no
+      // hover outline of its own (one target on screen: the ring); the HUD's own hover and lit cards still draw.
+      const hov = view.hovered === rc.id || (view.focused ? false : hovered === rc.id) || lit.has(rc.id);
       const entry = rc.place.kind === 'stack' && !dragging ? slotOf.get(rc.id) : undefined;
       // A foil printing shown face up carries the sheen (a rim, unless another outline takes the slot) and the badge.
       const foil = foilShown(rc) ? foilHue(foilPhase, foilIndex(rc.id)) : null;
       if (foil !== null) foilsDrawn.add(rc.id);
+      if (hov && !sel) hoversDrawn.add(rc.id);
       sorted.push({
         sort: sortKey(rc),
         draw: {
@@ -1687,6 +1695,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           lift: rc.lift.value,
           tilt: tiltDrawn.get(rc.id) ?? 0,
           foil: foilsDrawn.has(rc.id),
+          hovered: hoversDrawn.has(rc.id),
         };
       });
     },

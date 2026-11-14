@@ -382,7 +382,8 @@
       return;
     }
     const move = focusMoveOf(e);
-    if (move && !menu && !ownsArrows(e.target)) {
+    // The cheat sheet covers the table: arrows and Page keys do not move a focus the player cannot see under it.
+    if (move && !menu && !cheatOpen && !ownsArrows(e.target)) {
       e.preventDefault();
       moveKeyFocus(move);
       return;
@@ -495,7 +496,13 @@
   function menuAnchor(card: InstanceId | null): { x: number; y: number } {
     if (card !== null && typeof document !== 'undefined') {
       const sel = CSS.escape(card);
-      const els = [document.querySelector(`[data-testid="focus-ring"][data-focus-card="${sel}"] polygon`), ...document.querySelectorAll(`[data-card="${sel}"]`)];
+      // The card itself before any other element naming it (a log line's card name comes earlier in the DOM).
+      const els = [
+        document.querySelector(`[data-testid="focus-ring"][data-focus-card="${sel}"] polygon`),
+        document.querySelector(`[data-testid="hand-card"][data-card="${sel}"]`),
+        document.querySelector(`[data-testid="pile-card"][data-card="${sel}"]`),
+        ...document.querySelectorAll(`[data-card="${sel}"]`),
+      ];
       for (const el of els) {
         const r = el?.getBoundingClientRect();
         if (r && r.width > 0 && r.height > 0) return { x: Math.round(r.right), y: Math.round(r.top) };
@@ -715,7 +722,9 @@
     const el = t as HTMLElement | null;
     if (!el?.closest) return false;
     if (el.tagName === 'SELECT' || (el.tagName === 'INPUT' && ['range', 'radio', 'number'].includes((el as HTMLInputElement).type))) return true;
-    return !!el.closest('[role="menu"], [role="menubar"], [role="listbox"], [role="slider"], [role="radiogroup"], [role="tablist"], [role="grid"], [role="tree"]');
+    if (el.closest('[role="menu"], [role="menubar"], [role="listbox"], [role="slider"], [role="radiogroup"], [role="tablist"], [role="grid"], [role="tree"]')) return true;
+    // Scrollable HUD regions scroll with arrows and Page keys when they hold DOM focus: the log lines, the cheat sheet.
+    return !!el.closest('[data-testid="log-lines"], [data-testid="cheat-sheet"]');
   }
   // The table changed: focus stays on its card, or passes to the card that took its place (ui/a11y keepFocus).
   $effect(() => {
@@ -727,8 +736,14 @@
       const moved = next?.zone !== focus.zone || next?.card !== focus.card;
       if (moved) focus = next;
       focusOrder = next ? focusCards(s, game, a11yViewer, next.zone, opts) : [];
-      // The next key acts on another card: say which (after the log line of the move, which is polite and batched).
-      if (moved && next) announcer.focus(describeFocus(s, game, a11yViewer, next, focusName, opts));
+      // The next key acts on another card: say which, after the log line of the move. That line is queued by the log
+      // effect below in this same update, so the focus waits for the update to settle, then follows the waiting lines.
+      if (moved && next) {
+        const text = describeFocus(s, game, a11yViewer, next, focusName, opts);
+        void tick().then(() => {
+          if (focus?.zone === next.zone && focus.card === next.card) announcer.focusAfterLog(text);
+        });
+      }
     });
   });
   /** The last input wins: a pointer moved onto a card hands the keys back to hover (window pointermove, after the scene's hover). */
@@ -1436,12 +1451,12 @@
     border-radius: var(--sp-radius-md, 4px);
     padding: 2px 8px;
   }
-  .stack-chip button {
-    opacity: 0.55;
-  }
+  /* A Resolve that is not ready and Counter keep full-contrast text (Paper meets WCAG AA throughout); a lit Resolve
+     stands out by a heavier border in the foreground colour instead of the others being dimmed. */
   .stack-chip button.lit {
-    opacity: 1;
     border-color: var(--sp-fg, #111);
+    box-shadow: inset 0 0 0 1px var(--sp-fg, #111);
+    font-weight: 600;
   }
   .stack-chip .to {
     display: inline-flex;
@@ -1450,7 +1465,6 @@
     color: var(--sp-muted, #5f5f5f);
   }
   .stack-chip .to button {
-    opacity: 1;
     padding: 0 4px;
   }
   .stack-chip .to button.default {
