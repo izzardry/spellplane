@@ -492,10 +492,10 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M4-G Gate (owner playtest pending)
 - [x] M5-C Contracts
 - [x] M5-P1 Touch
-- [ ] M5-P2 Audit
+- [x] M5-P2 Audit
 - [x] M5-P3 Offline and storage
-- [ ] M5-P4 Accessibility
+- [x] M5-P4 Accessibility
 - [x] M5-P5 Finish
-- [ ] M5-P6 Hardening
+- [x] M5-P6 Hardening
 - [x] M5-P7 Table and voice decisions
-- [ ] M5-G Gate and owner playtest
+- [x] M5-G Gate (owner playtest pending)
