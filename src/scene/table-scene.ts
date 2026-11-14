@@ -43,6 +43,7 @@ import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type Combat
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
 import { CARD_H, CARD_W, rectPoint, cardCorners, cardHalfExtents, deltaDeg, legibleScale, pointInCard, pointInRect, rot2 } from './math';
+import { createFocusRing } from './focus-ring';
 import { CardMotion, HeldLift, heldTilt } from './motion';
 import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { badgeItems, drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackCollapsed, stackEntries, stackSlotPose, type DebugStackEntry, type StackEntry } from './stack';
@@ -97,6 +98,8 @@ export interface SceneDebugCard extends DebugCard {
   tilt: number;
   /** Drawn as a foil printing (sheen and badge) in the last frame (scene/foil.ts; DESIGN "Foils are marked with a subtle sheen and a badge"). */
   foil: boolean;
+  /** Drawn with the hover outline in the last frame (M5-P4: none on the pointer's card while a keyboard focus is set). */
+  hovered: boolean;
 }
 
 export type { SceneDebugLine };
@@ -245,6 +248,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   marqueeEl.setAttribute('data-scene', 'marquee');
   Object.assign(marqueeEl.style, { position: 'absolute', display: 'none', pointerEvents: 'none', border: `1px dashed ${theme.tokens.colours.focus}`, background: 'rgba(31,111,209,0.06)' });
   host.appendChild(marqueeEl);
+  // The keyboard focus ring (ViewState.focused; M5-P4, scene/focus-ring.ts), over the canvas like the marquee.
+  const focusRing = createFocusRing(host);
 
   // The far-zoom stack badge (scene/stack-badge.ts; DESIGN "The effect stack", Reading it; M5-P7).
   const stackBadge = new StackBadgeView(host, {
@@ -717,6 +722,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const hoverWidth = (mm: number, cardPx: number): number => legibleOutlineMm(mm, cardPx, HOVER_MIN_PX);
   /** Foil cards drawn with the sheen and badge in the last frame (debug; the tick redraws them while the sheen drifts). */
   const foilsDrawn = new Set<InstanceId>();
+  /** Cards drawn with the hover outline in the last frame (selection outlines win the slot and are not counted). */
+  const hoversDrawn = new Set<InstanceId>();
   /** Whether a card shows a foil printing's face: public face up, or the owner's own dimmed view (local only). */
   const foilShown = (rc: RCard): boolean => rc.place.ref?.foil === true && rc.shownKey !== BACK_KEY && rc.shownKey === rc.place.key;
   /** A stable per-card phase offset of the sheen, so neighbouring foils shimmer out of step. */
@@ -754,6 +761,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const slotOf = new Map(entries.map((e) => [e.item.card ?? '', e]));
     const foilPhase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
     foilsDrawn.clear();
+    hoversDrawn.clear();
+    let focusTarget: { card: InstanceId; corners: { x: number; y: number }[] } | null = null;
     for (const rc of order) {
       // A collapsed lane draws none of its cards (one being dragged out still follows the pointer).
       if (stackFolded && rc.place.kind === 'stack' && !(drag?.ids.includes(rc.id) ?? false)) {
@@ -775,11 +784,19 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (tilt) tiltDrawn.set(rc.id, tilt.deg);
       else tiltDrawn.delete(rc.id);
       const sel = selection.has(rc.id);
-      const hov = view.hovered === rc.id || hovered === rc.id || lit.has(rc.id);
+      if (view.focused === rc.id) {
+        const z = rc.place.z + rc.lift.value;
+        // The ring stands off these corners by a gap that keeps it apart from a selection outline (focus-ring.ts).
+        focusTarget = { card: rc.id, corners: cardCorners(pose).map((p) => rig.tableToScreen(p, z, cam)) };
+      }
+      // While a keyboard focus is set the keys act on the focused card, so the card under a resting pointer draws no
+      // hover outline of its own (one target on screen: the ring); the HUD's own hover and lit cards still draw.
+      const hov = view.hovered === rc.id || (view.focused ? false : hovered === rc.id) || lit.has(rc.id);
       const entry = rc.place.kind === 'stack' && !dragging ? slotOf.get(rc.id) : undefined;
       // A foil printing shown face up carries the sheen (a rim, unless another outline takes the slot) and the badge.
       const foil = foilShown(rc) ? foilHue(foilPhase, foilIndex(rc.id)) : null;
       if (foil !== null) foilsDrawn.add(rc.id);
+      if (hov && !sel) hoversDrawn.add(rc.id);
       sorted.push({
         sort: sortKey(rc),
         draw: {
@@ -822,6 +839,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       });
     }
     sorted.sort((a, b) => compareSort(a.sort, b.sort));
+    focusRing.set(focusTarget, { ring: theme.tokens.colours.focus, halo: theme.tokens.colours.bg });
     const draws = sorted.map((x) => x.draw);
     cards.setTextures(faces.textures());
     // Anisotropic filtering of the face arrays follows the quality level (a grown array starts at the GPU maximum).
@@ -1930,6 +1948,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           lift: rc.lift.value,
           tilt: tiltDrawn.get(rc.id) ?? 0,
           foil: foilsDrawn.has(rc.id),
+          hovered: hoversDrawn.has(rc.id),
         };
       });
     },
@@ -2373,6 +2392,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       removeEventListener('pointermove', releaseIdlePointer, true);
       removeEventListener('blur', releaseAllPointers);
       releaseDressing();
+      focusRing.dispose();
       runtime.dispose();
       boxes.dispose();
       contact.dispose();

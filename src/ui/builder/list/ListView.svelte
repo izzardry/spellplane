@@ -115,7 +115,9 @@
         <ul>
           {#each g.rows as row (row.key)}
             <li class="row" data-testid="list-row" data-sid={row.ref.sid} data-foil={row.ref.foil ? 'true' : undefined} data-count={row.count} class:loading={!row.known}>
-              <button type="button" class="main" title={fromDeck ? 'Move one to the pool' : 'Move one to the deck'} aria-label={`${fromDeck ? 'Move one to the pool' : 'Move one to the deck'}: ${row.name}`} onclick={(e) => move(row, fromDeck, e.shiftKey)}>
+              <button type="button" class="main" title={fromDeck ? 'Move one to the pool' : 'Move one to the deck'} onclick={(e) => move(row, fromDeck, e.shiftKey)}>
+                <!-- The accessible name starts with the action and contains the visible text (WCAG 2.5.3, M5-P4). -->
+                <span class="sr-only">{fromDeck ? 'Move one to the pool' : 'Move one to the deck'}: </span>
                 <span class="n">{row.count}</span>
                 <span class="name">{row.name}{#if row.ref.foil}<span class="foil" title="Foil" aria-label="foil">✦</span>{/if}</span>
                 <span class="cost muted">{row.manaCost}</span>
@@ -200,6 +202,17 @@
 </section>
 
 <style>
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
   .list-view {
     box-sizing: border-box;
     height: 100%;

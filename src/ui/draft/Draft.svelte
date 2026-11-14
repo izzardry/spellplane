@@ -20,6 +20,7 @@
   import type { DraftSurface } from '../../scene/types';
   import { cssText, hudCssVars } from '../../themes/index';
   import Inspect from '../Inspect.svelte';
+  import SeatGlyph from '../a11y/SeatGlyph.svelte';
   import type { DraftProps } from '../types';
   import { formatClock, remainingMs, SeqClock, URGENT_MS } from './timer';
   import { draftStatus, liveMarks, onSharedTable, Prefetch, seatChips, shownSids, stepMark, surfaceView } from './view';
@@ -258,7 +259,7 @@
               ? `${c.self ? 'You' : c.name}: ${c.pool} ${c.pool === 1 ? 'card' : 'cards'} drafted${c.picking ? ', picking' : ''}`
               : `${c.self ? 'You' : c.name}: ${c.packs} ${c.packs === 1 ? 'pack' : 'packs'} waiting, ${c.pool} ${c.pool === 1 ? 'card' : 'cards'} drafted`}
           >
-            <span class="dot" style:background={seatColour(c.colour)}></span>
+            <SeatGlyph colour={c.colour} size={8} tint={seatColour(c.colour)} />
             <span class="name">{c.self ? `${c.name} (you)` : c.name}</span>
             {#if c.packs !== null}
               <span class="packs" data-testid="draft-seat-packs" aria-label="{c.packs} {c.packs === 1 ? 'pack' : 'packs'} waiting">
@@ -382,11 +383,6 @@
   .seat.picking {
     border-color: var(--sp-fg);
     font-weight: var(--sp-font-weight-bold, 600);
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
   }
   .pool {
     font-family: var(--sp-font-mono);

@@ -11,6 +11,7 @@
   import type { SeatId, TableState } from '../../core/types';
   import type { TableScene } from '../../scene/types';
   import { registerDebug } from '../../util/debug';
+  import SeatGlyph from '../a11y/SeatGlyph.svelte';
   import type { ChatDebug } from './debug';
   import type { Flash, LogWatch } from './watch';
 
@@ -107,7 +108,7 @@
       style:animation-duration="{fadeMs}ms"
       aria-hidden="true"
     >
-      <span class="who">{seatName(f.by)}</span>
+      <span class="who"><SeatGlyph colour={seatColour(f.by)} size={8} tint="var(--seat-ink)" />{seatName(f.by)}</span>
     </div>
   {/if}
 {/each}

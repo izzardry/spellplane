@@ -23,6 +23,7 @@
   import UpdateNotice from './storage/UpdateNotice.svelte';
   import type { UpdatePlace } from './update';
   import type { Stage } from '../core/types';
+  import { installReducedMotionCss } from './a11y/motion';
 
   let props: Partial<AppProps> = $props();
 
@@ -40,6 +41,8 @@
   void startHints.load();
   const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
   onMount(() => {
+    // Every animation cuts under prefers-reduced-motion, on every page of the app (M5-P4, ui/a11y/motion.ts).
+    installReducedMotionCss();
     registerThemeDebug(choice);
     const off = choice.subscribe((s) => (theme = s.theme));
     void choice.ready.then(() => (ready = true));

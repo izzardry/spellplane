@@ -449,7 +449,9 @@ test.describe('log (DESIGN "Turn flow and confirmation", Action log)', () => {
     await expect(lines).toHaveCount(2);
     await expect(lines.nth(0)).toContainText('Anna taps Test Bear');
     await expect(lines.nth(1)).toContainText('Anna moves Test Bear to their graveyard');
-    await expect(page.locator('[data-testid="log"] [aria-live="polite"]')).toHaveCount(1);
+    // The log is a live region through the page's polite live region (M5-P4, ui/a11y): each new line is read once.
+    await expect(page.getByTestId('live-polite')).toHaveAttribute('aria-live', 'polite');
+    await expect(page.getByTestId('live-polite')).toContainText('Anna moves Test Bear to their graveyard');
     await lines.nth(0).getByTestId('log-card').hover();
     await expect(page.getByTestId('card-preview')).toBeVisible();
     await expect.poll(async () => (await ui<{ hovered: string | null }>(page, 'view'))?.hovered).toBe('bf1');
