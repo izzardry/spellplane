@@ -44,6 +44,7 @@
 //   --no-build        reuse dist-test/ as it is
 //   --dist <dir>      measure another test build (e.g. a copy of dist-test/ made before a change); implies --no-build
 //   --json <file>     also write the results as JSON
+//   --shots <dir>     Playwright: a screenshot of each theme after its idle phase (meter included), CSS-px scale
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -293,7 +294,10 @@ function serve() {
           run.info = msg.info;
           console.log(`[perf] ${run.browser}${run.query ? ` [${run.query}]` : ''}: ${msg.info.seats} seats, ${msg.info.cards} cards, ${msg.info.viewport} CSS px at dpr ${msg.info.dpr}, renderer ${msg.info.renderer}`);
         }
-        if (msg.row) report(run, msg.row);
+        if (msg.row) {
+          report(run, msg.row);
+          run.onRow?.(msg.row);
+        }
         if (msg.warn) console.warn(`[perf] ${run.browser}: ${msg.warn}`);
         if (msg.error) run.finish(new Error(msg.error));
         if (msg.done) run.finish(null);
@@ -356,8 +360,16 @@ async function runPlaywright(name, base) {
     const page = await context.newPage();
     page.on('pageerror', (e) => console.warn(`[perf] ${name} page error: ${e.message}`));
     await page.mouse.move(W - 40, 60);
+    const shots = opt('shots', null);
     for (const query of VARIANTS) {
       const run = newRun(name, query);
+      if (shots) {
+        fs.mkdirSync(shots, { recursive: true });
+        const tag = (query || 'default').replace(/[^a-z0-9=,.-]+/gi, '_');
+        run.onRow = (row) => {
+          if (row.phase === 'idle') void page.screenshot({ path: path.join(shots, `${name}-${row.theme}-${tag}.png`), scale: 'css' }).catch(() => {});
+        };
+      }
       await page.goto(scenarioUrl(base, run, SYNC));
       await awaitRun(run);
     }
