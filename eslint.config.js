@@ -59,7 +59,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   ...svelte.configs.recommended,
   {
-    languageOptions: { globals: { ...globals.browser, ...globals.node, __SPELLPLANE_DEBUG__: 'readonly' } },
+    languageOptions: { globals: { ...globals.browser, ...globals.node, __SPELLPLANE_DEBUG__: 'readonly', __SPELLPLANE_PREVIEW__: 'readonly' } },
     rules: {
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' }],
       '@typescript-eslint/consistent-type-imports': ['error', { fixStyle: 'inline-type-imports' }],

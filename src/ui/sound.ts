@@ -55,7 +55,9 @@ export function cuesFor(entries: readonly LogEntry[], me: SeatId | null): SoundC
       case 'tidy':
         rung.add('slide');
         break;
+      // A clip snaps on with the theme's short click (M6-P1; owner decisions: "the clip snaps on with a short sound").
       case 'tap':
+      case 'clipAdd':
         rung.add('tap');
         break;
       case 'shuffleDone':

@@ -129,10 +129,10 @@ describe('M5-P5 settings, card back, keymap', () => {
 
 describe('M5-P6 protocol version', () => {
   // The notice and the soak harness are implemented (M5-P6): tests/unit/net/version.test.ts, tests/sim/soak.test.ts.
-  it('reads rooms saved before M5 as protocol 1; M5 speaks protocol 2', () => {
+  it('reads rooms saved before M5 as protocol 1; M5 and later speak protocol 2 or newer (M6: 3)', () => {
     expect(roomProtocol({})).toBe(1);
     expect(roomProtocol({ protocol: 2 })).toBe(2);
-    expect(PROTOCOL_VERSION).toBe(2);
+    expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(2);
   });
 });
 

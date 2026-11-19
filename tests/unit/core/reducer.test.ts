@@ -293,7 +293,8 @@ describe('card family', () => {
     s = ok(s, act('tidy', { seat: 's0', poses: { a00: P(-500, -100), a02: P(-400, -100) } }));
     expect(card(s, 'a01').pose).toEqual(P(-500, -100 - CASCADE));
     expect(card(s, 'a03').pose).toEqual(P(-400 + TUCK.x, -100 + TUCK.y));
-    expect(s.zones['battlefield:s0']!.ids).toEqual(['a00', 'a01', 'a02', 'a03']);
+    // a03 is tucked behind its host a02 in the draw order (M6-P1: attach tucks behind the host).
+    expect(s.zones['battlefield:s0']!.ids).toEqual(['a00', 'a01', 'a03', 'a02']);
     no(s, act('tidy', { seat: 's0', poses: { b00: P(0, 0) } }), /not on/);
     clean(s);
   });

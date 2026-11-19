@@ -26,6 +26,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: cp dist/index.html dist/404.html
+      # M7 fast feedback: the `preview` branch, when it exists, is built beside the live site at /spellplane/preview/
+      # (its own saved data, no service worker, a Preview label). Pushes to `preview` dispatch this workflow on main.
+      - name: Check out the preview branch
+        id: pv
+        run: |
+          if git ls-remote --exit-code --heads origin preview >/dev/null; then echo "exists=true" >> "$GITHUB_OUTPUT"; fi
+      - if: steps.pv.outputs.exists == 'true'
+        uses: actions/checkout@v5
+        with:
+          ref: preview
+          path: pv
+      - if: steps.pv.outputs.exists == 'true'
+        name: Build the preview
+        working-directory: pv
+        env:
+          SPELLPLANE_BASE: /spellplane/preview/
+          SPELLPLANE_PREVIEW: '1'
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          mkdir -p ../dist/preview
+          cp -R dist/. ../dist/preview/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

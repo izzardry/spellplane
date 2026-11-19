@@ -46,6 +46,12 @@ export interface TalkInputs {
   windowFocus: boolean;
   /** The microphone was acquired on joining (a click); before that no audio opens (dictation does not need it: the engine listens itself). */
   micReady: boolean;
+  /**
+   * Added by M6-C. A table press held past HOLD_PRESS_TALK_MS (scene/types.ts) while "Talk while I hold or drag"
+   * (Settings.talkWhileHolding) is on: it counts as the talk key held (reason 'key', never team talk) until the press
+   * ends (PLAN Milestone 6, owner decisions, Hold-to-talk). Absent means false. Implementer: M6-P2.
+   */
+  pressHeld?: boolean;
 }
 
 /**
@@ -182,6 +188,12 @@ export interface VoiceControls {
   /** Talk key or talk mouse button down; `team` when Shift was held. Ignored while a text field (not a note field) has focus. */
   keyDown(team: boolean): void;
   keyUp(): void;
+  /**
+   * A held table press started (true) or ended (false) under "Talk while I hold or drag" (SceneEvents.pressHold;
+   * TalkInputs.pressHeld). Independent of the talk key: releasing either one leaves the other's hold open. Added by
+   * M6-C; implementer: M6-P2 (optional until it lands).
+   */
+  pressHeld?(held: boolean): void;
   /** Focus changes the gate depends on: window blur releases the key; text and note field focus. */
   focus(change: { window?: boolean; text?: boolean; note?: boolean }): void;
   /** The open-mic mute toggle (M). */

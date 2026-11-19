@@ -253,6 +253,12 @@ class Voice implements VoiceControls {
 
   private keyHeld = false;
   private teamKey = false;
+  /** A table press held past HOLD_PRESS_TALK_MS is down (SceneEvents.pressHold), whatever the setting says. */
+  private pressDown = false;
+  /** "Talk while I hold or drag" (Settings.talkWhileHolding; M6-P2), off by default. */
+  private holdTalk = false;
+  /** The setting was changed here before the stored value loaded (the change wins). */
+  private holdTalkSet = false;
   private textFocus = false;
   private noteFocus = false;
   private windowFocus = true;
@@ -305,6 +311,8 @@ class Voice implements VoiceControls {
     const { talk, migrated } = talkFromSettings(all);
     this.settings = talk;
     this.chosenDevice = typeof all.micDevice === 'string' && all.micDevice ? all.micDevice : null;
+    // A change made before the load finished wins over the stored value.
+    if (!this.holdTalkSet) this.holdTalk = all.talkWhileHolding === true;
     const peers: Record<string, PeerAudioSetting> = {};
     if (typeof all.peerAudio === 'object' && all.peerAudio !== null) for (const [k, v] of Object.entries(all.peerAudio)) peers[k] = cleanPeerAudio(v);
     // A change made before the load finished wins over the stored value.
@@ -476,6 +484,39 @@ class Voice implements VoiceControls {
     this.recompute();
   }
 
+  /**
+   * A held table press started or ended (SceneEvents.pressHold; PLAN Milestone 6, owner decisions, Hold-to-talk). It
+   * talks only while "Talk while I hold or drag" is on, never on a spectator's page, never while a text or note field
+   * has focus or the window has none; independent of the talk key (DECISIONS [M6-P2]).
+   */
+  pressHeld(held: boolean): void {
+    if (held && (this.listenOnly || this.textFocus || this.noteFocus || !this.windowFocus)) return;
+    if (this.pressDown === held) return;
+    this.pressDown = held;
+    this.recompute();
+  }
+
+  /** Whether a held table press is talking now (the debug hook's `voice.pressHeld`). */
+  pressTalking(): boolean {
+    return this.pressDown && this.holdTalk && !this.listenOnly;
+  }
+
+  /** "Talk while I hold or drag" (Settings.talkWhileHolding). */
+  talkWhileHolding(): boolean {
+    return this.holdTalk;
+  }
+
+  /** Change and persist "Talk while I hold or drag"; turning it off closes a press that is talking. */
+  async setTalkWhileHolding(on: boolean): Promise<void> {
+    this.holdTalkSet = true;
+    if (this.holdTalk !== on) {
+      this.holdTalk = on;
+      this.recompute();
+      this.emit();
+    }
+    await this.host.settings.set('talkWhileHolding', on).catch(() => undefined);
+  }
+
   focus(change: { window?: boolean; text?: boolean; note?: boolean }): void {
     if (change.window !== undefined) {
       this.windowFocus = change.window;
@@ -483,6 +524,7 @@ class Voice implements VoiceControls {
       if (!change.window) {
         this.keyHeld = false;
         this.teamKey = false;
+        this.pressDown = false;
       }
     }
     if (change.text !== undefined) {
@@ -490,9 +532,14 @@ class Voice implements VoiceControls {
       if (change.text) {
         this.keyHeld = false;
         this.teamKey = false;
+        this.pressDown = false;
       }
     }
-    if (change.note !== undefined) this.noteFocus = change.note;
+    if (change.note !== undefined) {
+      this.noteFocus = change.note;
+      // A press never dictates into a note field: one taking focus lets the press go.
+      if (change.note) this.pressDown = false;
+    }
     this.recompute();
   }
 
@@ -720,6 +767,7 @@ class Voice implements VoiceControls {
       settings: this.settings,
       keyHeld: this.keyHeld,
       teamKey: this.teamKey,
+      pressHeld: this.pressDown && this.holdTalk,
       ownTurn: own && inMatch && isSeatActive(state, seat),
       hasTeammate: mates.length > 0,
       textFocus: this.textFocus,
@@ -776,6 +824,21 @@ class Voice implements VoiceControls {
 /** Create the voice controller (voice/types.ts VoiceControls). `internals` are seams beyond the contract (presence, level meters, clock). */
 export function createVoiceWith(host: VoiceHost, internals: VoiceInternals = {}): VoiceControls & { readMeters(): void; device(): string | null } {
   return new Voice(host, internals);
+}
+
+/** "Talk while I hold or drag" of a controller made here (Settings.talkWhileHolding; false for any other controller). */
+export function talkWhileHolding(voice: VoiceControls): boolean {
+  return voice instanceof Voice ? voice.talkWhileHolding() : false;
+}
+
+/** Change and persist "Talk while I hold or drag" on a controller made here (the Voice settings; M6-P2). */
+export function setTalkWhileHolding(voice: VoiceControls, on: boolean): Promise<void> {
+  return voice instanceof Voice ? voice.setTalkWhileHolding(on) : Promise.resolve();
+}
+
+/** Whether a held table press is talking on a controller made here (debug hook `voice.pressHeld`). */
+export function pressTalking(voice: VoiceControls): boolean {
+  return voice instanceof Voice ? voice.pressTalking() : false;
 }
 
 /** The chosen microphone (settings key 'micDevice') of a controller made here, null for the default (the device picker). */

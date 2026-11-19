@@ -233,6 +233,16 @@ function opposite(before: TableState, after: TableState, a: UndoableAction): Und
       const l = before.lines[a.line]!;
       return { ...base, by: l.by, type: 'lineAdd', line: l.id, kind: l.kind, from: l.from, to: l.to, ...(l.label !== undefined ? { label: l.label } : {}) };
     }
+    // Added by M6-C (natural opposites; the restore steps for a clip's `by` and for clips a move dissolved are M6-P1's,
+    // RestorePatch.clips; a label's are M6-P3's).
+    case 'clipAdd':
+      return { ...base, type: 'clipRemove', clip: a.clip };
+    case 'clipRemove': {
+      const c = before.clips && Object.hasOwn(before.clips, a.clip) ? before.clips[a.clip] : undefined;
+      return c ? { ...base, type: 'clipAdd', clip: c.id, cards: [...c.cards], anchor: { ...c.anchor } } : null;
+    }
+    case 'lineLabel':
+      return { ...base, type: 'lineLabel', line: a.line, label: (Object.hasOwn(before.lines, a.line) ? before.lines[a.line]?.label : undefined) ?? '' };
     case 'phaseSet':
       return { ...base, type: 'phaseSet', phase: before.turn.phase };
     case 'turnPass':
@@ -340,6 +350,18 @@ function diff(before: TableState, got: TableState): { patch: RestorePatch; revea
   }
   if (Object.keys(lines).length) patch.lines = lines;
 
+  // Paperclips (M6-P1): a clip's creator (an undone removal comes back in the undoer's name) and clips a move off the
+  // battlefield dissolved or shrank.
+  const clips: NonNullable<RestorePatch['clips']> = {};
+  const bc = before.clips ?? {};
+  const gc = got.clips ?? {};
+  for (const id of ids(bc, gc)) {
+    const b = Object.hasOwn(bc, id) ? bc[id] : undefined;
+    const g = Object.hasOwn(gc, id) ? gc[id] : undefined;
+    if (!same(b, g)) clips[id] = stepOf(g, b);
+  }
+  if (Object.keys(clips).length) patch.clips = clips;
+
   if (!same(before.stack, got.stack)) patch.stack = stepOf(got.stack, before.stack);
 
   if (before.turn.active !== got.turn.active || before.turn.phase !== got.turn.phase) return null;
@@ -391,6 +413,18 @@ export function changedObjects(before: TableState, after: TableState): string[] 
       out.add(`line:${id}`);
       anchored(b);
       anchored(a);
+    }
+  }
+  if (before.clips !== after.clips) {
+    // A clip added, removed or changed (M6-P1), and the cards it holds.
+    const bc = before.clips ?? {};
+    const ac = after.clips ?? {};
+    for (const id of keys(bc, ac)) {
+      const b = Object.hasOwn(bc, id) ? bc[id] : undefined;
+      const a = Object.hasOwn(ac, id) ? ac[id] : undefined;
+      if (b === a || same(b, a)) continue;
+      out.add(`clip:${id}`);
+      for (const c of [...(b?.cards ?? []), ...(a?.cards ?? [])]) out.add(`card:${c}`);
     }
   }
   if (before.stack !== after.stack) {

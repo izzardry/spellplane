@@ -18,11 +18,17 @@ export function parseFlags(search: string): Flags {
   const p = new URLSearchParams(search);
   const profile = p.get('profile');
   return {
-    profile: profile && /^[a-z0-9_-]{1,32}$/i.test(profile) ? profile : null,
+    profile: previewProfile(profile && /^[a-z0-9_-]{1,32}$/i.test(profile) ? profile : null),
     transport: p.get('transport') === 'local' ? 'local' : 'trystero',
     faces: p.get('faces') === 'placeholder' ? 'placeholder' : 'scryfall',
     speech: p.get('speech') === 'fake' ? 'fake' : null,
   };
+}
+
+/** The preview build shares the live site's origin: its saved data lives in its own namespace, never the live one's. */
+function previewProfile(profile: string | null): string | null {
+  if (typeof __SPELLPLANE_PREVIEW__ === 'undefined' || !__SPELLPLANE_PREVIEW__) return profile;
+  return profile ? `preview-${profile}` : 'preview';
 }
 
 let cached: Flags | null = null;

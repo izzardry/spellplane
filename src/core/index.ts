@@ -19,3 +19,5 @@ export * from './stage';
 export * from './teams';
 export * from './audit';
 export { ASK_LABEL_MAX, blockingHolder, confirmDeadlines, hasPassed, participants, pendingAbout, roundPassed, silentSeats, timerStartSeq, waitingOn, type RoundState } from './reducer/confirm';
+export * from './clips';
+export * from './objects';

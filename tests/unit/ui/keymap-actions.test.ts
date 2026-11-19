@@ -21,7 +21,15 @@ interface Scenario {
   hold?: boolean;
   expect(r: Rig): void | Promise<void>;
   after?(r: Rig): void;
+  /**
+   * The package that implements this keymap action (added by M6-C with its default key); its test is a todo until that
+   * package replaces this scenario with a real one.
+   */
+  pending?: string;
 }
+
+/** A keymap action whose behaviour a later package implements (M6-C contracts). */
+const pending = (pkg: string): Scenario => ({ pending: pkg, expect: () => undefined });
 
 /** publicRandom awaits crypto.subtle (a real async digest), so wait until both rng drafts are out rather than one macrotask. */
 const flush = (r: Rig) => vi.waitFor(() => expect(drafts(r).map((a) => a.type)).toEqual(['rngCommit', 'rngReveal']));
@@ -49,6 +57,29 @@ const S: Record<ActionId, Scenario> = {
   },
   ping: { setup: { hovered: 'bf1' }, expect: (r) => expect(drafts(r)).toEqual([{ type: 'ping', target: { kind: 'card', id: 'bf1' } }]) },
   zoomTo: { setup: { hovered: 'bf1' }, expect: (r) => expect(r.scene.calls).toEqual([{ method: 'camera.zoomTo', args: ['bf1'] }]) },
+  // M6-C: keyboard routes whose packages implement them (PLAN Milestone 6).
+  place: pending('M6-P6'),
+  // M6-P1: O picks the hovered card up for attaching (a second O on the host attaches it; tests/unit/attach/keys.test.ts).
+  attach: {
+    setup: { hovered: 'bf1' },
+    expect: (r) => {
+      expect(drafts(r)).toEqual([]);
+      expect(r.ui).toEqual([{ hook: 'notify', args: ['Attach to…: point at (or focus) the host and press the Attach key again'] }]);
+    },
+  },
+  // M6-P1: Shift+P clips the selection together (anchored on the hovered card, between the two cards).
+  clip: {
+    setup: { hovered: 'bf1', selection: ['bf1', 'dfc'] },
+    expect: (r) => expect(drafts(r)).toEqual([{ type: 'clipAdd', clip: 'clip1', cards: ['bf1', 'dfc'], anchor: { card: 'bf1', x: 100, y: 0 } }]),
+  },
+  hide: pending('M6-P3'),
+  toCommand: pending('M6-P3'),
+  exileFaceDown: pending('M6-P3'),
+  tempMove: pending('M6-P6'),
+  line: pending('M6-P6'),
+  mark: pending('M6-P6'),
+  stickyNote: pending('M6-P3'),
+  counterObject: pending('M6-P3'),
   inspect: {
     setup: { hovered: 'bf1' },
     hold: true,
@@ -135,6 +166,10 @@ describe('canonical keymap: every binding dispatches its action (PLAN M0-P4)', (
 
   const name = (b: KeyBinding) => `${chordToString(b.chord)} → ${b.action}${b.context === 'prompt' ? ' (prompt showing)' : ''}`;
   for (const b of MTG_KEYMAP) {
+    if (S[b.action].pending) {
+      it.todo(`${name(b)} (pending ${S[b.action].pending})`);
+      continue;
+    }
     it(name(b), async () => {
       const sc = S[b.action];
       const r = rig(sc.setup);

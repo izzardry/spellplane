@@ -73,6 +73,9 @@ function actedOnCards(a: Action): unknown[] {
       return [a.card, a.of];
     case 'attach':
       return [a.card, a.to];
+    // Added by M6-C: a clip names every card it pins (the reducer, M6-P1, allows battlefield cards only).
+    case 'clipAdd':
+      return Array.isArray(a.cards) ? a.cards : [];
     case 'stackPush':
       return [a.card, a.source];
     case 'settle':

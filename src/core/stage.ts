@@ -216,6 +216,16 @@ export function formatSeatProblem(state: TableState, settings: DraftFormatSettin
 }
 
 /**
+ * Whether the current confirmation round is a consent round every other participating seat answered 'ok' (PLAN
+ * Milestone 6, owner decisions: '"New draft?" needs consent. It passes only when every player answered yes; silence
+ * never wipes pools'; core/types.ts ConfirmRound.consent). A hold or a missing answer is no. Added by M6-C;
+ * implementer: M6-P4 (and `stageProblem` requires it for a new draft). Stub: false, so no stage change relies on it yet.
+ */
+export function consentGiven(_state: TableState): boolean {
+  return false;
+}
+
+/**
  * Why a `stageSet` does not apply to `state`, or null (DESIGN "Specification: card data, packs and draft formats",
  * Evening stages):
  * - the edge exists (STAGE_EDGES) and the sender holds a seat;

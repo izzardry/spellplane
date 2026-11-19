@@ -7,6 +7,7 @@
  */
 import type { JsonValue, Room } from 'trystero';
 import { APP_ID } from './messages';
+import type { SignallingStrategy } from './types';
 import { CHANNELS, type Channel, type Message, type MessageHandler, type PeerHandler, type PeerId, type Transport } from './transport';
 
 type Sender = (data: JsonValue, options?: { target?: string | string[] | null }) => Promise<void>;
@@ -15,6 +16,13 @@ type Sender = (data: JsonValue, options?: { target?: string | string[] | null })
 export interface TrysteroOptions {
   /** Nostr relay URLs; Trystero's defaults when omitted. */
   relayUrls?: string[];
+  /**
+   * Added by M6-C. The signalling strategies to use, in order (net/types.ts SIGNALLING_STRATEGIES); absent means
+   * every strategy. Implementer: M6-P4 (until then only Nostr is used).
+   */
+  strategies?: readonly SignallingStrategy[];
+  /** Added by M6-C. BitTorrent tracker URLs for the 'torrent' strategy; Trystero's defaults when omitted. Implementer: M6-P4. */
+  trackerUrls?: string[];
 }
 
 /** Transport over a Trystero room (net/transport.ts). */

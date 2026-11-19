@@ -270,6 +270,8 @@ export interface FakeCardSpec {
   counters?: Record<string, number>;
   home?: { x: number; y: number; rot: number };
   combat?: 'attack' | 'block';
+  /** Added by M6-P1: the host it is attached to. */
+  attachedTo?: InstanceId;
 }
 
 /** A table with seats `names` and the given cards; hidden-zone identities go to the returned secrets (DESIGN "Table model"). */
@@ -306,6 +308,7 @@ export function tableWith(names: string[], cards: FakeCardSpec[], me: SeatId = '
     };
     if (c.home) inst.home = c.home;
     if (c.combat) inst.combat = c.combat;
+    if (c.attachedTo) inst.attachedTo = c.attachedTo;
     const hidden = z.visibility !== 'public' || inst.face === 'down';
     if (c.sid) {
       if (hidden) {

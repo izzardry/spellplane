@@ -98,6 +98,7 @@ describe('actions', () => {
     undo: true, snapshotHash: true, sequencerClaim: true, settings: true, stageSet: true, lobbySet: true, formatSet: true,
     recover: true, recoverCommit: true,
     auditPublish: true,
+    clipAdd: true, clipRemove: true, lineLabel: true, rngApply: true,
   };
 
   it('ACTION_FAMILIES covers every action type exactly', () => {

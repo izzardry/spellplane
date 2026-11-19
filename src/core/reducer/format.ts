@@ -72,6 +72,8 @@ export function formatSet(d: Draft, a: ActionOf<'formatSet'>): void {
     const named = [l.from, l.to].some((e) => e.kind === 'seat' && goneIds.has(e.id));
     if (named || goneIds.has(l.by)) d.lines.delete(l.id);
   }
+  // Clips made by a chair that goes go with it, like its lines (M6.1; core/invariants.ts: a clip's maker is a seat).
+  for (const c of d.clips.values()) if (goneIds.has(c.by)) d.clips.delete(c.id);
 
   // New chairs: free, the lowest colour no other chair uses, every seat zone kind.
   for (let index = 0; index < n; index++) {

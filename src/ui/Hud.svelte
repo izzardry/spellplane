@@ -22,6 +22,7 @@
   import { parsePlainList } from './deck';
   import { logLines } from './describe';
   import Flashes from './chat/Flashes.svelte';
+  import { typersOf, typingSeats, type Typer } from './chat/typing';
   import { addPending, LogWatch, prunePending } from './chat/watch';
   import { inZoneKind, layoutOf } from './geometry';
   import { fitInsets as fitInsetsFor, handOrder } from './hand';
@@ -44,6 +45,7 @@
   import TalkIndicator from './voice/TalkIndicator.svelte';
   import VoicePanel from './voice/VoicePanel.svelte';
   import { attachModifierTalkActions, attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
+  import { PressTalk } from './voice/press';
   import Speech from './settings/Speech.svelte';
   import ThemePicker from './settings/Theme.svelte';
   import { themeContext } from './settings/theme';
@@ -125,6 +127,8 @@
   /** Hand a drag out of the hand fan or a pile viewer to the scene, and show it to the others (M1-P5 presence). */
   function dragOut(id: InstanceId, x: number, y: number): void {
     if (!scene) return;
+    // The drag becomes a table press ("Talk while I hold or drag", M6-P2): captions said meanwhile attach to this card.
+    pressTalk.dragOut(id);
     scene.startDrag(id, x, y);
     presence?.beginExternalDrag(id, x, y);
   }
@@ -182,6 +186,21 @@
     return !!peer && speaking[peer] === true;
   };
   let logPanel = $state<LogPanel | undefined>();
+  /**
+   * Who is typing (M6-P2, GAPS 22; ui/chat/typing.ts): other peers' presence, shown beside the chat field and on their
+   * avatars. Spectators' names come from their connections' nicknames; `watching` counts the spectators connected now.
+   */
+  let typers = $state.raw<Typer[]>([]);
+  let watching = $state(0);
+  const typingAt = $derived(typingSeats(typers));
+  function refreshTypers(): void {
+    const peers = session.netStatus().peers;
+    const next = typersOf(session.presence.peers(), st, me, peers, Date.now());
+    // Presence fires on every throttled cursor and drag message: keep the same array unless who is typing changed.
+    if (JSON.stringify(next) !== JSON.stringify(typers)) typers = next;
+    const w = new Set(peers.filter((p) => p.role === 'spectator' && p.status !== 'handshake' && p.peerId).map((p) => p.peerId)).size;
+    if (w !== watching) watching = w;
+  }
   /** Dictated captions (M3-P4, session.captions) and the speech settings panel. */
   let captionList = $state.raw<Caption[]>([]);
   let speechOpen = $state(false);
@@ -543,11 +562,40 @@
   });
 
   // --- Menus ----------------------------------------------------------------------------------------------------
-  function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false) {
+  function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false, point: { x: number; y: number } | null = keyboard ? null : { x, y }) {
     const c = card ? st.cards[card] : undefined;
     menu = c
-      ? { title: focusName(c.id), entries: cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), x, y, keyboard }
+      ? { title: focusName(c.id), entries: [...cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), ...clipHereEntry(c.id, point)], x, y, keyboard }
       : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y, keyboard };
+  }
+  /**
+   * "Clip here" where the menu's point (the right-click, or the long-press that opened the touch radial menu) covers two
+   * or more battlefield cards (M6-P1; PLAN Milestone 6, owner decisions, Paperclips: the touch full menu offers it).
+   */
+  function clipHereEntry(card: InstanceId, point: { x: number; y: number } | null): MenuEntry[] {
+    if (!point || spectating || !scene?.cardsAt) return [];
+    const under = scene.cardsAt(point.x, point.y);
+    // Only for a menu of a table card at that point (not a hand card shown over the table).
+    if (under.length < 2 || !under.includes(card)) return [];
+    const at = scene.screenToTable(point.x, point.y);
+    if (!at) return [];
+    return [{ id: 'clipHere', label: 'Clip here', key: null, run: () => void commands.clipHere(under, at) }];
+  }
+  /** Where the long-press that opened the radial menu was: its full menu offers "Clip here" there (M6-P1). */
+  let radialPoint: { x: number; y: number } | null = null;
+  /** A paperclip's own menu (right-click or long-press on it): remove it (M6-P1). */
+  function openClipMenu(clip: string, at: { x: number; y: number }): void {
+    radial = null;
+    const c = st.clips?.[clip];
+    if (!c || spectating) return;
+    menu = { title: `Paperclip: ${c.cards.map((id) => nameOf(id)).join(', ')}`, entries: [{ id: 'removeClip', label: 'Remove clip', key: null, run: () => session.dispatch({ type: 'clipRemove', clip }) }], x: at.x, y: at.y, keyboard: false };
+  }
+  /** The clip tray (M6-P1): a press on it hands a new paperclip to the table, which follows the pointer until dropped. */
+  function clipTrayDown(e: PointerEvent): void {
+    if (e.button !== 0 || !scene?.startClipDrag) return;
+    e.preventDefault();
+    menu = null;
+    scene.startClipDrag(e.clientX, e.clientY);
   }
   /**
    * The context menu from the keyboard (DESIGN "Input and interaction design": every action has a context-menu route,
@@ -694,8 +742,17 @@
       soloShuffles,
     }),
   );
-  /** Chat tabs (DESIGN "Chat and voice", Text chat): the team tab when the own seat has a team. */
-  const chatTabs = $derived<ChatTab[]>(st.seats[me]?.team ? ['table', 'team'] : ['table']);
+  /**
+   * Chat tabs (DESIGN "Chat and voice", Text chat: table, team and spectator tabs): the team tab when the own seat has a
+   * team; the spectator tab for a spectator, and for players while someone watches or once the timeline holds a
+   * spectator line (M6-P2, GAPS 22).
+   */
+  const spectatorLines = $derived(entries.some((e) => e.kind === 'action' && e.action.type === 'chat' && e.action.channel === 'spectator'));
+  const chatTabs = $derived<ChatTab[]>([
+    'table',
+    ...(st.seats[me]?.team && !spectating ? (['team'] as const) : []),
+    ...(spectating || watching > 0 || spectatorLines ? (['spectator'] as const) : []),
+  ]);
   function sendChat(text: string, channel: ChatTab) {
     const a = session.chat(text, channel);
     followTeam();
@@ -905,8 +962,10 @@
   // The hovered card or stack item is a caption's anchor (DESIGN "Chat and voice", Placement: "last acted on or is
   // hovering"). A stack marker (an ability or trigger) has no card: the scene reports it on its own.
   let captionHover = '';
-  function syncCaptionHover(card: InstanceId | null): void {
+  function syncCaptionHover(hoveredCard: InstanceId | null): void {
     if (!session.captions) return;
+    // A held press that talks keeps its card as the anchor while it drags it (M6-P2, ui/voice/press.ts).
+    const card = pressTalk.anchorCard() ?? hoveredCard;
     const item = card ? null : hoveredStackItem(scene);
     const anchor: Anchor | null = card ? { kind: 'card', id: card } : item ? { kind: 'stackItem', id: item } : null;
     const key = anchor ? `${anchor.kind}:${anchor.id}` : '';
@@ -917,6 +976,12 @@
   $effect(() => {
     const h = hovered;
     untrack(() => syncCaptionHover(h));
+  });
+  /** "Talk while I hold or drag" (M6-P2): the scene's held table presses open the mic; captions attach to the pressed card. */
+  const pressTalk = new PressTalk({
+    voice: liveVoice,
+    cardAt: (x, y) => scene?.cardAt(x, y) ?? null,
+    onAnchor: () => syncCaptionHover(hovered),
   });
   /** While the note field has focus, dictation goes into it (DESIGN "Chat and voice", Notes by voice). */
   function dictateNote(on: boolean): void {
@@ -1000,6 +1065,13 @@
     const chordOf = (action: 'talk' | 'teamTalk') => keymap.find((b) => b.action === action && b.context === 'table')?.chord ?? null;
     const modifierOff = attachModifierTalkActions(window, (action, phase) => hooks.voice(action, phase), { talkChord: () => chordOf('talk'), teamTalkChord: () => chordOf('teamTalk'), onHold: (h) => (talkHold = h) });
     const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
+    // Who is typing (M6-P2): presence, the connections (spectators' nicknames) and the seats (names, teams).
+    refreshTypers();
+    const typingOff = session.presence.subscribe(() => refreshTypers());
+    const typingNetOff = session.subscribeNet(() => refreshTypers());
+    const typingStateOff = session.subscribe(() => refreshTypers());
+    // A typing peer that went silent (a lost stop) drops out after TYPING_STALE_MS even if nothing else changes.
+    const typingTimer = setInterval(() => typers.length > 0 && refreshTypers(), 1000);
     captionList = session.captions?.captions() ?? [];
     const unsubCaptions = session.captions?.subscribe((list) => (captionList = list));
     void settings
@@ -1024,6 +1096,7 @@
         events: {
           hover: (id) => (sceneHover = id),
           contextMenu: (id, at) => openMenu(id, at.x, at.y),
+          clipMenu: (clip, at) => openClipMenu(clip, at),
           inspect: (id) => hooks.inspect(id),
           pileOpen: (id) => {
             const kind = id.split(':')[0];
@@ -1033,9 +1106,11 @@
             else openPile = openPile === id ? null : id;
           },
           selectionChange: (ids) => (selection = [...ids]),
+          pressHold: (phase, kind) => pressTalk.hold(phase, kind),
           radialMenu: (id, at) => {
             menu = null;
             radial = id && !spectating && st.cards[id] ? { card: id, at: { x: at.x, y: at.y } } : null;
+            if (radial) radialPoint = { ...radial.at };
           },
         },
       });
@@ -1069,6 +1144,11 @@
       unsubView();
       view.dispose();
       voiceOff?.();
+      typingOff();
+      typingNetOff();
+      typingStateOff();
+      clearInterval(typingTimer);
+      pressTalk.dispose();
       modifierOff();
       speakOff?.();
       teamUnsub?.();
@@ -1113,7 +1193,10 @@
 <svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncView()} />
 
 <div class="root" class:touch-ui={touchUi} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
-  <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost} onpointerdowncapture={pressOnTable}></div>
+  <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost} onpointerdowncapture={(e) => {
+      pressOnTable();
+      pressTalk.down(e.clientX, e.clientY);
+    }}></div>
   {#if sceneError}<p class="scene-error" role="status">Table unavailable: {sceneError}</p>{/if}
   <Flashes
     {watch}
@@ -1131,6 +1214,13 @@
         <button type="button" data-testid="open-deck-import" onclick={() => (deckOpen = !deckOpen)}>Import deck</button>
         <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
         <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
+        {#if !spectating}
+          <!-- The clip tray (M6-P1): drag a paperclip from here onto overlapping cards. -->
+          <button type="button" class="clip-tray" data-testid="clip-tray" title="Drag a paperclip onto overlapping cards" onpointerdown={clipTrayDown}
+            ><svg width="12" height="16" viewBox="0 0 12 22" aria-hidden="true"><path d="M4 7v9a2 2 0 0 0 4 0V5a3 3 0 0 0-6 0v12a4 4 0 0 0 8 0V7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+            Clip</button
+          >
+        {/if}
         <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye')}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
         <button type="button" data-testid="open-settings" aria-pressed={settingsOpen} aria-expanded={settingsOpen} aria-label="Settings" title="Settings" onclick={() => (settingsOpen ? (settingsOpen = false) : openSettings())}>⚙</button>
@@ -1176,6 +1266,7 @@
           me={false}
           active={st.turn.active === seat.id || st.turn.active === seat.team}
           speaking={speaks(seat.id)}
+          typing={typingAt.has(seat.id)}
           responding={st.confirm?.holder === seat.id}
           asking={asking(seat.id)}
           glyph={glyphOf(seat.colour)}
@@ -1229,6 +1320,8 @@
         {faces}
         {back}
         tabs={chatTabs}
+        {typers}
+        ontyping={(channel) => session.presence.typing(channel)}
         onhovercard={(card, x, y) => {
           preview = card ? { card, x, y } : null;
           hudHover = card;
@@ -1382,7 +1475,7 @@
       insets={radialInsets}
       applies={(a) => !!radial && radialApplies(radial.card, a)}
       onrun={(card, a) => runOn(card, a)}
-      onmore={(card, x, y) => openMenu(card, x, y)}
+      onmore={(card, x, y) => openMenu(card, x, y, false, radialPoint)}
       onclose={() => (radial = null)}
     />
   {/if}
@@ -1624,6 +1717,13 @@
   }
   .voice-row {
     position: relative;
+  }
+  .clip-tray {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    touch-action: none;
+    cursor: grab;
   }
   .theme-anchor {
     position: relative;
