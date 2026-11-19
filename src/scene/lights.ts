@@ -26,6 +26,8 @@ export interface LightRig {
   readonly lights: THREE.Light[];
   /** The light that may shade card faces (scene/materials.ts KeyLight), or null. */
   readonly key: KeyLight | null;
+  /** Whether a light flickers (the rig changes with time unless motion is reduced). */
+  readonly flickers: boolean;
   /** Advance flicker to `timeMs` (no-op with reduced motion or without flicker). */
   update(timeMs: number): void;
   dispose(): void;
@@ -110,6 +112,7 @@ export function createLightRig(specs: readonly LightSpec[], opts: { viewerAngle:
     object: group,
     lights,
     key: keyLightOf(specs, opts.viewerAngle),
+    flickers: flickers.length > 0 && !opts.reducedMotion,
     update(timeMs) {
       if (opts.reducedMotion) return;
       const t = timeMs / 1000;

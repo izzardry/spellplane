@@ -39,6 +39,8 @@
 //                     frame times say little, the draw times (GPU included) say what a frame costs. Safari never syncs.
 //   --faces scryfall  real card images instead of placeholders (uses the network: Scryfall)
 //   --headed          Playwright browsers with a window
+//   --swiftshader     Chromium renders with SwiftShader (software GL, as on CI): a stand-in for a slow GPU, to see
+//                     the adaptive resolution at work (use --no-sync: frames are slow enough to hold the loop back)
 //   --no-build        reuse dist-test/ as it is
 //   --dist <dir>      measure another test build (e.g. a copy of dist-test/ made before a change); implies --no-build
 //   --json <file>     also write the results as JSON
@@ -79,7 +81,7 @@ if (!(W > 0 && H > 0 && DPR > 0 && PHASE_MS > 0)) usage('bad --size, --dpr or --
 
 function usage(msg) {
   console.error(
-    `perf: ${msg}\nusage: pnpm perf -- [--browsers webkit,chromium] [--safari | --safari-open] [--themes …] [--quality high|medium|low] [--size 2560x1440] [--dpr 2] [--phase-ms 3000] [--query k=v] [--faces scryfall] [--headed] [--no-build | --dist dir] [--json file]`,
+    `perf: ${msg}\nusage: pnpm perf -- [--browsers webkit,chromium] [--safari | --safari-open] [--themes …] [--quality high|medium|low] [--size 2560x1440] [--dpr 2] [--phase-ms 3000] [--query k=v] [--faces scryfall] [--headed] [--swiftshader] [--no-sync] [--variants 'q1|q2'] [--no-build | --dist dir] [--json file]`,
   );
   process.exit(2);
 }
@@ -155,6 +157,7 @@ function perfScenario(cfg) {
         }
       }
     }
+    await wait(500);
     const gl = canvas()?.getContext('webgl2');
     const info = gl?.getExtension('WEBGL_debug_renderer_info');
     return { renderer: gl && info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl ? gl.getParameter(gl.RENDERER) : 'no webgl2', seats: Object.keys(h.state().seats).length, cards: h.cards().length, viewport: `${innerWidth}x${innerHeight}`, dpr: devicePixelRatio, ua: navigator.userAgent };
@@ -346,7 +349,7 @@ async function awaitRun(run) {
 // --- Playwright --------------------------------------------------------------------------------------------------------
 async function runPlaywright(name, base) {
   const pw = await import('@playwright/test');
-  const args = name === 'chromium' ? ['--use-gl=angle', '--use-angle=metal', '--ignore-gpu-blocklist'] : [];
+  const args = name === 'chromium' ? ['--use-gl=angle', has('swiftshader') ? '--use-angle=swiftshader' : '--use-angle=metal', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] : [];
   const browser = await pw[name].launch({ headless: !has('headed'), args });
   try {
     const context = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: DPR });
