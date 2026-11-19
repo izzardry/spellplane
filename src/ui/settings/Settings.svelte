@@ -27,6 +27,7 @@
   import ThemePicker from './Theme.svelte';
   import { ThemeChoice } from './theme';
   import type { ViewPrefs } from './view';
+  import { setShowFps, showFpsSetting } from '../perf/meter';
 
   let {
     settings = null,
@@ -95,6 +96,13 @@
     void settings?.set('talk', storedTalk).catch(() => {});
   }
 
+  /** "Show frame rate" (M7-A0, ui/perf/meter.ts). */
+  let showFps = $state(showFpsSetting());
+  function setFps(on: boolean): void {
+    showFps = on;
+    setShowFps(on);
+  }
+
   function onkeydown(e: KeyboardEvent): void {
     if (e.key !== 'Escape' || e.ctrlKey || e.altKey || e.shiftKey || e.metaKey || !onclose) return;
     // A key capture in progress takes Esc itself (it stops the event before it gets here).
@@ -119,6 +127,10 @@
   <div class="body" role="tabpanel" id="sp-settings-{current}" aria-labelledby="sp-settings-tab-{current}" data-testid="settings-body">
     {#if current === 'display'}
       <div class="embed"><ThemePicker {choice} {sound} {view} /></div>
+      <label class="hold fps">
+        <span><input type="checkbox" data-testid="show-fps" checked={showFps} onchange={(e) => setFps((e.currentTarget as HTMLInputElement).checked)} /> Show frame rate</span>
+        <small class="muted">A small meter in the lower left corner: frames per second, frame times and the render size, for reporting how smoothly the table runs. Only this browser.</small>
+      </label>
     {:else if current === 'voice'}
       {#if voice && session}
         <div class="embed"><VoicePanel {voice} {session} /></div>
@@ -262,6 +274,9 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+  .fps {
+    margin-top: 12px;
   }
   .muted,
   small {

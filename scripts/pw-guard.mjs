@@ -232,9 +232,17 @@ function release() {
 
 /** Runs `pnpm exec playwright <args>` under the guard and exits with its status. */
 export async function runPlaywright(args, extraEnv = {}) {
+  await runGuarded('pnpm', ['exec', 'playwright', ...args], extraEnv);
+}
+
+/**
+ * Runs `command <args>` under the guard (a slot, the prompt, memory and load watchdogs) and exits with its status: for
+ * a script that drives browsers through Playwright's library API itself (scripts/perf/measure.mjs).
+ */
+export async function runGuarded(command, args, extraEnv = {}) {
   const env = { ...process.env, ...extraEnv, SPELLPLANE_PW_GUARD: '1' };
   if (process.env.CI) {
-    const r = spawnSync('pnpm', ['exec', 'playwright', ...args], { stdio: 'inherit', env });
+    const r = spawnSync(command, args, { stdio: 'inherit', env });
     process.exit(r.status ?? 1);
   }
   const prompt = securityPromptShowing();
@@ -255,7 +263,7 @@ export async function runPlaywright(args, extraEnv = {}) {
     console.error(`[pw-guard] macOS is showing a prompt (${promptAfterWait}). Not starting Playwright until it is answered.`);
     process.exit(3);
   }
-  const child = spawn('pnpm', ['exec', 'playwright', ...args], { stdio: 'inherit', env, detached: true });
+  const child = spawn(command, args, { stdio: 'inherit', env, detached: true });
   fs.writeFileSync(OWNER, JSON.stringify({ ...readOwner(), pgid: child.pid }));
 
   let aborted = null;

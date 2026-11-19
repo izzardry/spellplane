@@ -76,10 +76,14 @@ const SHADOW_TYPES: Record<NonNullable<ShadowSettings['map']>['type'], THREE.Sha
   vsm: THREE.VSMShadowMap,
 };
 
-/** Apply pixel ratio, shadow maps and anisotropy limits of `level` to the renderer, within the theme's shadow settings. */
-export function applyQuality(renderer: THREE.WebGLRenderer, level: QualityLevel, shadows: ShadowSettings): void {
+/**
+ * Apply pixel ratio, shadow maps and anisotropy limits of `level` to the renderer, within the theme's shadow settings.
+ * `pixelRatio` replaces the level's (the table scene's cap and adaptive scale, scene/resolution.ts).
+ */
+export function applyQuality(renderer: THREE.WebGLRenderer, level: QualityLevel, shadows: ShadowSettings, pixelRatio?: number): void {
   const eff = effectiveQuality(level, { shadows, post: { bloom: null, vignette: null } }, deviceLimits(renderer));
-  if (renderer.getPixelRatio() !== eff.pixelRatio) renderer.setPixelRatio(eff.pixelRatio);
+  const pr = pixelRatio !== undefined && pixelRatio > 0 ? pixelRatio : eff.pixelRatio;
+  if (renderer.getPixelRatio() !== pr) renderer.setPixelRatio(pr);
   const type = shadows.map ? SHADOW_TYPES[shadows.map.type] : THREE.PCFShadowMap;
   if (renderer.shadowMap.enabled !== eff.shadowMap || renderer.shadowMap.type !== type) {
     renderer.shadowMap.enabled = eff.shadowMap;
