@@ -454,6 +454,19 @@ The owner reviewed the critique and the three directions (A Kitchen Table, B Gra
 - **Almost haptic card handling.** Cards feel physical: they lift on pickup, sway with movement, are pulled into snap slots as they near them, settle with a small bounce, and every common move has a short animation and sound (draw, shuffle, tap and untap, play, to graveyard, attach, clip). Reduced motion is respected.
 - **Overnight build.** These five items are built in one unattended overnight workflow run on branch `m7`; the preview link (`/spellplane/preview/`) follows `m7` so the owner reviews the result in the morning and critiques from there. The dedicated deck builder mode (A7) follows in a later round.
 
+### Overnight run packages (M7, first build round)
+
+| Package | Scope | Main files |
+| --- | --- | --- |
+| M7-C Contracts | Look ids and token shape, tilt API, motion API, affordance events, new settings keys, debug shapes | `*/types.ts`, `ui/design/tokens.ts` |
+| M7-P1 Table worlds | The three looks as 3D tables (surface, frame, light, card shadows, pile and zone marks) readable at every tilt; Graphite with depth; the M4 themes out of the picker | `themes/*`, `scene/materials.ts`, `scene/lights.ts`, `scene/textures.ts` |
+| M7-P2 Design system and HUD | Tokens and components for the three looks; the HUD of `docs/design/m7-hud-proposal.md` (turn tracker, context primary button, menu, undo, log ticker, talk, life plates at seat edges, pile counts); the start page of the directions page; settings and menus restyled | `ui/design/*`, `ui/Hud.svelte`, `ui/*` |
+| M7-P3 One continuous tilt | One camera rig from first person to bird's-eye by a continuous, smooth tilt (drag, wheel, pinch or two-finger swipe, a HUD handle, keys), the hand in reach throughout | `scene/camera*`, `scene/camera/*` |
+| M7-P4 Card feel | Lift, sway, spring follow, magnetic snaps with preview, settle bounce; animations and sounds for draw, shuffle, tap and untap, play, to graveyard, attach, clip; reduced motion | `scene/motion.ts`, `scene/cards.ts`, `scene/snap.ts`, `ui/sound.ts` |
+| M7-P5 Play without keys | On-card and on-pile affordances (selection strip, pile actions, counter chips), double-click or tap to tap, life click and scrub, drag to every zone, gesture coach marks; keys leave the primary UI | `scene/table-scene.ts`, `ui/touch/*`, `ui/hints/*` |
+
+**Gate M7-G:** a goldfish game played by mouse only and one by touch only (iPad emulation), with no key pressed (asserted), in each of the three looks: draw, play a land, cast, tap and untap, attach, counters, life, attack, next turn. Screenshots per look at first person, mid-tilt and bird's-eye, during a magnetic snap and a draw animation. Idle frames stop (render on demand). Gates M0–M5 stay green. **Owner review:** the preview link in the morning.
+
 ### Interplay with M6
 
 - **The releases.**
