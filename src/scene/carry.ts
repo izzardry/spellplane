@@ -52,6 +52,33 @@ export function rigidPoses(group: DragGroup, start: ReadonlyMap<InstanceId, Pose
 }
 
 /**
+ * Drafts for a temporary move (Alt+drag) of a carry group with its grabbed card at `anchor` (drawn pose): one
+ * `moveTemp` per card that moves on its own, each at its rigid pose around the real anchor (the preview's poses); an
+ * attachment whose host moves too rides along in the reducer (M6.1: grabbed by such an attachment, the group lands
+ * where it was shown, not off by the tuck offset).
+ */
+export function tempCarryActions(
+  state: TableState,
+  group: DragGroup,
+  start: ReadonlyMap<InstanceId, Pose>,
+  anchor: Pose,
+  opts: Pick<DropActionOptions, 'newId'>,
+): ActionDraft[] {
+  const inG = new Set(group.cards);
+  const poses = rigidPoses(group, start, anchor);
+  const out: ActionDraft[] = [];
+  for (const id of group.cards) {
+    const c = Object.hasOwn(state.cards, id) ? state.cards[id] : undefined;
+    const pose = poses.get(id);
+    if (!c || !pose || (c.attachedTo !== undefined && inG.has(c.attachedTo))) continue;
+    out.push({ type: 'moveTemp', card: id, pose });
+  }
+  if (out.length < 2) return out;
+  const g = opts.newId('g');
+  return out.map((a) => ({ ...a, group: g }));
+}
+
+/**
  * Drafts for dropping a carry group (see the file comment); [] when nothing would change. Like scene/gestures.ts
  * dropActions, `move` poses are drawn poses (the scene's toStoredPoses strips the tap turn); `attach` poses are stored.
  * A tuck result's pose is the stored attachment slot (scene/snap.ts rule 3a).
@@ -78,7 +105,11 @@ export function carryDropActions(
   if (result.kind === 'zone') {
     // The stack lane takes the anchor (and a dragged selection) as spells; riders are not cast with it.
     const lane = opts.presentation(result.zone) === 'cascade-lane';
-    const cards = lane ? insts.filter((c) => c.id === group.anchor || group.reason[c.id] === 'selection') : insts;
+    const leads = (c: CardInstance) => c.id === group.anchor || group.reason[c.id] === 'selection';
+    // Onto a seat's pile (hand, library, graveyard, exile…) riders owned by another seat stay where they are on the
+    // battlefield; their clips and attachments dissolve as the leaving cards go (M6.1, DECISIONS).
+    const owner = state.zones[result.zone]?.owner ?? null;
+    const cards = lane ? insts.filter(leads) : insts.filter((c) => leads(c) || owner === null || c.owner === owner);
     return dropActions(state, cards, start, result, dest, { ...opts, keepPile: false });
   }
 
@@ -164,7 +195,9 @@ export function carryDropActions(
     const unchanged = c.zone === to && near(c.pose, stored(c, pose)) && (pile === undefined ? true : (c.pile?.id ?? null) === (pile?.id ?? null)) && !('controller' in controllerFor(c, to));
     if (unchanged) continue;
     out.push({ type: 'move', card: id, to, pose, ...(pile === undefined ? {} : { pile }), ...controllerFor(c, to) });
-    if (id === group.anchor && group.leavesHost !== null && c.zone === to) out.push({ type: 'detach', card: id });
+    // A card carried away from a host that stays (the anchor, or a rider such as an Aura clipped to the dragged card)
+    // leaves it: a logged detach in the same gesture (M6.1). Across battlefields the move itself detaches it.
+    if (host && c.zone === to) out.push({ type: 'detach', card: id });
   }
   return grouped([...out, ...reattach]);
 }

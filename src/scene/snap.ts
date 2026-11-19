@@ -16,7 +16,7 @@
  * Holding Ctrl skips rules 2 to 4.
  */
 import { GEOMETRY, TUCK_RULE } from '../core/geometry';
-import { tuckPose } from '../core/reducer';
+import { tuckPose, tuckSlot } from '../core/reducer';
 import type { InstanceId, PileRef, Pose, ZoneId } from '../core/types';
 import type { Rect } from '../games/types';
 import { cardHalfExtents, normDeg, pointInRect, rot2 } from './math';
@@ -292,9 +292,20 @@ export function ruleTuck(p: Pose, cards: readonly SnapCard[]): Extract<DropResul
   // The host: up the attachment chain to the card that is not tucked behind another (bounded against cycles).
   let host = best.c;
   for (let guard = 0; host.attachedTo !== undefined && byId.has(host.attachedTo) && guard < cards.length; guard++) host = byId.get(host.attachedTo)!;
-  const k = cards.filter((c) => c.attachedTo === host.id).length + 1;
+  // The first free slot, as the reducer picks it (M6.1): not on any card tucked behind the host, chained ones included.
+  const taken: Pose[] = [];
+  const under = new Set<InstanceId>([host.id]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const c of cards) {
+      if (c.attachedTo === undefined || under.has(c.id) || !under.has(c.attachedTo)) continue;
+      under.add(c.id);
+      taken.push(c.pose);
+      grew = true;
+    }
+  }
   const stored: Pose = { x: host.pose.x, y: host.pose.y, rot: host.tapped ? normDeg(host.pose.rot - 90) : host.pose.rot };
-  return { rule: '3a', kind: 'tuck', pose: tuckPose(stored, k), host: host.id };
+  return { rule: '3a', kind: 'tuck', pose: tuckPose(stored, tuckSlot(stored, taken)), host: host.id };
 }
 
 interface Box {

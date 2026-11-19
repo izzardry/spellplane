@@ -38,8 +38,8 @@ import { ambientDue, uploadScale } from './pacing';
 import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
 import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
-import { tapActions, tempMoveActions, toStoredPoses } from './gestures';
-import { carryDropActions, rigidPoses } from './carry';
+import { tapActions, toStoredPoses } from './gestures';
+import { carryDropActions, rigidPoses, tempCarryActions } from './carry';
 import { ClipView, clipCorners, clipFrame, clipHere, pointInClip, type ClipCard, type ClipDraw, type ClipFrame } from './clips';
 import { LAYER, cameraTable, compareSort, displayedRot, dropTable, dropTargets, faceOf, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
@@ -1206,7 +1206,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   /** A left press on an overlap starts the hold (PLAN Milestone 6, owner decisions, Creating a clip, Mouse). */
   function startHold(pointerId: number, x: number, y: number): void {
     const under = cardsUnder(x, y);
-    clipHold = under.length >= CLIP.minCards ? { pointerId, t0: performance.now(), at: { x, y }, cards: under.map((c) => c.id) } : null;
+    // Only where the hold would clip something (M6.1): over cards already clipped together it stays a plain press,
+    // so the click or drag goes on as usual and no duplicate clip is made.
+    const would = state && under.length >= CLIP.minCards ? clipHere(state, under, screenToTable(x, y)) : null;
+    clipHold = would ? { pointerId, t0: performance.now(), at: { x, y }, cards: under.map((c) => c.id) } : null;
   }
 
   function cancelHold(): void {
@@ -1220,9 +1223,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const h = clipHold;
     cancelHold();
     if (!h || !state) return;
-    if (gesture?.kind === 'press' && gesture.pointerId === h.pointerId) gesture = { kind: 'held', pointerId: h.pointerId };
     const made = clipHere(state, cardsUnder(h.at.x, h.at.y), screenToTable(h.at.x, h.at.y));
-    if (made) dispatch([{ type: 'clipAdd', clip: newId('clip'), cards: made.cards, anchor: made.anchor }]);
+    if (!made) return;
+    if (gesture?.kind === 'press' && gesture.pointerId === h.pointerId) gesture = { kind: 'held', pointerId: h.pointerId };
+    dispatch([{ type: 'clipAdd', clip: newId('clip'), cards: made.cards, anchor: made.anchor }]);
   }
 
   /** The hold ring: shown from CLIP.ringFromMs, full at CLIP.holdMs. */
@@ -1530,9 +1534,6 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const a0 = d.start.get(d.ids[0]!)!;
     const anchorPose: Pose = { x: p.x + d.offset.x, y: p.y + d.offset.y, rot: a0.rot };
     const group = groupOf(d);
-    const inGroup = new Set(d.ids);
-    /** Cards that move on their own: an attachment whose host moves too rides along (the reducer moves it). */
-    const own = insts.filter((c) => c.attachedTo === undefined || !inGroup.has(c.attachedTo));
     let actions: ActionDraft[];
     let predicted: Map<InstanceId, Pose> | null = null;
     // Dropped onto another seat's attacker (or its blocker fan): a block (DESIGN "Combat and annotation", Block). The
@@ -1554,8 +1555,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return;
     }
     if (d.temp) {
-      actions = tempMoveActions(own, d.start, anchorPose, { newId });
-      predicted = offsetPoses(d, anchorPose);
+      // Rigid around the grabbed card, as the preview shows it (M6.1), even when it rides on a host in the group.
+      actions = tempCarryActions(state, group, d.start, anchorPose, { newId });
+      predicted = rigidPoses(group, d.start, anchorPose);
     } else {
       const r = resolveFor(d, ctrl);
       if (!r) return back();

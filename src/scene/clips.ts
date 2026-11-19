@@ -54,15 +54,25 @@ export interface ClipCard {
 
 /**
  * The clip a press at table point `p` makes over `under` (the cards there, top first): every card under the point,
- * anchored on the topmost at that point. Null for fewer than CLIP.minCards cards, or when exactly these cards are
- * already clipped together (by a clip other than `ignore`, the clip being moved).
+ * anchored on the topmost at that point. Null for fewer than CLIP.minCards cards, or when these cards are already
+ * clipped together, directly or through a chain of clips other than `ignore` (the clip being moved): a hold there
+ * makes no duplicate and stays a plain press (M6.1).
  */
 export function clipHere(state: TableState, under: readonly ClipCard[], p: TablePoint, ignore: string | null = null): { cards: InstanceId[]; anchor: ClipAnchor } | null {
   if (under.length < CLIP.minCards) return null;
   const cards = [...new Set(under.map((c) => c.id))].sort();
   if (cards.length < CLIP.minCards) return null;
-  const key = cards.join('\u0000');
-  if (Object.values(state.clips ?? {}).some((c) => c.id !== ignore && c.cards.join('\u0000') === key)) return null;
+  const others = Object.values(state.clips ?? {}).filter((c) => c.id !== ignore);
+  const joined = new Set<InstanceId>([cards[0]!]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const c of others) {
+      if (!c.cards.some((id) => joined.has(id)) || c.cards.every((id) => joined.has(id))) continue;
+      for (const id of c.cards) joined.add(id);
+      grew = true;
+    }
+  }
+  if (cards.every((id) => joined.has(id))) return null;
   const top = under[0]!;
   const off = anchorOffset({ x: top.pose.x, y: top.pose.y, rot: storedRot(top.pose.rot, top.tapped) }, p);
   return { cards, anchor: { card: top.id, x: off.x, y: off.y } };

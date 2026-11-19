@@ -160,6 +160,20 @@ export function tuckPose(host: Pose, k: number): Pose {
   return { x: q(host.x + right.x * sx + up.x * sy), y: q(host.y + right.y * sx + up.y * sy), rot: host.rot };
 }
 
+/**
+ * The first free attachment slot behind a host (M6.1): the smallest k >= 1 whose tuckPose lies on none of `taken` (the
+ * poses of the cards already tucked behind the host, chained ones included), so no two attachments of a host share a
+ * pose after a middle one left. Total: among taken.length + 1 slots one is always free.
+ */
+export function tuckSlot(host: Pose, taken: readonly Pose[]): number {
+  const near = (a: Pose, b: Pose) => Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
+  for (let k = 1; k <= taken.length; k++) {
+    const p = tuckPose(host, k);
+    if (!taken.some((t) => near(t, p))) return k;
+  }
+  return taken.length + 1;
+}
+
 /** Lexicographic (UTF-16 code unit) order, as hidden zones and every deterministic iteration use. */
 export function byId(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;

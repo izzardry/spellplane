@@ -63,6 +63,20 @@ describe('making a clip', () => {
     expect(clipHere(s, under, { x: 20, y: 10 }, 'k1')).not.toBeNull();
   });
 
+  it('never over cards already clipped together through a chain (M6.1: a hold there stays a plain press)', () => {
+    const s = table();
+    s.clips = {
+      k1: { id: 'k1', cards: ['a', 'b'], anchor: { card: 'a', x: 0, y: 0 }, by: 's0' },
+      k2: { id: 'k2', cards: ['b', 'c'], anchor: { card: 'b', x: 0, y: 0 }, by: 's0' },
+    };
+    const under = [{ id: 'c', pose: P(30, 20), tapped: false }, { id: 'a', pose: P(0, 0), tapped: false }];
+    expect(clipHere(s, under, { x: 20, y: 10 })).toBeNull();
+    // Moving k2 there: without it, a and c are not joined, so the moved clip lands.
+    expect(clipHere(s, under, { x: 20, y: 10 }, 'k2')).not.toBeNull();
+    // A card not in the group under the press makes a new clip of all of them.
+    expect(clipHere(s, [...under, { id: 'd', pose: P(10, 10), tapped: false }], { x: 20, y: 10 })?.cards).toEqual(['a', 'c', 'd']);
+  });
+
   it('the keyboard clips a card with every card it overlaps, or the selection, over their overlap', () => {
     const s = table();
     expect(cardsOverlap(P(0, 0), P(30, 20))).toBe(true);

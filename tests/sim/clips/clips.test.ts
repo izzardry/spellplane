@@ -48,7 +48,7 @@ function dragDrafts(s: TableState, anchor: InstanceId, pose: Pose): ActionDraft[
   return toStoredPoses(s, carryDropActions(s, g, start, { rule: 5, kind: 'free', pose }, { zone, controller: s.cards[anchor]!.controller }, { newId: (p) => `${p}-${++n}`, presentation }));
 }
 
-describe('attach, carry and clips on two peers (delay, 5% drop, reordering)', () => {
+describe('attach, carry and clips on two peers (delay, 5% drop, reordering, peer loss)', () => {
   it.each([3, 11, 29])('converge on one hash with the clips and attachments the design gives (seed %i)', async (seed) => {
     const sim = makeSim({ engines: 2, seats: 2, start: baseTable(2), seed, ...FAULTS });
     await until(() => agreed(sim.peers), 20_000, 'connection');
@@ -109,5 +109,29 @@ describe('attach, carry and clips on two peers (delay, 5% drop, reordering)', ()
       await expectConverged(sim.peers);
       for (const p of sim.peers) expect(confirmed(p).clips?.k1).toMatchObject({ cards: ['a00', 'b00'], by: 's0' });
     }
+
+    // Peer loss between clip actions (PLAN standing rule: delay, drop, reordering and peer loss): the sequencing page
+    // clips while the other page is cut off, takes a clip off and puts another on before it is back; it catches up.
+    const stay = sim.peers.find((p) => p.engine.isSequencer())!;
+    const lost = sim.peers.find((p) => p !== stay)!;
+    propose(stay, [{ type: 'clipAdd', clip: 'k2', cards: ['a00', 'a02'], anchor: { card: 'a00', x: 0, y: 30 } }]);
+    await expectConverged(sim.peers);
+    sim.net.kill(lost.transport.selfId);
+    await vi.advanceTimersByTimeAsync(150);
+    propose(stay, [{ type: 'clipRemove', clip: 'k2' }]);
+    await vi.advanceTimersByTimeAsync(40);
+    propose(stay, [{ type: 'clipAdd', clip: 'k3', cards: ['a02', 'b00'], anchor: { card: 'b00', x: 0, y: -30 } }]);
+    await vi.advanceTimersByTimeAsync(300);
+    sim.net.revive(lost.transport.selfId);
+    await until(() => agreed(sim.peers), 30_000, 'the reconnection');
+    await expectConverged(sim.peers);
+    for (const p of sim.peers) {
+      expect(confirmed(p).clips?.k2).toBeUndefined();
+      expect(confirmed(p).clips?.k3).toMatchObject({ cards: ['a02', 'b00'], by: stay.seat });
+    }
+    // Back, the other page takes k3 off; both agree again.
+    propose(lost, [{ type: 'clipRemove', clip: 'k3' }]);
+    await expectConverged(sim.peers);
+    for (const p of sim.peers) expect(confirmed(p).clips?.k3).toBeUndefined();
   }, 120_000);
 });

@@ -8,7 +8,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { shot } from '../helpers/app';
 import { freshProfile, openSolo } from '../solo/helpers';
-import { SIDS, actions, centre, clipCentre, clips, creature, hover, idle, mouseDrag, pxPerMm, shown, state } from './helpers';
+import { SIDS, actions, centre, clipCentre, clips, creature, dispatch, hover, idle, mouseDrag, pxPerMm, shown, state } from './helpers';
 
 /** a at (0, -200) and b at (30, -180) overlap; c at (250, -200) stands apart. */
 async function table(page: Page): Promise<void> {
@@ -32,34 +32,47 @@ test.beforeEach(async ({ page }, info) => {
   await table(page);
 });
 
-test('holding the button still on an overlap clips the cards: the ring fills from 200 ms, the clip snaps on at 600 ms', async ({ page }, info) => {
+test('holding the button still on an overlap clips the cards: the ring fills from a third of the hold, the clip snaps on when it is full', async ({ page }, info) => {
   const p = await overlap(page);
   await page.mouse.move(p.x, p.y);
-  // Record in the page when the press went down, when the ring first showed and when the clip came on (lower bounds
-  // only: a slow machine may draw late, never early).
+  // Sample the debug hook's hold progress, the ring and the clips: right after the press went down (a bubbling
+  // listener runs after the scene's own) and then every frame until the clip is on. Asserted on the samples' states,
+  // never on wall-clock time.
   await page.evaluate(() => {
-    const w = window as unknown as { __ring: { down: number; shown: number; clipped: number } };
-    w.__ring = { down: 0, shown: 0, clipped: 0 };
-    addEventListener('pointerdown', () => (w.__ring.down = performance.now()), { capture: true, once: true });
+    type Sample = { progress: number | null; cards: string[] | null; ring: boolean; clips: number };
+    const w = window as unknown as { __holdSamples: Sample[] };
+    const sp = window.__spellplane as unknown as { clips(): { hold: { progress: number; cards: string[] } | null }; state(): { clips?: Record<string, unknown> } };
     const ring = document.querySelector<HTMLElement>('[data-scene="clip-ring"]')!;
-    new MutationObserver(() => {
-      if (ring.style.display === 'block' && !w.__ring.shown) w.__ring.shown = performance.now();
-    }).observe(ring, { attributes: true });
-    const loop = () => {
-      if ((window.__spellplane as unknown as { clips(): { clips: unknown[] } }).clips().clips.length) w.__ring.clipped = performance.now();
-      else requestAnimationFrame(loop);
+    w.__holdSamples = [];
+    const sample = (): number => {
+      const h = sp.clips().hold;
+      const clips = Object.keys(sp.state().clips ?? {}).length;
+      w.__holdSamples.push({ progress: h ? h.progress : null, cards: h ? [...h.cards].sort() : null, ring: ring.style.display === 'block', clips });
+      return clips;
     };
-    loop();
+    addEventListener('pointerdown', () => {
+      sample();
+      const loop = () => {
+        if (sample() === 0) requestAnimationFrame(loop);
+      };
+      requestAnimationFrame(loop);
+    }, { once: true });
   });
   await page.mouse.down();
-  await expect.poll(async () => (await clips(page)).hold?.cards.sort() ?? (await clips(page)).clips[0]?.cards).toEqual(['a', 'b']);
   await expect.poll(async () => Object.values((await state(page)).clips ?? {})[0]?.cards ?? null, { timeout: 10_000 }).toEqual(['a', 'b']);
-  const t = await page.evaluate(() => (window as unknown as { __ring: { down: number; shown: number; clipped: number } }).__ring);
-  expect(t.clipped - t.down).toBeGreaterThanOrEqual(595);
-  if (t.shown) {
-    expect(t.shown - t.down).toBeGreaterThanOrEqual(195);
-    expect(t.shown).toBeLessThanOrEqual(t.clipped);
+  const samples = await page.evaluate(() => (window as unknown as { __holdSamples: { progress: number | null; cards: string[] | null; ring: boolean; clips: number }[] }).__holdSamples);
+  // At the press: a hold over a and b has begun, nothing is clipped and the ring is not shown yet.
+  expect(samples[0]).toMatchObject({ cards: ['a', 'b'], ring: false, clips: 0 });
+  expect(samples[0]!.progress!).toBeLessThan(1 / 3);
+  for (const x of samples) {
+    // While the hold runs there is no clip; the ring only shows from a third of the hold on.
+    if (x.progress !== null) expect(x.clips).toBe(0);
+    if (x.ring) expect(x.progress ?? 0).toBeGreaterThanOrEqual(1 / 3);
   }
+  // Progress only grows until the hold ends.
+  const ps = samples.map((x) => x.progress).filter((x): x is number => x !== null);
+  expect(ps).toEqual([...ps].sort((m, n) => m - n));
+  expect(samples.at(-1)!.clips).toBe(1);
   await page.mouse.up();
   await expect(page.locator('[data-scene="clip-ring"]')).toBeHidden();
   const c = Object.values((await state(page)).clips!)[0]!;
@@ -195,4 +208,20 @@ test('a clipped card going to the graveyard leaves the clip; undo restores the c
   await page.keyboard.press('Control+KeyZ');
   await expect.poll(async () => (await state(page)).cards.a!.zone).toBe('battlefield:s0');
   await expect.poll(async () => Object.values((await state(page)).clips ?? {})[0]?.cards ?? null).toEqual(['a', 'b']);
+});
+
+test('a press on cards already clipped together starts no hold: it stays a click and makes no second clip', async ({ page }) => {
+  await dispatch(page, { type: 'clipAdd', clip: 'k1', cards: ['a', 'b'], anchor: { card: 'b', x: -15, y: -10 } });
+  await expect.poll(() => clipCount(page)).toBe(1);
+  await idle(page);
+  // Over both a and b, clear of the clip: 2 mm right of and 40 mm above a's centre.
+  const k = await pxPerMm(page, 'a');
+  const a = await centre(page, 'a');
+  const p = { x: a.x + 2 * k, y: a.y - 40 * k };
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.down();
+  expect((await clips(page)).hold).toBeNull();
+  await page.mouse.up();
+  await expect.poll(async () => (await shown(page)).filter((x) => x.selected).map((x) => x.id)).toEqual(['b']);
+  expect(await clipCount(page)).toBe(1);
 });
