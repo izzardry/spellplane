@@ -1294,3 +1294,8 @@ One line per decision the design did not fix. Format: `- [package] decision — 
 - [M7 owner] Deck building gets a dedicated full-screen deck builder mode (the idea of Hearthstone's, not its look) — the builder table and list view are not enough
 - [M7 owner] M7 runs owner-in-the-loop, one aspect at a time (critique, options, build on a preview, adjust), with a live dev view and a preview URL; full test runs only for release trains to main — the owner wants to iterate quickly, without hours-long test and release cycles
 - [M7 main] A0 Safari performance comes first, measured with an on-screen frame meter — judging the look at under 20 fps is pointless, and numbers beat impressions
+- [M7 owner] All three directions are kept as the redesign's themes (Kitchen Table, Graphite, Codex); Graphite gets more depth — "all looks, A, B and C are nice. B is a bit too flat"
+- [M7 owner] Every look works from first person to bird's-eye, with one continuous tilt instead of two rigs — the first-person tilt controls "need to actually transition from first person to birds-eye"
+- [M7 owner] Play by direct manipulation with almost haptic card handling (lift, sway, magnetic snaps, settle, animations); keys become optional accelerators — "the game play seemed to require hotkeys to be memorized instead of just intuitive play"
+- [M7 owner] These are built in one overnight workflow run on m7, reviewed on the preview link in the morning — the owner asked for "a long-running over-night task"
+- [M7 main] The M4 themes (Paper, Dusk, Wyrm, Stonetable) leave the theme picker but their code stays — reversible until the owner confirms they can go

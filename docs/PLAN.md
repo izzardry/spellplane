@@ -443,6 +443,17 @@ The builder is a full-screen mode of its own. It opens from the start page, from
   - the last edits undoable.
 - **Look.** Its own design under A1. It does not copy any existing game's screens or art.
 
+### Owner decisions after the first design round (19 Nov 2026)
+
+The owner reviewed the critique and the three directions (A Kitchen Table, B Graphite, C Codex; the page from the A1 round, kept in `docs/design/m7-directions.html`).
+
+- **All three looks are kept**, as the three themes of the redesign. Graphite is "a bit too flat": it gets depth (layered surfaces, soft shadows, a subtle material grain) while staying the calm, cheap-to-draw look. The four M4 themes (Paper, Dusk, Wyrm, Stonetable) leave the theme picker; their code stays until the owner confirms they can go.
+- **Every look works from bird's-eye to first person.** The directions were drawn top-down; each look is built as a 3D table world (surface, frame, lighting, card shadows, pile and zone marks) that reads well at every camera tilt.
+- **One continuous tilt.** The camera no longer switches between two rigs. One tilt control moves continuously and smoothly from first person (seated, looking across the table) to bird's-eye (straight down), with the hand kept in reach throughout; it works the same in all three looks, by mouse, touch and keyboard.
+- **Play without memorising keys.** The biggest problem: play seemed to require hotkeys. Every everyday action is reachable by direct manipulation with visible affordances: drag, drop, double-click or tap, on-card and on-pile actions, life totals you click or scrub. Keys stay as optional accelerators and leave the primary UI.
+- **Almost haptic card handling.** Cards feel physical: they lift on pickup, sway with movement, are pulled into snap slots as they near them, settle with a small bounce, and every common move has a short animation and sound (draw, shuffle, tap and untap, play, to graveyard, attach, clip). Reduced motion is respected.
+- **Overnight build.** These five items are built in one unattended overnight workflow run on branch `m7`; the preview link (`/spellplane/preview/`) follows `m7` so the owner reviews the result in the morning and critiques from there. The dedicated deck builder mode (A7) follows in a later round.
+
 ### Interplay with M6
 
 - **The releases.**
