@@ -13,7 +13,7 @@ import type { CardInstance, InstanceId, LogEntry, Pose, SeatId, StackItem, Stack
 import type { ActionId, GameDefinition } from '../games/types';
 import { hoveredStackItem } from '../scene/stack';
 import { clipForCards, clipHere, clipsHolding, type ClipCard } from '../scene/clips';
-import type { TableScene } from '../scene/types';
+import { perspectiveToggleTilt, type TableScene } from '../scene/types';
 import type { TableSession } from '../session/types';
 import { ASK_LABEL_MAX, blockingHolder, pendingAbout, roundPassed as coreRoundPassed } from '../core/reducer/confirm';
 import { promptModel } from './confirm/model';
@@ -505,9 +505,11 @@ export class Commands {
         return;
       // --- View
       case 'perspective': {
-        // The table point under the cursor stays under it through the blend (DESIGN "Camera and navigation", Switching).
+        // The old perspective key drives the one continuous tilt (M7-C; PLAN Milestone 7, One continuous tilt): the upper
+        // half goes to first person, the lower half to bird's-eye. The table point under the cursor stays under it
+        // (DESIGN "Camera and navigation", Switching).
         const at = this.host.pointer?.() ?? null;
-        scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye', at ? { anchor: at } : undefined);
+        if (scene) scene.camera.setTilt(perspectiveToggleTilt(scene.camera.tilt()), at ? { anchor: at, source: 'key' } : { source: 'key' });
         return;
       }
       case 'fitTable':

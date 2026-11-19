@@ -113,7 +113,42 @@ export interface Settings {
    * core/objects.ts DIE_SIDES offers the sizes). Implementer: M6-P3.
    */
   dieSides: number;
+  /**
+   * Added by M7-C. The viewer's look (themes/types.ts LookId: 'kitchen', 'graphite' or 'codex'; PLAN Milestone 7, Owner
+   * decisions after the first design round: "All three looks are kept"): the HUD's design tokens (ui/design/tokens.ts)
+   * and, through LOOK_THEME, the table's 3D theme. A string like `theme`, read with lookIdOf (anything unknown is the
+   * default look). Choosing a look in the picker also stores its theme in `theme`; an M4 theme set by the debug hook or
+   * an older save keeps `theme` and leaves the look alone. Implementer: M7-P2 (picker and HUD), M7-P1 (theme mapping).
+   */
+  look: string;
+  /**
+   * Added by M7-C. The tilt the table opens at, 0 first person to 1 bird's-eye (scene/types.ts Tilt; PLAN Milestone 7,
+   * Owner decisions, One continuous tilt), or null for the look's default (Theme.camera.tilt). The last tilt the viewer
+   * chose with the HUD handle or keys is stored here when it settles. Implementer: M7-P3.
+   */
+  tilt: number | null;
+  /**
+   * Added by M7-C. Motion intensity (PLAN Milestone 7, Owner decisions, Almost haptic card handling: "Reduced motion is
+   * respected"; scene/types.ts resolveMotion). Implementer: M7-P4 (the scene), M7-P2 (the setting in Settings).
+   */
+  motion: MotionIntensity;
+  /**
+   * Added by M7-C. "Show frame rate" (PLAN Milestone 7, A0 steps: "An on-screen fps and frame-time meter (a URL flag and a
+   * setting)"). M7-A0 keeps it in localStorage for now (DECISIONS [M7-A0]); moving it here is a follow-up of M7-A0's.
+   */
+  showFrameRate: boolean;
 }
+
+/**
+ * How much the table moves (Settings.motion; PLAN Milestone 7, Owner decisions, Almost haptic card handling): 'system'
+ * follows the browser's prefers-reduced-motion, 'full' all of it, 'subtle' half the sway and bounce and shorter
+ * animations, 'reduced' cuts instead of animating (DESIGN "Specification: geometry, layout and motion", Motion). Added by
+ * M7-C.
+ */
+export type MotionIntensity = 'system' | 'full' | 'subtle' | 'reduced';
+
+/** Every motion intensity, in the picker's order (Settings.motion). Added by M7-C. */
+export const MOTION_INTENSITIES: readonly MotionIntensity[] = ['system', 'full', 'subtle', 'reduced'];
 
 /** Which card back to draw (DESIGN "Card data and images", Card back). Added by M5-C. */
 export type CardBackChoice = 'spellplane' | 'official';
@@ -123,7 +158,29 @@ export type CardBackChoice = 'spellplane' | 'official';
  * explaining why" to add Spellplane to the Home Screen; M5-P3 storage-persistence prompt). Added by M5-C; packages may
  * add ids here through the contracts owner, and a stored id this build does not know is ignored.
  */
-export type HintId = 'welcome' | 'tableKeys' | 'touchGestures' | 'talkKey' | 'installHomeScreen' | 'persistStorage';
+export type HintId = 'welcome' | 'tableKeys' | 'touchGestures' | 'talkKey' | 'installHomeScreen' | 'persistStorage' | CoachMarkId;
+
+/**
+ * Gesture coach marks (PLAN M7-P5 "gesture coach marks"; docs/design/m7-hud-proposal.md, First-run hints: "One coach
+ * mark at a time, anchored to the thing it explains … They disappear once you've done it"). Each is a HintId, so
+ * `hintsSeen` remembers it once done or dismissed. Added by M7-C; implementer: M7-P5 (ui/hints/*).
+ */
+export type CoachMarkId =
+  | 'coachPlayLand'
+  | 'coachDraw'
+  | 'coachTap'
+  | 'coachSelect'
+  | 'coachAttack'
+  | 'coachLife'
+  | 'coachNextStep'
+  | 'coachTilt'
+  | 'coachPileActions';
+
+/** The coach marks in the order a newcomer meets them (docs/design/m7-hud-proposal.md, First-run hints: "Drag a land from your hand onto the table", then "Click your library to draw", then "Select a creature and press Attack"). Added by M7-C. */
+export const COACH_MARK_IDS: readonly CoachMarkId[] = ['coachPlayLand', 'coachDraw', 'coachTap', 'coachSelect', 'coachAttack', 'coachLife', 'coachNextStep', 'coachTilt', 'coachPileActions'];
+
+/** Every hint id this build knows (backup import keeps only these). Added by M7-C. */
+export const HINT_IDS: readonly HintId[] = ['welcome', 'tableKeys', 'touchGestures', 'talkKey', 'installHomeScreen', 'persistStorage', ...COACH_MARK_IDS];
 
 /** Talk defaults (DESIGN "Decision log": push-to-talk; hold V). Added by M3-C. */
 export const DEFAULT_TALK: TalkSettings = { gate: 'ptt', voice: true, dictation: false, muted: false, mouseButton: null };
@@ -146,6 +203,10 @@ export const DEFAULT_SETTINGS: Settings = {
   hintsSeen: [],
   talkWhileHolding: false,
   dieSides: DEFAULT_DIE_SIDES,
+  look: 'kitchen',
+  tilt: null,
+  motion: 'system',
+  showFrameRate: false,
 };
 
 /** `settings` store record, keyed by name (DESIGN "Local persistence"). */

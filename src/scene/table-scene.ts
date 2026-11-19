@@ -81,6 +81,7 @@ import type {
   TablePressKind,
   ViewState,
 } from './types';
+import { TILT_PRESETS, clampTilt, rigForTilt, tiltForRig, type SetTiltOptions, type Tilt } from './types';
 
 /** A debug card with extra fields the scene's own tests read (zone, pile, which face is shown, ...). */
 export interface SceneDebugCard extends DebugCard {
@@ -2519,7 +2520,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     },
     camera(): DebugCamera {
       const p = rig.pose();
-      return { rig: rig.rig(), fov: p.fovDeg, position: [...p.position], pitch: p.pitchDeg };
+      return { rig: rig.rig(), fov: p.fovDeg, position: [...p.position], pitch: p.pitchDeg, tilt: stubTilt() };
     },
     lines: () => lineView.debugLines(),
     drawnLines: () => lineView.debugDrawn(),
@@ -2611,6 +2612,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     stats: () => renderStats(),
     quality: () => runtime.qualityChoice,
     setQuality: (id) => sceneApi.setQuality(id),
+    framesDrawn: () => frame,
   };
   const rigDebug: RigDebug = {
     rig: () => controls.rig(),
@@ -2619,6 +2621,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     follow: () => controls.follow(),
     setFollow: (next) => controls.setFollow(next),
     pose: () => controls.pose(),
+    tilt: () => controls.tilt(),
+    setTilt: (t, o) => controls.setTilt(t, o),
   };
 
   const debugParts = {
@@ -2785,7 +2789,30 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return { ...b, anchor: { table: b.anchor.table, screen: { x: b.anchor.screen.x + r.left, y: b.anchor.screen.y + r.top } } };
     },
     pose: () => cameraPose(),
+    // The one continuous tilt (scene/types.ts TiltControls, M7-C): a stub over the two rigs until M7-P3 builds the
+    // continuous rig. A tilt goes to the nearer rig; mid-blend the tilt is the blend's progress.
+    tilt: () => stubTilt(),
+    setTilt(t: Tilt, o?: SetTiltOptions) {
+      const target = tiltForRig(rigForTilt(clampTilt(t)));
+      const from = stubTilt();
+      const source = o?.source ?? 'api';
+      controls.setRig(rigForTilt(target), { ...(o?.animate !== undefined ? { animate: o.animate } : {}), ...(o?.anchor ? { anchor: o.anchor } : {}) });
+      if (target !== from) opts.events.tilt?.({ phase: 'start', tilt: from, target, source });
+    },
+    tiltBy(dt: number, o?: SetTiltOptions) {
+      if (!Number.isFinite(dt) || dt === 0) return;
+      controls.setTilt(stubTilt() + dt, o);
+    },
+    tiltPresets: () => TILT_PRESETS,
   };
+
+  /** The tilt of the two-rig camera (M7-C stub until M7-P3): the rig's tilt, or the blend's eased progress between them. */
+  function stubTilt(): Tilt {
+    const b = rig.blendState();
+    if (!b) return tiltForRig(rig.rig());
+    const a = tiltForRig(b.from);
+    return a + (tiltForRig(b.to) - a) * b.t;
+  }
 
   raf = requestAnimationFrame(tick);
 

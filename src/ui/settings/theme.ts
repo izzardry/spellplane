@@ -19,6 +19,10 @@ export const THEME_BLURBS: Readonly<Record<ThemeId, string>> = {
   dusk: 'Moody, a warm lamp on dark felt',
   wyrm: 'Dragon-themed obsidian and embers',
   stonetable: 'Carved stone, rendered in 3D',
+  // The M7 looks (docs/design/m7-directions.html; M7-C, M7-P2 may reword).
+  kitchen: 'Warm and tactile: an oatmeal playmat on walnut',
+  graphite: 'Modern and minimal: cool charcoal, one mint accent',
+  codex: 'Restrained fantasy: midnight leather and gilt',
 };
 
 /** The state a picker or shell renders. */

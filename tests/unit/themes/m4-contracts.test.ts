@@ -52,7 +52,8 @@ describe('functional signals', () => {
 describe('theme interface v2', () => {
   it('loads every theme lazily under its own id, the stubs naming their package', async () => {
     // Every theme package has landed (Dusk: M4-P3, Wyrm: M4-P4, Stonetable: M4-P5); no stub remains.
-    const stubs: Record<string, string> = {};
+    // M7-C added the three looks' themes as stubs until M7-P1 builds them.
+    const stubs: Record<string, string> = { kitchen: 'M7-P1', graphite: 'M7-P1', codex: 'M7-P1' };
     for (const id of THEME_IDS) {
       const t = await loadTheme(id);
       expect(t.id).toBe(id);

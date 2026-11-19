@@ -8,14 +8,15 @@ import type { DeckBuild, InstanceId, Line, Pose, SecretStore, TableState } from 
 import type { DraftPrivateView } from '../draft/types';
 import type { PeerId } from '../net/transport';
 import type { ConnectionStatus, NetMessageRecord, PeerInfo } from '../net/types';
-import type { ClipDebugState, DebugCaption, RenderDebug, RigDebug, StackBadgeState, Vec3 } from '../scene/types';
+import type { AffordanceDebugState, ClipDebugState, DebugCaption, MotionDebugState, RenderDebug, RigDebug, StackBadgeState, Vec3 } from '../scene/types';
 import type { TouchGesture } from '../scene/input/touch';
 import type { AuditBundle, AuditVerdict } from '../core/audit';
 import type { StorageStatus } from '../store/quota';
 import type { RadialMenuState, ThumbAction } from '../ui/touch/actions';
 import type { CardFocus } from '../ui/a11y/index';
 import type { UpdateStatus } from '../util/pwa';
-import type { ThemeId } from '../themes/types';
+import type { LookId, ThemeId } from '../themes/types';
+import type { CoachMarkId } from '../store/types';
 import type { Caption, SpeechEngineId, TalkIndicatorState, TalkState, VoiceTrackState } from '../voice/types';
 
 /**
@@ -143,6 +144,42 @@ export interface A11yDebug {
   announcements(): string[];
 }
 
+/**
+ * The look part of the debug hook (PLAN Milestone 7, Owner decisions after the first design round: three looks; gate
+ * M7-G: a goldfish game "in each of the three looks"). Added by M7-C; registered by M7-P2's look picker.
+ */
+export interface LookDebug {
+  /** The look this page shows. */
+  current(): LookId;
+  /** Switch the HUD tokens and the table's theme (LOOK_THEME) to the look; resolves once the new theme rendered a frame. */
+  set(id: LookId): Promise<void>;
+}
+
+/**
+ * The input part of the debug hook (PLAN Milestone 7, gate M7-G: "a goldfish game played by mouse only and one by touch
+ * only … with no key pressed (asserted)"): counts of the page's input events since load. Added by M7-C; registered by
+ * debug/input.ts (M7-C) at boot in dev and test builds.
+ */
+export interface InputDebug {
+  /** keydown events the page received (any target, before any handler). */
+  keydowns(): number;
+  /** pointerdown events by pointer type. */
+  pointerdowns(): { mouse: number; touch: number; pen: number };
+  /** Reset the counters (before a scripted phase). */
+  reset(): void;
+}
+
+/**
+ * The coach-mark part of the debug hook (PLAN M7-P5 "gesture coach marks"; docs/design/m7-hud-proposal.md, First-run
+ * hints). Added by M7-C; registered by M7-P5.
+ */
+export interface CoachDebug {
+  /** The coach mark showing now, else null. */
+  current(): CoachMarkId | null;
+  /** Coach marks done or dismissed (stored in Settings.hintsSeen). */
+  seen(): CoachMarkId[];
+}
+
 /** The full debug hook (DESIGN "Specification: code interfaces"). */
 export interface SpellplaneDebug {
   state(): TableState;
@@ -177,6 +214,16 @@ export interface SpellplaneDebug {
   stackBadge(): StackBadgeState;
   /** Added by M6-C: paperclips, the hold ring, the drag group and the drop preview (registered by the table scene; M6-P1). */
   clips(): ClipDebugState;
+  /** Added by M7-C: the viewer's look (M7-P2). */
+  look: LookDebug;
+  /** Added by M7-C: input event counts, so the M7 gate asserts that no key was pressed (debug/input.ts). */
+  input: InputDebug;
+  /** Added by M7-C: card motion, running animations and frame holds (registered by the table scene; M7-P4). */
+  motion(): MotionDebugState;
+  /** Added by M7-C: the selection strip anchor, the pile under the pointer and a life scrub (registered by the table scene; M7-P5). */
+  affordances(): AffordanceDebugState;
+  /** Added by M7-C: the gesture coach marks (M7-P5). */
+  coach: CoachDebug;
 }
 
 // Types registerDebug (util/debug.ts) against SpellplaneDebug without util/ importing debug/.

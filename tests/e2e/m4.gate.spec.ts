@@ -29,7 +29,8 @@ import type { SecretStore, TableState } from '../../src/core/types';
 import type { NetMessageRecord } from '../../src/net/types';
 import type { DebugStackEntry } from '../../src/scene/stack';
 import type { SceneDebugCard } from '../../src/scene/table-scene';
-import { THEME_IDS, THEME_LABELS, type ThemeId } from '../../src/themes/index';
+// The M4 gate covers the four M4 themes; the M7 looks have their own gate (M7-G).
+import { M4_THEME_IDS as THEME_IDS, THEME_LABELS, type M4ThemeId as ThemeId } from '../../src/themes/index';
 import { scan } from '../leak/scan';
 import { hook, shot } from './helpers/app';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname } from './lobby/helpers';

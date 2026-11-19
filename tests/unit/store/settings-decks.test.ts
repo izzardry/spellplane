@@ -38,6 +38,10 @@ const CHANGED: Settings = {
   hintsSeen: ['welcome', 'installHomeScreen'],
   talkWhileHolding: true,
   dieSides: 20,
+  look: 'codex',
+  tilt: 0.25,
+  motion: 'subtle',
+  showFrameRate: true,
 };
 
 describe('settings', () => {

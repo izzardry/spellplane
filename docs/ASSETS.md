@@ -56,3 +56,15 @@ No bundled files: every texture and sound is generated in the browser by the mod
 | `src/themes/stonetable/runes.ts` | Stonetable rune band and card back | texture | procedural | MIT (this repository) | Invented straight-stroke rune alphabet drawn on canvases: the glowing band around the slab (1024 × 64) and the neutral card back (488 × 680) |
 | `src/themes/stonetable/motes.ts` | Stonetable dust motes | shader | procedural | MIT (this repository) | Point sprites drifting in a vertex shader, lit inside the torch's cone |
 | `src/themes/stonetable/sounds.ts` | Stonetable sound set | sound | procedural | MIT (this repository) | Web Audio: filtered seeded noise and sine partials (slide, tap, shuffle, turn chime, prompt tick, torch crackle) |
+
+## Kitchen Table
+
+No bundled assets yet: a stub of Paper's table until M7-P1 builds the look's table world (M7-C).
+
+## Graphite
+
+No bundled assets yet: a stub of Paper's table until M7-P1 builds the look's table world (M7-C).
+
+## Codex
+
+No bundled assets yet: a stub of Paper's table until M7-P1 builds the look's table world (M7-C).

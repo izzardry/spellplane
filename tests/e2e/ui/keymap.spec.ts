@@ -177,7 +177,8 @@ const S: Record<ActionId, Scenario> = {
   },
   mute: { check: async (page) => expect.poll(() => ui(page, 'voice')).toEqual([{ action: 'mute', phase: 'start' }]) },
   focusChat: { check: async (page) => expect(page.getByTestId('chat-input')).toBeFocused() },
-  perspective: { check: expectScene('camera.setRig', ['ego']) },
+  // The P key drives the one continuous tilt (M7-C): from bird's-eye (1) to first person (0).
+  perspective: { check: expectScene('camera.setTilt', [0]) },
   fitTable: { check: expectScene('camera.fit', [true]) },
   seat1: { check: expectScene('camera.goToSeat', ['s0']) },
   seat2: { check: expectScene('camera.goToSeat', ['s1']) },

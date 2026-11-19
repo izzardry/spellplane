@@ -69,6 +69,8 @@ async function boot(el: HTMLElement): Promise<void> {
   const solo = await createSoloSession({ game: mtg, cardData, roomId: SOLO_ROOM_ID, ...(stores ? { store: stores.tables } : {}) });
 
   const debug = __SPELLPLANE_DEBUG__ ? await import('./debug/index') : null;
+  // Input counters for the M7 gate's "no key pressed" (M7-C, debug/input.ts).
+  debug?.registerInputDebug();
   const registerSession = (session: TableSession): void => {
     debug?.registerSessionDebug(session, { cardData, parseDecklist });
     debug?.registerDraftDebug(session);

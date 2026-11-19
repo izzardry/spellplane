@@ -10,7 +10,7 @@
   import type { Anchor, CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
-  import type { ActivePing, TableScene, ViewState } from '../scene/types';
+  import { perspectiveToggleTilt, type ActivePing, type TableScene, type ViewState } from '../scene/types';
   import { attachPresence, type PresenceHandle } from '../scene/presence';
   import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
@@ -1221,7 +1221,7 @@
             Clip</button
           >
         {/if}
-        <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye')}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
+        <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setTilt(perspectiveToggleTilt(scene.camera.tilt()), { source: 'handle' })}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
         <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
         <button type="button" data-testid="open-settings" aria-pressed={settingsOpen} aria-expanded={settingsOpen} aria-label="Settings" title="Settings" onclick={() => (settingsOpen ? (settingsOpen = false) : openSettings())}>⚙</button>
         {#if themeChoice}

@@ -8,7 +8,7 @@ import { DEFAULT_TABLE_SETTINGS, type CardInstance, type CardRef, type InstanceI
 import type { CardData, CardDataSource, DeckEntry, DeckList, FaceImage, FaceSource, ParseError, ResolvedDeck } from '../data/types';
 import type { GameDefinition, SeatLayout, TableLayout } from '../games/types';
 import { MTG_KEYMAP } from '../games/mtg/keymap';
-import type { CameraRig, DebugCamera, FollowOptions, RenderStats, SceneDebugParts, TableCameraControls, TableScene, ViewState } from '../scene/types';
+import { TILT_PRESETS, clampTilt, rigForTilt, tiltForRig, type CameraRig, type DebugCamera, type FollowOptions, type RenderStats, type SceneDebugParts, type TableCameraControls, type TableScene, type ViewState } from '../scene/types';
 import type { QualityId, QualityLevel } from '../themes/types';
 import type { ChatChannel } from '../net/messages';
 import type { Presence } from '../net/types';
@@ -712,6 +712,17 @@ export class RecordingScene implements TableScene {
       },
       blend: () => null,
       pose: () => ({ position: [0, 0, 0], target: [0, 0, 0], fovDeg: 6, pitchDeg: 90 }),
+      // The one continuous tilt (M7-C): recorded like setRig; the fake's rig follows the nearer end.
+      tilt: () => tiltForRig(this.currentRig),
+      setTilt: (t: number) => {
+        this.currentRig = rigForTilt(clampTilt(t));
+        this.calls.push({ method: 'camera.setTilt', args: [t] });
+      },
+      tiltBy: (dt: number) => {
+        this.currentRig = rigForTilt(clampTilt(tiltForRig(this.currentRig) + dt));
+        this.calls.push({ method: 'camera.tiltBy', args: [dt] });
+      },
+      tiltPresets: () => TILT_PRESETS,
     };
     const cam: DebugCamera = { rig: 'birdseye', fov: 6, position: [0, 0, 0], pitch: 90 };
     this.debug = { cards: () => [], camera: () => ({ ...cam, rig: this.currentRig }), lines: () => Object.values(this.lastState?.lines ?? {}), frameStats: () => ({ drawCalls: 0, textureBytes: 0, frameMs: 0 }) };

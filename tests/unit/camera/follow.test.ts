@@ -88,16 +88,17 @@ describe('the P key', () => {
     const r = hudRig();
     const calls: unknown[][] = [];
     const scene = r.scene;
-    const camera = { ...scene.camera, setRig: (...args: unknown[]) => calls.push(args), rig: () => 'birdseye' as const };
+    // The P key drives the one continuous tilt (M7-C): from bird's-eye (1) it goes to first person (0).
+    const camera = { ...scene.camera, setTilt: (...args: unknown[]) => calls.push(args), tilt: () => 1 };
     const withCamera = Object.assign(Object.create(scene) as RecordingScene, { camera });
     const commands = new Commands({ session: r.session, game: fakeGame(), scene: () => withCamera, view: () => r.view, ui: {} as UiHooks, newId: (p) => p, now: () => 0, pointer: () => ({ x: 640, y: 380 }) });
     commands.run('perspective');
-    expect(calls).toEqual([['ego', { anchor: { x: 640, y: 380 } }]]);
+    expect(calls).toEqual([[0, { anchor: { x: 640, y: 380 }, source: 'key' }]]);
   });
 
   it('without a known pointer the view centre is the anchor', () => {
     const r = hudRig();
     r.press({ key: 'p' });
-    expect(r.scene.calls).toEqual([{ method: 'camera.setRig', args: ['ego'] }]);
+    expect(r.scene.calls).toEqual([{ method: 'camera.setTilt', args: [0] }]);
   });
 });

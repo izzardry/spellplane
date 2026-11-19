@@ -22,7 +22,9 @@ import {
   BACKUP_FILE_FORMAT,
   BACKUP_FILE_VERSION,
   DEFAULT_SETTINGS,
+  HINT_IDS,
   LIBRARY_FILE_FORMAT,
+  MOTION_INTENSITIES,
   type BackupFile,
   type BackupImport,
   type DeckRecord,
@@ -61,7 +63,6 @@ export const BACKUP_LIMITS = {
 } as const;
 
 const STAGES: readonly Stage[] = ['lobby', 'draft', 'build', 'match'];
-const HINT_IDS: readonly HintId[] = ['welcome', 'tableKeys', 'touchGestures', 'talkKey', 'installHomeScreen', 'persistStorage'];
 
 type Obj = Record<string, unknown>;
 
@@ -228,6 +229,7 @@ const SETTING_CHOICES: Partial<Record<keyof Settings, readonly string[]>> = {
   quality: ['high', 'medium', 'low'],
   sound: ['theme', 'on', 'off'],
   cardBack: ['spellplane', 'official'],
+  motion: MOTION_INTENSITIES,
 };
 
 /** One setting checked against the shape of its default; unknown hint ids are dropped as the store would ignore them. */
@@ -245,6 +247,10 @@ function settingValue(name: keyof Settings, v: unknown): unknown {
   if (name === 'keymap') {
     if (!Array.isArray(v) || !v.every((o) => isObj(o) && typeof o.action === 'string' && typeof o.context === 'string' && isObj(o.chord) && typeof o.chord.key === 'string')) throw new Invalid('is not a list of key bindings');
     return cloneJson(v);
+  }
+  if (name === 'tilt') {
+    if (v !== null && (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1)) throw new Invalid('is not a tilt between 0 and 1');
+    return v;
   }
   if (def === null) {
     if (v !== null && typeof v !== 'string') throw new Invalid('is not text');

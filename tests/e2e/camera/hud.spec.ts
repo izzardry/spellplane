@@ -41,9 +41,10 @@ test('a later change of the follow toggles reaches the scene, turning one off to
   ]);
 });
 
-test('the View button switches the camera rig, as P does', async ({ page }) => {
+test('the View button moves the camera tilt to the other end, as P does', async ({ page }) => {
   await openHud(page);
   await page.getByTestId('perspective').click();
-  await expect.poll(() => ui<Call[]>(page, 'scene')).toContainEqual({ method: 'camera.setRig', args: ['ego'] });
+  // The one continuous tilt (M7-C): from bird's-eye (1) the button goes to first person (0).
+  await expect.poll(() => ui<Call[]>(page, 'scene')).toContainEqual({ method: 'camera.setTilt', args: [0] });
   await expect(page.getByTestId('perspective')).toContainText('P');
 });

@@ -2,13 +2,43 @@
  * Theme loading and HUD token mapping (DESIGN "Themes and rendering": themes load on demand as separate chunks;
  * tokens are exposed to the HUD as CSS custom properties).
  */
-import type { HudTokens, Theme, ThemeId, ThemeTokens } from './types';
+import { DEFAULT_LOOK, LOOK_THEME, type HudTokens, type LookId, type M4ThemeId, type Theme, type ThemeId, type ThemeTokens } from './types';
 
 export * from './types';
 export * from './signals';
 
-/** Theme ids that exist today (DESIGN "Themes and rendering"). */
-export const THEME_IDS: readonly ThemeId[] = ['paper', 'dusk', 'wyrm', 'stonetable'];
+/** Theme ids that exist today (DESIGN "Themes and rendering"); M7-C added the three looks' themes. */
+export const THEME_IDS: readonly ThemeId[] = ['paper', 'dusk', 'wyrm', 'stonetable', 'kitchen', 'graphite', 'codex'];
+
+/** The four M4 themes in their M4 order (their gates and screenshot matrices run over these). Added by M7-C. */
+export const M4_THEME_IDS: readonly M4ThemeId[] = ['paper', 'dusk', 'wyrm', 'stonetable'];
+
+/**
+ * Whether a theme is offered in the picker (PLAN Milestone 7, Owner decisions after the first design round: "The four
+ * M4 themes (Paper, Dusk, Wyrm, Stonetable) leave the theme picker; their code stays until the owner confirms they can
+ * go"). An unlisted theme still loads (a stored setting, the debug hook's `theme.set`, tests). Added by M7-C; the picker
+ * reads it from M7-P2 on.
+ */
+export const THEME_LISTED: Readonly<Record<ThemeId, boolean>> = { paper: false, dusk: false, wyrm: false, stonetable: false, kitchen: true, graphite: true, codex: true };
+
+/** The themes the picker offers, in THEME_IDS order (PLAN Milestone 7, Owner decisions). Added by M7-C. */
+export const LISTED_THEME_IDS: readonly ThemeId[] = THEME_IDS.filter((id) => THEME_LISTED[id]);
+
+/** The three looks in the picker's order (PLAN Milestone 7; docs/design/m7-directions.html A, B, C). Added by M7-C. */
+export const LOOK_IDS: readonly LookId[] = ['kitchen', 'graphite', 'codex'];
+
+/** Names of the looks (docs/design/m7-directions.html). Added by M7-C. */
+export const LOOK_LABELS: Readonly<Record<LookId, string>> = { kitchen: 'Kitchen Table', graphite: 'Graphite', codex: 'Codex' };
+
+/** A stored setting as a look id; anything unknown is DEFAULT_LOOK (store/types.ts Settings.look is a string). Added by M7-C. */
+export function lookIdOf(value: unknown): LookId {
+  return typeof value === 'string' && (LOOK_IDS as readonly string[]).includes(value) ? (value as LookId) : DEFAULT_LOOK;
+}
+
+/** The look whose 3D theme `id` is, or null for an M4 theme, which keeps its own HUD tokens (hudCssVars). Added by M7-C. */
+export function lookOfTheme(id: ThemeId): LookId | null {
+  return LOOK_IDS.find((l) => LOOK_THEME[l] === id) ?? null;
+}
 
 function kebab(s: string): string {
   return s.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
@@ -79,7 +109,15 @@ export function cssText(vars: Record<string, string>): string {
 }
 
 /** Human names of the themes for the picker, without loading their chunks (DESIGN "Themes and rendering"). Added by M4-C. */
-export const THEME_LABELS: Readonly<Record<ThemeId, string>> = { paper: 'Paper', dusk: 'Dusk', wyrm: 'Wyrm', stonetable: 'Stonetable' };
+export const THEME_LABELS: Readonly<Record<ThemeId, string>> = {
+  paper: 'Paper',
+  dusk: 'Dusk',
+  wyrm: 'Wyrm',
+  stonetable: 'Stonetable',
+  kitchen: 'Kitchen Table',
+  graphite: 'Graphite',
+  codex: 'Codex',
+};
 
 /** A stored setting as a theme id; anything unknown is Paper (store/types.ts Settings.theme is a string). Added by M4-C. */
 export function themeIdOf(value: string): ThemeId {
@@ -100,5 +138,12 @@ export async function loadTheme(id: ThemeId): Promise<Theme> {
       return (await import('./wyrm/index')).wyrm;
     case 'stonetable':
       return (await import('./stonetable/index')).stonetable;
+    // The looks' table worlds (M7-C stubs until M7-P1 builds them).
+    case 'kitchen':
+      return (await import('./kitchen/index')).kitchen;
+    case 'graphite':
+      return (await import('./graphite/index')).graphite;
+    case 'codex':
+      return (await import('./codex/index')).codex;
   }
 }

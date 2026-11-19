@@ -46,7 +46,7 @@ const SID = ['226f7c45-db9f-4d48-b575-4d2f1904c963', '2f717e04-c078-4696-9ed6-e9
 function stubOf(id: ThemeId): string | null {
   const src = fs.readFileSync(path.join('src', 'themes', id, 'index.ts'), 'utf8');
   if (!src.includes('stubTheme(')) return null;
-  return /'(M4-P\d)'/.exec(src)?.[1] ?? 'its theme package';
+  return /'(M\d-P\d)'/.exec(src)?.[1] ?? 'its theme package';
 }
 
 const cards = (page: Page) => hook<SceneDebugCard[]>(page, 'cards');
@@ -522,7 +522,7 @@ for (const theme of THEME_IDS) {
 }
 
 test('every registered theme and every functional signal is covered', () => {
-  expect([...THEME_IDS]).toEqual(['paper', 'dusk', 'wyrm', 'stonetable']);
+  expect([...THEME_IDS]).toEqual(['paper', 'dusk', 'wyrm', 'stonetable', 'kitchen', 'graphite', 'codex']);
   // The per-theme block above has one test per signal; these are their ids in PLAN order.
   expect(SIGNALS.map((s) => s.id)).toEqual(['tapped', 'selected', 'hovered', 'displaced', 'attacking', 'blocking', 'faceDown', 'foil', 'seatColour', 'speaking', 'pendingConfirmation', 'away']);
 });

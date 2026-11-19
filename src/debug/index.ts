@@ -8,3 +8,4 @@ export * from './net';
 export * from './draft';
 export * from './speech';
 export { fixtureSetSource, injectedSets } from './fixture-sets';
+export { registerInputDebug } from './input';

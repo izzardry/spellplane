@@ -149,7 +149,7 @@ const S: Record<ActionId, Scenario> = {
   mute: { expect: (r) => expect(r.ui).toEqual([{ hook: 'voice', args: ['mute', 'start'] }]) },
   focusChat: { expect: (r) => expect(r.ui).toEqual([{ hook: 'focusChat', args: [] }]) },
   // View
-  perspective: { expect: (r) => expect(r.scene.calls).toEqual([{ method: 'camera.setRig', args: ['ego'] }]) },
+  perspective: { expect: (r) => expect(r.scene.calls).toEqual([{ method: 'camera.setTilt', args: [0] }]) },
   fitTable: { expect: (r) => expect(r.scene.calls).toEqual([{ method: 'camera.fit', args: [true] }]) },
   seat1: { expect: (r) => expect(r.scene.calls).toEqual([{ method: 'camera.goToSeat', args: ['s0'] }]) },
   seat2: { expect: (r) => expect(r.scene.calls).toEqual([{ method: 'camera.goToSeat', args: ['s1'] }]) },

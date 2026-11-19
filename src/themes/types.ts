@@ -13,13 +13,34 @@ import type { PerspectiveCamera, Scene, WebGLRenderer } from 'three';
 import type { LineKind } from '../core/types';
 import type { MotionConstants } from '../core/geometry';
 import type { TextureSource } from '../util/texture';
-import type { CameraRig, EgoRigParams, MaterialLibrary, PostPipeline } from '../scene/types';
+import type { CameraRig, CardFeel, EgoRigParams, MaterialLibrary, PostPipeline } from '../scene/types';
 
 export type { LineKind, MotionConstants };
 export { DEFAULT_MOTION } from '../core/geometry';
 
-/** Theme ids (DESIGN "Themes and rendering"). */
-export type ThemeId = 'paper' | 'dusk' | 'wyrm' | 'stonetable';
+/**
+ * Theme ids (DESIGN "Themes and rendering"). Added by M7-C: 'kitchen', 'graphite' and 'codex', the 3D table worlds of
+ * the three M7 looks (PLAN Milestone 7, Owner decisions after the first design round: "All three looks are kept, as the
+ * three themes of the redesign"); M7-P1 builds them. The four M4 themes stay registered but leave the picker
+ * (themes/index.ts THEME_LISTED).
+ */
+export type ThemeId = M4ThemeId | 'kitchen' | 'graphite' | 'codex';
+
+/** The four M4 themes (DESIGN "Themes and rendering", theme table), registered but no longer in the picker from M7 on. Added by M7-C. */
+export type M4ThemeId = 'paper' | 'dusk' | 'wyrm' | 'stonetable';
+
+/**
+ * The three looks of the redesign (PLAN Milestone 7, Owner decisions after the first design round; docs/design/
+ * m7-directions.html: A Kitchen Table, B Graphite, C Codex). A look is the HUD's design tokens (ui/design/tokens.ts)
+ * plus the 3D table world it maps to (LOOK_THEME). Stored per viewer in Settings.look. Added by M7-C.
+ */
+export type LookId = 'kitchen' | 'graphite' | 'codex';
+
+/** The 3D theme each look renders the table with (PLAN Milestone 7, Owner decisions: "each look is built as a 3D table world"). Added by M7-C; M7-P1 builds the three themes. */
+export const LOOK_THEME: Readonly<Record<LookId, ThemeId>> = { kitchen: 'kitchen', graphite: 'graphite', codex: 'codex' };
+
+/** The look a new viewer starts with (docs/design/m7-directions.html, comparison: Kitchen Table "replaces Paper as the friendly default"). Added by M7-C. */
+export const DEFAULT_LOOK: LookId = 'kitchen';
 
 /** Line dash pattern paired with a seat colour so nothing depends on hue alone (DESIGN "Input and interaction design", Accessibility). */
 export type SeatPattern = 'solid' | 'dash' | 'dot' | 'dash-dot' | 'long-dash' | 'dash-dot-dot' | 'double' | 'zigzag';
@@ -204,8 +225,19 @@ export interface AmbientSoundSource {
   start(ctx: AudioContext, gain: number): { stop(): void };
 }
 
-/** The sound cues a set may provide (DESIGN "Themes and rendering", Sound). v2 (M4-C). */
-export type SoundCue = 'slide' | 'tap' | 'shuffle' | 'turnChime' | 'promptTick';
+/**
+ * The sound cues a set may provide (DESIGN "Themes and rendering", Sound). v2 (M4-C). Added by M7-C: the card-feel cues
+ * (PLAN Milestone 7, Owner decisions, Almost haptic card handling: "every common move has a short animation and sound
+ * (draw, shuffle, tap and untap, play, to graveyard, attach, clip)"), plus pickup, drop and snap for the hand feel;
+ * M7-P4 plays them (ui/sound.ts) and M7-P1 gives each look its set. A set may leave any cue out.
+ */
+export type SoundCue = 'slide' | 'tap' | 'shuffle' | 'turnChime' | 'promptTick' | FeelCue;
+
+/** The card-feel sound cues (PLAN Milestone 7, Owner decisions, Almost haptic card handling). Added by M7-C; M7-P4. */
+export type FeelCue = 'draw' | 'untap' | 'play' | 'toGraveyard' | 'toExile' | 'toHand' | 'attach' | 'clip' | 'pickup' | 'drop' | 'snap';
+
+/** Every feel cue, in the order a batch plays them (PLAN Milestone 7, Owner decisions, Almost haptic card handling). Added by M7-C. */
+export const FEEL_CUES: readonly FeelCue[] = ['draw', 'play', 'untap', 'attach', 'clip', 'toGraveyard', 'toExile', 'toHand', 'pickup', 'snap', 'drop'];
 
 /** Optional sound set, off by default in Paper (DESIGN "Themes and rendering", Sound). */
 export interface SoundSet {
@@ -214,6 +246,18 @@ export interface SoundSet {
   shuffle?: SoundSource;
   turnChime?: SoundSource;
   promptTick?: SoundSource;
+  /** Added by M7-C: the card-feel cues (FeelCue); M7-P4 and M7-P1. Absent cues stay silent. */
+  draw?: SoundSource;
+  untap?: SoundSource;
+  play?: SoundSource;
+  toGraveyard?: SoundSource;
+  toExile?: SoundSource;
+  toHand?: SoundSource;
+  attach?: SoundSource;
+  clip?: SoundSource;
+  pickup?: SoundSource;
+  drop?: SoundSource;
+  snap?: SoundSource;
   /** v2 (M4-C). */
   ambience?: AmbientSoundSource;
   /** v2 (M4-C): whether the set plays until the viewer turns it off (Settings.sound 'theme'); Paper has no set. */
@@ -313,6 +357,12 @@ export interface CameraDefaults {
   birdseyeTiltDeg?: number;
   /** v2 (M4-C): overrides of the ego rig's parameters (DESIGN "Specification: geometry", Camera rigs, as defaults). */
   ego?: Partial<EgoRigParams>;
+  /**
+   * Added by M7-C: the theme's starting tilt on the one continuous tilt, 0 first person to 1 bird's-eye (PLAN Milestone
+   * 7, Owner decisions, One continuous tilt; scene/types.ts Tilt). Absent means `tiltForRig(defaultRig)`. The viewer's
+   * Settings.tilt wins over it. Read by M7-P3; the looks' values are M7-P1's.
+   */
+  tilt?: number;
 }
 
 /** What a theme builds into (DESIGN "Specification: code interfaces", Theme.build). */
@@ -340,6 +390,12 @@ export interface ThemeInstance {
   setQuality?(quality: QualityLevel): void;
   /** v2 (M4-C): the stack lane's centre in table mm moved (Wyrm's heat shimmer follows it). */
   setStackFocus?(at: { x: number; y: number } | null): void;
+  /**
+   * Added by M7-C: whether the instance animates by itself right now (flicker, particles, shimmer), so the scene keeps
+   * drawing frames; false or absent lets a still table stop drawing (render on demand; PLAN Milestone 7, A0 steps:
+   * "render on demand"; M7-A0's StillAware). Absent means "animates while the theme is lit" (the M4 behaviour).
+   */
+  animating?(): boolean;
 }
 
 /** A theme package (DESIGN "Specification: code interfaces", Theme). */
@@ -363,6 +419,12 @@ export interface Theme {
   shadows: ShadowSettings;
   /** v2 (M4-C). */
   post: PostSettings;
+  /**
+   * Added by M7-C: the theme's card feel over DEFAULT_CARD_FEEL (scene/types.ts CardFeel; PLAN Milestone 7, Owner
+   * decisions, Almost haptic card handling: lift, sway, magnetic snaps, settle bounce). Absent means the defaults.
+   * Read by M7-P4; the looks' values are M7-P1's.
+   */
+  feel?: Partial<CardFeel>;
 }
 
 /** The order in which a lower quality level drops features (DESIGN "Themes and rendering", Renderer: "drops shadows and post-processing first"). v2 (M4-C). */

@@ -8,10 +8,11 @@ import type { Anchor, CardRef, ClipId, DeckBuild, DraftCard, InstanceId, Line, P
 import type { DragGroup } from '../core/clips';
 import type { CardData, FaceSource } from '../data/types';
 import type { GameDefinition, TableLayout, TextureSource } from '../games/types';
-import type { CardDressing, MaterialSpec, PostSettings, QualityId, QualityLevel, Theme, ThemeId } from '../themes/types';
+import type { CardDressing, MaterialSpec, PostSettings, QualityId, QualityLevel, SoundCue, Theme, ThemeId } from '../themes/types';
+import type { MotionIntensity } from '../store/types';
 import type { Material, Texture } from 'three';
 import type { Pass } from 'three/examples/jsm/postprocessing/Pass.js';
-import { CAMERA } from '../core/geometry';
+import { CAMERA, GEOMETRY } from '../core/geometry';
 
 /** A point in CSS pixels relative to the viewport (DESIGN "Camera and navigation"). */
 export interface ScreenPoint {
@@ -119,6 +120,40 @@ export interface SceneEvents {
    * Paperclips: "its context menu … Remove clip"). Added by M6-C; implementer: M6-P1.
    */
   clipMenu?(clip: ClipId, at: ScreenPoint): void;
+  /**
+   * The camera tilt started, changed target or settled (PLAN Milestone 7, Owner decisions, One continuous tilt; DESIGN
+   * "Camera and navigation"). Never once per frame: 'start' when a move begins, 'change' when its target changes (a new
+   * wheel step, a preset), 'end' when it settles; a HUD handle that follows the camera live reads `camera.tilt()` in its
+   * own animation frame and moves with a CSS transform, never through per-frame Svelte state. Added by M7-C; M7-P3.
+   */
+  tilt?(e: TiltEvent): void;
+  /**
+   * Where the selection strip sits (PLAN Milestone 7, Owner decisions, Play without memorising keys: "on-card and
+   * on-pile actions"; docs/design/m7-hud-proposal.md, Card action strip): the selection's screen box, reported when the
+   * selection changes and when the camera or a drag settles; null while there is no selection or while the camera or
+   * the selected cards move (the strip hides, then returns). Added by M7-C; M7-P5.
+   */
+  selectionAnchor?(anchor: SelectionAnchor | null): void;
+  /**
+   * The pointer rests on, or a tap lands on, a zone pile (library, graveyard, exile, command) or a squared pile; null
+   * when it leaves (docs/design/m7-hud-proposal.md, Pile actions: "Hover or tap a pile"). The HUD shows PILE_ACTIONS
+   * beside it. Added by M7-C; M7-P5.
+   */
+  pileHover?(hover: PileHover | null): void;
+  /**
+   * A life scrub on a seat's life total drawn in the scene (docs/design/m7-hud-proposal.md, Life steppers; PLAN
+   * Milestone 7, Owner decisions: "life totals you click or scrub"): 'start' on press, 'move' with the whole steps
+   * scrubbed so far, 'end' on release (the HUD dispatches one life change of `steps`), 'cancel' on Esc or a lost
+   * pointer. The scene reports it only where it draws life; the HUD's DOM plates scrub by themselves with LIFE_SCRUB.
+   * Added by M7-C; M7-P5.
+   */
+  lifeScrub?(e: LifeScrubEvent): void;
+  /**
+   * The screen anchors of each seat's edge, where the life plates sit (docs/design/m7-hud-proposal.md, Opponent plate:
+   * "at the opponent's edge of the table"; PLAN M7-P2 "life plates at seat edges"), reported after a layout change and
+   * whenever the camera settles, never per frame. Added by M7-C; M7-P3 reports, M7-P2 places the plates.
+   */
+  seatAnchors?(anchors: SeatAnchor[]): void;
 }
 
 /** What a held table press is doing (PLAN Milestone 6, owner decisions, Hold-to-talk). Added by M6-C. */
@@ -147,6 +182,10 @@ export interface TableSceneOptions {
   follow?: FollowOptions;
   /** v2 (M4-C): the rig to start in; absent means the theme's camera.defaultRig. */
   rig?: CameraRig;
+  /** Added by M7-C: the tilt to start at (Settings.tilt); absent means the theme's camera tilt. Wins over `rig`. M7-P3. */
+  tilt?: Tilt;
+  /** Added by M7-C: motion intensity and reduced motion (Settings.motion resolved by resolveMotion); absent means full motion unless ViewState.reducedMotion. M7-P4. */
+  motion?: MotionSettings;
 }
 
 /** Camera rig name (DESIGN "Camera and navigation"). */
@@ -251,8 +290,99 @@ export interface FollowOptions {
   activePlayer: boolean;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// One continuous tilt (PLAN Milestone 7, Owner decisions after the first design round, One continuous tilt: "One tilt
+// control moves continuously and smoothly from first person … to bird's-eye … with the hand kept in reach throughout; it
+// works the same in all three looks, by mouse, touch and keyboard"). Added by M7-C. The tilt replaces the two-rig switch
+// at the API level: the HUD, gestures and keys drive `setTilt`; `setRig` stays for older callers and maps onto it
+// (birdseye = 1, ego = 0). M7-P3 implements the rig (scene/camera/*); until then the table scene maps a tilt onto the
+// nearer rig.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** A camera tilt in [0, 1]: 0 first person (seated, looking across the table), 1 bird's-eye (straight down) (PLAN Milestone 7, Owner decisions, One continuous tilt). Added by M7-C. */
+export type Tilt = number;
+
+/** Named stops on the tilt (PLAN Milestone 7, gate M7-G: "first person, mid-tilt and bird's-eye"). Added by M7-C. */
+export type TiltPresetId = 'firstPerson' | 'midTilt' | 'birdseye';
+
+/** A named stop on the tilt (PLAN Milestone 7, Owner decisions, One continuous tilt; gate M7-G). Added by M7-C. */
+export interface TiltPreset {
+  id: TiltPresetId;
+  tilt: Tilt;
+  label: string;
+}
+
+/** The tilt presets, first person to bird's-eye (PLAN Milestone 7, gate M7-G screenshots). Added by M7-C; M7-P3 may tune `midTilt`. */
+export const TILT_PRESETS: readonly TiltPreset[] = [
+  { id: 'firstPerson', tilt: 0, label: 'First person' },
+  { id: 'midTilt', tilt: 0.5, label: 'Leaning in' },
+  { id: 'birdseye', tilt: 1, label: "Bird's-eye" },
+];
+
+/** The tilt of a rig's view (DESIGN "Camera and navigation": bird's-eye looks straight down, ego from the seat). Added by M7-C. */
+export function tiltForRig(rig: CameraRig): Tilt {
+  return rig === 'birdseye' ? 1 : 0;
+}
+
+/** The rig a tilt is nearer to, for callers that still speak rigs (debug `rig()`, DebugCamera.rig). Added by M7-C. */
+export function rigForTilt(t: Tilt): CameraRig {
+  return t >= 0.5 ? 'birdseye' : 'ego';
+}
+
+/** Clamp a tilt into [0, 1]; a non-finite value is 1 (bird's-eye). Added by M7-C. */
+export function clampTilt(t: number): Tilt {
+  return Number.isFinite(t) ? Math.min(1, Math.max(0, t)) : 1;
+}
+
+/**
+ * Where the old perspective key (P, "Switch perspective"; DESIGN "Input and interaction design", View) sends the tilt:
+ * from the upper half to first person, from the lower half to bird's-eye (PLAN Milestone 7, Owner decisions: keys stay
+ * as optional accelerators). Added by M7-C.
+ */
+export function perspectiveToggleTilt(current: Tilt): Tilt {
+  return current >= 0.5 ? 0 : 1;
+}
+
+/** One key step of the tilt (keyboard accelerators, PLAN M7-P3 "keys"), and one wheel notch with the tilt modifier. Added by M7-C; M7-P3 may tune. */
+export const TILT_STEP = 0.125;
+
+/** What moved the tilt (PLAN M7-P3: "drag, wheel, pinch or two-finger swipe, a HUD handle, keys"). Added by M7-C. */
+export type TiltSource = 'drag' | 'wheel' | 'touch' | 'handle' | 'key' | 'preset' | 'theme' | 'api';
+
+/** Options of a tilt change (DESIGN "Camera and navigation", Switching: the point under the cursor stays put; reduced motion cuts). Added by M7-C. */
+export interface SetTiltOptions {
+  /** false cuts instead of easing (reduced motion always cuts). */
+  animate?: boolean;
+  /** Screen point whose table point stays fixed while the tilt moves; absent means the viewport centre. */
+  anchor?: ScreenPoint;
+  /** What asked for it (reported back in TiltEvent); absent means 'api'. */
+  source?: TiltSource;
+}
+
+/** A tilt event (SceneEvents.tilt; PLAN Milestone 7, Owner decisions, One continuous tilt). Added by M7-C. */
+export interface TiltEvent {
+  phase: 'start' | 'change' | 'end';
+  /** The tilt now. */
+  tilt: Tilt;
+  /** Where it is going (equal to `tilt` on 'end'). */
+  target: Tilt;
+  source: TiltSource;
+}
+
+/** The tilt part of the table camera (PLAN Milestone 7, Owner decisions, One continuous tilt; PLAN M7-P3). Added by M7-C; stubbed by the table scene until M7-P3. */
+export interface TiltControls {
+  /** The current tilt (mid-move it is the eased value). */
+  tilt(): Tilt;
+  /** Move the tilt to `t` (clamped), easing unless `animate` is false or motion is reduced. */
+  setTilt(t: Tilt, opts?: SetTiltOptions): void;
+  /** Move the tilt by `dt` from its current target (wheel, keys, drag). */
+  tiltBy(dt: number, opts?: SetTiltOptions): void;
+  /** The named stops (TILT_PRESETS unless the theme moves `midTilt`). */
+  tiltPresets(): readonly TiltPreset[];
+}
+
 /** The table scene's camera controls, a superset of the surfaces' (DESIGN "Camera and navigation"). Added by M4-C; the additions are M4-P1's. */
-export interface TableCameraControls extends CameraControls {
+export interface TableCameraControls extends CameraControls, TiltControls {
   /** Pitch the ego rig by `deg` (right-drag; positive looks further down), clamped to the rig's limits; no-op in bird's-eye. */
   pitchBy(deg: number): void;
   follow(): FollowOptions;
@@ -322,6 +452,11 @@ export interface RenderDebug {
   quality(): QualityId;
   /** Apply a quality level at once (no reload). */
   setQuality(id: QualityId): void;
+  /**
+   * Added by M7-C: frames drawn since the scene was created (PLAN Milestone 7, gate M7-G: "Idle frames stop (render on
+   * demand)"): a test reads it twice across an idle wait and expects no change. Implemented by the table scene.
+   */
+  framesDrawn?(): number;
 }
 
 /** The rig part of the debug hook (`window.__spellplane.rig`): camera rig, blend and follow toggles. Registered by the table scene; M4-P1's. Added by M4-C. */
@@ -332,6 +467,10 @@ export interface RigDebug {
   follow(): FollowOptions;
   setFollow(next: Partial<FollowOptions>): void;
   pose(): CameraPose;
+  /** Added by M7-C: the camera tilt (PLAN Milestone 7, One continuous tilt); stubbed from the rig until M7-P3. */
+  tilt?(): Tilt;
+  /** Added by M7-C: move the tilt, like TiltControls.setTilt. */
+  setTilt?(t: Tilt, opts?: SetTiltOptions): void;
 }
 
 /** One card as the debug hook reports it (DESIGN "Specification: code interfaces", SpellplaneDebug.cards). */
@@ -348,6 +487,8 @@ export interface DebugCamera {
   fov: number;
   position: Vec3;
   pitch: number;
+  /** Added by M7-C: the camera tilt, 0 first person to 1 bird's-eye (PLAN Milestone 7, One continuous tilt); absent before M7-P3 reports it. */
+  tilt?: Tilt;
 }
 
 /** Render statistics (DESIGN "Specification: code interfaces", frameStats). */
@@ -367,6 +508,10 @@ export interface SceneDebugParts {
   captions?(): DebugCaption[];
   /** Added by M6-C: paperclips, the hold ring, the drag group and the drop preview (M6-P1). Optional until M6-P1 draws them. */
   clips?(): ClipDebugState;
+  /** Added by M7-C: card motion and the frames it holds (PLAN M7-P4; gate M7-G "Idle frames stop"). Optional until M7-P4. */
+  motion?(): MotionDebugState;
+  /** Added by M7-C: the on-card and on-pile affordances the scene reports (PLAN M7-P5). Optional until M7-P5. */
+  affordances?(): AffordanceDebugState;
 }
 
 /**
@@ -402,6 +547,208 @@ export interface ClipDebugState {
   drag: DragGroup | null;
   /** The snap the drag in progress would make, else null. */
   preview: DropPreview | null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Card feel and on-demand animation (PLAN Milestone 7, Owner decisions after the first design round, Almost haptic card
+// handling: "they lift on pickup, sway with movement, are pulled into snap slots as they near them, settle with a small
+// bounce, and every common move has a short animation and sound … Reduced motion is respected"; DESIGN "Specification:
+// geometry, layout and motion", Motion). Added by M7-C; M7-P4 implements (scene/motion.ts, scene/cards.ts, scene/snap.ts).
+// ---------------------------------------------------------------------------------------------------------------------
+
+/**
+ * The card feel parameters (PLAN Milestone 7, Owner decisions, Almost haptic card handling; DESIGN "Specification:
+ * geometry, layout and motion": lift 12, tilt 4°, spring 320/36/1, snap radius 12). mm, degrees, ms. Added by M7-C.
+ */
+export interface CardFeel {
+  /** Height a picked-up card rises to, mm (DESIGN geometry: lift while dragged 12). */
+  liftMm: number;
+  /** Time the card takes to rise on pickup and to come down on drop, ms. */
+  liftMs: number;
+  /** Sway: the card leans into its motion, `degPerMmPerS` of lean per mm/s of pointer speed, at most `maxDeg`, relaxing with `relaxMs`. */
+  sway: { maxDeg: number; degPerMmPerS: number; relaxMs: number };
+  /** The spring a held card follows the pointer with (a light lag, never a rubber band). */
+  follow: { stiffness: number; damping: number; mass: number };
+  /** Magnetic snap: within `radiusMm` of a snap slot the card is pulled toward it by `strength` (0 none, 1 onto it); the slot's ghost shows from `previewMm`. */
+  magnet: { radiusMm: number; strength: number; previewMm: number };
+  /** Settle: the overshoot of the landing bounce as a fraction of the lift (0 none) and how long the card settles, ms. */
+  settle: { bounce: number; ms: number };
+  /** Durations of the move animations, ms (draw from library to hand, a shuffle's riffle, a play from hand, a card going to a pile). */
+  durations: { draw: number; shuffle: number; play: number; toPile: number; attach: number; clip: number };
+}
+
+/** The default card feel (DESIGN "Specification: geometry, layout and motion" for lift, tilt, spring and snap radius; the rest M7-C's choice, tuned by M7-P4). Added by M7-C. */
+export const DEFAULT_CARD_FEEL: CardFeel = {
+  liftMm: GEOMETRY.dragLift,
+  liftMs: 120,
+  sway: { maxDeg: GEOMETRY.dragTiltDeg * 2, degPerMmPerS: 0.01, relaxMs: 180 },
+  follow: { stiffness: 320, damping: 36, mass: 1 },
+  magnet: { radiusMm: GEOMETRY.snapRadius * 2, strength: 0.35, previewMm: GEOMETRY.snapRadius * 3 },
+  settle: { bounce: 0.15, ms: 260 },
+  durations: { draw: 320, shuffle: 480, play: 260, toPile: 280, attach: 220, clip: 160 },
+};
+
+/**
+ * How strongly the viewer wants motion (Settings.motion): 'system' follows prefers-reduced-motion, 'full' all feel,
+ * 'subtle' half the sway and bounce and shorter animations, 'reduced' cuts (DESIGN "Specification: geometry, layout and
+ * motion": "With reduced motion, all of these are cuts"). Re-exported from store/types.ts. Added by M7-C.
+ */
+export type { MotionIntensity } from '../store/types';
+
+/** The resolved motion setting the scene applies (PLAN Milestone 7, Owner decisions: "Reduced motion is respected"). Added by M7-C. */
+export interface MotionSettings {
+  /** Every change is a cut, no sway, no bounce. */
+  reduced: boolean;
+  /** Scale of sway, bounce and animation durations, 0..1 (0 with `reduced`). */
+  scale: number;
+}
+
+/** Resolve the viewer's motion setting against the system's reduced-motion preference (PLAN Milestone 7, Owner decisions: reduced motion respected). Added by M7-C. */
+export function resolveMotion(intensity: MotionIntensity, systemReduced: boolean): MotionSettings {
+  const level = intensity === 'system' ? (systemReduced ? 'reduced' : 'full') : intensity;
+  if (level === 'reduced') return { reduced: true, scale: 0 };
+  return { reduced: false, scale: level === 'subtle' ? 0.5 : 1 };
+}
+
+/** The card feel a theme asks for, over the defaults, scaled by the motion setting (sway, bounce, durations; reduced: none). Added by M7-C; M7-P4 reads it. */
+export function cardFeel(theme: { feel?: Partial<CardFeel> }, motion: MotionSettings): CardFeel {
+  const f: CardFeel = { ...DEFAULT_CARD_FEEL, ...theme.feel };
+  const k = motion.reduced ? 0 : motion.scale;
+  const d = f.durations;
+  return {
+    ...f,
+    sway: { ...f.sway, maxDeg: f.sway.maxDeg * k },
+    settle: { ...f.settle, bounce: f.settle.bounce * k, ms: f.settle.ms * k },
+    liftMs: f.liftMs * k,
+    durations: { draw: d.draw * k, shuffle: d.shuffle * k, play: d.play * k, toPile: d.toPile * k, attach: d.attach * k, clip: d.clip * k },
+  };
+}
+
+/** The card animations the scene plays (PLAN Milestone 7, Owner decisions: "draw, shuffle, tap and untap, play, to graveyard, attach, clip"). Added by M7-C. */
+export type CardAnimationKind = 'draw' | 'shuffle' | 'tap' | 'untap' | 'play' | 'toGraveyard' | 'toExile' | 'toHand' | 'toLibrary' | 'attach' | 'detach' | 'clip' | 'unclip' | 'flip';
+
+/**
+ * A request to animate cards (TableScene.animate; PLAN M7-P4). Most animations start from the scene itself when state
+ * changes; the HUD asks for the ones it starts (a draw from the hand fan's side, a shuffle). Added by M7-C.
+ */
+export interface CardAnimationRequest {
+  kind: CardAnimationKind;
+  /** The cards; a shuffle names none (the library pile animates). */
+  cards: InstanceId[];
+  /** The zone the cards come from and go to, when it is a pile (draw: library to hand; shuffle: the library). */
+  from?: ZoneId | null;
+  to?: ZoneId | null;
+  /** The sound cue to play with it; absent means the kind's own cue (M7-P4's table), null for none. */
+  cue?: SoundCue | null;
+}
+
+/** A hold on the frame loop (FrameScheduler.hold): frames are drawn until it is released. Added by M7-C. */
+export interface FrameHold {
+  release(): void;
+}
+
+/**
+ * Render on demand (PLAN Milestone 7, A0 steps: "render on demand"; gate M7-G: "Idle frames stop"): the scene draws a
+ * frame only when something changed. Anything that animates asks for frames here instead of running its own loop.
+ * Added by M7-C; M7-P4 implements it on the table scene's tick (keeping M7-A0's frame meter and on-demand behaviour).
+ */
+export interface FrameScheduler {
+  /** Draw one more frame (something changed once). */
+  invalidate(): void;
+  /** Keep drawing until the hold is released, or until `active` returns false (checked once per frame). `reason` names it in the debug hook. */
+  hold(reason: string, active?: () => boolean): FrameHold;
+}
+
+/** Card motion as the debug hook reports it (PLAN M7-P4; gate M7-G: a magnetic snap and a draw animation). Added by M7-C. */
+export interface MotionDebugState {
+  motion: MotionSettings;
+  /** Animations running now, oldest first. */
+  running: { kind: CardAnimationKind; cards: InstanceId[]; progress: number }[];
+  /** Reasons holding frames now (FrameScheduler.hold); empty when the scene is idle. */
+  holds: string[];
+  /** The held card's lift (mm) and sway (degrees) during a drag, else null. */
+  held: { card: InstanceId; liftMm: number; swayDeg: number } | null;
+  /** The snap slot pulling the dragged card (its kind and pull 0..1), else null. */
+  magnet: { kind: DropPreview['kind'] | 'align'; target: InstanceId | null; pull: number } | null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Affordances (PLAN Milestone 7, Owner decisions after the first design round, Play without memorising keys: "Every
+// everyday action is reachable by direct manipulation with visible affordances: drag, drop, double-click or tap,
+// on-card and on-pile actions, life totals you click or scrub"; docs/design/m7-hud-proposal.md). Added by M7-C; M7-P5.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** A screen rectangle in CSS px relative to the viewport (the HUD positions DOM over it). Added by M7-C. */
+export interface ScreenRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The selection strip's anchor (SceneEvents.selectionAnchor; docs/design/m7-hud-proposal.md, Card action strip: "A small strip above the card"). Added by M7-C. */
+export interface SelectionAnchor {
+  cards: InstanceId[];
+  /** The selection's screen box. */
+  rect: ScreenRect;
+  /** The zone the selection is in when it is one zone (it picks the strip's actions), else null. */
+  zone: ZoneId | null;
+  /** Place the strip above the box (false: below, when the box is at the top of the screen). */
+  above: boolean;
+}
+
+/** A pile under the pointer (SceneEvents.pileHover; docs/design/m7-hud-proposal.md, Pile actions). Added by M7-C. */
+export interface PileHover {
+  /** The zone pile (library, graveyard, exile, command), or null for a squared pile on the battlefield. */
+  zone: ZoneId | null;
+  /** The squared pile, or null for a zone pile. */
+  pile: PileId | null;
+  /** The pile's owner, null for table zones. */
+  owner: SeatId | null;
+  count: number;
+  rect: ScreenRect;
+  /** How it was found: the mouse resting on it, or a tap (touch keeps the actions until another tap). */
+  via: 'hover' | 'tap';
+}
+
+/** The actions a pile offers on hover or tap (docs/design/m7-hud-proposal.md, Pile actions: "Library: Draw · Shuffle · Search…; Graveyard and Exile: Open"). Added by M7-C. */
+export type PileActionId = 'draw' | 'drawN' | 'shuffle' | 'search' | 'open' | 'mill';
+
+/** Pile actions by zone kind, the first is the double-click or tap action (docs/design/m7-hud-proposal.md: "Double-click a library draws"). Added by M7-C; M7-P5 may extend. */
+export const PILE_ACTIONS: Readonly<Record<'library' | 'graveyard' | 'exile' | 'command' | 'pile', readonly PileActionId[]>> = {
+  library: ['draw', 'shuffle', 'search'],
+  graveyard: ['open'],
+  exile: ['open'],
+  command: ['open'],
+  pile: ['open'],
+};
+
+/** A life scrub (SceneEvents.lifeScrub; docs/design/m7-hud-proposal.md, Life steppers). Added by M7-C. */
+export interface LifeScrubEvent {
+  seat: SeatId;
+  phase: 'start' | 'move' | 'end' | 'cancel';
+  /** Whole life points scrubbed since 'start' (up or right is positive). */
+  steps: number;
+}
+
+/** Life scrubbing (docs/design/m7-hud-proposal.md, Life steppers; PLAN Milestone 7, Owner decisions: "life totals you click or scrub"): one point per `pxPerPoint` of drag, a press shorter than `clickMs` and `slopPx` is a click. Added by M7-C; M7-P5 may tune. */
+export const LIFE_SCRUB = { pxPerPoint: 12, slopPx: 6, clickMs: 250 } as const;
+
+/** A seat's edge on screen, where its life plate sits (SceneEvents.seatAnchors; docs/design/m7-hud-proposal.md, Opponent plate). Added by M7-C. */
+export interface SeatAnchor {
+  seat: SeatId;
+  /** The midpoint of the seat's table edge on screen, clamped into the viewport; null when the edge is behind the camera. */
+  at: ScreenPoint | null;
+  /** The screen direction pointing out of the table at that edge, degrees clockwise from up (0: plate above the edge). */
+  outwardDeg: number;
+}
+
+/** The affordances as the debug hook reports them (PLAN M7-P5; gate M7-G: a game played with no key pressed). Added by M7-C. */
+export interface AffordanceDebugState {
+  selection: SelectionAnchor | null;
+  pile: PileHover | null;
+  /** A life scrub in progress, else null. */
+  scrub: LifeScrubEvent | null;
 }
 
 /** A live table scene (DESIGN "Specification: code interfaces"; "Themes and rendering"). */
@@ -442,6 +789,16 @@ export interface TableScene {
   cardsAt?(x: number, y: number): InstanceId[];
   /** The paperclip under a screen point, or null. Added by M6-C; implementer: M6-P1. */
   clipAt?(x: number, y: number): ClipId | null;
+  /**
+   * Play a card animation (PLAN Milestone 7, Owner decisions, Almost haptic card handling: "every common move has a
+   * short animation and sound"); the scene draws frames until it ends, then stops (render on demand). With reduced
+   * motion it cuts. Added by M7-C; implementer: M7-P4 (optional until it lands).
+   */
+  animate?(req: CardAnimationRequest): void;
+  /** Apply the viewer's motion setting without a rebuild (Settings.motion). Added by M7-C; implementer: M7-P4 (optional until it lands). */
+  setMotion?(motion: MotionSettings): void;
+  /** Ask for frames: anything that moves outside the scene's own state holds them (PLAN Milestone 7, A0: "render on demand"). Added by M7-C; implementer: M7-P4 (optional until it lands). */
+  readonly frames?: FrameScheduler;
   worldToScreen(p: TablePoint3): ScreenPoint | null;
   screenToTable(x: number, y: number): TablePoint | null;
   readonly debug: SceneDebugParts;
