@@ -27,6 +27,7 @@ import type { CardInstance, ClipId, InstanceId, Pose, SeatId, StackItemId, Table
 import type { Rect, TableLayout, TextureSource } from '../games/types';
 import type { QualityId } from '../themes/types';
 import { registerDebug } from '../util/debug';
+import { frameMeter, type RenderInfo } from '../util/frame-meter';
 import { NO_INSETS, type Insets } from './camera';
 import { followRequests, type FollowRequest } from './camera/follow';
 import { basis } from './camera/pose';
@@ -1047,6 +1048,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       drewLastTick = true;
     }
     if (captionLayer.active) captionLayer.place();
+    frameMeter.tick(now, drewLastTick);
   }
 
   // --- Coordinates --------------------------------------------------------------------------------------------------
@@ -2788,6 +2790,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   };
 
   raf = requestAnimationFrame(tick);
+  const meterSource = (): RenderInfo => ({
+    width: canvas.width,
+    height: canvas.height,
+    pixelRatio: renderer.getPixelRatio(),
+    devicePixelRatio: typeof devicePixelRatio === 'number' ? devicePixelRatio : 1,
+    renderScale: 1,
+    theme: theme.id,
+    quality: runtime.level.id,
+    post: runtime.post.passes(),
+    shadows: runtime.effective.shadowMap || runtime.effective.contactShadows,
+  });
+  frameMeter.setRender(meterSource);
 
   /** The game's layout for a table format, or null when the game has none for it (the scene keeps its own). */
   function layoutFor(format: TableState['format']): TableLayout | null {
@@ -2953,6 +2967,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     debug,
     dispose() {
       disposed = true;
+      frameMeter.releaseRender(meterSource);
       pressHold.dispose();
       touchInput.reset();
       cancelAnimationFrame(raf);
