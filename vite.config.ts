@@ -6,7 +6,8 @@ import { WEB_APP_MANIFEST } from './src/util/pwa.js';
 
 // GitHub Pages serves the app from https://izzardry.github.io/spellplane/
 export default defineConfig(({ mode }) => ({
-  base: '/spellplane/',
+  // The preview build (M7, .github/workflows/deploy.yml) is served beside the live site at /spellplane/preview/.
+  base: process.env.SPELLPLANE_BASE ?? '/spellplane/',
   plugins: [
     svelte(),
     // Service worker (src/sw.ts) and web app manifest (PLAN M5-P3; util/pwa.ts): the worker precaches every file of
@@ -34,6 +35,8 @@ export default defineConfig(({ mode }) => ({
   define: {
     // The debug hook (window.__spellplane) ships in dev and test builds only.
     __SPELLPLANE_DEBUG__: JSON.stringify(mode !== 'production'),
+    // The preview build: its own saved data, no service worker, a Preview label (M7 fast feedback, PLAN Milestone 7).
+    __SPELLPLANE_PREVIEW__: JSON.stringify(process.env.SPELLPLANE_PREVIEW === '1'),
   },
   build: {
     target: 'es2023',

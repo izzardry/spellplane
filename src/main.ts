@@ -38,6 +38,7 @@ const harness = __SPELLPLANE_DEBUG__ ? new URLSearchParams(location.search).get(
  * `?transport=local`), the debug hook, then the app shell.
  */
 async function boot(el: HTMLElement): Promise<void> {
+  if (__SPELLPLANE_PREVIEW__) previewLabel();
   // Browser tests inject recorded card data (tests/fixtures/) so they never touch the network; dev and test builds only.
   const fixtures = __SPELLPLANE_DEBUG__ ? (await import('./debug/fixture-cards')).injectedCardData() : null;
   // A test that injects card data but no set data (the M0/M1 gates) gets an empty set source, never MTGJSON.
@@ -170,6 +171,18 @@ async function boot(el: HTMLElement): Promise<void> {
   mount(App, { target: el, props });
 }
 
+/** A small fixed label so the owner always knows the preview build from the live site (M7 fast feedback). */
+function previewLabel(): void {
+  const tag = document.createElement('div');
+  tag.textContent = 'Preview';
+  tag.setAttribute('aria-hidden', 'true');
+  tag.style.cssText =
+    'position:fixed;left:50%;bottom:4px;transform:translateX(-50%);z-index:2147483647;pointer-events:none;' +
+    'font:600 11px/1 system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;padding:4px 8px;' +
+    'border-radius:999px;background:#b4232a;color:#fff;opacity:.85';
+  document.body.append(tag);
+}
+
 /** The service worker's AppUpdate, a test's fake one (`?update=fake`, dev and test builds), or null without a worker. */
 function appUpdate(): AppUpdate | null {
   if (__SPELLPLANE_DEBUG__ && new URLSearchParams(location.search).get('update') === 'fake') {
@@ -177,6 +190,8 @@ function appUpdate(): AppUpdate | null {
     (window as Window & { __spellplaneFakeUpdate?: FakeAppUpdate }).__spellplaneFakeUpdate = fake;
     return fake;
   }
+  // The preview build runs no worker: the live site's worker owns the origin's offline caches.
+  if (__SPELLPLANE_PREVIEW__) return null;
   return pageWorker({ production: import.meta.env.MODE === 'production', dev: import.meta.env.DEV, search: location.search, base: import.meta.env.BASE_URL });
 }
 

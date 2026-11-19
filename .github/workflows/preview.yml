@@ -1,0 +1,15 @@
+name: Preview
+# M7 fast feedback: a push to `preview` redeploys Pages from main, which builds the live site and the preview
+# (/spellplane/preview/) together. The Pages environment only deploys from main, so the push dispatches it there.
+on:
+  push:
+    branches: [preview]
+permissions:
+  actions: write
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh workflow run deploy.yml --repo "$GITHUB_REPOSITORY" --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}
