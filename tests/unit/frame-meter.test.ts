@@ -62,10 +62,11 @@ describe('frame meter statistics (M7-A0)', () => {
 
   it('writes the render size, theme and quality into the overlay', () => {
     const m = new FrameMeter();
-    m.setRender(() => ({ width: 2880, height: 1800, pixelRatio: 2, devicePixelRatio: 2, renderScale: 1, theme: 'dusk', quality: 'high', post: ['render', 'bloom'], shadows: true }));
-    for (let i = 0; i <= 60; i++) m.tick(i * 20, true);
+    m.setRender(() => ({ width: 2880, height: 1800, pixelRatio: 2, devicePixelRatio: 2, renderScale: 1, theme: 'dusk', quality: 'high', post: ['render', 'bloom'], shadows: true, sync: false }));
+    for (let i = 0; i <= 60; i++) m.tick(i * 20, true, i % 2 ? 4 : 6);
     const lines = meterLines(m.snapshot(1200));
     expect(lines[0]).toBe('50 fps · 20.0 / 20.0 ms');
+    expect(lines[1]).toBe('max 20 ms · draw 4.0 / 6.0');
     expect(lines[2]).toBe('2880×1800 @2.00 dpr 2.00');
     expect(lines[3]).toBe('dusk · high · post · shadows');
   });

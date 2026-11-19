@@ -54,8 +54,8 @@ export function meterLines(s: MeterSnapshot): string[] {
   const lines: string[] = [];
   if (s.idle) lines.push(`idle · ${Math.round(s.callbacks)} Hz`);
   else lines.push(`${fixed(s.fps, 0)} fps · ${fixed(s.p50)} / ${fixed(s.p95)} ms`);
-  lines.push(`max ${fixed(s.max, 0)} ms · p50 / p95`);
   const r = s.render;
+  lines.push(`max ${fixed(s.max, 0)} ms · ${r?.sync ? 'gpu' : 'draw'} ${fixed(s.drawP50)} / ${fixed(s.drawP95)}`);
   if (r) {
     lines.push(`${r.width}×${r.height} @${fixed(r.pixelRatio, 2)}${r.renderScale !== 1 ? ` (×${fixed(r.renderScale, 2)})` : ''} dpr ${fixed(r.devicePixelRatio, 2)}`);
     lines.push(`${r.theme} · ${r.quality}${r.post.length ? ' · post' : ''}${r.shadows ? ' · shadows' : ''}`);
