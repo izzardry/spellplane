@@ -1,6 +1,8 @@
 name: CI
 on:
   push:
+    # The preview branch only follows m7 (fast-forward); m7's own run covers the same commits.
+    branches-ignore: [preview]
   pull_request:
 concurrency:
   group: ci-${{ github.ref }}
