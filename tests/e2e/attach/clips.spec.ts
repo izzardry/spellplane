@@ -8,7 +8,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { shot } from '../helpers/app';
 import { freshProfile, openSolo } from '../solo/helpers';
-import { SIDS, actions, centre, clipCentre, clips, creature, hover, idle, mouseDrag, pxPerMm, shown, state } from './helpers';
+import { SIDS, actions, centre, clipCentre, clips, creature, dispatch, hover, idle, mouseDrag, pxPerMm, shown, state } from './helpers';
 
 /** a at (0, -200) and b at (30, -180) overlap; c at (250, -200) stands apart. */
 async function table(page: Page): Promise<void> {
@@ -208,4 +208,20 @@ test('a clipped card going to the graveyard leaves the clip; undo restores the c
   await page.keyboard.press('Control+KeyZ');
   await expect.poll(async () => (await state(page)).cards.a!.zone).toBe('battlefield:s0');
   await expect.poll(async () => Object.values((await state(page)).clips ?? {})[0]?.cards ?? null).toEqual(['a', 'b']);
+});
+
+test('a press on cards already clipped together starts no hold: it stays a click and makes no second clip', async ({ page }) => {
+  await dispatch(page, { type: 'clipAdd', clip: 'k1', cards: ['a', 'b'], anchor: { card: 'b', x: -15, y: -10 } });
+  await expect.poll(() => clipCount(page)).toBe(1);
+  await idle(page);
+  // Over both a and b, clear of the clip: 2 mm right of and 40 mm above a's centre.
+  const k = await pxPerMm(page, 'a');
+  const a = await centre(page, 'a');
+  const p = { x: a.x + 2 * k, y: a.y - 40 * k };
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.down();
+  expect((await clips(page)).hold).toBeNull();
+  await page.mouse.up();
+  await expect.poll(async () => (await shown(page)).filter((x) => x.selected).map((x) => x.id)).toEqual(['b']);
+  expect(await clipCount(page)).toBe(1);
 });
