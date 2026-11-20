@@ -260,6 +260,23 @@ export const TAP_FEEL_MS = 180;
 /** A wave of untaps (untap all) staggers per card by this, ms, at most WAVE_MAX_MS in all (left to right). */
 export const WAVE_STEP_MS = 30;
 export const WAVE_MAX_MS = 240;
+/**
+ * A group of moves that arrives at once (an opening hand of seven, a mill, a wrath) staggers card by card
+ * (m7-adjustments.md, M7-P4 change 3: "the opening seven draw 40 ms apart, the whole group done within 600 ms").
+ */
+export const GROUP_STEP_MS = 40;
+export const GROUP_MAX_MS = 600;
+
+/**
+ * The delay of the `i`-th card (0-based) of a group whose moves last `durMs`: GROUP_STEP_MS apart, but never so late
+ * that the card ends after GROUP_MAX_MS (later cards of a large group start together at the last possible moment).
+ * Reduced motion has no durations, so no delay.
+ */
+export function groupDelay(i: number, durMs: number): number {
+  if (!(i > 0) || !(durMs > 0)) return 0;
+  return Math.min(i * GROUP_STEP_MS, Math.max(0, GROUP_MAX_MS - durMs));
+}
+
 /** A card at full lift is drawn this much larger (it rises toward the viewer); never a distortion, a uniform scale. */
 export const LIFT_SCALE = 0.05;
 /** A counter change pops its badge by this much, over POP_MS. */

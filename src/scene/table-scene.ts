@@ -28,7 +28,7 @@ import { parseZoneId } from '../core/ids';
 import type { Rect, TableLayout, TextureSource } from '../games/types';
 import type { QualityId } from '../themes/types';
 import { registerDebug } from '../util/debug';
-import { feelCues, handRoom, tableTheme } from '../util/feel';
+import { feelCues, forgetMotion, handRoom, reportMotion, tableTheme } from '../util/feel';
 import { frameMeter, type RenderInfo } from '../util/frame-meter';
 import { NO_INSETS, type Insets } from './camera';
 import { followRequests, type FollowRequest } from './camera/follow';
@@ -65,6 +65,7 @@ import {
   easeOutBack,
   easeOutCubic,
   feelWithin,
+  groupDelay,
   heldTilt,
   liftScale,
   liftShadow,
@@ -596,6 +597,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   };
   /** Card animations running (M7-P4; debug `motion().running`): each ends at start + dur and then holds no frame. */
   let anims: { kind: CardAnimationKind; cards: InstanceId[]; start: number; dur: number }[] = [];
+  /** This scene's key in the page-wide motion totals (util/feel.ts). */
+  const motionKey = {};
+  /** The next card's place in the group of moves of the state being laid out (relayout; motion.ts groupDelay). */
+  let groupIndex = 0;
   function startAnim(kind: CardAnimationKind, ids: InstanceId[], now: number, dur: number): void {
     if (!(dur > 0) || ids.length === 0) return;
     const same = anims.find((a) => a.kind === kind && a.start === now);
@@ -733,16 +738,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
    * hand fan, turning face up on the way when the viewer may see it (their own identity of it, ViewState.privateFaces:
    * nothing new is shown or sent), then dropped (M7-P4: "draw … flipping face up for its owner only").
    */
-  function startLeaving(rc: RCard, inst: CardInstance, now: number, f: CardFeel): void {
+  function startLeaving(rc: RCard, inst: CardInstance, at: number, f: CardFeel): void {
     const kind = arrivalKind(rc.inst.zone, inst.zone);
     const dur = arrivalMs(kind, f);
+    // A group (seven drawn at once) staggers: this card starts its flight a little after the one before (M7-P5).
+    const now = at + groupDelay(groupIndex++, dur);
     const ref = inst.identity ?? view.privateFaces[inst.id] ?? null;
     const key = ref ? `${ref.sid}#${inst.faceIndex}` : BACK_KEY;
     if (ref) faces.register(ref, inst.faceIndex);
     rc.inst = inst;
     rc.place = { ...rc.place, zone: inst.zone, kind: 'hand', key, ref, dimmed: false, fanned: false, z: rc.place.z, sort: [LAYER.dragged, 1, 0] };
     if (key !== rc.shownKey) rc.motion.startFlip(now, theme.motion, reduced(), Math.min(theme.motion.flipMs, dur * 0.7));
-    rc.motion.tweenTo(handPoint(), now, dur, easeInOutCubic, reduced());
+    rc.motion.tweenTo(handPoint(), at, dur, easeInOutCubic, reduced(), now - at);
     rc.lift.arc(now, heldLift(), dur, reduced());
     rc.leaving = { until: now + dur };
     startAnim(kind, [rc.id], now, dur);
@@ -755,6 +762,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     // Only a new state animates (a layout or view change re-places cards as before); reduced motion cuts (M7-P4).
     const animate = before !== null && before !== state && !reduced();
     const f = feel();
+    // Cards that move in one new state are one group: their flights stagger (motion.ts groupDelay).
+    groupIndex = 0;
     const places = placeCards(state, view, { game: opts.game, layout, viewerSeat });
     entries = stackEntries(state, layout.stackLane, viewerAngle(state, layout, viewerSeat));
     syncStackFocus();
@@ -827,11 +836,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           rc.motion.moveTo(place.rest, 'spring', now, theme.motion, reduced());
           startAnim(kind, [id], now, Math.max(dur, f.settle.ms));
         } else {
-          // Another player's move, or a key: a short flight with a hop, landing softly where the state says.
-          rc.motion.tweenTo(place.rest, now, dur, kind === 'play' ? easeOutCubic : easeInOutCubic, reduced());
-          if (kind === 'play') rc.lift.land(now, heldLift(), dur, f.settle.bounce, reduced());
-          else rc.lift.arc(now, heldLift() * (kind === 'attach' || kind === 'detach' ? 0.5 : 0.8), dur, reduced());
-          startAnim(kind, [id], now, dur);
+          // Another player's move, or a key: a short flight with a hop, landing softly where the state says; a group
+          // staggers (M7-P5).
+          const delay = groupDelay(groupIndex++, dur);
+          rc.motion.tweenTo(place.rest, now, dur, kind === 'play' ? easeOutCubic : easeInOutCubic, reduced(), delay);
+          if (kind === 'play') rc.lift.land(now + delay, heldLift(), dur, f.settle.bounce, reduced());
+          else rc.lift.arc(now + delay, heldLift() * (kind === 'attach' || kind === 'detach' ? 0.5 : 0.8), dur, reduced());
+          startAnim(kind, [id], now + delay, dur);
         }
         continue;
       }
@@ -887,22 +898,25 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
    * A card that appears on the table (M7-P4): played onto a battlefield or the stack it lands softly, coming up out of
    * the viewer's hand fan when it was theirs; put on a pile from the viewer's hand it flies there from the fan.
    */
-  function arrive(rc: RCard, from: ZoneId | undefined, now: number, f: CardFeel): void {
+  function arrive(rc: RCard, from: ZoneId | undefined, at: number, f: CardFeel): void {
     const kind = arrivalKind(from, rc.inst.zone);
     const dur = arrivalMs(kind, f);
+    // A group (a hand dumped onto the table) staggers (M7-P5).
+    const delay = groupDelay(groupIndex++, dur);
+    const now = at + delay;
     const fromHand = from !== undefined && from === ownHandZone();
     if (rc.place.kind === 'free' || rc.place.kind === 'stack' || rc.place.kind === 'area') {
       if (fromHand) {
         const h = handPoint();
         const rest = rc.place.rest;
         rc.motion.cut({ x: rest.x + (h.x - rest.x) * 0.35, y: rest.y + (h.y - rest.y) * 0.35, rot: rest.rot });
-        rc.motion.tweenTo(rest, now, dur, easeOutCubic, reduced());
+        rc.motion.tweenTo(rest, at, dur, easeOutCubic, reduced(), delay);
       }
       rc.lift.land(now, heldLift(), dur, f.settle.bounce, reduced());
       startAnim('play', [rc.id], now, dur);
     } else if (rc.place.kind === 'pile' && fromHand) {
       rc.motion.cut(handPoint());
-      rc.motion.tweenTo(rc.place.rest, now, dur, easeInOutCubic, reduced());
+      rc.motion.tweenTo(rc.place.rest, at, dur, easeInOutCubic, reduced(), delay);
       rc.lift.arc(now, heldLift(), dur, reduced());
       startAnim(kind, [rc.id], now, dur);
     }
@@ -1448,6 +1462,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     for (const [id, h] of frameHolds) if (h.active && !h.active()) frameHolds.delete(id);
     if (frameHolds.size) changed = true;
+    // What this scene runs, for the page-wide totals (util/feel.ts; a dispose forgets it).
+    reportMotion(motionKey, anims.length, frameHolds.size);
     if (faces.pump(frame, uploadScale(frameCost))) changed = true;
     // Ambient motion: what moves with nothing changing (ping fades, the pending pulse, a lit theme's light and
     // particles, the foil sheen). On a slow renderer it waits a few frame costs between frames (scene/pacing.ts).
@@ -3995,7 +4011,19 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     dispose() {
       disposed = true;
       handRoom.set(null);
+      // Cancel every animation and release every frame hold (M7-P5): tables are mounted and disposed many times.
       frameHolds.clear();
+      anims = [];
+      for (const rc of rcards.values()) {
+        rc.motion.cut(rc.motion.target);
+        rc.lift.cut(0);
+        rc.sway.cut();
+        rc.pop = null;
+        rc.badgePop = null;
+        rc.riffle = null;
+        rc.leaving = null;
+      }
+      forgetMotion(motionKey);
       frameMeter.releaseRender(meterSource);
       pressHold.dispose();
       touchInput.reset();
