@@ -11,6 +11,7 @@
   import BoosterFan from '../design/BoosterFan.svelte';
   import Button from '../design/Button.svelte';
   import CardFan from '../design/CardFan.svelte';
+  import Icon from '../design/Icon.svelte';
   import IconButton from '../design/IconButton.svelte';
   import ModeCard from '../design/ModeCard.svelte';
   import PileStack from '../design/PileStack.svelte';
@@ -35,7 +36,7 @@
   import type { CardRef } from '../../core/types';
   import type { Matchmaker, MatchmakerStatus } from '../../session/types';
   import { DEFAULT_HOME_PREFS, type BoosterSetup, type DeckRecord, type GameSummary, type HomeMode, type HomePrefs } from '../../store/types';
-  import { DRAFT_PLAYERS, FORMATS, heroPacks, homeView, MODES, stepDeck } from './view';
+  import { DRAFT_PLAYERS, FORMATS, heroPacks, homeView, MODE_ICONS, MODES, stepDeck } from './view';
 
   let {
     matchmaker,
@@ -146,6 +147,18 @@
     void save({ ...prefs, mode: mode as HomeMode });
   }
 
+  /** Arrow keys move the mode (a radio group; the ends do not wrap, as the phone's stepper). */
+  function modeKey(e: KeyboardEvent): void {
+    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    if (!d || view.optionsLocked) return;
+    e.preventDefault();
+    const group = e.currentTarget as HTMLElement;
+    const i = MODES.findIndex((m) => m.value === view.mode);
+    const next = MODES[Math.min(MODES.length - 1, Math.max(0, i + d))]!;
+    setMode(next.value);
+    void settled().then(() => group.querySelector<HTMLElement>(`[data-value="${next.value}"]`)?.focus());
+  }
+
   function step(d: -1 | 1): void {
     if (view.deckLocked || !view.deck) return;
     const next = stepDeck(decks, view.deck.id, d);
@@ -230,6 +243,13 @@
     }
   }
 
+  // After 400 ms of loading the status line says so (journey.md 4.1 "Other states").
+  let slow = $state(false);
+  onMount(() => {
+    const t = setTimeout(() => (slow = true), 400);
+    return () => clearTimeout(t);
+  });
+
   onMount(() => {
     void load();
     syncClock();
@@ -289,6 +309,10 @@
       <div class="hero__acts">
         <Button size="sm" onclick={() => void openBoosters()} data-testid="home-change-boosters">CHANGE BOOSTERS</Button>
       </div>
+    {:else if !ready}
+      <!-- Loading (journey.md 4.1 "Other states"): an empty pile outline, no text until 400 ms have passed. -->
+      <span class="eyebrow">YOUR DECK</span>
+      <div class="hero__row"><div class="hero__empty" data-testid="home-loading-hero"></div></div>
     {:else if view.hero === 'empty'}
       <span class="eyebrow">YOUR DECK</span>
       <div class="hero__row">
@@ -321,7 +345,8 @@
   </section>
 
   <!-- 2. Modes and options -->
-  <div class="modes" role="radiogroup" aria-label="How to play" data-testid="home-modes">
+  <!-- svelte-ignore a11y_interactive_supports_focus -->
+  <div class="modes" role="radiogroup" aria-label="How to play" tabindex="-1" onkeydown={modeKey} data-testid="home-modes">
     {#each MODES as m (m.value)}
       <ModeCard
         value={m.value}
@@ -331,7 +356,9 @@
         locked={view.optionsLocked}
         onselect={() => setMode(m.value)}
         data-testid="mode-{m.value}"
-      />
+      >
+        {#snippet icon()}<Icon name={MODE_ICONS[m.value]} size={20} />{/snippet}
+      </ModeCard>
     {/each}
   </div>
   <div class="modes-narrow">
@@ -355,13 +382,13 @@
 
   <!-- 3. The one primary -->
   <div class="go">
-    <Button variant={view.primary.waiting ? 'secondary' : 'primary'} size="lg" waiting={view.primary.waiting} pressed={view.primary.waiting || undefined} disabled={view.primary.disabled || (busy && !view.primary.waiting)} onclick={() => void primary()} data-testid="home-primary">
+    <Button variant={view.primary.waiting ? 'secondary' : 'primary'} size="lg" waiting={view.primary.waiting} pressed={view.primary.waiting || undefined} disabled={!ready || view.primary.disabled || (busy && !view.primary.waiting)} onclick={() => void primary()} data-testid="home-primary">
       {busy && view.primary.action === 'firstRun' ? 'FETCHING THE DECKS…' : view.primary.label}
       {#snippet trailing()}{#if view.since !== null}<span class="timer" data-testid="home-timer">{elapsed}</span>{/if}{/snippet}
     </Button>
     {#if view.cancel}<IconButton label="Cancel the search" size="lg" variant="ghost" onclick={() => matchmaker.cancel()} data-testid="home-cancel">✕</IconButton>{/if}
   </div>
-  <StatusLine tone={view.tone} data-testid="home-status">{rankedNote ?? view.line ?? ''}</StatusLine>
+  <StatusLine tone={view.tone} data-testid="home-status">{ready ? (rankedNote ?? view.line ?? '') : slow ? 'Loading your decks…' : ''}</StatusLine>
   {#if view.links.length}
     <div class="links">
       <Button size="xs" variant="quiet" onclick={() => void launchFirstRun(deps, prefs).catch(() => (firstRunFailed = true))}>STARTER DECK</Button>

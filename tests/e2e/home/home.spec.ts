@@ -4,6 +4,7 @@
  * the fake matchmaker, the first-run sheet, 390 px, the lifecycle counts and the design audit.
  */
 import { expect, test } from '@playwright/test';
+import { shot } from '../helpers/app';
 import { designAudit } from '../helpers/design-audit';
 import { fixtureDeck, fixtureGame, openHomeHarness, seedDecks, seedGames } from '../helpers/home';
 
@@ -48,7 +49,10 @@ test('with a fixture deck the hero shows name, count and curve; switching mode c
     // JOIN A GAME… opens the lobby package's sheet; while that part draws nothing it says so.
     await page.getByTestId('home-join').click();
     await expect.poll(() => page.evaluate(() => window.__homeHarness!.toasts())).toContain('Joining by a pasted link is not in this build yet. Open the link itself.');
-    await page.getByTestId('mode-quick').click();
+    // The mode cards are a radio group: the arrow keys move the mode.
+    await page.getByTestId('mode-private').press('ArrowLeft');
+    await expect(page.getByTestId('mode-quick')).toHaveAttribute('aria-checked', 'true');
+    await expect(page.getByTestId('mode-quick')).toBeFocused();
     await expect(page.getByTestId('home-primary')).toHaveText('FIND MATCH');
     await expect(page.getByTestId('home-status')).toHaveText('Connects your browser directly to other players who are looking. They see your name and network address.');
     await page.getByTestId('opt-ranked').getByRole('radio', { name: 'RANKED', exact: true }).click();
@@ -246,4 +250,27 @@ test('the profile chip: a made-up nickname, renamed in the popover and kept over
   await page.getByTestId('shell-gear').click();
   await page.getByTestId('gear-menu').getByRole('menuitem', { name: 'Settings' }).click();
   await expect(page.getByTestId('harness-stub-settings')).toBeVisible();
+});
+
+test('screenshots of Home, Draft night and History (evidence, not baselines)', async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const profile = uniq('shots');
+  await openHomeHarness(page, { profile });
+  await seedDecks(page, [fixtureDeck('gruul', 'Gruul Stompy', 60), fixtureDeck('b', 'Beta Deck', 60, { updatedAt: 1 })]);
+  await seedGames(page, [fixtureGame('amber-fox-river-93', Date.now() - 12 * 60_000), fixtureGame('reed-owl-cliff-12', Date.now() - 2 * 3_600_000, { format: 'ffa4', active: 's2', turn: 11, players: [
+    { seat: 's0', name: 'Ann', colour: 0, life: 18, away: false, me: true },
+    { seat: 's1', name: 'Ben', colour: 1, life: 12, away: true, me: false },
+    { seat: 's2', name: 'Cleo', colour: 2, life: 20, away: false, me: false },
+    { seat: 's3', name: 'Dan', colour: 3, life: 7, away: false, me: false },
+  ] })]);
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => window.__homeHarness?.ready === true)).toBe(true);
+  await expect(page.getByTestId('hero-name')).toHaveText('Gruul Stompy');
+  await shot(page, 'M8', 'home', info.project.name);
+  await page.getByTestId('mode-draft').click();
+  await expect(page.getByTestId('home-boosters')).toBeVisible();
+  await shot(page, 'M8', 'home-draft', info.project.name);
+  await page.evaluate(() => (location.hash = '#/history'));
+  await expect(page.getByTestId('history-row')).toHaveCount(2);
+  await shot(page, 'M8', 'history', info.project.name);
 });

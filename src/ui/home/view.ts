@@ -18,6 +18,9 @@ export const MODES: readonly { value: HomeMode; name: string }[] = [
   { value: 'draft', name: 'DRAFT NIGHT' },
 ];
 
+/** The mode cards' icons (the kit's icon set). */
+export const MODE_ICONS = { solo: 'play', quick: 'join', private: 'link', draft: 'deck' } as const satisfies Record<HomeMode, string>;
+
 /** The copy Home shows (journey.md 4.1; contracts.md Part G "Matchmaking" items 4 and 5). */
 export const COPY = {
   noDeckSolo: 'No deck yet: you get a starter deck.',
