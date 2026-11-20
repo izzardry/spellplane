@@ -24,8 +24,13 @@ const STUB = () => {
 };
 
 const state = (p: Page) => hook<TableState>(p, 'state');
-const handOf = (s: TableState, seat: string) => s.zones[`hand:${seat}`]?.count ?? s.zones[`hand:${seat}`]?.ids.length ?? 0;
-const libraryOf = (s: TableState, seat: string) => s.zones[`library:${seat}`]?.count ?? s.zones[`library:${seat}`]?.ids.length ?? 0;
+function countOf(s: TableState, zone: string): number {
+  const z = s.zones[zone];
+  if (!z) return 0;
+  return z.visibility === 'public' ? z.ids.length : (z.count ?? z.ids.length);
+}
+const handOf = (s: TableState, seat: string) => countOf(s, `hand:${seat}`);
+const libraryOf = (s: TableState, seat: string) => countOf(s, `library:${seat}`);
 const dispatch = (p: Page, action: unknown) => p.evaluate((a) => (window.__spellplane as unknown as { dispatch(a: unknown): void }).dispatch(a), action);
 
 async function ready(p: Page, file: string): Promise<void> {

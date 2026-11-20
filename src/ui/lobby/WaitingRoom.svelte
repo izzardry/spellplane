@@ -129,6 +129,7 @@
   const list = $derived(chairs(st, selfPeer));
   const teams = $derived(teamGroups(st, selfPeer));
   const ready = $derived(readiness(st));
+  const open = $derived(list.filter((c) => !c.occupied).length);
   const report: ConnectivityReport = $derived(selfPeer ? check.observe(net, st, selfPeer, now) : { overall: 'checking', pairs: [], problems: [] });
   const present = (seat: SeatId): boolean => {
     const peer = st.seats[seat]?.peer;
@@ -158,7 +159,6 @@
   );
   const failedPeers = $derived(new Set(report.pairs.filter((p) => p.state === 'failed').map((p) => p.peer)));
   const code = $derived(codeLabel(link.roomId));
-  const open = $derived(list.filter((c) => !c.occupied).length);
   const seatedCount = $derived(list.filter((c) => c.occupied).length);
   const watchLink = $derived(`${link.url}/watch`);
   const FORMAT_LABEL: Record<Format, string> = { '1v1': '1V1', ffa3: '3 FFA', ffa4: '4 FFA', '2hg': '2V2' };

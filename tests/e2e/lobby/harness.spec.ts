@@ -80,6 +80,15 @@ test.describe('lobby harness (M8-P4)', () => {
     expect(await lobbyAudit(page)).toEqual([]);
   });
 
+  test('seats stay empty: START WITH 2 PLAYERS once both are ready; the empty chair stays empty', async ({ page }) => {
+    await harness(page, 'view=room&format=ffa3&ben=1&annReady=1&benReady=1');
+    await expect(page.getByTestId('start-pill')).toHaveCount(0);
+    await expect(page.getByTestId('start-short')).toHaveText('START WITH 2 PLAYERS');
+    await expect(page.getByTestId('missing-line')).toHaveText('Waiting for one more player.');
+    await page.getByTestId('start-short').click();
+    await expect.poll(async () => (await state(page)).stage).toBe('match');
+  });
+
   test('BOOSTER DECKS ONLY: the picker gets an allow that rejects custom decks with the reason', async ({ page }) => {
     await harness(page, 'view=room&rule=booster');
     await closeInvite(page);
