@@ -519,7 +519,7 @@
             {@const pos = a ? place(a.x, a.y) : { left: 50, top: 50 }}
             {@const sc = seatColours[c.colour]}
             {@const failed = cannotConnect(c)}
-            <div class="seat" style:left="{pos.left}%" style:top="{pos.top}%">
+            <div class="seat" class:above={pos.top < 50} style:left="{pos.left}%" style:top="{pos.top}%">
               {#if c.occupied}
                 <button
                   type="button"
@@ -655,8 +655,8 @@
             {/if}
           {/if}
           <p class="line" role="status" data-testid="missing-line">{line}</p>
-          <p class="ds-t-meta" data-testid="ready-count">{ready.ready} of {Object.keys(st.seats).length} players ready.</p>
-          {#if startBlocked && !drafting}<p class="ds-t-meta" data-testid="start-blocked">{startBlocked}</p>{/if}
+          {#if !drafting}<p class="ds-t-meta" data-testid="ready-count">{ready.ready} of {Object.keys(st.seats).length} players ready.</p>{/if}
+          {#if startBlocked && !drafting}<p class="ds-t-meta" data-testid="start-blocked" hidden={startBlocked === line}>{startBlocked}</p>{/if}
           {#if failure}<p class="ds-status ds-status--danger" role="alert" data-testid="lobby-failure">{failure}</p>{/if}
           {#if note}<StatusLine data-testid="lobby-note">{note}</StatusLine>{/if}
         </section>
@@ -709,7 +709,10 @@
         {/if}
       </section>
 
-      <div class="spect"><SpectatorPanel {session} {link} inline /></div>
+      <details class="spect">
+        <summary class="ds-t-eyebrow">SPECTATORS</summary>
+        <SpectatorPanel {session} {link} inline />
+      </details>
     </div>
 
     {#if inviteOpen}
@@ -879,9 +882,14 @@
   .seat {
     position: absolute;
     transform: translate(-50%, -50%);
-    display: grid;
-    justify-items: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     gap: var(--ds-space-xs);
+  }
+  /* A seat across the table keeps its extra line on the outside, away from the table. */
+  .seat.above {
+    flex-direction: column-reverse;
   }
   /* A seat plate (visual.md 2.8 "Seat row"): a raised pill, 56 high; an open seat is a dashed well. */
   .plate {
@@ -1127,6 +1135,12 @@
     gap: var(--ds-space-md);
   }
   /* The legacy spectator panel (not this package's) wears the kit's smallest height here. */
+  .spect {
+    padding: var(--ds-space-sm) var(--ds-space-lg);
+  }
+  .spect summary {
+    cursor: pointer;
+  }
   .spect :global(button),
   .spect :global(input:not([type='checkbox']):not([type='radio'])) {
     box-sizing: border-box;
