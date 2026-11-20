@@ -9,7 +9,7 @@
 
 <div class="opening" role="group" aria-label="Opening hand" data-testid="opening-hand">
   <button type="button" class="ds-btn sp-h-sm sp-pill chip" data-testid="opening-keep" title="Keep this hand" onclick={onkeep}>Keep</button>
-  <button type="button" class="ds-btn ds-btn--quiet sp-h-sm sp-pill chip" data-testid="opening-mulligan" title="Shuffle this hand away and draw a new one" onclick={onmulligan}>Mulligan</button>
+  <button type="button" class="ds-btn sp-h-sm sp-pill chip" data-testid="opening-mulligan" title="Shuffle this hand away and draw a new one" onclick={onmulligan}>Mulligan</button>
 </div>
 
 <style>

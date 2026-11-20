@@ -8,7 +8,7 @@
   timeline, its tabs and the chat field. Never a permanent column.
 -->
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy, untrack, type Snippet } from 'svelte';
   import type { ChatTab, TimelineFilter } from '../core/log';
   import type { InstanceId } from '../core/types';
   import type { CardDataSource, FaceSource } from '../data/types';
@@ -35,6 +35,7 @@
     tabs = ['table'],
     typers = [],
     ontyping,
+    under,
   }: {
     lines: LogLine[];
     open: boolean;
@@ -52,6 +53,8 @@
     typers?: Typer[];
     /** Added by M6-P2: announce this field's typing on presence (Presence.typing); absent at the solo table. */
     ontyping?: (channel: ChatTab | null) => void;
+    /** Added by M7-P2: controls stacked under the Activity button and above the ticker (the View control). */
+    under?: Snippet;
   } = $props();
 
   let text = $state('');
@@ -109,6 +112,7 @@
 {#if !open}
   <div class="activity" data-testid="log" data-open="false">
     <button type="button" class="ds-btn ds-icon-btn sp-h-md sp-round" data-testid="open-log" title="Log and chat" aria-expanded={false} onclick={ontoggle}><Icon name="chat" /><span class="sp-sr">Log and chat</span>{#if unread}<span class="ds-badge" data-testid="unread">{unread}</span><span class="sp-sr"> new</span>{/if}</button>
+    {#if under}<div class="under">{@render under()}</div>{/if}
     <!-- The ticker repeats lines the page's live region already announces (ui/a11y), so it is hidden from screen readers. -->
     <ol class="ticker" aria-hidden="true" data-testid="log-ticker">
       {#each ticker as l (l.key)}
@@ -160,6 +164,9 @@
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+  .under {
+    pointer-events: auto;
   }
   .activity > button {
     position: relative;

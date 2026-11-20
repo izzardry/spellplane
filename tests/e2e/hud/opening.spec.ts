@@ -6,7 +6,8 @@ import { expect, test } from '@playwright/test';
 import type { LogEntry, TableState } from '../../../src/core/types';
 import { hook } from '../helpers/app';
 import { call } from '../solo/helpers';
-import { soloWithDeck, state } from './helpers';
+import { settled } from '../helpers/hud';
+import { IPAD_LANDSCAPE, IPAD_PORTRAIT, soloWithDeck, state } from './helpers';
 
 test('no chips before a hand is drawn; both show with a fresh hand and neither is filled', async ({ page }, info) => {
   await soloWithDeck(page, info);
@@ -41,3 +42,30 @@ test('playing a card out of the hand removes the chips', async ({ page }, info) 
   await hook(page, 'dispatch', { type: 'move', card, to: 'battlefield:s0', pose: { x: 0, y: 120, rot: 0 } });
   await expect(page.getByTestId('opening-hand')).toHaveCount(0);
 });
+
+/** Whether two boxes overlap (by more than half a pixel). */
+const overlap = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) =>
+  a.x + 0.5 < b.x + b.width && b.x + 0.5 < a.x + a.width && a.y + 0.5 < b.y + b.height && b.y + 0.5 < a.y + a.height;
+
+for (const [name, device] of [
+  ['desktop', null],
+  ['1024 x 768', { viewport: { width: 1024, height: 768 } }],
+  ['iPad portrait', IPAD_PORTRAIT],
+  ['iPad landscape', IPAD_LANDSCAPE],
+] as const) {
+  test.describe(name, () => {
+    if (device) test.use({ ...device });
+    test('the chips sit clear of the own plate and the primary button', async ({ page }, info) => {
+      await soloWithDeck(page, info, { hand: 7 });
+      await settled(page);
+      const chips = [await page.getByTestId('opening-keep').boundingBox(), await page.getByTestId('opening-mulligan').boundingBox()];
+      const plate = await page.locator('[data-testid="avatar"][data-seat="s0"]').boundingBox();
+      const primary = await page.getByTestId('primary-action').boundingBox();
+      for (const chip of chips) {
+        expect(chip).not.toBeNull();
+        expect(overlap(chip!, plate!), 'chip over the plate').toBe(false);
+        expect(overlap(chip!, primary!), 'chip over the primary button').toBe(false);
+      }
+    });
+  });
+}

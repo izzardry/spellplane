@@ -380,12 +380,14 @@
     void vh;
     return safeAreaInsets();
   });
-  const fitInsets = $derived(fitInsetsFor(vh, logOpen, teamFanShown, thumbShown ? THUMB_BAR_SPACE_PX : 0, safeInsets));
+  // The drawer opens over the table and never resizes it (m7-adjustments.md, M7-P2 "HUD layout": Activity), so the
+  // table's framing ignores it.
+  const fitInsets = $derived(fitInsetsFor(vh, false, teamFanShown, thumbShown ? THUMB_BAR_SPACE_PX : 0, safeInsets));
   /** Bottom of the block above the hand (toast, offer, prompt): above the teammate's fan and the thumb bar when shown. */
   const aboveHandBottom = $derived.by(() => {
     const thumb = thumbShown ? THUMB_BAR_SPACE_PX : 0;
     if (teamFanShown) return `${teamFanTop(vh) + 8 + thumb}px`;
-    return thumb ? `calc(22vh + ${16 + thumb}px)` : null;
+    return thumb ? `calc(22vh + ${16 + thumb}px + var(--sp-above-row, 0px))` : null;
   });
 
   // --- Card identity as this browser may know it ----------------------------------------------------------------
@@ -1540,10 +1542,9 @@
           preview = card ? { card, x, y } : null;
           hudHover = card;
         }}
-      />
-      {#if !logOpen}
-        <div class="view-slot"><ViewControl camera={() => scene?.camera ?? null} /></div>
-      {/if}
+      >
+        {#snippet under()}<ViewControl camera={() => scene?.camera ?? null} />{/snippet}
+      </LogPanel>
     </div>
     {/if}
 
@@ -1999,11 +2000,6 @@
   .sp-status:empty {
     display: none;
   }
-  .view-slot {
-    position: absolute;
-    top: calc(var(--ds-control-md) + var(--ds-space-sm));
-    right: 0;
-  }
   .sp-primary {
     min-width: 200px;
     pointer-events: auto;
@@ -2113,10 +2109,19 @@
     .bottom-right {
       bottom: calc(22vh + 16px);
     }
+    /* The chips and prompts move above that row, so the plate never covers KEEP. */
+    .above-hand {
+      --sp-above-row: calc(var(--ds-control-lg) + 24px);
+      bottom: calc(22vh + 16px + var(--sp-above-row));
+    }
   }
   .touch-ui .own-avatar,
   .touch-ui .bottom-right {
     bottom: calc(22vh + 16px + var(--thumb-space, 0px));
+  }
+  .touch-ui .above-hand {
+    --sp-above-row: calc(var(--ds-control-lg) + 24px);
+    bottom: calc(22vh + 16px + var(--thumb-space, 0px) + var(--sp-above-row));
   }
   /* Talk keeps its states and buttons; shortcut text stays out of the primary UI (tooltips name the keys). */
   .talk-cluster :global(kbd) {
