@@ -48,14 +48,14 @@
       {@const on = now?.id === s.id}
       <li class="step" class:on class:group={s.phases.length > 1}>
         {#if s.phases.length > 1}
-          <button type="button" class="main" class:current={on} data-step={s.id} title="{s.label}: {s.phases.map(label).join(', ')}{tip}" onclick={() => onphase(s.phases[0]!)}>{s.label}</button>
+          <button type="button" class="ds-btn ds-btn--quiet sp-h-sm main" class:current={on} data-step={s.id} title="{s.label}: {s.phases.map(label).join(', ')}{tip}" onclick={() => onphase(s.phases[0]!)}>{s.label}</button>
           <span class="subs" role="group" aria-label="{s.label} steps">
             {#each s.phases as p (p)}
-              <button type="button" class="sub" class:current={p === current} aria-current={p === current ? 'step' : undefined} data-phase={p} title="{label(p)}{tip}" onclick={() => onphase(p)}>{label(p)}</button>
+              <button type="button" class="ds-btn ds-btn--quiet sp-h-xs sub" class:current={p === current} aria-current={p === current ? 'step' : undefined} data-phase={p} title="{label(p)}{tip}" onclick={() => onphase(p)}>{label(p)}</button>
             {/each}
           </span>
         {:else}
-          <button type="button" class="main" class:current={on} aria-current={on ? 'step' : undefined} data-step={s.id} data-phase={s.phases[0]} title="{label(s.phases[0] ?? s.id)}{tip}" onclick={() => onphase(s.phases[0]!)}>{s.label}</button>
+          <button type="button" class="ds-btn ds-btn--quiet sp-h-sm main" class:current={on} aria-current={on ? 'step' : undefined} data-step={s.id} data-phase={s.phases[0]} title="{label(s.phases[0] ?? s.id)}{tip}" onclick={() => onphase(s.phases[0]!)}>{s.label}</button>
         {/if}
       </li>
     {/each}
@@ -67,7 +67,7 @@
     display: flex;
     align-items: center;
     gap: var(--ds-space-md);
-    min-height: var(--ds-control-tracker);
+    min-height: var(--ds-control-md);
     padding: 0 var(--ds-space-xs) 0 var(--ds-space-md);
     box-sizing: border-box;
     background: var(--ds-panel);
@@ -122,16 +122,16 @@
     position: relative;
   }
   button {
-    font: inherit;
+    font-size: inherit;
     color: inherit;
     background: none;
+    box-shadow: none;
     border: 1px solid transparent;
     border-radius: var(--ds-radius-pill);
     cursor: pointer;
     white-space: nowrap;
   }
   .main {
-    min-height: 32px;
     padding: 0 var(--ds-space-md);
     text-transform: var(--ds-label-case);
     letter-spacing: var(--ds-label-spacing);

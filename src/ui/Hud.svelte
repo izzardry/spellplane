@@ -128,7 +128,7 @@
   /** A seat's player is away: the table says so (Seat.away) or the shell does (seatPresence). */
   const isAway = (seat: string): boolean => seatPresence?.[seat] === 'away' || st.seats[seat]?.away === true;
   /** The shell's notice, shown once per id (HudShellProps.notice). */
-  let shownNotice = $state<{ id: number; text: string; action?: { label: string; run: () => void } } | null>(null);
+  let shownNotice = $state.raw<{ id: number; text: string; action?: { label: string; run: () => void } } | null>(null);
   const seenNotices = new Set<number>();
   $effect(() => {
     const n = notice;
@@ -1491,15 +1491,15 @@
       {#if top && full}
         <div class="stack-chip ds-panel" data-testid="stack-chip">
           <span class="ds-label">Stack {st.stack.length}</span>
-          <button type="button" class="ds-btn ds-btn--small" class:lit={resolveLit} data-testid="resolve" title="Resolve{keyOf('resolve') ? ` (${keyOf('resolve')})` : ''}" onclick={() => commands.run('resolve')}>Resolve</button>
+          <button type="button" class="ds-btn sp-h-xs sp-pill" class:lit={resolveLit} data-testid="resolve" title="Resolve{keyOf('resolve') ? ` (${keyOf('resolve')})` : ''}" onclick={() => commands.run('resolve')}>Resolve</button>
           {#if resolveTargets.length}
             <span class="to" data-testid="resolve-to">to
               {#each resolveTargets as t (t.zone)}
-                <button type="button" class="ds-btn ds-btn--quiet ds-btn--small" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
+                <button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-pill" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
               {/each}
             </span>
           {/if}
-          <button type="button" class="ds-btn ds-btn--small" title="Counter{keyOf('counterTop') ? ` (${keyOf('counterTop')})` : ''}" onclick={() => commands.run('counterTop')}>Counter</button>
+          <button type="button" class="ds-btn sp-h-xs sp-pill" title="Counter{keyOf('counterTop') ? ` (${keyOf('counterTop')})` : ''}" onclick={() => commands.run('counterTop')}>Counter</button>
         </div>
       {/if}
       <!-- Other players' plates without a reported seat edge sit in a row under the tracker. -->
@@ -1604,8 +1604,9 @@
               class="ds-btn sp-h-xs sp-pill"
               data-testid="hud-notice-action"
               onclick={() => {
+                const run = act.run;
                 shownNotice = null;
-                act.run();
+                run();
               }}>{act.label}</button
             >
           {/if}
@@ -1786,6 +1787,7 @@
       <!-- Asks without a key (touch): the press keeps the field's focus, so its blur does not close it first. -->
       <button
         type="button"
+        class="ds-btn sp-h-xs"
         data-testid="ask-submit"
         onmousedown={(e) => e.preventDefault()}
         onpointerdown={(e) => e.preventDefault()}
@@ -1802,7 +1804,7 @@
     <div class="inline draw-n" data-testid="draw-n">
       <label>{drawN.what === 'mill' ? 'Mill how many?' : 'Draw how many?'} <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" enterkeyhint="go" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => (drawN = null)} /></label>
       <!-- The button for a screen without an Enter key (a tablet): its press keeps the focus in the field, whose blur would close it. -->
-      <button type="button" data-testid="draw-n-go" onmousedown={(e) => e.preventDefault()} onclick={() => submitDrawN()}>{drawN.what === 'mill' ? 'Mill' : 'Draw'}</button>
+      <button type="button" class="ds-btn sp-h-xs" data-testid="draw-n-go" onmousedown={(e) => e.preventDefault()} onclick={() => submitDrawN()}>{drawN.what === 'mill' ? 'Mill' : 'Draw'}</button>
     </div>
   {/if}
 
@@ -1813,12 +1815,12 @@
         <p class="muted">No other players at the table.</p>
       {:else}
         {#each otherSeats as s (s.id)}
-          <button type="button" data-seat={s.id} onclick={() => doRevealTo([s.id])}>{s.name}</button>
+          <button type="button" class="ds-btn sp-h-xs" data-seat={s.id} onclick={() => doRevealTo([s.id])}>{s.name}</button>
         {/each}
-        {#each teamRevealChoices(st, me) as c (c.id)}<button type="button" data-seat={c.id} onclick={() => doRevealTo(c.seats)}>{c.label}</button>{/each}
-        {#if otherSeats.length > 1}<button type="button" data-seat="all" onclick={() => doRevealTo(otherSeats.map((s) => s.id))}>Everyone</button>{/if}
+        {#each teamRevealChoices(st, me) as c (c.id)}<button type="button" class="ds-btn sp-h-xs" data-seat={c.id} onclick={() => doRevealTo(c.seats)}>{c.label}</button>{/each}
+        {#if otherSeats.length > 1}<button type="button" class="ds-btn sp-h-xs" data-seat="all" onclick={() => doRevealTo(otherSeats.map((s) => s.id))}>Everyone</button>{/if}
       {/if}
-      <button type="button" class="x" onclick={() => (revealTo = null)}>Cancel</button>
+      <button type="button" class="ds-btn ds-btn--quiet sp-h-xs x" onclick={() => (revealTo = null)}>Cancel</button>
     </div>
   {/if}
 
@@ -2191,7 +2193,7 @@
     width: min(18em, 60vw);
   }
   .muted {
-    color: var(--sp-muted, #5f5f5f);
+    color: var(--ds-muted);
   }
   .preview {
     position: fixed;

@@ -19,7 +19,7 @@
   import { TypingSender, type Typer } from './chat/typing';
   import TypingLine from './chat/TypingLine.svelte';
   import type { LogLine } from './describe';
-  import IconButton from './design/IconButton.svelte';
+  import Icon from './design/Icon.svelte';
   import SeatGlyph from './a11y/SeatGlyph.svelte';
   import { tickerText, TICKER_LINES, TICKER_MS } from './hud/ticker';
 
@@ -108,7 +108,7 @@
 
 {#if !open}
   <div class="activity" data-testid="log" data-open="false">
-    <IconButton icon="chat" label="Log and chat" data-testid="open-log" aria-expanded={false} badge={unread || null} onclick={ontoggle} />
+    <button type="button" class="ds-btn ds-icon-btn sp-h-md sp-round" data-testid="open-log" aria-label="Log and chat{unread ? ` (${unread} new)` : ''}" title="Log and chat" aria-expanded={false} onclick={ontoggle}><Icon name="chat" />{#if unread}<span class="ds-badge" data-testid="unread">{unread}</span>{/if}</button>
     <!-- The ticker repeats lines the page's live region already announces (ui/a11y), so it is hidden from screen readers. -->
     <ol class="ticker" aria-hidden="true" data-testid="log-ticker">
       {#each ticker as l (l.key)}
@@ -121,7 +121,7 @@
     <header>
       <h2 class="ds-heading">Activity</h2>
       <FilterBar bind:filter bind:tab tabs={shownTabs} />
-      <IconButton icon="close" label="Hide the log" variant="quiet" data-testid="close-log" aria-expanded={true} onclick={ontoggle} />
+      <button type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-sm sp-round" data-testid="close-log" aria-label="Hide the log" title="Hide the log" aria-expanded={true} onclick={ontoggle}><Icon name="close" /></button>
     </header>
     <ChatLines {lines} {filter} {tab} {onhovercard} {resolver} {faces} {back} />
     <input
@@ -152,6 +152,15 @@
     align-items: flex-end;
     gap: var(--ds-space-sm);
     pointer-events: none;
+  }
+  .activity > button {
+    position: relative;
+    pointer-events: auto;
+  }
+  .activity .ds-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
   }
   .ticker {
     list-style: none;

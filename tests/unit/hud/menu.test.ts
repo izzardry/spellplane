@@ -70,3 +70,10 @@ describe('HUD menu', () => {
     expect(items(false).find((i) => i.id === 'mute')!.label).toBe('Mute microphone');
   });
 });
+
+describe('HUD menu and the shell (HudShellProps)', () => {
+  it('offers "Import deck…" only when the table imports (the sandbox)', () => {
+    expect(ids({ ...player, importDeck: false })).not.toContain('importDeck');
+    expect(ids({ ...player, importDeck: true })).toContain('importDeck');
+  });
+});
