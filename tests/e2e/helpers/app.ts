@@ -8,8 +8,15 @@ export async function openApp(page: Page, opts: { profile?: string; transport?: 
   if (opts.faces !== null) q.set('faces', opts.faces ?? 'placeholder');
   if (opts.profile) q.set('profile', opts.profile);
   if (opts.transport) q.set('transport', opts.transport);
-  await page.goto(`./?${q.toString()}${opts.hash ? `#${opts.hash}` : ''}`);
+  // M8-C: without a hash the table sandbox (`#/solo`); `#/` is Home (openHome).
+  await page.goto(`./?${q.toString()}#${opts.hash ?? '/solo'}`);
   await expect.poll(() => page.evaluate(() => typeof window.__spellplane === 'object')).toBe(true);
+}
+
+/** Open Home (`#/`, journey.md 4.1) with the harness flags of openApp; waits for the debug hook and the Home page. Added by M8-C. */
+export async function openHome(page: Page, opts: { profile?: string; transport?: 'local'; faces?: 'placeholder' | null } = {}) {
+  await openApp(page, { ...opts, hash: '/' });
+  await expect(page.getByTestId('route-home')).toBeVisible();
 }
 
 /** Call a function of window.__spellplane in the page and return its JSON result. */

@@ -49,7 +49,8 @@ export function appUrl(opts: { profile: string; sw?: boolean; swv?: string; upda
   if (opts.swv) q.set('swv', opts.swv);
   if (opts.update) q.set('update', opts.update);
   if (opts.transport) q.set('transport', opts.transport);
-  return `./?${q.toString()}#${opts.hash ?? '/'}`;
+  // M8-C: the table sandbox moved to #/solo (`#/` is Home).
+  return `./?${q.toString()}#${opts.hash ?? '/solo'}`;
 }
 
 export async function waitForSession(page: Page): Promise<void> {
