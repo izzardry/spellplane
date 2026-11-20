@@ -18,7 +18,27 @@ import { ownActions, summarise } from './summary';
 import type { KnownHead, SaveState, TableSession } from './types';
 
 /** Why a checkpoint is taken (persistence.md section 2). */
-export type CheckpointReason = 'timer' | 'turn' | 'hide' | 'leave' | 'result' | 'stage';
+export type CheckpointReason = 'timer' | 'turn' | 'hide' | 'leave' | 'result' | 'stage' | 'rejoin';
+
+/** Sequenced actions after which the game is saved at once (persistence.md section 2). */
+const SAVE_AT_ONCE: ReadonlySet<string> = new Set(['seatClaim', 'recoverCommit', 'playOn']);
+
+/** Whether the log holds one of SAVE_AT_ONCE sequenced after `seq` (the log's tail only). */
+function savesAtOnce(session: TableSession, seq: number): boolean {
+  let log: ReturnType<TableSession['log']>;
+  try {
+    log = session.log();
+  } catch {
+    return false;
+  }
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i]!;
+    if (e.kind !== 'action') continue;
+    if (e.seq <= seq) break;
+    if (SAVE_AT_ONCE.has(e.action.type)) return true;
+  }
+  return false;
+}
 
 /** The checkpoint period while something changed (persistence.md D2). */
 export const CHECKPOINT_MS = 20_000;
@@ -157,6 +177,7 @@ export function createCheckpointer(session: TableSession, games: GameStore | nul
     if (next.stage !== prev.stage) void now('stage');
     else if (next.result && !prev.result) void now('result');
     else if (next.turn.number !== prev.turn.number || next.turn.active !== prev.turn.active) void now('turn');
+    else if (next.seq > prev.seq && savesAtOnce(session, prev.seq)) void now('rejoin');
   });
 
   const tick = (): void => {

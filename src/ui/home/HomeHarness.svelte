@@ -27,7 +27,7 @@
   {#key route.name}
     <Shell {route} settings={stores?.settings ?? null} {matchmaker} games={stores?.games ?? null} identity={stores?.identity ?? null} ratings={stores?.ratings ?? null} go={deps.go}>
       {#if route.name === 'home'}
-        <Home {deps} {matchmaker} {matchmakingAvailable} {computerAvailable} storageOk={stores !== null} online={true} />
+        <Home {deps} {matchmaker} {matchmakingAvailable} {computerAvailable} storageOk={stores !== null} />
       {:else if route.name === 'history'}
         <HistoryPage games={stores?.games ?? null} go={deps.go} />
       {:else}

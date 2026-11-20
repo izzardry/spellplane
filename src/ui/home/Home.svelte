@@ -48,7 +48,7 @@
     matchmakingAvailable = MATCHMAKING_AVAILABLE,
     computerAvailable = COMPUTER_AVAILABLE,
     storageOk = undefined,
-    online = typeof navigator !== 'undefined' ? navigator.onLine : true,
+    online = undefined,
     faceUrl = undefined,
     now = () => Date.now(),
   }: {
@@ -65,7 +65,8 @@
     computerAvailable?: boolean;
     /** Whether this browser keeps decks and games (default: a games store exists). */
     storageOk?: boolean | undefined;
-    online?: boolean;
+    /** Whether the browser is online (default: navigator.onLine, following the online and offline events). */
+    online?: boolean | undefined;
     /** The image of a card for the hero's fan, or null for a card back (default: the page's face source). */
     faceUrl?: ((ref: CardRef) => Promise<string | null>) | undefined;
     now?: () => number;
@@ -75,6 +76,8 @@
   const page = tableDeps();
   const deps: LaunchDeps = untrack(() => launchDeps(given, { games, newRoom, go, openPractice, now, page, matchmaker }));
   const keeps = $derived(storageOk ?? deps.games !== null);
+  let browserOnline = $state(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const isOnline = $derived(online ?? browserOnline);
   const facesOf = untrack(() => faceUrl ?? pageFaces(page));
 
   let prefs: HomePrefs = $state(structuredClone(DEFAULT_HOME_PREFS));
@@ -96,7 +99,7 @@
     syncClock();
   });
 
-  const view = $derived(homeView(prefs, decks, online, keeps, { available: matchmakingAvailable, status, searched }, { computer: computerAvailable }));
+  const view = $derived(homeView(prefs, decks, isOnline, keeps, { available: matchmakingAvailable, status, searched }, { computer: computerAvailable }));
   const elapsed = $derived.by(() => {
     void tick;
     if (view.since === null) return '0:00';
@@ -297,6 +300,8 @@
     return `${sets.join(' ')} × ${seal.sets.length}`;
   });
 </script>
+
+<svelte:window ononline={() => (browserOnline = true)} onoffline={() => (browserOnline = false)} />
 
 <div class="home" data-testid="home" data-ready={ready}>
   <!-- 1. The hero -->

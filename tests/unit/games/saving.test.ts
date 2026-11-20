@@ -226,6 +226,39 @@ describe('checkpointer', () => {
     cp.stop();
   });
 
+  it('saves at once after a sequenced seatClaim, recoverCommit or playOn', async () => {
+    const games = counting(memoryGames());
+    const session = fakeSession('amber-fox-river-12');
+    const cp = createCheckpointer(session, games, { doc: null, win: null, hash: (st) => Promise.resolve(`h${st.seq}`) });
+    session.push({ kind: 'action', seq: 4, at: 0, action: { type: 'tap', by: 's0', cid: 'c4', seq: 4 } as unknown as Action });
+    session.set({ ...session.getState(), seq: 4 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(games.puts).toBe(0);
+    for (const [i, type] of ['seatClaim', 'recoverCommit', 'playOn'].entries()) {
+      const seq = 5 + i;
+      session.push({ kind: 'action', seq, at: 0, action: { type, by: 's1', cid: `c${seq}`, seq } as unknown as Action });
+      session.set({ ...session.getState(), seq });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(games.puts).toBe(i + 1);
+    }
+    cp.stop();
+  });
+
+  it('never lists the sandbox; a networked table joined by link gets a private summary with the key of the address', async () => {
+    const games = counting(memoryGames());
+    const sandbox = createCheckpointer(fakeSession('solo'), games, { doc: null, win: null });
+    await sandbox.now('leave');
+    expect(games.puts).toBe(0);
+    expect(live().timers).toBe(0);
+    sandbox.stop();
+    const net = fakeSession('amber-fox-river-12');
+    (net as unknown as { netStatus: () => unknown }).netStatus = () => ({ mode: 'networked', connection: 'connected', peers: [], sequencer: null, seq: 0 });
+    const cp = createCheckpointer(net, games, { doc: null, win: null, key: 'KEY', hash: () => Promise.resolve('h') });
+    await cp.now('timer');
+    expect(await games.get('amber-fox-river-12')).toMatchObject({ kind: 'private', key: 'KEY', format: '1v1' });
+    cp.stop();
+  });
+
   it('without a store it says notSaving and writes nothing', async () => {
     const cp = createCheckpointer(fakeSession(), null, { doc: null, win: null });
     await cp.now('leave');

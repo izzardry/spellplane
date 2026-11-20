@@ -169,6 +169,24 @@ test('searching: the pill is pressed with the timer, the deck is locked, and the
   });
 });
 
+test('offline: the modes that need the network say so; Solo still plays', async ({ page, context }) => {
+  await openHomeHarness(page, { profile: uniq('offline') });
+  await seedDecks(page, [fixtureDeck('gruul', 'Gruul Stompy', 60)]);
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => window.__homeHarness?.ready === true)).toBe(true);
+  await page.getByTestId('mode-private').click();
+  await context.setOffline(true);
+  await expect(page.getByTestId('home-primary')).toHaveText('OFFLINE');
+  await expect(page.getByTestId('home-primary')).toBeDisabled();
+  await expect(page.getByTestId('home-status')).toHaveText('You are offline. Solo works with decks you have opened before.');
+  await page.getByTestId('mode-solo').click();
+  await expect(page.getByTestId('home-primary')).toHaveText('PLAY');
+  await expect(page.getByTestId('home-primary')).toBeEnabled();
+  await context.setOffline(false);
+  await page.getByTestId('mode-private').click();
+  await expect(page.getByTestId('home-primary')).toHaveText('CREATE TABLE');
+});
+
 test('Quick match while the matchmaker is a stub: disabled with its line', async ({ page }) => {
   await openHomeHarness(page, { profile: uniq('nomm'), query: { mm: 'off' } });
   await seedDecks(page, [fixtureDeck('a', 'Alpha Deck', 60)]);
