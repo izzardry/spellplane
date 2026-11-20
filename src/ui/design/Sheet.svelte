@@ -1,9 +1,12 @@
 <!--
-  A sheet of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): the shell's large surface, labelled, with an
-  optional header and footer; `onclose` adds a close button and Esc. Plain markup by M8-C; M8-P1 gives it its look.
+  A sheet (docs/design/m8/contracts.md Part B; visual.md 2.8): paper (`panel`) with grain, the `sheet` elevation,
+  radius `sheet`, padding 24; it rises 16 px and fades in. `width: 'narrow'` is the 336 px side sheet. A round close
+  button when `onclose` is given; Escape closes it too. Added by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
   import type { Snippet } from 'svelte';
+  import IconButton from './IconButton.svelte';
 
   let {
     label,
@@ -12,6 +15,7 @@
     header = undefined,
     footer = undefined,
     children,
+    class: extra = '',
     ...rest
   }: {
     label: string;
@@ -20,14 +24,17 @@
     header?: Snippet | undefined;
     footer?: Snippet | undefined;
     children?: Snippet;
+    /** Extra classes on the root (placement in a parent's grid). */ // [M8-P1]
+    class?: string;
     [attr: string]: unknown;
   } = $props();
 </script>
 
 <section
-  class="ds-sheet"
+  class="ds-sheet ds-root {extra}"
   class:ds-sheet--narrow={width === 'narrow'}
   aria-label={label}
+  data-ds-layer="sheet"
   onkeydown={(e) => {
     if (e.key === 'Escape' && onclose) {
       e.stopPropagation();
@@ -38,10 +45,10 @@
 >
   {#if header || onclose}
     <div class="ds-sheet__head">
-      {#if header}{@render header()}{/if}
-      {#if onclose}<button type="button" class="ds-btn ds-btn--quiet ds-btn--sm ds-icon-btn ds-icon-only" aria-label="Close" title="Close" onclick={onclose}>×</button>{/if}
+      <div class="ds-sheet__title">{#if header}{@render header()}{/if}</div>
+      {#if onclose}<IconButton label="Close" icon="close" size="sm" variant="quiet" onclick={onclose} />{/if}
     </div>
   {/if}
   {@render children?.()}
-  {#if footer}<div class="ds-sheet__foot">{@render footer()}</div>{/if}
+  {#if footer}<div class="ds-sheet__foot ds-row">{@render footer()}</div>{/if}
 </section>

@@ -9,6 +9,7 @@
 import { hudCssVars, lookOfTheme } from '../../themes/index';
 import { DEFAULT_LOOK, type LookId, type Theme } from '../../themes/types';
 import { designCssVars, lookTokens, type LookTokens } from './tokens';
+import './kit';
 
 /** The look the HUD wears: the table theme's own look, else the viewer's stored look. */
 export function hudLook(theme: Theme, stored: LookId = DEFAULT_LOOK): LookId {
@@ -58,4 +59,18 @@ export function lookCssVars(theme: Theme, look: LookId, reduced = false): Record
   if (!own) delete ds['color-scheme'];
   Object.assign(vars, ds);
   return vars;
+}
+
+/**
+ * Put a look's `--ds-*` variables on an element (the shell's root, a harness page) and mark it with `data-look`.
+ * Returns a function that removes them again. Added by M8-P1.
+ */
+export function applyLook(el: HTMLElement, look: LookId, reduced = false): () => void {
+  const vars = designCssVars(lookTokens(look), reduced);
+  for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, v);
+  el.dataset['look'] = look;
+  return () => {
+    for (const k of Object.keys(vars)) el.style.removeProperty(k);
+    delete el.dataset['look'];
+  };
 }

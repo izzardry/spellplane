@@ -1,10 +1,13 @@
 <!--
-  A sparkline of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): six to eight small bars, up to 20 px.
-  Plain markup by M8-C; M8-P1 gives it its look.
+  A sparkline (docs/design/m8/contracts.md Part B; visual.md 2.8): six to eight 5 px ink bars, up to 20 px high.
+  Added by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
+  import { sparkHeights } from './curve';
+
   let { values, label, ...rest }: { values: number[]; label: string; [attr: string]: unknown } = $props();
-  const max = $derived(Math.max(1, ...values));
+  const hs = $derived(sparkHeights(values));
 </script>
 
-<span class="ds-spark" role="img" aria-label={label} {...rest}>{#each values as v, i (i)}<i class="ds-spark__bar" style:height="{Math.round((v / max) * 20)}px"></i>{/each}</span>
+<span class="ds-spark" role="img" aria-label="{label}: {values.join(', ')}" {...rest}>{#each hs as h, i (i)}<span class="ds-spark__bar" style:height="{Math.max(1, h)}px"></span>{/each}</span>

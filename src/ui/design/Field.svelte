@@ -1,8 +1,9 @@
 <!--
-  A text field of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): a well, 44 high, a leading icon; `square`
-  for a link field. `onenter` runs on Enter. Plain markup by M8-C; M8-P1 gives it its look.
+  A field (docs/design/m8/contracts.md Part B; visual.md 2.8): a well, 44 px, a pill (or 12 px corners as a link field,
+  `square`), a leading icon; focus shows the focus ring on the well. `onenter` runs on Enter. Added by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
   import type { Snippet } from 'svelte';
 
   let {
@@ -30,7 +31,7 @@
   } = $props();
 </script>
 
-<label class="ds-field" class:ds-field--square={square}>
+<label class="ds-field" class:ds-field--square={square} {...rest}>
   {#if icon}{@render icon()}{/if}
   <input
     class="ds-field__input"
@@ -42,7 +43,6 @@
     onkeydown={(e) => {
       if (e.key === 'Enter') onenter?.(value);
     }}
-    {...rest}
   />
   {#if trailing}{@render trailing()}{/if}
 </label>

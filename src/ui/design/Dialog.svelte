@@ -1,11 +1,13 @@
 <!--
-  A dialog of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8 "Dialog and scrim"): a card over a flat scrim
-  (never a blur), labelled, closed by Esc or a press on the scrim; focus moves into it and back. `open` is bindable.
-  The seed's `title` (alias of `label`), `actions` (alias of `footer`), `testid` and `describedby` stay optional.
-  Plain markup by M8-C; M8-P1 gives it its look.
+  A dialog (docs/design/m8/contracts.md Part B; visual.md 2.8 "Dialog and scrim"): a white card, radius `sheet`,
+  `dialog` elevation, centred, at most 448 px, over a flat scrim (the page colour at 82 %, never a blur). Escape, the
+  close path or a press on the scrim close it; focus moves in on open and back on close; Tab stays inside. `open` is
+  bindable (default true, so the seed's mount-to-open use keeps working); the seed's `title`, `actions` and `testid`
+  stay as aliases of `label`, `footer` and `data-testid`. Rewritten by M8-P1.
 -->
 <script lang="ts">
-  import { onMount, type Snippet } from 'svelte';
+  import './kit';
+  import type { Snippet } from 'svelte';
 
   let {
     open = $bindable(true),
@@ -30,50 +32,46 @@
     testid?: string | null;
     describedby?: string | undefined;
   } = $props();
-  const id = `ds-dialog-${Math.random().toString(36).slice(2, 8)}`;
+  const pid = $props.id();
+  const id = `ds-dialog-${pid}`;
+  let el = $state<HTMLElement | undefined>();
   const heading = $derived(label ?? title ?? '');
   const foot = $derived(footer ?? actions);
-  let el = $state<HTMLElement | undefined>();
+
   function close(): void {
     open = false;
     onclose?.();
   }
-  onMount(() => {
+
+  $effect(() => {
+    if (!open || !el) return;
     const before = document.activeElement as HTMLElement | null;
-    const first = el?.querySelector<HTMLElement>('[data-autofocus], button, [href], input, select, textarea');
-    first?.focus({ preventScroll: true });
+    const first = el.querySelector<HTMLElement>('[data-autofocus]') ?? el.querySelector<HTMLElement>('button, [href], input, select, textarea');
+    (first ?? el).focus({ preventScroll: true });
     return () => before?.focus?.({ preventScroll: true });
   });
+
+  function key(e: KeyboardEvent): void {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    } else if (e.key === 'Tab' && el) {
+      const all = [...el.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')];
+      if (!all.length) return;
+      const at = all.indexOf(document.activeElement as HTMLElement);
+      e.preventDefault();
+      all[(at + (e.shiftKey ? -1 : 1) + all.length) % all.length]?.focus();
+    }
+  }
 </script>
 
 {#if open}
-  <div class="ds-scrim" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && close()}>
-    <div
-      bind:this={el}
-      class="ds-pop ds-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby={id}
-      aria-describedby={describedby}
-      data-testid={testid}
-      tabindex="-1"
-      onkeydown={(e) => {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          e.stopPropagation();
-          close();
-        }
-      }}
-    >
-      <h2 class="ds-heading" {id}>{heading}</h2>
+  <div class="ds-scrim ds-root" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && close()}>
+    <div bind:this={el} class="ds-pop ds-dialog" role="dialog" aria-modal="true" aria-labelledby={id} aria-describedby={describedby} data-testid={testid} data-ds-layer="dialog" tabindex="-1" onkeydown={key}>
+      <h2 class="ds-heading ds-t-heading" {id}>{heading}</h2>
       {@render children?.()}
-      {#if foot}<div class="ds-dialog-actions">{@render foot()}</div>{/if}
+      {#if foot}<div class="ds-dialog-actions ds-row">{@render foot()}</div>{/if}
     </div>
   </div>
 {/if}
-
-<style>
-  h2 {
-    font-size: var(--ds-type-heading);
-  }
-</style>

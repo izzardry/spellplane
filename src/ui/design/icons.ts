@@ -41,6 +41,23 @@ export const ICONS = {
   ask: 'M12 21a9 9 0 1 1 0-18 9 9 0 0 1 0 18zM12 8v5M12 16h.01',
   tidy: 'M4 6h16M4 12h10M4 18h6',
   hand: 'M6 4h7a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM16 6l3 .8a1 1 0 0 1 .7 1.2l-3.3 12',
+  // [M8-P1] visual.md DS-2: the shell's and the kit's icons.
+  search: 'M11 4a7 7 0 1 1 0 14 7 7 0 0 1 0-14zM20 20l-4-4',
+  lock: 'M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3',
+  copy: 'M9 9h10v11H9zM5 15V4h10',
+  edit: 'M4 20h4L19 9l-4-4L4 16zM13 7l4 4',
+  clock: 'M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM12 7v5l3 2',
+  check: 'M5 12l5 5 9-10',
+  qr: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 18h2v2h-2zM14 18h2M18 14h2',
+  sliders: 'M4 7h10M18 7h2M4 17h4M12 17h8M16 5v4M10 15v4',
+  userPlus: 'M3 20v-1a6 6 0 0 1 12 0v1M9 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM19 8v6M16 11h6',
+  cpu: 'M7 7h10v10H7zM10 10h4v4h-4zM9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4',
+  globe: 'M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18',
+  volume: 'M4 10v4h4l5 4V6l-5 4zM16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11',
+  arrowLeft: 'M19 12H5M11 6l-6 6 6 6',
+  swap: 'M4 8h14l-4-4M20 16H6l4 4',
+  chevronLeft: 'M15 6l-6 6 6 6',
+  trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',
 } as const;
 
 export type IconName = keyof typeof ICONS;

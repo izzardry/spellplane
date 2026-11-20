@@ -2,6 +2,7 @@
   Tabs (PLAN Milestone 7, A1): a segmented row with arrow-key movement (role tablist).
 -->
 <script lang="ts" generics="T extends string">
+  import './kit';
   let { tabs, value, onchange, label, testid = null }: { tabs: readonly { id: T; label: string }[]; value: T; onchange: (id: T) => void; label: string; testid?: string | null } = $props();
   const buttons: HTMLButtonElement[] = [];
   function key(e: KeyboardEvent, i: number): void {

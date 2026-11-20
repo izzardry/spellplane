@@ -1,8 +1,11 @@
 <!--
-  A stepper of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): chevron, eyebrow over value, chevron (the
-  phone's mode picker). Plain markup by M8-C; M8-P1 gives it its look.
+  A stepper (docs/design/m8/contracts.md Part B; visual.md 2.8, Ztyle): a chevron, the eyebrow over the value, a
+  chevron. Phones only (the mode picker). Added by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
+  import IconButton from './IconButton.svelte';
+
   let {
     eyebrow = undefined,
     value,
@@ -14,11 +17,11 @@
   }: { eyebrow?: string | undefined; value: string; onprev: () => void; onnext: () => void; prevLabel: string; nextLabel: string; [attr: string]: unknown } = $props();
 </script>
 
-<div class="ds-stepper" {...rest}>
-  <button type="button" class="ds-btn ds-btn--ghost ds-btn--md ds-icon-btn ds-icon-only" aria-label={prevLabel} title={prevLabel} onclick={onprev}>‹</button>
-  <div class="ds-stepper__value">
+<div class="ds-stepper ds-row" {...rest}>
+  <IconButton label={prevLabel} icon="chevronLeft" onclick={onprev} />
+  <div class="ds-stepper__value" aria-live="polite">
     {#if eyebrow}<span class="ds-t-eyebrow">{eyebrow}</span>{/if}
     <span class="ds-t-list">{value}</span>
   </div>
-  <button type="button" class="ds-btn ds-btn--ghost ds-btn--md ds-icon-btn ds-icon-only" aria-label={nextLabel} title={nextLabel} onclick={onnext}>›</button>
+  <IconButton label={nextLabel} icon="chevronRight" onclick={onnext} />
 </div>

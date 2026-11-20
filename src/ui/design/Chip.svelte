@@ -1,9 +1,10 @@
 <!--
-  A chip of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): 28 high (`sm` 36, a filter chip), `fill`,
-  `line` (off) or `on` (ink). With `onclick` it is a toggle button. The seed's `icon` stays optional. Plain markup by
-  M8-C; M8-P1 gives it its look.
+  A chip (docs/design/m8/contracts.md Part B; visual.md 2.8): 28 px (36 as a filter chip, `size: 'sm'`), `fill` on the
+  chip colour, `line` outlined and muted (off), `on` in ink. With `onclick` it is a toggle button (`pressed`). The seed's
+  `icon` name stays. Rewritten by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
   import type { Snippet } from 'svelte';
   import Icon from './Icon.svelte';
   import type { IconName } from './icons';
@@ -27,7 +28,7 @@
     class?: string;
     [attr: string]: unknown;
   } = $props();
-  const cls = $derived(`ds-chip ds-chip--${variant}${size === 'sm' ? ' ds-chip--sm' : ''} ${extra}`.trim());
+  const cls = $derived(`ds-chip ds-chip--${variant} ds-chip--${size} ${extra}`.trim());
 </script>
 
 {#if onclick}
