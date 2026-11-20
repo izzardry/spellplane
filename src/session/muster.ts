@@ -24,6 +24,8 @@ export interface MusterPeer {
   peerId: string;
   status: 'handshake' | 'connected' | 'away';
   head?: PeerHead | undefined;
+  /** The last seq the peer reported (hello, heartbeat, claim). */
+  lastSeq?: number | undefined;
 }
 
 /** Everything the muster rule reads. */
@@ -41,10 +43,26 @@ export interface MusterInput {
   stayed: boolean;
   /** The table decided to play on since this page opened (rule 4). */
   decided?: boolean;
+  /**
+   * This browser's engine has reconciled its copy with the connected peers (it follows the newest copy and checks
+   * hashes): a peer that reported no newer seq and no differing head is then in step without a head message.
+   */
+  reconciled?: boolean;
 }
 
 function inStep(head: PeerHead | undefined, mine: MusterInput['mine']): boolean {
   return head !== undefined && head.seq === mine.seq && head.h === mine.h;
+}
+
+/**
+ * A connected peer's copy is this one: its head says so, or (no head at this seq) the engine reconciled with the room
+ * and the peer reported nothing newer. A head at the same seq with another hash is a fork: not in step.
+ */
+function peerInStep(p: MusterPeer | undefined, mine: MusterInput['mine'], reconciled: boolean): boolean {
+  if (p === undefined) return false;
+  if (inStep(p.head, mine)) return true;
+  if (p.head !== undefined && p.head.seq >= mine.seq) return false;
+  return reconciled && p.lastSeq !== undefined && p.lastSeq <= mine.seq;
 }
 
 /** Whether `known` is a newer copy than this one (contracts.md Part G item 2: newest by (play, seq, peerId)). */
@@ -73,7 +91,7 @@ export function musterStatus(arg: MusterInput | TableState, seat: SeatId | null 
     const raw = peers.find((x) => x.peerId === s.peer && x.status !== 'away');
     let st: MusterSeat['state'];
     // A browser that stayed does not hash its copy for every change (session/net.ts): a connected peer is here.
-    if (p && (inStep(p.head, mine) || (input.stayed && p.head !== undefined))) st = 'here';
+    if (p && (peerInStep(p, mine, input.reconciled === true) || input.stayed)) st = 'here';
     else if (p || raw) st = 'connecting';
     else st = s.away === true ? 'leftBefore' : 'away';
     return { seat: s.id, name: s.name, me: false, state: st };
@@ -91,9 +109,10 @@ export function musterStatus(arg: MusterInput | TableState, seat: SeatId | null 
   if (input.stayed) return verdict(true, 1, []);
   if (connected.some((p) => p.head?.live === true && inStep(p.head, mine))) return verdict(true, 2, []);
   // Rule 3: every occupied seat not marked away is here and in step, and so is every connected seated peer.
-  const missing = occupied.filter((s) => s.id !== me && s.away !== true && !inStep(byPeer.get(s.peer!)?.head, mine)).map((s) => s.id);
+  const rec = input.reconciled === true;
+  const missing = occupied.filter((s) => s.id !== me && s.away !== true && !peerInStep(byPeer.get(s.peer!), mine, rec)).map((s) => s.id);
   const seatedPeers = new Set(occupied.map((s) => s.peer));
-  const strayOut = connected.some((p) => seatedPeers.has(p.peerId) && !inStep(p.head, mine));
+  const strayOut = connected.some((p) => seatedPeers.has(p.peerId) && !peerInStep(p, mine, rec));
   if (missing.length === 0 && !strayOut && !newer) return verdict(true, input.decided === true ? 4 : 3, []);
   const waiting = [...missing];
   if (newer && knownHead!.seat !== null && !waiting.includes(knownHead!.seat) && knownHead!.seat !== me) waiting.push(knownHead!.seat);

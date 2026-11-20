@@ -11,7 +11,7 @@ import type { SecretStore, TableState } from '../../../src/core/types';
 import { HEAD_KEYS } from '../../../src/net/validate';
 import type { LoopbackOptions } from '../../../src/net/loopback';
 import { forbiddenFor, leakScan, type LeakScanInput } from '../../leak/leak';
-import { closeAll, FAKE_TIMERS, fixtureDeck, net, observedBy, open, settle, trackDisclosures, until, waitConverged, type Browser } from '../session/harness';
+import { closeAll, FAKE_TIMERS, fixtureDeck, net, observedBy, settle, trackDisclosures, until, waitConverged, type Browser } from '../session/harness';
 import { playScript } from '../session/script';
 import { lostHiddenCards } from '../../../src/session/resume';
 import { loseSave } from './helpers';
@@ -80,10 +80,18 @@ describe('rejoin leaks (M8-P5)', () => {
     }
     await settle(ann!.session!.shuffle(), 60_000, 'shuffle');
     await settle(ann!.session!.draw(7));
-    await leave(ben!);
-    await leave(cy!);
+    for (const b of [ann!, ben!, cy!]) await settle(b.session!.whenSaved());
+    // Every tab closes without a word: each copy shows the others present, so whoever comes back gathers.
+    for (const b of [ann!, ben!, cy!]) {
+      network.kill(b.peerId);
+      b.session!.dispose();
+      b.session = null;
+    }
     await comeBack(network, ben!);
     await comeBack(network, cy!);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(ben!.session!.muster.muster().live).toBe(false);
+    await comeBack(network, ann!);
     await vi.advanceTimersByTimeAsync(3000);
     const heads = network.delivered.filter((d) => (d.msg as { t?: string }).t === 'head').map((d) => d.msg as Record<string, unknown>);
     expect(heads.length).toBeGreaterThan(3);

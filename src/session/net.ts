@@ -96,8 +96,8 @@ import type { Channel, Message } from '../net/transport';
 import type { VoiceControls } from '../voice/types';
 import { INVITE_TTL_MS } from '../net/engine';
 import { knownIsNewer, musterStatus } from './muster';
-import { newClaimToken, rejoinLink } from './invite';
-import type { KnownHead, MusterStatus, SaveState, SessionMuster } from './types';
+import { claimFromLocation, newClaimToken, rejoinLink } from './invite';
+import type { ClaimView, KnownHead, MusterStatus, SaveState, SessionMuster } from './types';
 import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus, TeamControls } from './types';
 
 /** How long a browser without a seat listens for a table already in the room before it takes a chair (decision M1-P8). */
@@ -129,6 +129,9 @@ const UNSHUFFLED = 'Finish the recovery first: your new library is not shuffled 
 const IN_PLACE: ReadonlySet<string> = new Set(['tap', 'rotate', 'counter', 'note', 'attach', 'detach']);
 /** Seat colours a theme provides (DESIGN "Themes and rendering": eight seat colours). */
 const SEAT_COLOURS = 8;
+
+/** How long opening a table waits for the muster rule while a peer is connected (journey.md 4.12: live within a second). */
+const MUSTER_WAIT_MS = 5000;
 
 /** What a browser on standby may propose (persistence.md section 5; contracts.md Part G item 5). */
 const STANDBY_OK: ReadonlySet<string> = new Set(['chat', 'seatInvite', 'seatClaim', 'playOn']);
@@ -374,6 +377,8 @@ class NetTable implements NetSession, SessionRecovery {
   private readonly inviteTokens = new Map<SeatId, string>();
   /** The claim this page was opened with and has not made yet (see NetSessionInternals.claim). */
   private claimWanted: { seat: SeatId; token: string } | null = null;
+  /** The page was opened with a link for another seat than the one this browser holds here (`This link is for Ben's seat.`). */
+  private claimOtherSeat: SeatId | null = null;
   /** This page opened a saved table (its key pair held a seat in it once). */
   private hadSave = false;
   private headCache: { state: TableState; h: string } | null = null;
@@ -1893,7 +1898,16 @@ class NetTable implements NetSession, SessionRecovery {
 
   /** Join the room and resolve once this browser holds a chair (decision M1-P8: listen first, then sit). */
   async sitDown(settleMs: number, timeoutMs: number): Promise<void> {
-    if (this.engine.seat() !== null) return;
+    if (this.engine.seat() !== null) {
+      // M8-P5: a browser that holds a seat here by its key pair ignores a link's token and resumes (one for another
+      // seat is told so), then waits briefly for the muster rule.
+      if (this.claimWanted !== null) {
+        if (this.engine.seat() !== this.claimWanted.seat) this.claimOtherSeat = this.claimWanted.seat;
+        this.claimWanted = null;
+      }
+      await this.awaitMuster();
+      return;
+    }
     this.sitting = true;
     try {
       await this.sitDownNow(settleMs, timeoutMs);
@@ -1913,7 +1927,11 @@ class NetTable implements NetSession, SessionRecovery {
     const lone = this.rejoining ? timeoutMs : Math.max(0, (this.internals.loneWaitMs ?? 0) - settleMs);
     // M8-C: a browser that must never sit alone (a matched room's other members, a claim link) waits for a peer
     // without a time limit; disposing the session ends the wait.
-    if (this.claimWanted !== null && this.engine.seat() !== null) this.claimWanted = null;
+    // A browser that holds a seat here by its key pair ignores the token and resumes; one at another seat is told so.
+    if (this.claimWanted !== null && this.engine.seat() !== null) {
+      if (this.engine.seat() !== this.claimWanted.seat) this.claimOtherSeat = this.claimWanted.seat;
+      this.claimWanted = null;
+    }
     if (!this.createdHere && (this.internals.neverAlone === true || this.claimWanted !== null)) {
       while (!this.tableInRoom()) {
         await this.until(() => this.tableInRoom() || this.disposed, () => null, null, 'the table');
@@ -1939,6 +1957,10 @@ class NetTable implements NetSession, SessionRecovery {
     );
     // M8-P5: a claim link on a browser without a seat here: the public table is in step; the claim page sits down.
     if (this.claimWanted !== null && this.engine.seat() === null) return;
+    if (this.claimWanted !== null && this.engine.seat() !== null) {
+      if (this.engine.seat() !== this.claimWanted.seat) this.claimOtherSeat = this.claimWanted.seat;
+      this.claimWanted = null;
+    }
     // M8-P5 (persistence.md section 7): the seat this browser saved was taken over from another browser.
     const moved = this.seatMoved();
     if (moved !== null) throw new Error(moved);
@@ -1961,6 +1983,17 @@ class NetTable implements NetSession, SessionRecovery {
         throw new Error(`Could not take a chair at this table. (${errorText(e)})`);
       });
     }
+    // M8-P5 (journey.md 4.12): a player who stayed is at the table: sync to them, live within a second, Gathering is
+    // never seen. Wait a short while for the muster rule (the peers connect and announce their heads) before handing
+    // the table out; a table still waiting then shows the Gathering card.
+    await this.awaitMuster();
+  }
+
+  /** Wait up to MUSTER_WAIT_MS for the muster rule to make this browser live (it may stay on standby). */
+  private async awaitMuster(): Promise<void> {
+    this.refreshMuster();
+    if (this.live() || this.disposed) return;
+    await this.until(() => this.live() || this.disposed, () => null, MUSTER_WAIT_MS, 'the muster').catch(() => undefined);
   }
 
   /**
@@ -2069,10 +2102,11 @@ class NetTable implements NetSession, SessionRecovery {
       me: seatOfPeer(st, this.peerId),
       myPeerId: this.peerId,
       mine: { seq: this.engine.seq(), play: this.engine.play?.() ?? 0, h: this.stayed || st.stage === 'lobby' ? '' : this.headHash() },
-      peers: this.engine.peers().map((p) => ({ peerId: p.peerId, status: p.status, head: p.head })),
+      peers: this.engine.peers().map((p) => ({ peerId: p.peerId, status: p.status, head: p.head, lastSeq: p.lastSeq })),
       knownHead: this.knownHeadValue,
       stayed: this.stayed,
       decided: this.decided,
+      reconciled: this.engine.status() === 'connected' && this.engine.pending().length === 0,
     });
   }
 
@@ -2123,8 +2157,9 @@ class NetTable implements NetSession, SessionRecovery {
           console.error('muster listener failed', e);
         }
       }
-      // Proposals the muster held back (the session's own automatic ones) may go now.
+      // Proposals the muster held back (the session's own automatic ones) may go now; waits on the verdict end.
       if (m.live) this.queueDrive();
+      this.settleWaiters();
     }
   }
 
@@ -2176,7 +2211,7 @@ class NetTable implements NetSession, SessionRecovery {
     const by = [...this.entries].reverse().find((e) => e.kind === 'action' && e.action.type === 'seatClaim' && e.action.seat === seat.id);
     const invite = by?.kind === 'action' ? [...this.entries].reverse().find((e) => e.kind === 'action' && e.seq < by.seq && e.action.type === 'seatInvite' && e.action.seat === seat.id && e.action.h !== null) : undefined;
     const maker = invite?.kind === 'action' ? st.seats[invite.action.by]?.name : undefined;
-    return `[seat:moved] Your seat was taken over from another browser${maker ? ` (link made by ${maker})` : ''}. Your saved hand for this game can no longer be used.`;
+    return `Your seat was taken over from another browser${maker ? ` (link made by ${maker})` : ''}. Your saved hand for this game can no longer be used.`;
   }
 
   /** The re-invite link base: this page's address without its hash. */
@@ -2229,6 +2264,37 @@ class NetTable implements NetSession, SessionRecovery {
     return { seat: this.claimWanted.seat, name: seat?.name ?? '' };
   }
 
+  /**
+   * The claim page's view (persistence.md section 7): the seat, its name, and why a claim would be refused now (the
+   * reducer's reason, the sequencer's 24 hours on this page's clock, the old browser still connected), or null.
+   */
+  claimView(): ClaimView | null {
+    const st = this.engine.confirmedState();
+    if (this.claimOtherSeat !== null) {
+      const mine = this.engine.seat();
+      const target = st.seats[this.claimOtherSeat];
+      return { seat: this.claimOtherSeat, name: target?.name ?? '', refusal: `[claim:otherSeat] This link is for ${target?.name || this.claimOtherSeat}'s seat. You are ${(mine && st.seats[mine]?.name) || 'someone else'} at this table.` };
+    }
+    const c = this.claimInfo();
+    if (c === null) return null;
+    const seat = st.seats[c.seat];
+    const name = seat?.name ?? '';
+    const a = { type: 'seatClaim', seat: c.seat, claim: this.claimWanted!.token, peer: this.peerId, name: name || 'x', by: c.seat, cid: 'check', seq: st.seq + 1 } as Action;
+    let refusal = explain(st, a);
+    if (refusal === null && seat?.invite !== undefined && this.now() > seat.invite.exp) refusal = '[claim:expired] this link has expired';
+    if (refusal === null && seat?.peer !== undefined && this.engine.peers().some((p) => p.peerId === seat.peer && p.status === 'connected')) {
+      refusal = `[claim:otherDevice] ${name || c.seat} is still connected from their other browser`;
+    }
+    return { ...c, refusal };
+  }
+
+  /** Drop the claim of the link (`OPEN MY SEAT`, `NOT NOW`). */
+  dismissClaim(): void {
+    this.claimOtherSeat = null;
+    this.claimWanted = null;
+    this.notify();
+  }
+
   /** Sit down at the claimed seat with the link's token (`SIT DOWN HERE AS BEN`). Rejects with the refusal reason. */
   async claimSeat(name?: string): Promise<void> {
     const c = this.claimWanted;
@@ -2245,7 +2311,7 @@ class NetTable implements NetSession, SessionRecovery {
     try {
       await this.sequenced(a.cid);
     } catch (e) {
-      throw new Error(errorText(e).replace(/^refused: /, ''));
+      throw new Error(errorText(e).replace(/^refused: /, ''), { cause: e });
     }
   }
 
@@ -2279,6 +2345,12 @@ class NetTable implements NetSession, SessionRecovery {
       invite: (seat) => this.inviteSeat(seat),
       takeInviteBack: (seat) => this.takeInviteBack(seat),
       saveState: (): SaveState => (this.saves.failing ? 'notSaving' : 'saved'),
+      inviteLink: (seat) => this.inviteLink(seat),
+      claim: () => this.claimView(),
+      sitDown: (name) => this.claimSeat(name),
+      dismissClaim: () => this.dismissClaim(),
+      onNotice: (l) => this.onNotice(l),
+      team: () => this.team ?? null,
     };
   }
 
@@ -2562,7 +2634,9 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
   // A save that a newer Spellplane wrote may hold actions this page cannot apply: say so (net/version.ts).
   const newer = saved ? roomVersionNotice({ ...(saved.protocol !== undefined ? { protocol: saved.protocol } : {}) }, PROTOCOL_VERSION) : null;
   const entries: LogEntry[] = [...(saved?.entries ?? []), ...(newer !== null ? [{ kind: 'system' as const, seq: engine.confirmedState().seq, at: (opts.now ?? Date.now)(), level: 'warn' as const, text: newer }] : [])];
-  const session = new NetTable(engine, makeEngine, opts, internals, {
+  // M8-P5: a re-invite link in the address (`#/t/<room>/<key>/rejoin/<seat>/<token>`) when main.ts passed none.
+  const claim = internals.claim ?? claimFromLocation(opts.roomId);
+  const session = new NetTable(engine, makeEngine, opts, claim ? { ...internals, claim } : internals, {
     secrets: saved?.secrets ?? emptySecretStore(seat0),
     entries,
     snapshot: start.snapshot.state,

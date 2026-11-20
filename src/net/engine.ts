@@ -105,6 +105,8 @@ const INVITE_EXP_SLACK_MS = 10 * 60 * 1000;
 export const INVITE_AWAY_MS = 30_000;
 /** A `head` goes out this long after the confirmed seq last changed (persistence.md section 6). Added by M8-P5. */
 export const HEAD_DELAY_MS = 500;
+/** A browser on standby repeats its head this often (lost heads would leave it waiting). Added by M8-P5. */
+export const STANDBY_HEAD_MS = 2000;
 /**
  * What a standby sequencer sequences (contracts.md Part G item 5): chat, the rejoin actions and `away false` (checked
  * separately), and its own handover record. Added by M8-P5.
@@ -359,6 +361,8 @@ class Engine implements NetEngine {
   /** When the next `head` broadcast is due (500 ms after the confirmed seq last changed), or null. */
   private headDueAt: number | null = null;
   private headSeq = -1;
+  /** When this browser last repeated its standby head. */
+  private standbyHeadAt = 0;
   /** The clock of the rejoin checks (24 hours of an invite, 30 seconds of absence): `setClock` replaces it. */
   private rejoinNow: () => number;
   /** When this browser saw each seat marked away, on the rejoin clock; reset when it becomes the sequencer. */
@@ -588,9 +592,12 @@ class Engine implements NetEngine {
     const saving = flags.saving ?? this.headSaving;
     if (live === this.headLive && saving === this.headSaving) return;
     const wasLive = this.headLive;
+    const savingChanged = saving !== this.headSaving;
     this.headLive = live;
     this.headSaving = saving;
-    if (this.joined && !this.closed) this.sendHead();
+    // Heads go out only where someone gathers (a browser on standby, or a peer waiting on one), so a table where
+    // everyone stays live carries no head traffic; `saving` is always told (NOT SAVING on the others' plates).
+    if (this.joined && !this.closed && (savingChanged || (!live && this.reconciled) || (live && this.someoneGathering()))) this.sendHead();
     if (live && !wasLive && this.mode === 'active') {
       // Live now: the duties a standby sequencer held back (away marks, the game's timers) run.
       this.syncAwaySeats();
@@ -631,6 +638,8 @@ class Engine implements NetEngine {
   /** Send the head to one peer, or to everyone (then the next is due when the confirmed seq changes again). */
   private sendHead(to?: PeerId): void {
     if (this.closed || !this.joined) return;
+    // In the lobby every browser is live (persistence.md section 5): nothing to announce.
+    if (this.replica.confirmed().stage === 'lobby') return;
     const msg = this.headMessage();
     if (to === undefined) {
       this.headDueAt = null;
@@ -638,6 +647,11 @@ class Engine implements NetEngine {
       if (!this.connectedPeers().length) return;
     }
     this.send('ctl', msg, to);
+  }
+
+  /** A connected peer said in its last head that it is on standby (it waits for copies to be in step). */
+  private someoneGathering(): boolean {
+    return this.connectedPeers().some(([, e]) => e.info.head?.live === false);
   }
 
   private claimMsg(): WireOf<'claim'> {
@@ -929,7 +943,8 @@ class Engine implements NetEngine {
     this.peersChanged();
     this.livenessChanged();
     if (this.sequencer === hello.peerId) this.resendPending();
-    this.sendHead(from);
+    // A browser on standby tells a newly verified peer its head once its copy is reconciled (persistence.md section 6).
+    if (!this.headLive && this.reconciled) this.sendHead(from);
     if (this.mode === 'claiming') {
       e.claimAck = null;
       this.send('ctl', this.claimMsg(), from);
@@ -1091,11 +1106,9 @@ class Engine implements NetEngine {
       case 'head':
         // Added by M8-C: stored for the session's muster rule (persistence.md section 6); M8-P5 sends and uses it.
         e.info.head = { seq: msg.seq, play: msg.play, h: msg.h, turn: msg.turn, stage: msg.stage, live: msg.live, saving: msg.saving };
-        if (msg.seq >= e.info.lastSeq) {
-          e.info.lastSeq = msg.seq;
-          e.info.lastPlay = msg.play;
-          e.info.lastPlayAt = msg.seq;
-        }
+        // The head is for the session's muster rule only; reconciliation reads hello, hb and claimAck as before.
+        // A peer on standby learns this live copy's head (it may have changed since the one sent at verification).
+        if (!msg.live && this.headLive) this.sendHead(from);
         this.peersChanged();
         return;
       case 'propose':
@@ -1217,6 +1230,9 @@ class Engine implements NetEngine {
     if (this.reconciled) return;
     this.reconciled = true;
     this.yieldTo = null;
+    // M8-P5: a browser on standby announces its reconciled head; the live peers answer with theirs.
+    // Half a second later, so a browser the muster makes live at once (everyone in step) announces nothing.
+    if (!this.headLive && this.headDueAt === null) this.headDueAt = this.now() + HEAD_DELAY_MS;
     // Elect again from the reconciled state (deferred: this can run inside the replica's apply loop or a claim).
     queueMicrotask(() => {
       if (this.closed) return;
@@ -1231,10 +1247,9 @@ class Engine implements NetEngine {
    * the one further ahead wins; at the same seq, the lowest seat index (DESIGN Liveness: two claimants resolve by
    * lowest seat index), a seated claimant before an unseated one, then the lower peer id.
    */
-  private outranks(claimant: string, fromSeq: number, seat: SeatId | '', play?: number): boolean {
+  private outranks(claimant: string, fromSeq: number, seat: SeatId | ''): boolean {
     const seq = this.replica.seq();
-    // M8-P5 (contracts.md Part G item 2): more moves first, when the claimant said how many.
-    if (play !== undefined && play !== this.replica.play()) return play > this.replica.play();
+    
     if (fromSeq !== seq) return fromSeq > seq;
     const state = this.replica.confirmed();
     const index = (s: SeatId | '' | null): number => (s ? (state.seats[s]?.index ?? Number(/^s(\d+)$/.exec(s)?.[1] ?? Infinity)) : Infinity);
@@ -1278,7 +1293,7 @@ class Engine implements NetEngine {
    * sequencing and claims again, so it continues from the history the others acknowledged.
    */
   private aheadCheck(e: PeerEntry): void {
-    if (this.mode === 'active' && e.info.status === 'connected' && newerHead(headKeyOf(e.info), this.myHeadKey()) > 0 && this.differs(e)) this.startClaim(null);
+    if (this.mode === 'active' && e.info.status === 'connected' && e.info.lastSeq > this.replica.seq()) this.startClaim(null);
   }
 
   private connectedPeers(): [PeerId, PeerEntry][] {
@@ -1315,7 +1330,7 @@ class Engine implements NetEngine {
       if (ack === null) return this.updateStatus();
       const b = best?.[1];
       // M8-P5 (contracts.md Part G item 2): the copy with more moves, then the longer one, then the smaller peer id.
-      if (!b || newerHead(this.ackKey(pair[1]), this.ackKey(b)) > 0) best = pair;
+      if (!b || ack > (b.claimAck ?? 0) || (ack === b.claimAck && pair[1].info.peerId < b.info.peerId)) best = pair;
     }
     if (!best) return this.activate();
     const [to, e] = best;
@@ -1323,7 +1338,7 @@ class Engine implements NetEngine {
       if (!this.sync) this.requestSync(to, 'overlap');
       return this.updateStatus();
     }
-    if ((e.claimAck ?? 0) > this.replica.seq() && newerHead(this.ackKey(e), this.myHeadKey()) > 0) {
+    if ((e.claimAck ?? 0) > this.replica.seq()) {
       if (!this.sync) this.requestSync(to, 'tail');
       return this.updateStatus();
     }
@@ -1382,7 +1397,7 @@ class Engine implements NetEngine {
     e.info.lastSeq = Math.max(e.info.lastSeq, m.fromSeq);
     this.noteNamed(e, e.info.peerId);
     this.recompute();
-    if (this.sequencer === this.identity.peerId && !this.reconciled && this.outranks(e.info.peerId, m.fromSeq, m.seat, m.play)) {
+    if (this.sequencer === this.identity.peerId && !this.reconciled && this.outranks(e.info.peerId, m.fromSeq, m.seat)) {
       // Our claim rests on a state the room has not confirmed, and theirs ranks first: follow them and catch up.
       this.yieldTo = e.info.peerId;
       this.recompute();
@@ -1947,7 +1962,8 @@ class Engine implements NetEngine {
         this.syncAwaySeats();
       }
       if (this.mode === 'active') this.armDeadlines();
-      if (this.replica.seq() !== this.headSeq && this.headDueAt === null) this.headDueAt = this.now() + HEAD_DELAY_MS;
+      // A changed seq is announced 500 ms later while a peer waits on standby for this copy (persistence.md section 6).
+      if (this.replica.seq() !== this.headSeq && this.headDueAt === null && (this.someoneGathering() || (!this.headLive && this.reconciled))) this.headDueAt = this.now() + HEAD_DELAY_MS;
       const view = this.replica.view();
       if (view !== this.lastView) {
         this.lastView = view;
@@ -2008,7 +2024,15 @@ class Engine implements NetEngine {
       if (this.mode === 'claiming') this.checkClaim();
     }
     this.maybeCatchUp();
-    if (this.headDueAt !== null && now >= this.headDueAt) this.sendHead();
+    if (this.headDueAt !== null && now >= this.headDueAt) {
+      if (!this.headLive || this.someoneGathering()) this.sendHead();
+      else this.headDueAt = null;
+    }
+    // A browser on standby says so again now and then (a head may be lost): every live peer answers with its own.
+    else if (!this.headLive && this.reconciled && now - this.standbyHeadAt >= STANDBY_HEAD_MS) {
+      this.standbyHeadAt = now;
+      this.sendHead();
+    }
     if (this.mode === 'active') {
       this.expireHeld();
       this.syncAwaySeats();

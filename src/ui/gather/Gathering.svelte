@@ -11,10 +11,16 @@
   choice here is a ghost.
 -->
 <script lang="ts">
-  import { onDestroy, untrack, type Snippet } from 'svelte';
+  import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
   import type { SeatId, TableState } from '../../core/types';
-  import type { MusterStatus, SessionMuster } from '../../session/types';
-  import { joinNames, PLAY_ON_LINE, rowWord, titleOf } from './model';
+  import { scrubbedHash } from '../../session/invite';
+  import type { ClaimView, MusterStatus, SessionMuster } from '../../session/types';
+  import TeamPrompt from '../seat/TeamPrompt.svelte';
+  import { notices } from '../table/notices';
+  import BringBack from './BringBack.svelte';
+  import ClaimPage from './ClaimPage.svelte';
+  import { setActiveMuster } from './active';
+  import { claimScreenOf, joinNames, PLAY_ON_LINE, rowWord, titleOf } from './model';
 
   let {
     muster,
@@ -22,8 +28,9 @@
     code = null,
     failure = null,
     onhome,
-    onbringback,
-    onreadonly,
+    onbringback = undefined,
+    onreadonly = undefined,
+    onwatch = undefined,
     children,
   }: {
     muster: SessionMuster;
@@ -34,9 +41,12 @@
     /** One failure line replacing the newest-copy line (`No connection. Trying again in 8 s.`, the version notice). */
     failure?: string | null;
     onhome: () => void;
-    onbringback?: (seat: SeatId) => void;
-    /** Called with true while the table must not take actions (standby), false once live. */
-    onreadonly?: (readOnly: boolean) => void;
+    /** Bring a seat back; by default the card makes the link itself and shows it in the invite sheet. */
+    onbringback?: ((seat: SeatId) => void) | undefined;
+    /** Called with true while the table must not take actions (standby, or a claim page shown), false once live. */
+    onreadonly?: ((readOnly: boolean) => void) | undefined;
+    /** `WATCH` on a refusal screen; by default the game's watch link. */
+    onwatch?: (() => void) | undefined;
     children?: Snippet;
   } = $props();
 
@@ -44,19 +54,45 @@
   const PLAY_ON_AFTER_MS = 8000;
 
   let status = $state.raw<MusterStatus>(untrack(() => muster.muster()));
+  let claim = $state.raw<ClaimView | null>(untrack(() => muster.claim?.() ?? null));
+  let claimPhase = $state<'ready' | 'sitting'>('ready');
+  let claimError = $state<string | null>(null);
   let looking = $state(false);
   let waitedLong = $state(false);
   let busy = $state(false);
   let error = $state('');
+  let bringing = $state<SeatId | null>(null);
   let timer: ReturnType<typeof setTimeout> | null = null;
 
-  const off = untrack(() => muster.subscribe((m) => (status = m)));
+  const off = untrack(() =>
+    muster.subscribe((m) => {
+      status = m;
+      claim = muster.claim?.() ?? null;
+    }),
+  );
+  const offNotice = untrack(() => muster.onNotice?.((text) => notices.show(text)) ?? (() => undefined));
+  const offActive = untrack(() => setActiveMuster(muster));
+
+  // A new table state (a sync, a claim sequenced) may change what the claim page says.
+  $effect(() => {
+    void table;
+    untrack(() => (claim = muster.claim?.() ?? null));
+  });
+
+  onMount(() => {
+    // The token leaves the address bar once the session read it (persistence.md section 7): no history entry, no
+    // hashchange, nothing left in screenshots.
+    const clean = scrubbedHash(location.hash);
+    if (clean !== null) history.replaceState(history.state, '', `${location.pathname}${location.search}${clean}`);
+  });
+
+  const claiming = $derived(claim !== null || claimError !== null);
 
   $effect(() => {
-    const standby = !status.live;
+    const standby = !status.live || claiming;
     untrack(() => onreadonly?.(standby));
-    if (standby && timer === null && !waitedLong) timer = setTimeout(() => (waitedLong = true), PLAY_ON_AFTER_MS);
-    if (!standby) {
+    if (!status.live && timer === null && !waitedLong) timer = setTimeout(() => (waitedLong = true), PLAY_ON_AFTER_MS);
+    if (status.live) {
       if (timer !== null) clearTimeout(timer);
       timer = null;
       waitedLong = false;
@@ -66,6 +102,8 @@
 
   onDestroy(() => {
     off();
+    offNotice();
+    offActive();
     if (timer !== null) clearTimeout(timer);
   });
 
@@ -81,6 +119,7 @@
     }
     return `Newest table: yours · turn ${table.turn.number}`;
   });
+  const screen = $derived(claim !== null && claim.refusal !== null ? claimScreenOf(claim.refusal, claim.name) : claimError !== null ? claimScreenOf(claimError, claim?.name ?? '') : null);
 
   async function playOn(seats: SeatId[]): Promise<void> {
     if (busy) return;
@@ -94,19 +133,67 @@
       busy = false;
     }
   }
+
+  function bringBack(seat: SeatId): void {
+    if (onbringback) onbringback(seat);
+    else bringing = seat;
+  }
+
+  async function sit(name: string): Promise<void> {
+    if (!muster.sitDown || claimPhase === 'sitting') return;
+    claimPhase = 'sitting';
+    claimError = null;
+    try {
+      await muster.sitDown(name);
+      claim = muster.claim?.() ?? null;
+    } catch (e) {
+      claimError = e instanceof Error ? e.message : String(e);
+    } finally {
+      claimPhase = 'ready';
+    }
+  }
+
+  function notNow(): void {
+    muster.dismissClaim?.();
+    onhome();
+  }
+
+  function openMine(): void {
+    muster.dismissClaim?.();
+    claim = null;
+    claimError = null;
+  }
+
+  function watch(): void {
+    if (onwatch) return onwatch();
+    const m = /^#\/t\/([^/]+)\/([^/]+)/.exec(location.hash);
+    muster.dismissClaim?.();
+    if (m) location.hash = `#/t/${m[1]}/${m[2]}/watch`;
+  }
+
+  const team = $derived(muster.team?.() ?? null);
 </script>
 
 <div class="gathering" data-testid="gathering" data-live={status.live ? 'true' : 'false'}>
-  <div class="table" inert={!status.live}>
+  <div class="table" inert={!status.live || claiming}>
     {@render children?.()}
   </div>
-  {#if !status.live}
+  {#if claiming}
+    <div class="scrim" aria-hidden="true"></div>
+    <div class="over">
+      {#if screen}
+        <ClaimPage phase="refused" seatName={claim?.name ?? ''} refusal={screen} onsit={() => undefined} onnotnow={notNow} onwatch={watch} onopenmine={openMine} />
+      {:else if claim}
+        <ClaimPage phase={claimPhase} seatName={claim.name} onsit={(n) => void sit(n)} onnotnow={notNow} />
+      {/if}
+    </div>
+  {:else if !status.live}
     <div class="scrim" class:light={looking} aria-hidden="true"></div>
     {#if looking}
       <div class="banner" role="status" data-testid="gathering-banner">
         <span class="t">{missing.length ? `Waiting for ${names(missing)}` : 'Waiting for the others'}</span>
-        {#if missing.length && onbringback}
-          <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" onclick={() => onbringback?.(missing[0]!)}>Bring back</button>
+        {#if missing.length}
+          <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" onclick={() => bringBack(missing[0]!)}>Bring back</button>
         {/if}
         {#if waitedLong && missing.length}
           <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" disabled={busy} onclick={() => playOn(missing)}>Play on without {names(missing)}</button>
@@ -125,8 +212,8 @@
                 <span class="dot {row.state}" aria-hidden="true"></span>
                 {rowWord(row.state)}
               </span>
-              {#if (row.state === 'away' || row.state === 'leftBefore') && onbringback}
-                <button type="button" class="ds-btn ds-btn--ghost ds-btn--xs" data-testid="gathering-bring" onclick={() => onbringback?.(row.seat)}>BRING BACK</button>
+              {#if (row.state === 'away' || row.state === 'leftBefore') && table.settings.matched !== true}
+                <button type="button" class="ds-btn ds-btn--ghost ds-btn--xs" data-testid="gathering-bring" onclick={() => bringBack(row.seat)}>BRING BACK</button>
               {/if}
             </li>
           {/each}
@@ -147,11 +234,19 @@
           {/if}
           <button type="button" class="ds-btn ds-btn--ghost ds-btn--md" data-testid="gathering-home" onclick={() => onhome()}>HOME</button>
         </div>
-        {#if waitedLong && (missing.length > 0 || status.playOnHere)}
+        {#if (waitedLong && missing.length > 0) || status.playOnHere}
           <p class="meta" data-testid="gathering-play-on-line">{PLAY_ON_LINE}</p>
         {/if}
       </div>
     {/if}
+  {/if}
+  {#if bringing !== null}
+    <div class="over sheet-layer">
+      <BringBack {muster} {table} seat={bringing} onclose={() => (bringing = null)} />
+    </div>
+  {/if}
+  {#if team && !claiming}
+    <div class="team"><TeamPrompt {team} /></div>
   {/if}
 </div>
 
@@ -252,6 +347,12 @@
   .dot.leftBefore {
     box-shadow: inset 0 0 0 1.5px var(--ds-muted);
   }
+  @media (prefers-reduced-motion: reduce) {
+    .dot.connecting {
+      animation: none;
+      opacity: 0.6;
+    }
+  }
   @keyframes pulse {
     50% {
       opacity: 0.3;
@@ -269,6 +370,26 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--ds-space-sm);
+  }
+  .over {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    overflow: auto;
+    pointer-events: none;
+  }
+  .over > :global(*) {
+    pointer-events: auto;
+  }
+  .sheet-layer {
+    z-index: 2;
+  }
+  .team {
+    position: absolute;
+    right: var(--ds-space-lg);
+    bottom: var(--ds-space-lg);
+    z-index: 3;
   }
   .banner {
     position: absolute;

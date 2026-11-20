@@ -8,17 +8,20 @@ import type { PeerInfo } from '../../net/types';
 
 export type Presence = 'here' | 'connecting' | 'away';
 
-/** Each occupied seat's presence as this browser sees it: its own seat is here; a seat marked away is away. */
+/**
+ * The presence of every seat with a player, seen from `me` (who is always here): away when the state marks it away or
+ * its peer is away, connecting while its peer's handshake runs, else here.
+ */
 export function seatPresence(state: TableState, peers: readonly Pick<PeerInfo, 'peerId' | 'status'>[], me: SeatId | null): Record<SeatId, Presence> {
   const out: Record<SeatId, Presence> = {};
-  for (const s of Object.values(state.seats)) {
-    if (s.peer === undefined) continue;
-    if (s.id === me) out[s.id] = 'here';
-    else if (s.away === true) out[s.id] = 'away';
-    else {
-      const p = peers.find((x) => x.peerId === s.peer);
-      out[s.id] = p?.status === 'connected' ? 'here' : 'connecting';
+  for (const seat of Object.values(state.seats)) {
+    if (!seat.peer && !seat.name) continue;
+    if (seat.id === me) {
+      out[seat.id] = 'here';
+      continue;
     }
+    const peer = peers.find((p) => p.peerId !== '' && p.peerId === seat.peer);
+    out[seat.id] = seat.away || peer?.status === 'away' ? 'away' : peer?.status === 'handshake' ? 'connecting' : 'here';
   }
   return out;
 }

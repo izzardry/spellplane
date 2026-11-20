@@ -4,7 +4,11 @@
  * with seeded delay, drop and reordering, under fake timers.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { NetTable } from '../session/harness';
 import { closeAll, FAKE_TIMERS, hashOf, net, settle, until, waitConverged, type Browser } from '../session/harness';
+import { playScript } from '../session/script';
+import { lostHiddenCards } from '../../../src/session/resume';
+import type { LoopbackNetwork } from '../../../src/net/loopback';
 import { comeBack, confirmedHash, leave, moves, musterOf, seated, untilLive } from './rejoin-helpers';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
@@ -29,15 +33,14 @@ describe('the case table of persistence.md section 5', () => {
     await leave(ben!);
     await until(() => ann!.session!.getState().seats.s1!.away === true, 1000, 'Ben marked away within a second');
     await moves(ann!, 3);
-    const back = await comeBack(network, ben!);
+    // Opening the table waits for the muster (journey.md 4.12: Gathering is never seen) and resolves live.
     const t0 = Date.now();
-    const rules: (number | null)[] = [];
-    back.muster.subscribe((m) => rules.push(m.rule));
-    expect(musterOf(ben!).live).toBe(false);
+    const back = await comeBack(network, ben!);
     await untilLive(ben!, 2000);
-    await waitConverged([ann!.session!, back]);
-    expect(rules.find((r) => r !== null)).toBe(2);
     expect(Date.now() - t0).toBeLessThan(2000);
+    await waitConverged([ann!.session!, back]);
+    // Rule 2 (a live peer's head) or rule 3 (everyone in step by the engine's reconciliation, no head needed).
+    expect([2, 3]).toContain(back.liveRule());
     expect(confirmedHash(ben!)).toBe(confirmedHash(ann!));
     expect(lifeOf(ben!, 's0')).toBe(lifeOf(ann!, 's0'));
   });
@@ -161,5 +164,114 @@ describe('newest by moves (contracts.md Part G item 2)', () => {
     expect(lifeOf(ann!, 's1')).toBe(17);
     const chats = ann!.session!.log().flatMap((e) => (e.kind === 'action' && e.action.type === 'chat' ? [e.action.text] : []));
     expect(chats).toEqual(expect.arrayContaining(['alone 0', 'alone 1', 'alone 2', 'alone 3']));
+  });
+});
+
+/** The tab is closed (or the machine sleeps): no `bye`, the transport just goes. */
+function crash(network: LoopbackNetwork, b: Browser): void {
+  network.kill(b.peerId);
+  b.session!.dispose();
+  b.session = null;
+}
+
+describe('standby (persistence.md section 5; contracts.md Part G item 5)', () => {
+  it('three browsers all on standby wait for the fourth; one presses PLAY ON; a standby sequencer marks nobody away', async () => {
+    const network = lossy(131);
+    const [ann, ben, cy, dana] = await seated(network, browsers, 4, 'ffa4');
+    await moves(ann!, 2);
+    await waitConverged(browsers.map((b) => b.session!));
+    for (const b of [ann!, ben!, cy!]) await settle(b.session!.whenSaved());
+    // Every tab closes at once: every copy shows everyone present.
+    for (const b of [ann!, ben!, cy!, dana!]) crash(network, b);
+    const [a, b, c] = [await comeBack(network, ann!), await comeBack(network, ben!), await comeBack(network, cy!)];
+    await waitConverged([a, b, c], 'the three gathered');
+    await vi.advanceTimersByTimeAsync(20_000);
+    for (const x of [ann!, ben!, cy!]) {
+      expect(musterOf(x).live).toBe(false);
+      expect(musterOf(x).waitingFor).toEqual(['s3']);
+    }
+    // The standby sequencer marked nobody away, not even Dana who is gone for 20 s.
+    expect(Object.values(a.getState().seats).filter((s) => s.away === true)).toEqual([]);
+    // A move is held back while on standby.
+    const before = a.engine.seq();
+    a.dispatch({ type: 'life', seat: 's0', delta: -1 });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(a.engine.seq()).toBe(before);
+    await settle(b.muster.playOn(['s3']));
+    for (const x of [ann!, ben!, cy!]) await untilLive(x);
+    await waitConverged([a, b, c], 'live');
+    expect(a.getState().seats.s3!.away).toBe(true);
+    expect(Object.values(a.getState().seats).filter((s) => s.away === true).map((s) => s.id)).toEqual(['s3']);
+    // Live now: the move goes through.
+    a.dispatch({ type: 'life', seat: 's0', delta: -1 });
+    await until(() => a.engine.pending().length === 0 && a.getState().seats.s0!.life === 17, 5000, 'the move');
+  });
+});
+
+describe('equal copies (persistence.md section 6, "Newest" defined)', () => {
+  /** A split in which each side makes one move (equal play and seq, different hashes), healed by `isolated` coming back. */
+  async function equalSplit(seed: number, isolated: 0 | 1): Promise<{ first: string | undefined; hashes: string[] }> {
+    const network = lossy(seed);
+    const [ann, ben] = await seated(network, browsers, 2);
+    const cut = [ann!, ben!][isolated]!;
+    const other = [ann!, ben!][1 - isolated]!;
+    const fork = ann!.session!.engine.seq();
+    network.kill(cut.peerId);
+    await until(() => other.session!.engine.peers().every((p) => p.status !== 'connected'), 15_000, 'the split on the other side');
+    await until(() => cut.session!.engine.peers().every((p) => p.status !== 'connected'), 15_000, 'the split on the cut side');
+    // Marks of absence are sequencer records, not moves; one move each.
+    await moves(ann!, 1);
+    await moves(ben!, 1);
+    expect(ann!.session!.engine.play!()).toBe(ben!.session!.engine.play!());
+    network.revive(cut.peerId);
+    await waitConverged([ann!.session!, ben!.session!], 'the split healed');
+    const firstMove = ann!.session!.log().find((e) => e.kind === 'action' && e.seq > fork && e.action.type === 'life');
+    const hashes = [confirmedHash(ann!), confirmedHash(ben!)];
+    closeAll(browsers);
+    browsers = [];
+    return { first: firstMove?.kind === 'action' ? firstMove.action.by : undefined, hashes };
+  }
+
+  it('two different copies of equal length converge to the same copy for both connection orders', async () => {
+    const one = await equalSplit(141, 0);
+    const two = await equalSplit(141, 1);
+    expect(new Set(one.hashes).size).toBe(1);
+    expect(new Set(two.hashes).size).toBe(1);
+    // The same side's move is the table in both orders (the smaller peer id wins a tie of play and seq); the other
+    // side's move is played again on top, so both moves survive.
+    expect(one.first).toBeDefined();
+    expect(two.first).toBe(one.first);
+  });
+});
+
+describe('a long absence (persistence.md PS-6)', () => {
+  it('a player returning across a 600-action gap holds every id of hand and library and is offered no recovery', async () => {
+    const network = net({ seed: 151, delay: { min: 0, max: 40 } });
+    const p = await playScript(network, browsers);
+    const handBefore = [...p.a.secrets().hand];
+    const libraryBefore = [...p.a.secrets().libraryOrder];
+    const sids = (s: { identities: Record<string, { card: { sid: string } }> }, ids: readonly string[]): string[] => ids.map((id) => s.identities[id]!.card.sid).sort();
+    const bouncedSid = p.a.secrets().identities[p.faceDown]!.card.sid;
+    const handSids = sids(p.a.secrets(), handBefore);
+    expect(handBefore.length).toBeGreaterThan(3);
+    await leave(p.A);
+    const leftAt = p.b.engine.seq();
+    // Ben bounces Ann's face-down permanent to her hand, then plays on for more than the 600 states a peer keeps.
+    p.b.dispatch({ type: 'toZone', card: p.faceDown, to: 'hand:s0', position: 'any' });
+    for (let i = 0; i < 610; i++) p.b.chat(`turn ${i}`);
+    await until(() => p.b.engine.pending().length === 0, 120_000, 'Ben plays on');
+    const a: NetTable = await comeBack(network, p.A);
+    await waitConverged([a, p.b], 'Ann back across the gap');
+    const st = a.engine.confirmedState();
+    const lost = lostHiddenCards(st, a.secrets(), a.seat);
+    expect(lost.hand).toEqual([]);
+    expect(lost.library).toEqual([]);
+    // Every id of her hand and library is known to her browser.
+    for (const id of [...st.zones['hand:s0']!.ids, ...st.zones['library:s0']!.ids]) expect(a.secrets().identities[id], id).toBeDefined();
+    expect(a.secrets().libraryOrder.length).toBe(libraryBefore.length);
+    // Her old hand plus the bounced card; the gap was longer than the 600 states a peer keeps (snapshot catch-up).
+    expect(st.zones['hand:s0']!.ids.length).toBe(handBefore.length + 1);
+    expect(sids(a.secrets(), a.secrets().hand)).toEqual([...handSids, bouncedSid].sort());
+    expect(p.b.engine.seq() - leftAt).toBeGreaterThan(600);
   });
 });

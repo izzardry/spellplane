@@ -10,8 +10,10 @@
   - A team seat seen by an opponent: `Only Ben's teammate can bring Ben back.` A matched game: no bring-back at all.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { SeatId, TableState } from '../../core/types';
   import type { SessionMuster } from '../../session/types';
+  import BringBack from '../gather/BringBack.svelte';
   import { seatMenuModel, type Presence } from './presence';
 
   let {
@@ -22,60 +24,32 @@
     now = () => Date.now(),
     awaySince = null,
     savedAt = null,
-    presence,
-    link: initialLink = null,
-    onleave,
+    presence = undefined,
+    onleave = undefined,
   }: {
     table: TableState;
     seat: SeatId;
     me: SeatId | null;
     muster: SessionMuster;
     now?: () => number;
+    /** When this browser saw the seat away (ms epoch); null when unknown. */
     awaySince?: number | null;
+    /** When this browser last saved (ms epoch). */
     savedAt?: number | null;
-    presence?: Presence;
-    /** The link of an invite this page already made for the seat (it keeps the token in memory). */
-    link?: string | null;
-    onleave?: () => void;
+    presence?: Presence | undefined;
+    onleave?: (() => void) | undefined;
   } = $props();
 
-  let made = $state<string | null>(null);
-  let busy = $state(false);
-  let failure = $state('');
-  const link = $derived(made ?? initialLink);
+  // The link is shown in place once BRING … BACK was pressed, or at once when this page made an open one.
+  let showing = $state(untrack(() => muster.inviteLink?.(seat) != null));
   const model = $derived(seatMenuModel(table, seat, me, { now: now(), awaySince, savedAt, notSaving: muster.saveState() === 'notSaving', ...(presence ? { presence } : {}) }));
-
-  async function bring(): Promise<void> {
-    if (busy) return;
-    busy = true;
-    failure = '';
-    try {
-      made = await muster.invite(seat);
-    } catch (e) {
-      failure = (e instanceof Error ? e.message : String(e)).replace(/^\[[^\]]*\]\s*/, '').replace(/^refused: (\[[^\]]*\]\s*)?/, '');
-    } finally {
-      busy = false;
-    }
-  }
-
-  async function takeBack(): Promise<void> {
-    busy = true;
-    try {
-      await muster.takeInviteBack(seat);
-      made = null;
-    } catch (e) {
-      failure = e instanceof Error ? e.message : String(e);
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 {#if model}
   <div class="seat-menu" data-testid="seat-menu" data-seat={seat}>
     {#if model.kind === 'own'}
       <p class="line" class:danger={model.notSaving} data-testid="seat-menu-saved">{model.saved}</p>
-      <button type="button" class="ds-btn ds-btn--quiet ds-btn--sm" data-testid="seat-menu-leave" onclick={() => onleave?.()}>Leave table</button>
+      {#if onleave}<button type="button" class="ds-btn ds-btn--quiet ds-btn--sm" data-testid="seat-menu-leave" onclick={() => onleave?.()}>Leave table</button>{/if}
     {:else if model.kind === 'here'}
       <p class="line" data-testid="seat-menu-here"><span class="dot here" aria-hidden="true"></span>Here</p>
     {:else}
@@ -83,23 +57,16 @@
       {#if model.why}
         <p class="meta" data-testid="seat-menu-why">{model.why}</p>
       {:else if model.canBring}
-        {#if link}
-          <div class="invite" data-testid="seat-invite">
-            <p class="eyebrow">Bring {model.name} back</p>
-            <p class="meta">Send {model.name} this link, or let them scan the code. It opens this game at their seat.</p>
-            <p class="link" data-testid="seat-invite-link">{link}</p>
-            <p class="meta" data-testid="seat-invite-footer">This link works once, for 24 hours, and only for {model.name}'s seat.</p>
-            <div class="row">
-              <button type="button" class="ds-btn ds-btn--ghost ds-btn--xs" data-testid="seat-invite-new" disabled={busy} onclick={bring}>MAKE A NEW LINK</button>
-              <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" data-testid="seat-invite-back" disabled={busy} onclick={takeBack}>Take the invite back</button>
-            </div>
-          </div>
+        {#if showing}
+          <BringBack {muster} {table} {seat} onclose={() => (showing = false)} />
         {:else}
           {#if model.invite}<p class="meta" data-testid="seat-menu-open">Invite open · made by {model.invite.by}</p>{/if}
-          <button type="button" class="ds-btn ds-btn--primary ds-btn--sm full" data-testid="seat-menu-bring" disabled={busy} onclick={bring}>BRING {model.name.toUpperCase()} BACK</button>
+          <button type="button" class="ds-btn ds-btn--primary ds-btn--sm full" data-testid="seat-menu-bring" onclick={() => (showing = true)}>BRING {model.name.toUpperCase()} BACK</button>
+          {#if model.invite}
+            <button type="button" class="ds-btn ds-btn--quiet ds-btn--sm" data-testid="seat-menu-take-back" onclick={() => void muster.takeInviteBack(seat).catch(() => undefined)}>Take the invite back</button>
+          {/if}
         {/if}
       {/if}
-      {#if failure}<p class="meta danger" role="alert" data-testid="seat-menu-failure">{failure}</p>{/if}
     {/if}
   </div>
 {/if}
@@ -125,13 +92,6 @@
     font: var(--ds-type-small);
     color: var(--ds-muted);
   }
-  .eyebrow {
-    margin: 0;
-    font: var(--ds-type-label);
-    letter-spacing: var(--ds-label-spacing);
-    text-transform: var(--ds-label-case);
-    color: var(--ds-ink);
-  }
   .danger {
     color: var(--ds-danger);
   }
@@ -146,24 +106,6 @@
   }
   .dot.away {
     box-shadow: inset 0 0 0 1.5px var(--ds-muted);
-  }
-  .invite {
-    display: flex;
-    flex-direction: column;
-    gap: var(--ds-space-xs);
-  }
-  .link {
-    margin: 0;
-    font: var(--ds-type-small);
-    font-family: var(--ds-font-mono);
-    color: var(--ds-ink);
-    overflow-wrap: anywhere;
-    user-select: all;
-  }
-  .row {
-    display: flex;
-    gap: var(--ds-space-sm);
-    flex-wrap: wrap;
   }
   .full {
     width: 100%;

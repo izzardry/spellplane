@@ -41,6 +41,8 @@ export function parseRejoinHash(hash: string): { room: string; key: string; seat
 /** What the claim page says for a refusal (persistence.md section 7; journey.md 4.11). */
 export interface ClaimScreen {
   kind: ClaimRefusal | 'otherSeat' | 'noTable';
+  /** `OPEN MY SEAT` instead of `WATCH` (the link is for another seat of this browser). */
+  openMine?: boolean;
   title: string;
   text: string;
 }
@@ -49,6 +51,7 @@ export interface ClaimScreen {
 export function claimScreen(reason: string, seatName: string): ClaimScreen {
   const kind = claimRefusal(reason);
   const name = seatName || 'this player';
+  if (reason.startsWith('[claim:otherSeat]')) return { kind: 'otherSeat', title: 'Another seat', text: reason.replace(/^\[[^\]]*\]\s*/, ''), openMine: true };
   switch (kind) {
     case 'used':
     case 'takenBack':
@@ -68,4 +71,21 @@ export function claimScreen(reason: string, seatName: string): ClaimScreen {
     default:
       return { kind, title: 'Could not sit down', text: reason.replace(/^\[[^\]]*\]\s*/, '') };
   }
+}
+
+/**
+ * The claim of the re-invite link in this page's address for room `roomId`, or null (no page, another room, not a
+ * re-invite link). The session reads it once when it opens (persistence.md section 7); the claim page then takes the
+ * token out of the address bar.
+ */
+export function claimFromLocation(roomId: string): { seat: SeatId; token: string } | null {
+  const hash = typeof location === 'undefined' ? '' : location.hash;
+  const r = parseRejoinHash(hash);
+  return r !== null && r.room === roomId ? { seat: r.seat, token: r.token } : null;
+}
+
+/** The address without a re-invite link's token: `#/t/<room>/<key>` (null when `hash` is not a re-invite link). */
+export function scrubbedHash(hash: string): string | null {
+  const r = parseRejoinHash(hash);
+  return r === null ? null : `#/t/${r.room}/${r.key}`;
 }

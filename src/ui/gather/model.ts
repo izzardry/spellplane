@@ -3,6 +3,7 @@
  * Implementer: M8-P5.
  */
 import type { TableState } from '../../core/types';
+import { claimScreen } from '../../session/invite';
 import type { MusterSeat, MusterStatus } from '../../session/types';
 
 /** Under `PLAY ON WITHOUT …` and `PLAY ON WITH THIS TABLE` (contracts.md Part G item 2). */
@@ -61,4 +62,10 @@ export function refusalScreens(seatName: string, mySeatName: string): ClaimRefus
       text: "This game has started and every seat is taken. If one of them is yours, ask a player at the table to bring you back from your name's menu.",
     },
   ];
+}
+
+/** The refusal screen for a reason of the reducer, the sequencer or the claim view (`[claim:…]` codes). */
+export function claimScreenOf(reason: string, seatName: string): ClaimRefusalScreen {
+  const c = claimScreen(reason, seatName);
+  return { kind: c.kind, title: c.title, text: c.text, ...(c.openMine ? { openMine: true } : {}) };
 }

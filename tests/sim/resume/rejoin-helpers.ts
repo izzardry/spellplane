@@ -17,7 +17,8 @@ export async function seated(network: LoopbackNetwork, browsers: Browser[], n = 
     const b = await browser(NAMES[i]!.toLowerCase(), `peer-${String.fromCharCode(97 + i)}`, NAMES[i]!, i);
     browsers.push(b);
     out.push(b);
-    await open(network, b, { settleMs: 200 });
+    // The first browser created the room (main.ts marks it so): a joiner that sat alone gives its chair up to it.
+    await open(network, b, { settleMs: 200, ...(i === 0 ? { createdHere: true } : {}) });
     // The host sets the format before the others join (a joiner starts from the default table and syncs the log).
     if (i === 0 && format !== undefined && format !== '1v1') {
       const host = b.session!;

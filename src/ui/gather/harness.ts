@@ -10,7 +10,7 @@ import { mount as mountSvelte, unmount } from 'svelte';
 import { createTable } from '../../core/reducer';
 import type { SeatId, TableState } from '../../core/types';
 import { mtg } from '../../games/index';
-import type { MusterStatus, SessionMuster, TeamControls } from '../../session/types';
+import type { ClaimView, MusterStatus, SessionMuster, TeamControls } from '../../session/types';
 import { designCssVars, lookTokens } from '../design/tokens';
 import GatherHarness from './GatherHarness.svelte';
 
@@ -24,6 +24,8 @@ export interface GatherHarnessApi {
   readOnly(): boolean;
   /** Make the next `invite` reject with this reason (null: succeed). */
   failInvite(reason: string | null): void;
+  /** Show (or with null, end) the claim page of a re-invite link over the Gathering scene. */
+  setClaim(view: ClaimView | null): void;
   /** Switch the scene. */
   scene(name: 'gathering' | 'menus' | 'claim' | 'team'): void;
 }
@@ -64,12 +66,13 @@ function standby(): MusterStatus {
 export function mount(target: HTMLElement): () => void {
   const params = new URLSearchParams(location.search);
   // The design variables of the default look on the page root (the app frame does this through the look wiring).
-  for (const [k, v] of Object.entries(designCssVars(lookTokens('kitchen')))) document.documentElement.style.setProperty(k, v);
+  for (const [k, v] of Object.entries(designCssVars(lookTokens('plain')))) document.documentElement.style.setProperty(k, v);
   let status = standby();
   const listeners = new Set<(m: MusterStatus) => void>();
   const calls: string[] = [];
   let failNext: string | null = null;
   let readOnly = false;
+  let claim: ClaimView | null = null;
   const muster: SessionMuster = {
     muster: () => status,
     subscribe: (l) => {
@@ -96,6 +99,20 @@ export function mount(target: HTMLElement): () => void {
       return Promise.resolve();
     },
     saveState: () => (params.get('saving') === 'no' ? 'notSaving' : 'saved'),
+    inviteLink: () => null,
+    claim: () => claim,
+    sitDown: (name: string) => {
+      calls.push(`sitDown ${name}`);
+      claim = null;
+      for (const l of [...listeners]) l(status);
+      return Promise.resolve();
+    },
+    dismissClaim: () => {
+      calls.push('dismissClaim');
+      claim = null;
+      for (const l of [...listeners]) l(status);
+    },
+    onNotice: () => () => undefined,
   };
   const teamListeners = new Set<() => void>();
   let withheld = [{ seat: 's3', name: 'Dana', by: 'Cy' }];
@@ -147,6 +164,10 @@ export function mount(target: HTMLElement): () => void {
     readOnly: () => readOnly,
     failInvite: (reason) => (failNext = reason),
     scene: (name) => show(name),
+    setClaim: (view) => {
+      claim = view;
+      for (const l of [...listeners]) l(status);
+    },
   };
   return () => {
     if (app) void unmount(app);

@@ -346,7 +346,22 @@ export interface SessionMuster {
   invite(seat: SeatId): Promise<string>;
   takeInviteBack(seat: SeatId): Promise<void>;
   saveState(): SaveState;
+  /** The re-invite link this page made for `seat` while the invite is open (the token lives in this page's memory only). */ // [M8-P5]
+  inviteLink?(seat: SeatId): string | null; // [M8-P5]
+  /** The claim of the re-invite link this page was opened with, while it is not made: the seat, its name and why it would be refused now (a reason with a `[claim:…]` code), or null. */ // [M8-P5]
+  claim?(): ClaimView | null; // [M8-P5]
+  /** `SIT DOWN HERE AS BEN`: claim the seat with the link's token; rejects with the refusal reason. */ // [M8-P5]
+  sitDown?(name: string): Promise<void>; // [M8-P5]
+  /** Drop the claim of the link (`OPEN MY SEAT`, `NOT NOW`). */ // [M8-P5]
+  dismissClaim?(): void; // [M8-P5]
+  /** Plain notices of the table (`Ben left. The game goes on; Ben can come back.`, a repaired fork). */ // [M8-P5]
+  onNotice?(listener: (text: string) => void): () => void; // [M8-P5]
+  /** The team view, for the prompt after a teammate's seat was taken over (contracts.md Part G "Rejoin" item 1). */ // [M8-P5]
+  team?(): TeamControls | null; // [M8-P5]
 }
+
+/** The claim page's view of a re-invite link (persistence.md section 7). */ // [M8-P5]
+export interface ClaimView { seat: SeatId; name: string; refusal: string | null } // [M8-P5]
 
 /** The cue the human's primary button shows against Sparring (computer.md 5.3; contracts.md Part G item 1). */
 export type CombatCue = { kind: 'attack' | 'damage' | 'blocksDone'; label: string } | null;
