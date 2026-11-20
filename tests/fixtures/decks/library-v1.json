@@ -1,0 +1,386 @@
+{
+  "format": "spellplane-decks",
+  "version": 1,
+  "exportedAt": 1763600000000,
+  "decks": [
+    {
+      "id": "pasted-gw",
+      "name": "Green-White Pasted",
+      "main": [
+        {
+          "sid": "b52ff177-bafe-4e0a-a6c3-2cf012b1319f"
+        },
+        {
+          "sid": "b52ff177-bafe-4e0a-a6c3-2cf012b1319f"
+        },
+        {
+          "sid": "b52ff177-bafe-4e0a-a6c3-2cf012b1319f"
+        },
+        {
+          "sid": "b52ff177-bafe-4e0a-a6c3-2cf012b1319f"
+        },
+        {
+          "sid": "b52ff177-bafe-4e0a-a6c3-2cf012b1319f"
+        },
+        {
+          "sid": "b52ff177-bafe-4e0a-a6c3-2cf012b1319f"
+        },
+        {
+          "sid": "b52ff177-bafe-4e0a-a6c3-2cf012b1319f"
+        },
+        {
+          "sid": "b52ff177-bafe-4e0a-a6c3-2cf012b1319f"
+        },
+        {
+          "sid": "b52ff177-bafe-4e0a-a6c3-2cf012b1319f"
+        },
+        {
+          "sid": "0b1b55c1-d74b-4688-a3b8-8480d99524c7"
+        },
+        {
+          "sid": "0b1b55c1-d74b-4688-a3b8-8480d99524c7"
+        },
+        {
+          "sid": "0b1b55c1-d74b-4688-a3b8-8480d99524c7"
+        },
+        {
+          "sid": "0b1b55c1-d74b-4688-a3b8-8480d99524c7"
+        },
+        {
+          "sid": "0b1b55c1-d74b-4688-a3b8-8480d99524c7"
+        },
+        {
+          "sid": "0b1b55c1-d74b-4688-a3b8-8480d99524c7"
+        },
+        {
+          "sid": "0b1b55c1-d74b-4688-a3b8-8480d99524c7"
+        },
+        {
+          "sid": "0b1b55c1-d74b-4688-a3b8-8480d99524c7"
+        },
+        {
+          "sid": "73542493-cd0b-4bb7-a5b8-8f889c76e4d6"
+        },
+        {
+          "sid": "73542493-cd0b-4bb7-a5b8-8f889c76e4d6"
+        },
+        {
+          "sid": "73542493-cd0b-4bb7-a5b8-8f889c76e4d6"
+        },
+        {
+          "sid": "73542493-cd0b-4bb7-a5b8-8f889c76e4d6"
+        },
+        {
+          "sid": "0c04eafe-8be0-416e-a5b9-486a3b3b5984"
+        },
+        {
+          "sid": "0c04eafe-8be0-416e-a5b9-486a3b3b5984"
+        },
+        {
+          "sid": "0c04eafe-8be0-416e-a5b9-486a3b3b5984"
+        },
+        {
+          "sid": "c2f461b1-c801-4f0c-8fd7-fe68b6078ac6"
+        },
+        {
+          "sid": "c2f461b1-c801-4f0c-8fd7-fe68b6078ac6"
+        },
+        {
+          "sid": "c2f461b1-c801-4f0c-8fd7-fe68b6078ac6"
+        },
+        {
+          "sid": "2f717e04-c078-4696-9ed6-e973033d7be0"
+        },
+        {
+          "sid": "2f717e04-c078-4696-9ed6-e973033d7be0"
+        },
+        {
+          "sid": "2f717e04-c078-4696-9ed6-e973033d7be0"
+        },
+        {
+          "sid": "76ceff1d-9e83-41cc-b54b-8bf90d985da9"
+        },
+        {
+          "sid": "76ceff1d-9e83-41cc-b54b-8bf90d985da9"
+        },
+        {
+          "sid": "76ceff1d-9e83-41cc-b54b-8bf90d985da9"
+        },
+        {
+          "sid": "d0299b00-b16c-4e7d-b67a-ec160ea81a54"
+        },
+        {
+          "sid": "d0299b00-b16c-4e7d-b67a-ec160ea81a54"
+        },
+        {
+          "sid": "b31b2e5e-6572-462a-9fa0-1b2e660099e3"
+        },
+        {
+          "sid": "b31b2e5e-6572-462a-9fa0-1b2e660099e3"
+        },
+        {
+          "sid": "80d4ce4f-8255-419b-9e7f-544d9798e5c8"
+        },
+        {
+          "sid": "80d4ce4f-8255-419b-9e7f-544d9798e5c8"
+        },
+        {
+          "sid": "bbe53385-d63f-4d07-94ed-3ea5a48c79c8"
+        },
+        {
+          "sid": "bbe53385-d63f-4d07-94ed-3ea5a48c79c8"
+        },
+        {
+          "sid": "bbe53385-d63f-4d07-94ed-3ea5a48c79c8"
+        },
+        {
+          "sid": "fe574e49-723a-409b-9222-125eebb620ff"
+        },
+        {
+          "sid": "fe574e49-723a-409b-9222-125eebb620ff"
+        },
+        {
+          "sid": "812cf63f-aa3d-405b-92e1-7ffa31352481"
+        },
+        {
+          "sid": "812cf63f-aa3d-405b-92e1-7ffa31352481"
+        },
+        {
+          "sid": "dfbdd90c-1ae3-45e5-b1e5-5b8615a1511f"
+        },
+        {
+          "sid": "00906b47-6316-4e00-bbf5-b801ab583f4f"
+        },
+        {
+          "sid": "c1db84d8-d426-4c0d-b44e-5be7b0f5f5bf"
+        }
+      ],
+      "side": [
+        {
+          "sid": "dfbdd90c-1ae3-45e5-b1e5-5b8615a1511f"
+        },
+        {
+          "sid": "dfbdd90c-1ae3-45e5-b1e5-5b8615a1511f"
+        }
+      ],
+      "source": "pasted",
+      "text": "9 Forest\n8 Plains\n...",
+      "createdAt": 1763500000000,
+      "updatedAt": 1763500000000
+    },
+    {
+      "id": "drafted-ur",
+      "name": "Thursday Draft",
+      "main": [
+        {
+          "sid": "bf5a0e1e-5239-41f3-a63f-d9303b1b01fc"
+        },
+        {
+          "sid": "2ca822a3-4793-4cbc-a2f3-f43985e7ce8f"
+        },
+        {
+          "sid": "cb3b35b8-f321-46d8-a441-6b9a6efa9021"
+        },
+        {
+          "sid": "2eda67da-02b5-4ecb-9038-10e026d454ec"
+        },
+        {
+          "sid": "ad6d0a11-3a9c-4de0-9a46-06d2b9356eb7"
+        },
+        {
+          "sid": "91890c11-b139-474d-b12d-6afd6b7e6aee"
+        },
+        {
+          "sid": "71f2030b-f622-4cc3-ac83-258ae3645fd6"
+        }
+      ],
+      "side": [
+        {
+          "sid": "9cff3fae-e072-4068-a1de-27de3d89c532"
+        },
+        {
+          "sid": "975f61eb-a121-4f43-93a4-c6f20c6aee84"
+        },
+        {
+          "sid": "fcca2f76-3db9-472b-b78e-a87b81e31d0a"
+        },
+        {
+          "sid": "ade02a6b-0025-418b-8e20-0eb538fd66b1"
+        },
+        {
+          "sid": "1b12dfc1-81f2-44b2-baa2-73cc21363978"
+        },
+        {
+          "sid": "a82fdb2f-b199-44ff-9615-90fc074cb8b0"
+        },
+        {
+          "sid": "e0aa62c0-d24b-4bce-9f2b-d42402b0830c"
+        },
+        {
+          "sid": "bd2c1fb7-3c1d-49a9-b2c2-78ba2264df38"
+        },
+        {
+          "sid": "e83a678b-19d4-47a5-aa1c-c2437e5009c0"
+        },
+        {
+          "sid": "c3dab325-8f4f-4288-9f3f-960e52b4335b"
+        },
+        {
+          "sid": "cb38f190-30f0-49ca-99c3-d3cdf21075e8"
+        },
+        {
+          "sid": "46588683-74c7-4041-a43b-95d51ba51a94"
+        },
+        {
+          "sid": "48dbbc83-5549-480f-bf98-da90495d2a29"
+        }
+      ],
+      "source": "drafted",
+      "createdAt": 1763400000000,
+      "updatedAt": 1763400500000,
+      "pool": {
+        "cards": [
+          {
+            "id": "p1",
+            "ref": {
+              "sid": "bf5a0e1e-5239-41f3-a63f-d9303b1b01fc"
+            }
+          },
+          {
+            "id": "p2",
+            "ref": {
+              "sid": "2ca822a3-4793-4cbc-a2f3-f43985e7ce8f"
+            }
+          },
+          {
+            "id": "p3",
+            "ref": {
+              "sid": "cb3b35b8-f321-46d8-a441-6b9a6efa9021"
+            }
+          },
+          {
+            "id": "p4",
+            "ref": {
+              "sid": "9cff3fae-e072-4068-a1de-27de3d89c532"
+            }
+          },
+          {
+            "id": "p5",
+            "ref": {
+              "sid": "975f61eb-a121-4f43-93a4-c6f20c6aee84"
+            }
+          },
+          {
+            "id": "p6",
+            "ref": {
+              "sid": "2eda67da-02b5-4ecb-9038-10e026d454ec"
+            }
+          },
+          {
+            "id": "p7",
+            "ref": {
+              "sid": "ad6d0a11-3a9c-4de0-9a46-06d2b9356eb7"
+            }
+          },
+          {
+            "id": "p8",
+            "ref": {
+              "sid": "fcca2f76-3db9-472b-b78e-a87b81e31d0a"
+            }
+          },
+          {
+            "id": "p9",
+            "ref": {
+              "sid": "ade02a6b-0025-418b-8e20-0eb538fd66b1"
+            }
+          },
+          {
+            "id": "p10",
+            "ref": {
+              "sid": "1b12dfc1-81f2-44b2-baa2-73cc21363978"
+            }
+          },
+          {
+            "id": "p11",
+            "ref": {
+              "sid": "a82fdb2f-b199-44ff-9615-90fc074cb8b0"
+            }
+          },
+          {
+            "id": "p12",
+            "ref": {
+              "sid": "e0aa62c0-d24b-4bce-9f2b-d42402b0830c"
+            }
+          },
+          {
+            "id": "p13",
+            "ref": {
+              "sid": "bd2c1fb7-3c1d-49a9-b2c2-78ba2264df38"
+            }
+          },
+          {
+            "id": "p14",
+            "ref": {
+              "sid": "e83a678b-19d4-47a5-aa1c-c2437e5009c0"
+            }
+          },
+          {
+            "id": "p15",
+            "ref": {
+              "sid": "c3dab325-8f4f-4288-9f3f-960e52b4335b"
+            }
+          },
+          {
+            "id": "p16",
+            "ref": {
+              "sid": "cb38f190-30f0-49ca-99c3-d3cdf21075e8"
+            }
+          },
+          {
+            "id": "p17",
+            "ref": {
+              "sid": "46588683-74c7-4041-a43b-95d51ba51a94"
+            }
+          },
+          {
+            "id": "p18",
+            "ref": {
+              "sid": "48dbbc83-5549-480f-bf98-da90495d2a29"
+            }
+          },
+          {
+            "id": "b1",
+            "ref": {
+              "sid": "91890c11-b139-474d-b12d-6afd6b7e6aee"
+            },
+            "basic": true
+          },
+          {
+            "id": "b2",
+            "ref": {
+              "sid": "71f2030b-f622-4cc3-ac83-258ae3645fd6"
+            },
+            "basic": true
+          }
+        ],
+        "main": [
+          "p1",
+          "p2",
+          "p3",
+          "p6",
+          "p7",
+          "b1",
+          "b2"
+        ]
+      },
+      "origin": {
+        "format": "pass",
+        "sets": [
+          "M19",
+          "M19",
+          "M19"
+        ]
+      }
+    }
+  ]
+}

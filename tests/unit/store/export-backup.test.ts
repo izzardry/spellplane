@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { canonicalJson } from '../../../src/core/hash';
 import { backupFileName, backupText, exportBackup, readBackup, readBackupText, restoreBackup, suggestReplaceIdentity } from '../../../src/store/backup';
-import { exportLibrary } from '../../../src/store/decks';
+import { exportLibrary, migrateDeckRecord } from '../../../src/store/decks';
 import { generateIdentity } from '../../../src/store/identity';
 import { openStores, type LocalStores } from '../../../src/store/stores';
 import { SOLO_ROOM_ID } from '../../../src/store/tables';
@@ -207,7 +207,7 @@ describe('reading a file', () => {
 
   it('reads the deck library file of the builder (and a single exported deck) as a backup of decks', () => {
     const lib = JSON.parse(exportLibrary([deck('d1', 'A'), deck('d2', 'B')], NOW)) as unknown;
-    expect(readBackup(lib)).toEqual({ decks: [deck('d1', 'A'), deck('d2', 'B')], tables: [], identity: null, settings: {}, games: [], ratings: [], matches: [], computer: [], errors: [] });
+    expect(readBackup(lib)).toEqual({ decks: [migrateDeckRecord(deck('d1', 'A')), migrateDeckRecord(deck('d2', 'B'))] /* M8-P3: records are migrated on import */, tables: [], identity: null, settings: {}, games: [], ratings: [], matches: [], computer: [], errors: [] });
     expect(readBackup(deck('d3', 'C')).decks.map((d) => d.id)).toEqual(['d3']);
   });
 

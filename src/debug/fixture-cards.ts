@@ -7,7 +7,11 @@
 import { relatedTokenIds } from '../data/cards';
 import { nearMatches, normaliseName } from '../data/decklist';
 import { namesCard } from '../data/source';
-import type { CardData, CardDataSource, DeckEntry, DeckList, ParseError, ResolvedDeck } from '../data/types';
+import { queryMatcher, sortCards } from '../data/deck/query';
+import type { CardData, CardDataSource, CardSearchOptions, DeckEntry, DeckList, ParseError, ResolvedDeck } from '../data/types';
+
+/** Scryfall's first page holds 175 cards (decks.md section 3). */
+const SEARCH_LIMIT = 175;
 import type { CardRef, ScryfallId } from '../core/types';
 
 /** What a test injects before the page loads. */
@@ -102,24 +106,36 @@ export class FixtureCardDataSource implements CardDataSource {
   }
 
   /**
-   * The builder's search-and-add over the fixtures (M2-P7, standing in for Scryfall's /cards/search): non-token cards
-   * whose name, a face name or the type line contains every word of the query, one per name, sorted by name.
+   * The builder's search-and-add over the fixtures (M2-P7, standing in for Scryfall's /cards/search): non-token cards,
+   * one per name. A query with Scryfall terms (`t:creature`, `id<=gw`, `mv>=5`, `or`, parentheses; M8-P3) is evaluated
+   * by data/deck/query.ts; plain words match the name, a face name or the type line. Sorted by `options.order`
+   * (popular: EDHREC rank then rarity, as a stand-in for Scryfall's popularity; mana value; name).
    */
-  searchCards(query: string): Promise<CardData[]> {
-    const words = normaliseName(query).split(/\s+/).filter((w) => w !== '');
-    if (words.length === 0) return Promise.resolve([]);
+  searchCards(query: string, options: CardSearchOptions = {}): Promise<CardData[]> {
+    if (this.offline) return Promise.reject(new Error('offline'));
+    const q = query.trim();
+    if (q === '') return Promise.resolve([]);
+    const syntax = /[:<>=()"]|(^|\s)or(\s|$)|(^|\s)-\S/i.test(q);
+    const words = normaliseName(q).split(/\s+/).filter((w) => w !== '');
+    const matcher = syntax ? queryMatcher(q) : null;
     const seen = new Set<string>();
     const out: CardData[] = [];
     for (const c of this.byId.values()) {
       if (isToken(c) || seen.has(c.name)) continue;
-      const text = normaliseName([c.name, ...(c.card_faces ?? []).map((f) => f.name), c.type_line].join(' '));
-      if (!words.every((w) => text.includes(w))) continue;
+      if (matcher) {
+        if (!matcher(c)) continue;
+      } else {
+        const text = normaliseName([c.name, ...(c.card_faces ?? []).map((f) => f.name), c.type_line].join(' '));
+        if (!words.every((w) => text.includes(w))) continue;
+      }
       seen.add(c.name);
       out.push(c);
     }
-    out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-    return Promise.resolve(out);
+    return Promise.resolve(sortCards(out, options.order ?? 'name').slice(0, SEARCH_LIMIT));
   }
+
+  /** Card search answers "offline" while set (the decks debug hook's setOffline; M8-P3). */
+  offline = false;
 
   searchTokens(query: string): Promise<CardData[]> {
     const q = normaliseName(query);

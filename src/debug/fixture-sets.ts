@@ -14,7 +14,7 @@ declare global {
   }
 }
 
-/** Set data from a fixed list, featured sets first, then by release date; lookups never fetch. */
+/** Set data from a fixed list, featured sets first, then by release date; lookups never fetch. Every fixture set is a core set (M8-P3). */
 export function fixtureSetSource(sets: readonly SetData[]): SetDataSource {
   const byCode = new Map(sets.map((s) => [s.code.toUpperCase(), s] as const));
   const rank = (c: SetCode): number => {
@@ -25,7 +25,7 @@ export function fixtureSetSource(sets: readonly SetData[]): SetDataSource {
     listSets: () =>
       Promise.resolve(
         [...byCode.values()]
-          .map((s) => ({ ...summaryOf(s), featured: rank(s.code) < FEATURED_SETS.length }))
+          .map((s) => ({ ...summaryOf(s), featured: rank(s.code) < FEATURED_SETS.length, type: 'core' }))
           .sort((a, b) => rank(a.code) - rank(b.code) || (a.releaseDate < b.releaseDate ? -1 : a.releaseDate > b.releaseDate ? 1 : 0)),
       ),
     get: (code) => Promise.resolve(byCode.get(code.toUpperCase()) ?? null),
