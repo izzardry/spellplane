@@ -19,7 +19,7 @@ export async function deckAudit(page: Page): Promise<string[]> {
       }
       return true;
     };
-    const controls = [...document.querySelectorAll('button, input:not([type=hidden]), [role="radio"]')].filter(visible);
+    const controls = [...document.querySelectorAll('button, [role="button"], select, input:not([type=hidden]):not([type=radio]):not([type=checkbox]), [role="radio"]')].filter(visible);
     for (const c of controls) {
       if (c.closest('.ds-seg') && c.getAttribute('role') === 'radio') continue; // a segment sits in its track; the track is measured
       const box = c.closest('.ds-field') ?? c; // a field's input sits in its well; the well is the control
@@ -32,7 +32,7 @@ export async function deckAudit(page: Page): Promise<string[]> {
     }
     const layers = new Map<Element, number>();
     for (const b of [...document.querySelectorAll('.ds-btn--primary')].filter(visible)) {
-      const layer = b.closest('[role="dialog"], .ds-scrim, [role="menu"], .ds-toast') ?? document.body;
+      const layer = b.closest('[data-ds-layer], [role="dialog"], .ds-scrim, [role="menu"], .ds-toast') ?? document.body;
       layers.set(layer, (layers.get(layer) ?? 0) + 1);
     }
     for (const [layer, n] of layers) if (n > 1) problems.push(`${n} primary buttons in one layer (${layer.tagName.toLowerCase()})`);

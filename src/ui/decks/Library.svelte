@@ -8,6 +8,7 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
+  import { isOpening } from '../../data/deck/seal';
   import type { DeckRecord } from '../../store/types';
   import Button from '../design/Button.svelte';
   import Dialog from '../design/Dialog.svelte';
@@ -85,7 +86,8 @@
     if (await select(d)) env.go('#/');
   }
   function open(d: DeckRecord): void {
-    env.go(`#/decks/${encodeURIComponent(d.id)}`);
+    // A booster deck whose packs are not all shown resumes the opening.
+    env.go(`#/decks/${encodeURIComponent(d.id)}${isOpening(d) ? '/open' : ''}`);
   }
   function remove(d: DeckRecord): void {
     if (!lib.remove(d.id)) return;
@@ -183,7 +185,7 @@
   </section>
 
   {#if menu && menuPos}
-    <div class="menu" style:left="{menuPos.left}px" style:top="{menuPos.top}px">
+    <div class="menu" data-ds-layer="popover" style:left="{menuPos.left}px" style:top="{menuPos.top}px">
       <MenuPopover open={true} anchor={menu.anchor} label="Deck actions" groups={groups(menu.deck)} testid="deck-menu" onclose={() => (menu = null)} />
     </div>
   {/if}

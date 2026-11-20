@@ -156,7 +156,7 @@
     <BoosterSetupSheet value={setup} mode="deck" sets={env.sets} busy={opening} onchange={(v) => (setup = v)} onclose={() => (showSetup = false)} onopen={(v) => void open(v)} />
   {/if}
   {#if importing}
-    <div class="ds-scrim import">
+    <div class="ds-scrim import" data-ds-layer="dialog">
       <DeckImport cardData={env.cardData} parse={parseDecklist} onimport={imported} onclose={() => (importing = false)} />
     </div>
   {/if}

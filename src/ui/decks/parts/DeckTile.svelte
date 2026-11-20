@@ -9,6 +9,7 @@
 -->
 <script lang="ts">
   import { bandNumber } from '../../../data/deck/strength';
+  import { isOpening } from '../../../data/deck/seal';
   import { countNote, sizeOf } from '../../../data/deck/summary';
   import type { FaceSource } from '../../../data/types';
   import type { DeckRecord } from '../../../store/types';
@@ -55,6 +56,7 @@
   const band = $derived(s?.strength ? bandNumber(s.strength.band) : null);
   const packs = $derived(deck.seal ? packsLabel(deck.seal.sets) : '');
   const note = $derived(countNote(cards, size));
+  const opening = $derived(isOpening(deck));
   const meta = $derived(note ?? (deck.lastPlayedAt ? `played ${ago(deck.lastPlayedAt)}` : kind === 'sealed' ? 'from boosters' : 'never played'));
   let more = $state<HTMLElement | undefined>();
 
@@ -100,7 +102,8 @@
     <span class="behind" aria-hidden="true"></span>
     <span class="cover" data-testid="tile-cover"><CardImage {faces} cardRef={s?.cover ?? null} alt={deck.name} tier="normal" /></span>
     {#if deck.seal}<span class="band" data-testid="seal-band"><SealBand packs={packs} /></span>{/if}
-    {#if locked}<span class="reason" data-testid="tile-reason"><Badge tone="muted">{locked}</Badge></span>{/if}
+    {#if locked}<span class="reason" data-testid="tile-reason"><Badge tone="muted">{locked}</Badge></span>
+    {:else if opening}<span class="reason" data-testid="tile-opening"><Badge>{deck.seal?.revealed ?? 0} of {deck.seal?.sets.length ?? 0} opened</Badge></span>{/if}
     {#if actions && !locked}
       <div class="actions" data-testid="tile-actions">
         <Button size="sm" variant="primary" data-testid="tile-play" onclick={(e) => (e.stopPropagation(), onplay?.())}>Play</Button>

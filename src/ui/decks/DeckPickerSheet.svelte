@@ -58,6 +58,7 @@
 
 <div class="ds-scrim" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && onclose?.()}>
   <div
+    data-ds-layer="sheet"
     role="dialog"
     aria-modal="true"
     tabindex="-1"

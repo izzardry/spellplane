@@ -733,7 +733,7 @@
   }
   .drow {
     display: grid;
-    grid-template-columns: 28px 20px 28px minmax(0, 1fr) auto;
+    grid-template-columns: auto 20px auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 4px;
     min-height: 28px;
