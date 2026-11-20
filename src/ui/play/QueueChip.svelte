@@ -1,0 +1,123 @@
+<!--
+  The content of the shell's queue bar while a search runs (journey.md 4.5; visual.md 2.8 "Queue bar"; matchmaking.md
+  2.8): a pulsing ring, SEARCHING, mode and format, the timer, the count and CANCEL. A click on the bar (outside CANCEL)
+  goes Home. Renders nothing unless the matchmaker is connecting or seeking. The timer steps once a second (no per-frame
+  work). M8-P7.
+-->
+<script lang="ts">
+  import { onDestroy } from 'svelte';
+  import type { Matchmaker, MatchmakerStatus } from '../../session/types';
+  import { clockText, lookingCount, mmNow, queueLabel } from './mm-view';
+
+  let { matchmaker, onhome }: { matchmaker: Matchmaker; onhome?: () => void } = $props();
+
+  let status = $state<MatchmakerStatus>({ phase: 'off' });
+  let now = $state(0);
+  const off = matchmaker.subscribe((s) => {
+    status = s;
+    now = mmNow(matchmaker);
+  });
+  const timer = setInterval(() => {
+    if (status.phase === 'seeking' || status.phase === 'connecting') now = mmNow(matchmaker);
+  }, 1000);
+  onDestroy(() => {
+    off();
+    clearInterval(timer);
+  });
+
+  const shown = $derived(status.phase === 'seeking' || status.phase === 'connecting');
+  const count = $derived(lookingCount(status));
+</script>
+
+{#if shown}
+  <div class="mm-queue" data-testid="queue-chip" data-phase={status.phase}>
+    <button type="button" class="mm-queue-main ds-btn ds-btn--quiet" onclick={() => onhome?.()} aria-label="Searching for a match: go Home">
+      <span class="mm-ring" aria-hidden="true"></span>
+      {#if status.phase === 'seeking'}
+        <span class="mm-strong">SEARCHING</span>
+        <span class="mm-dot" aria-hidden="true">·</span>
+        <span data-testid="queue-chip-mode">{queueLabel(status.queues[0]!)}</span>
+        <span class="mm-dot" aria-hidden="true">·</span>
+        <span class="mm-strong mm-time" data-testid="queue-chip-time">{clockText(now - status.since)}</span>
+        <span class="mm-dot" aria-hidden="true">·</span>
+        <span data-testid="queue-chip-count">{status.alone ? 'ONLY YOU SO FAR' : `${count} LOOKING`}</span>
+      {:else}
+        <span class="mm-strong">CONNECTING…</span>
+      {/if}
+    </button>
+    <button type="button" class="ds-btn ds-btn--small mm-cancel" data-testid="queue-cancel" onclick={() => matchmaker.cancel()}>CANCEL</button>
+  </div>
+{/if}
+
+<style>
+  .mm-queue {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ds-space-sm);
+    min-height: 44px;
+    padding: 0 var(--ds-space-xs) 0 var(--ds-space-md);
+    border-radius: var(--ds-radius-pill);
+    background: var(--ds-ink);
+    color: var(--ds-on-ink);
+    box-shadow: var(--ds-elevation-primary);
+    font-family: var(--ds-font-mono);
+    font-size: var(--ds-type-small);
+    letter-spacing: 0.06em;
+    max-width: 100%;
+  }
+  .mm-queue-main {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ds-space-xs);
+    min-height: 44px;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    padding: 0;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .mm-strong {
+    font-weight: var(--ds-weight-bold);
+  }
+  .mm-time {
+    letter-spacing: 0.1em;
+    font-variant-numeric: tabular-nums;
+  }
+  .mm-dot {
+    opacity: 0.45;
+  }
+  .mm-cancel {
+    min-height: 36px;
+  }
+  .mm-ring {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid currentColor;
+    flex: none;
+    animation: mm-pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes mm-pulse {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.4;
+      transform: scale(0.8);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mm-ring {
+      animation: none;
+    }
+  }
+  @media (max-width: 600px) {
+    .mm-queue [data-testid='queue-chip-count'],
+    .mm-queue .mm-dot:nth-of-type(3) {
+      display: none;
+    }
+  }
+</style>
