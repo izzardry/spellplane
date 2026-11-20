@@ -6,7 +6,7 @@
 import type { Action } from '../core/actions';
 import type { DeckBuild, InstanceId, Line, Pose, QueueId, SecretStore, TableState } from '../core/types';
 import type { ComputerStatus, MatchmakerStatus } from '../session/types';
-import type { GameSummary } from '../store/types';
+import type { GameSummary, HomePrefs } from '../store/types'; // [M8-P2] HomePrefs
 import type { DraftPrivateView } from '../draft/types';
 import type { PeerId } from '../net/transport';
 import type { ConnectionStatus, NetMessageRecord, PeerInfo } from '../net/types';
@@ -266,12 +266,15 @@ export interface DecksDebug {
 /** History's games store (persistence.md section 3). M8-P2 fills it. Added by M8-C. */
 export interface GamesDebug {
   list(): Promise<GameSummary[]>;
+  get?(code: string): Promise<GameSummary | null>; // [M8-P2]
 }
 
 /** Home (journey.md 4.1). M8-P2 fills it. Added by M8-C. */
 export interface HomeDebug {
   /** The route shown (`home` on Home). */
   route(): string;
+  prefs?(): Promise<HomePrefs | null>; // [M8-P2]
+  live?(): Record<string, number>; // [M8-P2] the lifecycle counts (on Home every count is 0)
 }
 
 // Types registerDebug (util/debug.ts) against SpellplaneDebug without util/ importing debug/.

@@ -641,6 +641,8 @@ export interface GameStore {
   purge(code: string): Promise<void>;
   /** Mark older unfinished solo games ended ('replaced') and keep the newest `keep` resumable (contracts.md Part G "History" item 1). */
   endOlderSolo(keep: number): Promise<void>;
+  /** Purge every soft-deleted game: a removal whose undo toast the page did not outlive (persistence.md section 3, "at the next start"). */
+  purgeRemoved?(): Promise<void>; // [M8-P2]
 }
 
 /** The `ratings` store, one record per rating key (matchmaking.md 2.10). Implementer: M8-P7. Added by M8-C. */
