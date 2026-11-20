@@ -269,14 +269,14 @@
 <style>
   .settings {
     display: grid;
-    gap: var(--sp-space-sm, 8px);
-    padding: var(--sp-space-lg, 16px);
-    border: 1px solid var(--sp-border, #ccc);
-    border-radius: var(--sp-radius-lg, 8px);
-    font-family: var(--sp-font);
-    font-size: var(--sp-font-size, 14px);
-    color: var(--sp-fg);
-    background: var(--sp-bg);
+    gap: var(--ds-space-sm, 8px);
+    padding: var(--ds-space-lg, 16px);
+    border-radius: var(--ds-radius-sheet, 8px);
+    box-shadow: var(--ds-elevation-sheet, none);
+    font-family: var(--ds-font-body, var(--sp-font));
+    font-size: var(--ds-type-body, 14px);
+    color: var(--ds-ink, var(--sp-fg));
+    background: var(--ds-panel, var(--sp-bg));
     min-width: 0;
   }
   h2 {
@@ -306,16 +306,25 @@
     align-items: center;
     gap: 8px;
   }
+  /* Swept to the kit (contracts.md Part G "Visual" item 4): selects and number fields are kit wells, 36 px. */
   select,
   input[type='number'] {
+    box-sizing: border-box;
+    height: var(--ds-control-sm, 36px);
     font: inherit;
-    padding: 4px 6px;
-    border: 1px solid var(--sp-border);
-    border-radius: var(--sp-radius-sm, 4px);
-    background: var(--sp-bg);
-    color: var(--sp-fg);
+    padding: 0 var(--ds-space-md, 12px);
+    border: 0;
+    border-radius: var(--ds-radius-pill, 18px);
+    background: var(--ds-chip, var(--sp-bg));
+    box-shadow: var(--ds-elevation-well, none);
+    color: var(--ds-ink, var(--sp-fg));
     min-width: 0;
     max-width: 100%;
+  }
+  select:focus-visible,
+  input[type='number']:focus-visible {
+    outline: 2px solid var(--ds-focus, var(--sp-focus));
+    outline-offset: 2px;
   }
   input[type='number'] {
     width: 6em;
