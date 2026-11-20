@@ -378,7 +378,9 @@ export class ThemeSoundPlayer {
     untrack('audioContexts', ctx);
     // The page's context is kept for the next table, suspended; a context of its own (a test's) is closed.
     if (isPageContext(ctx)) {
-      if (ctx.state === 'running') ctx.suspend().catch(() => undefined);
+      // Also when it still reads 'suspended': a resume asked for by the first press may be pending (WebKit), and a
+      // suspend queued after it wins.
+      if (ctx.state !== 'closed') ctx.suspend().catch(() => undefined);
     } else ctx.close().catch(() => undefined);
   }
 

@@ -87,6 +87,17 @@ describe('one audio context for the page', () => {
     expect(made[0]!.calls).not.toContain('close');
   });
 
+  it('a table disposed while its first resume is still pending (the context still reads suspended) suspends it anyway', () => {
+    const p = new ThemeSoundPlayer();
+    p.unlock();
+    // As in WebKit: the resume the press asked for has not taken effect yet.
+    made[0]!.raw.state = 'suspended';
+    made[0]!.calls.length = 0;
+    p.dispose();
+    expect(made[0]!.calls).toEqual(['suspend']);
+    expect(live().audioContexts).toBe(0);
+  });
+
   it('a table that never had a gesture makes no context and counts none', () => {
     const p = new ThemeSoundPlayer();
     p.dispose();

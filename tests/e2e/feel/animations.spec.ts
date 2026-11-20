@@ -126,11 +126,27 @@ test('disposing the table mid-draw cancels every animation and releases every fr
 
 test('the page has one audio context, counted while the table holds it', async ({ page }, info) => {
   await openSolo(page, profileFor(info, 'feel-audio'));
+  // Nothing before the first press (the browsers' autoplay rule).
+  expect(await hook<number>(page, 'audio.made')).toBe(0);
+  expect(await hook<number>(page, 'audio.live')).toBe(0);
   await page.mouse.click(5, 300);
-  await expect.poll(() => hook<number>(page, 'audio.made')).toBeLessThanOrEqual(1);
-  // A look that plays sound by default made it on the first press; the count follows whether the table holds one.
-  const made = await hook<number>(page, 'audio.made');
-  expect(await hook<number>(page, 'audio.live')).toBe(made);
+  // Plain, the default look, plays sound by default: the first press makes the page's one context, counted while the
+  // table holds it.
+  await expect.poll(() => hook<number>(page, 'audio.made')).toBe(1);
+  await expect.poll(() => hook<number>(page, 'audio.live')).toBe(1);
+  // A second press makes no second context.
   await page.mouse.click(15, 300);
-  expect(await hook<number>(page, 'audio.made')).toBe(made);
+  await expect.poll(() => hook<number>(page, 'audio.made')).toBe(1);
+  expect(await hook<number>(page, 'audio.live')).toBe(1);
+  // Home disposes the table: it lets the context go, suspended, not closed, and counts none.
+  await page.evaluate(() => (location.hash = '#/'));
+  await expect.poll(() => hook<number>(page, 'audio.live')).toBe(0);
+  await expect.poll(() => hook<string | null>(page, 'audio.state')).toBe('suspended');
+  // A second table reuses it on its first press.
+  await page.evaluate(() => (location.hash = '#/solo'));
+  await expect.poll(() => page.evaluate(() => typeof (window.__spellplane as Record<string, unknown>).motion)).toBe('function');
+  await page.mouse.click(5, 300);
+  await expect.poll(() => hook<number>(page, 'audio.live')).toBe(1);
+  expect(await hook<number>(page, 'audio.made')).toBe(1);
+  await expect.poll(() => hook<string | null>(page, 'audio.state')).toBe('running');
 });
