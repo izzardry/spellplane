@@ -117,6 +117,8 @@ for (const look of LOOKS) {
     test('the undo toast lives 5 s; a second one restarts the timer and offers UNDO ALL', async ({ page }) => {
       await page.clock.install();
       await openKit(page, look);
+      // Stop the fake clock's natural flow, so only runFor moves it (a slow browser never eats into the 5 s).
+      await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
       const host = page.getByTestId('toast-host');
       await test.step('one toast, five seconds', async () => {
         await page.evaluate(() => window.__kitHarness!.undo('Deck A removed'));
