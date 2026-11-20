@@ -25,14 +25,25 @@ async function until(page: Page, pred: (m: MotionDebugState) => boolean, maxMs =
   throw new Error('the expected moment never came');
 }
 
-/** Every animation has ended and nothing holds frames; then 500 ms of clock draw no frame. */
+/**
+ * Every animation has ended and nothing holds frames; then 500 ms of clock draw no frame. A card face or back still
+ * loading (in real time, not on the page's paused clock) asks for one frame when it lands, so the quiet 500 ms are
+ * polled for, as feel/helpers.ts idleFramesStop does: it fails only if frames keep coming.
+ */
 async function endsAndStops(page: Page): Promise<void> {
   await until(page, (m) => m.running.length === 0 && m.holds.length === 0, 3000);
-  // One last frame may be in flight.
-  await step(page, 64);
-  const a = await framesDrawn(page);
-  await step(page, 500);
-  expect(await framesDrawn(page)).toBe(a);
+  await expect
+    .poll(
+      async () => {
+        // One last frame may be in flight.
+        await step(page, 64);
+        const a = await framesDrawn(page);
+        await step(page, 500);
+        return (await framesDrawn(page)) - a;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(0);
 }
 
 async function table(page: Page, tag: string, info: Parameters<typeof profileFor>[0]): Promise<void> {

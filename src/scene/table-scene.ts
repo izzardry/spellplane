@@ -3998,6 +3998,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const inst = state.cards[card];
       if (!inst) return;
       let rc = rcards.get(card);
+      // A card still on its flight into the hand fan (startLeaving) is picked up from the fan: the flight ends here and
+      // the drag carries a fresh card, so the frame that ends the flight does not drop the card being dragged.
+      if (rc?.leaving) {
+        rcards.delete(card);
+        rc = undefined;
+      }
       const added: InstanceId[] = [];
       if (!rc) {
         const p = screenToTable(x, y);
