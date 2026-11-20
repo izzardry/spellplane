@@ -86,5 +86,7 @@ test('Remove then UNDO restores; Remove and the clock running on removes the rec
 test('the empty line', async ({ page }) => {
   await openHomeHarness(page, { profile: uniq('empty'), harness: 'history' });
   await expect(page.getByTestId('history-empty')).toHaveText('No games yet. Games you play are kept here, on this device, so you can leave and come back.');
+  // The protection line under the list says whether the browser may delete saved games (persistence.md section 3).
+  await expect(page.getByTestId('history-protection')).toContainText(/Saved games are protected in this browser\.|may delete saved games|Safari deletes saved games/);
   await designAudit(page);
 });

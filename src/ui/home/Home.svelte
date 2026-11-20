@@ -7,6 +7,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick as settled, untrack } from 'svelte';
   import BoosterSetupSheet from '../decks/BoosterSetupSheet.svelte';
+  import JoinSheet from '../lobby/JoinSheet.svelte';
   import BoosterFan from '../design/BoosterFan.svelte';
   import Button from '../design/Button.svelte';
   import CardFan from '../design/CardFan.svelte';
@@ -183,6 +184,17 @@
       deps.toast('Changing the boosters is not in this build yet.');
     }
   }
+  // JOIN A GAME… opens the lobby package's JoinSheet (paste a table link), the same way.
+  let joinOpen = $state(false);
+  let joinHost: HTMLElement | null = $state(null);
+  async function openJoin(): Promise<void> {
+    joinOpen = true;
+    await settled();
+    if (joinHost && joinHost.childElementCount === 0) {
+      joinOpen = false;
+      deps.toast('Joining by a pasted link is not in this build yet. Open the link itself.');
+    }
+  }
 
   async function primary(): Promise<void> {
     if (busy || view.primary.disabled) return;
@@ -335,6 +347,7 @@
     {:else if view.mode === 'private'}
       <Segmented label="Format" size="sm" value={prefs.private.format} options={[...FORMATS]} onchange={(v) => void save({ ...prefs, private: { ...prefs.private, format: v as HomePrefs['private']['format'] } })} data-testid="opt-private-format" />
       <Segmented label="Decks" size="sm" value={prefs.private.decks} options={[{ value: 'any', label: 'ANY DECK' }, { value: 'booster', label: 'BOOSTER DECKS ONLY' }]} onchange={(v) => void save({ ...prefs, private: { ...prefs.private, decks: v as 'any' | 'booster' } })} data-testid="opt-private-decks" />
+      <Button size="sm" variant="quiet" onclick={() => void openJoin()} data-testid="home-join">JOIN A GAME…</Button>
     {:else if view.mode === 'draft'}
       <Segmented label="Players" size="sm" value={prefs.draft.format} options={[...DRAFT_PLAYERS]} onchange={(v) => void save({ ...prefs, draft: { ...prefs.draft, format: v as HomePrefs['draft']['format'] } })} data-testid="opt-draft-players" />
     {/if}
@@ -372,6 +385,10 @@
     {#if recent > 5}<Button size="sm" variant="quiet" onclick={() => deps.go('#/history')}>{recent - 5} MORE GAMES</Button>{/if}
   </section>
 </div>
+
+{#if joinOpen}
+  <div class="booster-sheet" bind:this={joinHost} data-testid="home-join-sheet"><JoinSheet onclose={() => (joinOpen = false)} /></div>
+{/if}
 
 {#if boostersOpen}
   <div class="booster-sheet" bind:this={boosterHost} data-testid="home-booster-sheet">

@@ -92,7 +92,18 @@
     return seats?.[colour]?.colour ?? (i === 0 ? 'var(--ds-accent)' : 'var(--ds-ink)');
   }
 
-  onMount(() => void load());
+  // The protection line under the full list (persistence.md section 3): whether the browser may delete saved games.
+  let persisted = $state<boolean | null>(null);
+  const safari = typeof navigator !== 'undefined' && /Safari\//.test(navigator.userAgent) && !/Chrome|Chromium|Android/.test(navigator.userAgent);
+  const homeScreen = typeof matchMedia !== 'undefined' && matchMedia('(display-mode: standalone)').matches;
+  async function protect(): Promise<void> {
+    persisted = (await navigator.storage?.persist?.().catch(() => false)) ?? false;
+  }
+
+  onMount(() => {
+    void load();
+    if (limit === undefined) void navigator.storage?.persisted?.().then((p) => (persisted = p), () => undefined);
+  });
   onDestroy(() => {
     alive = false;
   });
@@ -152,12 +163,26 @@
       {/each}
     </ul>
   {/if}
+  {#if limit === undefined && persisted !== null}
+    <p class="history__protect" data-testid="history-protection">
+      {#if persisted}
+        Saved games are protected in this browser.
+      {:else if safari && !homeScreen}
+        Safari deletes saved games after seven days without a visit. Add Spellplane to the Home Screen, or export a backup.
+        <Button size="xs" variant="quiet" href="#/settings">HOW</Button>
+      {:else}
+        This browser may delete saved games when space is short.
+        <Button size="xs" variant="quiet" onclick={() => void protect()} data-testid="history-protect">PROTECT</Button>
+      {/if}
+    </p>
+  {/if}
 </div>
 
 <style>
   .history { display: flex; flex-direction: column; gap: 12px; width: 100%; min-width: 0; }
   .history__head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
   .history__rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+  .history__protect { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0; font-size: 12px; color: var(--ds-muted); }
   .history__empty { margin: 0; color: var(--ds-muted); font-size: 13px; }
   .hrow { display: flex; align-items: stretch; gap: 12px; box-sizing: border-box; min-height: 88px; padding: 8px 12px 8px 8px; border-radius: 12px; background: var(--ds-panel-raised); box-shadow: var(--ds-elevation-raised); }
   .hrow__open { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ds-ink); font: inherit; text-align: left; text-decoration: none; cursor: pointer; border-radius: 8px; }

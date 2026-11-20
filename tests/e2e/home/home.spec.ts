@@ -44,6 +44,10 @@ test('with a fixture deck the hero shows name, count and curve; switching mode c
   await test.step('mode cards change the label', async () => {
     await page.getByTestId('mode-private').click();
     await expect(page.getByTestId('home-primary')).toHaveText('CREATE TABLE');
+    await designAudit(page);
+    // JOIN A GAME… opens the lobby package's sheet; while that part draws nothing it says so.
+    await page.getByTestId('home-join').click();
+    await expect.poll(() => page.evaluate(() => window.__homeHarness!.toasts())).toContain('Joining by a pasted link is not in this build yet. Open the link itself.');
     await page.getByTestId('mode-quick').click();
     await expect(page.getByTestId('home-primary')).toHaveText('FIND MATCH');
     await expect(page.getByTestId('home-status')).toHaveText('Connects your browser directly to other players who are looking. They see your name and network address.');
