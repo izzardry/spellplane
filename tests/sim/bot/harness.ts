@@ -35,7 +35,7 @@ export function fixtureCards(): CardData[] {
   return all;
 }
 export function starterPoolFixture(): CardData[] {
-  return JSON.parse(readFileSync(join(FIXTURES, 'scryfall', 'starter-pool.m19.json'), 'utf8')) as CardData[];
+  return JSON.parse(readFileSync(join(FIXTURES, 'starter', 'starter-pool.m19.json'), 'utf8')) as CardData[];
 }
 let src: FixtureCardDataSource | null = null;
 export function cards(): FixtureCardDataSource {

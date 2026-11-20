@@ -12,7 +12,7 @@ import type { CardData } from '../../../src/data/types';
 import { fixtureStarterPool } from '../../../src/debug/fixture-starter';
 
 const FIXTURES = fileURLToPath(new URL('../../fixtures', import.meta.url));
-const POOL = JSON.parse(readFileSync(join(FIXTURES, 'scryfall', 'starter-pool.m19.json'), 'utf8')) as CardData[];
+const POOL = JSON.parse(readFileSync(join(FIXTURES, 'starter', 'starter-pool.m19.json'), 'utf8')) as CardData[];
 const M19 = JSON.parse(readFileSync(join(FIXTURES, 'scryfall', 'm19.json'), 'utf8')) as CardData[];
 const byId = new Map(POOL.map((c) => [c.id, c]));
 const slot = (mv: number): number => Math.min(5, Math.max(0, mv - 1));

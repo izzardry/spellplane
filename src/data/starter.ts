@@ -6,7 +6,7 @@
  * borrows from the nearest slot. Pure and seeded: the same pool, colour and seed give the same deck.
  *
  * In production the pool comes from one Scryfall search per set at runtime (`cardSourcePool`), cached for the page;
- * in tests from `src/debug/fixture-starter.ts` over `tests/fixtures/scryfall/starter-pool.m19.json`. Card data is
+ * in tests from `src/debug/fixture-starter.ts` over `tests/fixtures/starter/starter-pool.m19.json`. Card data is
  * never bundled.
  */
 import { sha256Sync } from '../core/sha256';

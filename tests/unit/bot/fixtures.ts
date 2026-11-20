@@ -8,7 +8,7 @@ import type { CardData } from '../../../src/data/types';
 
 const FIXTURES = fileURLToPath(new URL('../../fixtures', import.meta.url));
 export const M19 = JSON.parse(readFileSync(join(FIXTURES, 'scryfall', 'm19.json'), 'utf8')) as CardData[];
-export const POOL = JSON.parse(readFileSync(join(FIXTURES, 'scryfall', 'starter-pool.m19.json'), 'utf8')) as CardData[];
+export const POOL = JSON.parse(readFileSync(join(FIXTURES, 'starter', 'starter-pool.m19.json'), 'utf8')) as CardData[];
 
 export function card(name: string): CardData {
   const c = M19.find((x) => x.name === name);
