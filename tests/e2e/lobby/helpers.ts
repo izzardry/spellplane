@@ -70,6 +70,6 @@ export async function twoPages(browser: Browser): Promise<{ context: BrowserCont
  * Loaded means the field holds the stored nickname, or is flagged invalid because a fresh profile has none.
  */
 export async function startPageLoaded(page: Page): Promise<void> {
-  // The identity has loaded (M7-P2: the nickname's problem shows only once the player typed, so the page says it).
-  await expect(page.getByTestId('start-page')).toHaveAttribute('data-loaded', 'true', { timeout: 15_000 });
+  const input = page.getByTestId('nickname');
+  await expect.poll(async () => (await input.getAttribute('aria-invalid')) === 'true' || (await input.inputValue()) !== '', { timeout: 15_000 }).toBe(true);
 }

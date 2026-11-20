@@ -35,12 +35,15 @@ export async function openLog(page: Page, how: Press = 'click'): Promise<void> {
 }
 
 /**
- * Propose "Next game" or "New draft": in a match from the HUD's Menu, confirmed in its dialog; between games (the
- * builder) from the evening bar, as before.
+ * Propose "Next game" or "New draft": from the evening bar where it shows, else (a match whose HUD has `evening`) from
+ * the HUD's Menu, confirmed in its dialog.
  */
 export async function propose(page: Page, event: 'nextGame' | 'newDraft', how: Press = 'click'): Promise<void> {
-  if ((await page.locator('[data-testid="stage"][data-stage="match"]').count()) === 0) {
-    await page.locator(`[data-testid="evening-bar"] [data-testid="propose-${event}"]`)[how]();
+  // The evening bar when the stage shows it (between games, and in a match while the shell does not pass `evening` to
+  // the HUD: m8's ui/flow/Stage.svelte), else the HUD's Menu.
+  const bar = page.locator(`[data-testid="evening-bar"] [data-testid="propose-${event}"]`);
+  if ((await page.locator('[data-testid="stage"][data-stage="match"]').count()) === 0 || (await bar.isVisible())) {
+    await bar[how]();
     return;
   }
   await menuItem(page, `propose-${event}`, how);

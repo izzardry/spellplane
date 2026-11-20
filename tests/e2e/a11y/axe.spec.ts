@@ -162,7 +162,7 @@ test.describe('axe: panels, prompts and notices (M5 review)', () => {
     expect(await seriousViolations(page, '[data-testid="avatar"][data-seat="s1"]')).toEqual([]);
     // Still told apart from a present player without dimming: a dashed frame and the "away" label.
     expect(await ben.evaluate((el) => getComputedStyle(el).borderTopStyle)).toBe('dashed');
-    await expect(ben.getByTestId('away')).toHaveText('away');
+    await expect(ben.getByTestId('away')).toHaveText('AWAY');
   });
 
   test('the audit panel after a two-player game (and the confirm prompt of "Next game")', async ({ browser }, info) => {

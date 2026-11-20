@@ -225,6 +225,8 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     // H returns it to the hand: the log now has a line naming it, earlier in the DOM than the hand fan.
     await page.keyboard.press('KeyH');
     await expect.poll(async () => (await ui<{ cards: Record<string, { zone: string }> }>(page, 'state')).cards.bf1?.zone).toBe('hand:s0');
+    // M7-P2: the log is closed on entry; open it so its line names the card.
+    await openLog(page);
     const logCard = page.locator('[data-testid="log"] [data-card="bf1"]').first();
     await expect(logCard).toBeVisible();
     await page.keyboard.press('ArrowUp');
@@ -252,6 +254,7 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('cheat-sheet')).toHaveCount(0);
     // A key pressed in the log lines (a scroller Chromium lets the keyboard focus) scrolls them instead.
+    await openLog(page);
     for (const key of ['PageDown', 'ArrowDown']) await page.getByTestId('log-lines').dispatchEvent('keydown', { key, code: key, bubbles: true, cancelable: true });
     expect(await focus(page)).toBeNull();
     await page.keyboard.press('ArrowRight');
@@ -317,6 +320,7 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
 test.describe('the log as a live region (PLAN M5-P4)', () => {
   test('a new log line is announced once, politely; a filter change announces nothing; the log list itself is not live', async ({ page }) => {
     await openHud(page);
+    await openLog(page);
     await expect(page.getByTestId('live-polite')).toHaveAttribute('aria-live', 'polite');
     await expect(page.getByTestId('live-assertive')).toHaveAttribute('aria-live', 'assertive');
     expect(await page.getByTestId('log-lines').getAttribute('aria-live')).toBeNull();

@@ -167,6 +167,8 @@ test('dragging the clip off onto empty table removes it; the clip tray clips an 
   await mouseDrag(page, at, { x: at.x - 250 * k, y: at.y + 150 * k });
   await expect.poll(() => clipCount(page)).toBe(0);
   // Again, then its context menu's Remove clip.
+  await page.getByTestId('open-menu').click();
+  box = (await tray.boundingBox())!;
   await mouseDrag(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 }, p);
   await expect.poll(() => clipCount(page)).toBe(1);
   const at2 = await clipCentre(page);
