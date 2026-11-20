@@ -161,6 +161,8 @@ export class CoachController {
   private ready = false;
   private facts: CoachFacts = { ...NO_FACTS };
   private shown: CoachMarkId | null = null;
+  /** Look, do not touch (TableScene.setReadOnly): no mark shows and the table's changes teach nothing. */
+  private paused = false;
   private readonly listeners = new Set<(id: CoachMarkId | null) => void>();
 
   constructor(private readonly settings: SettingsStore | null | undefined) {}
@@ -194,8 +196,20 @@ export class CoachController {
     this.refresh();
   }
 
+  /**
+   * Pause while the table is read-only (M7-P5): no mark shows, and what changes meanwhile (other players' moves, a
+   * catch-up) marks nothing done; after it the facts carry on from the table as it is then.
+   */
+  pause(on: boolean, now?: CoachFacts): void {
+    if (on === this.paused) return;
+    this.paused = on;
+    if (!on && now) this.facts = now;
+    this.refresh();
+  }
+
   /** The table changed: marks whose action happened are done; the next one whose moment came shows. */
   update(next: CoachFacts): void {
+    if (this.paused) return;
     const before = this.facts;
     this.facts = next;
     const did = TABLE_COACH_MARKS.filter((id) => !this.seen.includes(id) && coachDone(id, before, next));
@@ -236,7 +250,7 @@ export class CoachController {
   }
 
   private refresh(): void {
-    const next = this.ready ? nextCoach(this.seen, this.facts) : null;
+    const next = this.ready && !this.paused ? nextCoach(this.seen, this.facts) : null;
     if (next === this.shown) return;
     this.shown = next;
     for (const fn of [...this.listeners]) fn(next);

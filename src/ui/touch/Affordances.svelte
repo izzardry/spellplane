@@ -86,10 +86,15 @@
       identity,
       selected: selection,
       pileActions: pile !== null,
-      spectator: spectator || readOnly,
+      spectator,
       myTurn: me !== null && isOwnTurn(st, me),
     });
-    untrack(() => coach.update(facts));
+    // A read-only table pauses the marks: none shows and nothing is taught by what changes meanwhile.
+    const ro = readOnly;
+    untrack(() => {
+      coach.pause(ro, facts);
+      coach.update(facts);
+    });
   });
 
   onMount(() => {
