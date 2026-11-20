@@ -117,8 +117,10 @@
   });
 
   // ---- loading -------------------------------------------------------------------------------------------------
+  let destroyed = false;
   async function load(): Promise<void> {
     const d = await env.decks.get(id).catch(() => null);
+    if (destroyed) return;
     if (!d) {
       status = 'gone';
       return;
@@ -130,7 +132,8 @@
     const sids = [...new Set([...d.main, ...d.side, ...(d.seal?.pool ?? [])].map((r) => r.sid))];
     await env.cardData.getMany(sids).catch(() => ({}));
     basics = await basicRefs(env.cardData, d.seal?.sets[0]);
-    editor?.dispose();
+    if (destroyed) return;
+    void editor?.dispose();
     editor = new DeckEditor(d, {
       store: env.decks,
       lookup,
@@ -315,6 +318,7 @@
     });
   });
   onDestroy(() => {
+    destroyed = true;
     if (timer) clearTimeout(timer);
     window.removeEventListener('keydown', keys);
     window.removeEventListener('pagehide', pagehide);

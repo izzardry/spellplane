@@ -10,7 +10,7 @@
   import { onMount } from 'svelte';
   import type { SetCode } from '../../core/types';
   import { parseDecklist } from '../../data/decklist';
-  import { latestCoreSet } from '../../data/sets';
+  import { FALLBACK_CORE_SET, latestCoreSet } from '../../data/sets';
   import { buildStarterDeck, STARTER_AVAILABLE } from '../../data/starter';
   import type { CardData } from '../../data/types';
   import type { BoosterSetup, DeckRecord } from '../../store/types';
@@ -28,7 +28,9 @@
 
   let { env, path = undefined }: { env: DecksEnv; path?: string | undefined } = $props();
 
-  let setup = $state<BoosterSetup>({ how: 'sealed', packs: DEFAULT_PACKS, picks: 1, sets: ['M21'], pickTimer: false });
+  let setup = $state<BoosterSetup>({ how: 'sealed', packs: DEFAULT_PACKS, picks: 1, sets: [FALLBACK_CORE_SET], pickTimer: false });
+  /** The set was chosen by hand (no fallback then: decks.md section 6 "Fallback"). */
+  let chosenByHand = false;
   let showSetup = $state(false);
   let importing = $state(false);
   let opening = $state(false);
@@ -49,12 +51,17 @@
     if (opening) return;
     opening = true;
     failure = null;
+    const deps = { decks: env.decks, sets: env.sets, cardData: env.cardData, newId: env.newId, now: env.now };
     try {
-      const d = await openBoosterDeck(
-        { decks: env.decks, sets: env.sets, cardData: env.cardData, newId: env.newId, now: env.now },
-        v.packs,
-        [...v.sets] as SetCode[],
-      );
+      let d;
+      try {
+        d = await openBoosterDeck(deps, v.packs, [...v.sets] as SetCode[]);
+      } catch (e) {
+        // The default (latest core) set cannot make packs here: fall back to Core Set 2021 and say so (decks.md D9).
+        if (chosenByHand || v.sets.every((s) => s === FALLBACK_CORE_SET)) throw e;
+        toasts.info(`${v.sets[0]} boosters could not be made here. Using Core Set 2021.`);
+        d = await openBoosterDeck(deps, v.packs, [FALLBACK_CORE_SET]);
+      }
       showSetup = false;
       env.go(`#/decks/${encodeURIComponent(d.id)}/open`);
     } catch (e) {
@@ -153,7 +160,10 @@
   {#if failure}<StatusLine tone="danger" data-testid="open-failure">{failure}</StatusLine>{/if}
 
   {#if showSetup}
-    <BoosterSetupSheet value={setup} mode="deck" sets={env.sets} busy={opening} onchange={(v) => (setup = v)} onclose={() => (showSetup = false)} onopen={(v) => void open(v)} />
+    <BoosterSetupSheet value={setup} mode="deck" sets={env.sets} busy={opening} {failure} onchange={(v) => {
+        if (v.sets[0] !== setup.sets[0]) chosenByHand = true;
+        setup = v;
+      }} onclose={() => (showSetup = false)} onopen={(v) => void open(v)} />
   {/if}
   {#if importing}
     <div class="ds-scrim import" data-ds-layer="dialog">

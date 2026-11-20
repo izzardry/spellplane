@@ -24,6 +24,7 @@
     onclose = undefined,
     onopen = undefined,
     busy = false,
+    failure = null,
   }: {
     value: BoosterSetup;
     mode: 'deck' | 'draft';
@@ -34,11 +35,12 @@
     /** `deck` mode: OPEN with the value. */
     onopen?: ((value: BoosterSetup) => void) | undefined;
     busy?: boolean;
+    /** Why the last OPEN failed (no booster data for the set, or no connection). */
+    failure?: string | null;
   } = $props();
 
   let list = $state.raw<SetSummary[]>(boosterSetOrder(FEATURED_SET_INFO));
   let latest = $state<string>(latestCoreSet(FEATURED_SET_INFO));
-  let noData = $state(false);
 
   onMount(() => {
     if (!sets) return;
@@ -61,11 +63,6 @@
   function change(next: Partial<BoosterSetup>): void {
     const v = { ...value, ...next };
     onchange?.(v);
-    void checkData(v.sets[0]);
-  }
-  async function checkData(code: string | undefined): Promise<void> {
-    if (!sets || !code) return;
-    noData = (await sets.get(code).catch(() => null)) === null;
   }
   function stepSet(d: number): void {
     if (list.length === 0) return;
@@ -75,7 +72,6 @@
   function stepPacks(d: number): void {
     change({ packs: Math.min(range.max, Math.max(range.min, value.packs + d)) });
   }
-  onMount(() => void checkData(set));
 </script>
 
 <div class="ds-scrim" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && onclose?.()}>
@@ -140,10 +136,10 @@
         />
       </div>
     {/if}
-    {#if noData}<StatusLine tone="danger" data-testid="setup-nodata">No booster data for this set</StatusLine>{/if}
+    {#if failure}<StatusLine tone="danger" data-testid="setup-failure">{failure}</StatusLine>{/if}
     <div class="ds-sheet__foot">
       {#if mode === 'deck' && onopen}
-        <Button variant="primary" size="lg" data-testid="setup-open" disabled={busy || noData} waiting={busy} onclick={() => onopen?.(value)}>{busy ? 'Opening…' : 'Open'}</Button>
+        <Button variant="primary" size="lg" data-testid="setup-open" disabled={busy} waiting={busy} onclick={() => onopen?.(value)}>{busy ? 'Opening…' : 'Open'}</Button>
       {:else}
         <Button variant="primary" data-testid="setup-done" onclick={() => onclose?.()}>Done</Button>
       {/if}
