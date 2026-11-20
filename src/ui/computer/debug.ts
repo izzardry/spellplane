@@ -5,7 +5,7 @@
  * `?harness=computer` page register the part. Dev and test builds only (registerDebug is a no-op in production).
  */
 import type { BotRunner } from '../../bot/runner';
-import { ManualClock } from '../../bot/runner';
+import { ManualClock } from '../../bot/clock';
 import type { BotClock, BotConfig, BotPace, BotStatus, BotStep, BotView } from '../../bot/types';
 
 /** The `bot` part of window.__spellplane (a superset of debug/types.ts BotDebug). */

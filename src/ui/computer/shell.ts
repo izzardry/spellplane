@@ -1,9 +1,9 @@
 /**
- * What the computer route adds to the table frame (contracts.md Part C `extraShell`; Part G "Computer opponent"),
- * without the frame: the combat cue for the HUD's primary button (`primaryOverride`), Sparring's plate badge and plate
- * menu items (Pause / Resume Sparring, Sparring concedes), the one coach mark on the cue (once per profile), and the
- * pause while the page is hidden. ComputerRoute.svelte renders these into the frame's slots once the frame lands on
- * `m8` (M8-C's UI commit); until then this module is the tested part of the route.
+ * What the computer route adds to the table frame (contracts.md Part C `extraShell`; Part G "Computer opponent"), as
+ * plain functions ComputerRoute.svelte renders into the frame's slots: the combat cue for the primary button
+ * (`primaryOverride`, with `Main 2` once Sparring counted the human's combat), Sparring's plate menu items (Pause /
+ * Resume Sparring, Sparring concedes), whether the one coach mark on the cue is due (once per profile), and the pause
+ * while the page is hidden.
  */
 import { damageCounted } from '../../bot/cues';
 import { CUE_LABELS } from '../../bot/types';
