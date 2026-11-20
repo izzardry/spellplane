@@ -21,6 +21,8 @@ export interface EditorDeps {
   clearTimer?: (t: unknown) => void;
   /** Called after every change of the open record or of the undo stacks. */
   onchange?: (deck: DeckRecord) => void;
+  /** A save reached the store and nothing newer is waiting. */
+  onsaved?: () => void;
   /** A save failed (quota): the deck stays open and dirty. */
   onsaveerror?: (e: unknown) => void;
 }
@@ -113,6 +115,9 @@ export class DeckEditor {
     this.current = record;
     this.saving = this.saving
       .then(() => this.deps.store.put(record))
+      .then(() => {
+        if (!this.dirty) this.deps.onsaved?.();
+      })
       .catch((e: unknown) => {
         this.dirty = true;
         this.deps.onsaveerror?.(e);

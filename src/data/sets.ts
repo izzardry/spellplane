@@ -6,7 +6,7 @@
  * Only set codes, names and release dates live here, so the featured sets are listed even before (or without) any
  * network access; their card and booster data is fetched from MTGJSON at runtime like every other set.
  */
-import type { SetCode, SetSummary } from './types';
+import type { SetCode, SetData, SetDataSource, SetSummary } from './types';
 import { FEATURED_SETS } from './types';
 
 /** Names and release dates of the featured sets, in FEATURED_SETS order. */
@@ -83,4 +83,23 @@ export function boosterSetOrder(summaries: readonly SetSummary[]): SetSummary[] 
   const cores = list.filter((s) => s.code !== latest && core(s)).sort(newest);
   const rest = list.filter((s) => s.code !== latest && !core(s)).sort(newest);
   return [...first, ...cores, ...rest];
+}
+
+/** Set data from a fixed list (the fixture source of dev and test builds, the decks harness), featured sets first, then by release date; lookups never fetch. Every fixture set is a core set (M8-P3). */
+export function listSetSource(sets: readonly SetData[]): SetDataSource {
+  const byCode = new Map(sets.map((s) => [s.code.toUpperCase(), s] as const));
+  const rank = (c: SetCode): number => {
+    const i = (FEATURED_SETS as readonly string[]).indexOf(c);
+    return i < 0 ? FEATURED_SETS.length : i;
+  };
+  return {
+    listSets: () =>
+      Promise.resolve(
+        [...byCode.values()]
+          .map((s) => ({ code: s.code, name: s.name, releaseDate: s.releaseDate, featured: rank(s.code) < FEATURED_SETS.length, type: 'core' }))
+          .sort((a, b) => rank(a.code) - rank(b.code) || (a.releaseDate < b.releaseDate ? -1 : a.releaseDate > b.releaseDate ? 1 : 0)),
+      ),
+    get: (code) => Promise.resolve(byCode.get(code.toUpperCase()) ?? null),
+    peek: (code) => byCode.get(code.toUpperCase()) ?? null,
+  };
 }

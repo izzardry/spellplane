@@ -128,3 +128,23 @@ export async function finishOpening(deps: Pick<OpenDeps, 'decks' | 'cardData' | 
   await deps.decks.put(out);
   return { deck: out, suggestion };
 }
+
+const suggestOnOpen = new Set<string>();
+
+/** The opening ended: the deck page applies the suggestion as its first (undoable) edit (contracts.md Part G "Decks" item 1). */
+export function markSuggest(id: string): void {
+  suggestOnOpen.add(id);
+}
+
+/** Whether the deck page should apply the suggestion now (once). */
+export function takeSuggest(id: string): boolean {
+  return suggestOnOpen.delete(id);
+}
+
+/** Record that the opening showed `revealed` packs (a reload resumes there). */
+export async function saveRevealed(decks: DeckStore, deck: DeckRecord, revealed: number, now: number): Promise<DeckRecord> {
+  if (!deck.seal) return deck;
+  const next: DeckRecord = { ...deck, seal: { ...deck.seal, revealed: Math.min(revealed, deck.seal.sets.length) }, updatedAt: now };
+  await decks.put(next);
+  return next;
+}

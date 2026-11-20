@@ -158,3 +158,15 @@ export class DeckLibrary {
     }
   }
 }
+
+const fresh = new Set<string>();
+
+/** A new custom deck made by the chooser: written at once so its page can open it, removed again if left untouched. */
+export function markFresh(id: string): void {
+  fresh.add(id);
+}
+
+/** Whether the deck was made by the chooser and not edited since (and forget it). */
+export function takeFresh(id: string): boolean {
+  return fresh.delete(id);
+}
