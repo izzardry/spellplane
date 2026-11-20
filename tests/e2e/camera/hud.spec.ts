@@ -41,10 +41,14 @@ test('a later change of the follow toggles reaches the scene, turning one off to
   ]);
 });
 
-test('the View button moves the camera tilt to the other end, as P does', async ({ page }) => {
+test('"Switch perspective" in the Menu moves the camera tilt to the other end, as P does', async ({ page }) => {
   await openHud(page);
-  await page.getByTestId('perspective').click();
-  // The one continuous tilt (M7-C): from bird's-eye (1) the button goes to first person (0).
+  // M7-P2: the toolbar's View button moved into the Menu (the View control under Activity is the visible handle).
+  await page.getByTestId('open-menu').click();
+  const item = page.getByTestId('menu-popover').getByTestId('perspective');
+  // The key shows on the item's right, muted (docs/design/m7-hud-proposal.md, In the menu).
+  await expect(item).toContainText('P');
+  await item.click();
+  // The one continuous tilt (M7-C): from bird's-eye (1) the item goes to first person (0).
   await expect.poll(() => ui<Call[]>(page, 'scene')).toContainEqual({ method: 'camera.setTilt', args: [0] });
-  await expect(page.getByTestId('perspective')).toContainText('P');
 });

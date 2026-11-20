@@ -181,17 +181,22 @@ test.describe('Dusk look', () => {
     expect(opened.errors).toEqual([]);
   });
 
-  test('a dark HUD: avatars take Dusk’s tokens', async ({ page }) => {
+  test('a dark HUD: avatars are HUD panels in the kit’s tokens, the page keeps Dusk’s dark scheme', async ({ page }) => {
     const opened = await openDusk(page);
     const avatar = page.locator('[data-testid="avatar"][data-seat="s0"]');
     await expect(avatar).toBeVisible();
     const style = await avatar.evaluate((el) => {
+      // Since M7 (M7-C decision) the plate is a design-kit panel: it wears the HUD's `--ds-panel` and `--ds-ink`, which
+      // the app's HUD sets from the viewer's look (ui/design/css.ts lookCssVars). This page sets only Dusk's `--sp-*`,
+      // so the kit tokens are given here and the plate must follow them.
+      const host = el.parentElement!;
+      host.style.setProperty('--ds-panel', 'rgb(20, 18, 24)');
+      host.style.setProperty('--ds-ink', 'rgb(236, 230, 218)');
       const cs = getComputedStyle(el);
       return { bg: cs.backgroundColor, fg: cs.color, scheme: getComputedStyle(el.parentElement!.parentElement!).colorScheme };
     });
     expect(style.scheme).toBe('dark');
-    // As in the app (hudCssVars): the avatar is a HUD panel (tokens.hud.panel), not the felt, with light text (fg).
-    expect(style.bg).toBe('rgba(20, 18, 24, 0.9)');
+    expect(style.bg).toBe('rgb(20, 18, 24)');
     expect(style.fg).toBe('rgb(236, 230, 218)');
     expect(opened.errors).toEqual([]);
   });

@@ -186,7 +186,9 @@ test('with "Talk while I hold or drag" on, a held drag talks until release and a
   await a.mouse.up();
   await expect.poll(() => enabled(a)).toEqual([false]);
 
-  // A press on the HUD (the log panel) is not a table press.
+  // A press on the HUD (the log panel, opened from its activity button since M7-P2) is not a table press.
+  await a.getByTestId('open-log').click();
+  await expect(a.locator('[data-testid="log"][data-open="true"]')).toBeVisible();
   await record(a);
   const log = a.getByTestId('log');
   const box = (await log.boundingBox())!;
@@ -195,6 +197,7 @@ test('with "Talk while I hold or drag" on, a held drag talks until release and a
   await a.waitForTimeout(500);
   await a.mouse.up();
   expect(await seen(a)).toEqual([]);
+  await a.getByTestId('close-log').click();
 
   // Ben never turned it on: his held drag stays silent.
   await b.bringToFront();

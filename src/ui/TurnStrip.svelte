@@ -172,6 +172,15 @@
     transform: translateX(-50%);
     pointer-events: auto;
   }
+  /* The kit's buttons take pointer events on their own: while the sub-steps are closed (invisible) they must not
+     catch a press meant for what lies under them (the stack chip). */
+  .subs .sub {
+    pointer-events: none;
+  }
+  .group:hover .subs .sub,
+  .group:focus-within .subs .sub {
+    pointer-events: auto;
+  }
   .sub {
     min-height: 28px;
     padding: 0 var(--ds-space-sm);

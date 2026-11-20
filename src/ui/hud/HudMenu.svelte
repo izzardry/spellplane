@@ -27,6 +27,28 @@
     top?: Snippet<[() => void]> | undefined;
   } = $props();
   let el = $state<HTMLElement | undefined>();
+  /**
+   * A press that started a drag out of the menu (the paperclip): the menu hides at once but stays in the page until that
+   * pointer is released, so the press's target is not removed under it and the drag's moves still reach the window.
+   */
+  let handing = $state(false);
+  let handOff: (() => void) | null = null;
+  function handOver(e: PointerEvent): void {
+    handing = true;
+    const pointer = e.pointerId;
+    const end = (ev: PointerEvent): void => {
+      if (ev.pointerId !== pointer) return;
+      handOff?.();
+      onclose();
+    };
+    handOff = () => {
+      window.removeEventListener('pointerup', end, true);
+      window.removeEventListener('pointercancel', end, true);
+      handOff = null;
+    };
+    window.addEventListener('pointerup', end, true);
+    window.addEventListener('pointercancel', end, true);
+  }
 
   function items(): HTMLElement[] {
     return el ? [...el.querySelectorAll<HTMLElement>('[role="menuitem"]:not(:disabled), .sp-menu-top button:not(:disabled)')] : [];
@@ -61,12 +83,15 @@
       onclose();
     };
     window.addEventListener('pointerdown', away, true);
-    return () => window.removeEventListener('pointerdown', away, true);
+    return () => {
+      window.removeEventListener('pointerdown', away, true);
+      handOff?.();
+    };
   });
   const shown = $derived(groups.filter((g) => g.items.length));
 </script>
 
-<div bind:this={el} class="ds-pop ds-menu sp-menu" role="menu" aria-label={label} data-testid={testid} tabindex="-1" onkeydown={key}>
+<div bind:this={el} class="ds-pop ds-menu sp-menu" class:sp-handing={handing} role="menu" aria-label={label} data-testid={testid} tabindex="-1" onkeydown={key}>
   {#if top}
     <div class="sp-menu-top" data-testid="menu-top-slot">{@render top(onclose)}</div>
     {#if shown.length}<div class="sp-menu-divider" role="separator"></div>{/if}
@@ -87,7 +112,7 @@
           onpointerdown={item.onpointerdown
             ? (e) => {
                 item.onpointerdown?.(e);
-                onclose();
+                handOver(e);
               }
             : undefined}
           onclick={() => {
@@ -103,6 +128,9 @@
 </div>
 
 <style>
+  .sp-handing {
+    visibility: hidden;
+  }
   .sp-menu {
     max-height: calc(100vh - 80px);
     overflow-y: auto;
