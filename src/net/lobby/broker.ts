@@ -222,6 +222,10 @@ class Stepper {
   }
   /** Linked: each side connected to the other as far as this browser knows. */
   linked(a: string, b: string): boolean {
+    // A peer this browser hears from is connected to it (beats go only over open connections); a beat's own list may
+    // arrive out of order, so a pair with this browser is judged by this browser's own links.
+    if (a === this.s.tid) return this.s.links.includes(b) && this.s.peers[b] !== undefined;
+    if (b === this.s.tid) return this.s.links.includes(a) && this.s.peers[a] !== undefined;
     const linksOf = (t: string): readonly string[] => (t === this.s.tid ? this.s.links : (this.s.peers[t]?.links ?? []));
     return linksOf(a).includes(b) && linksOf(b).includes(a);
   }
