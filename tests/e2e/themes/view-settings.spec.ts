@@ -32,10 +32,10 @@ test('quality and follow toggles set in the picker reach the scene, survive a th
   await expect(followStack).not.toBeChecked();
   await expect(followActive).not.toBeChecked();
 
-  // Paper has one level: the choice is kept, the level shown stays Paper's.
+  // Plain (the default table, M7-P1) has its own low level: the card's contact shadow goes, and there is no post-processing at any level.
   await quality.selectOption('low');
   await expect.poll(() => choice(page)).toBe('low');
-  expect(await stats(page)).toMatchObject({ theme: 'plain', quality: 'high' /* M8-C: Plain is the default table */ });
+  await expect.poll(() => stats(page)).toMatchObject({ theme: 'plain', quality: 'low', shadows: false, passes: [] });
 
   // Keyboard: Space toggles a focused checkbox.
   await followStack.focus();

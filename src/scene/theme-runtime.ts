@@ -9,7 +9,7 @@
  * maps) before building the new one, so GPU textures do not pile up across switches (PLAN M4-P2).
  */
 import * as THREE from 'three';
-import { qualityLevel, type QualityId, type QualityLevel, type SceneContext, type Theme, type ThemeInstance } from '../themes/types';
+import { qualityLevel, type MarkRect, type QualityId, type QualityLevel, type SceneContext, type TableMarks, type Theme, type ThemeInstance } from '../themes/types';
 import { applyLightShadows, CAST_SHADOW, createLightRig, keyLightOf, type LightRig } from './lights';
 import { createMaterialLibrary, keyLightUniform, type MaterialLibraryImpl } from './materials';
 import { createPostPipeline, type PostPipelineImpl } from './post';
@@ -63,6 +63,22 @@ export function tableTurnMatrix(deg: number): THREE.Matrix4 {
   return new THREE.Matrix4().makeBasis(new THREE.Vector3(ax, 0, -ay), new THREE.Vector3(0, 1, 0), new THREE.Vector3(bx, 0, -by));
 }
 
+/** Marks turned `deg` clockwise about the table centre (scene/math.ts rot2). Added by M7-P1. */
+export function turnMarks(m: TableMarks, deg: number): TableMarks {
+  if (!deg) return m;
+  const pt = (x: number, y: number) => {
+    const [a, b] = rot2(x, y, deg);
+    return { x: a, y: b };
+  };
+  const rect = (r: MarkRect): MarkRect => ({ ...r, ...pt(r.x, r.y), rot: normDeg(r.rot + deg) });
+  return {
+    viewerAngle: normDeg(m.viewerAngle + deg),
+    seats: m.seats.map((s) => ({ ...s, territory: rect(s.territory), avatar: s.avatar ? pt(s.avatar.x, s.avatar.y) : null, angle: normDeg(s.angle + deg) })),
+    piles: m.piles.map((p) => ({ ...p, ...pt(p.x, p.y), rot: normDeg(p.rot + deg) })),
+    areas: m.areas.map((a) => ({ ...a, rect: rect(a.rect) })),
+  };
+}
+
 export class ThemeRuntime {
   readonly materials: MaterialLibraryImpl;
   readonly post: PostPipelineImpl;
@@ -82,6 +98,8 @@ export class ThemeRuntime {
   private scale = 1;
   /** A cap on the pixel ratio (scene/switches.ts `pr=`), or null. */
   private pixelRatioCap: number | null = null;
+  /** The table's marks in the canonical frame (M7-P1), handed to every build of a theme that draws them. */
+  private marks: TableMarks | null = null;
 
   constructor(
     private renderer: THREE.WebGLRenderer,
@@ -214,9 +232,25 @@ export class ThemeRuntime {
       }
     }
     this.applyShadows();
+    this.forwardMarks();
     const key = t.lighting.lit ? keyLightOf(t.lighting.lights, p.viewerAngle) : null;
     keyLightUniform(key, this.keyLight);
     this.materials.setKeyLight(key);
+  }
+
+  /**
+   * The zones of the current table for the theme's own pile and zone marks (themes/types.ts ThemeInstance.setMarks;
+   * M7-P1). Kept and handed to every later build; given in the canonical table frame, passed on in the frame the theme
+   * was built in (turned back by `tableRot`, which the runtime then applies to the theme's objects).
+   */
+  setMarks(marks: TableMarks | null): void {
+    this.marks = marks;
+    this.forwardMarks();
+  }
+
+  private forwardMarks(): void {
+    if (!this.marks || !this.instance?.setMarks) return;
+    this.instance.setMarks(turnMarks(this.marks, -normDeg(this.placement.tableRot ?? 0)));
   }
 
   /** Shadow maps on the lights that ask for them (the rig's and the theme's own). */

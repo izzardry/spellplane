@@ -152,13 +152,17 @@ test.describe('M4-P1 acceptance', () => {
     const table = (await layoutOf(page)).table;
     // The seat: CAMERA.ego.behindEdge behind the near edge (900 since M5-P7's ego framing; the spec's 260 before).
     const seatY = -table.d / 2 - CAMERA.ego.behindEdge;
+    // First person keeps the ego lens' pitch range; a right-drag now tilts on toward bird's-eye (PLAN Milestone 7, Owner
+    // decisions, Mouse controls: "Right-click dragging on the empty table orbits vertically, between first person (front
+    // view) and bird's-eye (top view)"), so after it the pitch may reach straight down, never beyond.
+    let maxPitch = 60;
     const check = async (what: string) => {
       await settle(page);
       const p = await pose(page);
       expect(p.position[2], what).toBeGreaterThanOrEqual(MIN_HEIGHT - 1e-6);
       expect(p.position[1], what).toBeGreaterThanOrEqual(seatY - 1e-6);
       expect(p.pitchDeg, what).toBeGreaterThanOrEqual(25 - 1e-9);
-      expect(p.pitchDeg, what).toBeLessThanOrEqual(60 + 1e-9);
+      expect(p.pitchDeg, what).toBeLessThanOrEqual(maxPitch + 1e-9);
       // The lean reaches the table's side edge, no further (DECISIONS [M4-P1]).
       expect(Math.abs(p.position[0]), what).toBeLessThanOrEqual(table.w / 2 + 1e-6);
       return p;
@@ -180,7 +184,8 @@ test.describe('M4-P1 acceptance', () => {
     await page.mouse.down({ button: 'right' });
     await page.mouse.move(empty.x, empty.y + 600, { steps: 12 });
     await page.mouse.up({ button: 'right' });
-    expect((await check('pitched down')).pitchDeg).toBe(60);
+    maxPitch = 90;
+    expect((await check('pitched down')).pitchDeg).toBeGreaterThan(60);
     await page.mouse.move(720, 450);
     for (let i = 0; i < 12; i++) await page.mouse.wheel(0, -400);
     await check('pitched down and wheeled in');
@@ -213,7 +218,9 @@ test.describe('M4-P1 acceptance', () => {
       c.panBy(-1e6, -1e6);
     });
     const p = await check('controls at the other limits');
-    expect(p.pitchDeg).toBe(25);
+    // Pitched up as far as it goes is tilt 0: first person at the ego lens' own pitch (the one continuous tilt has no
+    // second pitch axis below it; DECISIONS [M7-P1]), never below the ego range's minimum checked above.
+    expect(p.pitchDeg).toBeCloseTo(CAMERA.ego.pitchDeg, 6);
   });
 });
 

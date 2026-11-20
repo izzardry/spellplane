@@ -108,6 +108,7 @@ import type {
   RenderDebug,
   RenderStats,
   RigDebug,
+  SeatAnchor,
   TableCameraControls,
   DebugCamera,
   DebugCard,
@@ -125,7 +126,10 @@ import type {
   TablePressKind,
   ViewState,
 } from './types';
-import { TILT_PRESETS, cardFeel, clampTilt, rigForTilt, tiltForRig, type SetTiltOptions, type Tilt } from './types';
+import { markedGame, optionalMarkings, optionalZones, shownZones, tableMarks } from './table-marks';
+import { TILT_PRESETS, cardFeel, clampTilt, tiltForRig, type SetTiltOptions, type Tilt } from './types';
+import { TILT_PER_DRAG_PX, TILT_PER_SWIPE_PX, TILT_PER_WHEEL_PX } from './camera/tilt';
+import { seatAnchorOf } from './camera/anchors';
 
 /** A debug card with extra fields the scene's own tests read (zone, pile, which face is shown, ...). */
 export interface SceneDebugCard extends DebugCard {
@@ -284,8 +288,8 @@ type Gesture =
   | { kind: 'marquee'; pointerId: number; x0: number; y0: number; x1: number; y1: number; base: InstanceId[] }
   | { kind: 'line'; pointerId: number }
   | { kind: 'drag' }
-  /** Right-drag on empty table in the ego rig: pitch (DESIGN "Camera and navigation", Navigation gestures). */
-  | { kind: 'pitch'; pointerId: number; last: { x: number; y: number } };
+  /** Right- or middle-drag on empty table: the one continuous tilt (PLAN M7-P3: "mouse drag with the right or middle button vertically"). */
+  | { kind: 'tilt'; pointerId: number; last: { x: number; y: number } };
 
 /** What a drop in progress would do beyond the snap preview (M7-P5), with the ghost outlines it shows. */
 interface DragHint {
@@ -317,14 +321,25 @@ const GHOST_WIDTH_PX = 1;
 const MARKER_WIDTH_PX = 2;
 /** After a right-drag drew a line, the context menu that some platforms fire on release is ignored this long, ms. */
 const MENU_SUPPRESS_MS = 400;
-/** Right-drag pitch in the ego rig: degrees per CSS px dragged (down looks further down). */
-const PITCH_DEG_PER_PX = 0.2;
 /** A followed stack item counts as on screen when its centre is at least this far inside the viewport, CSS px. */
 const FOLLOW_MARGIN_PX = 40;
 /** How long a dropped card waits for the state to confirm its new pose before returning. */
 const EXPECT_MS = 1500;
 /** The gap the HUD keeps between the table's fit and the hand fan (ui/hand.ts FIT_INSET.handGap): not part of the fan's band, CSS px. */
 const HAND_BAND_GAP_PX = 8;
+/** The seat anchors are reported once the camera has rested this long after a change, ms (never per frame). */
+const SEAT_ANCHOR_SETTLE_MS = 120;
+
+/**
+ * The tilt a table opens at (PLAN M7-P3; scene/types.ts TableSceneOptions.tilt): the viewer's stored tilt, else an old
+ * rig asked for by name (its end of the tilt), else the theme's tilt (Theme.camera.tilt), else its preferred rig's end.
+ */
+export function startTilt(o: { tilt?: number; rig?: CameraRig }, theme: { camera: { defaultRig: CameraRig; tilt?: number } }): number {
+  if (typeof o.tilt === 'number') return clampTilt(o.tilt);
+  if (o.rig === 'birdseye' || o.rig === 'ego') return tiltForRig(o.rig);
+  if (typeof theme.camera.tilt === 'number') return clampTilt(theme.camera.tilt);
+  return tiltForRig(theme.camera.defaultRig);
+}
 
 export function createTableScene(host: HTMLElement, opts: TableSceneOptions): SceneHandle {
   let theme = opts.theme;
@@ -337,7 +352,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   // Measuring switches (scene/switches.ts; M7-A0).
   const switches = renderSwitches();
   const renderer = new THREE.WebGLRenderer({ antialias: switches.antialias ?? true, preserveDrawingBuffer: false });
-  // M8-C: counted while it lives (contracts.md Part C lifecycle counters).
+  // Counted while it lives (contracts.md Part C lifecycle counters).
   trackContext(renderer);
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, theme.quality[0]?.pixelRatio ?? 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -385,41 +400,6 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   overlay.name = 'overlay';
   const camera = new THREE.PerspectiveCamera(CAMERA.birdseye.fovDeg, 1, 10, 100000);
   const viewport = () => ({ w: Math.max(1, host.clientWidth || innerWidth), h: Math.max(1, host.clientHeight || innerHeight) });
-  // Both camera rigs and the blend between them (scene/camera/rig.ts, M4-P1).
-  const rig = new TableRig({
-    // The camera's table: turned to the viewer where seats sit at 120° (scene/layout.ts cameraTable; M5-P7).
-    table: cameraTable(layout, viewerAngle(null, layout, viewerSeat)),
-    viewport: viewport(),
-    angle: viewerAngle(null, layout, viewerSeat),
-    inertiaMs: theme.motion.panInertiaMs,
-    rig: opts.rig ?? theme.camera.defaultRig,
-    ego: theme.camera.ego,
-    tiltDeg: theme.camera.birdseyeTiltDeg,
-  });
-  /** Whether the viewer chose a rig (P); until then a theme switch brings the new theme's default rig. */
-  let rigChosen = opts.rig !== undefined;
-  /** The ego seat sits in front of the viewer's own territory (Three players, Two-Headed Giant share an edge). */
-  const viewerLateral = (st: TableState | null): number => {
-    const sl = st ? seatLayoutOf(st, layout, viewerSeat) : null;
-    return sl ? lateralOf(sl.territory, sl.angle) : 0;
-  };
-  /**
-   * What the default ego view keeps clear of the HUD (PLAN M5 owner decision "Ego framing shows your own piles"): the
-   * corners of the viewer's territory, pile column (library, graveyard, exile) and command area.
-   */
-  const egoKeepOf = (st: TableState | null): TablePoint[] => {
-    const sl = st ? seatLayoutOf(st, layout, viewerSeat) : null;
-    if (!sl) return [];
-    const cornersOf = (r: { x: number; y: number; w: number; d: number; rot: number }) =>
-      [
-        [-1, -1],
-        [1, -1],
-        [1, 1],
-        [-1, 1],
-      ].map(([u, v]) => rectPoint(r, (u! * r.w) / 2, (v! * r.d) / 2));
-    const pile = (p: Pose) => cornersOf({ ...p, w: CARD_W, d: CARD_H });
-    return [...cornersOf(sl.territory), ...pile(sl.zones.library), ...pile(sl.zones.graveyard), ...pile(sl.zones.exile), ...cornersOf(sl.zones.command)];
-  };
   // The HUD tells the scene which screen edges its screen-anchored layer covers through the host's
   // `data-fit-insets="top right bottom left"` (CSS px); fitting the table keeps the table clear of them.
   const readInsets = (): Insets => {
@@ -427,8 +407,33 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (v.length !== 4 || v.some((n) => !Number.isFinite(n) || n < 0)) return NO_INSETS;
     return { top: v[0]!, right: v[1]!, bottom: v[2]!, left: v[3]! };
   };
-  rig.bird.insets = readInsets();
-  rig.bird.view = rig.bird.fitView();
+  /** The seat edges' screen anchors are due to be reported (scene/camera/anchors.ts; after a layout change or a camera move). */
+  let seatAnchorsDue = true;
+  // The one camera rig with its continuous tilt, first person to bird's-eye (scene/camera/rig.ts; M7-P3).
+  const rig = new TableRig({
+    // The camera's table: turned to the viewer where seats sit at 120° (scene/layout.ts cameraTable; M5-P7).
+    table: cameraTable(layout, viewerAngle(null, layout, viewerSeat)),
+    viewport: viewport(),
+    angle: viewerAngle(null, layout, viewerSeat),
+    inertiaMs: theme.motion.panInertiaMs,
+    tilt: startTilt(opts, theme),
+    homeTilt: startTilt({}, theme),
+    ego: theme.camera.ego,
+    tiltDeg: theme.camera.birdseyeTiltDeg,
+    insets: readInsets(),
+  });
+  rig.onTilt = (e) => {
+    opts.events.tilt?.(e);
+    // The seat edges move on screen with the camera: told again once it settles (never per frame).
+    if (e.phase === 'end') seatAnchorsDue = true;
+  };
+  /** Whether the viewer chose a tilt (P, a drag, the wheel, the HUD); until then a theme switch brings the new theme's tilt. */
+  let rigChosen = opts.tilt !== undefined || opts.rig !== undefined;
+  /** The ego seat sits in front of the viewer's own territory (Three players, Two-Headed Giant share an edge). */
+  const viewerLateral = (st: TableState | null): number => {
+    const sl = st ? seatLayoutOf(st, layout, viewerSeat) : null;
+    return sl ? lateralOf(sl.territory, sl.angle) : 0;
+  };
   const insetObserver = new MutationObserver(() => {
     rig.setInsets(readInsets());
     dirty = true;
@@ -552,7 +557,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let stats: FrameStats = { drawCalls: 0, textureBytes: 0, frameMs: 0 };
   let lastTick = performance.now();
   let raf = 0;
-  /** The identity the frame loop is counted under (M8-C lifecycle counters). */
+  /** The identity the frame loop is counted under (lifecycle counters). */
   const frameLoop = {};
   let disposed = false;
   let hovered: InstanceId | null = null;
@@ -687,16 +692,48 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   };
 
   // --- Layout and markings ----------------------------------------------------------------------------------------
-  function rebuildMarkings(): void {
+  /** The keys of the optional zones marked now (scene/table-marks.ts: exile, command and the stack lane while used). */
+  let shownMarks = new Set<string>();
+  let shownMarksKey = '';
+  /** Whether the last marks check saw a dragged card (its end re-checks once). */
+  let marksSawDrag = false;
+  function markShown(): Set<string> {
+    const angle = viewerAngle(state, layout, viewerSeat);
+    const zones = optionalZones(layout, opts.game, angle, state ? Object.keys(state.seats).length : layout.seats.length, state);
+    const dragged: TablePoint[] = [];
+    if (drag) for (const id of drag.ids) {
+      const rc = rcards.get(id);
+      if (rc) dragged.push({ x: rc.motion.pose.x, y: rc.motion.pose.y });
+    }
+    return shownZones(zones, state, dragged);
+  }
+  /** Marks only where used: rebuild the marks when the set of shown optional zones changed (a card arrived, a drag came near). */
+  function syncMarks(): boolean {
+    const next = markShown();
+    const key = [...next].sort().join('|');
+    if (key === shownMarksKey) return false;
+    rebuildMarkings(next);
+    return true;
+  }
+  function rebuildMarkings(shown: Set<string> = markShown()): void {
+    shownMarks = shown;
+    shownMarksKey = [...shown].sort().join('|');
     const angle = viewerAngle(state, layout, viewerSeat);
     const names: string[] = [];
     if (state) for (const seat of Object.values(state.seats)) names[seat.index] = seat.name;
-    const m = markings(layout, opts.game, angle, state ? Object.keys(state.seats).length : layout.seats.length, names);
+    const inUse = state ? Object.keys(state.seats).length : layout.seats.length;
+    // Library and graveyard (and the table's edge and territories) always; the optional zones only while used.
+    const m = markings(layout, markedGame(opts.game), angle, inUse, names);
+    const extra = optionalMarkings(optionalZones(layout, opts.game, angle, inUse, state), shownMarks, layout, opts.game, angle);
+    const segs = [...m.segments, ...extra.segments];
     const pos: number[] = [];
-    for (let i = 0; i < m.segments.length; i += 4) pos.push(m.segments[i]!, 0.05, -m.segments[i + 1]!, m.segments[i + 2]!, 0.05, -m.segments[i + 3]!);
+    for (let i = 0; i < segs.length; i += 4) pos.push(segs[i]!, 0.05, -segs[i + 1]!, segs[i + 2]!, 0.05, -segs[i + 3]!);
     markGeometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     markGeometry.computeBoundingSphere();
-    markLabels = m.labels;
+    markLabels = [...m.labels, ...extra.labels];
+    // The theme's own pile and zone marks under the hairlines (M7-P1; themes/types.ts ThemeInstance.setMarks).
+    const seats = state ? Object.values(state.seats).map((s) => ({ index: s.index, colour: s.colour, named: !!s.name.trim() })) : layout.seats.map((sl) => ({ index: sl.index, colour: sl.index, named: false }));
+    runtime.setMarks(tableMarks(layout, opts.game, angle, seats, { keys: shownMarks, state }));
     dirty = true;
   }
   rebuildMarkings();
@@ -1255,7 +1292,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           uv,
           dim: rc.shownDim ? 1 - dressing.faceDownOwnerOpacity : 0,
           highlight: sel
-            ? { colour: dressing.selected.colour, width: dressing.selected.width }
+            ? { colour: dressing.selected.colour, width: dressing.selected.width, ...(dressing.selected.gap ? { gap: dressing.selected.gap } : {}) }
             : hov
               ? { colour: dressing.hover.colour, width: hoverWidth(dressing.hover.width, cardPx) }
               : entry
@@ -1359,7 +1396,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const continuous = drewLastTick;
     if (drewLastTick) {
       frameCost = now - drewAt;
-      if (!rescaledLast) resolution.observe(now, frameCost);
+      // A hidden page or a covered window holds frames back: such gaps are not the scene's cost (scene/resolution.ts).
+      if (!rescaledLast) resolution.observe(now, frameCost, { hidden: typeof document !== 'undefined' && document.visibilityState === 'hidden', drawMs: stats.frameMs });
     } else if (now - drewAt > 100) resolution.pause();
     drewLastTick = false;
     if (runtime.fullPixelRatio !== resolutionBase) {
@@ -1368,6 +1406,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     touchInput.tick(now);
     let changed = rig.step(now, dt);
+    watchSeatAnchors(now);
     if (pendingFollow.length && !holding()) {
       const reqs = pendingFollow;
       pendingFollow = [];
@@ -1400,6 +1439,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (drag.last !== dragDrawn) changed = true;
       dragDrawn = drag.last;
     } else dragDrawn = null;
+    // Marks only where used: a dragged card near exile, command or the stack lane shows its mark (M7-P1).
+    if (drag || marksSawDrag) {
+      marksSawDrag = !!drag;
+      if (syncMarks()) changed = true;
+    }
     // A press held still on an overlap clips at CLIP.holdMs; its ring fills from CLIP.ringFromMs (M6-P1).
     if (clipHold) {
       if (now - clipHold.t0 >= CLIP.holdMs) commitHold();
@@ -2582,9 +2626,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return;
     }
     const rc = pick(e.clientX, e.clientY);
-    // Right button: a press on a public card may become a line (right-drag); on empty table in the ego rig a
-    // right-drag pitches; elsewhere it is the context menu alone.
-    if (e.button === 2 && (!rc || !lineSource(rc)) && (rc || rig.rig() !== 'ego')) return;
+    // Right button: a press on a public card may become a line (right-drag); on empty table a right-drag tilts the
+    // camera (M7-P3); on any other card it is the context menu alone.
+    if (e.button === 2 && rc && !lineSource(rc)) return;
     menuPending = null;
     const pileGrab = !!rc && rc.inst.pile?.kind === 'squared' && onPileBadge(rc, e.clientX, e.clientY);
     const item = rc ? null : (markerAt(screenToTable(e.clientX, e.clientY))?.item.id ?? null);
@@ -2705,10 +2749,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         return;
       }
       const rc = g.card ? rcards.get(g.card) : null;
-      if (g.button === 2 && !rc && !g.badge && rig.rig() === 'ego') {
+      // Right- or middle-drag on empty table: the one continuous tilt, holding the table point under the press (M7-P3).
+      if ((g.button === 2 || g.button === 1) && !rc && !g.badge) {
         menuPending = null;
-        gesture = { kind: 'pitch', pointerId: g.pointerId, last: { x: e.clientX, y: e.clientY } };
-        rig.pitchBy((e.clientY - g.y0) * PITCH_DEG_PER_PX);
+        gesture = { kind: 'tilt', pointerId: g.pointerId, last: { x: e.clientX, y: e.clientY } };
+        rig.beginTiltDrag(toCanvas(g.x0, g.y0), 'drag');
+        rig.tiltDragBy((e.clientY - g.y0) * TILT_PER_DRAG_PX);
+        // Only a drag that moved the tilt is the viewer's choice (a horizontal right-drag leaves the view alone).
+        if (rig.tiltDragMoved()) rigChosen = true;
         setHover(null);
         dirty = true;
         return;
@@ -2754,13 +2802,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       rig.stop();
       gesture = { kind: 'pan', pointerId: g.pointerId, last: { x: g.x0, y: g.y0 }, samples: [{ x: g.x0, y: g.y0, t: performance.now() }] };
     }
-    if (gesture.kind === 'pitch') {
-      rig.pitchBy((e.clientY - gesture.last.y) * PITCH_DEG_PER_PX);
+    if (gesture.kind === 'tilt') {
+      rig.tiltDragBy((e.clientY - gesture.last.y) * TILT_PER_DRAG_PX);
+      if (rig.tiltDragMoved()) rigChosen = true;
       gesture.last = { x: e.clientX, y: e.clientY };
       dirty = true;
     } else if (gesture.kind === 'pan') {
       const g = gesture;
-      rig.panBy(e.clientX - g.last.x, e.clientY - g.last.y);
+      rig.panBy(e.clientX - g.last.x, e.clientY - g.last.y, toCanvas(e.clientX, e.clientY));
       g.last = { x: e.clientX, y: e.clientY };
       const t = performance.now();
       g.samples.push({ x: e.clientX, y: e.clientY, t });
@@ -2820,9 +2869,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     // A right press on the far-zoom badge's list that never became a line lets the list go (scene/stack-badge.ts); it
     // stays open while the pointer rests on it.
     if (g.kind === 'press' && g.badge) stackBadge.trackLine({ x: e.clientX, y: e.clientY }, true);
-    if (g.kind === 'pitch') {
-      // The context menu some platforms fire on release does not open after a pitch.
+    if (g.kind === 'tilt') {
+      // A tilt near a preset eases onto it; the context menu some platforms fire on release does not open after a tilt.
+      rig.endTiltDrag(performance.now(), blend());
       menuSuppressUntil = performance.now() + MENU_SUPPRESS_MS;
+      dirty = true;
       return;
     }
     if (g.kind === 'line') {
@@ -2918,6 +2969,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (clipDrag && clipDrag.pointerId === e.pointerId && !clipDrag.external) finishClipDrag(true);
     if (clipHold?.pointerId === e.pointerId) cancelHold();
     if (gesture?.kind === 'marquee') marqueeEl.style.display = 'none';
+    if (gesture?.kind === 'tilt') rig.endTiltDrag(performance.now(), blend());
     if (gesture?.kind === 'line') dirty = true;
     if (gesture?.kind === 'line' || (gesture?.kind === 'press' && gesture.badge)) stackBadge.trackLine(null);
     lineView.draft = null;
@@ -3029,14 +3081,24 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       case 'twoFinger': {
         touchTableMenu = null;
         if (g.phase === 'start') rig.stop();
-        if (g.phase !== 'start' && g.phase !== 'move') return;
-        // Two-finger vertical drag pitches in the ego rig (pitch is ego only; in bird's-eye it pans like any two-finger drag).
-        if (g.mode === 'pitch' && rig.rig() === 'ego') rig.pitchBy(g.pan.dy * PITCH_DEG_PER_PX);
-        else {
-          rig.panBy(g.pan.dx, g.pan.dy);
-          const c = toCanvas(g.centre.x, g.centre.y);
-          if (g.scale !== 1) rig.zoomAt(c.x, c.y, g.scale);
+        // A two-finger vertical swipe tilts the camera at every tilt, holding the table point between the fingers
+        // (M7-P3: "two-finger vertical swipe on iPad"); on release a tilt near a preset eases onto it.
+        if (g.mode === 'pitch') {
+          if (g.phase === 'end' || g.phase === 'cancel') {
+            rig.endTiltDrag(performance.now(), blend());
+            dirty = true;
+            return;
+          }
+          if (!rig.tiltDragging()) rig.beginTiltDrag(toCanvas(g.centre.x - g.pan.dx, g.centre.y - g.pan.dy), 'touch');
+          rig.tiltDragBy(g.pan.dy * TILT_PER_SWIPE_PX);
+          if (rig.tiltDragMoved()) rigChosen = true;
+          dirty = true;
+          return;
         }
+        if (g.phase !== 'start' && g.phase !== 'move') return;
+        const c = toCanvas(g.centre.x, g.centre.y);
+        rig.panBy(g.pan.dx, g.pan.dy, c);
+        if (g.scale !== 1) rig.zoomAt(c.x, c.y, g.scale);
         dirty = true;
         return;
       }
@@ -3072,7 +3134,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         return;
       }
       rig.stop();
-      rig.panBy(g.at.x - g.start.x, g.at.y - g.start.y);
+      rig.panBy(g.at.x - g.start.x, g.at.y - g.start.y, toCanvas(g.at.x, g.at.y));
       touchHold = { kind: 'pan', last: g.at, samples: [{ x: g.start.x, y: g.start.y, t: g.t }, { x: g.at.x, y: g.at.y, t: g.t }] };
       dirty = true;
       return;
@@ -3083,7 +3145,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       else if (h.kind === 'clip' && clipDrag) clipDrag.last = { x: g.at.x, y: g.at.y };
       else if (h.kind === 'item' && itemDrag) itemDrag.last = { x: g.at.x, y: g.at.y };
       else if (h.kind === 'pan') {
-        rig.panBy(g.at.x - h.last.x, g.at.y - h.last.y);
+        rig.panBy(g.at.x - h.last.x, g.at.y - h.last.y, toCanvas(g.at.x, g.at.y));
         h.last = g.at;
         h.samples.push({ x: g.at.x, y: g.at.y, t: g.t });
         while (h.samples.length > 2 && g.t - h.samples[0]!.t > 100) h.samples.shift();
@@ -3293,6 +3355,16 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const c = toCanvas(e.clientX, e.clientY);
     const lineMode = e.deltaMode !== 0;
     const dy = lineMode ? e.deltaY * 33 : e.deltaY;
+    if ((e.altKey || e.shiftKey) && !e.ctrlKey) {
+      // The wheel with Alt (Option) or Shift tilts the camera, mouse or trackpad (M7-P3): down toward bird's-eye, up
+      // toward first person, holding the table point under the cursor; it snaps softly to a preset nearby once it rests.
+      // Shift turns a mouse wheel's notches sideways in some browsers: the larger of the two deltas counts.
+      const d = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      rigChosen = true;
+      rig.wheelTilt((lineMode ? d * 33 : d) * TILT_PER_WHEEL_PX, performance.now(), blend(), c);
+      dirty = true;
+      return;
+    }
     if (e.ctrlKey) {
       // Trackpad pinch (browsers report it as ctrl+wheel).
       rig.zoomAt(c.x, c.y, Math.exp(-dy * 0.01));
@@ -3302,7 +3374,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     } else {
       // Two-finger scroll: pan.
       rig.stop();
-      rig.panBy(-e.deltaX, -e.deltaY);
+      rig.panBy(-e.deltaX, -e.deltaY, c);
     }
     dirty = true;
   }
@@ -3383,7 +3455,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const g = gesture;
     if (!g) return 'other';
     if (g.kind === 'held') return 'clip';
-    if (g.kind === 'pan' || g.kind === 'pitch') return 'camera';
+    if (g.kind === 'pan' || g.kind === 'tilt') return 'camera';
     if (g.kind === 'marquee' || g.kind === 'line') return g.kind;
     if (g.kind === 'drag') return 'card';
     if (g.button === 2) return g.card || g.item ? 'line' : 'camera';
@@ -3450,7 +3522,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     },
     camera(): DebugCamera {
       const p = rig.pose();
-      return { rig: rig.rig(), fov: p.fovDeg, position: [...p.position], pitch: p.pitchDeg, tilt: stubTilt() };
+      return { rig: rig.rig(), fov: p.fovDeg, position: [...p.position], pitch: p.pitchDeg, tilt: rig.tilt() };
     },
     lines: () => lineView.debugLines(),
     drawnLines: () => lineView.debugDrawn(),
@@ -3607,6 +3679,51 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     };
   }
   /** The camera's pose in table space (scene/camera/rig.ts). */
+  // --- Seat anchors (SceneEvents.seatAnchors; M7-C contract, M7-P3 reports): where each seat's table edge shows ---------
+  /** The camera pose and viewport the anchors were last checked against, and since when they have not changed. */
+  const anchorPose: number[] = [];
+  let anchorStillSince = 0;
+  let lastAnchors = '';
+  /** A camera gesture under way (pan, tilt drag, two fingers): the anchors wait until it ends. */
+  const cameraGesture = () => gesture?.kind === 'pan' || gesture?.kind === 'tilt' || touchHold?.kind === 'pan' || touchInput.active();
+  /**
+   * Report the seat anchors once the camera has rested for SEAT_ANCHOR_SETTLE_MS after a change (and after a layout
+   * change), never per frame: the HUD's plates hide while the camera moves and return where the edges settled.
+   */
+  function watchSeatAnchors(now: number): void {
+    if (!opts.events.seatAnchors) return;
+    const p = rig.pose();
+    const vp = rig.viewport;
+    const key = [p.position[0], p.position[1], p.position[2], p.pitchDeg, p.fovDeg, vp.w, vp.h];
+    if (key.some((v, i) => v !== anchorPose[i])) {
+      anchorPose.splice(0, anchorPose.length, ...key);
+      anchorStillSince = now;
+      seatAnchorsDue = true;
+    }
+    if (!seatAnchorsDue || now - anchorStillSince < SEAT_ANCHOR_SETTLE_MS || rig.moving || rig.tiltDragging() || cameraGesture()) return;
+    seatAnchorsDue = false;
+    const anchors = seatAnchorsNow();
+    const json = JSON.stringify(anchors);
+    if (json === lastAnchors) return;
+    lastAnchors = json;
+    opts.events.seatAnchors(anchors);
+  }
+  /** Each seat's edge on screen (viewport CSS px), in seat order. */
+  function seatAnchorsNow(): SeatAnchor[] {
+    if (!state) return [];
+    const st = state;
+    const pose = rig.pose();
+    const r = canvasRect();
+    const out: SeatAnchor[] = [];
+    for (const seat of Object.values(st.seats).sort((a, b) => a.index - b.index)) {
+      const sl = seatLayoutOf(st, layout, seat.id);
+      if (!sl) continue;
+      const a = seatAnchorOf(pose, rig.angle, rig.viewport, sl.territory, sl.angle);
+      out.push({ seat: seat.id, at: a.at ? { x: a.at.x + r.left, y: a.at.y + r.top } : null, outwardDeg: a.outwardDeg });
+    }
+    return out;
+  }
+
   function cameraPose(): CameraPose {
     const p = rig.pose();
     return { position: [...p.position], target: [...p.target], fovDeg: p.fovDeg, pitchDeg: p.pitchDeg };
@@ -3616,7 +3733,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     quality: () => runtime.qualityChoice,
     setQuality: (id) => sceneApi.setQuality(id),
     framesDrawn: () => frame,
-    // M8-C: the lifecycle counters (contracts.md Part C).
+    zoneMarks: () => [...shownMarks].sort(),
+    // The lifecycle counters (contracts.md Part C).
     ...lifecycleRender(),
   };
   const rigDebug: RigDebug = {
@@ -3776,10 +3894,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     },
     setRig(next: CameraRig, o?: SetRigOptions) {
       if (next !== 'birdseye' && next !== 'ego') return;
-      // Only a real switch is the viewer's choice: asking for the rig already shown keeps the theme's default in charge.
-      if (next !== rig.rig()) rigChosen = true;
-      rig.setRig(next, performance.now(), blend(o?.animate ?? true), canvasPoint(o?.anchor));
-      dirty = true;
+      // The old rigs are the ends of the one continuous tilt (M7-P3).
+      controls.setTilt(tiltForRig(next), { ...(o?.animate !== undefined ? { animate: o.animate } : {}), ...(o?.anchor ? { anchor: o.anchor } : {}) });
     },
     rig: () => rig.rig(),
     pitchBy(deg: number) {
@@ -3800,30 +3916,22 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return { ...b, anchor: { table: b.anchor.table, screen: { x: b.anchor.screen.x + r.left, y: b.anchor.screen.y + r.top } } };
     },
     pose: () => cameraPose(),
-    // The one continuous tilt (scene/types.ts TiltControls, M7-C): a stub over the two rigs until M7-P3 builds the
-    // continuous rig. A tilt goes to the nearer rig; mid-blend the tilt is the blend's progress.
-    tilt: () => stubTilt(),
+    // The one continuous tilt (scene/camera/rig.ts; PLAN M7-P3): first person (0) to bird's-eye (1).
+    tilt: () => rig.tilt(),
     setTilt(t: Tilt, o?: SetTiltOptions) {
-      const target = tiltForRig(rigForTilt(clampTilt(t)));
-      const from = stubTilt();
-      const source = o?.source ?? 'api';
-      controls.setRig(rigForTilt(target), { ...(o?.animate !== undefined ? { animate: o.animate } : {}), ...(o?.anchor ? { anchor: o.anchor } : {}) });
-      if (target !== from) opts.events.tilt?.({ phase: 'start', tilt: from, target, source });
+      if (typeof t !== 'number') return;
+      const target = clampTilt(t);
+      // Only a real change is the viewer's choice: asking for the tilt already shown keeps the theme's default in charge.
+      if (target !== rig.tiltTarget()) rigChosen = true;
+      rig.setTilt(target, performance.now(), blend(o?.animate ?? true), canvasPoint(o?.anchor), o?.source ?? 'api');
+      dirty = true;
     },
     tiltBy(dt: number, o?: SetTiltOptions) {
       if (!Number.isFinite(dt) || dt === 0) return;
-      controls.setTilt(stubTilt() + dt, o);
+      controls.setTilt(rig.tiltTarget() + dt, o);
     },
     tiltPresets: () => TILT_PRESETS,
   };
-
-  /** The tilt of the two-rig camera (M7-C stub until M7-P3): the rig's tilt, or the blend's eased progress between them. */
-  function stubTilt(): Tilt {
-    const b = rig.blendState();
-    if (!b) return tiltForRig(rig.rig());
-    const a = tiltForRig(b.from);
-    return a + (tiltForRig(b.to) - a) * b.t;
-  }
 
   raf = requestAnimationFrame(tick);
   // The sound player follows the table's look (util/feel.ts; ui/sound.ts).
@@ -3885,7 +3993,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       cancelHold();
       if (itemDrag) finishItemDrag(true);
       if (lineView.draft) lineView.draft = null;
-      if (gesture && gesture.kind !== 'pan' && gesture.kind !== 'pitch') gesture = null;
+      if (gesture && gesture.kind !== 'pan' && gesture.kind !== 'tilt') gesture = null;
       pileWant = null;
     }
     readOnly = on;
@@ -3924,16 +4032,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (want.table !== built.table || want.viewerAngle !== built.viewerAngle || want.reducedMotion !== built.reducedMotion || want.tableRot !== built.tableRot) rebuildTheme(want);
       if (formatLayout || prevState === null || Object.keys(prevState.seats).length !== Object.keys(next.seats).length) {
         rig.setTable(cameraTable(layout, viewerAngle(state, layout, viewerSeat)), viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
-        rig.setEgoKeep(egoKeepOf(state));
+        seatAnchorsDue = true;
         rebuildMarkings();
       } else if (prevState.seats !== next.seats) {
         // A chair taken or left changes which hand rows the fitted view must show, and the names at the avatar spots.
         rig.setFrame(fitFrame(state, layout, viewerSeat));
-        if (Object.values(next.seats).some((s) => prevState.seats[s.id]?.name !== s.name)) rebuildMarkings();
+        if (Object.values(next.seats).some((s) => prevState.seats[s.id]?.name !== s.name || prevState.seats[s.id]?.colour !== s.colour)) rebuildMarkings();
       }
       if (prevState !== next || openChanged) relayout(performance.now());
       // The selection strip and the pile actions follow the state and the selection (M7-P5).
       if (prevState !== next || viewChanged) affordDirty = true;
+      // A zone that now holds a card (or no longer does) shows (or hides) its mark (M7-P1).
+      if (prevState !== next) syncMarks();
       if (prevState !== next && !formatLayout) requestFollow(followRequests(prevState, next, follow));
       if (viewChanged) dirty = true;
       if (nextView.captions || captionLayer.active) captionLayer.set(nextView.captions ?? []);
@@ -3955,9 +4065,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       styleOverlays();
       ghostLayer.setOpacity(theme.cardDressing.ghost.opacity);
       rig.inertiaMs = theme.motion.panInertiaMs;
-      // The theme's camera defaults: its ego parameters and bird's-eye tilt, and its preferred rig unless the viewer chose one.
+      // The theme's camera defaults: its first-person lens and bird's-eye tilt, and its tilt unless the viewer chose one.
       rig.setTheme(theme.camera.ego, theme.camera.birdseyeTiltDeg);
-      if (!rigChosen && rig.rig() !== theme.camera.defaultRig) rig.setRig(theme.camera.defaultRig, performance.now(), blend(), null);
+      const themeTilt = startTilt({}, theme);
+      rig.setHomeTilt(themeTilt);
+      if (!rigChosen && rig.tiltTarget() !== themeTilt) rig.setTilt(themeTilt, performance.now(), blend(), null, 'theme');
       dirty = true;
     },
     setLayout(nextLayout: TableLayout, seat: SeatId | null) {
@@ -3965,7 +4077,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       viewerSeat = seat;
       rebuildTheme(placement());
       rig.setTable(cameraTable(layout, viewerAngle(state, layout, viewerSeat)), viewerAngle(state, layout, viewerSeat), fitFrame(state, layout, viewerSeat), viewerLateral(state));
-      rig.setEgoKeep(egoKeepOf(state));
+      seatAnchorsDue = true;
       rebuildMarkings();
       relayout(performance.now());
     },
@@ -4116,7 +4228,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       markGeometry.dispose();
       markMaterial.dispose();
       renderer.dispose();
-      // M8-C: what the renderer still held, and the context and frame loop released (contracts.md Part C).
+      // What the renderer still held, and the context and frame loop released (contracts.md Part C).
       untrackContext(renderer);
       untrack('rafLoops', frameLoop);
       // Free the WebGL context now, not at GC: browsers cap live contexts (about 16).
@@ -4125,7 +4237,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       // Debug parts must not point at a disposed scene (a newer scene's parts stay).
       const hook = typeof window === 'undefined' ? undefined : (window.__spellplane as Record<string, unknown> | undefined);
       if (hook) for (const [k, fn] of Object.entries(debugParts)) if (hook[k] === fn) delete hook[k];
-      // M8-C: the render part's lifecycle members stay readable on Home (contracts.md Part C).
+      // The render part's lifecycle members stay readable on Home (contracts.md Part C).
       registerBaseRender();
       marqueeEl.remove();
       stackBadge.dispose();

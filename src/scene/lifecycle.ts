@@ -1,7 +1,7 @@
 /**
  * The scene side of the lifecycle counters (contracts.md Part C; m7-adjustments.md section 2): a renderer's WebGL
  * context is counted while it lives, and what its `info` still held after dispose is reported. Re-exports the context
- * functions of src/util/lifecycle.ts. Added by M8-C; M7-P1 owns the file afterwards.
+ * functions of src/util/lifecycle.ts. Contracts.md Part C (M8-C's shape); owned by M7-P1.
  */
 import { live, reportResidue, residue, track, untrack } from '../util/lifecycle';
 import { registerDebug } from '../util/debug';

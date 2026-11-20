@@ -41,6 +41,8 @@ test('Paper is silent; Dusk plays its room tone after a press; Off silences it a
   await openSolo(page, profile);
   const hud = page.getByTestId('hud');
   await expect(hud).toBeVisible();
+  // The default table is Plain, which has its own sound set (M7-P1): Paper, the silent theme, is chosen first.
+  await setTheme(page, 'paper');
   await expect(hud).toHaveAttribute('data-sound', 'off');
   await setTheme(page, 'dusk');
   // On by default in Dusk, but audio waits for the viewer's first gesture.

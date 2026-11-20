@@ -125,6 +125,8 @@ export interface HighlightStyle {
   lift: number;
   /** v2 (M4-C): emissive strength 0..1 that the bloom pass picks up in lit themes; absent or 0 for none. */
   glow?: number;
+  /** A gap in the table's surface colour between the card and the ring, mm (a double ring that reads on a black border and a pale table); absent or 0 for none. */ // [M7-P1]
+  gap?: number; // [M7-P1]
 }
 
 /**
