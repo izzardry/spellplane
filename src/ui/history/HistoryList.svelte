@@ -10,6 +10,7 @@
   import IconButton from '../design/IconButton.svelte';
   import Segmented from '../design/Segmented.svelte';
   import StatusLine from '../design/StatusLine.svelte';
+  import SeatGlyph from '../design/SeatGlyph.svelte';
   import TableThumb from '../design/TableThumb.svelte';
   import { toasts } from '../design/toasts';
   import { themeContext } from '../settings/theme';
@@ -133,7 +134,11 @@
           >
             <TableThumb thumb={g.thumb ?? null} seats={g.players.map((p, i) => ({ colour: seatColour(p.colour, i), life: p.life, computer: g.opponent === 'sparring' && !p.me }))} width={128} />
             <span class="hrow__text">
-              <span class="hrow__title" data-testid="history-title">{rowTitle(g)}</span>
+              <span class="hrow__head">
+                <span class="hrow__title" data-testid="history-title">{rowTitle(g)}</span>
+                <!-- Seat colours are never shown alone: each disc of the thumb has its glyph here (DESIGN accessibility). -->
+                <span class="hrow__glyphs">{#each g.players as p, i (p.seat)}<SeatGlyph seat={i % 4} colour={seatColour(p.colour, i)} size={12} computer={g.opponent === 'sparring' && !p.me} label={p.me ? 'you' : p.name} />{/each}</span>
+              </span>
               <span class="hrow__line">{rowLine(g)}</span>
               <span class="hrow__state" data-testid="history-state">{rowState(g)}</span>
             </span>
@@ -158,6 +163,8 @@
   .hrow__open { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ds-ink); font: inherit; text-align: left; text-decoration: none; cursor: pointer; border-radius: 8px; }
   .hrow__open:focus-visible { outline: 2px solid var(--ds-focus); outline-offset: 2px; }
   .hrow__text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .hrow__head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .hrow__glyphs { display: inline-flex; gap: 2px; flex: none; }
   .hrow__title { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hrow__line { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ds-muted); }
   .hrow__state { font-size: 13px; }
