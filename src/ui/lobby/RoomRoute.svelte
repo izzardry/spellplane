@@ -117,6 +117,9 @@
         settings={app.settings}
         sets={app.sets}
         update={app.update}
+        games={app.games ?? null}
+        matches={app.matches ?? null}
+        ratings={app.ratings ?? null}
       />
     {/key}
   </div>
@@ -135,7 +138,7 @@
     {:else}
       <p>This page cannot join tables.</p>
     {/if}
-    <p><a href="#/">Back to the solo table</a></p>
+    <p><a href="#/">Home</a></p>
   </main>
 {/if}
 
