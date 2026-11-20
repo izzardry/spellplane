@@ -233,6 +233,35 @@ const oomphBin = () => {
 };
 
 /** Waits for an oomph grant (returns its id), or null without oomph; exits 75 when it never comes. */
+/**
+ * Graphics memory of killed WebKit GPU helpers is not freed at once: on 20 Nov 2026 it stayed
+ * "unowned" (held by no process) for about an hour, 37 GB after six aborted runs. Starting more
+ * browsers meanwhile stacks it up, so wait until oomph sees it given back.
+ */
+const MAX_UNOWNED_GB = Number(process.env.SPELLPLANE_PW_MAX_UNOWNED_GB ?? 6);
+async function waitForReclaim() {
+  const bin = oomphBin();
+  if (!bin) return;
+  const started = Date.now();
+  let lastNote = 0;
+  for (;;) {
+    const r = spawnSync(bin, ['status', '--json'], { encoding: 'utf8' });
+    let unowned = 0;
+    try { unowned = Number(JSON.parse(r.stdout).unowned_gb) || 0; } catch { return; }
+    if (unowned <= MAX_UNOWNED_GB) return;
+    if (Date.now() - started > MAX_WAIT_MS) {
+      release();
+      console.error(`[pw-guard] ${unowned} GB of graphics memory still not given back after ${MAX_WAIT_MS / 60_000} min; giving up (exit 4)`);
+      process.exit(4);
+    }
+    if (Date.now() - lastNote > 60_000) {
+      console.error(`[pw-guard] waiting: ${unowned} GB of memory is held by no process (graphics memory of killed browsers); starting only when it is under ${MAX_UNOWNED_GB} GB`);
+      lastNote = Date.now();
+    }
+    await sleep(30_000);
+  }
+}
+
 async function oomphReserve() {
   const bin = oomphBin();
   if (!bin) return null;
@@ -378,6 +407,7 @@ export async function runGuarded(command, args, extraEnv = {}) {
     process.exit(3);
   }
   sweepStrays('before this run');
+  await waitForReclaim();
   const lease = await oomphReserve();
   const child = spawn(command, args, { stdio: 'inherit', env, detached: true });
   fs.writeFileSync(OWNER, JSON.stringify({ ...readOwner(), pgid: child.pid }));

@@ -21,7 +21,17 @@ const REPO = A.repo
 const WT = A.wtRoot
 // Model and reasoning effort for every agent (args.model, args.effort; omitted = the session's).
 const MODEL_OPTS = { ...(A.model ? { model: A.model } : {}), ...(A.effort ? { effort: A.effort } : {}) }
-const ag = (prompt, opts) => agent(prompt, { ...MODEL_OPTS, ...opts })
+// args.roles: per-role overrides, e.g. { review: {model:'fable', effort:'high'}, gate: {...}, explore: {...} }.
+// Role from the label: review*, gate: / gate-rerun: (verdicts), explore:; everything else (contracts, impl, fix, integrate, gate-fix) uses MODEL_OPTS.
+const ROLES = A.roles || {}
+const roleOf = (label = '') =>
+  label.startsWith('review') ? 'review' : label.startsWith('gate:') || label.startsWith('gate-rerun:') ? 'gate' : label.startsWith('explore:') ? 'explore' : 'build'
+let agentCount = 0
+const ag = (prompt, opts) => {
+  agentCount++
+  const role = ROLES[roleOf(opts && opts.label)] || {}
+  return agent(prompt, { ...MODEL_OPTS, ...role, ...opts })
+}
 
 const COMMON = [
   `Project: Spellplane, repository ${REPO} (CLAUDE.md there has the commands, hard rules and harnesses — follow it).`,
@@ -154,6 +164,13 @@ const GATE_SCHEMA = {
 // ---------------------------------------------------------------------------
 // Contracts
 // ---------------------------------------------------------------------------
+// args.explore: { key, prompt, forPackages:[ids] } — an investigation that runs beside the contracts step;
+// its findings are appended to the briefs of forPackages, which wait for it (the others do not).
+const explorePromise = A.explore
+  ? ag([COMMON, ``, A.explore.prompt].join('\n'), { label: `explore:${A.explore.key}`, phase: 'Contracts' }).catch(() => null)
+  : Promise.resolve(null)
+const exploreFor = (A.explore && A.explore.forPackages) || []
+
 let contracts = null
 if (A.contracts) {
   phase('Contracts')
@@ -285,6 +302,10 @@ async function runPackage(pkg) {
       }
       log(`${pkg.id}: dependencies merged, starting`)
     }
+    if (exploreFor.includes(pkg.id)) {
+      const found = await explorePromise
+      if (found) pkg.brief += `\n\nFINDINGS of the investigation "${A.explore.key}" (they bind your package where they name a cause or fix in files you own; report anything they need in files you do not own):\n${String(found).slice(0, 12000)}`
+    }
     // resume: the implementation already exists on branch pkg.slug (e.g. after a crash); go straight to review.
     const impl = pkg.resume
       ? { status: 'green', check_green: true, decisions: [], summary: `resumed from existing branch ${pkg.slug}` }
@@ -381,6 +402,8 @@ if (!gate1 || !gate1.gate_green || gateFindings.some((f) => f.severity === 'bloc
 
 return {
   milestone: M,
+  agents: agentCount,
+  explore: await explorePromise,
   contracts,
   packages: results.map((r, i) => r || { pkg: A.packages[i].id, error: 'pipeline returned null' }),
   gate: { first: gate1, fix: gateFix, final: gate2 || gate1 },
