@@ -119,9 +119,7 @@ test.describe('first-run hints', () => {
     expect(through).toBe(true);
     await expect(hint).not.toBeFocused();
 
-    await hint.getByTestId('hint-dismiss').click();
-    await expect(hint).toHaveAttribute('data-hint', 'tableKeys');
-    await expect(hint).toContainText('T taps it');
+    // M7-P5: no hint teaches the table's keys after the welcome (the gesture coach marks teach the table instead).
     await hint.getByTestId('hint-dismiss').click();
     await expect(hint).toHaveCount(0);
     await openHud(page, { keepSettings: true });
@@ -129,13 +127,14 @@ test.describe('first-run hints', () => {
     await expect(page.getByTestId('hint')).toHaveCount(0);
   });
 
-  test('hints name the player\'s own keys', async ({ page }) => {
+  test('no hint teaches the table keys, remapped or not (M7-P5: keys stay accelerators, not the primary UI)', async ({ page }) => {
     await openHud(page);
     await page.getByTestId('hint').getByTestId('hint-dismiss').click();
     await openHudSettings(page, 'keys');
     await page.locator('[data-testid="key-row"][data-action="tap"]').getByTestId('key-change').click();
     await page.keyboard.press('KeyJ');
-    await expect(page.getByTestId('hint')).toContainText('J taps it');
+    await page.waitForTimeout(300);
+    await expect(page.getByTestId('hint')).toHaveCount(0);
   });
 
   test('a touch screen gets the gesture hint instead of the keys; voice adds the talk key', async ({ page }) => {

@@ -23,12 +23,14 @@ import { lifecycleRender, registerBaseRender, trackContext, untrackContext } fro
 import { track, untrack } from '../util/lifecycle';
 import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
-import { CAMERA, CLIP } from '../core/geometry';
+import { CAMERA, CLIP, GEOMETRY, SCREEN_LAYER } from '../core/geometry';
 import { carryGroup, clipGroup, type DragGroup } from '../core/clips';
 import type { CardInstance, ClipId, InstanceId, Pose, SeatId, StackItemId, TableState, ZoneId } from '../core/types';
+import { parseZoneId } from '../core/ids';
 import type { Rect, TableLayout, TextureSource } from '../games/types';
 import type { QualityId } from '../themes/types';
 import { registerDebug } from '../util/debug';
+import { feelCues, forgetMotion, handRoom, reportMotion, tableTheme } from '../util/feel';
 import { frameMeter, type RenderInfo } from '../util/frame-meter';
 import { NO_INSETS, type Insets } from './camera';
 import { followRequests, type FollowRequest } from './camera/follow';
@@ -46,25 +48,59 @@ import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
 import { tapActions, toStoredPoses } from './gestures';
 import { carryDropActions, rigidPoses, tempCarryActions } from './carry';
 import { ClipView, clipCorners, clipFrame, clipHere, pointInClip, type ClipCard, type ClipDraw, type ClipFrame } from './clips';
-import { LAYER, cameraTable, compareSort, displayedRot, dropTable, dropTargets, faceOf, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
+import { LAYER, cameraTable, compareSort, displayedRot, dropTable, dropTargets, faceOf, fitFrame, markings, pileAnchor, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
-import { CARD_H, CARD_W, rectPoint, cardCorners, cardHalfExtents, deltaDeg, legibleScale, pointInCard, pointInRect, rot2 } from './math';
+import { CARD_H, CARD_W, rectPoint, cardCorners, cardHalfExtents, deltaDeg, legibleScale, normDeg, pointInCard, pointInRect, rot2 } from './math';
 import { createFocusRing } from './focus-ring';
-import { CardMotion, HeldLift, heldTilt } from './motion';
+import {
+  CLIP_POP_SCALE,
+  CardMotion,
+  LiftMotion,
+  POP_MS,
+  POP_SCALE,
+  SwayMotion,
+  TAP_FEEL_MS,
+  TAP_OVERSHOOT,
+  easeInOutCubic,
+  easeOutBack,
+  easeOutCubic,
+  feelWithin,
+  groupDelay,
+  heldTilt,
+  liftScale,
+  liftShadow,
+  magnetOn,
+  magnetPull,
+  popCurve,
+  progressOf,
+  riffleOffset,
+  swayTarget,
+  waveDelays,
+  type MagnetState,
+} from './motion';
 import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { badgeItems, drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackCollapsed, stackEntries, stackSlotPose, type DebugStackEntry, type StackEntry } from './stack';
 import { StackBadgeView } from './stack-badge';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
+import { attackDrop, attackPose, inHandBand, libraryBottomSlot, opponents, samePileHover, sameSelectionAnchor, selectionAnchorOf, type AttackDrop } from './affordances';
 import { attachPressHold } from './press-hold';
 import { TextLayer, type TextSpec } from './text';
 import { recentGestures, TouchPointers } from './input/pointers';
 import type { TouchGesture } from './input/touch';
 import { FACE_BUDGET_HEADROOM, TEXTURE_CAP_BYTES, tierForScreenHeight } from './textures';
 import type {
+  AffordanceDebugState,
   CameraPose,
   CameraRig,
+  CardAnimationKind,
+  CardAnimationRequest,
+  CardFeel,
+  FrameHold,
+  FrameScheduler,
+  MotionDebugState,
+  MotionSettings,
   ClipDebugState,
   DebugClip,
   DropPreview,
@@ -76,7 +112,10 @@ import type {
   DebugCamera,
   DebugCard,
   FrameStats,
+  PileHover,
   SceneDebugParts,
+  ScreenRect,
+  SelectionAnchor,
   ScreenPoint,
   SetRigOptions,
   TablePoint,
@@ -86,7 +125,7 @@ import type {
   TablePressKind,
   ViewState,
 } from './types';
-import { TILT_PRESETS, clampTilt, rigForTilt, tiltForRig, type SetTiltOptions, type Tilt } from './types';
+import { TILT_PRESETS, cardFeel, clampTilt, rigForTilt, tiltForRig, type SetTiltOptions, type Tilt } from './types';
 
 /** A debug card with extra fields the scene's own tests read (zone, pile, which face is shown, ...). */
 export interface SceneDebugCard extends DebugCard {
@@ -169,8 +208,16 @@ interface RCard {
   /** After a drop: expected pose, and when to give up waiting for the state to confirm it. */
   expect: { pose: Pose; until: number } | null;
   tierDrawn: 'small' | 'normal' | 'large' | null;
-  /** Lift while held (CardDressing.held.lift), springing up on grab and down on release. */
-  lift: HeldLift;
+  /** Height above its place (M7-P4, scene/motion.ts LiftMotion): rises on grab, settles with a bounce, hops along a toss. */
+  lift: LiftMotion;
+  /** The lean of a dragged card into its motion (M7-P4, CardFeel.sway). */
+  sway: SwayMotion;
+  /** A pop of the whole card (a clip snapping on), of its counter badge (start time), and a pile's riffle (M7-P4). */
+  pop: { start: number; dur: number; amp: number } | null;
+  badgePop: number | null;
+  riffle: { start: number; dur: number; i: number; n: number } | null;
+  /** Gone from the table into the viewer's own hand (the DOM fan): drawn flying there until `until`, then dropped (M7-P4). */
+  leaving: { until: number } | null;
 }
 
 interface DragState {
@@ -191,6 +238,11 @@ interface DragState {
   group: DragGroup | null;
   /** Ctrl held at the last pointer event (skips snapping; the preview follows it). */
   ctrl: boolean;
+  /**
+   * The top card of the own library, picked up to draw it (PLAN M7-P5: "drag from library to hand draws"): dropped in
+   * the hand it is drawn, anywhere else it springs back. Never shown to the others (scene/presence.ts mayShowDrag).
+   */
+  fromLibrary?: boolean;
 }
 
 /**
@@ -235,6 +287,14 @@ type Gesture =
   /** Right-drag on empty table in the ego rig: pitch (DESIGN "Camera and navigation", Navigation gestures). */
   | { kind: 'pitch'; pointerId: number; last: { x: number; y: number } };
 
+/** What a drop in progress would do beyond the snap preview (M7-P5), with the ghost outlines it shows. */
+interface DragHint {
+  kind: 'draw' | 'hand' | 'top' | 'bottom' | 'attack';
+  /** Where its label stands on the table, or null: over the hand. */
+  at: TablePoint | null;
+  ghosts: Pose[];
+}
+
 const DRAG_THRESHOLD_PX = 4;
 /** Counter badge type size on the table (mm), its place on the card (over the art box) and its far-zoom floor. */
 const COUNTER_SIZE = 6.5;
@@ -263,6 +323,8 @@ const PITCH_DEG_PER_PX = 0.2;
 const FOLLOW_MARGIN_PX = 40;
 /** How long a dropped card waits for the state to confirm its new pose before returning. */
 const EXPECT_MS = 1500;
+/** The gap the HUD keeps between the table's fit and the hand fan (ui/hand.ts FIT_INSET.handGap): not part of the fan's band, CSS px. */
+const HAND_BAND_GAP_PX = 8;
 
 export function createTableScene(host: HTMLElement, opts: TableSceneOptions): SceneHandle {
   let theme = opts.theme;
@@ -511,7 +573,52 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let idCounter = 0;
   const idPrefix = Math.random().toString(36).slice(2, 8);
   const newId = (p: string) => `${p}-${idPrefix}-${(++idCounter).toString(36)}`;
-  const reduced = () => view.reducedMotion;
+  /** The viewer's motion setting (Settings.motion through `setMotion` or `opts.motion`); absent: ViewState.reducedMotion decides. */
+  let motionSetting: MotionSettings | null = opts.motion ?? null;
+  const reduced = () => (motionSetting ? motionSetting.reduced : view.reducedMotion);
+  /** The motion applied now: the setting, else full motion unless the view asks for reduced motion. */
+  const motionNow = (): MotionSettings => motionSetting ?? (view.reducedMotion ? { reduced: true, scale: 0 } : { reduced: false, scale: 1 });
+  /** The card feel of the theme under the motion setting (scene/types.ts cardFeel), rebuilt when either changes. */
+  let feelCache: { theme: typeof theme; motion: string; feel: CardFeel } | null = null;
+  function feel(): CardFeel {
+    const m = motionNow();
+    const key = `${m.reduced}:${m.scale}`;
+    if (!feelCache || feelCache.theme !== theme || feelCache.motion !== key) feelCache = { theme, motion: key, feel: feelWithin(cardFeel(theme, m), m.reduced ? 0 : m.scale) };
+    return feelCache.feel;
+  }
+  /** The height a held card rises to: the theme's held lift (M4 CardDressing.held.lift), or its card feel's when it sets one. */
+  const heldLift = () => theme.feel?.liftMm ?? theme.cardDressing.held.lift;
+
+  // Render on demand (M7-P4; scene/types.ts FrameScheduler): anything that animates holds frames until it is done.
+  const frameHolds = new Map<number, { reason: string; active?: () => boolean }>();
+  let holdId = 0;
+  const frames: FrameScheduler = {
+    invalidate: () => void (dirty = true),
+    hold(reason: string, active?: () => boolean): FrameHold {
+      const id = ++holdId;
+      frameHolds.set(id, active ? { reason, active } : { reason });
+      dirty = true;
+      return { release: () => void frameHolds.delete(id) };
+    },
+  };
+  /** Card animations running (M7-P4; debug `motion().running`): each ends at start + dur and then holds no frame. */
+  let anims: { kind: CardAnimationKind; cards: InstanceId[]; start: number; dur: number }[] = [];
+  /** This scene's key in the page-wide motion totals (util/feel.ts). */
+  const motionKey = {};
+  /** The next card's place in the group of moves of the state being laid out (relayout; motion.ts groupDelay). */
+  let groupIndex = 0;
+  function startAnim(kind: CardAnimationKind, ids: InstanceId[], now: number, dur: number): void {
+    if (!(dur > 0) || ids.length === 0) return;
+    const same = anims.find((a) => a.kind === kind && a.start === now);
+    if (same) {
+      for (const id of ids) if (!same.cards.includes(id)) same.cards.push(id);
+      same.dur = Math.max(same.dur, dur);
+    } else anims.push({ kind, cards: [...ids], start: now, dur });
+    dirty = true;
+  }
+  /** The magnet a drag in progress feels (M7-P4): the slot it is pulled toward, what kind of snap it is, and the pull. */
+  let magnet: { kind: 'squared' | 'cascade' | 'tuck' | 'align' | 'zone' | 'hand'; target: InstanceId | null; slot: Pose | null; byCursor: boolean } | null = null;
+  let magnetDrawn: MagnetState | null = null;
 
   // Connection lines and ping rings (DESIGN "Combat and annotation"; scene/lines.ts).
   const lineView = new LineView({
@@ -566,8 +673,17 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const seatAngleOf = (seat: SeatId): number => (state ? (seatLayoutOf(state, layout, seat)?.angle ?? 0) : 0);
   const combatCtx: CombatContext = { angleOf: seatAngleOf, newId };
 
+  // Look, do not touch (M7-P5; m7-adjustments.md D14): a read-only scene proposes no action. Every route below checks
+  // `readOnly` before it starts a drag, a tap, a line, a hold or a pile action; this guard is the last net.
+  let readOnly = opts.readOnly === true;
+  /** The actions this scene proposed (the read-only spec counts them through the debug hook). */
+  let proposed = 0;
   const dispatch = (actions: ActionDraft[]) => {
-    for (const a of actions) opts.dispatch(a);
+    if (readOnly) return;
+    for (const a of actions) {
+      proposed++;
+      opts.dispatch(a);
+    }
   };
 
   // --- Layout and markings ----------------------------------------------------------------------------------------
@@ -586,32 +702,117 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   rebuildMarkings();
 
   // --- State -> render cards ----------------------------------------------------------------------------------------
+  /** The state the cards were last laid out for: a new state's differences from it start the card animations (M7-P4). */
+  let laid: TableState | null = null;
+  /** Taps and untaps that started in one frame (a wave when there are several; M7-P4). */
+  let tapWave: { tick: number; start: number; items: { rc: RCard; tapped: boolean; x: number }[] } | null = null;
+
+  /** The viewer's own hand zone (the DOM fan), or null without a seat. */
+  function ownHandZone(): ZoneId | null {
+    const hand = opts.game.zones.find((z) => z.presentation === 'fan');
+    return hand && viewerSeat ? `${hand.id}:${viewerSeat}` : null;
+  }
+
+  /** Where a card flies to when it goes into the viewer's own hand: under the middle of the hand fan, upright for the viewer. */
+  function handPoint(): Pose {
+    const vp = rig.viewport;
+    const p = rig.screenToTable(vp.w / 2, vp.h * (1 - SCREEN_LAYER.handCardViewportFraction / 2));
+    return { x: p.x, y: p.y, rot: viewerAngle(state, layout, viewerSeat) };
+  }
+
+  /** The animation kind of a card arriving in `zone` (M7-P4: play, to graveyard, to exile, to hand, to library, draw). */
+  function arrivalKind(from: ZoneId | undefined, zone: ZoneId): CardAnimationKind {
+    const kind = zone.split(':')[0];
+    const fromKind = from?.split(':')[0];
+    if (kind === 'graveyard') return 'toGraveyard';
+    if (kind === 'exile') return 'toExile';
+    if (kind === 'library') return 'toLibrary';
+    if (kind === 'hand') return fromKind === 'library' ? 'draw' : 'toHand';
+    return 'play';
+  }
+
+  /** Duration of an arrival animation (CardFeel.durations, already scaled by the motion setting). */
+  function arrivalMs(kind: CardAnimationKind, f: CardFeel): number {
+    if (kind === 'draw') return f.durations.draw;
+    if (kind === 'play') return f.durations.play;
+    if (kind === 'attach' || kind === 'detach') return f.durations.attach;
+    return f.durations.toPile;
+  }
+
+  /**
+   * A card that went into the viewer's own hand (a draw, a card picked up): drawn flying from where it was to under the
+   * hand fan, turning face up on the way when the viewer may see it (their own identity of it, ViewState.privateFaces:
+   * nothing new is shown or sent), then dropped (M7-P4: "draw … flipping face up for its owner only").
+   */
+  function startLeaving(rc: RCard, inst: CardInstance, at: number, f: CardFeel): void {
+    const kind = arrivalKind(rc.inst.zone, inst.zone);
+    const dur = arrivalMs(kind, f);
+    // A group (seven drawn at once) staggers: this card starts its flight a little after the one before (M7-P5).
+    const now = at + groupDelay(groupIndex++, dur);
+    const ref = inst.identity ?? view.privateFaces[inst.id] ?? null;
+    const key = ref ? `${ref.sid}#${inst.faceIndex}` : BACK_KEY;
+    if (ref) faces.register(ref, inst.faceIndex);
+    rc.inst = inst;
+    rc.place = { ...rc.place, zone: inst.zone, kind: 'hand', key, ref, dimmed: false, fanned: false, z: rc.place.z, sort: [LAYER.dragged, 1, 0] };
+    if (key !== rc.shownKey) rc.motion.startFlip(now, theme.motion, reduced(), Math.min(theme.motion.flipMs, dur * 0.7));
+    rc.motion.tweenTo(handPoint(), at, dur, easeInOutCubic, reduced(), now - at);
+    rc.lift.arc(now, heldLift(), dur, reduced());
+    rc.leaving = { until: now + dur };
+    startAnim(kind, [rc.id], now, dur);
+  }
+
   function relayout(now: number): void {
     if (!state) return;
+    const before = laid;
+    laid = state;
+    // Only a new state animates (a layout or view change re-places cards as before); reduced motion cuts (M7-P4).
+    const animate = before !== null && before !== state && !reduced();
+    const f = feel();
+    // Cards that move in one new state are one group: their flights stagger (motion.ts groupDelay).
+    groupIndex = 0;
     const places = placeCards(state, view, { game: opts.game, layout, viewerSeat });
     entries = stackEntries(state, layout.stackLane, viewerAngle(state, layout, viewerSeat));
     syncStackFocus();
     if (hoverItem && !state.stack.some((i) => i.id === hoverItem)) hoverItem = null;
-    for (const id of [...rcards.keys()]) if (!places.has(id) && !drag?.ids.includes(id)) rcards.delete(id);
+    const ownHand = ownHandZone();
+    for (const [id, rc] of [...rcards]) {
+      if (places.has(id) || drag?.ids.includes(id) || rc.leaving) continue;
+      const inst = state.cards[id];
+      if (animate && inst && ownHand && inst.zone === ownHand && rc.inst.zone !== ownHand) startLeaving(rc, inst, now, f);
+      else rcards.delete(id);
+    }
     // Cards a settle sends home move together with the settle timing, staggered, their attachments riding along
     // (DESIGN "Specification: geometry, layout and motion", Motion).
     const settling = settleSlots(state, places.keys(), (id) => rcards.get(id)?.inst);
+    const newCards = before ? [...places.keys()].filter((id) => !rcards.has(id)).length : 0;
+    const taps: { rc: RCard; tapped: boolean }[] = [];
     for (const [id, place] of places) {
       const inst = state.cards[id]!;
       if (place.ref) faces.register(place.ref, place.faceIndex);
       let rc = rcards.get(id);
       if (!rc) {
-        rc = { id, inst, place, motion: new CardMotion(place.rest), shownKey: place.key, shownDim: place.dimmed, localUntil: 0, expect: null, tierDrawn: null, lift: new HeldLift() };
+        rc = { id, inst, place, motion: new CardMotion(place.rest), shownKey: place.key, shownDim: place.dimmed, localUntil: 0, expect: null, tierDrawn: null, lift: new LiftMotion(), sway: new SwayMotion(), pop: null, badgePop: null, riffle: null, leaving: null };
         rcards.set(id, rc);
+        // A card that appears on the table (played from the hand fan, a new token): a soft landing; a few at a time only
+        // (a deck going into the library is no storm of landings).
+        if (animate && newCards <= 12) arrive(rc, before!.cards[id]?.zone, now, f);
         continue;
       }
       const prev = rc.inst;
       rc.inst = inst;
       rc.place = place;
-      if (prev.face !== inst.face && rc.shownKey !== place.key) rc.motion.startFlip(now, theme.motion, reduced());
-      else if (rc.motion.flipSwapped) {
+      rc.leaving = null;
+      if (prev.face !== inst.face && rc.shownKey !== place.key) {
+        rc.motion.startFlip(now, theme.motion, reduced());
+        if (animate) startAnim('flip', [id], now, theme.motion.flipMs);
+      } else if (rc.motion.flipSwapped) {
         rc.shownKey = place.key;
         rc.shownDim = place.dimmed;
+      }
+      // Counters changed: the badge pops (M7-P4).
+      if (animate && !sameCounters(prev.counters, inst.counters)) {
+        rc.badgePop = now;
+        startAnim('counter', [id], now, POP_MS * motionNow().scale);
       }
       if (drag?.ids.includes(id)) continue;
       const t = rc.motion.target;
@@ -627,11 +828,104 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         rc.motion.moveTo(place.rest, 'settle', now, theme.motion, reduced(), slot * theme.motion.settleStaggerMs);
         continue;
       }
-      const kind = prev.tapped !== inst.tapped && onlyRot ? 'tap' : now < rc.localUntil ? 'spring' : 'remote';
+      if (prev.tapped !== inst.tapped && onlyRot) {
+        taps.push({ rc, tapped: inst.tapped });
+        continue;
+      }
+      const own = now < rc.localUntil;
+      const attachChanged = prev.attachedTo !== inst.attachedTo;
+      if (animate && (prev.zone !== inst.zone || attachChanged)) {
+        const kind: CardAnimationKind = prev.zone !== inst.zone ? arrivalKind(prev.zone, inst.zone) : inst.attachedTo !== undefined ? 'attach' : 'detach';
+        const dur = arrivalMs(kind, f);
+        if (own) {
+          // The viewer's own drop: the spring carries it and the lift settles with its bounce (tick); listed for the hook.
+          rc.motion.moveTo(place.rest, 'spring', now, theme.motion, reduced());
+          startAnim(kind, [id], now, Math.max(dur, f.settle.ms));
+        } else {
+          // Another player's move, or a key: a short flight with a hop, landing softly where the state says; a group
+          // staggers (M7-P5).
+          const delay = groupDelay(groupIndex++, dur);
+          rc.motion.tweenTo(place.rest, now, dur, kind === 'play' ? easeOutCubic : easeInOutCubic, reduced(), delay);
+          if (kind === 'play') rc.lift.land(now + delay, heldLift(), dur, f.settle.bounce, reduced());
+          else rc.lift.arc(now + delay, heldLift() * (kind === 'attach' || kind === 'detach' ? 0.5 : 0.8), dur, reduced());
+          startAnim(kind, [id], now + delay, dur);
+        }
+        continue;
+      }
+      const kind = now < rc.localUntil ? 'spring' : 'remote';
       rc.motion.moveTo(place.rest, kind, now, theme.motion, reduced());
+    }
+    // Taps and untaps turn with a small overshoot; many at once (untap all) run as a wave from the viewer's left (M7-P4).
+    // Taps that arrive within one frame, in one state or several, are one wave.
+    if (taps.length) {
+      if (!tapWave || tapWave.tick !== lastTick) tapWave = { tick: lastTick, start: now, items: [] };
+      const wave = tapWave;
+      const angle = viewerAngle(state, layout, viewerSeat);
+      for (const t of taps) {
+        wave.items = wave.items.filter((x) => x.rc !== t.rc);
+        wave.items.push({ rc: t.rc, tapped: t.tapped, x: rot2(t.rc.place.rest.x, t.rc.place.rest.y, -angle)[0] });
+      }
+      const delays = wave.items.length >= 3 ? waveDelays(wave.items.map((x) => x.x)) : wave.items.map(() => 0);
+      const dur = TAP_FEEL_MS * motionNow().scale;
+      wave.items.forEach(({ rc }, i) => rc.motion.tweenTo(rc.place.rest, wave.start, dur, (t) => easeOutBack(t, TAP_OVERSHOOT), reduced(), delays[i]));
+      if (animate) {
+        for (const tapped of [true, false]) {
+          const group = wave.items.map((x, i) => ({ ...x, i })).filter((x) => x.tapped === tapped);
+          if (group.length) startAnim(tapped ? 'tap' : 'untap', group.map((x) => x.rc.id), wave.start, dur + Math.max(...group.map((x) => delays[x.i]!)));
+        }
+      }
+    }
+    if (animate && before) {
+      // A library shuffled (its round finished): the pile riffles.
+      for (const round of Object.values(state.shuffles)) {
+        if (round.purpose !== 'shuffle' || round.orderHash === null || before.shuffles[round.id]?.orderHash) continue;
+        const pile = [...rcards.values()].filter((rc) => rc.inst.zone === round.zone && rc.place.kind === 'pile').sort((a, b) => a.place.z - b.place.z);
+        pile.forEach((rc, i) => (rc.riffle = { start: now, dur: f.durations.shuffle, i, n: pile.length }));
+        startAnim('shuffle', [], now, f.durations.shuffle);
+      }
+      // A clip snapped on or came off: its cards pop.
+      const clipsNow = state.clips ?? {};
+      const clipsBefore = before.clips ?? {};
+      for (const [cid, clip] of Object.entries(clipsNow)) {
+        if (clipsBefore[cid]) continue;
+        for (const id of clip.cards) {
+          const rc = rcards.get(id);
+          if (rc) rc.pop = { start: now, dur: f.durations.clip, amp: CLIP_POP_SCALE };
+        }
+        startAnim('clip', [...clip.cards], now, f.durations.clip);
+      }
+      for (const [cid, clip] of Object.entries(clipsBefore)) if (!clipsNow[cid]) startAnim('unclip', [...clip.cards], now, f.durations.clip);
     }
     sortOrder();
     dirty = true;
+  }
+
+  /**
+   * A card that appears on the table (M7-P4): played onto a battlefield or the stack it lands softly, coming up out of
+   * the viewer's hand fan when it was theirs; put on a pile from the viewer's hand it flies there from the fan.
+   */
+  function arrive(rc: RCard, from: ZoneId | undefined, at: number, f: CardFeel): void {
+    const kind = arrivalKind(from, rc.inst.zone);
+    const dur = arrivalMs(kind, f);
+    // A group (a hand dumped onto the table) staggers (M7-P5).
+    const delay = groupDelay(groupIndex++, dur);
+    const now = at + delay;
+    const fromHand = from !== undefined && from === ownHandZone();
+    if (rc.place.kind === 'free' || rc.place.kind === 'stack' || rc.place.kind === 'area') {
+      if (fromHand) {
+        const h = handPoint();
+        const rest = rc.place.rest;
+        rc.motion.cut({ x: rest.x + (h.x - rest.x) * 0.35, y: rest.y + (h.y - rest.y) * 0.35, rot: rest.rot });
+        rc.motion.tweenTo(rest, at, dur, easeOutCubic, reduced(), delay);
+      }
+      rc.lift.land(now, heldLift(), dur, f.settle.bounce, reduced());
+      startAnim('play', [rc.id], now, dur);
+    } else if (rc.place.kind === 'pile' && fromHand) {
+      rc.motion.cut(handPoint());
+      rc.motion.tweenTo(rc.place.rest, at, dur, easeInOutCubic, reduced(), delay);
+      rc.lift.arc(now, heldLift(), dur, reduced());
+      startAnim(kind, [rc.id], now, dur);
+    }
   }
 
   function sortOrder(): void {
@@ -710,7 +1004,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const seen = new Set<string>();
     for (const rc of order) {
       const c = rc.inst;
-      const pose = rc.motion.pose;
+      const pose = shownPose(rc);
       const local = (lx: number, ly: number) => {
         const [x, y] = rot2(lx, ly, pose.rot);
         return { x: pose.x + x, y: pose.y + y };
@@ -729,7 +1023,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (kinds.length && (rc.place.kind === 'free' || rc.place.kind === 'stack')) {
         // Over the art box, clear of the name, mana cost, type line and power/toughness the badge must not hide.
         const p = local(0, COUNTER_ART_Y);
-        specs.set(`ctr:${rc.id}`, { text: kinds.map((k) => counterText(k, c.counters[k]!)).join('\n'), x: p.x, y: p.y, z: 20, rot: pose.rot, size: COUNTER_SIZE, scale: counterScale, colour: t.fg, outline: t.surface, anchorX: 'center', anchorY: 'middle' });
+        specs.set(`ctr:${rc.id}`, { text: kinds.map((k) => counterText(k, c.counters[k]!)).join('\n'), x: p.x, y: p.y, z: 20, rot: pose.rot, size: COUNTER_SIZE, scale: counterScale * badgePopScale(rc), colour: t.fg, outline: t.surface, anchorX: 'center', anchorY: 'middle' });
       }
       if (c.note && rc.place.kind === 'free') {
         const p = local(0, -CARD_H / 2 + 12);
@@ -752,6 +1046,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
     }
     return specs;
+  }
+
+  /** A counter badge's pop (M7-P4: counters changing pop): up to POP_SCALE larger, back over POP_MS. */
+  function badgePopScale(rc: RCard): number {
+    if (rc.badgePop === null) return 1;
+    const dur = POP_MS * motionNow().scale;
+    return dur > 0 ? 1 + POP_SCALE * popCurve((lastTick - rc.badgePop) / dur) : 1;
   }
 
   function topOfPile(pile: string): InstanceId | null {
@@ -846,6 +1147,25 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   };
   let lastSheen = 0;
 
+  /**
+   * The pose a card is drawn at (M7-P4): its motion's pose turned by its sway and, while its pile riffles, moved aside
+   * in the viewer's frame. The debug hook's `pose` stays the motion's pose (where the card is going to rest).
+   */
+  function shownPose(rc: RCard): Pose {
+    const p = rc.motion.pose;
+    if (!rc.sway.value && !rc.riffle) return p;
+    let { x, y } = p;
+    if (rc.riffle) {
+      const o = riffleOffset(rc.riffle.i, rc.riffle.n, progressOf(rc.riffle, lastTick));
+      const [dx, dy] = rot2(o.dx * CARD_W, 0, viewerAngle(state, layout, viewerSeat));
+      x += dx;
+      y += dy;
+    }
+    return { x, y, rot: rc.sway.value ? normDeg(p.rot + rc.sway.value) : p.rot };
+  }
+  /** The hop of a riffling card, mm. */
+  const riffleZ = (rc: RCard): number => (rc.riffle ? riffleOffset(rc.riffle.i, rc.riffle.n, progressOf(rc.riffle, lastTick)).dz : 0);
+
   /** Tilt of held cards in the last frame (debug). */
   const tiltDrawn = new Map<InstanceId, number>();
 
@@ -876,6 +1196,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const lit = new Set([...(hoverItem && state ? hoverHighlights(state, hoverItem) : []), ...hoverClipCards()]);
     const slotOf = new Map(entries.map((e) => [e.item.card ?? '', e]));
     const foilPhase = reduced() ? 0 : (performance.now() / FOIL_SHEEN.periodMs) % 1;
+    const held = heldLift();
+    const down = viewerAngle(state, layout, viewerSeat);
     foilsDrawn.clear();
     hoversDrawn.clear();
     let focusTarget: { card: InstanceId; corners: { x: number; y: number }[] } | null = null;
@@ -885,7 +1207,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         rc.tierDrawn = null;
         continue;
       }
-      const pose = rc.motion.pose;
+      const pose = shownPose(rc);
       if (rc.motion.flipSwapped) {
         rc.shownKey = rc.place.key;
         rc.shownDim = rc.place.dimmed;
@@ -913,14 +1235,22 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const foil = foilShown(rc) ? foilHue(foilPhase, foilIndex(rc.id)) : null;
       if (foil !== null) foilsDrawn.add(rc.id);
       if (hov && !sel) hoversDrawn.add(rc.id);
+      // Card feel (M7-P4): a lifted card is drawn a little larger with its shadow under it; a pop swells it briefly.
+      const lifted = rc.lift.value;
+      const pop = rc.pop ? 1 + rc.pop.amp * popCurve(progressOf(rc.pop, lastTick)) : 1;
+      const scale = liftScale(lifted, held) * pop;
+      const sh = liftShadow(lifted, held);
+      const [sdx, sdy] = sh ? rot2(sh.dx, sh.dy, down) : [0, 0];
       sorted.push({
         sort: sortKey(rc),
         draw: {
           pose,
-          z: rc.place.z + rc.lift.value,
+          z: rc.place.z + lifted + riffleZ(rc),
           // Still lifted after the drop: its contact shadow follows it down instead of popping in on landing.
-          held: dragging || rc.lift.value > 0,
+          held: dragging || lifted > 0,
           tilt,
+          ...(scale !== 1 ? { scale } : {}),
+          shadow: sh ? { dx: sdx, dy: sdy, grow: sh.grow, blur: sh.blur, opacity: sh.opacity, z: rc.place.z } : null,
           scaleX: rc.motion.flipScale(lastTick),
           uv,
           dim: rc.shownDim ? 1 - dressing.faceDownOwnerOpacity : 0,
@@ -1045,20 +1375,30 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       changed = true;
     }
     if (drag) {
+      // The drop preview and the magnet follow the pointer and Ctrl (M6-P1; M7-P4), once per pointer move.
+      if (!previewFor || previewFor.x !== drag.last.x || previewFor.y !== drag.last.y || previewFor.ctrl !== drag.ctrl) {
+        previewFor = { x: drag.last.x, y: drag.last.y, ctrl: drag.ctrl };
+        const next = dragTargets(drag);
+        if (!samePreview(preview, next.preview)) {
+          preview = next.preview;
+          changed = true;
+        }
+        setMagnet(next.magnet);
+        // The hand fan makes room while the card is over it (ui/HandFan.svelte through util/feel.ts handRoom).
+        handRoom.set(next.magnet?.kind === 'hand' && magnet?.byCursor ? Math.round(drag.last.x) : null);
+        // The drop's own label and ghosts (M7-P5): draw, to hand, library top or bottom, attack.
+        const hint = computeDragHint(drag);
+        if (!sameDragHint(hint, dragHint)) {
+          dragHint = hint;
+          syncDragHint();
+          changed = true;
+        }
+      }
       followDrag();
       // A held card redraws when the pointer moved (its springs keep it drawing while it catches up and tilts); a
       // pointer held still over a card at rest needs no frames.
       if (drag.last !== dragDrawn) changed = true;
       dragDrawn = drag.last;
-      // The drop preview follows the pointer and Ctrl (M6-P1).
-      if (!previewFor || previewFor.x !== drag.last.x || previewFor.y !== drag.last.y || previewFor.ctrl !== drag.ctrl) {
-        previewFor = { x: drag.last.x, y: drag.last.y, ctrl: drag.ctrl };
-        const next = computePreview(drag);
-        if (!samePreview(preview, next)) {
-          preview = next;
-          changed = true;
-        }
-      }
     } else dragDrawn = null;
     // A press held still on an overlap clips at CLIP.holdMs; its ring fills from CLIP.ringFromMs (M6-P1).
     if (clipHold) {
@@ -1066,12 +1406,46 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       syncRing(now);
     }
     if (clipDrag) changed = true;
-    const held = theme.cardDressing.held.lift;
+    // Card feel (M7-P4): a held card rises, leans into its motion and settles with a bounce when let go; pops, riffles
+    // and flights into the hand run to their end. Each asks for frames only while it moves.
+    const held = heldLift();
+    const f = feel();
+    const still = reduced();
+    const grip = drag ? screenToTable(drag.last.x, drag.last.y) : null;
+    const down = viewerAngle(state, layout, viewerSeat);
+    let dropped = false;
     for (const rc of rcards.values()) {
-      const lift = drag?.ids.includes(rc.id) ? held : 0;
-      if (rc.lift.target !== lift) rc.lift.set(lift, reduced());
+      if (rc.leaving && now >= rc.leaving.until) {
+        rcards.delete(rc.id);
+        dropped = true;
+        continue;
+      }
+      const dragging = drag?.ids.includes(rc.id) ?? false;
+      if (dragging && rc.lift.target !== held) rc.lift.rise(now, held, f.liftMs, still);
+      else if (!dragging && !rc.leaving && rc.lift.target !== 0) rc.lift.settle(now, f.settle.ms, f.settle.bounce, still);
       if (rc.lift.moving) {
-        rc.lift.step(dt, theme.motion);
+        rc.lift.step(now);
+        changed = true;
+      }
+      if (still) rc.sway.cut();
+      else if (dragging && grip) {
+        const pose = rc.motion.pose;
+        rc.sway.set(swayTarget(rc.motion.x.v, rc.motion.y.v, pose.x - grip.x, pose.y - grip.y, down, f.sway));
+      } else rc.sway.set(0);
+      if (rc.sway.moving) {
+        rc.sway.step(dt, f.sway.relaxMs);
+        changed = true;
+      }
+      if (rc.pop) {
+        if (now - rc.pop.start >= rc.pop.dur) rc.pop = null;
+        changed = true;
+      }
+      if (rc.badgePop !== null) {
+        if (now - rc.badgePop >= POP_MS * motionNow().scale) rc.badgePop = null;
+        changed = true;
+      }
+      if (rc.riffle) {
+        if (now - rc.riffle.start >= rc.riffle.dur) rc.riffle = null;
         changed = true;
       }
       // The step that brings a card to rest still needs its frame (the rest pose; a held card's tilt back to flat).
@@ -1086,6 +1460,16 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
       if (rc.motion.moving) changed = true;
     }
+    if (dropped) sortOrder();
+    // Animations listed for the hook end on time; frame holds of other movers end when released or no longer active.
+    if (anims.length) {
+      anims = anims.filter((a) => now < a.start + a.dur);
+      changed = true;
+    }
+    for (const [id, h] of frameHolds) if (h.active && !h.active()) frameHolds.delete(id);
+    if (frameHolds.size) changed = true;
+    // What this scene runs, for the page-wide totals (util/feel.ts; a dispose forgets it).
+    reportMotion(motionKey, anims.length, frameHolds.size);
     if (faces.pump(frame, uploadScale(frameCost))) changed = true;
     // Ambient motion: what moves with nothing changing (ping fades, the pending pulse, a lit theme's light and
     // particles, the foil sheen). On a slow renderer it waits a few frame costs between frames (scene/pacing.ts).
@@ -1104,6 +1488,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       drewLastTick = true;
     }
     if (captionLayer.active) captionLayer.place();
+    syncAffordances();
     frameMeter.tick(now, drewLastTick, drewLastTick ? stats.frameMs : 0);
   }
 
@@ -1126,7 +1511,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
   }
 
-  /** The height a card is drawn at: its place in a pile plus the theme's held lift (M4-P2's `HeldLift`). */
+  /** The height a card is drawn at: its place in a pile plus the lift (M4-P2's held lift, M7-P4's LiftMotion). */
   function drawnZ(rc: RCard): number {
     return rc.place.z + rc.lift.value;
   }
@@ -1204,7 +1589,19 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   function targets() {
-    return state ? dropTargets(state, layout, viewerAngle(state, layout, viewerSeat), opts.game) : [];
+    if (!state) return [];
+    const out = dropTargets(state, layout, viewerAngle(state, layout, viewerSeat), opts.game);
+    // The command and emblem area is a drop target too (PLAN M7-P5: drag to every zone, "command"; DESIGN "Card
+    // manipulation", Move to zone: "Also by dragging onto the zone").
+    for (const z of opts.game.zones) {
+      if (z.scope !== 'seat' || z.presentation !== 'area') continue;
+      for (const seat of Object.values(state.seats)) {
+        const sl = seatLayoutOf(state, layout, seat.id);
+        const id = `${z.id}:${seat.id}`;
+        if (sl && state.zones[id]) out.push({ zone: id, rect: { ...sl.zones.command } });
+      }
+    }
+    return out;
   }
 
   // --- Paperclips (M6-P1; PLAN Milestone 6, owner decisions, Paperclips) ------------------------------------------
@@ -1263,6 +1660,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** A left press on an overlap starts the hold (PLAN Milestone 6, owner decisions, Creating a clip, Mouse). */
   function startHold(pointerId: number, x: number, y: number): void {
+    if (readOnly) return;
     const under = cardsUnder(x, y);
     // Only where the hold would clip something (M6.1): over cards already clipped together it stays a plain press,
     // so the click or drag goes on as usual and no duplicate clip is made.
@@ -1305,6 +1703,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** Pick up an existing clip (or, from the tray, a new one) at a screen point. */
   function startClipDrag(pointerId: number, clip: ClipId | null, x: number, y: number, external: boolean): void {
+    if (readOnly) return;
     cancelHold();
     clipDrag = { pointerId, clip, last: { x, y }, external };
     setHover(null);
@@ -1359,14 +1758,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** The drop preview: a ghost outline at the landing spot and, for a tuck, the attach glyph at the peeking strip. */
   function syncPreview(cam: ReturnType<typeof rig.pose>): void {
-    const pv = preview;
+    // A zone pile or an avatar pulling the card shows its landing spot too (M7-P4: "with the landing preview").
+    const zoneSlot = !preview && drag && magnet?.slot && (magnet.kind === 'zone' || magnet.kind === 'hand') ? magnet.slot : null;
+    const pv: DropPreview | null = preview ?? (zoneSlot ? { kind: 'squared', target: '', pose: zoneSlot } : null);
+    const colour = theme.tokens.colours.focus;
+    // The drag's own landing spots beyond the snap preview (M7-P5): the library's bottom slot, an attacker's spot.
+    const extra = dragHint ? dragHint.ghosts.flatMap((g) => ghostSegments(g, true).map((sgm) => ({ ...sgm, colour, widthPx: 1.5 }))) : [];
     if (!pv) {
-      previewLayer.sync([]);
+      previewLayer.sync(extra);
       if (glyphEl.style.display !== 'none') glyphEl.style.display = 'none';
       return;
     }
-    const colour = theme.tokens.colours.focus;
-    previewLayer.sync(ghostSegments(pv.pose, true).map((sgm) => ({ ...sgm, colour, widthPx: 1.5 })));
+    previewLayer.sync([...ghostSegments(pv.pose, true).map((sgm) => ({ ...sgm, colour, widthPx: 1.5 })), ...extra]);
     if (pv.kind !== 'tuck') {
       glyphEl.style.display = 'none';
       return;
@@ -1426,12 +1829,17 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const isBattlefield = (zone: ZoneId) => state && presentationOf(opts.game, state, zone) === 'free';
 
   function startCardDrag(rc: RCard, pointerId: number, x: number, y: number, temp: boolean, pileGrab: boolean, external = false): boolean {
+    // Read-only (M7-P5): no card moves; a press-and-drag on a card moves the view instead.
+    if (readOnly) return false;
     if (!state) return false;
     const inst = rc.inst;
     const zoneObj = state.zones[inst.zone];
     const pres = presentationOf(opts.game, state, inst.zone);
-    // Library cards are drawn through the draw action (a private effect), other seats' hands are not ours to drag.
-    if (!external && zoneObj && zoneObj.visibility !== 'public') return false;
+    // Library cards are drawn through the draw action (a private effect), other seats' hands are not ours to drag. The
+    // top of the own library may be picked up to draw it (PLAN M7-P5: "drag from library to hand draws"): it is drawn
+    // by the session on a drop in the hand, never moved by an action of the scene.
+    const fromLibrary = !external && !!zoneObj && zoneObj.kind === 'library' && zoneObj.owner === viewerSeat && viewerSeat !== null && rc.place.kind === 'pile' && isPileTop(rc);
+    if (!external && zoneObj && zoneObj.visibility !== 'public' && !fromLibrary) return false;
     let ids: InstanceId[] = [rc.id];
     let group: DragGroup | null = null;
     if (pres === 'free') {
@@ -1451,30 +1859,83 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (r) start.set(id, { ...r.motion.pose, rot: r.place.rest.rot });
     }
     const a = anchor.motion.pose;
-    drag = { pointerId, ids, offset: { x: a.x - p.x, y: a.y - p.y }, start, keepPile, temp, last: { x, y }, external, added: [], group, ctrl: false };
+    drag = { pointerId, ids, offset: { x: a.x - p.x, y: a.y - p.y }, start, keepPile, temp, last: { x, y }, external, added: [], group, ctrl: false, ...(fromLibrary ? { fromLibrary: true } : {}) };
+    // The strip and the pile actions step aside while a card is held (they return when it lands).
+    syncAffordances(true);
     preview = null;
     previewFor = null;
+    magnet = null;
+    magnetDrawn = null;
     for (const id of ids) rcards.get(id)!.expect = null;
     sortOrder();
     dirty = true;
+    // The card is picked up (M7-P4): it rises in tick(); the pickup cue sounds once.
+    feelCues.emit('pickup');
     return true;
   }
 
-  /** Drag targets follow the pointer (recomputed each frame so zooming mid-drag keeps the card under the cursor). */
+  /**
+   * Drag targets follow the pointer (recomputed each frame so zooming mid-drag keeps the card under the cursor). Near a
+   * snap slot the magnet pulls the drawn card toward it (M7-P4, CardFeel.magnet); where it lands is still the drop's
+   * resolution from the pointer, which the preview shows. Reduced motion: no pull.
+   */
   function followDrag(): void {
     if (!drag) return;
     const p = screenToTable(drag.last.x, drag.last.y);
     const a0 = drag.start.get(drag.ids[0]!)!;
-    const ax = p.x + drag.offset.x;
-    const ay = p.y + drag.offset.y;
+    let ax = p.x + drag.offset.x;
+    let ay = p.y + drag.offset.y;
+    let turn = 0;
+    magnetDrawn = null;
+    if (magnet?.slot && !reduced()) {
+      const fm = feel().magnet;
+      const free: Pose = { x: ax, y: ay, rot: a0.rot };
+      let m: MagnetState | null;
+      if (magnet.byCursor) {
+        // A zone pile or an avatar pulls while the pointer is over it, however far from the card's centre it grabbed.
+        const pull = magnetPull(Math.hypot(magnet.slot.x - p.x, magnet.slot.y - p.y), Math.max(fm.radiusMm, CARD_H / 2 + 12), fm.strength);
+        m = pull > 0 ? { slot: magnet.slot, pull, pose: { x: ax + (magnet.slot.x - p.x) * pull, y: ay + (magnet.slot.y - p.y) * pull, rot: a0.rot } } : null;
+      } else m = magnetOn(free, magnet.slot, fm);
+      if (m) {
+        ax = m.pose.x;
+        ay = m.pose.y;
+        // A single card also turns toward the slot (a tuck behind a tapped host, a pile of turned cards).
+        if (drag.ids.length === 1) turn = deltaDeg(a0.rot, m.slot.rot) * m.pull;
+        magnetDrawn = m;
+      }
+    }
     for (const id of drag.ids) {
       const rc = rcards.get(id);
       const s = drag.start.get(id);
       if (!rc || !s) continue;
-      const pose = { x: ax + (s.x - a0.x), y: ay + (s.y - a0.y), rot: s.rot };
+      const pose = { x: ax + (s.x - a0.x), y: ay + (s.y - a0.y), rot: s.rot + turn };
       if (reduced()) rc.motion.cut(pose);
       else rc.motion.follow(pose);
     }
+  }
+
+  /** A new magnet target: the snap cue sounds when the card is pulled toward a new slot (M7-P4). */
+  function setMagnet(next: typeof magnet): void {
+    const prev = magnet;
+    magnet = next;
+    if (!next) return;
+    if (prev && prev.kind === next.kind && prev.target === next.target && (prev.slot === next.slot || (!!prev.slot && !!next.slot && samePose(prev.slot, next.slot)))) return;
+    if (next.kind !== 'align') feelCues.emit('snap');
+  }
+
+  /**
+   * Whether a screen point is over the viewer's hand fan (M7-P4: "hand cards fan and make room as a card passes over
+   * the hand"): the bottom band the HUD keeps clear for the fan (the host's data-fit-insets bottom), when the viewer has
+   * a hand. Without a HUD (the scene harness) there is no fan and no band.
+   */
+  function overHandBand(x: number, y: number): boolean {
+    const zone = ownHandZone();
+    if (!zone || !state?.zones[zone]) return false;
+    const vp = rig.viewport;
+    const bottom = readInsets().bottom;
+    if (bottom < vp.h * SCREEN_LAYER.handCardViewportFraction) return false;
+    const c = toCanvas(x, y);
+    return c.y >= vp.h - bottom + HAND_BAND_GAP_PX && c.y <= vp.h && c.x >= 0 && c.x <= vp.w;
   }
 
   function groupExtent(d: DragState): Extent {
@@ -1539,10 +2000,15 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         ...(rc.inst.tapped ? { tapped: true } : {}),
       });
     }
-    const result: DropResult = resolveDrop(
-      { pose: anchorPose, cursor: p, single: d.ids.length === 1, ctrl, frameDeg: dest?.frameDeg ?? 0, extent: groupExtent(d) },
-      { table: dropTable(layout), cards: snapCards, targets: targets() },
-    );
+    const hand = ownHandZone();
+    // Over the hand fan the card goes to the viewer's hand (M7-P4; like a drop on their avatar, rule 1).
+    const result: DropResult =
+      hand && overHandBand(d.last.x, d.last.y)
+        ? { rule: 1, kind: 'zone', zone: hand }
+        : resolveDrop(
+            { pose: anchorPose, cursor: p, single: d.ids.length === 1, ctrl, frameDeg: dest?.frameDeg ?? 0, extent: groupExtent(d) },
+            { table: dropTable(layout), cards: snapCards, targets: targets() },
+          );
     return { result, dest, anchorPose, p };
   }
 
@@ -1552,17 +2018,316 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   /**
    * The landing spot of the drag in progress as the preview shows it (PLAN Milestone 6, owner decisions, Preview: "the
    * landing spot of every snap (pile, cascade, tuck) is shown as a ghost outline, and a tuck also shows a small attach
-   * glyph"): null for a temporary move, a zone drop and a free or aligned spot.
+   * glyph"): null for a temporary move, a zone drop and a free or aligned spot. With it the magnet (M7-P4): the slot the
+   * drawn card is pulled toward, from the same resolution, so the pull always leads to where the release puts it — a
+   * snap slot, an aligned spot, a zone pile or avatar under the pointer, or the hand fan.
    */
-  function computePreview(d: DragState): DropPreview | null {
-    if (d.temp || !state) return null;
+  function dragTargets(d: DragState): { preview: DropPreview | null; magnet: typeof magnet } {
+    const none = { preview: null, magnet: null };
+    if (!state) return none;
+    if (d.temp) return none;
     const r = resolveFor(d, d.ctrl);
-    if (!r) return null;
+    if (!r) return none;
     const res = r.result;
-    if (res.kind === 'squared') return { kind: 'squared', target: res.onto, pose: res.pose };
-    if (res.kind === 'cascade') return { kind: 'cascade', target: res.below, pose: res.pose };
-    if (res.kind === 'tuck') return { kind: 'tuck', target: res.host, pose: tuckDrawn(state.cards[d.ids[0]!], res.pose) };
+    if (res.kind === 'squared') return { preview: { kind: 'squared', target: res.onto, pose: res.pose }, magnet: { kind: 'squared', target: res.onto, slot: res.pose, byCursor: false } };
+    if (res.kind === 'cascade') return { preview: { kind: 'cascade', target: res.below, pose: res.pose }, magnet: { kind: 'cascade', target: res.below, slot: res.pose, byCursor: false } };
+    if (res.kind === 'tuck') {
+      const pose = tuckDrawn(state.cards[d.ids[0]!], res.pose);
+      return { preview: { kind: 'tuck', target: res.host, pose }, magnet: { kind: 'tuck', target: res.host, slot: pose, byCursor: false } };
+    }
+    if (res.kind === 'align') return { preview: null, magnet: { kind: 'align', target: res.to, slot: res.pose, byCursor: false } };
+    if (res.kind === 'zone') {
+      const hand = res.zone === ownHandZone() && overHandBand(d.last.x, d.last.y);
+      if (hand) return { preview: null, magnet: { kind: 'hand', target: null, slot: null, byCursor: true } };
+      const t = targets().find((x) => x.zone === res.zone);
+      const slot: Pose | null = t?.rect ? { x: t.rect.x, y: t.rect.y, rot: t.rect.rot } : t?.circle ? { x: t.circle.x, y: t.circle.y, rot: r.anchorPose.rot } : null;
+      // The stack lane is a lane, not a slot: no pull toward its centre.
+      if (!slot || presentationOf(opts.game, state, res.zone) === 'cascade-lane') return none;
+      const top = state.zones[res.zone]?.ids.at(-1) ?? null;
+      return { preview: null, magnet: { kind: t?.circle ? 'hand' : 'zone', target: t?.rect ? top : null, slot, byCursor: true } };
+    }
+    return none;
+  }
+
+  // --- Affordances (PLAN M7-P5, Play without keys; scene/affordances.ts) -----------------------------------------------
+  /** The library's bottom slot while a dragged card is over that library (or over the slot itself). */
+  let libSlot: { zone: ZoneId; rect: Rect } | null = null;
+  /**
+   * What the drop in progress would do beyond the snap preview (draw, to hand, top or bottom of a library, attack), with
+   * the ghost outlines it shows; null when it is a plain move. Recomputed when the pointer moves, shown as one label.
+   */
+  let dragHint: DragHint | null = null;
+  /** The pile the pointer rests on or a click or tap chose (its actions show beside it). */
+  let pileWant: { zone: ZoneId; via: 'hover' | 'tap' } | null = null;
+  /** The selection anchor and pile hover last reported (null while things move). */
+  let selAnchorNow: SelectionAnchor | null = null;
+  let pileHoverNow: PileHover | null = null;
+  /** Something the anchors depend on changed (selection, state, pile under the pointer, viewport). */
+  let affordDirty = true;
+  /** Whether the camera, the selection or a drag moved at the last check, and the camera pose then. */
+  let affordMoving = false;
+  let affordCam = '';
+  /** The label of the drop in progress, over the canvas (no blur or backdrop filter: Safari). */
+  const hintEl = document.createElement('div');
+  hintEl.setAttribute('data-scene', 'drop-hint');
+  hintEl.setAttribute('data-testid', 'drop-hint');
+  Object.assign(hintEl.style, { position: 'absolute', left: '0', top: '0', display: 'none', pointerEvents: 'none', zIndex: '3', padding: '3px 10px', borderRadius: '999px', font: '600 13px/1.3 system-ui, sans-serif', whiteSpace: 'nowrap', transform: 'translate(-50%, -50%)' });
+  host.appendChild(hintEl);
+
+  /** The top card of its zone's pile (the one a press on the pile picks up). */
+  function isPileTop(rc: RCard): boolean {
+    const ids = state?.zones[rc.inst.zone]?.ids;
+    return !!ids && ids[ids.length - 1] === rc.id;
+  }
+
+  /** The own hand when a drop at this viewport point goes there: the hand band at the bottom of the screen, the hand fan, or the own avatar spot. */
+  function handDropAt(x: number, y: number, p: TablePoint): ZoneId | null {
+    if (!state || viewerSeat === null) return null;
+    const hand = opts.game.zones.find((z) => z.presentation === 'fan' && z.scope === 'seat');
+    const own: ZoneId = `${hand?.id ?? 'hand'}:${viewerSeat}`;
+    if (!state.zones[own]) return null;
+    if (zoneTargetAt(p, targets())?.zone === own) return own;
+    // The band at the bottom of the screen is the hand's only while the HUD shows the viewer's fan (not in the scene
+    // harness, which has no HUD: there the bottom of the screen is table).
+    const fanShown = typeof document !== 'undefined' && document.querySelector('[data-testid="hand"]') !== null;
+    const vh = typeof window === 'undefined' ? canvasRect().bottom : window.innerHeight;
+    if (fanShown && inHandBand(y, vh, vh)) return own;
+    const el = typeof document !== 'undefined' && typeof document.elementFromPoint === 'function' ? document.elementFromPoint(x, y) : null;
+    return el instanceof Element && el.closest('[data-testid="hand"]') ? own : null;
+  }
+
+  /** The attacker the drop would block (scene/combat.ts), as finishDrag decides it: a block wins over an attack. */
+  function blockTargetAt(d: DragState, p: TablePoint): InstanceId | null {
+    if (!state || d.external) return null;
+    const group = groupOf(d);
+    const blockers = d.ids.filter((id) => id === group.anchor || group.reason[id] === 'selection');
+    const under = pick(d.last.x, d.last.y, new Set(d.ids));
+    return (under ? fanAttacker(state, under.id) : null) ?? fanUnder(state, blockers, p, combatCtx);
+  }
+
+  /** The cards a drop would send into an attack, and the seat it names (scene/affordances.ts attackDrop), or null. */
+  function attackFor(d: DragState, p: TablePoint): { cards: CardInstance[]; target: AttackDrop['target'] } | null {
+    if (!state || d.temp || d.external || d.fromLibrary) return null;
+    if (blockTargetAt(d, p)) return null;
+    const st = state;
+    const group = groupOf(d);
+    const leads = d.ids
+      .filter((id) => id === group.anchor || group.reason[id] === 'selection')
+      .map((id) => st.cards[id])
+      .filter((c): c is CardInstance => !!c);
+    const avatar = seatElementAt(d.last.x, d.last.y) ?? lineView.avatarAt(p);
+    // The territories of the seats that are taken (an empty chair's half of a goldfish table is open table).
+    const territories = Object.values(st.seats)
+      .filter((s) => s.id === viewerSeat || s.name !== '' || s.peer !== undefined)
+      .map((s) => seatLayoutOf(st, layout, s.id)?.territory)
+      .filter((t): t is Rect => !!t);
+    const angle = viewerAngle(st, layout, viewerSeat);
+    const r = attackDrop(st, leads, p, {
+      viewer: viewerSeat,
+      seatLayout: (seat) => seatLayoutOf(st, layout, seat),
+      territories,
+      lane: { ...layout.stackLane, rot: layout.stackLane.rot + angle },
+      avatarSeat: avatar?.kind === 'seat' ? avatar.id : null,
+      battlefield: (z) => isBattlefield(z) === true,
+    });
+    return r ? { cards: leads, target: r.target } : null;
+  }
+
+  /**
+   * Open the library's bottom slot while the dragged card is over a library, keep it while the pointer crosses the gap
+   * to the slot (and on the slot), close it elsewhere. Returns whether the point is over a library. Run on every pointer
+   * move of a card drag, not only once per frame: on a slow frame rate a quick move over the library onto the slot
+   * would otherwise never be seen over the library.
+   */
+  function trackLibSlot(p: TablePoint): boolean {
+    if (!state) return false;
+    const t = zoneTargetAt(p, targets());
+    const tz = t ? state.zones[t.zone] : undefined;
+    if (t && tz?.kind === 'library') {
+      const sl = seatLayoutOf(state, layout, tz.owner);
+      const a = sl ? pileAnchor(sl, 'library') : null;
+      libSlot = a ? { zone: t.zone, rect: libraryBottomSlot(a) } : null;
+      return true;
+    }
+    if (libSlot) {
+      // The slot stays while the pointer crosses the gap between the library and the slot (and on the slot itself).
+      const m = GEOMETRY.gap + 6;
+      const r = libSlot.rect;
+      if (!pointInRect(p, { ...r, w: r.w + 2 * m, d: r.d + 2 * m })) libSlot = null;
+    }
+    return false;
+  }
+
+  /** A card drag's pointer moved: follow the library slot at once (trackLibSlot); the rest waits for the frame. */
+  function dragPointerMoved(d: DragState): void {
+    if (!state || d.temp || d.fromLibrary) return;
+    const p = screenToTable(d.last.x, d.last.y);
+    if (handDropAt(d.last.x, d.last.y, p)) return;
+    trackLibSlot(p);
+  }
+
+  /** What the drag in progress would do beyond the snap rules, and the library slot it opened. */
+  function computeDragHint(d: DragState): DragHint | null {
+    if (!state || d.temp) {
+      libSlot = null;
+      return null;
+    }
+    const p = screenToTable(d.last.x, d.last.y);
+    const handZone = handDropAt(d.last.x, d.last.y, p);
+    if (d.fromLibrary) return handZone ? { kind: 'draw', at: null, ghosts: [] } : null;
+    if (handZone) {
+      libSlot = null;
+      return { kind: 'hand', at: null, ghosts: [] };
+    }
+    const overLibrary = trackLibSlot(p);
+    if (libSlot) {
+      const r = libSlot.rect;
+      const onSlot = !overLibrary && pointInRect(p, r);
+      return { kind: onSlot ? 'bottom' : 'top', at: { x: r.x, y: r.y }, ghosts: [{ x: r.x, y: r.y, rot: r.rot }] };
+    }
+    const atk = attackFor(d, p);
+    if (atk) {
+      const ghosts = atk.cards.map((c) => {
+        const a = attackPose(c, seatAngleOf(c.controller));
+        return { ...a, rot: displayedRot({ pose: a, tapped: true }) };
+      });
+      return { kind: 'attack', at: ghosts[0] ? { x: ghosts[0].x, y: ghosts[0].y } : null, ghosts };
+    }
     return null;
+  }
+
+  const sameDragHint = (a: DragHint | null, b: DragHint | null): boolean =>
+    a === b || (!!a && !!b && a.kind === b.kind && a.ghosts.length === b.ghosts.length && (a.at === b.at || (!!a.at && !!b.at && Math.abs(a.at.x - b.at.x) < 1e-6 && Math.abs(a.at.y - b.at.y) < 1e-6)));
+  const HINT_TEXT: Record<DragHint['kind'], string> = { draw: 'Draw', hand: 'To hand', top: 'Bottom ↓', bottom: 'Bottom of library', attack: 'Attack' };
+  /** Show the drop label for the current hint (only when the hint changes: no per-frame DOM writes). */
+  function syncDragHint(): void {
+    const h = dragHint;
+    if (!h) {
+      if (hintEl.style.display !== 'none') hintEl.style.display = 'none';
+      hintEl.removeAttribute('data-kind');
+      return;
+    }
+    const c = theme.tokens.colours;
+    const hr = host.getBoundingClientRect();
+    let x: number;
+    let y: number;
+    if (h.at) {
+      const s = worldToScreen({ x: h.at.x, y: h.at.y, z: 0 });
+      x = (s?.x ?? hr.left + hr.width / 2) - hr.left;
+      y = (s?.y ?? hr.top + hr.height / 2) - hr.top;
+    } else {
+      // Over the hand, at the pointer's side of the screen.
+      x = Math.min(Math.max(60, (drag?.last.x ?? hr.width / 2) - hr.left), hr.width - 60);
+      y = hr.height * (1 - 0.22) - 18;
+    }
+    hintEl.textContent = HINT_TEXT[h.kind];
+    hintEl.setAttribute('data-kind', h.kind);
+    const strong = h.kind !== 'top';
+    Object.assign(hintEl.style, {
+      display: 'block',
+      left: `${Math.round(x)}px`,
+      top: `${Math.round(y)}px`,
+      background: strong ? c.focus : c.surface,
+      color: strong ? c.surface : c.fg,
+      border: `1px solid ${c.focus}`,
+      opacity: strong ? '1' : '0.85',
+    });
+  }
+
+  /** The zone pile under a viewport point (library, graveyard, exile), or null. */
+  function pileUnder(x: number, y: number): ZoneId | null {
+    const rc = pick(x, y);
+    if (!rc || rc.place.kind !== 'pile' || rc.place.fanned) return null;
+    return rc.inst.zone;
+  }
+
+  function setPileWant(next: typeof pileWant): void {
+    // Read-only (M7-P5): no pile offers its actions.
+    if (readOnly && next) next = null;
+    if (next === pileWant || (next && pileWant && next.zone === pileWant.zone && next.via === pileWant.via)) return;
+    pileWant = next;
+    affordDirty = true;
+  }
+
+  /** The pointer moved over the table without a press: the pile under it, unless a click chose another. */
+  function hoverPile(x: number, y: number): void {
+    const z = pileUnder(x, y);
+    if (z) {
+      if (pileWant?.zone !== z) setPileWant({ zone: z, via: 'hover' });
+    } else if (pileWant?.via === 'hover') setPileWant(null);
+  }
+
+  /** The selection's screen anchor now (scene/affordances.ts), from the cards as drawn. */
+  function selectionAnchorNow(): SelectionAnchor | null {
+    // Read-only (M7-P5): the selection is for reading; no strip stands beside it.
+    if (readOnly) return null;
+    // Cards drawn on the table and handled one by one: not another seat's hand row, not a card gone into a pile (a
+    // selected card put into the graveyard leaves the strip behind).
+    const ids = view.selection.filter((id) => {
+      const k = rcards.get(id)?.place.kind;
+      return k !== undefined && k !== 'hand' && k !== 'pile';
+    });
+    if (ids.length === 0) return null;
+    const r = canvasRect();
+    const rects: ScreenRect[] = [];
+    const zones: ZoneId[] = [];
+    for (const id of ids) {
+      const rc = rcards.get(id)!;
+      const b = screenRect(rc);
+      rects.push({ x: b.x, y: b.y, width: b.width, height: b.height });
+      zones.push(rc.inst.zone);
+    }
+    return selectionAnchorOf(ids, rects, zones, { x: r.left, y: r.top, width: r.width, height: r.height });
+  }
+
+  /** The chosen pile as it is drawn now, or null (an empty pile offers nothing). */
+  function pileHoverNowOf(want: NonNullable<typeof pileWant>): PileHover | null {
+    const zone = state?.zones[want.zone];
+    if (!zone || zone.ids.length === 0) return null;
+    const top = rcards.get(zone.ids[zone.ids.length - 1]!);
+    if (!top || top.place.kind !== 'pile') return null;
+    const b = screenRect(top);
+    const rect = { x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) };
+    return { zone: zone.id, pile: null, owner: zone.owner, count: zone.ids.length, rect, via: want.via };
+  }
+
+  /**
+   * Report the selection strip's anchor and the pile actions' anchor (SceneEvents.selectionAnchor, pileHover): null
+   * while the camera, a drag or the selected cards move, the new anchors once they rest, and on any change. Runs every
+   * tick but does work only around a change, so a still table reports nothing (Safari: no per-frame DOM or Svelte work).
+   */
+  function syncAffordances(force = false): void {
+    if (!state) return;
+    const cam = rig.pose();
+    const camKey = `${cam.position[0]},${cam.position[1]},${cam.position[2]},${cam.target[0]},${cam.target[1]},${cam.target[2]},${cam.fovDeg}`;
+    const camMoved = camKey !== affordCam;
+    affordCam = camKey;
+    const selMoving = view.selection.some((id) => {
+      const rc = rcards.get(id);
+      return !!rc && (rc.motion.moving || rc.lift.moving);
+    });
+    const handling = !!drag || !!clipDrag || !!itemDrag || (gesture !== null && gesture.kind !== 'press') || touchHold !== null;
+    const moving = camMoved || selMoving || handling;
+    if (!moving && !affordDirty && !affordMoving && !force) return;
+    affordMoving = moving;
+    affordDirty = false;
+    const sel = moving ? null : selectionAnchorNow();
+    if (!sameSelectionAnchor(sel, selAnchorNow)) {
+      selAnchorNow = sel;
+      opts.events.selectionAnchor?.(sel);
+    }
+    // The pile actions stay while only the selection moves (a tapped card turning); a drag or the camera hides them.
+    const ph = camMoved || handling || !pileWant ? null : pileHoverNowOf(pileWant);
+    if (!ph && pileWant && !camMoved && !handling) pileWant = null;
+    if (!samePileHover(ph, pileHoverNow)) {
+      pileHoverNow = ph;
+      opts.events.pileHover?.(ph);
+    }
+  }
+
+  /** The affordances as the debug hook reports them (PLAN M7-P5). */
+  function affordanceDebug(): AffordanceDebugState {
+    return { selection: selAnchorNow, pile: pileHoverNow, scrub: null };
   }
 
   function finishDrag(ctrl: boolean, cancel = false): void {
@@ -1574,6 +2339,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     drag = null;
     preview = null;
     previewFor = null;
+    magnet = null;
+    magnetDrawn = null;
+    handRoom.set(null);
     dirty = true;
     const now = performance.now();
     const insts = d.ids.map((id) => state!.cards[id]).filter((c): c is CardInstance => !!c);
@@ -1587,6 +2355,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       sortOrder();
       dirty = true;
     };
+    const slot = libSlot;
+    libSlot = null;
+    dragHint = null;
+    syncDragHint();
     if (cancel || !anchorRc || insts.length === 0) return back();
     const p = screenToTable(d.last.x, d.last.y);
     const a0 = d.start.get(d.ids[0]!)!;
@@ -1594,6 +2366,36 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const group = groupOf(d);
     let actions: ActionDraft[];
     let predicted: Map<InstanceId, Pose> | null = null;
+    const handZone = handDropAt(d.last.x, d.last.y, p);
+    // The top of the own library dropped in the hand is drawn (PLAN M7-P5: "drag from library to hand draws"); the
+    // session draws it as the library's own action (the pile's first action, PILE_ACTIONS.library: draw), so the scene
+    // never names which hidden card that is. Anywhere else it goes back on the pile.
+    if (d.fromLibrary) {
+      back();
+      if (handZone !== null) opts.events.pileOpen?.(insts[0]!.zone);
+      return;
+    }
+    // Dropped in the hand at the bottom of the screen (or on the own avatar spot, rule 1): to the owner's hand, as H
+    // does (PLAN M7-P5: "drag to every zone (hand, …)").
+    if (handZone !== null && !d.temp) {
+      const zone = `hand:${insts[0]!.owner}`;
+      if (!state.zones[zone]) return back();
+      const drafts = toStoredPoses(state, carryDropActions(state, group, d.start, { rule: 1, kind: 'zone', zone }, { zone: insts[0]!.zone, controller: insts[0]!.controller }, { newId, presentation: (z) => presentationOf(opts.game, state!, z) }));
+      if (drafts.length === 0) return back();
+      lastDrop = { rule: 1, kind: 'zone', zone };
+      markLocal(d, null, now);
+      dispatch(withUnblock(state, drafts, d.ids, combatCtx));
+      return;
+    }
+    // Dropped on the bottom slot beside a library (shown while the card is over the library): its bottom.
+    if (slot && !d.temp && pointInRect(p, slot.rect)) {
+      const drafts = carryDropActions(state, group, d.start, { rule: 1, kind: 'zone', zone: slot.zone }, { zone: insts[0]!.zone, controller: insts[0]!.controller }, { newId, presentation: (z) => presentationOf(opts.game, state!, z) }).map((a): ActionDraft => (a.type === 'toZone' ? { ...a, position: 'bottom' } : a));
+      if (drafts.length === 0) return back();
+      lastDrop = { rule: 1, kind: 'zone', zone: slot.zone };
+      markLocal(d, null, now);
+      dispatch(withUnblock(state, drafts, d.ids, combatCtx));
+      return;
+    }
     // Dropped onto another seat's attacker (or its blocker fan): a block (DESIGN "Combat and annotation", Block). The
     // blockers are the grabbed card and the selection; their attachments come along (owner decisions, Combat).
     const blockers = d.ids.filter((id) => id === group.anchor || group.reason[id] === 'selection');
@@ -1612,6 +2414,29 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       dispatch(plan.actions);
       return;
     }
+    // Pushed toward an opponent: an attack, as the Attack shortcut does it (PLAN M7-P5; DESIGN "Combat and annotation").
+    const attack = d.temp || d.external ? null : attackFor(d, p);
+    if (attack) {
+      const leads = attack.cards;
+      const out: ActionDraft[] = leads.map((c): ActionDraft => ({ type: 'moveTemp', card: c.id, pose: attackPose(c, seatAngleOf(c.controller)), combat: 'attack', tap: true }));
+      // Several opponents: the attack line names the one it was pushed onto (Attack target 2).
+      if (attack.target !== null && viewerSeat !== null && opponents(state, viewerSeat).length > 1) {
+        for (const c of leads) out.push({ type: 'lineAdd', line: newId('ln'), kind: 'attack', from: { kind: 'card', id: c.id }, to: { kind: 'seat', id: attack.target } });
+      }
+      const g = out.length > 1 ? newId('g') : null;
+      const drafts = g ? out.map((a) => ({ ...a, group: g })) : out;
+      lastDrop = null;
+      const poses = new Map<InstanceId, Pose>();
+      for (const c of leads) {
+        const at = attackPose(c, seatAngleOf(c.controller));
+        poses.set(c.id, { ...at, rot: displayedRot({ pose: at, tapped: true }) });
+      }
+      // Riders that were carried along stay where they were.
+      for (const id of d.ids) if (!poses.has(id)) rcards.get(id)?.motion.moveTo(rcards.get(id)!.place.rest, 'spring', now, theme.motion, reduced());
+      markLocal({ ...d, ids: leads.map((c) => c.id) }, poses, now);
+      dispatch(drafts);
+      return;
+    }
     if (d.temp) {
       // Rigid around the grabbed card, as the preview shows it (M6.1), even when it rides on a host in the group.
       actions = tempCarryActions(state, group, d.start, anchorPose, { newId });
@@ -1621,6 +2446,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (!r) return back();
       const { result, dest } = r;
       lastDrop = result;
+      // Dropped back over the hand it came from: it stays there (the fan closes the room it made).
+      if (result.kind === 'zone' && result.zone === ownHandZone() && insts.every((c) => c.zone === result.zone)) return back();
       // An item's card dropped back into the lane moves to the slot under the pointer (DESIGN "The effect stack",
       // Resolving 4: items can be reordered by hand).
       const anchorInst = insts[0]!;
@@ -1685,6 +2512,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** Pick up a stack marker (markers are not cards: they never go through startCardDrag). */
   function startItemDrag(item: StackItemId, pointerId: number, x: number, y: number): boolean {
+    if (readOnly) return false;
     const e = entries.find((x) => x.item.id === item);
     if (!state || !e || !e.marker) return false;
     const p = screenToTable(x, y);
@@ -1828,6 +2656,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (drag && e.pointerId === drag.pointerId && !drag.external) {
       drag.last = { x: e.clientX, y: e.clientY };
       drag.ctrl = e.ctrlKey;
+      dragPointerMoved(drag);
       return;
     }
     if (clipDrag && e.pointerId === clipDrag.pointerId && !clipDrag.external) {
@@ -1857,6 +2686,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const rc = clip ? null : pick(e.clientX, e.clientY);
       setHover(rc?.id ?? null);
       setHoverItem(clip ? null : itemAt(e.clientX, e.clientY, rc));
+      // The pile under the pointer offers its actions (PLAN M7-P5: "hovering … a pile shows its few actions").
+      if (clip) {
+        if (pileWant?.via === 'hover') setPileWant(null);
+      } else hoverPile(e.clientX, e.clientY);
       return;
     }
     if (e.pointerId !== ('pointerId' in gesture ? gesture.pointerId : -1)) return;
@@ -1878,6 +2711,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         rig.pitchBy((e.clientY - g.y0) * PITCH_DEG_PER_PX);
         setHover(null);
         dirty = true;
+        return;
+      }
+      if (g.button === 2 && readOnly) {
+        // Read-only (M7-P5): a right-drag from a card draws no line; nothing happens until the release.
+        menuPending = null;
+        gesture = null;
+        release(e);
         return;
       }
       if (g.button === 2) {
@@ -1952,6 +2792,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     if (drag && e.pointerId === drag.pointerId && !drag.external) {
       drag.last = { x: e.clientX, y: e.clientY };
+      dragPointerMoved(drag);
       finishDrag(e.ctrlKey);
       gesture = null;
       release(e);
@@ -2023,6 +2864,15 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
    * "Camera and navigation": go to another seat, tap an avatar).
    */
   function clickAt(x: number, y: number, card: InstanceId | null, item: StackItemId | null, shift: boolean): void {
+    // A click or tap on a zone pile (library, graveyard, exile) shows its actions beside it and keeps them until the
+    // next click elsewhere (PLAN M7-P5: "a click on the library pile offers Draw"); it selects nothing.
+    const pileZone = card && !shift ? pileUnder(x, y) : null;
+    if (pileZone) {
+      setPileWant({ zone: pileZone, via: 'tap' });
+      if (view.selection.length) setSelection([]);
+      return;
+    }
+    if (pileWant?.via === 'tap') setPileWant(null);
     if (card) {
       if (shift) setSelection(view.selection.includes(card) ? view.selection.filter((id) => id !== card) : [...view.selection, card]);
       else if (!view.selection.includes(card) || view.selection.length > 1) setSelection([card]);
@@ -2119,7 +2969,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       touchLine(g);
       return;
     }
-    const entry = stackFolded ? entries.find((x) => x.item.id === b.item) : undefined;
+    const entry = stackFolded && !readOnly ? entries.find((x) => x.item.id === b.item) : undefined;
     if (!entry) return;
     const sourceCard = entry.item.card ?? b.item;
     lineView.draft = { pointerId: -1, source: { kind: 'stackItem', id: b.item }, sourceCard, target: lineTargetAt(g.at.x, g.at.y, sourceCard), cur: screenToTable(g.at.x, g.at.y), shift: false };
@@ -2149,6 +2999,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         controls.fit(true);
         return;
       case 'longPress': {
+        if (readOnly) {
+          // Read-only (M7-P5): a long-press on a card inspects it; no action menu opens.
+          const ro = pick(g.at.x, g.at.y);
+          if (ro) opts.events.inspect?.(ro.id);
+          return;
+        }
         const clip = clipUnder(g.at.x, g.at.y, true);
         if (clip) {
           touchClipMenu = true;
@@ -2272,7 +3128,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         return;
       }
       const rc = pick(g.start.x, g.start.y);
-      const source = rc ? lineSource(rc) : null;
+      const source = rc && !readOnly ? lineSource(rc) : null;
       if (!rc || !source) return;
       lineView.draft = { pointerId: -1, source, sourceCard: rc.id, target: lineTargetAt(g.at.x, g.at.y, rc.id), cur: screenToTable(g.at.x, g.at.y), shift: false };
       touchHold = { kind: 'line' };
@@ -2348,6 +3204,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
    */
   function doubleAt(x: number, y: number, touch = false): void {
     if (!state) return;
+    if (readOnly) {
+      // Read-only (M7-P5): no tap, no draw, no clip taken off; double-click beside a card still zooms to it and a public
+      // pile (graveyard, exile) still opens for reading.
+      const ro = pick(x, y);
+      if (ro?.place.kind === 'pile' && parseZoneId(ro.inst.zone).kind !== 'library') opts.events.pileOpen?.(ro.inst.zone);
+      if (ro) return;
+    }
     // Double-click (double-tap) on a clip takes it off (M6-P1).
     const clip = clipUnder(x, y, touch);
     if (clip) {
@@ -2399,6 +3262,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   function onContextMenu(e: MouseEvent): void {
     e.preventDefault();
+    if (readOnly) {
+      // Read-only (M7-P5): a right-click on a card inspects it; no action menu opens.
+      if (touchInput.recent()) return;
+      const ro = pick(e.clientX, e.clientY);
+      if (ro) opts.events.inspect?.(ro.id);
+      return;
+    }
     // Some browsers fire a context menu on a long touch: touch has its own long-press (the radial menu).
     if (touchInput.recent()) return;
     // A clip's own menu (M6-P1: "its context menu (right-click, long-press) Remove clip").
@@ -2442,6 +3312,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       setHoverClip(null);
       setHover(null);
       setHoverItem(null);
+      // The HUD keeps the pile's actions while the pointer moves onto them (ui/touch/PileActions.svelte).
+      if (pileWant?.via === 'hover') setPileWant(null);
     }
   }
 
@@ -2563,7 +3435,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           dimmed: rc.shownDim,
           selected: sel.has(rc.id),
           dragging: drag?.ids.includes(rc.id) ?? false,
-          moving: rc.motion.moving,
+          // Any motion of the card (its pose, lift, sway, a pop, a riffle, a flight into the hand; M7-P4).
+          moving: cardMoving(rc),
           tier: rc.tierDrawn,
           order: i,
           displaced: ghostOf(rc) !== null,
@@ -2586,7 +3459,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return { ...stats };
     },
     lastDrop: () => lastDrop,
-    idle: () => !drag && !rig.moving && pendingFollow.length === 0 && ![...rcards.values()].some((rc) => rc.motion.moving || rc.lift.moving),
+    idle: () => !drag && !rig.moving && pendingFollow.length === 0 && anims.length === 0 && frameHolds.size === 0 && ![...rcards.values()].some((rc) => cardMoving(rc)),
     pendingTextures: () => faces.pending,
     frames: () => frame,
     pipeline() {
@@ -2607,7 +3480,80 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       };
     },
     captions: () => captionLayer.debug(),
+    motion: () => motionDebug(),
   };
+  /** The sound cue of an animation the HUD asks for (CardAnimationRequest.cue absent; M7-P4). */
+  const ANIMATION_CUE: Partial<Record<CardAnimationKind, string>> = {
+    draw: 'draw',
+    shuffle: 'shuffle',
+    tap: 'tap',
+    untap: 'untap',
+    play: 'play',
+    toGraveyard: 'toGraveyard',
+    toExile: 'toExile',
+    toHand: 'toHand',
+    toLibrary: 'slide',
+    attach: 'attach',
+    clip: 'clip',
+  };
+
+  /**
+   * An animation the HUD asks for (TableScene.animate; M7-P4): a library riffles, clipped cards pop, cards on the table
+   * hop; it holds frames until it ends, then the scene is idle again. Moves that change the state animate by
+   * themselves (relayout); this is for what the HUD starts. Reduced motion: nothing moves, the cue still sounds.
+   */
+  function playAnimation(req: CardAnimationRequest): void {
+    const now = performance.now();
+    const f = feel();
+    const cue = req.cue === undefined ? ANIMATION_CUE[req.kind] : req.cue;
+    if (cue) feelCues.emit(cue);
+    if (reduced()) return;
+    if (req.kind === 'shuffle') {
+      const zone = req.from ?? req.to ?? (viewerSeat ? `library:${viewerSeat}` : null);
+      const pile = [...rcards.values()].filter((rc) => rc.inst.zone === zone && rc.place.kind === 'pile').sort((a, b) => a.place.z - b.place.z);
+      pile.forEach((rc, i) => (rc.riffle = { start: now, dur: f.durations.shuffle, i, n: pile.length }));
+      if (pile.length) startAnim('shuffle', pile.map((rc) => rc.id), now, f.durations.shuffle);
+      return;
+    }
+    const ids = req.cards.filter((id) => rcards.has(id));
+    if (!ids.length) return;
+    if (req.kind === 'clip' || req.kind === 'unclip' || req.kind === 'counter') {
+      for (const id of ids) {
+        const rc = rcards.get(id)!;
+        if (req.kind === 'counter') rc.badgePop = now;
+        else rc.pop = { start: now, dur: f.durations.clip, amp: CLIP_POP_SCALE };
+      }
+      startAnim(req.kind, ids, now, req.kind === 'counter' ? POP_MS * motionNow().scale : f.durations.clip);
+      return;
+    }
+    const dur = req.kind === 'tap' || req.kind === 'untap' || req.kind === 'flip' ? TAP_FEEL_MS * motionNow().scale : arrivalMs(req.kind, f);
+    for (const id of ids) rcards.get(id)!.lift.arc(now, heldLift() * 0.5, dur, false);
+    startAnim(req.kind, ids, now, dur);
+  }
+
+  /** Whether a card still moves in any way: its pose, lift, sway, a pop, a riffle or its flight into the hand (M7-P4). */
+  function cardMoving(rc: RCard): boolean {
+    return rc.motion.moving || rc.lift.moving || rc.sway.moving || rc.pop !== null || rc.badgePop !== null || rc.riffle !== null || rc.leaving !== null;
+  }
+
+  /** Card motion for the debug hook (scene/types.ts MotionDebugState; PLAN M7-P4, gate M7-G "Idle frames stop"). */
+  function motionDebug(): MotionDebugState {
+    const now = performance.now();
+    const heldRc = drag ? rcards.get(drag.ids[0]!) : undefined;
+    const holds = [...frameHolds.values()].map((h) => h.reason);
+    const running = anims.filter((a) => now < a.start + a.dur);
+    for (const a of running) holds.push(`animation:${a.kind}`);
+    if (drag) holds.push('drag');
+    if ([...rcards.values()].some((rc) => cardMoving(rc))) holds.push('cards');
+    return {
+      motion: motionNow(),
+      running: running.map((a) => ({ kind: a.kind, cards: [...a.cards], progress: progressOf(a, now) })),
+      holds,
+      held: heldRc ? { card: heldRc.id, liftMm: heldRc.lift.value, swayDeg: heldRc.sway.value } : null,
+      magnet: magnet ? { kind: magnet.kind, target: magnet.target, pull: magnet.kind === 'hand' && !magnet.slot ? 1 : (magnetDrawn?.pull ?? 0) } : null,
+    };
+  }
+
   /** The stack lane as drawn (scene/stack.ts DebugStackEntry). */
   function stackDebug(): DebugStackEntry[] {
     syncCamera();
@@ -2702,6 +3648,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     stackBadge: () => stackBadge.state(),
     // Paperclips, the hold ring, the drag group and the drop preview (M6-P1).
     clips: () => clipDebug(),
+    // The selection strip's and the pile actions' anchors (M7-P5).
+    affordances: () => affordanceDebug(),
+    // Card motion, running animations and frame holds (M7-P4).
+    motion: () => motionDebug(),
+    // Look, do not touch (M7-P5): the switch and the count of actions this scene proposed.
+    readOnly: { on: () => readOnly, set: (on: boolean) => setReadOnlyNow(on), proposed: () => proposed },
   };
   registerDebug(debugParts);
 
@@ -2874,6 +3826,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   raf = requestAnimationFrame(tick);
+  // The sound player follows the table's look (util/feel.ts; ui/sound.ts).
+  tableTheme.set(theme.id);
   // M8-C: the frame loop is counted until dispose (contracts.md Part C).
   track('rafLoops', frameLoop);
   const meterSource = (): RenderInfo => ({
@@ -2918,7 +3872,43 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     dirty = true;
   }
 
+  /**
+   * Switch "look, do not touch" (M7-P5; TableScene.setReadOnly): what is in hand is let go where it came from, a line
+   * being drawn and a hold to clip are dropped, the pile actions and the selection strip go away, and the HUD hears of it
+   * (SceneEvents.readOnly) so it hides its coach marks.
+   */
+  function setReadOnlyNow(on: boolean): void {
+    if (on === readOnly) return;
+    if (on) {
+      if (drag) finishDrag(false, true);
+      if (clipDrag) finishClipDrag(true);
+      cancelHold();
+      if (itemDrag) finishItemDrag(true);
+      if (lineView.draft) lineView.draft = null;
+      if (gesture && gesture.kind !== 'pan' && gesture.kind !== 'pitch') gesture = null;
+      pileWant = null;
+    }
+    readOnly = on;
+    opts.events.readOnly?.(on);
+    affordDirty = true;
+    dirty = true;
+  }
+
   const sceneApi: SceneHandle = {
+    frames,
+    setMotion(next: MotionSettings) {
+      // The viewer's motion setting (Settings.motion resolved; M7-P4): reduced motion cuts what moves now as well.
+      motionSetting = { reduced: next.reduced, scale: next.reduced ? 0 : Math.max(0, Math.min(1, next.scale)) };
+      feelCache = null;
+      if (motionSetting.reduced) for (const rc of rcards.values()) rc.sway.cut();
+      dirty = true;
+    },
+    animate(req: CardAnimationRequest) {
+      playAnimation(req);
+    },
+    setReadOnly(on: boolean) {
+      setReadOnlyNow(on);
+    },
     update(next, nextView) {
       const prevState = state;
       const viewChanged = nextView !== view;
@@ -2942,11 +3932,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         if (Object.values(next.seats).some((s) => prevState.seats[s.id]?.name !== s.name)) rebuildMarkings();
       }
       if (prevState !== next || openChanged) relayout(performance.now());
+      // The selection strip and the pile actions follow the state and the selection (M7-P5).
+      if (prevState !== next || viewChanged) affordDirty = true;
       if (prevState !== next && !formatLayout) requestFollow(followRequests(prevState, next, follow));
       if (viewChanged) dirty = true;
       if (nextView.captions || captionLayer.active) captionLayer.set(nextView.captions ?? []);
     },
     setTheme(next) {
+      tableTheme.set(next.id);
       // Hot-swap (DESIGN "Themes and rendering": switchable mid-game without reloading): the old theme's objects,
       // passes, lights, shadow maps and released materials go first; the state and the cards' motion stay.
       const oldBack = backOf(theme);
@@ -3024,7 +4017,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           localUntil: 0,
           expect: null,
           tierDrawn: null,
-          lift: new HeldLift(),
+          lift: new LiftMotion(),
+          sway: new SwayMotion(),
+          pop: null,
+          badgePop: null,
+          riffle: null,
+          leaving: null,
         };
         rcards.set(card, rc);
         added.push(card);
@@ -3052,10 +4050,22 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return screenToTable(x, y);
     },
     debug,
-    // M8-C: the read-only seam (m7-adjustments.md section 2); M7-P5 makes the scene propose nothing while it is on.
-    setReadOnly() {},
     dispose() {
       disposed = true;
+      handRoom.set(null);
+      // Cancel every animation and release every frame hold (M7-P5): tables are mounted and disposed many times.
+      frameHolds.clear();
+      anims = [];
+      for (const rc of rcards.values()) {
+        rc.motion.cut(rc.motion.target);
+        rc.lift.cut(0);
+        rc.sway.cut();
+        rc.pop = null;
+        rc.badgePop = null;
+        rc.riffle = null;
+        rc.leaving = null;
+      }
+      forgetMotion(motionKey);
       frameMeter.releaseRender(meterSource);
       pressHold.dispose();
       touchInput.reset();
@@ -3095,6 +4105,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       previewLayer.dispose();
       ringEl.remove();
       glyphEl.remove();
+      hintEl.remove();
       captionLayer.dispose();
       markGeometry.dispose();
       markMaterial.dispose();
@@ -3144,6 +4155,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   registerStackHover(sceneApi, () => hoverItem);
 
   return sceneApi;
+}
+
+function sameCounters(a: Record<string, number>, b: Record<string, number>): boolean {
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  return ka.every((k) => a[k] === b[k]);
 }
 
 function samePose(a: Pose, b: Pose, eps = 0.01): boolean {
