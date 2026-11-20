@@ -592,12 +592,11 @@ class Engine implements NetEngine {
     const saving = flags.saving ?? this.headSaving;
     if (live === this.headLive && saving === this.headSaving) return;
     const wasLive = this.headLive;
-    const savingChanged = saving !== this.headSaving;
     this.headLive = live;
     this.headSaving = saving;
     // Heads go out only where someone gathers (a browser on standby, or a peer waiting on one), so a table where
-    // everyone stays live carries no head traffic; `saving` is always told (NOT SAVING on the others' plates).
-    if (this.joined && !this.closed && (savingChanged || (!live && this.reconciled) || (live && this.someoneGathering()))) this.sendHead();
+    // everyone stays live carries no head traffic; a changed `saving` rides on the next head.
+    if (this.joined && !this.closed && ((!live && this.reconciled) || (live && this.someoneGathering()))) this.sendHead();
     if (live && !wasLive && this.mode === 'active') {
       // Live now: the duties a standby sequencer held back (away marks, the game's timers) run.
       this.syncAwaySeats();

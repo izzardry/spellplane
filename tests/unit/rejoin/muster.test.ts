@@ -71,6 +71,18 @@ describe('musterStatus', () => {
     expect(musterStatus(input({ state: table(['s1']), decided: true }))).toMatchObject({ live: true, rule: 4 });
   });
 
+  it('without a head, a peer is in step once the engine reconciled and the peer reported nothing newer; a head at the same seq with another hash is a fork', () => {
+    const quiet = (i: number, lastSeq: number): MusterPeer => ({ peerId: `p${i}`, status: 'connected', lastSeq });
+    // Not reconciled yet: the peer is connecting, this browser waits.
+    expect(musterStatus(input({ peers: [quiet(1, 40)] }))).toMatchObject({ live: false, waitingFor: ['s1'] });
+    // Reconciled and the peer is not ahead: everyone is back (rule 3), no head needed.
+    expect(musterStatus(input({ peers: [quiet(1, 40)], reconciled: true }))).toMatchObject({ live: true, rule: 3 });
+    // The peer reported a newer seq: still waiting for it.
+    expect(musterStatus(input({ peers: [quiet(1, 45)], reconciled: true })).live).toBe(false);
+    // A head at this seq with another hash: two copies of equal length, not in step.
+    expect(musterStatus(input({ peers: [{ ...peer(1, OLD), lastSeq: 40 }], reconciled: true })).live).toBe(false);
+  });
+
   it('in the lobby every browser is live', () => {
     expect(musterStatus(input({ state: { ...table(), stage: 'lobby' }, knownHead: { play: 99, seq: 99, peer: 'p1', seat: 's1' } })).live).toBe(true);
   });

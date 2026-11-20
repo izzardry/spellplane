@@ -2147,7 +2147,7 @@ class NetTable implements NetSession, SessionRecovery {
       this.stayed = true;
       this.liveRuleValue = m.rule;
     }
-    this.engine.setHead?.({ live: m.live, saving: !this.saves.failing });
+    this.engine.setHead?.({ live: m.live, saving: !!this.opts.store && !this.saves.failing });
     const changed = this.musterValue === null || canonicalJson(this.musterValue) !== canonicalJson(m);
     this.musterValue = m;
     if (changed) {
@@ -2357,7 +2357,8 @@ class NetTable implements NetSession, SessionRecovery {
       playOn: (seats) => this.playOn(seats),
       invite: (seat) => this.inviteSeat(seat),
       takeInviteBack: (seat) => this.takeInviteBack(seat),
-      saveState: (): SaveState => (this.saves.failing ? 'notSaving' : 'saved'),
+      // Without a store (blocked storage) nothing is kept: NOT SAVING from the start (persistence.md section 10).
+      saveState: (): SaveState => (!this.opts.store || this.saves.failing ? 'notSaving' : 'saved'),
       inviteLink: (seat) => this.inviteLink(seat),
       claim: () => this.claimView(),
       sitDown: (name) => this.claimSeat(name),
