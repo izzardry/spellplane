@@ -49,13 +49,16 @@
     left: 50%;
     /* The HUD's slot above the hand (Hud.svelte .above-hand) unless the HUD passes where it starts now. */
     bottom: calc(22vh + 16px);
-    z-index: 23;
+    /* Under the strip and the pile actions (22): a control the player just opened is never covered by a hint. */
+    z-index: 21;
     transform: translateX(-50%);
     margin-bottom: 8px;
     display: flex;
     align-items: center;
     gap: var(--ds-space-md, 10px);
-    max-width: min(520px, 92vw);
+    /* Narrow enough to stay clear of the own piles at the territory's right edge (an iPad's library sits about 220 px
+       right of the centre); a longer line wraps. */
+    max-width: min(380px, calc(100vw - 32px));
     padding: 6px 6px 6px 12px;
     pointer-events: none;
     font-family: var(--ds-font-body, var(--sp-font));

@@ -6,6 +6,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { hook } from '../helpers/app';
 import { call, decklist, openSolo } from '../solo/helpers';
+import { IPAD } from '../touch/helpers';
 import { cardIn, coachNow, coachSeen, handIds, handPoint, mouseDrag, pileCentre, profileFor, settledTable, shown, tableToScreen, typeLine } from './helpers';
 
 const overlap = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -24,6 +25,16 @@ async function clearOfThePlayArea(page: Page): Promise<void> {
     const ys = opp.map((p) => p.y);
     const box = { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
     expect(overlap(mark, box), 'covers the opponent territory').toBe(false);
+  }
+  // Not over the own piles: a newcomer reaches for the library the first mark points at.
+  const own = view?.seats.find((s) => s.seat === 's0')?.zones as Record<string, ({ x: number; y: number } | null)[] | undefined> | undefined;
+  for (const kind of ['library', 'graveyard', 'exile']) {
+    const pts = own?.[kind]?.filter((p): p is { x: number; y: number } => !!p) ?? [];
+    if (pts.length < 4) continue;
+    const xs = pts.map((p) => p.x);
+    const ys = pts.map((p) => p.y);
+    const box = { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+    expect(overlap(mark, box), `covers the own ${kind}`).toBe(false);
   }
   // Not over the hand either.
   for (const h of await page.getByTestId('hand-card').all()) {
@@ -93,4 +104,23 @@ test('a coach mark lets the table work under it: only its button takes the point
   await expect.poll(() => coachSeen(page)).toContain('coachDraw');
   await expect(mark).not.toHaveAttribute('data-coach', 'coachDraw');
   expect(await hook<number>(page, 'input.keydowns')).toBe(0);
+});
+
+test.describe('on an iPad', () => {
+  test.skip(({ browserName }) => browserName !== 'webkit', 'the iPad is emulated in WebKit (PLAN M5, owner decisions)');
+  test.use(IPAD);
+
+  test('the first coach mark (seven cards in hand) stays clear of the piles, and a tap on the library reaches it', async ({ page }, info) => {
+    await openSolo(page, profileFor(info, 'coach3'));
+    await call(page, 'importDecklist', decklist('gw-m19-60.txt'));
+    await call(page, 'draw', 7);
+    const mark = page.getByTestId('coach-mark');
+    await expect(mark).toHaveCount(1);
+    await expect(mark).not.toContainText(/\bpress\b|\bkey\b|\bclick\b/i);
+    await settledTable(page);
+    await clearOfThePlayArea(page);
+    const lib = await pileCentre(page, 'library');
+    await page.touchscreen.tap(lib.x, lib.y);
+    await expect(page.getByTestId('pile-actions')).toHaveAttribute('data-zone', 'library:s0');
+  });
 });
