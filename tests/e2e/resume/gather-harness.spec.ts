@@ -6,6 +6,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { seriousViolations } from '../a11y/helpers';
+import { designAudit } from './audit';
 
 async function openGather(page: Page, scene: string, extra: Record<string, string> = {}): Promise<void> {
   const q = new URLSearchParams({ faces: 'placeholder', harness: 'gather', scene, ...extra });
@@ -48,6 +49,7 @@ test.describe('Gathering (journey.md 4.12)', () => {
       expect(await page.evaluate(() => window.__gather!.readOnly())).toBe(true);
       await expect(filled(page, 'gathering-card')).toHaveCount(0);
       await noBlur(page);
+      await designAudit(page);
       expect(await seriousViolations(page)).toEqual([]);
     });
     await test.step('PLAY ON WITHOUT appears only after 8 s on the page clock', async () => {
@@ -122,7 +124,8 @@ test.describe('the seat menu (persistence.md section 7)', () => {
       const away = page.getByTestId('menu-away');
       await expect(away.getByTestId('seat-menu-away')).toHaveText('Away for 3 min');
       await away.getByTestId('seat-menu-bring').click();
-      await expect(away.getByTestId('seat-invite-link')).toHaveText(/#\/t\/amber-fox-93\/[\w-]{22}\/rejoin\/s1\/[\w-]{22}$/);
+      await expect(away.getByTestId('seat-invite')).toHaveAttribute('data-link', /#\/t\/amber-fox-93\/[\w-]{22}\/rejoin\/s1\/[\w-]{22}$/);
+      await expect(away.getByTestId('invite-sheet')).toContainText('Bring Ben back');
       await expect(away.getByTestId('seat-invite-footer')).toHaveText("This link works once, for 24 hours, and only for Ben's seat.");
       await away.getByTestId('seat-invite-new').click();
       await away.getByTestId('seat-invite-back').click();
@@ -139,6 +142,7 @@ test.describe('the seat menu (persistence.md section 7)', () => {
       await expect(page.getByTestId('badges').locator('[data-kind="notSaving"]')).toHaveCount(0);
     });
     await noBlur(page);
+    await designAudit(page);
     expect(await seriousViolations(page)).toEqual([]);
   });
 
@@ -174,6 +178,7 @@ test.describe('the claim page and its refusal screens (journey.md 4.11; contract
     await expect(page.getByTestId('claim-refused-otherSeat').getByTestId('claim-open-mine')).toBeVisible();
     await expect(page.getByTestId('claim-refused-used').getByTestId('claim-watch')).toBeVisible();
     await noBlur(page);
+    await designAudit(page);
     expect(await seriousViolations(page)).toEqual([]);
     await live.getByTestId('claim-name').fill('Benjamin');
     await live.getByTestId('claim-sit').click();
@@ -190,5 +195,36 @@ test.describe('the team prompt (contracts.md Part G item 1)', () => {
     await prompt.getByTestId('team-prompt-show').click();
     await expect(prompt).toHaveCount(0);
     expect(await page.evaluate(() => window.__gather!.calls())).toEqual(['showHand s3']);
+  });
+});
+
+test.describe('the claim page over the table (persistence.md section 7)', () => {
+  test('a re-invite link shows the claim page over the dimmed table; a refusal replaces it; sitting down ends it', async ({ page }) => {
+    await openGather(page, 'gathering');
+    await page.evaluate(() => window.__gather!.setStatus({ live: true, rule: 2, waitingFor: [] }));
+    await expect(page.getByTestId('gathering-card')).toHaveCount(0);
+    await test.step('the claim page, read-only table, no filled button', async () => {
+      await page.evaluate(() => window.__gather!.setClaim({ seat: 's1', name: 'Ben', refusal: null }));
+      const claim = page.getByTestId('claim-page');
+      await expect(claim).toHaveAttribute('data-phase', 'ready');
+      await expect(claim.getByTestId('claim-sit')).toHaveText('SIT DOWN HERE AS BEN');
+      await expect(claim.getByTestId('claim-warning')).toBeVisible();
+      await expect(claim.locator('.ds-btn--primary')).toHaveCount(0);
+      expect(await page.evaluate(() => window.__gather!.readOnly())).toBe(true);
+      await designAudit(page);
+      expect(await seriousViolations(page)).toEqual([]);
+    });
+    await test.step('a refusal: This link was already used', async () => {
+      await page.evaluate(() => window.__gather!.setClaim({ seat: 's1', name: 'Ben', refusal: '[claim:used] this link was already used' }));
+      await expect(page.getByTestId('claim-refusal')).toHaveText('This link was already used. Ask for a new one.');
+      await expect(page.getByTestId('claim-watch')).toBeVisible();
+    });
+    await test.step('sitting down ends the claim page and the table is live', async () => {
+      await page.evaluate(() => window.__gather!.setClaim({ seat: 's1', name: 'Ben', refusal: null }));
+      await page.getByTestId('claim-sit').click();
+      await expect(page.getByTestId('claim-page')).toHaveCount(0);
+      expect(await page.evaluate(() => window.__gather!.calls())).toEqual(['sitDown Ben']);
+      expect(await page.evaluate(() => window.__gather!.readOnly())).toBe(false);
+    });
   });
 });

@@ -1249,7 +1249,6 @@ class Engine implements NetEngine {
    */
   private outranks(claimant: string, fromSeq: number, seat: SeatId | ''): boolean {
     const seq = this.replica.seq();
-    
     if (fromSeq !== seq) return fromSeq > seq;
     const state = this.replica.confirmed();
     const index = (s: SeatId | '' | null): number => (s ? (state.seats[s]?.index ?? Number(/^s(\d+)$/.exec(s)?.[1] ?? Infinity)) : Infinity);

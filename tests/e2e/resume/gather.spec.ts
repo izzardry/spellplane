@@ -82,9 +82,14 @@ test('A leaves, B plays on, A comes back live with B’s hash; alone on standby 
       await expect.poll(async () => (await state(b)).seats.s0!.away === true, { timeout: 10_000 }).toBe(true);
     });
     await test.step('invite through the hook returns the link', async () => {
+      // The sequencer's clock (the page clock, net.setClock) moves 31 s on: A has been away for 30 seconds.
       const link = await b.evaluate(async () => {
-        window.__spellplane!.net!.setClock!(31_000);
-        return window.__spellplane!.session!.invite!('s0');
+        window.__spellplane!.net!.setClock!(Date.now() + 31_000);
+        try {
+          return await window.__spellplane!.session!.invite!('s0');
+        } finally {
+          window.__spellplane!.net!.setClock!(null);
+        }
       });
       expect(link).toMatch(new RegExp(`#/t/${room.roomId}/${room.roomKey}/rejoin/s0/[\\w-]{22}$`));
       expect((await state(b)).seats.s0!.invite).toBeDefined();
