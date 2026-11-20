@@ -129,11 +129,12 @@
   const isAway = (seat: string): boolean => seatPresence?.[seat] === 'away' || st.seats[seat]?.away === true;
   /** The shell's notice, shown once per id (HudShellProps.notice). */
   let shownNotice = $state.raw<{ id: number; text: string; action?: { label: string; run: () => void } } | null>(null);
-  const seenNotices = new Set<number>();
+  /** Notice ids shown already (plain, not reactive). */
+  const seenNotices: number[] = [];
   $effect(() => {
     const n = notice;
-    if (!n || seenNotices.has(n.id)) return;
-    seenNotices.add(n.id);
+    if (!n || seenNotices.includes(n.id)) return;
+    seenNotices.push(n.id);
     shownNotice = n;
     untrack(() => later(() => {
       if (shownNotice?.id === n.id) shownNotice = null;

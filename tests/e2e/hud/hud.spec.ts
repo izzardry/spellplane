@@ -9,7 +9,7 @@ import { hook } from '../helpers/app';
 import { menuItem, openLog, openZone, plateDetails } from '../helpers/hud';
 import { call } from '../solo/helpers';
 import { drafts, openHud } from '../ui/harness';
-import { hudVar, LOOKS, soloWithDeck, state } from './helpers';
+import { LOOKS, soloWithDeck, state } from './helpers';
 import { LOOKS as LOOK_TOKENS } from '../../../src/ui/design/tokens';
 
 /** Text of the HUD's always-visible controls (the menu, drawers and dialogs closed). */

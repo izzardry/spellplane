@@ -331,8 +331,17 @@
     justify-content: flex-start;
   }
   /* Away (HudShellProps.seatPresence, Seat.away): the plate at 60 %, AWAY in words. */
-  .plate.away > :not(.pop) {
-    opacity: 0.6;
+  /* Away: the seat disc loses its colour and the edge turns dashed; the text keeps full contrast (M5 review: dimming
+     text by opacity fell under 4.5:1), and the word AWAY says it. */
+  .plate.away {
+    border-style: dashed;
+    border-color: var(--ds-muted);
+  }
+  .plate.away .disc {
+    background: var(--ds-chip);
+  }
+  .plate.away .glyph {
+    background: var(--ds-muted);
   }
   .badges {
     display: inline-flex;
