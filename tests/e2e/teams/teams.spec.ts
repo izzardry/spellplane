@@ -28,8 +28,9 @@ async function converged(pages: Page[]): Promise<void> {
 
 /** Send a chat line on `tab` through the HUD's chat panel, as a player does. */
 async function say(page: Page, tab: 'table' | 'team', text: string): Promise<void> {
-  await page.getByTestId(`chat-tab-${tab}`).click();
+  // M7-P2: the log and chat are a drawer, closed on entry.
   await openLog(page);
+  await page.getByTestId(`chat-tab-${tab}`).click();
   await page.getByTestId('chat-input').fill(text);
   await page.getByTestId('chat-input').press('Enter');
   await expect(page.getByTestId('chat-input')).toHaveValue('');
@@ -37,6 +38,7 @@ async function say(page: Page, tab: 'table' | 'team', text: string): Promise<voi
 
 /** The chat lines a page's chat panel shows on `tab` that contain `text`. */
 async function shown(page: Page, tab: 'table' | 'team', text: string): Promise<number> {
+  await openLog(page);
   await page.getByTestId(`chat-tab-${tab}`).click();
   return page.locator('[data-testid=log-line][data-kind=chat]').filter({ hasText: text }).count();
 }

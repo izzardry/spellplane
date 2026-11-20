@@ -133,7 +133,7 @@
     <div class="tags">
       {#if away}<span class="tag inverse" data-testid="away" title="Away: public cards stay; hand and library are unavailable until this player returns">AWAY</span>{/if}
       {#if responding}<span class="tag" data-testid="responding">responding</span>{/if}
-      {#if asking}<span class="tag inverse" data-testid="asking">asks</span>{/if}
+      {#if asking}<span class="tag on-seat" data-testid="asking">asks</span>{/if}
       {#if typing}<span class="tag typing" data-testid="avatar-typing" title="Typing a chat line" aria-label="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>{/if}
       {#if seat.autoPass}<span class="tag" title="Passing until end of turn">auto-pass</span>{/if}
     </div>
@@ -398,6 +398,12 @@
   .tag.inverse {
     background: var(--ds-ink);
     color: var(--ds-panel);
+  }
+  /* "asks" on the seat colour, in the seat's own ink (the theme tunes the pair to 4.5:1; signals spec). */
+  .tag.on-seat {
+    background: var(--seat);
+    border-color: var(--seat);
+    color: var(--seat-ink);
   }
   .plate.asking {
     animation: asking 1.2s ease-in-out infinite;

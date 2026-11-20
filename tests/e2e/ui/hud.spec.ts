@@ -348,7 +348,7 @@ test.describe('avatar (DESIGN "Turn flow and confirmation", Life and player coun
       }),
     );
     await expect(ben).toHaveAttribute('data-away', 'true');
-    await expect(ben.getByTestId('away')).toHaveText('away');
+    await expect(ben.getByTestId('away')).toHaveText('AWAY');
     await expect(ben).toHaveAttribute('aria-label', /away/);
     await page.evaluate(() =>
       window.__uiHarness!.update((s) => {
@@ -381,7 +381,8 @@ test.describe('turn strip (DESIGN "Turn flow and confirmation", Turn and phase s
     await expect(strip.getByTestId('turn-number')).toHaveText('Turn 1');
     await expect(strip.getByTestId('active-player')).toHaveText('Anna');
     await expect(strip.locator('[data-phase]')).toHaveCount(7);
-    await expect(strip.locator('[aria-current="step"]')).toHaveText('Main 1');
+    // M7-P2: five grouped steps (Beginning, Main, Combat, Main 2, End); main 1 reads "Main".
+    await expect(strip.locator('[aria-current="step"]')).toHaveText('Main');
     await hoverNothing(page);
     await page.keyboard.press('Tab');
     await expect(strip.locator('[aria-current="step"]')).toHaveText('Combat');

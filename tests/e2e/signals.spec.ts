@@ -851,18 +851,18 @@ test.describe('theme switcher', () => {
       // Nothing but presence went out for the switch, and the table is the same in both browsers.
       expect(await sentActs(a)).toBe(actsBefore);
       // No message this page sent since names the theme.
-      expect(JSON.stringify((await sent(a)).slice(outBefore))).not.toMatch(/"graphite"|theme|look/i);
+      expect(JSON.stringify((await sent(a)).slice(outBefore))).not.toMatch(/"dusk"|theme/i);
       expect(await hash(a)).toBe(hashBefore);
       await expect.poll(() => hash(b)).toBe(hashBefore);
 
       await setTheme(b, 'wyrm');
-      expect(await currentTheme(a)).toBe('graphite');
+      expect(await currentTheme(a)).toBe('dusk');
       expect(await currentTheme(b)).toBe('wyrm');
 
       // Each browser keeps its own choice across a reload.
       await a.reload();
       await expect(a.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
-      await expect.poll(() => currentTheme(a)).toBe('graphite');
+      await expect.poll(() => currentTheme(a)).toBe('dusk');
       expect(await currentTheme(b)).toBe('wyrm');
       // While a reloads, the sequencer marks its seat away and back (and may hand over the sequencer role), so the
       // shared state moves on: wait until both browsers see s0 present again, then until both hold the same state.
