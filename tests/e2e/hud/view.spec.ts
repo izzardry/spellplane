@@ -43,8 +43,9 @@ test('a vertical drag scrubs the tilt, 200 px for the whole range, and is not a 
   await view.click(); // to first person (0)
   await page.evaluate(() => window.__uiHarness!.clear());
   const b = (await view.boundingBox())!;
-  const x = b.x + b.width / 2;
-  const y = b.y + b.height / 2;
+  // Whole pixels: WebKit rounds a fractional pointer position, which shortened the 100 px drag by one pixel.
+  const x = Math.round(b.x + b.width / 2);
+  const y = Math.round(b.y + b.height / 2);
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x, y - 50, { steps: 5 });

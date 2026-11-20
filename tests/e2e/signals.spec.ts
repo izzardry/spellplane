@@ -195,9 +195,12 @@ async function controlledTable(page: Page, info: TestInfo, theme: ThemeId): Prom
   if (await hint.isVisible().catch(() => false)) await hint.click();
   await expect(page.getByTestId('hint')).toHaveCount(0);
   // The bird's-eye rig for every theme, so regions come from a near-affine view (the gate's matrix covers both rigs).
+  // M7-P1: a look's own tilt (Plain and Kitchen 0.55, Codex 0.5) already reports the 'birdseye' rig (the nearer end),
+  // so the tilt is set to its bird's-eye end (1) itself: lines float 30 mm above the cards, and at a pitched view they
+  // project off the card centres the seat-colour region is drawn around.
   await page.evaluate(() => {
     const rig = window.__spellplane!.rig;
-    if (rig && rig.rig() !== 'birdseye') rig.setRig('birdseye', { animate: false });
+    if (rig && rig.tilt?.() !== 1) rig.setRig('birdseye', { animate: false });
   });
   const tok = (c: string, zone: string, pose: Pose, sid: string) => dispatch(page, { type: 'createToken', card: c, zone, pose, ref: { sid } });
   await tok('c1', 'battlefield:s0', { x: -100, y: -200, rot: 0 }, SID[0]!);

@@ -39,6 +39,8 @@ test.describe('the M8 frame', () => {
     await page.addInitScript({ content: fixturesScript() });
     await openHome(page, { profile: `m8c-practice-${test.info().workerIndex}-${Date.now()}` });
     await test.step('PLAY opens a practice table', async () => {
+      // SOLO's default opponent is SPARRING (a computer table, `#/c/<room>`); ALONE opens a practice table.
+      await page.getByTestId('opt-opponent').getByRole('radio', { name: 'ALONE' }).click();
       await page.getByTestId('home-primary').click();
       await expect(page).toHaveURL(/#\/p\/p-[0-9a-z]{12}$/);
       await expect(page.getByTestId('table-frame')).toHaveAttribute('data-kind', 'practice');

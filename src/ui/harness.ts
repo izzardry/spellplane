@@ -94,9 +94,13 @@ class DomScene extends RecordingScene {
   private get ev(): Partial<SceneEvents> {
     return this.opts.events;
   }
-  private toScreen(x: number, y: number): { left: number; top: number } {
-    const r = this.layer.getBoundingClientRect();
-    return { left: r.width / 2 + x * 0.5, top: r.height * 0.42 - y * 0.5 };
+  /**
+   * Where table point (x, y) shows as CSS lengths relative to the layer (50 % across, 42 % down, 0.5 px per mm). In
+   * percentages, not measured px: the first update can run before the host has its height, and a card placed then at
+   * a 0 px height stayed under the top bar's plates (WebKit, M8 integration).
+   */
+  private toScreen(x: number, y: number, dx = 0, dy = 0): { left: string; top: string } {
+    return { left: `calc(50% + ${x * 0.5 + dx}px)`, top: `calc(42% + ${-y * 0.5 + dy}px)` };
   }
   private readonly items = new Map<string, HTMLElement>();
   /** One element per card or pile, created once and updated in place, so hover is never disturbed by re-rendering. */
@@ -138,8 +142,8 @@ class DomScene extends RecordingScene {
         const name = ref ? (data.peek(ref.sid)?.name ?? 'Card') : 'Face-down card';
         const text = `${name}${c.tapped ? ' (tapped)' : ''}`;
         if (el.textContent !== text) el.textContent = text;
-        const p = zone.kind === 'stack' ? this.toScreen(-30 + i * 6, 40 - i * 22) : this.toScreen(c.pose.x, c.pose.y);
-        const css = `position:absolute;left:${p.left - 31}px;top:${p.top - 44}px;width:63px;height:88px;border:1px solid ${view.hovered === id ? '#111' : '#bbb'};background:#fafafa;font:10px system-ui;overflow:hidden;box-sizing:border-box;padding:2px;user-select:none;${view.selection.includes(id) ? 'outline:2px solid #1f6fd1;' : ''}`;
+        const p = zone.kind === 'stack' ? this.toScreen(-30 + i * 6, 40 - i * 22, -31, -44) : this.toScreen(c.pose.x, c.pose.y, -31, -44);
+        const css = `position:absolute;left:${p.left};top:${p.top};width:63px;height:88px;border:1px solid ${view.hovered === id ? '#111' : '#bbb'};background:#fafafa;font:10px system-ui;overflow:hidden;box-sizing:border-box;padding:2px;user-select:none;${view.selection.includes(id) ? 'outline:2px solid #1f6fd1;' : ''}`;
         if (el.style.cssText !== css) el.style.cssText = css;
       });
     }
@@ -155,8 +159,8 @@ class DomScene extends RecordingScene {
         return b;
       });
       el.textContent = `${label} ${z.ids.length}`;
-      const p = this.toScreen(x, y);
-      el.style.cssText = `position:absolute;left:${p.left - 31}px;top:${p.top - 20}px;width:63px;height:40px;border:1px dashed #111;font:10px system-ui;background:#fff;`;
+      const p = this.toScreen(x, y, -31, -20);
+      el.style.cssText = `position:absolute;left:${p.left};top:${p.top};width:63px;height:40px;border:1px dashed #111;font:10px system-ui;background:#fff;`;
     };
     badge('library:s0', 'Library', 560, -470);
     badge('graveyard:s0', 'Graveyard', 560, -400);
