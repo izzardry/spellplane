@@ -6,8 +6,11 @@
   store the sheet says so. Implementer: M8-P3.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
+  import { createFaceSource } from '../../data/faces';
+  import { ScryfallCardDataSource } from '../../data/source';
   import type { FaceSource } from '../../data/types';
+  import { openStores, type LocalStores } from '../../store/stores';
   import type { DeckRecord, DeckStore } from '../../store/types';
   import Button from '../design/Button.svelte';
   import StatusLine from '../design/StatusLine.svelte';
@@ -33,17 +36,25 @@
   } = $props();
 
   let list = $state.raw<DeckRecord[] | null>(null);
-  const noFaces: FaceSource = { faceFor: () => Promise.reject(new Error('no faces')) };
+  // Without the page's sources the sheet opens the profile's library itself and draws covers from Scryfall.
+  const coverFaces: FaceSource = untrack(() => faces ?? createFaceSource(new ScryfallCardDataSource()));
+  let own: LocalStores | null = null;
+  let gone = false;
 
   onMount(() => {
-    if (!decks) {
-      list = [];
-      return;
-    }
-    void decks
-      .list()
-      .then((l) => (list = l))
-      .catch(() => (list = []));
+    void (async () => {
+      let store = decks;
+      if (!store) {
+        own = await openStores().catch(() => null);
+        if (gone) own?.close();
+        store = own?.decks ?? null;
+      }
+      list = store ? await store.list().catch(() => []) : [];
+    })();
+  });
+  onDestroy(() => {
+    gone = true;
+    own?.close();
   });
 
   function reason(d: DeckRecord): string | null {
@@ -81,7 +92,7 @@
     {:else if list}
       <div class="grid" role="listbox" aria-label="Decks">
         {#each list as d (d.id)}
-          <DeckTile deck={d} faces={faces ?? noFaces} selected={selectedId === d.id} locked={reason(d)} actions={false} onselect={() => pick(d)} onopen={() => pick(d)} />
+          <DeckTile deck={d} faces={coverFaces} selected={selectedId === d.id} locked={reason(d)} actions={false} onselect={() => pick(d)} onopen={() => pick(d)} />
         {/each}
       </div>
     {/if}

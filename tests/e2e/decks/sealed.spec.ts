@@ -102,3 +102,28 @@ test('OPEN saves the pool first, reveals per pack and ends on a 40-card deck; un
     expect(canonicalJson((await decks<DeckRecord>(page, 'get', id))!)).toBe(before);
   });
 });
+
+test('the setup sheet opens 3 packs; an unfinished opening resumes from its tile', async ({ page }, info) => {
+  await openDecks(page, { profile: profileOf(info), hash: '/decks/new/boosters' });
+  const sheet = page.getByTestId('booster-setup');
+  await expect(sheet).toBeVisible();
+  await expect(sheet).toHaveAttribute('data-mode', 'deck');
+  await expect(sheet.getByTestId('setup-packs')).toContainText('6 packs');
+  for (let i = 0; i < 4; i++) await sheet.getByRole('button', { name: 'Fewer packs' }).click();
+  // The range is 3 to 12.
+  await expect(sheet.getByTestId('setup-packs')).toContainText('3 packs');
+  await page.getByTestId('setup-open').click();
+  await expect(page.getByTestId('opening-pack')).toHaveText('Pack 1 of 3');
+  const id = decodeURIComponent((await page.evaluate(() => location.hash)).replace(/^#\/decks\//, '').replace(/\/open$/, ''));
+  expect((await decks<DeckRecord>(page, 'get', id))!.seal!.pool).toHaveLength(45);
+  await go(page, '#/decks');
+  const tile = page.locator(`[data-deck-id="${id}"]`);
+  await expect(tile.getByTestId('tile-opening')).toHaveText('1 of 3 opened');
+  await tile.dblclick();
+  await expect(page.getByTestId('opening-pack')).toHaveText('Pack 2 of 3');
+  await page.getByTestId('open-next').click();
+  await expect(page.getByTestId('open-next')).toHaveText('Build deck');
+  await page.getByTestId('open-next').click();
+  await expect(page.getByTestId('deck-page')).toHaveAttribute('data-kind', 'sealed');
+  await expect.poll(async () => (await decks<DeckRecord>(page, 'get', id))!.main.length).toBeGreaterThan(0);
+});

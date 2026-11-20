@@ -114,6 +114,35 @@ test.describe('a seeded library', () => {
     await expect(page.getByTestId('toast').filter({ hasText: 'removed' })).toHaveCount(0);
   });
 
+  test('the tile menu: rename, duplicate, and convert a booster deck into a custom copy', async ({ page }) => {
+    const custom = page.locator('[data-testid="deck-tile"][data-kind="custom"]');
+    const id = (await custom.getAttribute('data-deck-id'))!;
+    await custom.hover();
+    await custom.getByTestId('tile-more').click();
+    await expect(page.getByTestId('deck-menu')).toBeVisible();
+    await expect(page.getByTestId('deck-convert')).toHaveCount(0);
+    await page.getByTestId('deck-rename').click();
+    await page.getByTestId('rename-field').fill('Elf stompy');
+    await page.getByTestId('rename-save').click();
+    await expect(custom).toContainText('Elf stompy');
+    await expect.poll(async () => (await decks<DeckRecord>(page, 'get', id))!.name).toBe('Elf stompy');
+    await custom.hover();
+    await custom.getByTestId('tile-more').click();
+    await page.getByTestId('deck-duplicate').click();
+    await expect(page.getByTestId('deck-tile')).toHaveCount(3);
+    const sealed = page.locator('[data-testid="deck-tile"][data-kind="sealed"]');
+    const sid = (await sealed.getAttribute('data-deck-id'))!;
+    const before = JSON.stringify(await decks(page, 'get', sid));
+    await sealed.hover();
+    await sealed.getByTestId('tile-more').click();
+    await page.getByTestId('deck-convert').click();
+    await expect(page.getByTestId('deck-tile')).toHaveCount(4);
+    await expect(page.locator('[data-testid="deck-tile"][data-kind="custom"]')).toHaveCount(3);
+    const list = await decks<DeckRecord[]>(page, 'list');
+    expect(list.filter((d) => d.name.endsWith('(custom)'))).toHaveLength(1);
+    expect(JSON.stringify(await decks(page, 'get', sid))).toBe(before);
+  });
+
   test('the picker with allow rejecting custom decks dims text and well, shows the reason, keeps the face at full opacity', async ({ page }) => {
     await expect.poll(async () => (await decks<DeckRecord[]>(page, 'list')).every((d) => !!d.summary?.cover)).toBe(true);
     await page.evaluate(() => window.__decksHarness!.openPicker('booster'));
