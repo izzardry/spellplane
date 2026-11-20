@@ -6,7 +6,7 @@
   kit toast. The countdown steps once a second, never per frame. M8-P7.
 -->
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import type { Matchmaker, MatchmakerStatus } from '../../session/types';
   import { toasts } from '../design/toasts';
   import MatchFound from './MatchFound.svelte';
@@ -20,7 +20,7 @@
   let chimed = '';
   let ticker: ReturnType<typeof setInterval> | null = null;
 
-  const off = matchmaker.subscribe((s) => {
+  const off = untrack(() => matchmaker).subscribe((s) => {
     const was = status.phase;
     status = s;
     now = mmNow(matchmaker);

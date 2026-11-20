@@ -333,8 +333,8 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       ratings[key] = { r: r?.rating ?? 1500, g: r?.games ?? 0 };
     }
     const id = await identity();
-    // eslint-disable-next-line no-control-regex
     // Without a nickname the player is named by its peer id, so two of them are never both "Player".
+    // eslint-disable-next-line no-control-regex
     const name = id.nickname.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24) || `Player ${id.peerId.slice(0, 4).toUpperCase()}`;
     return {
       name,

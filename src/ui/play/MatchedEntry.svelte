@@ -6,7 +6,7 @@
   already seeking again with the waiting time kept; MatchHost shows why). Never a waiting room. M8-P7.
 -->
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import type { MatchRecord } from '../../core/types';
   import { deckImportOfRecord } from '../../session/deck-build';
   import { runMatchedEntry, type MatchedEntryStage } from '../../session/match-room';
@@ -37,7 +37,7 @@
   let stop: (() => void) | null = null;
   let gone = false;
 
-  const me = session.getState().seats[session.seat]?.peer ?? '';
+  const me = untrack(() => session.getState().seats[session.seat]?.peer ?? '');
   void (async () => {
     const rec = decks ? await decks.get(record.deckId).catch(() => null) : null;
     if (gone) return;

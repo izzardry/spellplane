@@ -5,25 +5,30 @@
   work). M8-P7.
 -->
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import type { Matchmaker, MatchmakerStatus } from '../../session/types';
   import Button from '../design/Button.svelte';
   import { clockText, lookingCount, mmNow, queueLabel } from './mm-view';
 
   let { matchmaker, onhome }: { matchmaker: Matchmaker; onhome?: () => void } = $props();
 
-  let status = $state<MatchmakerStatus>({ phase: 'off' });
+  let status = $state.raw<MatchmakerStatus>({ phase: 'off' });
   let now = $state(0);
-  const off = matchmaker.subscribe((s) => {
+  // The timer steps once a second, and only while the bar shows.
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const off = untrack(() => matchmaker).subscribe((s) => {
     status = s;
     now = mmNow(matchmaker);
+    const searching = s.phase === 'seeking' || s.phase === 'connecting';
+    if (searching) timer ??= setInterval(() => (now = mmNow(matchmaker)), 1000);
+    else if (timer !== null) {
+      clearInterval(timer);
+      timer = null;
+    }
   });
-  const timer = setInterval(() => {
-    if (status.phase === 'seeking' || status.phase === 'connecting') now = mmNow(matchmaker);
-  }, 1000);
   onDestroy(() => {
     off();
-    clearInterval(timer);
+    if (timer !== null) clearInterval(timer);
   });
 
   const shown = $derived(status.phase === 'seeking' || status.phase === 'connecting');
