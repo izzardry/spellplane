@@ -82,6 +82,31 @@ describe('broker over a loopback lobby', () => {
     }
   });
 
+  it('three seekers form one ffa3 match; four solo 2hg seekers form two teams, the highest and lowest rated together', async () => {
+    const net = lobbyNet({ seed: 5 });
+    const q3: QueueId = 'ffa3.constructed.casual';
+    const three = ['a', 'b', 'c'].map((n) => seeker(net, n, { tid: `${n}3` }));
+    for (const s of three) await joinAndSeek(s, draft([q3]));
+    await until(() => three.every((s) => s.formed.length === 1), 10_000, 'the ffa3 match');
+    expect(new Set(three.map((s) => s.formed[0]!.roomId)).size).toBe(1);
+    expect(new Set(three[0]!.formed[0]!.order).size).toBe(3);
+
+    const net2 = lobbyNet({ seed: 6 });
+    const q2: QueueId = '2hg.limited.casual';
+    const ratings = [1400, 1500, 1520, 1600];
+    const four = ratings.map((r, i) => ({ s: seeker(net2, `t${i}`, { tid: `h${i}` }), r }));
+    for (const { s, r } of four) await joinAndSeek(s, { ...draft([q2], { r }), ratings: { '2hg.limited': { r, g: 12 } } });
+    await until(() => four.every(({ s }) => s.formed.length === 1), 10_000, 'the 2hg match');
+    const f = four[0]!.s.formed[0]!;
+    expect(f.queue).toBe(q2);
+    const teamOf = (tid: string) => f.members.find((m) => m.tid === tid)?.team;
+    // 1600 with 1400, 1500 with 1520.
+    expect(teamOf('h3')).toBe(teamOf('h0'));
+    expect(teamOf('h1')).toBe(teamOf('h2'));
+    expect(teamOf('h0')).not.toBe(teamOf('h1'));
+    for (const { s } of four) expect(s.formed[0]!.members).toEqual(f.members);
+  });
+
   it('a decline returns the others to seeking with their waiting time kept; the decliner stops', async () => {
     const net = lobbyNet({ seed: 4 });
     const a = seeker(net, 'ann', { tid: 'a2', answer: true });
