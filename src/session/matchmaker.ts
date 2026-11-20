@@ -134,6 +134,8 @@ export interface MatchmakerControl extends Matchmaker {
   stranded(roomId: string, missing: string | null): void;
   /** The last short notice (a declined match, a missed one); null when none. */
   notice(): string | null;
+  /** `SEARCH AGAIN`: with a search config kept (after a match that could not be reached) and no search running, search again. */
+  searchAgain(): void;
   /** The deck library the search reads (debug hook: a spec stores its deck first). */
   decks(): DeckStore;
   /** The page went to `hash` (the hashchange listener calls it): a networked room that is not the match's turns it off. */
@@ -495,6 +497,10 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
         .get(roomId)
         .then((r) => (r ? deps.matches.put({ ...r, state: 'void' }) : undefined))
         .catch(() => undefined);
+      // A matched game that never started is not kept in History (journey.md 4.7).
+      void gamesStore()
+        .then((g) => g?.purge(roomId))
+        .catch(() => undefined);
       lastNotice = MM_TEXT.unreachable(missing ?? 'Another player');
       moving = null;
       closeRoom();
@@ -505,6 +511,12 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     notice: () => lastNotice,
     decks: () => deps.decks,
     route: onRoute,
+    searchAgain() {
+      if (!config || mode === 'moving') return;
+      const st = room?.state;
+      if (st && st.phase !== 'watching') return;
+      void announce();
+    },
   };
   setPageMatchmaker(mm);
   return mm;

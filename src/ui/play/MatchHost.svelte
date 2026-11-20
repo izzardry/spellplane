@@ -1,29 +1,24 @@
 <!--
-  Mounted once by App.svelte over every shell screen and solo table (contracts.md Part C): in phase `check` it shows
-  the match-found card, plays the matchFound chime once per match and sets the tab title to `Match found ·
-  Spellplane` until the check ends; a short notice follows a declined or missed match. The countdown is stepped once a
-  second, never per frame. M8-P7.
+  The page-wide match-found host (contracts.md Part C; journey.md 4.6; matchmaking.md 2.8), mounted by the shell over
+  every shell screen (and by the frame over a solo table). In phase `check` it shows the match-found card, asks for the
+  matchFound chime once per match (`chime`; the debug hook counts it) and sets the tab title to `Match found ·
+  Spellplane` until the check ends. After a declined, missed or unreachable match it shows the matchmaker's notice as a
+  kit toast. The countdown steps once a second, never per frame. M8-P7.
 -->
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import type { Matchmaker, MatchmakerStatus } from '../../session/types';
+  import { toasts } from '../design/toasts';
   import MatchFound from './MatchFound.svelte';
-  import { MATCH_FOUND_TITLE, mmNow } from './mm-view';
+  import { MATCH_FOUND_TITLE, mmNow, noticeOf, ringChime, searchAgain } from './mm-view';
 
-  let { matchmaker, chime }: { matchmaker: Matchmaker; chime?: () => void } = $props();
+  let { matchmaker, chime = undefined }: { matchmaker: Matchmaker; chime?: (() => void) | undefined } = $props();
 
-  let status = $state<MatchmakerStatus>({ phase: 'off' });
+  let status = $state.raw<MatchmakerStatus>({ phase: 'off' });
   let now = $state(0);
-  let notice: string | null = $state(null);
   let savedTitle: string | null = null;
   let chimed = '';
   let ticker: ReturnType<typeof setInterval> | null = null;
-  let noticeTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const noticeOf = (): string | null => {
-    const n = (matchmaker as Matchmaker & { notice?: () => string | null }).notice;
-    return typeof n === 'function' ? n.call(matchmaker) : null;
-  };
 
   const off = matchmaker.subscribe((s) => {
     const was = status.phase;
@@ -36,29 +31,27 @@
       }
       if (chimed !== s.match.matchId) {
         chimed = s.match.matchId;
-        chime?.();
+        ringChime(chime);
       }
       ticker ??= setInterval(() => (now = mmNow(matchmaker)), 1000);
-    } else {
-      if (savedTitle !== null && typeof document !== 'undefined') document.title = savedTitle;
-      savedTitle = null;
-      if (ticker !== null) clearInterval(ticker);
-      ticker = null;
-      if (was === 'check' || (was === 'moving' && (s.phase === 'connecting' || s.phase === 'seeking'))) {
-        const n = noticeOf();
-        if (n) {
-          notice = n;
-          if (noticeTimer !== null) clearTimeout(noticeTimer);
-          noticeTimer = setTimeout(() => (notice = null), 5000);
-        }
-      }
+      return;
+    }
+    if (savedTitle !== null && typeof document !== 'undefined') document.title = savedTitle;
+    savedTitle = null;
+    if (ticker !== null) clearInterval(ticker);
+    ticker = null;
+    const back = s.phase === 'connecting' || s.phase === 'seeking' || s.phase === 'watching' || s.phase === 'off';
+    if ((was === 'check' && back) || (was === 'moving' && (s.phase === 'connecting' || s.phase === 'seeking'))) {
+      const text = noticeOf(matchmaker);
+      if (!text) return;
+      if (was === 'moving') toasts.info(text, { label: 'SEARCH AGAIN', run: () => searchAgain(matchmaker) });
+      else toasts.info(text);
     }
   });
 
   onDestroy(() => {
     off();
     if (ticker !== null) clearInterval(ticker);
-    if (noticeTimer !== null) clearTimeout(noticeTimer);
     if (savedTitle !== null && typeof document !== 'undefined') document.title = savedTitle;
   });
 </script>
@@ -66,24 +59,3 @@
 {#if status.phase === 'check'}
   <MatchFound {status} {now} onanswer={(a) => matchmaker.answer(a)} />
 {/if}
-{#if notice}
-  <div class="mm-notice" role="status" data-testid="mm-notice">{notice}</div>
-{/if}
-
-<style>
-  .mm-notice {
-    position: fixed;
-    left: 50%;
-    bottom: var(--ds-space-xl);
-    transform: translateX(-50%);
-    z-index: 890;
-    max-width: calc(100% - 32px);
-    padding: var(--ds-space-sm) var(--ds-space-md);
-    border-radius: var(--ds-radius-pill);
-    background: var(--ds-ink);
-    color: var(--ds-on-ink);
-    box-shadow: var(--ds-elevation-pop);
-    font-family: var(--ds-font-body);
-    font-size: var(--ds-type-small);
-  }
-</style>

@@ -8,14 +8,9 @@ import type { QueueId } from '../core/types';
 import type { MatchmakerControl } from '../session/matchmaker';
 import type { Matchmaker } from '../session/types';
 import type { DeckRecord, DeckStore } from '../store/types';
+import { chimeCount } from '../ui/play/mm-view';
 import { registerDebug } from '../util/debug';
 import type { MmDebug } from './types';
-
-let chimeCount = 0;
-/** Counted by the app's MatchHost chime (src/ui/play/MatchHost.svelte). */
-export function countChime(): void {
-  chimeCount++;
-}
 
 function control(mm: Matchmaker): Partial<MatchmakerControl> {
   return mm as Partial<MatchmakerControl>;
@@ -52,7 +47,7 @@ export function registerMmDebug(mm: Matchmaker | null | undefined, deps: { decks
     cancel: () => mm.cancel(),
     widen: () => mm.widen(),
     watch: (on) => mm.watch(on),
-    chimes: () => chimeCount,
+    chimes: () => chimeCount(),
     notice: () => c.notice?.() ?? null,
   };
   registerDebug({ mm: api });

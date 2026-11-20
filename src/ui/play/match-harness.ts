@@ -7,11 +7,14 @@ import { mount as mountSvelte, unmount } from 'svelte';
 import type { QueueId } from '../../core/types';
 import type { LobbyView } from '../../net/lobby/types';
 import type { Matchmaker, MatchmakerStatus } from '../../session/types';
+import { plain } from '../../themes/plain/index';
+import '../design/base.css';
+import { lookCssVars } from '../design/css';
 import MatchHarness from './MatchHarness.svelte';
 
 export interface MatchHarnessApi {
   /** Set the fake status: `seeking` (with `waitedMs`, `alone`), `check` (with `secondsLeft`, `accepted`, `mine`), or any other phase. */
-  set(phase: MatchmakerStatus['phase'], o?: { waitedMs?: number; alone?: boolean; secondsLeft?: number; accepted?: string[]; mine?: boolean; queue?: QueueId; looking?: number }): void;
+  set(phase: MatchmakerStatus['phase'], o?: { waitedMs?: number; alone?: boolean; secondsLeft?: number; accepted?: string[]; mine?: boolean; queue?: QueueId; looking?: number; notice?: string | null }): void;
   /** Move the fake clock. */
   advance(ms: number): void;
   answers(): boolean[];
@@ -48,6 +51,7 @@ export function mount(target: HTMLElement): void {
   const emit = (): void => {
     for (const l of listeners) l(status);
   };
+  let notice: string | null = null;
   const fake: Matchmaker & { now(): number; notice(): string | null } = {
     status: () => status,
     subscribe(l) {
@@ -75,11 +79,12 @@ export function mount(target: HTMLElement): void {
     avoid: () => Promise.resolve(),
     dispose: () => undefined,
     now: () => now,
-    notice: () => null,
+    notice: () => notice,
   };
   const api: MatchHarnessApi = {
     set(phase, o = {}) {
       const queue = o.queue ?? '1v1.constructed.ranked';
+      notice = o.notice ?? null;
       const looking = o.looking ?? 0;
       if (phase === 'seeking') {
         status = { phase, lobby: lobby(looking, queue), since: now - (o.waitedMs ?? 0), window: { rating: 100, band: 0 }, alone: o.alone ?? false, deckId: 'deck-1', queues: [queue] };
@@ -116,6 +121,9 @@ export function mount(target: HTMLElement): void {
   };
   window.__matchHarness = api;
   document.title = 'Spellplane';
+  // The Plain look on the page, as the app shell sets it.
+  for (const [k, v] of Object.entries(lookCssVars(plain, 'plain'))) document.documentElement.style.setProperty(k, v);
+  document.documentElement.dataset.look = 'plain';
   const app = mountSvelte(MatchHarness, { target, props: { matchmaker: fake, onhome: () => homes++, chime: () => chimes++ } });
   void app;
   void unmount;

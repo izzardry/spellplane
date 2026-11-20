@@ -1,16 +1,18 @@
 <!-- The `?harness=match` page: a stand-in shell bar with the queue chip, and the match host (M8-P7). -->
 <script lang="ts">
   import type { Matchmaker } from '../../session/types';
+  import ToastHost from '../design/ToastHost.svelte';
   import MatchHost from './MatchHost.svelte';
   import QueueChip from './QueueChip.svelte';
 
   let { matchmaker, onhome, chime }: { matchmaker: Matchmaker; onhome: () => void; chime: () => void } = $props();
 </script>
 
-<main class="mm-harness">
+<main class="mm-harness ds-root" data-testid="harness-match">
   <div class="mm-harness-bar"><QueueChip {matchmaker} {onhome} /></div>
-  <p>Match harness</p>
+  <p class="ds-t-meta">Match harness</p>
   <MatchHost {matchmaker} {chime} />
+  <ToastHost place="bottom-centre" />
 </main>
 
 <style>

@@ -12,7 +12,8 @@
   import { runMatchedEntry, type MatchedEntryStage } from '../../session/match-room';
   import type { TableSession } from '../../session/types';
   import type { DeckStore, MatchStore, RatingStore } from '../../store/types';
-  import { queueLabel } from './mm-view';
+  import SeatGlyph from '../design/SeatGlyph.svelte';
+  import { queueLabel, seatColourVar } from './mm-view';
 
   let {
     session,
@@ -63,11 +64,11 @@
 </script>
 
 {#if stage !== 'match'}
-  <div class="mm-entry" role="status" data-testid="matched-entry" data-stage={stage}>
+  <div class="mm-entry ds-pop ds-root" role="status" data-testid="matched-entry" data-stage={stage}>
     <p class="mm-entry-title">{record.roomId.replace(/-/g, ' ').toUpperCase()} · {queueLabel(record.queue)}</p>
     <ul class="mm-entry-seats">
       {#each record.players as p, i (p.peerId)}
-        <li><span aria-hidden="true">{['◆', '▲', '●', '■'][i] ?? '◆'}</span> {p.name}</li>
+        <li class="mm-entry-seat"><SeatGlyph seat={i} colour={seatColourVar(i)} size={28} label={`Seat ${i + 1}`} /> {p.name}</li>
       {/each}
     </ul>
     <p class="mm-entry-line">{stage === 'connecting' ? 'CONNECTING…' : stage === 'entering' ? 'DEALING…' : 'NOT CONNECTED'}</p>
@@ -99,6 +100,11 @@
     font-family: var(--ds-font-mono);
     letter-spacing: 0.08em;
     font-size: var(--ds-type-small);
+  }
+  .mm-entry-seat {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ds-space-xs);
   }
   .mm-entry-seats {
     list-style: none;
