@@ -807,12 +807,12 @@ test.describe('theme switcher', () => {
     await setNickname(page, 'Ann');
     await expect(chair(page, 's0')).toHaveAttribute('data-mine', 'true');
     const details = page.getByTestId('lobby-theme');
-    // M8-C: Plain is the default; the picker offers the four looks.
-    await expect(details).toContainText('Theme: Plain');
+    // M8-C: Plain is the default; the picker offers the four looks. M8-P4: the waiting room names it the look.
+    await expect(details).toContainText('Look: Plain');
     await details.locator('summary').click();
     await details.locator('[data-testid="theme-option"][data-theme="graphite"] input').check();
     await expect.poll(() => currentTheme(page)).toBe('graphite');
-    await expect(details).toContainText('Theme: Graphite');
+    await expect(details).toContainText('Look: Graphite');
     const seats = (await loadTheme('graphite')).tokens.colours.seats;
     const swatches = page.locator('.swatch');
     await expect(swatches).toHaveCount(8);
