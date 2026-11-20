@@ -1,6 +1,7 @@
 // The theme's sound set under the viewer's Settings.sound (DESIGN "Themes and rendering", What a theme package
 // contains: "Sound: an optional set ..., off by default in Paper"; theme table, Dusk: "muted ambience"). The HUD root
 // says what plays: data-sound 'off', 'on' (waiting for a gesture) or 'playing' (the room tone runs).
+import { menuItem } from '../../helpers/app';
 import { expect, test, type Page } from '@playwright/test';
 import type { ThemeId } from '../../../../src/themes/index';
 import { freshProfile, openSolo } from '../../solo/helpers';
@@ -47,7 +48,7 @@ test('Paper is silent; Dusk plays its room tone after a press; Off silences it a
   await page.mouse.click(40, 450);
   await expect(hud).toHaveAttribute('data-sound', 'playing');
   // The picker's sound choice.
-  await page.getByTestId('open-theme-settings').click();
+  await menuItem(page, 'open-theme-settings', 'click');
   await expect(page.getByTestId('theme-sound')).toHaveValue('theme');
   await page.getByTestId('theme-sound').selectOption('off');
   await expect(hud).toHaveAttribute('data-sound', 'off');
@@ -57,7 +58,7 @@ test('Paper is silent; Dusk plays its room tone after a press; Off silences it a
   await expect(page.getByTestId('hud')).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__spellplane?.theme?.current?.())).toBe('dusk');
   await expect(page.getByTestId('hud')).toHaveAttribute('data-sound', 'off');
-  await page.getByTestId('open-theme-settings').click();
+  await menuItem(page, 'open-theme-settings', 'click');
   await expect(page.getByTestId('theme-sound')).toHaveValue('off');
   expect(errors).toEqual([]);
 });

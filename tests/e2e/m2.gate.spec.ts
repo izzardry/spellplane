@@ -42,7 +42,7 @@ import { columnOf, columnX } from '../../src/scene/builder';
 import type { SceneDebugCard } from '../../src/scene/table-scene';
 import type { BuilderSort } from '../../src/scene/types';
 import { packLeakScan } from '../leak/draft';
-import { hook, shot } from './helpers/app';
+import { hook, shot, propose } from './helpers/app';
 import { freshProfile, freshRoom, open, setNickname } from './lobby/helpers';
 
 const FIXTURE_CARDS = new Map<string, CardData>(
@@ -560,7 +560,7 @@ test.describe('M2 gate @gate', () => {
     // Back to the builder: Ann proposes the next game, Ben confirms in the HUD's prompt; Ann swaps a sideboard card.
     // ------------------------------------------------------------------------------------------------------------
     const backOk = await step('next game: Ann proposes it in the evening bar, Ben confirms in the HUD prompt; both return to their builds', async () => {
-      await A.page.getByTestId('propose-nextGame').click();
+      await propose(A.page, 'nextGame', 'click');
       await expect(B.page.getByTestId('confirm-prompt')).toBeVisible({ timeout: 15_000 });
       await B.page.getByTestId('prompt-ok').click();
       for (const p of both) await inStage(p.page, 'build');
@@ -605,7 +605,12 @@ test.describe('M2 gate @gate', () => {
       const sids = [...sec.libraryOrder, ...sec.hand].map((id) => sec.identities[id]!.card.sid).sort();
       const b = decks.s0!;
       expect(sids).toEqual(b.main.map((id) => b.cards.find((c) => c.id === id)!.ref.sid).sort());
-      await soft('the evening bar names game two', () => expect(A.page.getByTestId('evening-status')).toHaveText('Game 2.'));
+      // M7-P2: in a match the evening bar gives way to the HUD (Next game and New draft are in its Menu).
+      await soft('the table offers the next game in its Menu', async () => {
+        await A.page.getByTestId('open-menu').click();
+        await expect(A.page.getByTestId('propose-nextGame')).toBeVisible();
+        await A.page.keyboard.press('Escape');
+      });
       await converged(A.page, B.page);
     });
     if (!game2) return finish();
@@ -614,7 +619,7 @@ test.describe('M2 gate @gate', () => {
     // Sealed: a new draft from the match opens six packs each.
     // ------------------------------------------------------------------------------------------------------------
     const sealedOk = await step('sealed: a new draft (Ben proposes, Ann confirms in the HUD prompt); Ann opens six sealed packs each', async () => {
-      await B.page.getByTestId('propose-newDraft').click();
+      await propose(B.page, 'newDraft', 'click');
       await expect(A.page.getByTestId('confirm-prompt')).toBeVisible({ timeout: 15_000 });
       await A.page.getByTestId('prompt-ok').click();
       for (const p of both) await inStage(p.page, 'lobby');
@@ -643,7 +648,7 @@ test.describe('M2 gate @gate', () => {
     // ------------------------------------------------------------------------------------------------------------
     const rochesterPicks: PickRec[] = [];
     await step('Rochester: a new draft from the builder (Ann proposes, Ben answers OK in the evening bar); one pack each on the shared table', async () => {
-      await A.page.getByTestId('propose-newDraft').click();
+      await propose(A.page, 'newDraft', 'click');
       await expect(B.page.getByTestId('evening-ok')).toBeVisible({ timeout: 15_000 });
       await B.page.getByTestId('evening-ok').click();
       for (const p of both) await inStage(p.page, 'lobby');

@@ -3,7 +3,7 @@
 // personal toggles, off by default; "Local persistence": quality and follow toggles are per-browser settings).
 // Behaviour is read from the debug hook's render and rig parts, never from pixels.
 import { expect, test, type Page } from '@playwright/test';
-import { hook } from '../helpers/app';
+import { hook, menuItem } from '../helpers/app';
 import { freshProfile, openSolo } from '../solo/helpers';
 
 type Stats = { quality: string; theme: string; shadows: boolean; passes: string[] };
@@ -22,7 +22,7 @@ test('quality and follow toggles set in the picker reach the scene, survive a th
   await expect.poll(() => choice(page)).toBe('high');
   expect(await follow(page)).toEqual({ stack: false, activePlayer: false });
 
-  await page.getByTestId('open-theme-settings').click();
+  await menuItem(page, 'open-theme-settings', 'click');
   const quality = page.getByTestId('theme-quality');
   const followStack = page.getByRole('checkbox', { name: 'Follow the stack' });
   const followActive = page.getByRole('checkbox', { name: 'Follow the active player' });
@@ -45,7 +45,8 @@ test('quality and follow toggles set in the picker reach the scene, survive a th
   await expect.poll(() => follow(page)).toEqual({ stack: false, activePlayer: true });
 
   // A theme switch keeps the choice; Dusk resolves it to its own low level (no shadows, no post-processing).
-  await page.locator('[data-testid="theme-option"][data-theme="dusk"]').click();
+  // M7-P2: Dusk left the picker (it stays loadable); the switch goes through the debug hook.
+  await page.evaluate(() => window.__spellplane!.theme!.set('dusk'));
   await expect.poll(async () => (await stats(page)).theme, { timeout: 15_000 }).toBe('dusk');
   await expect.poll(() => stats(page)).toMatchObject({ theme: 'dusk', quality: 'low', shadows: false, passes: [] });
   expect(await choice(page)).toBe('low');
@@ -58,7 +59,7 @@ test('quality and follow toggles set in the picker reach the scene, survive a th
   await expect.poll(() => choice(page)).toBe('low');
   await expect.poll(() => stats(page)).toMatchObject({ quality: 'low', shadows: false, passes: [] });
   await expect.poll(() => follow(page)).toEqual({ stack: false, activePlayer: true });
-  await page.getByTestId('open-theme-settings').click();
+  await menuItem(page, 'open-theme-settings', 'click');
   await expect(quality).toHaveValue('low');
   await expect(followStack).not.toBeChecked();
   await expect(followActive).toBeChecked();

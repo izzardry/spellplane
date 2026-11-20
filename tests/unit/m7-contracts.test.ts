@@ -82,7 +82,7 @@ describe('design tokens', () => {
       expect(t.sound.gain).toBeLessThanOrEqual(1);
     }
     // docs/design/m7-directions.html swatches.
-    expect(LOOKS.kitchen.colour).toMatchObject({ mat: '#d9ccb2', frame: '#5b3f2c', panel: '#f7f1e5', ink: '#2b2118', accent: '#c0532f', selection: '#b08a3e' });
+    expect(LOOKS.kitchen.colour).toMatchObject({ mat: '#d9ccb2', frame: '#5b3f2c', panel: '#f7f1e5', ink: '#2b2118', accent: '#b94f2c' /* M7-P2 tuned the directions' #c0532f to meet AA under the primary button's text */, selection: '#b08a3e' });
     expect(LOOKS.graphite.colour).toMatchObject({ mat: '#16191e', panel: '#20242b', border: '#323843', ink: '#e9ecf0', muted: '#9aa3ae', accent: '#3fd2a3' });
     expect(LOOKS.codex.colour).toMatchObject({ mat: '#1b2235', panel: '#242c42', ornament: '#c8a75e', ink: '#efe6d2', muted: '#a99f8c', accent: '#b8432f' });
   });

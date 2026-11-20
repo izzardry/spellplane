@@ -148,13 +148,17 @@ test('double-click on the clip takes it off; undo puts it back', async ({ page }
 
 test('dragging the clip off onto empty table removes it; the clip tray clips an overlap; its menu removes it', async ({ page }) => {
   // From the tray onto the overlap.
+  // M7-P2: the clip tray is an item of the Menu, dragged out of it.
   const tray = page.getByTestId('clip-tray');
-  const box = (await tray.boundingBox())!;
   const p = await overlap(page);
+  await page.getByTestId('open-menu').click();
+  let box = (await tray.boundingBox())!;
   await mouseDrag(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 }, p);
   await expect.poll(async () => Object.values((await state(page)).clips ?? {})[0]?.cards ?? null).toEqual(['a', 'b']);
   // Dropped from the tray on empty table, a clip just vanishes.
   const k = await pxPerMm(page, 'a');
+  await page.getByTestId('open-menu').click();
+  box = (await tray.boundingBox())!;
   await mouseDrag(page, { x: box.x + box.width / 2, y: box.y + box.height / 2 }, { x: p.x - 200 * k, y: p.y + 150 * k });
   await page.waitForTimeout(300);
   expect(await clipCount(page)).toBe(1);

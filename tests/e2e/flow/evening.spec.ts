@@ -12,7 +12,7 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import type { DeckBuild, SecretStore, Stage, TableState } from '../../../src/core/types';
 import type { DraftPrivateView } from '../../../src/draft/types';
-import { hook, shot } from '../helpers/app';
+import { hook, shot, propose } from '../helpers/app';
 import { freshProfile, freshRoom, open, twoPages } from '../lobby/helpers';
 import { setsScript } from './helpers';
 
@@ -186,7 +186,7 @@ test('a reload in each stage returns to that stage with the same pool, deck and 
 
   // Next game: Anna proposes from the evening bar, Ben confirms in the HUD's prompt; both are back in the builder
   // with the decks they had, the game table cleared.
-  await a.getByTestId('propose-nextGame').click();
+  await propose(a, 'nextGame', 'click');
   await expect(b.getByTestId('confirm-prompt')).toBeVisible({ timeout: 15_000 });
   await shot(b, 'M2', 'flow-next-game-prompt', info.project.name);
   await b.getByTestId('prompt-ok').click();
@@ -198,7 +198,7 @@ test('a reload in each stage returns to that stage with the same pool, deck and 
   for (const [i, p] of [a, b].entries()) expect(deckOf(await build(p))).toEqual(deckOf(builds[i]!));
 
   // A new draft from the builder: Ben proposes, Anna answers OK in the evening bar; back to the lobby, nothing kept.
-  await b.getByTestId('propose-newDraft').click();
+  await propose(b, 'newDraft', 'click');
   await expect(a.getByTestId('evening-ok')).toBeVisible({ timeout: 15_000 });
   await a.getByTestId('evening-ok').click();
   await inStage(a, 'lobby');

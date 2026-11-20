@@ -5,7 +5,7 @@
  * table stays live under them.
  */
 import { expect, test } from '@playwright/test';
-import { openApp } from '../helpers/app';
+import { openApp, menuItem } from '../helpers/app';
 import { drafts, hoverCard, openHud } from '../ui/harness';
 import { openHudSettings, openSettingsHarness } from './helpers';
 
@@ -190,7 +190,7 @@ test.describe('first-run hints', () => {
 test.describe('one settings panel', () => {
   test('on the table: display, voice, dictation, keys, card back, storage and About; the theme popover stays a shortcut', async ({ page }) => {
     await openHud(page);
-    await page.getByTestId('open-settings').click();
+    await menuItem(page, 'open-settings', 'click');
     const panel = page.getByTestId('settings');
     await expect(panel.getByTestId('settings-tab')).toHaveText(['Display and sound', 'Voice', 'Dictation', 'Keys', 'Card back', 'Storage', 'About']);
     await expect(panel.getByTestId('theme-picker')).toBeVisible();
@@ -209,9 +209,9 @@ test.describe('one settings panel', () => {
 
   test('in the app the theme popover stays as a shortcut beside the settings button', async ({ page }) => {
     await openApp(page);
-    await page.getByTestId('open-theme-settings').click();
+    await menuItem(page, 'open-theme-settings', 'click');
     await expect(page.getByTestId('theme-settings')).toBeVisible();
-    await page.getByTestId('open-settings').click();
+    await menuItem(page, 'open-settings', 'click');
     // The popover closed (its × is the popover's own); the panel holds the same picker.
     await expect(page.getByTestId('theme-close')).toHaveCount(0);
     await expect(page.getByTestId('settings').getByTestId('theme-picker')).toBeVisible();
@@ -225,7 +225,7 @@ test.describe('one settings panel', () => {
     await expect(page.locator('[data-testid="key-row"][data-action="tap"]').getByTestId('key-current')).toHaveText(['J']);
     await page.goto(page.url().replace(/#.*$/, '#/'));
     await expect(page.getByTestId('hud')).toBeVisible();
-    await page.getByTestId('open-cheat-sheet').click();
+    await menuItem(page, 'open-cheat-sheet', 'click');
     await expect(page.locator('[data-testid="cheat-row"][data-action="tap"]').getByTestId('cheat-key')).toHaveText(['J']);
   });
 });

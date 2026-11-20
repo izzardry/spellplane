@@ -7,7 +7,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { mergeTimeline, type ChatTab } from '../core/log';
-  import type { Anchor, CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
+  import type { Anchor, CardInstance, Seat, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import { perspectiveToggleTilt, type ActivePing, type TableScene, type ViewState } from '../scene/types';
@@ -15,7 +15,20 @@
   import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
-  import { cssText, hudCssVars } from '../themes/index';
+  import { cssText } from '../themes/index';
+  import type { SeatAnchor } from '../scene/types';
+  import './design/base.css';
+  import { hudLook, lookCssVars } from './design/css';
+  import { lookContext } from './design/look';
+  import IconButton from './design/IconButton.svelte';
+  import Icon from './design/Icon.svelte';
+  import Button from './design/Button.svelte';
+  import Dialog from './design/Dialog.svelte';
+  import MenuPopover from './design/MenuPopover.svelte';
+  import { primaryAction } from './hud/turn';
+  import { tickerText } from './hud/ticker';
+  import { hudMenu, type HudMenuId } from './menu';
+  import { proposals, PROPOSAL_LABELS } from './flow/model';
   import { Commands, isEmptyChair, isOwnTurn, promptKeys, promptShowing, roundPassed, untapOfferOnOpen, type UiHooks } from './commands';
   import ConfirmPrompt from './confirm/ConfirmPrompt.svelte';
   import { promptModel, roundWhat } from './confirm/model';
@@ -74,7 +87,7 @@
   import { installReducedMotionCss, prefersReducedMotion, watchReducedMotion } from './a11y/motion';
   import FocusMirror from './a11y/FocusMirror.svelte';
 
-  let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
+  let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId, evening }: HudProps = $props();
 
   // --- Shared state, as views of the session (the HUD is mounted per session; it never swaps sessions) ----------
   const me = untrack(() => session.seat);
@@ -159,19 +172,10 @@
   let touchUi = $state(touchDevice());
   let untapOffer = $state(false);
   /**
-   * Below this width (a tablet held upright) the log starts hidden, so the table, the turn strip and the toolbar are
-   * not crowded under it (M5 gate, iPad portrait); the Log tab opens it. Crossing the width (turning the tablet) opens
-   * or hides it again.
+   * The log and chat drawer (docs/design/m7-hud-proposal.md, Activity drawer: "Full history on demand, never a permanent
+   * column"): closed, an activity button with an unread count and a ticker; it opens from that button or Enter.
    */
-  const NARROW_HUD_PX = 900;
-  let logOpen = $state(untrack(() => vw) >= NARROW_HUD_PX);
-  let narrowWas = untrack(() => vw) < NARROW_HUD_PX;
-  $effect(() => {
-    const narrow = vw < NARROW_HUD_PX;
-    if (narrow === narrowWas) return;
-    narrowWas = narrow;
-    logOpen = !narrow;
-  });
+  let logOpen = $state(false);
   let preview = $state<{ card: InstanceId; x: number; y: number } | null>(null);
   let voice = $state<{ talking: 'talk' | 'teamTalk' | null; muted: boolean }>({ talking: null, muted: false });
   /** The modifier talk key's hold-alone state (shown on the talk indicator as data-hold). */
@@ -209,7 +213,19 @@
   let noteInput = $state<HTMLInputElement | undefined>();
   let drawInput = $state<HTMLInputElement | undefined>();
 
-  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
+  /** The viewer's look (ui/design/look.ts): the HUD's design tokens; in a harness page without the app shell, the theme's own look. */
+  const lookChoice = lookContext();
+  let storedLook = $state(untrack(() => lookChoice?.current() ?? hudLook(theme)));
+  const look = $derived(lookChoice ? storedLook : hudLook(theme));
+  $effect(() => lookChoice?.subscribe((l) => (storedLook = l)));
+  const cssVars = $derived(cssText(lookCssVars(theme, look, reducedMotion)));
+  /** The Menu (docs/design/m7-hud-proposal.md, In the menu): every rare tool, one step away. */
+  let menuOpen = $state(false);
+  let menuButton = $state<HTMLButtonElement | undefined>();
+  /** "Next game" and "New draft" leave the game: they ask first (critique, Top 10, 9: destructive actions). */
+  let leaving = $state<'nextGame' | 'newDraft' | null>(null);
+  /** Each seat's table edge on screen (SceneEvents.seatAnchors), where its plate sits; empty until the scene reports them. */
+  let anchors = $state.raw<SeatAnchor[]>([]);
   /** The settings panel (M5-P5, ui/settings/Settings.svelte); the theme popover below stays as its shortcut. */
   let settingsOpen = $state(false);
   let settingsSection = $state<SettingsSection>('display');
@@ -445,6 +461,8 @@
    */
   function closeTop(promptUp: boolean): boolean {
     if (radial) radial = null;
+    else if (leaving) leaving = null;
+    else if (menuOpen) menuOpen = false;
     else if (menu) menu = null;
     else if (themeOpen) themeOpen = false;
     else if (settingsOpen) settingsOpen = false;
@@ -766,6 +784,103 @@
   const noDeck = $derived(!spectating && !!st.seats[me] && st.stage === 'match' && !Object.values(st.cards).some((c) => c.owner === me));
   const storageFull = $derived(quotaError || entries.some(isStorageFullLine));
   const keyOf = (a: ActionId, ctx: KeyContext = 'table') => keyLabel(keymap, a, ctx);
+
+  // --- The always-visible HUD (docs/design/m7-hud-proposal.md, Always visible) ------------------------------------
+  const mineTurn = $derived(isOwnTurn(st, me));
+  /** The one primary button: the next move for this moment (ui/hud/turn.ts). */
+  const primary = $derived(primaryAction({ mine: mineTurn, phase: st.turn.phase, phases: game.phases, activeName, offer: untapOffer, spectator: spectating }));
+  function runPrimary(): void {
+    const p = primary;
+    if (p.disabled) return;
+    if (p.kind === 'untapDraw') {
+      untapOffer = false;
+      commands.untapAndDraw();
+    }
+    if (p.kind === 'endTurn') commands.run('nextTurn');
+    else if (p.phase) session.dispatch({ type: 'phaseSet', phase: p.phase });
+  }
+  /** Undo's tooltip names the action it takes back (docs/design/m7-hud-proposal.md, Undo: "Undo: tap Forest"). */
+  const undoTip = $derived.by(() => {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const l = lines[i]!;
+      if (l.kind === 'action' && l.seat === me) return `Undo: ${tickerText({ ...l, actor: '' })}`;
+    }
+    return 'Undo';
+  });
+  /** Another player's hand count on their plate (docs/design/m7-hud-proposal.md, Opponent plate). */
+  const handCountOf = (seat: string): number | null => (seat === me ? null : (st.zones[`hand:${seat}`]?.ids.length ?? null));
+  /** The evening's proposals open now (Next game, New draft), offered in the Menu behind a confirmation. */
+  const offers = $derived(evening ? proposals(st, me) : []);
+  const menuGroups = $derived(
+    hudMenu(
+      { spectator: spectating, voice: !!liveVoice, captions: !!session.captions, proposals: offers, muted: voice.muted },
+      (a) => keyOf(a),
+      runMenu,
+      spectating ? {} : { clip: clipTrayDown },
+    ),
+  );
+  function runMenu(id: HudMenuId): void {
+    switch (id) {
+      case 'drawN':
+        commands.run('drawN');
+        return;
+      case 'mulligan':
+      case 'shuffle':
+      case 'untapAll':
+      case 'token':
+      case 'rollDie':
+      case 'flipCoin':
+      case 'tidy':
+      case 'ask':
+      case 'fitTable':
+        commands.run(id);
+        return;
+      case 'mute':
+        if (liveVoice) liveVoice.toggleMute();
+        else hooks.voice('mute', 'start');
+        return;
+      case 'importDeck':
+        deckOpen = true;
+        return;
+      case 'nextGame':
+      case 'newDraft':
+        leaving = id;
+        return;
+      case 'perspective':
+        scene?.camera.setTilt(perspectiveToggleTilt(scene.camera.tilt()), { source: 'handle' });
+        return;
+      case 'look':
+        themeOpen = true;
+        return;
+      case 'voice':
+        voicePanel = true;
+        return;
+      case 'dictation':
+        speechTop = 56;
+        speechOpen = true;
+        return;
+      case 'keys':
+        cheatOpen = true;
+        return;
+      case 'settings':
+        openSettings();
+        return;
+      case 'clip':
+        return;
+    }
+  }
+  async function confirmLeave(): Promise<void> {
+    const event = leaving;
+    leaving = null;
+    if (!event || !evening) return;
+    const moved = await evening.propose(event);
+    if (!moved) notify(event === 'nextGame' ? 'The next game did not go ahead.' : 'The new draft did not go ahead.');
+  }
+  /** Plates at their seat's edge (docs/design/m7-hud-proposal.md, Opponent plate); the own plate stays bottom left. */
+  const anchorOf = (seat: string): SeatAnchor | null => {
+    const a = anchors.find((x) => x.seat === seat);
+    return a?.at ? a : null;
+  };
 
   // On Next turn, offer the new active player (or team) untap-and-draw; close the offer once the turn moves on
   // (DESIGN "Turn flow and confirmation": offered a single key, never done for them).
@@ -1106,6 +1221,7 @@
             else openPile = openPile === id ? null : id;
           },
           selectionChange: (ids) => (selection = [...ids]),
+          seatAnchors: (a) => (anchors = a),
           pressHold: (phase, kind) => pressTalk.hold(phase, kind),
           radialMenu: (id, at) => {
             menu = null;
@@ -1192,7 +1308,29 @@
 />
 <svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncView()} />
 
-<div class="root" class:touch-ui={touchUi} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
+{#snippet plate(seat: Seat, mine: boolean)}
+  <Avatar
+    {seat}
+    life={lifeOf(seat.id)}
+    me={mine}
+    active={st.turn.active === seat.id || st.turn.active === seat.team}
+    speaking={speaks(seat.id)}
+    typing={!mine && typingAt.has(seat.id)}
+    responding={st.confirm?.holder === seat.id}
+    asking={asking(seat.id)}
+    glyph={glyphOf(seat.colour)}
+    zones={zoneButtons(seat.id)}
+    handCount={handCountOf(seat.id)}
+    onlife={(delta) => session.dispatch({ type: 'life', seat: seat.id, delta })}
+    oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: seat.id, kind, delta })}
+    onopenzone={openViewer}
+    ongoto={() => scene?.camera.goToSeat(seat.id)}
+    readonly={spectating}
+    compact={!mine && otherAvatars >= 3}
+  />
+{/snippet}
+
+<div class="root ds-root" class:touch-ui={touchUi} style:--thumb-space="{thumbShown ? THUMB_BAR_SPACE_PX : 0}px" data-look={look} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost} onpointerdowncapture={(e) => {
       pressOnTable();
       pressTalk.down(e.clientX, e.clientY);
@@ -1209,107 +1347,86 @@
   />
 
   <div class="layer">
+    <!-- Top left: the Menu and Undo (docs/design/m7-hud-proposal.md, Always visible). -->
     <div class="top-left">
       <nav class="toolbar" aria-label="Table tools">
-        <button type="button" data-testid="open-deck-import" onclick={() => (deckOpen = !deckOpen)}>Import deck</button>
-        <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
-        <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
+        <button
+          bind:this={menuButton}
+          type="button"
+          class="ds-btn ds-icon-btn"
+          data-testid="open-menu"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          title="Menu: deck, tokens, dice, view, voice, keys, settings"
+          onclick={() => (menuOpen = !menuOpen)}><Icon name="menu" /><span>Menu</span></button
+        >
         {#if !spectating}
-          <!-- The clip tray (M6-P1): drag a paperclip from here onto overlapping cards. -->
-          <button type="button" class="clip-tray" data-testid="clip-tray" title="Drag a paperclip onto overlapping cards" onpointerdown={clipTrayDown}
-            ><svg width="12" height="16" viewBox="0 0 12 22" aria-hidden="true"><path d="M4 7v9a2 2 0 0 0 4 0V5a3 3 0 0 0-6 0v12a4 4 0 0 0 8 0V7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
-            Clip</button
-          >
-        {/if}
-        <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setTilt(perspectiveToggleTilt(scene.camera.tilt()), { source: 'handle' })}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
-        <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
-        <button type="button" data-testid="open-settings" aria-pressed={settingsOpen} aria-expanded={settingsOpen} aria-label="Settings" title="Settings" onclick={() => (settingsOpen ? (settingsOpen = false) : openSettings())}>⚙</button>
-        {#if themeChoice}
-          <span class="theme-anchor" bind:this={themeAnchor}>
-            <button type="button" data-testid="open-theme-settings" aria-pressed={themeOpen} aria-expanded={themeOpen} aria-label="Theme" title="Theme" onclick={() => (themeOpen = !themeOpen)}>◐</button>
-            {#if themeOpen}<div class="theme-pop"><ThemePicker choice={themeChoice} sound={{ mode: soundMode ?? 'theme', set: setSoundMode }} view={{ prefs: viewPrefs, set: (name, value) => void view.set(name, value).catch(() => {}) }} onclose={() => (themeOpen = false)} /></div>{/if}
-          </span>
+          <IconButton icon="undo" label="Undo" showLabel data-testid="undo" title="{undoTip}{keyOf('undo') ? ` (${keyOf('undo')})` : ''}" onclick={() => commands.run('undo')} />
         {/if}
         {#if !liveVoice}
-          {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
-          {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
+          {#if voice.talking}<span class="ds-chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
+          {#if voice.muted}<span class="ds-chip" data-testid="muted">Muted</span>{/if}
         {/if}
       </nav>
-      {#if liveVoice || (session.captions && !spectating)}
-        <!-- The voice row: the talk-mode indicator (M3-P3) and the speech settings (M3-P4), so the shared toolbar keeps
-             its layout and the avatar column below stays short. A spectator only sees captions. -->
-        <div class="toolbar voice-row">
-          {#if liveVoice}
-            <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} hold={talkHold} ontogglepanel={() => (voicePanel = !voicePanel)} />
-          {/if}
-          {#if session.captions && !spectating}
-            <button
-              type="button"
-              data-testid="open-speech-settings"
-              aria-pressed={speechOpen}
-              onclick={(e) => {
-                speechTop = Math.round((e.currentTarget as HTMLElement).getBoundingClientRect().bottom + 6);
-                speechOpen = !speechOpen;
-              }}>Dictation</button
-            >
-          {/if}
-          {#if liveVoice && voicePanel}
-            <!-- Drops down over the avatar column instead of pushing it into the own avatar (M3-G). -->
-            <div class="voice-pop"><VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} /></div>
-          {/if}
+      {#if menuOpen}
+        <div class="menu-pop">
+          <MenuPopover groups={menuGroups} label="Menu" anchor={menuButton ?? null} onclose={() => (menuOpen = false)} />
         </div>
       {/if}
-      {#each others as seat (seat.id)}
-        <Avatar
-          {seat}
-          life={lifeOf(seat.id)}
-          me={false}
-          active={st.turn.active === seat.id || st.turn.active === seat.team}
-          speaking={speaks(seat.id)}
-          typing={typingAt.has(seat.id)}
-          responding={st.confirm?.holder === seat.id}
-          asking={asking(seat.id)}
-          glyph={glyphOf(seat.colour)}
-          zones={zoneButtons(seat.id)}
-          onlife={(delta) => session.dispatch({ type: 'life', seat: seat.id, delta })}
-          oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: seat.id, kind, delta })}
-          onopenzone={openViewer}
-          ongoto={() => scene?.camera.goToSeat(seat.id)}
-          readonly={spectating}
-          compact={otherAvatars >= 3}
-        />
-      {/each}
+      {#if themeChoice && themeOpen}
+        <div class="theme-pop" bind:this={themeAnchor}><ThemePicker choice={themeChoice} sound={{ mode: soundMode ?? 'theme', set: setSoundMode }} view={{ prefs: viewPrefs, set: (name, value) => void view.set(name, value).catch(() => {}) }} onclose={() => (themeOpen = false)} /></div>
+      {/if}
+      {#if liveVoice && voicePanel}
+        <div class="voice-pop"><VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} /></div>
+      {/if}
     </div>
 
+    <!-- Top centre: the turn tracker; the stack's controls appear under it only while something is on the stack. -->
     <div class="top-centre">
       <TurnStrip
         turn={st.turn.number}
         {activeName}
         {activeColour}
+        mine={mineTurn}
         phases={game.phases}
         current={st.turn.phase}
         nextPhaseKey={keyOf('nextPhase')}
-        nextTurnKey={keyOf('nextTurn')}
         onphase={(phase) => session.dispatch({ type: 'phaseSet', phase })}
-        onnextturn={() => commands.run('nextTurn')}
       />
       {#if top}
-        <div class="stack-chip" data-testid="stack-chip">
-          Stack {st.stack.length}
-          <button type="button" class:lit={resolveLit} data-testid="resolve" onclick={() => commands.run('resolve')}>Resolve {#if keyOf('resolve')}<kbd>{keyOf('resolve')}</kbd>{/if}</button>
+        <div class="stack-chip ds-panel" data-testid="stack-chip">
+          <span class="ds-label">Stack {st.stack.length}</span>
+          <button type="button" class="ds-btn ds-btn--small" class:lit={resolveLit} data-testid="resolve" title="Resolve{keyOf('resolve') ? ` (${keyOf('resolve')})` : ''}" onclick={() => commands.run('resolve')}>Resolve</button>
           {#if resolveTargets.length}
             <span class="to" data-testid="resolve-to">to
               {#each resolveTargets as t (t.zone)}
-                <button type="button" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
+                <button type="button" class="ds-btn ds-btn--quiet ds-btn--small" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
               {/each}
             </span>
           {/if}
-          <button type="button" onclick={() => commands.run('counterTop')}>Counter {#if keyOf('counterTop')}<kbd>{keyOf('counterTop')}</kbd>{/if}</button>
+          <button type="button" class="ds-btn ds-btn--small" title="Counter{keyOf('counterTop') ? ` (${keyOf('counterTop')})` : ''}" onclick={() => commands.run('counterTop')}>Counter</button>
         </div>
       {/if}
+      <!-- Other players' plates without a reported seat edge sit in a row under the tracker. -->
+      <div class="plates-row">
+        {#each others as seat (seat.id)}
+          {#if !anchorOf(seat.id)}
+            <div class="plate-top">{@render plate(seat, false)}</div>
+          {/if}
+        {/each}
+      </div>
     </div>
 
-    <div class="right">
+    {#each others as seat (seat.id)}
+      {@const a = anchorOf(seat.id)}
+      {#if a?.at}
+        <!-- At the seat's table edge (SceneEvents.seatAnchors), moved by a transform when the camera settles. -->
+        <div class="plate-anchor" class:plate-top={a.at.y < vh / 2} style:transform="translate({Math.round(Math.min(Math.max(a.at.x, 120), vw - 120))}px, {Math.round(Math.min(Math.max(a.at.y, 70), vh - 200))}px)">{@render plate(seat, false)}</div>
+      {/if}
+    {/each}
+
+    <!-- Top right: the activity button and its ticker; the drawer opens over the right edge. -->
+    <div class="right" class:open={logOpen}>
       <LogPanel
         bind:this={logPanel}
         {lines}
@@ -1330,25 +1447,27 @@
     </div>
 
     {#if st.seats[me]}
-      <div class="own-avatar">
-        <Avatar
-          seat={st.seats[me]}
-          life={lifeOf(me)}
-          me={true}
-          active={st.turn.active === me || st.turn.active === st.seats[me].team}
-          speaking={speaks(me)}
-          responding={st.confirm?.holder === me}
-          asking={asking(me)}
-          glyph={glyphOf(st.seats[me].colour)}
-          zones={zoneButtons(me)}
-          onlife={(delta) => session.dispatch({ type: 'life', seat: me, delta })}
-          oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: me, kind, delta })}
-          onopenzone={openViewer}
-          ongoto={() => scene?.camera.goToSeat(me)}
-          readonly={spectating}
-        />
-      </div>
+      <div class="own-avatar">{@render plate(st.seats[me], true)}</div>
     {/if}
+
+    <!-- Bottom right: Talk and the one primary button. -->
+    <div class="bottom-right">
+      {#if liveVoice}
+        <div class="talk-cluster">
+          <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} hold={talkHold} ontogglepanel={() => (voicePanel = !voicePanel)} />
+        </div>
+      {/if}
+      {#if !spectating}
+        <Button
+          variant="primary"
+          data-testid="primary-action"
+          data-kind={primary.kind}
+          aria-disabled={primary.disabled ? 'true' : undefined}
+          title={primary.kind === 'endTurn' && keyOf('nextTurn') ? `End the turn (${keyOf('nextTurn')})` : primary.kind === 'untapDraw' ? 'Untap all your permanents and draw a card (U)' : primary.label}
+          onclick={runPrimary}>{primary.label}</Button
+        >
+      {/if}
+    </div>
 
     <!-- Above the hand, centred (DESIGN "Specification: geometry, layout and motion", Screen layer); with a teammate's fan shown, above that fan too. -->
     {#if thumbShown}
@@ -1363,18 +1482,22 @@
       {#if noDeck && !noDeckDismissed && !deckOpen}
         <div class="state"><EmptyState id="noDeck" action={{ label: 'Import a deck', run: () => (deckOpen = true), testid: 'empty-import-deck' }} ondismiss={() => (noDeckDismissed = true)} /></div>
       {/if}
-      {#if toast}<p class="toast" role="status" data-testid="toast">{toast.text}</p>{/if}
+      {#if toast}<p class="ds-toast" role="status" data-testid="toast">{toast.text}</p>{/if}
       {#if untapOffer}
-        <div class="offer" data-testid="untap-offer">
-          Your turn.
+        <!-- The new turn's offer (DESIGN "Turn flow and confirmation": offered, never done for them); the primary button
+             does the same, so this is a quiet line with its own button and a dismiss. -->
+        <div class="offer ds-pop" data-testid="untap-offer">
+          <span>Your turn.</span>
           <button
             type="button"
+            class="ds-btn ds-btn--small"
+            title="Untap all and draw (U)"
             onclick={() => {
               untapOffer = false;
               commands.untapAndDraw();
-            }}>Untap all and draw <kbd>U</kbd></button
+            }}>Untap all and draw</button
           >
-          <button type="button" class="x" aria-label="Dismiss" onclick={() => (untapOffer = false)}>×</button>
+          <IconButton icon="close" label="Dismiss" variant="quiet" class="x" onclick={() => (untapOffer = false)} />
         </div>
       {/if}
       <FocusMirror
@@ -1617,6 +1740,20 @@
 
   <Hint {hints} keyOf={(a) => keyOf(a)} />
 
+  {#if leaving}
+    <Dialog title={leaving === 'nextGame' ? 'Start the next game?' : 'Start a new draft?'} testid="leave-confirm" onclose={() => (leaving = null)}>
+      <p class="dialog-text">
+        {leaving === 'nextGame'
+          ? 'This game ends for everyone at the table once they agree, and you go back to your decks to sideboard.'
+          : 'This game and the drafted pools end for everyone at the table once all agree, and the table goes back to the lobby.'}
+      </p>
+      {#snippet actions()}
+        <Button variant="quiet" data-testid="leave-cancel" onclick={() => (leaving = null)}>Keep playing</Button>
+        <Button variant="primary" data-testid="leave-ok" onclick={() => void confirmLeave()}>{leaving === 'nextGame' ? PROPOSAL_LABELS.nextGame : PROPOSAL_LABELS.newDraft}</Button>
+      {/snippet}
+    </Dialog>
+  {/if}
+
   {#if cheatOpen}
     <CheatSheet {keymap} onremap={remap} onreset={resetKeys} onclose={() => (cheatOpen = false)} />
   {/if}
@@ -1654,7 +1791,7 @@
     color-scheme: var(--sp-hud-scheme, light);
     background: var(--sp-bg, #fff);
     color: var(--sp-fg, #111);
-    font-family: var(--sp-font, system-ui);
+    font-family: var(--ds-font-body);
   }
   .scene {
     position: absolute;
@@ -1681,149 +1818,129 @@
     pointer-events: none;
     font-size: var(--sp-font-size-small, 12px);
   }
-  .layer :global(button),
   .inline :global(button) {
     font: inherit;
   }
   .top-left {
     position: absolute;
-    top: 8px;
-    left: 8px;
+    top: var(--ds-edge);
+    left: var(--ds-edge);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--ds-space-sm);
     align-items: flex-start;
+    z-index: 40;
   }
+  /* One row that never wraps (critique, iPad 1: "The toolbar breaks into four rows"). */
   .toolbar {
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+    flex-wrap: nowrap;
+    gap: var(--ds-space-sm);
     pointer-events: auto;
     align-items: center;
-    /* Clear of the turn strip centred above the table (about 640 px wide): the tools wrap to a second row rather than
-       slide under it (the View button of M4-P1 made the row too long at 1440 px). */
-    max-width: max(220px, calc(50vw - 336px));
   }
-  .toolbar button,
-  .stack-chip button,
-  .offer button,
-  .inline button {
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-sm, 2px);
-    padding: 2px 8px;
-    cursor: pointer;
-  }
-  .voice-row {
-    position: relative;
-  }
-  .clip-tray {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    touch-action: none;
-    cursor: grab;
-  }
-  .theme-anchor {
-    position: relative;
-  }
-  .theme-pop {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    z-index: 70;
-  }
+  .menu-pop,
+  .theme-pop,
   .voice-pop {
     position: absolute;
-    top: calc(100% + 4px);
+    top: calc(var(--ds-control-height) + var(--ds-space-sm));
     left: 0;
-    z-index: 30;
+    z-index: 60;
+    pointer-events: auto;
     max-height: calc(100vh - 96px);
     overflow-y: auto;
   }
-  kbd {
-    font-family: var(--sp-font-mono, monospace);
-    opacity: 0.7;
+  .stack-chip button.lit {
+    background: var(--ds-on);
+    color: var(--ds-on-ink);
+    border-color: var(--ds-on);
   }
-  /* A touch screen has no keyboard to press: the toolbar names no keys there (M5 gate; the cheat sheet still lists them
-     for a hardware keyboard). */
-  .touch-ui .toolbar kbd,
-  .touch-ui .top-centre :global(kbd) {
-    display: none;
-  }
-  .chip {
-    border: 1px solid var(--sp-fg, #111);
-    border-radius: 999px;
-    padding: 0 8px;
-    background: var(--sp-surface, #fff);
+  .stack-chip .to button.default {
+    border-color: var(--ds-ink);
   }
   .top-centre {
     position: absolute;
-    top: 8px;
+    top: var(--ds-edge);
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
+    gap: var(--ds-space-sm);
+    z-index: 30;
   }
   .stack-chip {
     pointer-events: auto;
     display: flex;
-    gap: 6px;
+    gap: var(--ds-space-sm);
     align-items: center;
-    background: var(--sp-surface, #fff);
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-md, 4px);
-    padding: 2px 8px;
-  }
-  /* A Resolve that is not ready and Counter keep full-contrast text (Paper meets WCAG AA throughout); a lit Resolve
-     stands out by a heavier border in the foreground colour instead of the others being dimmed. */
-  .stack-chip button.lit {
-    border-color: var(--sp-fg, #111);
-    box-shadow: inset 0 0 0 1px var(--sp-fg, #111);
-    font-weight: 600;
+    padding: var(--ds-space-xs) var(--ds-space-sm) var(--ds-space-xs) var(--ds-space-md);
   }
   .stack-chip .to {
     display: inline-flex;
     gap: 2px;
     align-items: center;
-    color: var(--sp-muted, #5f5f5f);
+    color: var(--ds-muted);
   }
-  .stack-chip .to button {
-    padding: 0 4px;
+  .plates-row {
+    display: flex;
+    gap: var(--ds-space-sm);
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: min(900px, calc(100vw - 2 * var(--ds-edge)));
   }
-  .stack-chip .to button.default {
-    border-color: var(--sp-fg, #111);
+  .plates-row:empty {
+    display: none;
+  }
+  .plate-anchor {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 10;
+    /* The transform puts the plate's centre on the anchor. */
+    translate: -50% -50%;
+    transition: transform var(--ds-duration-slow) var(--ds-ease-standard);
   }
   .right {
     position: absolute;
-    top: 8px;
-    right: 8px;
-    bottom: calc(22vh + 16px);
+    top: var(--ds-edge);
+    right: var(--ds-edge);
     display: flex;
+    z-index: 50;
   }
-  /* A narrow screen (an upright tablet): the turn strip packs tighter, so it clears the toolbar and the log (M5 gate). */
-  @media (max-width: 1000px) {
-    .top-centre :global([data-testid='turn-strip']) {
-      gap: 4px;
-      padding: 4px 6px;
-    }
-    .top-centre :global([data-testid='turn-strip'] button) {
-      padding: 1px 3px;
-    }
-  }
-  /* An upright tablet: the thumb bar spans under the log, so the log (its chat input) ends above it (M5 gate). */
-  @media (max-width: 1000px) {
-    .touch-ui .right {
-      bottom: calc(22vh + 16px + 64px);
-    }
+  .right.open {
+    bottom: calc(22vh + 16px);
   }
   .own-avatar {
     position: absolute;
-    left: 8px;
-    bottom: calc(22vh + 16px);
+    left: var(--ds-edge);
+    bottom: var(--ds-edge);
+    z-index: 35;
+  }
+  .bottom-right {
+    position: absolute;
+    right: var(--ds-edge);
+    bottom: var(--ds-edge);
+    display: flex;
+    align-items: center;
+    gap: var(--ds-space-sm);
+    z-index: 35;
+  }
+  /* Where the hand fan spans the width (a narrow window, a touch screen's scrolling fan), the plate and the primary
+     button sit just above the hand, within thumb reach, never over a card (docs/design/m7-hud-proposal.md, iPad). */
+  @media (max-width: 1100px) {
+    .own-avatar,
+    .bottom-right {
+      bottom: calc(22vh + 16px);
+    }
+  }
+  .touch-ui .own-avatar,
+  .touch-ui .bottom-right {
+    bottom: calc(22vh + 16px + var(--thumb-space, 0px));
+  }
+  /* Talk keeps its states and buttons; shortcut text stays out of the primary UI (tooltips name the keys). */
+  .talk-cluster :global(kbd) {
+    display: none;
   }
   .above-hand {
     position: absolute;
@@ -1850,25 +1967,16 @@
     bottom: calc(22vh + 8px);
     transform: translateX(-50%);
   }
-  .toast {
-    margin: 0;
-    padding: 4px 12px;
-    background: var(--sp-fg, #111);
-    color: var(--sp-bg, #fff);
-    border-radius: var(--sp-radius-md, 4px);
-  }
   .offer {
     pointer-events: auto;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    background: var(--sp-surface, #fff);
-    border: 1px solid var(--sp-fg, #111);
-    border-radius: var(--sp-radius-md, 4px);
+    gap: var(--ds-space-sm);
+    padding: var(--ds-space-xs) var(--ds-space-xs) var(--ds-space-xs) var(--ds-space-md);
   }
-  .x {
-    border: 0 !important;
+  .dialog-text {
+    margin: 0;
+    color: var(--ds-ink);
   }
   .inline {
     position: fixed;

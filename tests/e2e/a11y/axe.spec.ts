@@ -12,7 +12,7 @@ import type { SecretStore, TableState } from '../../../src/core/types';
 import type { StackBadgeState } from '../../../src/scene/types';
 import type { CardFocus } from '../../../src/ui/a11y/index';
 import { SETTINGS_SECTIONS } from '../../../src/ui/settings/sections';
-import { hook } from '../helpers/app';
+import { hook, menuItem, openZone, propose } from '../helpers/app';
 import { decklist as lobbyDecklist, freshProfile, freshRoom, open, openTable, startPageLoaded } from '../lobby/helpers';
 import { appUrl, fixturesScript, freshProfile as offlineProfile, noNetwork, waitForSession } from '../offline/helpers';
 import { IPAD, card, centre, fingers, holdDown, radial, tableWithCards } from '../touch/helpers';
@@ -67,7 +67,7 @@ test.describe('axe: no serious or critical violations (PLAN M5-P4)', () => {
     expect(await seriousViolations(page)).toEqual([]);
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('context-menu')).toHaveCount(0);
-    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
+    await openZone(page, 'library:s0', 'click');
     await expect(page.getByTestId('pile-viewer')).toBeVisible();
     expect(await seriousViolations(page)).toEqual([]);
   });
@@ -75,7 +75,7 @@ test.describe('axe: no serious or critical violations (PLAN M5-P4)', () => {
   test('the table HUD with the cheat sheet open', async ({ page }, info) => {
     await soloTable(page, info);
     await sceneReady(page);
-    await page.getByTestId('open-cheat-sheet').click();
+    await menuItem(page, 'open-cheat-sheet', 'click');
     await expect(page.getByTestId('cheat-sheet')).toBeVisible();
     expect(await seriousViolations(page)).toEqual([]);
   });
@@ -97,7 +97,7 @@ test.describe('axe: panels, prompts and notices (M5 review)', () => {
   test('the settings panel over the table, every section', async ({ page }, info) => {
     await soloTable(page, info);
     await sceneReady(page);
-    await page.getByTestId('open-settings').click();
+    await menuItem(page, 'open-settings', 'click');
     const panel = page.getByTestId('settings');
     await expect(panel).toBeVisible();
     for (const s of SETTINGS_SECTIONS) {
@@ -176,7 +176,7 @@ test.describe('axe: panels, prompts and notices (M5 review)', () => {
       await Promise.all([a.evaluate(() => window.__spellplane!.session!.shuffle()), b.evaluate(() => window.__spellplane!.session!.shuffle())]);
       await a.evaluate(() => window.__spellplane!.session!.draw(7));
       await b.evaluate(() => window.__spellplane!.session!.draw(7));
-      await a.getByTestId('propose-nextGame').click();
+      await propose(a, 'nextGame', 'click');
       await expect(b.getByTestId('confirm-prompt')).toBeVisible({ timeout: 15_000 });
       expect(await seriousViolations(b)).toEqual([]);
       await b.getByTestId('prompt-ok').click();

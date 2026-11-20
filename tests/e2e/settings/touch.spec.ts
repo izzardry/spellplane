@@ -3,6 +3,7 @@
  * two-finger camera; PLAN Milestone 5, owner decisions, Tablet: iPad with Safari). A touch screen gets the gestures
  * instead of the hover keys, and the hint's button and the settings panel's controls are sized for thumbs.
  */
+import { menuItem } from '../helpers/app';
 import { expect, test } from '@playwright/test';
 import { openHud } from '../ui/harness';
 
@@ -24,7 +25,7 @@ test('a touch screen gets the gesture hint after the welcome, with a thumb-sized
 
 test('the settings panel opens by tap and its tabs are sized for thumbs', async ({ page }) => {
   await openHud(page);
-  await page.getByTestId('open-settings').tap();
+  await menuItem(page, 'open-settings', 'tap');
   const tabs = page.getByTestId('settings-tab');
   await expect(tabs).toHaveCount(7);
   for (const t of await tabs.all()) expect((await t.boundingBox())!.height).toBeGreaterThanOrEqual(44);

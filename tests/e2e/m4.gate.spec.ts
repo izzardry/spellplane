@@ -32,7 +32,7 @@ import type { SceneDebugCard } from '../../src/scene/table-scene';
 // The M4 gate covers the four M4 themes; the M7 looks have their own gate (M7-G).
 import { M4_THEME_IDS as THEME_IDS, THEME_LABELS, type M4ThemeId as ThemeId } from '../../src/themes/index';
 import { scan } from '../leak/scan';
-import { hook, shot } from './helpers/app';
+import { hook, shot, menuItem, openZone } from './helpers/app';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname } from './lobby/helpers';
 import { openRender, rh, settle as settleRender } from './render/helpers';
 
@@ -231,7 +231,14 @@ async function pickLobbyTheme(page: Page, theme: ThemeId): Promise<void> {
 /** Pick a theme in the HUD's picker mid-game; resolves once the scene drew in it. */
 async function pickHudTheme(page: Page, theme: ThemeId): Promise<void> {
   const picker = page.getByTestId('theme-settings');
-  if (!(await picker.isVisible())) await page.getByTestId('open-theme-settings').click();
+  // M7-P2: the picker offers the three looks; an M4 theme (out of the picker, still loadable) goes through the debug hook.
+  if (!['kitchen', 'graphite', 'codex'].includes(theme)) {
+    await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
+    await expect.poll(() => hook<{ theme: string }>(page, 'render.stats').then((r) => r.theme), { timeout: 20_000 }).toBe(theme);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    return;
+  }
+  if (!(await picker.isVisible())) await menuItem(page, 'open-theme-settings', 'click');
   await expect(picker).toBeVisible();
   await picker.locator(`[data-testid="theme-option"][data-theme="${theme}"] input`).check();
   await expect.poll(() => currentTheme(page), { timeout: 20_000 }).toBe(theme);
@@ -961,7 +968,7 @@ async function tutorFromLibrary(
   byId: (id: string) => boolean = () => true,
 ): Promise<string> {
   await page.bringToFront();
-  await page.locator(`[data-testid="avatar"][data-seat="${seat}"] [data-testid="zone-button"][data-zone="library:${seat}"]`).click();
+  await openZone(page, `library:${seat}`, 'click');
   await expect(page.getByTestId('pile-viewer')).toBeVisible();
   await page.getByTestId('search-library').click();
   const sec = await secrets(page);

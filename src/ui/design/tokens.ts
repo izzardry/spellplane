@@ -202,7 +202,7 @@ const KITCHEN: LookTokens = {
     line: '#d6c8ae',
     ink: '#2b2118',
     muted: '#6f604e',
-    accent: '#c0532f',
+    accent: '#b94f2c',
     accentInk: '#fff8ef',
     accentEdge: '#8e3a1f',
     on: '#2b2118',

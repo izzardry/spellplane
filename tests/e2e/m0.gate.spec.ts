@@ -16,7 +16,7 @@ import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CardInstance, SecretStore, TableState } from '../../src/core/types';
-import { hook, shot } from './helpers/app';
+import { hook, shot, menuItem, openZone } from './helpers/app';
 import { call, decklist, freshProfile, openSolo, waitForSession } from './solo/helpers';
 
 type ShownCard = {
@@ -143,7 +143,7 @@ test.describe('M0 gate @gate', () => {
     await evidence(page, 'empty-table', project);
 
     // --- Paste the decklist into the import dialog -----------------------------------------------------------------
-    await page.getByTestId('open-deck-import').click();
+    await menuItem(page, 'open-deck-import', 'click');
     await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
     await page.getByTestId('deck-check').click();
     await expect(page.getByTestId('deck-summary')).toContainText('60 cards in the deck, 3 in the sideboard');
@@ -192,7 +192,7 @@ test.describe('M0 gate @gate', () => {
 
     // --- Fetch a Leonin Warleader (library viewer, Search, hover, H), so the cast creature has a related token ------
     await page.mouse.move(720, 300);
-    await page.locator(`[data-testid="avatar"][data-seat="${ME}"] [data-testid="zone-button"][data-zone="library:${ME}"]`).click();
+    await openZone(page, `library:${ME}`, 'click');
     await expect(page.getByTestId('pile-viewer')).toBeVisible();
     await page.getByTestId('search-library').click();
     await expect(page.getByTestId('pile-card')).toHaveCount(54);
@@ -215,7 +215,7 @@ test.describe('M0 gate @gate', () => {
     await expect.poll(async () => (await secrets(page)).libraryOrder).not.toEqual(orderBeforeClose);
 
     // --- Mill three (library viewer, Mill N), so the graveyard has a pile to fan ----------------------------------
-    await page.locator(`[data-testid="avatar"][data-seat="${ME}"] [data-testid="zone-button"][data-zone="library:${ME}"]`).click();
+    await openZone(page, `library:${ME}`, 'click');
     await page.getByTestId('library-n').fill('3');
     await page.getByTestId('mill').click();
     await expect.poll(async () => (await state(page)).zones[`graveyard:${ME}`]?.ids.length).toBe(3);
@@ -359,7 +359,7 @@ test.describe('M0 gate @gate', () => {
     expect(sansSeq(await state(page))).toEqual(sansSeq(inGraveyard));
 
     // --- Pile fan: the graveyard opens as an ordered fan (avatar zone button) ---------------------------------------
-    await page.locator(`[data-testid="avatar"][data-seat="${ME}"] [data-testid="zone-button"][data-zone="graveyard:${ME}"]`).click();
+    await openZone(page, `graveyard:${ME}`, 'click');
     await expect(page.getByTestId('pile-viewer')).toHaveAttribute('data-kind', 'graveyard');
     await expect(page.getByTestId('pile-card')).toHaveCount(4);
     expect(await page.getByTestId('pile-card').evaluateAll((els) => els.map((e) => e.getAttribute('data-card')))).toEqual((await state(page)).zones[`graveyard:${ME}`]!.ids);

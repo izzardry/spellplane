@@ -10,6 +10,7 @@
  * and holding dictation while a note field has focus dictates into that field (Notes by voice). Engine behaviour is
  * asserted on the debug hook (anchors and screen rectangles), never on pixels. Two pages on the local transport.
  */
+import { menuItem, openLog } from '../helpers/app';
 import { expect, test, type Page } from '@playwright/test';
 import type { DebugStackEntry } from '../../../src/scene/stack';
 import type { DebugCaption } from '../../../src/scene/types';
@@ -84,6 +85,7 @@ test.describe('captions with the fake engine', () => {
       await expect.poll(async () => (await lastAction(p, 'caption')) !== null, { timeout: 15_000 }).toBe(true);
       expect(await lastAction(p, 'caption')).toMatchObject({ text: 'two damage to your Elf', anchor: { kind: 'card', id: card }, about: tap.cid });
       // And it reads in the timeline as the speaker's line.
+      await openLog(p);
       await expect(p.getByTestId('log-line').filter({ hasText: 'two damage to your Elf' })).toHaveCount(1);
     }
 
@@ -203,7 +205,7 @@ test('the on-device model is not downloaded unless chosen; the settings say wher
   const loadedSincePageOpened = () => a.evaluate((src) => performance.getEntriesByType('resource').map((e) => e.name).filter((n) => new RegExp(src).test(n)), MODEL.source);
   expect(await loadedSincePageOpened()).toEqual([]);
 
-  await a.getByTestId('open-speech-settings').click();
+  await menuItem(a, 'open-speech-settings', 'click');
   const panel = a.getByTestId('speech-settings');
   await expect(panel).toBeVisible();
   // The active engine and where its audio goes, in plain words.
@@ -247,8 +249,8 @@ test('the on-device model is not downloaded unless chosen; the settings say wher
   expect(await engineOf(a)).not.toBe('local');
 
   // Closing and reopening keeps the language.
-  await a.getByTestId('open-speech-settings').click();
-  await a.getByTestId('open-speech-settings').click();
+  await menuItem(a, 'open-speech-settings', 'click');
+  await menuItem(a, 'open-speech-settings', 'click');
   await expect(a.getByTestId('speech-lang')).toHaveValue('de-DE');
 });
 

@@ -9,7 +9,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { SecretStore, TableState } from '../../../src/core/types';
 import type { CardFocus } from '../../../src/ui/a11y/index';
-import { hook } from '../helpers/app';
+import { hook, menuItem } from '../helpers/app';
 import { sceneReady, soloTable } from './helpers';
 
 const focus = (page: Page) => hook<CardFocus | null>(page, 'a11y.focus');
@@ -116,10 +116,10 @@ async function busySession(page: Page, info: Parameters<typeof soloTable>[1]): P
   await page.getByTestId('hand-card').nth(2).hover();
   await page.getByTestId('hand-card').nth(4).hover();
   await page.mouse.move(5, 450);
-  await page.getByTestId('open-cheat-sheet').click();
+  await menuItem(page, 'open-cheat-sheet', 'click');
   await page.keyboard.press('Escape');
-  await page.getByTestId('log').getByRole('button', { name: 'Hide' }).click();
-  await page.getByTestId('log').getByRole('button', { name: 'Log' }).click();
+  await page.getByTestId('open-log').click();
+  await page.getByTestId('close-log').click();
   const id = await castFirstByKeyboard(page);
   await page.keyboard.press('ArrowDown');
   await page.keyboard.press('KeyT');

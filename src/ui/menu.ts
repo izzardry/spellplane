@@ -6,6 +6,8 @@ import type { CardInstance } from '../core/types';
 import type { ActionId, Keymap } from '../games/types';
 import { COUNTER_KINDS, type Commands } from './commands';
 import { keyLabel } from './keymap';
+import type { IconName } from './design/icons';
+import type { MenuGroup } from './design/menu';
 
 /** One menu entry. */
 export interface MenuEntry {
@@ -70,4 +72,158 @@ export function tableMenu(keymap: Keymap, run: (action: ActionId) => void, libra
   const entries: MenuEntry[] = TABLE_MENU.map((a) => ({ id: a, label: labelOf(keymap, a), key: keyLabel(keymap, a), run: () => run(a) }));
   entries.splice(entries.findIndex((e) => e.id === 'shuffle') + 1, 0, ...library);
   return entries;
+}
+
+// --- The HUD's Menu (PLAN M7-P2; docs/design/m7-hud-proposal.md, In the menu: "Grouped, with icons, keys shown on the
+// right in muted type"). Everything done a few times an evening or less lives here, one step away from the table.
+
+/** An entry of the HUD's Menu. `action` names the keymap action whose key the menu shows. */
+export interface HudMenuSpec {
+  id: HudMenuId;
+  label: string;
+  icon: IconName;
+  action?: ActionId;
+  /** Kept from the toolbar the item replaces, so the route stays addressable. */
+  testid: string;
+}
+
+export type HudMenuId =
+  | 'drawN'
+  | 'mulligan'
+  | 'shuffle'
+  | 'untapAll'
+  | 'token'
+  | 'clip'
+  | 'rollDie'
+  | 'flipCoin'
+  | 'tidy'
+  | 'ask'
+  | 'importDeck'
+  | 'nextGame'
+  | 'newDraft'
+  | 'fitTable'
+  | 'perspective'
+  | 'look'
+  | 'voice'
+  | 'dictation'
+  | 'mute'
+  | 'keys'
+  | 'settings';
+
+export type HudMenuGroupId = 'game' | 'deck' | 'table' | 'view' | 'voice' | 'help';
+
+/** The Menu's groups in order (docs/design/m7-hud-proposal.md: Game, Deck, Table, View, Voice, Help). */
+export const HUD_MENU: readonly { id: HudMenuGroupId; label: string; items: readonly HudMenuSpec[] }[] = [
+  {
+    id: 'game',
+    label: 'Game',
+    items: [
+      { id: 'drawN', label: 'Draw several…', icon: 'draw', action: 'drawN', testid: 'menu-draw-n' },
+      { id: 'mulligan', label: 'Mulligan', icon: 'shuffle', action: 'mulligan', testid: 'menu-mulligan' },
+      { id: 'shuffle', label: 'Shuffle library', icon: 'shuffle', action: 'shuffle', testid: 'menu-shuffle' },
+      { id: 'untapAll', label: 'Untap all', icon: 'untap', action: 'untapAll', testid: 'menu-untap-all' },
+      { id: 'token', label: 'Create token…', icon: 'token', action: 'token', testid: 'open-token' },
+      { id: 'clip', label: 'Paperclip (drag onto cards)', icon: 'clip', testid: 'clip-tray' },
+      { id: 'rollDie', label: 'Roll a die', icon: 'die', action: 'rollDie', testid: 'menu-roll-die' },
+      { id: 'flipCoin', label: 'Flip a coin', icon: 'coin', action: 'flipCoin', testid: 'menu-flip-coin' },
+      { id: 'tidy', label: 'Tidy my side', icon: 'tidy', action: 'tidy', testid: 'menu-tidy' },
+      { id: 'ask', label: 'Ask the table…', icon: 'ask', action: 'ask', testid: 'menu-ask' },
+    ],
+  },
+  { id: 'deck', label: 'Deck', items: [{ id: 'importDeck', label: 'Import deck…', icon: 'deck', testid: 'open-deck-import' }] },
+  {
+    id: 'table',
+    label: 'Table',
+    items: [
+      { id: 'nextGame', label: 'Next game…', icon: 'next', testid: 'propose-nextGame' },
+      { id: 'newDraft', label: 'New draft…', icon: 'flag', testid: 'propose-newDraft' },
+    ],
+  },
+  {
+    id: 'view',
+    label: 'View',
+    items: [
+      { id: 'fitTable', label: 'Fit table', icon: 'fit', action: 'fitTable', testid: 'menu-fit-table' },
+      { id: 'perspective', label: 'Switch perspective', icon: 'view', action: 'perspective', testid: 'perspective' },
+      { id: 'look', label: 'Look and sound…', icon: 'palette', testid: 'open-theme-settings' },
+    ],
+  },
+  {
+    id: 'voice',
+    label: 'Voice',
+    items: [
+      { id: 'voice', label: 'Voice and microphone…', icon: 'voice', testid: 'open-voice-panel' },
+      { id: 'mute', label: 'Mute microphone', icon: 'micOff', action: 'mute', testid: 'menu-mute' },
+      { id: 'dictation', label: 'Captions (dictation)…', icon: 'captions', testid: 'open-speech-settings' },
+    ],
+  },
+  {
+    id: 'help',
+    label: 'Help',
+    items: [
+      { id: 'keys', label: 'Keyboard shortcuts', icon: 'keys', action: 'help', testid: 'open-cheat-sheet' },
+      { id: 'settings', label: 'Settings…', icon: 'settings', testid: 'open-settings' },
+    ],
+  },
+];
+
+/** What the table offers now: items that do not apply are left out of the Menu. */
+export interface HudMenuContext {
+  spectator: boolean;
+  /** Live voice at this table (networked). */
+  voice: boolean;
+  /** Dictated captions are available. */
+  captions: boolean;
+  /** The evening proposals open now (ui/flow/model.ts proposals). */
+  proposals: readonly ('nextGame' | 'newDraft')[];
+  /** Muted now (the Mute item reads "Unmute"). */
+  muted?: boolean;
+}
+
+/** Whether a Menu item is offered in this context. */
+export function hudMenuOffers(id: HudMenuId, ctx: HudMenuContext): boolean {
+  switch (id) {
+    case 'nextGame':
+    case 'newDraft':
+      return ctx.proposals.includes(id);
+    case 'voice':
+      return ctx.voice;
+    case 'mute':
+      return ctx.voice;
+    case 'dictation':
+      return ctx.captions && !ctx.spectator;
+    case 'fitTable':
+    case 'perspective':
+    case 'look':
+    case 'keys':
+    case 'settings':
+      return true;
+    default:
+      return !ctx.spectator;
+  }
+}
+
+/**
+ * The Menu as popover groups: the offered items, each with the key of its action (muted on the right) and `run` from
+ * the HUD. `pointerdown` handles items that start a drag (the paperclip).
+ */
+export function hudMenu(ctx: HudMenuContext, keyOf: (a: ActionId) => string | null, run: (id: HudMenuId) => void, pointerdown: Partial<Record<HudMenuId, (e: PointerEvent) => void>> = {}): MenuGroup[] {
+  return HUD_MENU.map((g) => ({
+    id: g.id,
+    label: g.label,
+    items: g.items
+      .filter((i) => hudMenuOffers(i.id, ctx))
+      .map((i) => {
+        const down = pointerdown[i.id];
+        return {
+          id: i.id,
+          label: i.id === 'mute' && ctx.muted ? 'Unmute microphone' : i.label,
+          icon: i.icon,
+          key: i.action ? keyOf(i.action) : null,
+          testid: i.testid,
+          danger: i.id === 'newDraft',
+          ...(down ? { onpointerdown: down, title: 'Drag a paperclip onto overlapping cards' } : { run: () => run(i.id) }),
+        };
+      }),
+  }));
 }

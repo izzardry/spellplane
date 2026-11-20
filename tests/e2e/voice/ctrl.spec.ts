@@ -10,6 +10,7 @@
  * page (both events before any timer can run); Ctrl held alone and Ctrl pressed during a click use the real keyboard
  * and mouse. Engine facts come from the harness and the debug hook.
  */
+import { menuItem } from '../helpers/app';
 import { expect, test, type Page } from '@playwright/test';
 import type { SentStream, VoiceHarness } from '../../../src/ui/voice/harness';
 
@@ -60,7 +61,7 @@ async function openVoice(page: Page): Promise<void> {
 test('the talk key is Ctrl: labels and the cheat sheet say so', async ({ page }) => {
   await openVoice(page);
   await expect(page.getByTestId('talk-state')).toHaveText('Hold Ctrl to talk');
-  await page.getByTestId('open-cheat-sheet').click();
+  await menuItem(page, 'open-cheat-sheet', 'click');
   await expect(page.locator('[data-testid="cheat-row"][data-action="talk"] [data-testid="cheat-key"]')).toHaveText(['Ctrl']);
   await expect(page.locator('[data-testid="cheat-row"][data-action="teamTalk"] [data-testid="cheat-key"]')).toHaveText(['Shift+Ctrl']);
 });

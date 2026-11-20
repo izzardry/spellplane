@@ -9,7 +9,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import crypto from 'node:crypto';
 import { scan } from '../../leak/scan';
-import { shot } from '../helpers/app';
+import { shot, openLog } from '../helpers/app';
 import { openTeamPage, th } from './bundle';
 
 type Card = { id: string; sid: string };
@@ -28,6 +28,7 @@ async function converged(pages: Page[]): Promise<void> {
 /** Send a chat line on `tab` through the HUD's chat panel, as a player does. */
 async function say(page: Page, tab: 'table' | 'team', text: string): Promise<void> {
   await page.getByTestId(`chat-tab-${tab}`).click();
+  await openLog(page);
   await page.getByTestId('chat-input').fill(text);
   await page.getByTestId('chat-input').press('Enter');
   await expect(page.getByTestId('chat-input')).toHaveValue('');

@@ -6,7 +6,7 @@
  * callout or magnifier, no double-tap zoom and no pull-to-refresh at the table, and safe-area insets are respected.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { hook } from '../helpers/app';
+import { hook, openZone } from '../helpers/app';
 import { IPAD, card, centre, fingers, holdDown, lastActions, path, radial, settled, state, tableWithCards, thumbBar, type Pt } from './helpers';
 
 test.skip(({ browserName }) => browserName !== 'webkit', 'the iPad is emulated in WebKit (PLAN M5, owner decisions)');
@@ -34,7 +34,7 @@ test.describe('on an iPad', () => {
 
   test('Draw N works without a keyboard: the field has a Draw button (no return key needed)', async ({ page }, info) => {
     const { hand } = await tableWithCards(page, info, { battlefield: 0, hand: 1 });
-    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').tap();
+    await openZone(page, 'library:s0', 'tap');
     await expect(page.getByTestId('pile-viewer')).toHaveAttribute('data-kind', 'library');
     await page.getByTestId('pile-viewer').getByRole('button', { name: /^Draw N/ }).tap();
     await expect(page.getByTestId('draw-n-input')).toBeVisible();
