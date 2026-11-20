@@ -138,8 +138,11 @@ for (const look of LOOKS) {
         const c = await capture(page);
         const k = r.height / 88;
         const near = avg(c, { x: r.x - 3.5 * k, y: r.y + r.height * 0.3, width: 2.5 * k, height: r.height * 0.4 });
+        // The same strip 2 CSS px further out: at low quality (pixel ratio 1) the upscaled canvas spreads the card's black
+        // border about a pixel outward (WebKit measured 5-7 levels in the strip above), which is not a shadow.
+        const clear = avg(c, { x: r.x - 3.5 * k - 2, y: r.y + r.height * 0.3, width: 2.5 * k, height: r.height * 0.4 });
         const far = avg(c, { x: r.x - 28 * k, y: r.y + r.height * 0.3, width: 3 * k, height: r.height * 0.4 });
-        return { near: lum(near), far: lum(far) };
+        return { near: lum(near), clear: lum(clear), far: lum(far) };
       };
       const on = await measure();
       const p = await rh<{ contactShadows: boolean; boxes: boolean; faceShade: number; toneMapping: number }>(page, 'pipeline');
@@ -151,7 +154,7 @@ for (const look of LOOKS) {
       expect(on.near).toBeLessThan(on.far - 2);
       expect(on.near).toBeLessThan(off.near - 2);
       // Without shadows the two samples differ only by the lamp's gradient and the surface's grain over 25 mm.
-      expect(Math.abs(off.near - off.far)).toBeLessThan(4);
+      expect(Math.abs(off.clear - off.far)).toBeLessThan(4);
       expect((await rh<{ contactShadows: boolean }>(page, 'pipeline')).contactShadows).toBe(false);
       expect((await stats(page)).shadows).toBe(false);
       expect(errors).toEqual([]);
