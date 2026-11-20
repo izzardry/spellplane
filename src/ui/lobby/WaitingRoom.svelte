@@ -374,6 +374,11 @@
    * commitment, DECISIONS [M1-P5]); the start waits for this browser until READY is pressed again.
    */
   function toggleHeld(): void {
+    if (!isHost) {
+      // Only the creator's browser counts down; a guest's hold cannot reach it yet (DECISIONS [M8-P4]).
+      note = `Your deck stays locked to your seat. Ask ${hostName} to wait if you need a moment.`;
+      return;
+    }
     held = !held;
     note = held ? 'Your deck stays locked to your seat. The game does not start until you press READY again.' : '';
   }
@@ -381,8 +386,12 @@
   function start(): void {
     if (startProblem(view, mySeat, host)) return;
     stopCount();
-    if (drafting && session.evening) session.evening.start();
-    else session.dispatch({ type: 'stageSet', stage: 'match' });
+    try {
+      if (drafting && session.evening) session.evening.start();
+      else session.dispatch({ type: 'stageSet', stage: 'match' });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+    }
   }
 
   /** START WITH n PLAYERS: the empty chairs stay empty (the table cannot change its format once a player is Ready). */
@@ -523,7 +532,7 @@
               {#if c.occupied}
                 <button
                   type="button"
-                  class="plate"
+                  class="plate ds-focusable"
                   class:mine={c.mine}
                   data-testid="chair"
                   data-seat={c.seat}
@@ -550,7 +559,7 @@
                 {@const choice = chairChoice(st, c.seat, selfPeer)}
                 <button
                   type="button"
-                  class="plate free"
+                  class="plate free ds-focusable"
                   data-testid="chair"
                   data-seat={c.seat}
                   data-occupied="false"
@@ -909,10 +918,6 @@
     text-align: left;
     cursor: pointer;
     transition: transform var(--ds-duration-fast, 120ms) var(--ds-ease-out, ease-out);
-  }
-  .plate:focus-visible {
-    outline: 2px solid var(--ds-focus);
-    outline-offset: 2px;
   }
   .plate.mine {
     box-shadow:

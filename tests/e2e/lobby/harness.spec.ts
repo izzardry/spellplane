@@ -89,6 +89,28 @@ test.describe('lobby harness (M8-P4)', () => {
     await expect.poll(async () => (await state(page)).stage).toBe('match');
   });
 
+  test('a guest tapping READY ✓ is told the deck stays locked; the creator un-readying holds the start', async ({ page }) => {
+    await harness(page, 'view=room&ben=1&annReady=1&benReady=1&me=s1');
+    await page.getByTestId('ready-on').click();
+    await expect(page.getByTestId('lobby-note')).toHaveText('Your deck stays locked to your seat. Ask Ann to wait if you need a moment.');
+    await harness(page, 'view=room&ben=1&annReady=1&benReady=1&auto=1');
+    await expect(page.getByTestId('start-game')).toHaveText(/^START · [123]$/);
+    await page.getByTestId('ready-on').click();
+    await expect(page.getByTestId('start-game')).toHaveCount(0);
+    await expect(page.getByTestId('start-pill')).toHaveText('WAITING · 1 OF 2 READY');
+    await page.getByTestId('ready-on').click();
+    await expect(page.getByTestId('start-game')).toHaveText(/^START · [123]$/);
+  });
+
+  test('at phone width the room is one column with no sideways scroll', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await harness(page, 'view=room&ben=1&format=ffa4');
+    await expect(page.getByTestId('invite-sheet')).toBeVisible();
+    const overflow = await page.getByTestId('lobby-harness').evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+    await expect(page.getByTestId('ready')).toBeVisible();
+  });
+
   test('BOOSTER DECKS ONLY: the picker gets an allow that rejects custom decks with the reason', async ({ page }) => {
     await harness(page, 'view=room&rule=booster');
     await closeInvite(page);

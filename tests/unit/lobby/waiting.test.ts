@@ -177,6 +177,10 @@ describe('the concede chip', () => {
     const p = match(edit(twoSeated(), (x) => (x.seats.s0!.counters = { poison: 10 })));
     expect(concedeOffer(p, 's0')?.reason).toBe('poison');
   });
+  it('is not offered at a table with one player', () => {
+    const alone = match(edit(sit(freshTable(), 's0', 'Ann', 0, A), (x) => (x.seats.s0!.life = 0)));
+    expect(concedeOffer(alone, 's0')).toBeNull();
+  });
   it('is not offered outside a match, after the result or after conceding', () => {
     const low = edit(twoSeated(), (x) => (x.seats.s1!.life = -2));
     expect(concedeOffer(low, 's1')).toBeNull();

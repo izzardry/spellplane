@@ -218,6 +218,8 @@ export const POISON_LIMIT = 10;
  */
 export function concedeOffer(state: TableState, seat: SeatId | null): null | { reason: 'life' | 'poison'; text: string } {
   if (seat === null || state.stage !== 'match' || state.result) return null;
+  // Conceding needs someone to concede to: a table with one player (the sandbox) offers nothing.
+  if (Object.values(state.seats).filter((x) => isOccupied(state, x.id)).length < 2) return null;
   const s = state.seats[seat];
   if (!s || s.conceded === true) return null;
   if (s.life <= 0) return { reason: 'life', text: `You are at ${s.life} life.` };

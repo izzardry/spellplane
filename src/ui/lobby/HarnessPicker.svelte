@@ -20,7 +20,7 @@
     {#each decks as d (d.id)}
       {@const ok = allow ? allow(d) : true}
       <li>
-        <button type="button" class="tile" class:locked={ok !== true} data-testid="picker-deck" data-deck={d.id} data-allowed={ok === true} aria-disabled={ok !== true} onclick={() => ok === true && onpick(d)}>
+        <button type="button" class="tile ds-focusable" class:locked={ok !== true} data-testid="picker-deck" data-deck={d.id} data-allowed={ok === true} aria-disabled={ok !== true} onclick={() => ok === true && onpick(d)}>
           <span class="name">{d.name}</span>
           {#if ok !== true}<span class="ds-badge" data-testid="picker-reason">{ok}</span>{/if}
         </button>
