@@ -345,31 +345,37 @@ test('two-finger pinch zooms around the point between the fingers', async ({ pag
   expect(g.some((x) => x.kind === 'drag' || x.kind === 'tap')).toBe(false);
 });
 
-test('two-finger vertical drag pitches in the ego view; in bird’s-eye it pans', async ({ page }, info) => {
+test('two-finger vertical drag tilts in the ego view and in bird’s-eye; a sideways two-finger drag pans', async ({ page }, info) => {
   const { bf } = await tableWithCards(page, info);
   const vp = page.viewportSize()!;
   const y0 = Math.round(vp.height * 0.45);
   const x0 = Math.round(vp.width / 2);
-  // Bird's-eye: the drag moves the table, the pitch stays.
+  // Bird's-eye, sideways: the drag moves the table, the pitch stays.
   const b0 = await pose(page);
-  await fingers(page, twoFingers({ x: x0 - 60, y: y0 }, { x: x0 + 60, y: y0 }, { x: x0 - 60, y: y0 - 120 }, { x: x0 + 60, y: y0 - 120 }));
+  await fingers(page, twoFingers({ x: x0 - 60, y: y0 }, { x: x0 + 60, y: y0 }, { x: x0 - 60 - 140, y: y0 }, { x: x0 + 60 - 140, y: y0 }));
   await settled(page);
   const b1 = await pose(page);
   expect(b1.pitchDeg).toBeCloseTo(b0.pitchDeg, 3);
   expect(camMoved(b0, b1)).toBeGreaterThan(1);
+  // Bird's-eye, fingers up: the one continuous tilt leans toward first person at every tilt (PLAN Milestone 7, Owner
+  // decisions, Mouse controls: "touch keeps its gestures (pinch zooms, two-finger vertical swipe tilts)"; M7-P3).
+  await fingers(page, twoFingers({ x: x0 - 60, y: y0 }, { x: x0 + 60, y: y0 }, { x: x0 - 60, y: y0 - 120 }, { x: x0 + 60, y: y0 - 120 }));
+  await settled(page);
+  expect((await pose(page)).pitchDeg).toBeLessThan(b1.pitchDeg - 5);
 
   await hook(page, 'rig.setRig', 'ego', { animate: false });
   await settled(page);
   const e0 = await pose(page);
   expect(e0.fovDeg).toBeGreaterThan(20);
-  // Fingers up: the camera looks less steeply down (as a right-drag up does); fingers down: steeper again.
-  await fingers(page, twoFingers({ x: x0 - 60, y: y0 }, { x: x0 + 60, y: y0 }, { x: x0 - 60, y: y0 - 100 }, { x: x0 + 60, y: y0 - 100 }));
+  // First person is the low end of the one tilt: fingers down look more steeply down (as a right-drag down does);
+  // fingers up: less steeply again.
+  await fingers(page, twoFingers({ x: x0 - 60, y: y0 - 100 }, { x: x0 + 60, y: y0 - 100 }, { x: x0 - 60, y: y0 }, { x: x0 + 60, y: y0 }));
   await settled(page);
   const e1 = await pose(page);
-  expect(e1.pitchDeg).toBeLessThan(e0.pitchDeg - 5);
-  await fingers(page, twoFingers({ x: x0 - 60, y: y0 }, { x: x0 + 60, y: y0 }, { x: x0 - 60, y: y0 + 100 }, { x: x0 + 60, y: y0 + 100 }));
+  expect(e1.pitchDeg).toBeGreaterThan(e0.pitchDeg + 5);
+  await fingers(page, twoFingers({ x: x0 - 60, y: y0 }, { x: x0 + 60, y: y0 }, { x: x0 - 60, y: y0 - 100 }, { x: x0 + 60, y: y0 - 100 }));
   await settled(page);
-  expect((await pose(page)).pitchDeg).toBeGreaterThan(e1.pitchDeg + 5);
+  expect((await pose(page)).pitchDeg).toBeLessThan(e1.pitchDeg - 5);
   expect((await gestures(page)).some((g) => g.kind === 'twoFinger' && g.mode === 'pitch')).toBe(true);
   expect((await state(page)).cards[bf[0]!]!.tapped).toBe(false);
 });
@@ -416,16 +422,18 @@ test('nothing moves the camera while a finger drags a card: a second finger is i
   const { bf } = await tableWithCards(page, info);
   const p0 = await pose(page);
   const from = centre(await card(page, bf[0]!));
-  const to = { x: from.x + 60, y: from.y - 80 };
+  // Sideways over the own battlefield: at the default look's tilt (Plain leans in) 80 px up already reaches the stack
+  // lane, which would take the card.
+  const to = { x: from.x - 90, y: from.y - 20 };
   // The second finger lands on empty table, right of the row of cards.
   const c2 = await card(page, bf[2]!);
   const f2 = { x: Math.round(c2.screen.x + c2.screen.width + 80), y: Math.round(c2.screen.y - 40) };
   const f2end = { x: f2.x + 120, y: f2.y + 60 };
   expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, f2)).toBe('CANVAS');
-  await fingers(page, [{ type: 'down', id: 1, ...from }, ...path(1, from, { x: from.x + 30, y: from.y - 40 }, 4)]);
+  await fingers(page, [{ type: 'down', id: 1, ...from }, ...path(1, from, { x: from.x - 30, y: from.y - 10 }, 4)]);
   expect((await card(page, bf[0]!)).dragging).toBe(true);
   // A second finger lands and slides; the first goes on dragging.
-  await fingers(page, [{ type: 'down', id: 2, ...f2 }, ...path(2, f2, f2end, 6), ...path(1, { x: from.x + 30, y: from.y - 40 }, to, 4)]);
+  await fingers(page, [{ type: 'down', id: 2, ...f2 }, ...path(2, f2, f2end, 6), ...path(1, { x: from.x - 30, y: from.y - 10 }, to, 4)]);
   expect(camMoved(p0, await pose(page))).toBeLessThan(0.01);
   expect((await card(page, bf[0]!)).dragging).toBe(true);
   await fingers(page, [
