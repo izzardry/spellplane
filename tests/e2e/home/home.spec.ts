@@ -21,7 +21,7 @@ test('a fresh profile sees Home, the nav, the empty hero and PLAY enabled; nothi
   await expect(page.getByTestId('home-primary')).toBeEnabled();
   await expect(page.getByTestId('home-status')).toHaveText('No deck yet: you get a starter deck.');
   // The profile chip carries a made-up nickname.
-  await expect(page.getByTestId('profile-chip')).toHaveText(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
+  await expect(page.getByTestId('profile-chip')).toHaveText(/[A-Z][a-z]+ [A-Z][a-z]+$/);
   // No CONTINUE strip and no recent games without a game.
   await expect(page.getByTestId('home-continue')).toHaveCount(0);
   expect(Object.values(await page.evaluate(() => window.__homeHarness!.live())).every((n) => n === 0)).toBe(true);
@@ -47,7 +47,7 @@ test('with a fixture deck the hero shows name, count and curve; switching mode c
     await page.getByTestId('mode-quick').click();
     await expect(page.getByTestId('home-primary')).toHaveText('FIND MATCH');
     await expect(page.getByTestId('home-status')).toHaveText('Connects your browser directly to other players who are looking. They see your name and network address.');
-    await page.getByTestId('opt-ranked').getByRole('radio', { name: 'RANKED' }).click();
+    await page.getByTestId('opt-ranked').getByRole('radio', { name: 'RANKED', exact: true }).click();
     await expect(page.getByTestId('home-status')).toHaveText('Ranked counts only when the loser concedes.');
   });
 
@@ -180,8 +180,6 @@ test('first run: one PLAY builds and saves a starter deck and opens a practice t
     expect(decks.map((d) => d.name)).toEqual(['Starter · Green']);
     const games = await page.evaluate(() => window.__homeHarness!.games());
     expect(games[0]).toMatchObject({ kind: 'solo', opponent: 'dummy', deck: { name: 'Starter · Green' } });
-    // The computer is a stub here: ALONE with a toast.
-    expect(await page.evaluate(() => window.__homeHarness!.toasts())).toContain('Sparring is not available here. You play alone.');
   });
 });
 

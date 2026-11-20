@@ -41,12 +41,12 @@ test('rows newest first, named by the other players, with the state line; ended 
 
   await test.step('the filter', async () => {
     const filter = page.getByTestId('history-filter');
-    await filter.getByRole('radio', { name: 'UNFINISHED' }).click();
+    await filter.getByRole('radio', { name: 'UNFINISHED', exact: true }).click();
     await expect(rows).toHaveCount(2);
-    await filter.getByRole('radio', { name: 'FINISHED' }).click();
+    await filter.getByRole('radio', { name: 'FINISHED', exact: true }).click();
     await expect(rows).toHaveCount(2);
     await expect(page.locator('[data-code="p-ended-solo"]')).toBeVisible();
-    await filter.getByRole('radio', { name: 'ALL' }).click();
+    await filter.getByRole('radio', { name: 'ALL', exact: true }).click();
     await expect(rows).toHaveCount(3);
     await expect(page.locator('[data-code="p-ended-solo"]')).toHaveCount(0);
   });
