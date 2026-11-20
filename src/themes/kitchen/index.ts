@@ -30,7 +30,10 @@ import { KITCHEN_BACK, LINEN, LINEN_TILE_MM, WALNUT, WALNUT_TILE_MM } from './te
  * The linen as the HUD and the contrast rules see it (tokens.colours.surface): the lamp-lit cloth on screen half-way
  * between the middle of the table and its corners (measured by tests/e2e/themes/looks.spec.ts).
  */
-export const KITCHEN_SURFACE = '#d5c7ab';
+/** What frames the table on screen (the look's `frame` token; docs/design/m8/m7-adjustments.md, M7-P1). */
+export const KITCHEN_SURROUND = '#5b3f2c';
+
+export const KITCHEN_SURFACE = '#d9ccb2';
 
 /** The room around the table (first person looks past the far edge). */
 export const KITCHEN_BACKGROUND = '#2a1e16';
@@ -70,6 +73,8 @@ const SEATS: SeatColour[] = [
 /** The world: walnut board, linen playmat, the skirt where they meet, and the marks. */
 export const KITCHEN_WORLD: Omit<WorldSpec, 'seats'> = {
   name: 'kitchen',
+  surface: KITCHEN_SURFACE,
+  surround: KITCHEN_SURROUND,
   slabs: [
     { name: 'board', spec: BOARD, growMm: BOARD_MM, radiusMm: 26, top: -1.6, depth: 38, bevel: 5 },
     { name: 'mat', spec: MAT, growMm: 0, radiusMm: 18, top: 0, depth: 1.6, bevel: 0.5 },

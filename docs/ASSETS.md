@@ -60,6 +60,15 @@ No bundled files: every texture and sound is generated in the browser by the mod
 | `src/themes/stonetable/motes.ts` | Stonetable dust motes | shader | procedural | MIT (this repository) | Point sprites drifting in a vertex shader, lit inside the torch's cone |
 | `src/themes/stonetable/sounds.ts` | Stonetable sound set | sound | procedural | MIT (this repository) | Web Audio: filtered seeded noise and sine partials (slide, tap, shuffle, turn chime, prompt tick, torch crackle) |
 
+## Plain
+
+No bundled files: every texture and sound is drawn or synthesised in the browser by the modules below.
+
+| Asset | Used by | Kind | Source | Licence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/themes/plain/textures.ts` | Plain table, desk and card back | texture | procedural | MIT (this repository) | `TABLE_HALFTONE` and `DESK_HALFTONE`: 256 × 256 white tiles with a 0.5 mm dot every 4 mm at 5 % and 3 % ink (antialiased by coverage, so every mip level keeps the tone), one tile per 16 mm; `PLAIN_BACK`: 488 × 680 pale paper, grey hairline frame and a ring of ink dots, geometric only |
+| `src/themes/kit/sounds.ts` | Plain sound set | sound | procedural | MIT (this repository) | `soundSet` with a dry, light timbre (paper on a desk): every table and card-feel cue synthesised with Web Audio; no audio files |
+
 ## Kitchen Table
 
 No bundled files: every texture and sound is drawn or synthesised in the browser by the modules below.

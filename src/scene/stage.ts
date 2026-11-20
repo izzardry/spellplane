@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { trackContext, untrackContext } from './lifecycle';
 import { drawPlaceholderFace, type PlaceholderFace } from './placeholder';
 
 /**
@@ -32,6 +33,8 @@ export interface Stage {
 
 export function createStage(host: HTMLElement): Stage {
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
+  // Counted while it lives (contracts.md Part C lifecycle counters).
+  trackContext(renderer);
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   host.appendChild(renderer.domElement);
@@ -119,7 +122,20 @@ export function createStage(host: HTMLElement): Stage {
     render,
     dispose() {
       removeEventListener('resize', onResize);
+      // Every geometry, material and texture of the stage, before the renderer (lifecycle residue).
+      scene.traverse((o) => {
+        const m = o as THREE.Mesh;
+        m.geometry?.dispose();
+        for (const mat of Array.isArray(m.material) ? m.material : m.material ? [m.material] : []) {
+          (mat as THREE.MeshBasicMaterial).map?.dispose();
+          mat.dispose();
+        }
+      });
+      scene.clear();
       renderer.dispose();
+      untrackContext(renderer);
+      // Free the WebGL context now, not at GC: browsers cap live contexts.
+      renderer.forceContextLoss();
       renderer.domElement.remove();
     },
   };

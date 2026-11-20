@@ -28,7 +28,10 @@ import { DEFAULT_MOTION, type LineKind, type LineStyle, type MaterialSpec, type 
 import { CODEX_BACK, EBONY, EBONY_TILE_MM, LEATHER, LEATHER_TILE_MM } from './textures';
 
 /** The leather as the HUD and the contrast rules see it (tokens.colours.surface), measured half-way out (tests/e2e/themes/looks.spec.ts). */
-export const CODEX_SURFACE = '#1c2336';
+/** What frames the table on screen (the look's `frame` token; docs/design/m8/m7-adjustments.md, M7-P1). */
+export const CODEX_SURROUND = '#141a29';
+
+export const CODEX_SURFACE = '#1b2235';
 
 export const CODEX_BACKGROUND = '#0b0e17';
 
@@ -108,6 +111,8 @@ function ornament(parts: Parts, table: { w: number; d: number }): THREE.Object3D
 
 export const CODEX_WORLD: Omit<WorldSpec, 'seats'> = {
   name: 'codex',
+  surface: CODEX_SURFACE,
+  surround: CODEX_SURROUND,
   slabs: [
     { name: 'desk', spec: DESK, growMm: DESK_MM, radiusMm: 4, top: -2, depth: 42, bevel: 3 },
     { name: 'leather', spec: LEATHER_SPEC, growMm: LEATHER_MARGIN_MM, radiusMm: 3, top: 0, depth: 2, bevel: 0.6 },

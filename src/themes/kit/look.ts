@@ -29,6 +29,8 @@ export interface WorldSlab {
   top: number;
   depth: number;
   bevel: number;
+  /** The slab's side faces (and bevel) when they differ from its top (Plain's side one step darker than the desk). */
+  side?: MaterialSpec;
 }
 
 /** A baked soft shadow around the table grown by `growMm`, lying at `at` mm. */
@@ -44,6 +46,13 @@ export interface WorldSkirt {
 export interface WorldSpec {
   /** Object name prefix (scene graph, tests). */
   name: string;
+  /**
+   * The colours the world shows on screen (docs/design/m8/m7-adjustments.md, M7-P1: "Surface and surround colours equal
+   * the look's `mat` and `frame` tokens"): the table surface, and what frames it (board, plinth, desk). A unit test
+   * compares them with src/ui/design/tokens.ts; the looks spec measures them on screen.
+   */
+  surface: string;
+  surround: string;
   /** Bottom to top; the last one is the table surface (top 0). */
   slabs: WorldSlab[];
   skirts: WorldSkirt[];
@@ -69,7 +78,8 @@ export function buildWorld(ctx: SceneContext, spec: WorldSpec): WorldInstance {
   const slabs: Record<string, THREE.Mesh> = {};
   for (const s of spec.slabs) {
     const geo = parts.geometry(slabGeometry(roundedRect(w + 2 * s.growMm, d + 2 * s.growMm, s.radiusMm), s.top, s.depth, s.bevel));
-    const mesh = new THREE.Mesh(geo, parts.material(s.spec));
+    // ExtrudeGeometry's groups: 0 the top and bottom, 1 the sides and bevel.
+    const mesh = new THREE.Mesh(geo, s.side ? [parts.material(s.spec), parts.material(s.side)] : parts.material(s.spec));
     mesh.name = `${spec.name}-${s.name}`;
     mesh.receiveShadow = true;
     mesh.renderOrder = 0;

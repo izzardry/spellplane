@@ -5,7 +5,7 @@
 // CUE_PEAK of the gain at every moment, starts and ends at silence (no clicks), stops by itself within CUE_MAX_S, and
 // leaves nothing connected afterwards; a gain of 0 builds nothing.
 import { describe, expect, it } from 'vitest';
-import { LOOK_IDS, LOOK_THEME, loadTheme, type SoundCue, type Theme } from '../../../../src/themes/index';
+import { LISTED_THEME_IDS, loadTheme, type SoundCue, type Theme } from '../../../../src/themes/index';
 import { CUE_MAX_S, CUE_PEAK } from '../../../../src/themes/kit/sounds';
 
 type Ev = { kind: 'set' | 'linear' | 'exp'; v: number; t: number };
@@ -110,7 +110,7 @@ function level(src: Node, destination: Node, t: number): number {
   return walk(src);
 }
 
-const looks: Theme[] = await Promise.all(LOOK_IDS.map((id) => loadTheme(LOOK_THEME[id])));
+const looks: Theme[] = await Promise.all(LISTED_THEME_IDS.map((id) => loadTheme(id)));
 const CUES: SoundCue[] = ['slide', 'tap', 'shuffle', 'turnChime', 'promptTick', 'draw', 'untap', 'play', 'toGraveyard', 'toExile', 'toHand', 'attach', 'clip', 'pickup', 'drop', 'snap'];
 
 describe.each(looks.map((t) => [t.id, t] as const))('%s', (_id, theme) => {
@@ -155,12 +155,12 @@ describe.each(looks.map((t) => [t.id, t] as const))('%s', (_id, theme) => {
   });
 });
 
-it('gives each look its own timbre: the same cue sounds different in the three looks', () => {
+it('gives each look its own timbre: the same cue sounds different in the four looks', () => {
   const freqs = looks.map((t) => {
     const { ctx, nodes } = fakeContext();
     t.sounds!.slide!.play(ctx, 1);
     const f = nodes.find((n): n is Filter => n instanceof Filter)!;
     return f.frequency.at(10.006);
   });
-  expect(new Set(freqs).size).toBe(3);
+  expect(new Set(freqs).size).toBe(looks.length);
 });

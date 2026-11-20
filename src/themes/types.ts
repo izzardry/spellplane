@@ -24,7 +24,7 @@ export { DEFAULT_MOTION } from '../core/geometry';
  * three themes of the redesign"); M7-P1 builds them. The four M4 themes stay registered but leave the picker
  * (themes/index.ts THEME_LISTED).
  */
-export type ThemeId = M4ThemeId | 'kitchen' | 'graphite' | 'codex';
+export type ThemeId = M4ThemeId | 'plain' | 'kitchen' | 'graphite' | 'codex'; // [M7-P1] 'plain': the fourth look's table world (m7-adjustments.md, M7-P1)
 
 /** The four M4 themes (DESIGN "Themes and rendering", theme table), registered but no longer in the picker from M7 on. Added by M7-C. */
 export type M4ThemeId = 'paper' | 'dusk' | 'wyrm' | 'stonetable';
@@ -125,6 +125,8 @@ export interface HighlightStyle {
   lift: number;
   /** v2 (M4-C): emissive strength 0..1 that the bloom pass picks up in lit themes; absent or 0 for none. */
   glow?: number;
+  /** A gap in the table's surface colour between the card and the ring, mm (a double ring that reads on a black border and a pale table); absent or 0 for none. */ // [M7-P1]
+  gap?: number; // [M7-P1]
 }
 
 /**

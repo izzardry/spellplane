@@ -457,6 +457,27 @@ export interface RenderDebug {
    * demand)"): a test reads it twice across an idle wait and expects no change. Implemented by the table scene.
    */
   framesDrawn?(): number;
+  /** Live WebGL contexts, `live().contexts` of src/util/lifecycle.ts (contracts.md Part C). */ // [M7-P1]
+  liveContexts?(): number; // [M7-P1]
+  /** What disposed renderers still held and every live count (contracts.md Part C). */ // [M7-P1]
+  memory?(): RenderMemory; // [M7-P1]
+}
+
+/** The lifecycle counters as the render part reports them (contracts.md Part C: `{ ...residue(), ...live() }`). [M7-P1] */
+export interface RenderMemory {
+  geometries: number;
+  textures: number;
+  programs: number;
+  disposals: number;
+  contexts: number;
+  sessions: number;
+  engines: number;
+  transports: number;
+  audioContexts: number;
+  workers: number;
+  rafLoops: number;
+  botRunners: number;
+  timers: number;
 }
 
 /** The rig part of the debug hook (`window.__spellplane.rig`): camera rig, blend and follow toggles. Registered by the table scene; M4-P1's. Added by M4-C. */

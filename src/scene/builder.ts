@@ -19,6 +19,8 @@
  * Pure layout functions come first (unit-tested in tests/unit/builder/), the Three.js surface after them.
  */
 import * as THREE from 'three';
+import { trackContext, untrackContext } from './lifecycle';
+import { track, untrack } from '../util/lifecycle';
 import { CAMERA, GEOMETRY } from '../core/geometry';
 import type { CardRef, DeckBuild, PileRef, PoolCard, Pose } from '../core/types';
 import type { CardData } from '../data/types';
@@ -679,6 +681,10 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
 
   // --- Three.js -------------------------------------------------------------------------------------------------
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
+  // Counted while it lives (contracts.md Part C lifecycle counters); its frame loop is counted while mounted.
+  trackContext(renderer);
+  const frameLoop = {};
+  track('rafLoops', frameLoop);
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, theme.quality[0]?.pixelRatio ?? 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const canvas = renderer.domElement;
@@ -1646,6 +1652,8 @@ export function createBuilderSurfaceImpl(host: HTMLElement, opts: BuilderSurface
       outlineGeometry.dispose();
       outlineMaterial.dispose();
       renderer.dispose();
+      untrackContext(renderer);
+      untrack('rafLoops', frameLoop);
       renderer.forceContextLoss();
       canvas.remove();
       overlay.remove();

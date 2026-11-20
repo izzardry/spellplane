@@ -53,7 +53,8 @@ describe('looks', () => {
       expect(THEME_LISTED[id]).toBe(false);
       expect(lookOfTheme(id)).toBeNull();
     }
-    expect([...LISTED_THEME_IDS]).toEqual(['kitchen', 'graphite', 'codex']);
+    // M7-P1 added Plain, listed first (docs/design/m8/m7-adjustments.md, M7-P1).
+    expect([...LISTED_THEME_IDS]).toEqual(['plain', 'kitchen', 'graphite', 'codex']);
   });
 
   it('reads a stored look, anything unknown as the default look (Kitchen Table)', () => {
@@ -138,8 +139,12 @@ describe('the one continuous tilt', () => {
     expect(perspectiveToggleTilt(0.3)).toBe(1);
   });
 
-  it('starts the looks’ stub themes in bird’s-eye until M7-P1 and M7-P3 choose', async () => {
-    for (const look of LOOK_IDS) expect((await loadTheme(LOOK_THEME[look])).camera.tilt).toBe(1);
+  it('starts each look at a tilt on the one continuous tilt (M7-P1 chose them; the stubs started bird’s-eye)', async () => {
+    for (const look of LOOK_IDS) {
+      const t = (await loadTheme(LOOK_THEME[look])).camera.tilt!;
+      expect(t).toBeGreaterThanOrEqual(0);
+      expect(t).toBeLessThanOrEqual(1);
+    }
     expect(DEFAULT_SETTINGS.tilt).toBeNull();
   });
 });

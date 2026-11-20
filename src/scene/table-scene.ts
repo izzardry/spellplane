@@ -20,6 +20,8 @@
  * Paper stays one cheap pass: no lights, boxes, shadows or post, the same draw calls as before.
  */
 import * as THREE from 'three';
+import { lifecycleRender, registerBaseRender, trackContext, untrackContext } from './lifecycle';
+import { track, untrack } from '../util/lifecycle';
 import type { ActionDraft } from '../core/actions';
 import { CAMERA, CLIP } from '../core/geometry';
 import { carryGroup, clipGroup, type DragGroup } from '../core/clips';
@@ -288,6 +290,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   // Measuring switches (scene/switches.ts; M7-A0).
   const switches = renderSwitches();
   const renderer = new THREE.WebGLRenderer({ antialias: switches.antialias ?? true, preserveDrawingBuffer: false });
+  // Counted while it lives (contracts.md Part C lifecycle counters).
+  trackContext(renderer);
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, theme.quality[0]?.pixelRatio ?? 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // A frame is several render calls (world, post passes, overlay): the scene resets the counters once per frame.
@@ -490,6 +494,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let stats: FrameStats = { drawCalls: 0, textureBytes: 0, frameMs: 0 };
   let lastTick = performance.now();
   let raf = 0;
+  /** The identity the frame loop is counted under (lifecycle counters). */
+  const frameLoop = {};
   let disposed = false;
   let hovered: InstanceId | null = null;
   /** The stack item under the pointer (DESIGN "The effect stack": hovering an item highlights its source and targets). */
@@ -926,7 +932,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           uv,
           dim: rc.shownDim ? 1 - dressing.faceDownOwnerOpacity : 0,
           highlight: sel
-            ? { colour: dressing.selected.colour, width: dressing.selected.width }
+            ? { colour: dressing.selected.colour, width: dressing.selected.width, ...(dressing.selected.gap ? { gap: dressing.selected.gap } : {}) }
             : hov
               ? { colour: dressing.hover.colour, width: hoverWidth(dressing.hover.width, cardPx) }
               : entry
@@ -1030,7 +1036,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const continuous = drewLastTick;
     if (drewLastTick) {
       frameCost = now - drewAt;
-      if (!rescaledLast) resolution.observe(now, frameCost);
+      // A hidden page or a covered window holds frames back: such gaps are not the scene's cost (scene/resolution.ts).
+      if (!rescaledLast) resolution.observe(now, frameCost, { hidden: typeof document !== 'undefined' && document.visibilityState === 'hidden', drawMs: stats.frameMs });
     } else if (now - drewAt > 100) resolution.pause();
     drewLastTick = false;
     if (runtime.fullPixelRatio !== resolutionBase) {
@@ -2745,6 +2752,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     quality: () => runtime.qualityChoice,
     setQuality: (id) => sceneApi.setQuality(id),
     framesDrawn: () => frame,
+    // The lifecycle counters (contracts.md Part C).
+    ...lifecycleRender(),
   };
   const rigDebug: RigDebug = {
     rig: () => controls.rig(),
@@ -2937,6 +2946,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   };
 
   raf = requestAnimationFrame(tick);
+  // The frame loop is counted until dispose (contracts.md Part C).
+  track('rafLoops', frameLoop);
   const meterSource = (): RenderInfo => ({
     width: canvas.width,
     height: canvas.height,
@@ -3159,12 +3170,17 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       markGeometry.dispose();
       markMaterial.dispose();
       renderer.dispose();
+      // What the renderer still held, and the context and frame loop released (contracts.md Part C).
+      untrackContext(renderer);
+      untrack('rafLoops', frameLoop);
       // Free the WebGL context now, not at GC: browsers cap live contexts (about 16).
       renderer.forceContextLoss();
       canvas.remove();
       // Debug parts must not point at a disposed scene (a newer scene's parts stay).
       const hook = typeof window === 'undefined' ? undefined : (window.__spellplane as Record<string, unknown> | undefined);
       if (hook) for (const [k, fn] of Object.entries(debugParts)) if (hook[k] === fn) delete hook[k];
+      // The render part's lifecycle members stay readable on Home (contracts.md Part C).
+      registerBaseRender();
       marqueeEl.remove();
       stackBadge.dispose();
     },

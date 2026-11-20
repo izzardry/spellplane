@@ -31,8 +31,10 @@ const looks: Theme[] = await Promise.all(LOOK_IDS.map((id) => loadTheme(LOOK_THE
 const ALL_CUES: SoundCue[] = ['slide', 'tap', 'shuffle', 'turnChime', 'promptTick', 'draw', 'untap', 'play', 'toGraveyard', 'toExile', 'toHand', 'attach', 'clip', 'pickup', 'drop', 'snap'];
 
 describe('the picker', () => {
-  it('lists exactly the three looks, in the directions page’s order; the M4 themes stay registered and loadable', async () => {
-    expect(LISTED_THEME_IDS).toEqual(['kitchen', 'graphite', 'codex']);
+  it('lists exactly the four looks, Plain first (docs/design/m8/m7-adjustments.md, M7-P1); the M4 themes stay registered and loadable', async () => {
+    expect(LISTED_THEME_IDS).toEqual(['plain', 'kitchen', 'graphite', 'codex']);
+    expect((await loadTheme('plain')).label).toBe('Plain');
+    expect('stub' in (await loadTheme('plain'))).toBe(false);
     for (const id of M4_THEME_IDS) {
       expect(THEME_LISTED[id]).toBe(false);
       expect(THEME_IDS).toContain(id);

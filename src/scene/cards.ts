@@ -45,7 +45,8 @@ export interface CardDraw {
   /** 0 = face as printed; > 0 blends toward the table colour (owner's own face-down card). */
   dim: number;
   /** Outline colour (CSS) and width in mm, or null. */
-  highlight: { colour: string; width: number } | null;
+  /** `gap` (mm, [M7-P1]): a band in the table's colour between the card and the ring (a double ring). */
+  highlight: { colour: string; width: number; gap?: number } | null;
   /** Held by the pointer (DESIGN geometry table: lift while dragged); its contact shadow follows it. */
   held?: boolean;
   /** Tilt of a held card: the edge toward table direction (x, y) dips by `deg` (DESIGN geometry table: 4° in lit themes). */
@@ -179,8 +180,12 @@ void main() {
     c.rgb = mix(c.rgb, badge, 1.0 - smoothstep(-baa, baa, bd));
   }
   float inside = 1.0 - smoothstep(-aa, aa, d);
-  float ring = vHi.a > 0.0 ? 1.0 - smoothstep(vHi.a - aa, vHi.a + aa, d) : 0.0;
-  vec4 col = mix(vec4(vHi.rgb, ring), vec4(c.rgb, 1.0), inside);
+  float gk = floor(vHi.a / 1000.0);
+  float outer = vHi.a - gk * 1000.0;
+  float gap = gk / 100.0;
+  float ring = outer > 0.0 ? 1.0 - smoothstep(outer - aa, outer + aa, d) : 0.0;
+  vec3 ringRgb = gap > 0.0 ? mix(uBg, vHi.rgb, smoothstep(gap - aa, gap + aa, d)) : vHi.rgb;
+  vec4 col = mix(vec4(ringRgb, ring), vec4(c.rgb, 1.0), inside);
   if (col.a < 0.004) discard;
   gl_FragColor = col;
 }
@@ -301,7 +306,8 @@ export class CardLayer {
         hi[q] = tmpColour.r;
         hi[q + 1] = tmpColour.g;
         hi[q + 2] = tmpColour.b;
-        hi[q + 3] = Math.min(PAD_MM, d.highlight.width);
+        // The gap rides in the thousands of the width (in hundredths of a mm): one attribute, no extra upload.
+        hi[q + 3] = Math.min(PAD_MM, d.highlight.width) + 1000 * Math.round(Math.max(0, Math.min(d.highlight.width, d.highlight.gap ?? 0)) * 100);
       } else {
         hi[q] = hi[q + 1] = hi[q + 2] = hi[q + 3] = 0;
       }

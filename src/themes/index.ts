@@ -8,7 +8,7 @@ export * from './types';
 export * from './signals';
 
 /** Theme ids that exist today (DESIGN "Themes and rendering"); M7-C added the three looks' themes. */
-export const THEME_IDS: readonly ThemeId[] = ['paper', 'dusk', 'wyrm', 'stonetable', 'kitchen', 'graphite', 'codex'];
+export const THEME_IDS: readonly ThemeId[] = ['paper', 'dusk', 'wyrm', 'stonetable', 'plain', 'kitchen', 'graphite', 'codex'];
 
 /** The four M4 themes in their M4 order (their gates and screenshot matrices run over these). Added by M7-C. */
 export const M4_THEME_IDS: readonly M4ThemeId[] = ['paper', 'dusk', 'wyrm', 'stonetable'];
@@ -19,7 +19,7 @@ export const M4_THEME_IDS: readonly M4ThemeId[] = ['paper', 'dusk', 'wyrm', 'sto
  * go"). An unlisted theme still loads (a stored setting, the debug hook's `theme.set`, tests). Added by M7-C; the picker
  * reads it from M7-P2 on.
  */
-export const THEME_LISTED: Readonly<Record<ThemeId, boolean>> = { paper: false, dusk: false, wyrm: false, stonetable: false, kitchen: true, graphite: true, codex: true };
+export const THEME_LISTED: Readonly<Record<ThemeId, boolean>> = { paper: false, dusk: false, wyrm: false, stonetable: false, plain: true, kitchen: true, graphite: true, codex: true };
 
 /** The themes the picker offers, in THEME_IDS order (PLAN Milestone 7, Owner decisions). Added by M7-C. */
 export const LISTED_THEME_IDS: readonly ThemeId[] = THEME_IDS.filter((id) => THEME_LISTED[id]);
@@ -114,6 +114,7 @@ export const THEME_LABELS: Readonly<Record<ThemeId, string>> = {
   dusk: 'Dusk',
   wyrm: 'Wyrm',
   stonetable: 'Stonetable',
+  plain: 'Plain',
   kitchen: 'Kitchen Table',
   graphite: 'Graphite',
   codex: 'Codex',
@@ -139,6 +140,9 @@ export async function loadTheme(id: ThemeId): Promise<Theme> {
     case 'stonetable':
       return (await import('./stonetable/index')).stonetable;
     // The looks' table worlds (M7-C stubs until M7-P1 builds them).
+    // Plain, the fourth look and the default (docs/design/m8/m7-adjustments.md, M7-P1).
+    case 'plain':
+      return (await import('./plain/index')).plain;
     case 'kitchen':
       return (await import('./kitchen/index')).kitchen;
     case 'graphite':

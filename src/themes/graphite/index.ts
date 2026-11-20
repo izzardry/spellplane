@@ -24,7 +24,10 @@ import { DEFAULT_MOTION, type LineKind, type LineStyle, type MaterialSpec, type 
 import { GRAPHITE_BACK, PLINTH, SLATE, SLATE_TILE_MM } from './textures';
 
 /** The slate as the HUD and the contrast rules see it (tokens.colours.surface), measured half-way out (tests/e2e/themes/looks.spec.ts). */
-export const GRAPHITE_SURFACE = '#1c2026';
+/** What frames the table on screen (the look's `frame` token; docs/design/m8/m7-adjustments.md, M7-P1). */
+export const GRAPHITE_SURROUND = '#101317';
+
+export const GRAPHITE_SURFACE = '#16191e';
 
 export const GRAPHITE_BACKGROUND = '#0b0d10';
 
@@ -68,6 +71,8 @@ const SEATS: SeatColour[] = [
 
 export const GRAPHITE_WORLD: Omit<WorldSpec, 'seats'> = {
   name: 'graphite',
+  surface: GRAPHITE_SURFACE,
+  surround: GRAPHITE_SURROUND,
   slabs: [
     { name: 'plinth', spec: PLINTH_SPEC, growMm: PLINTH_MM, radiusMm: 10, top: -PLINTH_DROP_MM, depth: 30, bevel: 2.5 },
     { name: 'slab', spec: SLAB, growMm: 0, radiusMm: 4, top: 0, depth: PLINTH_DROP_MM + 6, bevel: 1.6 },

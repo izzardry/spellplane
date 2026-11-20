@@ -16,6 +16,11 @@
  * Pure: the scene passes the clock and the frame costs. A frame's cost is the time from the callback that drew it to the
  * next animation-frame callback (scene/pacing.ts); a frame drawn at a new scale also pays for the new buffers and is
  * not counted.
+ *
+ * Gaps that are not the scene's cost never lower the resolution (docs/design/m8/m7-adjustments.md, M7-P6: "the adaptive
+ * policy must ignore frame gaps while the page is hidden or covered"): while `document.visibilityState` is hidden the
+ * browser stops or throttles animation frames, and a covered window gets them at a low rate; there a frame's gap is long
+ * while the scene's own draw (the CPU time of its render calls) is short. Such a frame is dropped and ends the run.
  */
 
 /** Median frame cost (ms) of a run above which the motion scale goes down (under 48 fps). */
@@ -31,6 +36,24 @@ export const UP_AFTER_MS = 4000;
 export const UP_MAX_MS = 60_000;
 /** No change for this long: the scene draws at the full ratio (ms). */
 export const REST_AFTER_MS = 1000;
+/** A gap at least this long (ms) whose draw took at most COVERED_DRAW_MS is the browser holding frames back (a covered window). */
+export const COVERED_GAP_MS = 50;
+export const COVERED_DRAW_MS = 8;
+
+/** What the scene knows about a frame besides its cost. */
+export interface FrameContext {
+  /** The page is hidden (document.visibilityState). */
+  hidden?: boolean;
+  /** The CPU time of the frame's render calls, ms. */
+  drawMs?: number;
+}
+
+/** Whether a frame's gap says nothing about the scene's cost (hidden page, or a covered window holding frames back). */
+export function foreignGap(costMs: number, ctx: FrameContext = {}): boolean {
+  if (ctx.hidden) return true;
+  return ctx.drawMs !== undefined && costMs >= COVERED_GAP_MS && ctx.drawMs <= COVERED_DRAW_MS;
+}
+
 /** The lowest pixel ratio the motion scale goes to. */
 export const MIN_PIXEL_RATIO = 1;
 /** Pixel ratios are multiples of this, so the buffers take only a few sizes. */
@@ -73,9 +96,13 @@ export class AdaptiveResolution {
     return Math.min(1, Math.max(this.floor(), ratio / this.base));
   }
 
-  /** The cost (ms) of a frame of a continuous run, measured at `now`. */
-  observe(now: number, costMs: number): void {
+  /** The cost (ms) of a frame of a continuous run, measured at `now`; a hidden or covered gap is ignored and ends the run. */
+  observe(now: number, costMs: number, ctx?: FrameContext): void {
     if (!this.enabled || !(costMs > 0)) return;
+    if (foreignGap(costMs, ctx)) {
+      this.pause();
+      return;
+    }
     this.costs.push(costMs);
     if (this.costs.length > RUN) this.costs.shift();
     if (this.costs.length < RUN) return;
