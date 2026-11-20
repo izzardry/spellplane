@@ -89,13 +89,13 @@ export type SyncReqMessage = Envelope<'syncReq', { haveSeq: number }>;
 export type SyncResMessage = Envelope<'syncRes', { snapshot: { seq: number; state: TableState; /** Added by M8-C: the play count at the snapshot. */ play?: number } | null; tail: SequencedAction[] }>;
 
 /** Heartbeat every HEARTBEAT_MS; a peer silent for AWAY_AFTER_MS is away (DESIGN "Specification: network protocol and secrecy", Liveness). Carries the sender's last applied seq. */
-export type HeartbeatMessage = Envelope<'hb', { seq: number; sequencer: string | null }>;
+export type HeartbeatMessage = Envelope<'hb', { seq: number; sequencer: string | null; /** The sender's play count at `seq` (newest by (play, seq, peerId)). */ play?: number /* [M8-P5] */ }>;
 
 /** A new sequencer takes over from `fromSeq` (DESIGN "Specification: network protocol and secrecy", Liveness); two claimants resolve by lowest seat index. */
-export type ClaimMessage = Envelope<'claim', { fromSeq: number; seat: SeatId }>;
+export type ClaimMessage = Envelope<'claim', { fromSeq: number; seat: SeatId; /** The claimant's play count at `fromSeq`. */ play?: number /* [M8-P5] */ }>;
 
 /** A peer's answer to a `claim`: its last seq, so whoever is ahead resends the missing `seq` messages (DESIGN "Specification: network protocol and secrecy", Liveness). Added by M1-C. */
-export type ClaimAckMessage = Envelope<'claimAck', { lastSeq: number }>;
+export type ClaimAckMessage = Envelope<'claimAck', { lastSeq: number; /** The sender's play count at `lastSeq`. */ lastPlay?: number /* [M8-P5] */ }>;
 
 /** State-hash exchange every HASH_EVERY actions: base64url SHA-256 of the canonical JSON of the state at `seq` (DESIGN "Specification: network protocol and secrecy", Sync). */
 export type HashMessage = Envelope<'hash', { seq: number; h: string }>;

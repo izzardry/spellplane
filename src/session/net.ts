@@ -35,6 +35,8 @@ import type { Action, ActionDraft } from '../core/actions';
 import { nonceHash, type RevealedCard } from '../core/commit';
 import { deadlines } from '../core/deadlines';
 import { canonicalJson } from '../core/hash';
+import { sha256Sync } from '../core/sha256';
+import { claimHashOf } from '../core/reducer/rejoin';
 import { zoneId } from '../core/ids';
 import { createTable, explain, reduce } from '../core/reducer/index';
 import { roundPassed } from '../core/reducer/confirm';
@@ -92,6 +94,10 @@ import { attachAudit, gatedTransport, registerAuditDebug, SessionAudit, tamperNe
 import type { AuditControls } from '../net/audit';
 import type { Channel, Message } from '../net/transport';
 import type { VoiceControls } from '../voice/types';
+import { INVITE_TTL_MS } from '../net/engine';
+import { knownIsNewer, musterStatus } from './muster';
+import { newClaimToken, rejoinLink } from './invite';
+import type { KnownHead, MusterStatus, SaveState, SessionMuster } from './types';
 import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus, TeamControls } from './types';
 
 /** How long a browser without a seat listens for a table already in the room before it takes a chair (decision M1-P8). */
@@ -124,6 +130,15 @@ const IN_PLACE: ReadonlySet<string> = new Set(['tap', 'rotate', 'counter', 'note
 /** Seat colours a theme provides (DESIGN "Themes and rendering": eight seat colours). */
 const SEAT_COLOURS = 8;
 
+/** What a browser on standby may propose (persistence.md section 5; contracts.md Part G item 5). */
+const STANDBY_OK: ReadonlySet<string> = new Set(['chat', 'seatInvite', 'seatClaim', 'playOn']);
+
+/** `Ben`, `Ben and Cy`, `Ben, Cy and Dana`. */
+function joinNames(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]!}`;
+}
+
 const SEATS_OF: Record<Format, number> = { '1v1': 2, ffa3: 3, ffa4: 4, '2hg': 4 };
 
 /** How main.ts opened the room, and what tests may change, beyond NetSessionOptions. */
@@ -153,6 +168,12 @@ export interface NetSessionInternals {
    * Ignored when `createdHere` is set. Default false.
    */
   neverAlone?: boolean;
+  /**
+   * M8-P5 (persistence.md section 7): the page was opened by a re-invite link `#/t/<room>/<key>/rejoin/<seat>/<token>`.
+   * A browser that holds the seat by its key pair (its save) ignores the token and resumes; a browser without a seat
+   * here never sits alone, syncs the public table and waits until `claimSeat` is called (the claim page's button).
+   */
+  claim?: { seat: SeatId; token: string };
 }
 
 /** The seq-0 table of a room nobody saved (DESIGN "Players, seats and formats", Seats: every chair free). */
@@ -322,12 +343,46 @@ class NetTable implements NetSession, SessionRecovery {
   /** Live voice (M3-P3, session/voice.ts); set by openNetSession when the options ask for it. */
   voiceImpl: VoiceControls | null = null;
   /** The Two-Headed Giant team view (M3-P2, session/team.ts). */
-  private readonly teamView = new TeamView({ seat: () => this.seat, confirmedState: () => this.engine.confirmedState(), secrets: () => this.sec, now: () => this.now() });
+  private readonly teamView = new TeamView({
+    seat: () => this.seat,
+    confirmedState: () => this.engine.confirmedState(),
+    secrets: () => this.sec,
+    now: () => this.now(),
+    // M8-P5: the take-overs this player confirmed, per teammate seat, kept beside the open nonces.
+    confirmed: {
+      get: (seat) => Number(this.nonces.get('claim', `team:${seat}`) ?? '0') || 0,
+      set: (seat, n) => this.nonces.set('claim', `team:${seat}`, String(n)),
+    },
+  });
   /** Dictation and captions (session/captions.ts, M3-P4); set once joined when the session has voice options. */
   captions?: CaptionControls;
   /** The post-game audit (M5-P2, session/audit.ts). */
   private readonly auditImpl: SessionAudit;
   private readonly unregisterAuditDebug: () => void;
+
+  // --- M8-P5: muster, knownHead, invites and claims (persistence.md sections 5 to 7) -------------------------------
+  /** Live since it joined (rule 1): set the first time the muster rule holds, never cleared in this page. */
+  private stayed = false;
+  /** The table decided to play on (`playOn` applied) since this page opened (rule 4). */
+  private decided = false;
+  /** The newest head a verified peer reported that is newer than this copy (kept with the save). */
+  private knownHeadValue: KnownHead | null = null;
+  private musterValue: MusterStatus | null = null;
+  private readonly musterListeners = new Set<(m: MusterStatus) => void>();
+  private readonly noticeListeners = new Set<(text: string) => void>();
+  /** Claim tokens of invites this page made, by seat (memory only: persistence.md section 2). */
+  private readonly inviteTokens = new Map<SeatId, string>();
+  /** The claim this page was opened with and has not made yet (see NetSessionInternals.claim). */
+  private claimWanted: { seat: SeatId; token: string } | null = null;
+  /** This page opened a saved table (its key pair held a seat in it once). */
+  private hadSave = false;
+  private headCache: { state: TableState; h: string } | null = null;
+  private liveRuleValue: MusterStatus['rule'] = null;
+
+  /** The rule that first made this page live (1 to 4), null while it never was (tests and the debug hook). */
+  liveRule(): MusterStatus['rule'] {
+    return this.liveRuleValue;
+  }
 
   constructor(
     engine: NetEngine,
@@ -335,7 +390,7 @@ class NetTable implements NetSession, SessionRecovery {
     private readonly makeEngine: (start: ResumePoint) => NetEngine,
     private readonly opts: NetSessionOptions,
     private readonly internals: NetSessionInternals,
-    init: { secrets: SecretStore; entries: LogEntry[]; snapshot: TableState; snapshotSeq: number; lastSeq: number; protocol?: number | undefined },
+    init: { secrets: SecretStore; entries: LogEntry[]; snapshot: TableState; snapshotSeq: number; lastSeq: number; protocol?: number | undefined; hadSave?: boolean; knownHead?: KnownHead | null },
   ) {
     this.savedProtocol = init.protocol;
     this.eng = engine;
@@ -349,6 +404,9 @@ class NetTable implements NetSession, SessionRecovery {
     this.fold = engine.confirmedState();
     this.lastSeat = engine.seat() ?? init.secrets.seat;
     this.sec = init.secrets;
+    this.hadSave = init.hadSave === true;
+    this.knownHeadValue = init.knownHead ?? null;
+    if (internals.claim) this.claimWanted = { ...internals.claim };
     this.followView(engine.state(), 'top');
     this.exposed = exposedFromLog(
       init.entries.flatMap((e) => (e.kind === 'action' ? [e.action] : [])),
@@ -437,6 +495,7 @@ class NetTable implements NetSession, SessionRecovery {
       // M8-C: the play count travels beside the saved snapshot (contracts.md Part D).
       play: () => this.engine.play?.() ?? 0,
       snapshotPlay: snapshotPlayAt(this.engine, snapshotSeq, this.entries),
+      knownHead: () => this.knownHeadValue,
     });
   }
 
@@ -466,6 +525,25 @@ class NetTable implements NetSession, SessionRecovery {
         this.auditImpl.sequencerChanged();
         this.netChanged();
       }),
+      // M8-P5 (persistence.md section 5): a player who left on purpose.
+      ...(engine.onLeave
+        ? [
+            engine.onLeave((peerId) => {
+              const seat = Object.values(this.engine.confirmedState().seats).find((x) => x.peer === peerId);
+              if (!seat) return;
+              const name = seat.name || 'A player';
+              this.notice(`${name} left. The game goes on; ${name} can come back.`);
+            }),
+          ]
+        : []),
+      // M8-P5 (persistence.md section 6; contracts.md Part G item 2): this copy gave up a part for a copy with more moves.
+      ...(engine.onAdopt
+        ? [
+            engine.onAdopt((e) => {
+              if (e.abandonedOwn > 0) this.notice("The table with more moves is kept; the other side's moves are played again on top where they still fit.");
+            }),
+          ]
+        : []),
       // A reveal to named spectators (M3-P5, net/roles.ts).
       spectatorRevealSender(engine, () => this.sec),
       this.channel.onIdentity((card, from, verified) => {
@@ -1191,6 +1269,11 @@ class NetTable implements NetSession, SessionRecovery {
    */
   private propose(action: Action, undoable = true): boolean {
     if (this.disposed) return false;
+    // Standby (persistence.md section 5): only chat, seatInvite, seatClaim and playOn go out until the muster rule holds.
+    if (!STANDBY_OK.has(action.type) && !this.live()) {
+      this.warn(this.waitingText());
+      return false;
+    }
     const before = this.engine.state();
     const handBefore = this.sec.hand;
     const libraryBefore = this.sec.libraryOrder;
@@ -1359,6 +1442,7 @@ class NetTable implements NetSession, SessionRecovery {
       next = this.engine.confirmedState();
     }
     this.fold = next;
+    this.noteRejoin(action, prior);
     this.noteOthers(action, prior, next, exact);
     if (exact) for (const id of disclosedBy(this.sec, prior, action, next)) this.exposed.add(id);
     else if (next !== prior) {
@@ -1536,6 +1620,11 @@ class NetTable implements NetSession, SessionRecovery {
    */
   private drive(): void {
     if (this.disposed) return;
+    // The session's own automatic proposals wait while this browser is on standby (persistence.md section 5).
+    if (!this.live()) {
+      this.settleWaiters();
+      return;
+    }
     const st = this.engine.confirmedState();
     const me = seatOfPeer(st, this.peerId);
     if (me !== null) {
@@ -1824,7 +1913,8 @@ class NetTable implements NetSession, SessionRecovery {
     const lone = this.rejoining ? timeoutMs : Math.max(0, (this.internals.loneWaitMs ?? 0) - settleMs);
     // M8-C: a browser that must never sit alone (a matched room's other members, a claim link) waits for a peer
     // without a time limit; disposing the session ends the wait.
-    if (!this.createdHere && this.internals.neverAlone === true) {
+    if (this.claimWanted !== null && this.engine.seat() !== null) this.claimWanted = null;
+    if (!this.createdHere && (this.internals.neverAlone === true || this.claimWanted !== null)) {
       while (!this.tableInRoom()) {
         await this.until(() => this.tableInRoom() || this.disposed, () => null, null, 'the table');
         if (this.disposed) throw new Error('The session is closed');
@@ -1847,6 +1937,11 @@ class NetTable implements NetSession, SessionRecovery {
       timeoutMs,
       'the table to sync',
     );
+    // M8-P5: a claim link on a browser without a seat here: the public table is in step; the claim page sits down.
+    if (this.claimWanted !== null && this.engine.seat() === null) return;
+    // M8-P5 (persistence.md section 7): the seat this browser saved was taken over from another browser.
+    const moved = this.seatMoved();
+    if (moved !== null) throw new Error(moved);
     const deadline = this.now() + timeoutMs;
     while (this.engine.seat() === null || seatOfPeer(this.engine.confirmedState(), this.peerId) === null) {
       if (this.disposed) throw new Error('The session is closed');
@@ -1957,6 +2052,236 @@ class NetTable implements NetSession, SessionRecovery {
     }
   }
 
+  // --- Rejoin (M8-P5; persistence.md sections 5 to 7) ----------------------------------------------------------
+
+  /** The hash of the confirmed state, as a `head` carries it (cached per state). */
+  private headHash(): string {
+    const st = this.engine.confirmedState();
+    if (this.headCache?.state !== st) this.headCache = { state: st, h: sha256Sync(canonicalJson(st)) };
+    return this.headCache.h;
+  }
+
+  /** The muster verdict now (session/muster.ts). */
+  private musterNow(): MusterStatus {
+    const st = this.engine.confirmedState();
+    return musterStatus({
+      state: st,
+      me: seatOfPeer(st, this.peerId),
+      myPeerId: this.peerId,
+      mine: { seq: this.engine.seq(), play: this.engine.play?.() ?? 0, h: this.stayed || st.stage === 'lobby' ? '' : this.headHash() },
+      peers: this.engine.peers().map((p) => ({ peerId: p.peerId, status: p.status, head: p.head })),
+      knownHead: this.knownHeadValue,
+      stayed: this.stayed,
+      decided: this.decided,
+    });
+  }
+
+  /** Whether this browser may act (the muster rule; persistence.md section 5). */
+  private live(): boolean {
+    if (this.stayed || this.engine.confirmedState().stage === 'lobby') return true;
+    return (this.musterValue ?? this.musterNow()).live;
+  }
+
+  /** The line the HUD shows while on standby: `Waiting for Ben`. */
+  private waitingText(): string {
+    const m = this.musterValue ?? this.musterNow();
+    const st = this.engine.confirmedState();
+    const names = m.waitingFor.map((id) => st.seats[id]?.name || id);
+    return names.length ? `Waiting for ${joinNames(names)}` : 'Waiting for the others';
+  }
+
+  /** Recompute the muster rule, `knownHead` and the head flags; tell the listeners when the verdict changed. */
+  private refreshMuster(): void {
+    if (this.disposed) return;
+    const st = this.engine.confirmedState();
+    const mine = { seq: this.engine.seq(), play: this.engine.play?.() ?? 0 };
+    let known = this.knownHeadValue;
+    if (known !== null && !knownIsNewer(known, mine)) known = null;
+    for (const p of this.engine.peers()) {
+      if (p.status !== 'connected' || !p.head || p.peerId === '') continue;
+      const cand: KnownHead = { play: p.head.play, seq: p.head.seq, peer: p.peerId, seat: seatOfPeer(st, p.peerId) };
+      if (knownIsNewer(cand, mine) && (known === null || knownIsNewer(cand, known))) known = cand;
+    }
+    if (known !== this.knownHeadValue && canonicalJson(known) !== canonicalJson(this.knownHeadValue)) {
+      this.knownHeadValue = known;
+      this.saves.saveRecord();
+    }
+    const m = this.musterNow();
+    // Rule 1: once live (in the lobby every browser is), this page stays live until it closes.
+    if (m.live && !this.stayed) {
+      this.stayed = true;
+      this.liveRuleValue = m.rule;
+    }
+    this.engine.setHead?.({ live: m.live, saving: !this.saves.failing });
+    const changed = this.musterValue === null || canonicalJson(this.musterValue) !== canonicalJson(m);
+    this.musterValue = m;
+    if (changed) {
+      for (const l of [...this.musterListeners]) {
+        try {
+          l(m);
+        } catch (e) {
+          console.error('muster listener failed', e);
+        }
+      }
+      // Proposals the muster held back (the session's own automatic ones) may go now.
+      if (m.live) this.queueDrive();
+    }
+  }
+
+  /** A sequenced rejoin action: `knownHead` and rule 4 (contracts.md Part G item 3). */
+  private noteRejoin(action: Action, prior: TableState): void {
+    if (action.type === 'playOn') {
+      this.decided = true;
+      if (this.knownHeadValue !== null) {
+        this.knownHeadValue = null;
+        this.saves.saveRecord();
+      }
+    } else if (action.type === 'seatClaim') {
+      const old = prior.seats[action.seat]?.peer;
+      if (this.knownHeadValue !== null && old !== undefined && this.knownHeadValue.peer === old) {
+        this.knownHeadValue = null;
+        this.saves.saveRecord();
+      }
+      const invite = prior.seats[action.seat]?.invite;
+      const maker = invite ? prior.seats[invite.by]?.name : undefined;
+      if (maker) this.teamView.makers.set(action.seat, maker);
+      if (action.peer === this.peerId) {
+        this.claimWanted = null;
+        this.nonces.delete('claim', action.seat);
+      }
+    } else if (action.type === 'seatInvite' && action.h === null) {
+      this.inviteTokens.delete(action.seat);
+    }
+  }
+
+  /** A plain notice for the table (persistence.md sections 5 and 6): into the log and to the notice listeners. */
+  private notice(text: string): void {
+    this.system('info', text);
+    for (const l of [...this.noticeListeners]) {
+      try {
+        l(text);
+      } catch (e) {
+        console.error('notice listener failed', e);
+      }
+    }
+    this.notify();
+  }
+
+  /** Why this browser cannot sit down again: its saved seat was taken over from another browser; null otherwise. */
+  private seatMoved(): string | null {
+    if (!this.hadSave || this.engine.seat() !== null) return null;
+    const st = this.engine.confirmedState();
+    const seat = st.seats[this.sec.seat];
+    if (!seat || seat.peer === undefined || seat.peer === this.peerId || (seat.takeovers ?? 0) === 0) return null;
+    const by = [...this.entries].reverse().find((e) => e.kind === 'action' && e.action.type === 'seatClaim' && e.action.seat === seat.id);
+    const invite = by?.kind === 'action' ? [...this.entries].reverse().find((e) => e.kind === 'action' && e.seq < by.seq && e.action.type === 'seatInvite' && e.action.seat === seat.id && e.action.h !== null) : undefined;
+    const maker = invite?.kind === 'action' ? st.seats[invite.action.by]?.name : undefined;
+    return `[seat:moved] Your seat was taken over from another browser${maker ? ` (link made by ${maker})` : ''}. Your saved hand for this game can no longer be used.`;
+  }
+
+  /** The re-invite link base: this page's address without its hash. */
+  private linkBase(): string {
+    return typeof location === 'undefined' ? '' : location.href.split('#')[0]!;
+  }
+
+  /** Open a re-invite for an away seat; resolves to the link once sequenced (persistence.md section 7). */
+  async inviteSeat(seat: SeatId): Promise<string> {
+    if (this.disposed) throw new Error('The session is closed');
+    const token = newClaimToken();
+    const a = this.stamp({ type: 'seatInvite', seat, h: claimHashOf(seat, token), exp: this.now() + INVITE_TTL_MS });
+    const why = explain(this.engine.state(), { ...a, seq: this.engine.state().seq + 1 } as Action);
+    if (why !== null) throw new Error(why);
+    if (!this.propose(a, false)) throw new Error(this.lastWarning());
+    this.notify();
+    await this.sequenced(a.cid);
+    this.inviteTokens.set(seat, token);
+    return rejoinLink(this.linkBase(), this.roomId, this.opts.roomKey, seat, token);
+  }
+
+  /** The link of the open invite this page made for `seat`, if it still holds its token. */
+  inviteLink(seat: SeatId): string | null {
+    const token = this.inviteTokens.get(seat);
+    const open = this.engine.confirmedState().seats[seat]?.invite;
+    if (!token || !open || open.h !== claimHashOf(seat, token)) return null;
+    return rejoinLink(this.linkBase(), this.roomId, this.opts.roomKey, seat, token);
+  }
+
+  /** Take an open invite back (`seatInvite {h: null}`). */
+  async takeInviteBack(seat: SeatId): Promise<void> {
+    const a = this.stamp({ type: 'seatInvite', seat, h: null });
+    if (!this.propose(a, false)) throw new Error(this.lastWarning());
+    this.notify();
+    await this.sequenced(a.cid);
+  }
+
+  /** `PLAY ON WITHOUT …`, or with an empty list `PLAY ON WITH THIS TABLE` (persistence.md section 5). */
+  async playOn(seats: SeatId[]): Promise<void> {
+    const a = this.stamp({ type: 'playOn', without: [...seats] });
+    if (!this.propose(a, false)) throw new Error(this.lastWarning());
+    this.notify();
+    await this.sequenced(a.cid);
+  }
+
+  /** The claim this page was opened with and has not made: the seat and its current name (for the claim page). */
+  claimInfo(): { seat: SeatId; name: string } | null {
+    if (this.claimWanted === null || this.engine.seat() !== null) return null;
+    const seat = this.engine.confirmedState().seats[this.claimWanted.seat];
+    return { seat: this.claimWanted.seat, name: seat?.name ?? '' };
+  }
+
+  /** Sit down at the claimed seat with the link's token (`SIT DOWN HERE AS BEN`). Rejects with the refusal reason. */
+  async claimSeat(name?: string): Promise<void> {
+    const c = this.claimWanted;
+    if (this.disposed) throw new Error('The session is closed');
+    if (c === null) throw new Error('This page has no seat to claim.');
+    const st = this.engine.state();
+    const nm = (name ?? st.seats[c.seat]?.name ?? '').trim().slice(0, 64) || this.opts.identity.nickname || DEFAULT_NICKNAME;
+    const a = this.stampAs({ type: 'seatClaim', seat: c.seat, claim: c.token, peer: this.peerId, name: nm }, c.seat);
+    const why = explain(st, { ...a, seq: st.seq + 1 } as Action);
+    if (why !== null) throw new Error(why);
+    this.nonces.set('claim', c.seat, c.token);
+    if (!this.propose(a, false)) throw new Error(this.lastWarning());
+    this.notify();
+    try {
+      await this.sequenced(a.cid);
+    } catch (e) {
+      throw new Error(errorText(e).replace(/^refused: /, ''));
+    }
+  }
+
+  /** Plain notices of this table (a player left, a copy was replaced). */
+  onNotice(l: (text: string) => void): () => void {
+    this.noticeListeners.add(l);
+    return () => {
+      this.noticeListeners.delete(l);
+    };
+  }
+
+  /** Move the clock of the sequencer's rejoin checks (debug hook `net.setClock`, tests). */
+  setClock(now: () => number): void {
+    this.engine.setClock?.(now);
+  }
+
+  /** The rejoin controls (session/types.ts SessionMuster). */
+  get muster(): SessionMuster {
+    return {
+      muster: () => {
+        this.refreshMuster();
+        return this.musterValue ?? this.musterNow();
+      },
+      subscribe: (l) => {
+        this.musterListeners.add(l);
+        return () => {
+          this.musterListeners.delete(l);
+        };
+      },
+      playOn: (seats) => this.playOn(seats),
+      invite: (seat) => this.inviteSeat(seat),
+      takeInviteBack: (seat) => this.takeInviteBack(seat),
+      saveState: (): SaveState => (this.saves.failing ? 'notSaving' : 'saved'),
+    };
+  }
+
   // --- Log, notifications ------------------------------------------------------------------------------------
 
   private warn(text: string): void {
@@ -1986,6 +2311,7 @@ class NetTable implements NetSession, SessionRecovery {
 
   private notify(): void {
     if (this.disposed) return;
+    this.refreshMuster();
     this.settleWaiters();
     this.teamView.sync();
     for (const l of [...this.changeListeners]) {
@@ -2015,6 +2341,7 @@ class NetTable implements NetSession, SessionRecovery {
   }
 
   private notifyNet(): void {
+    if (!this.disposed) this.refreshMuster();
     const s = this.netStatus();
     for (const l of [...this.netListeners]) {
       try {
@@ -2169,7 +2496,10 @@ function snapshotPlayAt(engine: NetEngine, snapshotSeq: number, entries: readonl
   return Math.max(0, (engine.play?.() ?? 0) - after);
 }
 
-async function loadSaved(store: TableStore | undefined, roomId: string): Promise<{ start: ResumePoint; secrets: SecretStore | null; entries: LogEntry[]; snapshotSeq: number; protocol: number | undefined } | null> {
+async function loadSaved(
+  store: TableStore | undefined,
+  roomId: string,
+): Promise<{ start: ResumePoint; secrets: SecretStore | null; entries: LogEntry[]; snapshotSeq: number; protocol: number | undefined; seat: SeatId | null; knownHead: KnownHead | null } | null> {
   if (!store) return null;
   const loaded = await store.loadTable(roomId);
   if (!loaded || !loaded.table.snapshot || loaded.table.roomKey === '') return null;
@@ -2191,7 +2521,7 @@ async function loadSaved(store: TableStore | undefined, roomId: string): Promise
     log = loaded.log;
   }
   const entries: LogEntry[] = log.filter((r) => r.seq <= seq).map((r) => ({ kind: 'action', seq: r.seq, at: r.at, action: r.action }));
-  return { start: { snapshot: { seq: table.snapshotSeq, state: snapshot, ...(table.snapshotPlay !== undefined ? { play: table.snapshotPlay } : {}) }, tail }, secrets: loaded.secrets, entries, snapshotSeq: table.snapshotSeq, protocol: table.protocol };
+  return { start: { snapshot: { seq: table.snapshotSeq, state: snapshot, ...(table.snapshotPlay !== undefined ? { play: table.snapshotPlay } : {}) }, tail }, secrets: loaded.secrets, entries, snapshotSeq: table.snapshotSeq, protocol: table.protocol, seat: table.seat, knownHead: table.knownHead ?? null };
 }
 
 /**
@@ -2239,6 +2569,8 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
     snapshotSeq: start.snapshot.seq,
     lastSeq: engine.confirmedState().seq,
     protocol: saved?.protocol,
+    hadSave: saved !== null && saved.seat !== null,
+    knownHead: saved?.knownHead ?? null,
   });
   gate = (channel, msg) => session.auditOutgoing(channel, msg);
   observe = (channel, from, msg) => session.auditIncoming(channel, from, msg);

@@ -167,6 +167,12 @@ export interface TeamControls {
   subscribe(listener: () => void): () => void;
   /** Team chat lines received and sent, as log entries for this browser's timeline (never in the shared log). */
   chatLog(): LogEntry[];
+  /** Teammates whose seat a new browser took over and who get no hand until this player confirms (contracts.md Part G item 1). */ // [M8-P5]
+  withheld?(): { seat: SeatId; name: string; by: string | null }[]; // [M8-P5]
+  /** `SHOW`: send the own hand to that teammate again. */ // [M8-P5]
+  showHand?(seat: SeatId): void; // [M8-P5]
+  /** `NOT YET`: keep withholding; the prompt goes away for this page. */ // [M8-P5]
+  holdHand?(seat: SeatId): void; // [M8-P5]
 }
 
 /**

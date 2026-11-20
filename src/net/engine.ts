@@ -97,6 +97,20 @@ const KEEP_ASKS = 256;
 const KEEP_DEFERRED = 16;
 /** Actions the sequencer proposes as records of its own view, never re-proposed from an abandoned history. */
 const DUTY_RECORDS: ReadonlySet<string> = new Set(['away', 'sequencerClaim']);
+/** How long a re-invite link works (persistence.md section 7): 24 hours on the sequencer's clock. Added by M8-P5. */
+export const INVITE_TTL_MS = 24 * 60 * 60 * 1000;
+/** Slack on the maker's clock for an invite's expiry (its clock may run ahead of the sequencer's). Added by M8-P5. */
+const INVITE_EXP_SLACK_MS = 10 * 60 * 1000;
+/** The sequencer accepts an invite only after it has seen the seat away this long (contracts.md Part G item 7). Added by M8-P5. */
+export const INVITE_AWAY_MS = 30_000;
+/** A `head` goes out this long after the confirmed seq last changed (persistence.md section 6). Added by M8-P5. */
+export const HEAD_DELAY_MS = 500;
+/**
+ * What a standby sequencer sequences (contracts.md Part G item 5): chat, the rejoin actions and `away false` (checked
+ * separately), and its own handover record. Added by M8-P5.
+ */
+export const STANDBY_TYPES: ReadonlySet<string> = new Set(['chat', 'seatInvite', 'seatClaim', 'playOn', 'away', 'sequencerClaim']);
+
 /** Reason of a `nack` for a proposal that was already sequenced (the proposer drops it silently). */
 export const NACK_DUPLICATE = 'duplicate';
 
@@ -333,12 +347,29 @@ class Engine implements NetEngine {
   private readonly sequencerEv = new Emitter<[string | null, number]>();
   private readonly peersEv = new Emitter<[PeerInfo[]]>();
   private readonly privateEv = new Emitter<[PrivateMessage, { seat: SeatId | null; peerId: string }]>();
+  private readonly adoptEv = new Emitter<[{ forkSeq: number; abandonedOwn: number; from: string }]>();
+  private readonly leaveEv = new Emitter<[string, SeatId | null]>();
+  /** Verified players whose connection went, by transport id: a late `bye { reason: 'leave' }` names them (M8-P5). */
+  private readonly gone = new Map<PeerId, string>();
+
+  // --- M8-P5: head announcements, standby and the rejoin checks (persistence.md sections 5 to 7) ---------------
+  /** The flags of this browser's `head`: live by the muster rule, and saving. */
+  private headLive = true;
+  private headSaving = true;
+  /** When the next `head` broadcast is due (500 ms after the confirmed seq last changed), or null. */
+  private headDueAt: number | null = null;
+  private headSeq = -1;
+  /** The clock of the rejoin checks (24 hours of an invite, 30 seconds of absence): `setClock` replaces it. */
+  private rejoinNow: () => number;
+  /** When this browser saw each seat marked away, on the rejoin clock; reset when it becomes the sequencer. */
+  private readonly awaySince = new Map<SeatId, number>();
 
   constructor(opts: NetEngineOptions) {
     this.opts = opts;
     this.identity = opts.identity;
     this.role = opts.role ?? 'player';
     this.now = opts.now ?? (() => Date.now());
+    this.rejoinNow = this.now;
     const rnd = crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
     this.cidPrefix = `${opts.identity.peerId}.${rnd.toString(36)}.`;
     this.replica = new Replica(opts.game, opts.start.snapshot);
@@ -549,6 +580,128 @@ class Engine implements NetEngine {
     return this.logStart === 0 ? [...this.log] : [...this.log.slice(this.logStart), ...this.log.slice(0, this.logStart)];
   }
 
+  // --- M8-P5: head, standby, rejoin checks ---------------------------------------------------------------
+
+  /** Set the flags of this browser's `head` (persistence.md section 6); a change is announced at once. */
+  setHead(flags: { live?: boolean; saving?: boolean }): void {
+    const live = flags.live ?? this.headLive;
+    const saving = flags.saving ?? this.headSaving;
+    if (live === this.headLive && saving === this.headSaving) return;
+    const wasLive = this.headLive;
+    this.headLive = live;
+    this.headSaving = saving;
+    if (this.joined && !this.closed) this.sendHead();
+    if (live && !wasLive && this.mode === 'active') {
+      // Live now: the duties a standby sequencer held back (away marks, the game's timers) run.
+      this.syncAwaySeats();
+      this.armDeadlines();
+      this.afterChange();
+    }
+  }
+
+  onLeave(l: (peerId: string, seat: SeatId | null) => void): Unsubscribe {
+    return this.leaveEv.add(l);
+  }
+
+  onAdopt(l: (e: { forkSeq: number; abandonedOwn: number; from: string }) => void): Unsubscribe {
+    return this.adoptEv.add(l);
+  }
+
+  /** Replace the clock of the rejoin checks (net.setClock in the debug hook; tests). */
+  setClock(now: () => number): void {
+    this.rejoinNow = now;
+  }
+
+  /** The announcement of this browser's head: public facts only (exactly the keys of net/validate.ts HEAD_KEYS). */
+  private headMessage(): WireOf<'head'> {
+    const st = this.replica.confirmed();
+    return {
+      v: PROTOCOL_VERSION,
+      t: 'head',
+      seq: this.replica.seq(),
+      play: this.replica.play(),
+      h: sha256Sync(canonicalJson(st)),
+      turn: st.turn.number,
+      stage: st.stage,
+      live: this.headLive,
+      saving: this.headSaving,
+    };
+  }
+
+  /** Send the head to one peer, or to everyone (then the next is due when the confirmed seq changes again). */
+  private sendHead(to?: PeerId): void {
+    if (this.closed || !this.joined) return;
+    const msg = this.headMessage();
+    if (to === undefined) {
+      this.headDueAt = null;
+      this.headSeq = msg.seq;
+      if (!this.connectedPeers().length) return;
+    }
+    this.send('ctl', msg, to);
+  }
+
+  private claimMsg(): WireOf<'claim'> {
+    return { v: PROTOCOL_VERSION, t: 'claim', fromSeq: this.replica.seq(), seat: this.seat() ?? '', play: this.replica.play() };
+  }
+
+  private myHeadKey(): HeadKey {
+    return { play: this.replica.play(), seq: this.replica.seq(), peerId: this.identity.peerId };
+  }
+
+  /** The key of a peer's claimAck (its play count only when reported at that seq). */
+  private ackKey(e: PeerEntry): HeadKey {
+    const seq = e.claimAck ?? 0;
+    return { play: e.info.lastPlayAt === seq ? e.info.lastPlay : undefined, seq, peerId: e.info.peerId };
+  }
+
+  /** A peer's copy is not merely this one: it is ahead by seq, or its announced head differs from this replica's. */
+  private differs(e: PeerEntry): boolean {
+    if (e.info.lastSeq > this.replica.seq()) return true;
+    const head = e.info.head;
+    if (!head || head.seq !== e.info.lastSeq) return e.info.lastPlayAt === e.info.lastSeq && (e.info.lastPlay ?? 0) > this.replica.play();
+    return head.seq !== this.replica.seq() || head.h !== sha256Sync(canonicalJson(this.replica.confirmed()));
+  }
+
+  /** Remember when each seat was first seen away (rejoin clock); a seat back is forgotten. */
+  private noteAway(): void {
+    const seats = this.replica.confirmed().seats;
+    for (const s of Object.values(seats)) {
+      if (s.away === true) {
+        if (!this.awaySince.has(s.id)) this.awaySince.set(s.id, this.rejoinNow());
+      } else this.awaySince.delete(s.id);
+    }
+  }
+
+  /**
+   * The sequencer's own checks of the rejoin actions (persistence.md section 7; contracts.md Part G items 6 and 7): a
+   * claim with the claimant's own peer id, within the invite's 24 hours, never while the seat's previous browser is
+   * connected; an invite only after the seat was seen away for 30 seconds and with an expiry within 24 hours; a
+   * standby sequencer sequences `away` only to mark a connected seat back. Null when allowed.
+   */
+  private rejoinProblem(state: TableState, action: Action, senderPeer: string): string | null {
+    if (!this.headLive && !STANDBY_TYPES.has(action.type)) return 'the table is gathering: only chat, invites, claims and play on go through until everyone is back';
+    if (action.type === 'away' && !this.headLive && action.away !== false) return 'a gathering table marks nobody away';
+    if (action.type === 'seatClaim') {
+      if (action.peer !== senderPeer) return 'a seat is claimed with the claimant’s own peer id';
+      const seat = typeof action.seat === 'string' && Object.hasOwn(state.seats, action.seat) ? state.seats[action.seat]! : null;
+      if (seat?.invite && seat.invite.h !== undefined && this.rejoinNow() > seat.invite.exp) return '[claim:expired] this link has expired';
+      const old = seat?.peer;
+      if (old !== undefined && (old === this.identity.peerId || this.connectedPeers().some(([, e]) => e.info.peerId === old))) {
+        return `[claim:otherDevice] ${seat!.name || seat!.id} is still connected from another browser`;
+      }
+    }
+    if (action.type === 'seatInvite' && action.h !== null) {
+      const seat = typeof action.seat === 'string' && Object.hasOwn(state.seats, action.seat) ? state.seats[action.seat]! : null;
+      if (seat && seat.away === true) {
+        const since = this.awaySince.get(seat.id);
+        const now = this.rejoinNow();
+        if (since === undefined || now - since < INVITE_AWAY_MS) return `[invite:soon] ${seat.name || seat.id} has been away for less than 30 seconds`;
+        if (typeof action.exp === 'number' && (action.exp <= now || action.exp > now + INVITE_TTL_MS + INVITE_EXP_SLACK_MS)) return '[invite:exp] an invite expires within 24 hours';
+      }
+    }
+    return null;
+  }
+
   // --- sending ----------------------------------------------------------------------------------------------
 
   private send(channel: Channel, msg: WireMessage, to?: PeerId): void {
@@ -634,6 +787,10 @@ class Engine implements NetEngine {
     const e = this.peerMap.get(peer);
     if (!e) return;
     this.peerMap.delete(peer);
+    if (this.verified(e) && e.info.role === 'player' && e.info.peerId) {
+      this.gone.set(peer, e.info.peerId);
+      trimMap(this.gone, 32);
+    }
     this.presence.forget(peer);
     if (this.sync?.to === peer) this.sync = null;
     this.asks = this.asks.filter((a) => a.to !== peer);
@@ -772,9 +929,10 @@ class Engine implements NetEngine {
     this.peersChanged();
     this.livenessChanged();
     if (this.sequencer === hello.peerId) this.resendPending();
+    this.sendHead(from);
     if (this.mode === 'claiming') {
       e.claimAck = null;
-      this.send('ctl', { v: PROTOCOL_VERSION, t: 'claim', fromSeq: this.replica.seq(), seat: this.seat() ?? '' }, from);
+      this.send('ctl', this.claimMsg(), from);
     }
     this.maybeCatchUp();
     this.updateStatus();
@@ -787,7 +945,11 @@ class Engine implements NetEngine {
     }
     if (m.reason === 'seatTaken') this.system('warn', 'This browser identity is already at the table in another page.');
     if (m.reason === 'badSignature' && this.verified(e)) return;
+    const left = m.reason === 'leave' && this.verified(e) && e.info.role === 'player' ? e.info.peerId : null;
     this.removePeer(from);
+    this.gone.delete(from);
+    // M8-P5 (persistence.md section 5): a player who left on purpose; the sequencer marked the seat away above.
+    if (left !== null) this.leaveEv.emit(left, seatOfPeer(this.replica.confirmed(), left));
   }
 
   /**
@@ -860,6 +1022,13 @@ class Engine implements NetEngine {
       // A peer we do not know (yet, or any more) speaks to us: start the handshake. Our hello makes it answer, so
       // a peer that still counts us as verified after we dropped it is not ignored for ever. A late message from a
       // connection the transport already reported gone is ignored.
+      if (msg.t === 'bye' && msg.reason === 'leave') {
+        // M8-P5: the connection was reported gone before its bye arrived: still a player who left on purpose.
+        const gone = this.gone.get(from);
+        this.gone.delete(from);
+        if (gone !== undefined) this.leaveEv.emit(gone, seatOfPeer(this.replica.confirmed(), gone));
+        return;
+      }
       if (msg.t !== 'hello' && !this.opts.transport.peers().includes(from)) return;
       e = this.addPeer(from);
       this.sendHello(from, e);
@@ -892,6 +1061,10 @@ class Engine implements NetEngine {
         return this.onSyncRes(from, e, msg);
       case 'hb':
         e.info.lastSeq = msg.seq;
+        if (msg.play !== undefined) {
+          e.info.lastPlay = msg.play;
+          e.info.lastPlayAt = msg.seq;
+        }
         this.noteNamed(e, msg.sequencer);
         if (!this.reconciled) this.recompute();
         this.aheadCheck(e);
@@ -901,6 +1074,10 @@ class Engine implements NetEngine {
         return this.onClaim(from, e, msg);
       case 'claimAck':
         e.info.lastSeq = msg.lastSeq;
+        if (msg.lastPlay !== undefined) {
+          e.info.lastPlay = msg.lastPlay;
+          e.info.lastPlayAt = msg.lastSeq;
+        }
         if (this.mode === 'claiming') {
           e.claimAck = msg.lastSeq;
           this.checkClaim();
@@ -914,8 +1091,12 @@ class Engine implements NetEngine {
       case 'head':
         // Added by M8-C: stored for the session's muster rule (persistence.md section 6); M8-P5 sends and uses it.
         e.info.head = { seq: msg.seq, play: msg.play, h: msg.h, turn: msg.turn, stage: msg.stage, live: msg.live, saving: msg.saving };
-        e.info.lastPlay = msg.play;
-        e.info.lastPlayAt = msg.seq;
+        if (msg.seq >= e.info.lastSeq) {
+          e.info.lastSeq = msg.seq;
+          e.info.lastPlay = msg.play;
+          e.info.lastPlayAt = msg.seq;
+        }
+        this.peersChanged();
         return;
       case 'propose':
         return this.onPropose(from, msg);
@@ -1050,8 +1231,10 @@ class Engine implements NetEngine {
    * the one further ahead wins; at the same seq, the lowest seat index (DESIGN Liveness: two claimants resolve by
    * lowest seat index), a seated claimant before an unseated one, then the lower peer id.
    */
-  private outranks(claimant: string, fromSeq: number, seat: SeatId | ''): boolean {
+  private outranks(claimant: string, fromSeq: number, seat: SeatId | '', play?: number): boolean {
     const seq = this.replica.seq();
+    // M8-P5 (contracts.md Part G item 2): more moves first, when the claimant said how many.
+    if (play !== undefined && play !== this.replica.play()) return play > this.replica.play();
     if (fromSeq !== seq) return fromSeq > seq;
     const state = this.replica.confirmed();
     const index = (s: SeatId | '' | null): number => (s ? (state.seats[s]?.index ?? Number(/^s(\d+)$/.exec(s)?.[1] ?? Infinity)) : Infinity);
@@ -1095,7 +1278,7 @@ class Engine implements NetEngine {
    * sequencing and claims again, so it continues from the history the others acknowledged.
    */
   private aheadCheck(e: PeerEntry): void {
-    if (this.mode === 'active' && e.info.status === 'connected' && e.info.lastSeq > this.replica.seq()) this.startClaim(null);
+    if (this.mode === 'active' && e.info.status === 'connected' && newerHead(headKeyOf(e.info), this.myHeadKey()) > 0 && this.differs(e)) this.startClaim(null);
   }
 
   private connectedPeers(): [PeerId, PeerEntry][] {
@@ -1115,7 +1298,7 @@ class Engine implements NetEngine {
     this.claimRival = null;
     for (const [, e] of this.connectedPeers()) this.noteRival(e.named);
     this.lastClaimAt = this.now();
-    if (this.connectedPeers().length) this.send('ctl', { v: PROTOCOL_VERSION, t: 'claim', fromSeq: this.replica.seq(), seat: this.seat() ?? '' });
+    if (this.connectedPeers().length) this.send('ctl', this.claimMsg());
     this.checkClaim();
   }
 
@@ -1131,7 +1314,8 @@ class Engine implements NetEngine {
       const ack = pair[1].claimAck;
       if (ack === null) return this.updateStatus();
       const b = best?.[1];
-      if (!b || ack > (b.claimAck ?? 0) || (ack === b.claimAck && pair[1].info.peerId < b.info.peerId)) best = pair;
+      // M8-P5 (contracts.md Part G item 2): the copy with more moves, then the longer one, then the smaller peer id.
+      if (!b || newerHead(this.ackKey(pair[1]), this.ackKey(b)) > 0) best = pair;
     }
     if (!best) return this.activate();
     const [to, e] = best;
@@ -1139,7 +1323,7 @@ class Engine implements NetEngine {
       if (!this.sync) this.requestSync(to, 'overlap');
       return this.updateStatus();
     }
-    if ((e.claimAck ?? 0) > this.replica.seq()) {
+    if ((e.claimAck ?? 0) > this.replica.seq() && newerHead(this.ackKey(e), this.myHeadKey()) > 0) {
       if (!this.sync) this.requestSync(to, 'tail');
       return this.updateStatus();
     }
@@ -1148,6 +1332,9 @@ class Engine implements NetEngine {
 
   private activate(): void {
     this.mode = 'active';
+    // A new sequencer starts the 30 seconds of absence again (contracts.md Part G item 7).
+    this.awaySince.clear();
+    this.noteAway();
     // Connected peers acknowledged the claim and this replica took over the history of the one furthest ahead.
     if (this.connectedPeers().length > 0) this.markReconciled();
     this.seqr = createSequencer(this.replica.seq());
@@ -1188,10 +1375,14 @@ class Engine implements NetEngine {
 
   private onClaim(from: PeerId, e: PeerEntry, m: WireOf<'claim'>): void {
     // A claimant names itself, and holds at least the history it claims from.
+    if (m.fromSeq >= e.info.lastSeq && m.play !== undefined) {
+      e.info.lastPlay = m.play;
+      e.info.lastPlayAt = m.fromSeq;
+    }
     e.info.lastSeq = Math.max(e.info.lastSeq, m.fromSeq);
     this.noteNamed(e, e.info.peerId);
     this.recompute();
-    if (this.sequencer === this.identity.peerId && !this.reconciled && this.outranks(e.info.peerId, m.fromSeq, m.seat)) {
+    if (this.sequencer === this.identity.peerId && !this.reconciled && this.outranks(e.info.peerId, m.fromSeq, m.seat, m.play)) {
       // Our claim rests on a state the room has not confirmed, and theirs ranks first: follow them and catch up.
       this.yieldTo = e.info.peerId;
       this.recompute();
@@ -1208,7 +1399,7 @@ class Engine implements NetEngine {
       this.replica.clearBuffer();
       this.gapSince = null;
       this.seqrHashes.clear();
-      this.send('ctl', { v: PROTOCOL_VERSION, t: 'claimAck', lastSeq: this.replica.seq() }, from);
+      this.send('ctl', { v: PROTOCOL_VERSION, t: 'claimAck', lastSeq: this.replica.seq(), lastPlay: this.replica.play() }, from);
       this.resendPending();
       this.requestSync(from, 'overlap');
     } else if (this.sequencer === this.identity.peerId) {
@@ -1217,7 +1408,7 @@ class Engine implements NetEngine {
       const now = this.now();
       if (now - e.counterAt < CLAIM_RETRY_MS) return;
       e.counterAt = now;
-      this.send('ctl', { v: PROTOCOL_VERSION, t: 'claim', fromSeq: this.replica.seq(), seat: this.seat() ?? '' }, from);
+      this.send('ctl', this.claimMsg(), from);
     }
   }
 
@@ -1242,6 +1433,8 @@ class Engine implements NetEngine {
 
   private senderPeerCheck(state: TableState, action: Action, sender: { peerId: string; role: PeerRole; nickname: string }): string | null {
     if (action.type === 'seatTake' && action.peer !== sender.peerId) return 'a seat is taken with the taker’s own peer id';
+    const rejoin = this.rejoinProblem(state, action, sender.peerId);
+    if (rejoin !== null) return rejoin;
     // A spectator acts as its own spectator id and chats under the nickname it joined with (net/roles.ts; M3-P5); the
     // sequencer's own check (net/sequencer.ts) covers the action type and never-for-a-seat.
     if (sender.role === 'spectator') return roleProblem(state, action, { role: sender.role, peerId: sender.peerId, seat: null }) ?? spectatorNameProblem(action, sender.nickname);
@@ -1275,6 +1468,10 @@ class Engine implements NetEngine {
     if (this.mode !== 'active' || !this.seqr) return;
     const e = this.peerMap.get(from);
     if (!e || !this.verified(e)) return;
+    // A standby sequencer sequences exactly chat, seatInvite, seatClaim, playOn and `away false` (contracts.md Part G
+    // item 5). Anything else is neither sequenced nor refused: its proposer resends it, and it goes through once this
+    // browser is live (or another browser sequences).
+    if (!this.headLive && !STANDBY_TYPES.has(msg.action.type)) return;
     const cid = msg.cid;
     const done = this.replica.seqOf(cid);
     if (done !== undefined) {
@@ -1423,7 +1620,7 @@ class Engine implements NetEngine {
     const now = this.now();
     if (now - (this.toldHeadAt.get(to) ?? -Infinity) < HELLO_RETRY_MS) return;
     this.toldHeadAt.set(to, now);
-    this.send('ctl', { v: PROTOCOL_VERSION, t: 'hb', seq: this.replica.seq(), sequencer: this.sequencer }, to);
+    this.send('ctl', { v: PROTOCOL_VERSION, t: 'hb', seq: this.replica.seq(), sequencer: this.sequencer, play: this.replica.play() }, to);
   }
   private readonly toldHeadAt = new Map<PeerId, number>();
 
@@ -1595,7 +1792,7 @@ class Engine implements NetEngine {
       // rewound to adopt another history meanwhile). Its claimAck is stale; ask it again rather than waiting for ever
       // for seqs it no longer holds (review M1-P1 retry round 1).
       e.claimAck = null;
-      this.send('ctl', { v: PROTOCOL_VERSION, t: 'claim', fromSeq: this.replica.seq(), seat: this.seat() ?? '' }, from);
+      this.send('ctl', this.claimMsg(), from);
     }
     this.afterChange();
     this.checkClaim();
@@ -1628,6 +1825,7 @@ class Engine implements NetEngine {
       abandoned.filter((a) => this.ownCids.has(a.cid) && !DUTY_RECORDS.has(a.type)).map(({ seq, ...rest }) => ({ action: rest as Action, oldSeq: seq, abandoned: true })),
     );
     this.adoptFrom = to;
+    this.adoptEv.emit({ forkSeq, abandonedOwn: abandoned.filter((a) => this.ownCids.has(a.cid) && !DUTY_RECORDS.has(a.type)).length, from: this.peerMap.get(to)?.info.peerId ?? '' });
     // Own hashes from the fork point on describe the abandoned history: the sequencer's hash of such a seq may arrive
     // before this replica re-applies it from the adopted history, and must not be compared with them.
     for (const seq of [...this.myHashes.keys()]) if (seq >= forkSeq) this.myHashes.delete(seq);
@@ -1743,11 +1941,13 @@ class Engine implements NetEngine {
       const seats = this.replica.confirmed().seats;
       if (seats !== this.lastSeats) {
         this.lastSeats = seats;
+        this.noteAway();
         this.peersChanged();
         this.recompute();
         this.syncAwaySeats();
       }
       if (this.mode === 'active') this.armDeadlines();
+      if (this.replica.seq() !== this.headSeq && this.headDueAt === null) this.headDueAt = this.now() + HEAD_DELAY_MS;
       const view = this.replica.view();
       if (view !== this.lastView) {
         this.lastView = view;
@@ -1764,7 +1964,7 @@ class Engine implements NetEngine {
 
   private heartbeat(): void {
     if (this.closed || !this.joined) return;
-    this.send('ctl', { v: PROTOCOL_VERSION, t: 'hb', seq: this.replica.seq(), sequencer: this.sequencer });
+    this.send('ctl', { v: PROTOCOL_VERSION, t: 'hb', seq: this.replica.seq(), sequencer: this.sequencer, play: this.replica.play() });
   }
 
   private tick(): void {
@@ -1795,7 +1995,7 @@ class Engine implements NetEngine {
     if (this.mode === 'claiming' && now - this.lastClaimAt >= CLAIM_RETRY_MS) {
       this.lastClaimAt = now;
       for (const [t, e] of this.connectedPeers()) {
-        if (e.claimAck === null) this.send('ctl', { v: PROTOCOL_VERSION, t: 'claim', fromSeq: this.replica.seq(), seat: this.seat() ?? '' }, t);
+        if (e.claimAck === null) this.send('ctl', this.claimMsg(), t);
       }
       this.checkClaim();
     }
@@ -1808,6 +2008,7 @@ class Engine implements NetEngine {
       if (this.mode === 'claiming') this.checkClaim();
     }
     this.maybeCatchUp();
+    if (this.headDueAt !== null && now >= this.headDueAt) this.sendHead();
     if (this.mode === 'active') {
       this.expireHeld();
       this.syncAwaySeats();
@@ -1837,7 +2038,8 @@ class Engine implements NetEngine {
         // A page watching as a spectator does not sit at the chair its key pair holds (M3-P5).
         const present = peer === me || [...this.peerMap.values()].some((e) => e.info.peerId === peer && e.info.status === 'connected' && e.info.role !== 'spectator');
         const away = seat.away === true;
-        if (!present && !away && this.seen.has(peer)) this.proposeAsSelf({ type: 'away', seat: seat.id, away: true });
+        // A standby sequencer marks nobody away (contracts.md Part G item 5).
+        if (!present && !away && this.seen.has(peer) && this.headLive) this.proposeAsSelf({ type: 'away', seat: seat.id, away: true });
         else if (present && away) this.proposeAsSelf({ type: 'away', seat: seat.id, away: false });
       }
     } finally {
@@ -1853,7 +2055,8 @@ class Engine implements NetEngine {
 
   private armDeadlines(): void {
     const source = this.opts.deadlines;
-    if (!source || this.mode !== 'active') {
+    // A standby sequencer runs no timers of the game: its automatic proposals wait until it is live.
+    if (!source || this.mode !== 'active' || !this.headLive) {
       this.clearDeadlines();
       return;
     }
@@ -1957,7 +2160,7 @@ export const ENGINE_RETAIN_LIMITS: Readonly<Record<keyof EngineRetained, number>
 };
 
 /** The concrete engine type, for tests and the debug hook (net/types.ts NetEngine plus `isSequencing`, `retained`). */
-export type NetEngineImpl = NetEngine & { isSequencing(): boolean; retained(): EngineRetained; play(): number };
+export type NetEngineImpl = NetEngine & { isSequencing(): boolean; retained(): EngineRetained; play(): number; setHead(flags: { live?: boolean; saving?: boolean }): void; setClock(now: () => number): void };
 
 /** What decides which copy of a table is newest (contracts.md Part D). `play` absent: the peer sent no play count. Added by M8-C. */
 export interface HeadKey {
