@@ -32,11 +32,14 @@ export function profileOf(info: TestInfo): string {
   return `decks-${info.testId.replace(/[^a-z0-9]/gi, '').slice(0, 24)}-${info.project.name}`;
 }
 
-/** Open the decks harness at `hash` (default the library) with fixtures and placeholder faces. */
-export async function openDecks(page: Page, opts: { profile: string; hash?: string }): Promise<void> {
+/**
+ * Open the decks harness at `hash` (default the library) with fixtures and placeholder faces. `faces: 'scryfall'` uses
+ * the fixtures' image URLs instead: the caller routes them first (page.route), so nothing reaches the network.
+ */
+export async function openDecks(page: Page, opts: { profile: string; hash?: string; faces?: 'placeholder' | 'scryfall' }): Promise<void> {
   await page.addInitScript({ content: fixturesScript() });
   await page.addInitScript({ content: setsScript(['M19']) });
-  await page.goto(`./?harness=decks&faces=placeholder&profile=${encodeURIComponent(opts.profile)}#${opts.hash ?? '/decks'}`);
+  await page.goto(`./?harness=decks&faces=${opts.faces ?? 'placeholder'}&profile=${encodeURIComponent(opts.profile)}#${opts.hash ?? '/decks'}`);
   await expect.poll(() => page.evaluate(() => window.__decksHarness?.ready === true)).toBe(true);
   await expect.poll(() => page.evaluate(() => typeof window.__spellplane?.decks?.edit === 'function')).toBe(true);
 }

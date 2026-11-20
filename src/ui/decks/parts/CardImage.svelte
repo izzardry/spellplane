@@ -1,12 +1,12 @@
 <!--
   One whole card face in Deck mode (decks.md D28): never cropped, blurred, tinted, dimmed or stretched. The box keeps
-  the card's 63:88 ratio and the image is scaled uniformly inside it; without a card (or before the face arrives) the
-  box shows the neutral back. Implementer: M8-P3.
+  the card's 63:88 ratio and the image is scaled uniformly inside it; without a card, before the face arrives, or when
+  its image fails to load, the box shows the neutral back. Implementer: M8-P3.
 -->
 <script lang="ts">
   import type { CardRef } from '../../../core/types';
   import type { FaceSource, ImageTier } from '../../../data/types';
-  import { faceUrl } from './face-url';
+  import { faceUrl, forgetFaceUrl } from './face-url';
 
   let {
     faces,
@@ -36,7 +36,20 @@
 
 <span class="face" data-face={cardRef ? 'up' : 'back'}>
   {#if src}
-    <img {src} {alt} loading={lazy ? 'lazy' : 'eager'} decoding="async" draggable="false" data-card-face />
+    <img
+      {src}
+      {alt}
+      loading={lazy ? 'lazy' : 'eager'}
+      decoding="async"
+      draggable="false"
+      data-card-face
+      onerror={() => {
+        // A face that cannot be loaded shows the neutral back, never the browser's broken-image box (DESIGN "Deck
+        // building mode", failure behaviour).
+        if (src) forgetFaceUrl(src);
+        src = null;
+      }}
+    />
   {:else}
     <span class="back" role="img" aria-label={alt || 'Card back'}></span>
   {/if}

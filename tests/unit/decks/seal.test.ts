@@ -137,3 +137,42 @@ describe('custom deck edits', () => {
     expect(remove(deck, ref('Cancel'), 'main', 1)).toEqual({ ok: false, reason: 'absent' });
   });
 });
+
+describe('foil pool cards (decks.md D5: "A click on a pool card moves it into the deck")', () => {
+  const shock = ref('Shock');
+  const foilShock = { ...shock, foil: true as const };
+  const withPool = (pool: { sid: string; foil?: true }[]): DeckRecord =>
+    sealedDeck({ side: pool.map((r) => ({ ...r })), seal: { ...sealedDeck().seal!, pool: pool.map((r) => ({ ...r })) } });
+
+  it('a foil-only pool card is added by its card id (the page names the card, not the printing)', () => {
+    const deck = withPool([foilShock, ref('Cancel')]);
+    const r = add(deck, { sid: shock.sid }, 'main', 1, named('Shock'));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.deck.main).toEqual([foilShock]);
+    expect(r.deck.side).toEqual([ref('Cancel')]);
+    expect(sealIntact(r.deck, freeBasic)).toBe(true);
+    // Removed with −, it can be put back.
+    const back = remove(r.deck, { sid: shock.sid }, 'main', 1);
+    expect(back.ok && back.deck.side).toEqual([foilShock, ref('Cancel')]);
+    const again = back.ok ? add(back.deck, { sid: shock.sid }, 'main', 1, named('Shock')) : null;
+    expect(again?.ok && again.deck.main).toEqual([foilShock]);
+  });
+
+  it('a card with a plain and a foil copy: the plain one first, then the foil one, then notInPool', () => {
+    let deck = withPool([foilShock, shock]);
+    const first = add(deck, { sid: shock.sid }, 'main', 1, named('Shock'));
+    if (!first.ok) throw new Error(first.reason);
+    expect(first.deck.main).toEqual([shock]);
+    deck = first.deck;
+    const second = add(deck, { sid: shock.sid }, 'main', 1, named('Shock'));
+    if (!second.ok) throw new Error(second.reason);
+    expect(second.deck.main).toEqual([shock, foilShock]);
+    expect(second.deck.side).toEqual([]);
+    expect(sealIntact(second.deck, freeBasic)).toBe(true);
+    expect(add(second.deck, { sid: shock.sid }, 'main', 1, named('Shock'))).toEqual({ ok: false, reason: 'notInPool' });
+    // Two at once take both copies.
+    const both = add(withPool([foilShock, shock]), { sid: shock.sid }, 'main', 2, named('Shock'));
+    expect(both.ok && both.deck.main.length).toBe(2);
+  });
+});

@@ -8,6 +8,7 @@
 import type { CardLookup } from '../../../data/deck/analyse';
 import type { EditResult } from '../../../data/deck/edit';
 import { summarise } from '../../../data/deck/summary';
+import { settleEdited } from '../../../store/decks';
 import type { DeckRecord, DeckStore } from '../../../store/types';
 
 export const UNDO_LIMIT = 50;
@@ -110,7 +111,7 @@ export class DeckEditor {
     if (!this.dirty) return this.saving;
     this.dirty = false;
     const now = this.deps.now();
-    const record: DeckRecord = { ...this.current, updatedAt: now };
+    const record: DeckRecord = { ...settleEdited(this.current), updatedAt: now };
     record.summary = summarise(record, this.deps.lookup);
     this.current = record;
     this.saving = this.saving

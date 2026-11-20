@@ -43,6 +43,7 @@
     go?: ((hash: string) => void) | undefined;
   } = $props();
 
+  const isOffline = (): boolean => decksOffline() || (typeof navigator !== 'undefined' && navigator.onLine === false);
   const env: DecksEnv = untrack(() => {
     const data = cardData ?? new ScryfallCardDataSource();
     return {
@@ -55,8 +56,19 @@
       newId: newDeckId,
       go: go ?? ((hash: string) => void (location.hash = hash)),
       searching: searching ?? (() => false),
-      offline: () => decksOffline() || (typeof navigator !== 'undefined' && navigator.onLine === false),
-      onOffline: onDecksOffline,
+      offline: isOffline,
+      // The hook's switch and the browser's own online / offline events; the page releases both on destroy.
+      onOffline: (fn) => {
+        const tell = (): void => fn(isOffline());
+        const off = onDecksOffline(tell);
+        window.addEventListener('online', tell);
+        window.addEventListener('offline', tell);
+        return () => {
+          off();
+          window.removeEventListener('online', tell);
+          window.removeEventListener('offline', tell);
+        };
+      },
     };
   });
   const noStorage = untrack(() => !decks);

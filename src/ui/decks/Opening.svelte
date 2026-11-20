@@ -2,7 +2,7 @@
   D4, opening a booster deck's packs (decks.md section 3 "D4 Opening", with the ruling "a simple reveal instead of the
   full opening animation"): the pool was saved before this page shows anything; each pack is shown face up, one at a
   time (only the current pack's cards are in the DOM), `seal.revealed` is saved after each, so a reload resumes at the
-  first unopened pack. NEXT PACK, then BUILD DECK; OPEN ALL goes straight to the deck page, where the suggestion is
+  first unopened pack (the last pack counts only when the opening ends, so a reload there comes back to it). NEXT PACK, then BUILD DECK; OPEN ALL goes straight to the deck page, where the suggestion is
   applied as its first edit (contracts.md Part G "Decks" item 1). Implementer: M8-P3.
 -->
 <script lang="ts">
@@ -14,7 +14,7 @@
   import StatusLine from '../design/StatusLine.svelte';
   import type { DecksEnv } from './env';
   import CardImage from './parts/CardImage.svelte';
-  import { loadSets, markSuggest, saveRevealed } from './state/open';
+  import { loadSets, markSuggest, revealedWhileShowing, saveRevealed } from './state/open';
 
   let { env, id }: { env: DecksEnv; id: string } = $props();
 
@@ -47,8 +47,8 @@
     void env.cardData.getMany([...new Set(d.seal.pool.map((r) => r.sid))]).catch(() => ({}));
     deck = d;
     shown = d.seal.revealed;
-    // Showing a pack counts it as revealed.
-    deck = await saveRevealed(env.decks, d, shown + 1, env.now());
+    // Showing a pack counts it as revealed (the last one only once the opening ends).
+    deck = await saveRevealed(env.decks, d, revealedWhileShowing(shown, total), env.now());
   }
 
   async function next(): Promise<void> {
@@ -58,7 +58,7 @@
       const total = deck.seal.sets.length;
       if (shown + 1 >= total) return await build();
       shown++;
-      deck = await saveRevealed(env.decks, deck, shown + 1, env.now());
+      deck = await saveRevealed(env.decks, deck, revealedWhileShowing(shown, total), env.now());
     } finally {
       busy = false;
     }

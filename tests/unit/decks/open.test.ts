@@ -10,8 +10,9 @@ import { add, setMain } from '../../../src/data/deck/edit';
 import { convertToCustom } from '../../../src/data/deck/seal';
 import { fixtureSetSource } from '../../../src/debug/fixture-sets';
 import type { DeckRecord, DeckStore } from '../../../src/store/types';
+import { summarise } from '../../../src/data/deck/summary';
 import { DeckEditor } from '../../../src/ui/decks/state/editor';
-import { boosterDeckName, finishOpening, openBoosterDeck, pinNextSeed, suggestFor } from '../../../src/ui/decks/state/open';
+import { boosterDeckName, finishOpening, markSuggest, openBoosterDeck, pinNextSeed, revealedWhileShowing, suggestFor, takeSuggest } from '../../../src/ui/decks/state/open';
 import { QUICK_DECK_NAME, quickBoosterDeck } from '../../../src/ui/decks/state/quick';
 import { lookup, named, setData, source } from './fixture-decks';
 
@@ -114,5 +115,27 @@ describe('OPEN', () => {
 
   it('names mixed boosters MIXED', () => {
     expect(boosterDeckName(['M19', 'M20'], Date.UTC(2026, 0, 2))).toBe('MIXED boosters · 2 Jan');
+  });
+});
+
+describe('the end of the opening survives a reload (contracts.md Part G "Decks" item 1)', () => {
+  it('the last pack counts as revealed only when the opening ends', () => {
+    expect([0, 1, 2, 3, 4, 5].map((i) => revealedWhileShowing(i, 6))).toEqual([1, 2, 3, 4, 5, 5]);
+    expect(revealedWhileShowing(0, 1)).toBe(0);
+  });
+
+  it('the deck page suggests for a finished opening that was never saved, even without the in-page mark', async () => {
+    const { d } = deps();
+    const deck = await openBoosterDeck(d, 6, ['M19']);
+    const opened: DeckRecord = { ...deck, seal: { ...deck.seal!, revealed: 6 } };
+    expect(takeSuggest(opened.id, opened)).toBe(true);
+    // Still opening, already built, or saved by an edit (a summary): no suggestion.
+    expect(takeSuggest(deck.id, deck)).toBe(false);
+    expect(takeSuggest(opened.id, { ...opened, main: [opened.side[0]!] })).toBe(false);
+    expect(takeSuggest(opened.id, { ...opened, summary: summarise(opened, lookup) })).toBe(false);
+    // The mark is taken once.
+    markSuggest('x');
+    expect(takeSuggest('x')).toBe(true);
+    expect(takeSuggest('x')).toBe(false);
   });
 });

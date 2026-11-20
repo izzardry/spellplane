@@ -9,6 +9,7 @@ import { autobuild, coloursInWords, type Suggestion } from '../../../data/deck/a
 import { BASIC_LAND_NAMES, type BasicLandName } from '../../../data/deck/analyse';
 import { setMain } from '../../../data/deck/edit';
 import { summarise } from '../../../data/deck/summary';
+import { settleEdited } from '../../../store/decks';
 import type { CardDataSource, SetData, SetDataSource } from '../../../data/types';
 import { BoosterError, openBoosters, PACK_GENERATOR_VERSION, seedHex, setsForPacks } from '../../../draft/solo-sealed';
 import type { DeckRecord, DeckStore } from '../../../store/types';
@@ -123,7 +124,7 @@ export async function finishOpening(deps: Pick<OpenDeps, 'decks' | 'cardData' | 
     const r = setMain(out, suggestion.main, (ref) => deps.cardData.peek(ref.sid));
     if (r.ok) out = r.deck;
   }
-  out = { ...out, updatedAt: deps.now() };
+  out = { ...settleEdited(out), updatedAt: deps.now() };
   out.summary = summarise(out, (r) => deps.cardData.peek(r.sid));
   await deps.decks.put(out);
   return { deck: out, suggestion };
@@ -136,9 +137,23 @@ export function markSuggest(id: string): void {
   suggestOnOpen.add(id);
 }
 
-/** Whether the deck page should apply the suggestion now (once). */
-export function takeSuggest(id: string): boolean {
-  return suggestOnOpen.delete(id);
+/**
+ * Whether the deck page should apply the suggestion now (once): the opening asked for it on this page load, or the
+ * record shows an opening that ended without it (a reload or Back between BUILD DECK and the first save): a booster
+ * deck from packs, every pack shown, an empty main deck and never saved by an edit (no summary yet).
+ */
+export function takeSuggest(id: string, deck?: DeckRecord): boolean {
+  const asked = suggestOnOpen.delete(id);
+  if (asked) return true;
+  return !!deck && deck.kind === 'sealed' && deck.seal?.via === 'packs' && deck.seal.revealed >= deck.seal.sets.length && deck.main.length === 0 && !deck.summary;
+}
+
+/**
+ * The `revealed` count the opening saves while pack `shown` (0-based) is on screen: the last pack counts as revealed
+ * only when BUILD DECK or OPEN ALL ends the opening, so a reload on it comes back to the opening, not to an empty deck.
+ */
+export function revealedWhileShowing(shown: number, total: number): number {
+  return Math.max(0, Math.min(shown + 1, total - 1));
 }
 
 /** Record that the opening showed `revealed` packs (a reload resumes there). */

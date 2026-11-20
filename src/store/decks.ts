@@ -67,6 +67,29 @@ export function migrateDeckRecord(record: DeckRecord): DeckRecord {
   return { ...record, kind: 'custom', size };
 }
 
+/**
+ * A record as an edit saves it (decks.md section 7, "The record's invariants"): a custom deck drops the M2 builder's
+ * `pool` and `origin` ("removed at the first save after migration"); a sealed deck keeps them for the M2 builder only
+ * while the pool still holds the same cards as its deck and sideboard, else the stale `pool` is dropped (the seal holds
+ * the pool now, and the builder opens the record from its lists). A record without `kind` is returned as it is.
+ */
+export function settleEdited(record: DeckRecord): DeckRecord {
+  if (!record.kind || (record.pool === undefined && record.origin === undefined)) return record;
+  const out: DeckRecord = { ...record };
+  if (out.kind === 'custom') {
+    delete out.pool;
+    delete out.origin;
+  } else if (out.pool && !poolMatches(out.pool, out.main, out.side)) {
+    delete out.pool;
+  }
+  return out;
+}
+
+function poolMatches(pool: DeckBuild, main: readonly CardRef[], side: readonly CardRef[]): boolean {
+  const lists = buildLists(pool);
+  return sameRefs(lists.main, main) && sameRefs(lists.side, side);
+}
+
 /** A new random deck id. */
 export function newDeckId(): string {
   return crypto.randomUUID();
@@ -337,9 +360,10 @@ function deckRecord(v: unknown): DeckRecord {
   }
   if (v.pool !== undefined) {
     const pool = deckBuild(v.pool);
-    const lists = buildLists(pool);
-    if (!sameRefs(lists.main, record.main) || !sameRefs(lists.side, record.side)) throw new Invalid('the pool does not hold the same cards as the deck and sideboard');
-    record.pool = pool;
+    // An M8 record (with `kind`) keeps the M2 pool only as a convenience for the builder: a stale one is dropped, not
+    // fatal (decks.md section 7). A version 1 record still needs its pool to match, since migration reads it.
+    if (poolMatches(pool, record.main, record.side)) record.pool = pool;
+    else if (v.kind === undefined) throw new Invalid('the pool does not hold the same cards as the deck and sideboard');
   }
   if (v.origin !== undefined) {
     const o = v.origin;
@@ -436,14 +460,28 @@ export function checkSealedImport(record: DeckRecord, isFreeBasic: (ref: CardRef
   return { record: out, unsealed: true };
 }
 
+/** What importLibrary checks sealed records with (decks.md section 7, "The record's invariants"). */
+export interface ImportOptions {
+  /**
+   * Whether a main-deck card outside a sealed deck's pool is one of the five basic lands (from card data the caller
+   * loaded). Without it, or for a card it does not know, the card counts as foreign and the deck becomes custom: the
+   * check is never skipped.
+   */
+  isFreeBasic?: (ref: CardRef) => boolean;
+  /** The time stamped on `convertedFrom` of a deck that fails (default: the record's own change date). */
+  now?: number;
+}
+
 /**
  * Read a LibraryFile (or a single exported deck record) back into records (DESIGN "Pre-game", Local deck library:
  * importable). Every record is checked; invalid ones are reported in `errors` with their 0-based index in the file and
  * never thrown on. Problems with the file as a whole (not JSON, another format, a newer version) are reported with
  * index -1 and no records. A record whose id appears earlier in the same file is skipped. Ids that already exist in
- * the library are kept for the caller to overwrite or rename (see planImport).
+ * the library are kept for the caller to overwrite or rename (see planImport). Every sealed record is checked
+ * (checkSealedImport with `opts.isFreeBasic`): one holding cards from outside its boosters is returned as a custom deck
+ * and listed in `notes` with UNSEALED_NOTE.
  */
-export function importLibrary(text: string): LibraryImport {
+export function importLibrary(text: string, opts: ImportOptions = {}): LibraryImport {
   const fail = (message: string): LibraryImport => ({ decks: [], errors: [{ index: -1, message }] });
   let data: unknown;
   try {
@@ -465,20 +503,28 @@ export function importLibrary(text: string): LibraryImport {
   if (entries.length > LIBRARY_LIMITS.decks) return fail(`The file holds more than ${LIBRARY_LIMITS.decks} decks.`);
   const decks: DeckRecord[] = [];
   const errors: LibraryImport['errors'] = [];
+  const notes: NonNullable<LibraryImport['notes']> = [];
   const seen = new Set<string>();
   entries.forEach((entry, index) => {
     try {
-      const record = migrateDeckRecord(deckRecord(entry));
-      if (seen.has(record.id)) throw new Invalid(`an earlier deck in the file has the same id`);
-      seen.add(record.id);
-      decks.push(record);
+      const read = deckRecord(entry);
+      // An M2 pool (kept only while it matches the lists, see deckRecord) flags the basics its builder dispensed: those
+      // count as free basics here, so a drafted deck keeps its seal without card data.
+      const dispensed = read.pool ? new Set(read.pool.cards.filter((c) => c.basic === true).map((c) => c.ref.sid)) : null;
+      const free = (r: CardRef): boolean => (dispensed?.has(r.sid) ?? false) || (opts.isFreeBasic?.(r) ?? false);
+      const migrated = migrateDeckRecord(read);
+      if (seen.has(migrated.id)) throw new Invalid(`an earlier deck in the file has the same id`);
+      seen.add(migrated.id);
+      const checked = checkSealedImport(migrated, free, opts.now ?? migrated.updatedAt);
+      if (checked.unsealed) notes.push({ index, message: `“${checked.record.name}”: ${UNSEALED_NOTE}` });
+      decks.push(checked.record);
     } catch (e) {
       if (!(e instanceof Invalid)) throw e;
       const name = isObj(entry) && typeof entry.name === 'string' && entry.name.trim() ? ` "${entry.name.trim().slice(0, 60)}"` : '';
       errors.push({ index, message: `Deck ${index + 1}${name} was skipped: ${e.message}.` });
     }
   });
-  return { decks, errors };
+  return notes.length > 0 ? { decks, errors, notes } : { decks, errors };
 }
 
 /** What importing records into a library does (see planImport). */

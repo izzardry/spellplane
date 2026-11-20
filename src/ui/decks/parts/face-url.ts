@@ -35,3 +35,8 @@ export async function faceUrl(faces: FaceSource, ref: CardRef, tier: ImageTier =
   small.width = small.height = 0;
   return remember(key, url);
 }
+
+/** An image that failed to load (offline, 404): not kept, so the next tile that shows the card asks again. */
+export function forgetFaceUrl(url: string): void {
+  for (const [k, v] of cache) if (v === url) cache.delete(k);
+}

@@ -6,6 +6,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { CardRef, DeckBuild } from '../../../core/types';
+  import { isFreeBasic } from '../../../data/deck/analyse';
   import type { CardData } from '../../../data/types';
   import { buildFromDeckRecord, deckRecordFromBuild, exportFileName, exportLibrary, importLibrary, newDeckId, planImport } from '../../../store/decks';
   import type { DeckRecord, DeckStore } from '../../../store/types';
@@ -140,8 +141,9 @@
         status = `“${file.name}” is too large for a deck file.`;
         return;
       }
-      const result = importLibrary(await file.text());
-      problems = result.errors.map((e) => e.message);
+      // Sealed decks are checked against their boosters; a basic land counts as free only when its card data is known.
+      const result = importLibrary(await file.text(), { isFreeBasic: (r) => isFreeBasic(card(r)), now: Date.now() });
+      problems = [...result.errors, ...(result.notes ?? [])].map((e) => e.message);
       const existing = await decks.list();
       const plan = planImport(existing, result.decks, newDeckId);
       for (const r of plan.put) await decks.put(r);

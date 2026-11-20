@@ -113,7 +113,7 @@
     {/if}
     <Stepper eyebrow="Set · {sub}" value="{info?.name ?? set} ({set})" onprev={() => stepSet(-1)} onnext={() => stepSet(1)} prevLabel="Previous set" nextLabel="Next set" data-testid="setup-set" />
     <Stepper
-      eyebrow={mode === 'deck' ? `about ${value.packs * 14} cards for a 40-card deck` : 'per player'}
+      eyebrow={mode === 'deck' ? `about ${value.packs * 15} cards for a 40-card deck` : 'per player'}
       value="{value.packs} packs"
       onprev={() => stepPacks(-1)}
       onnext={() => stepPacks(1)}

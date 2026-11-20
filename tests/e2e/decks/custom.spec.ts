@@ -146,6 +146,51 @@ test('offline: the search is disabled and the list still edits', async ({ page }
   await expect(page.getByTestId('card-search')).toBeDisabled();
   await page.evaluate(() => window.__spellplane!.decks!.setOffline(false));
   await expect(page.getByTestId('card-search')).toBeEnabled();
+  // The browser's own connection events count too: the field follows them both ways.
+  await page.context().setOffline(true);
+  await expect(page.getByTestId('card-search')).toBeDisabled();
+  await page.context().setOffline(false);
+  await expect(page.getByTestId('card-search')).toBeEnabled();
+});
+
+test('an undone rename stays undone when the page is left', async ({ page }, info) => {
+  await openDecks(page, { profile: profileOf(info) });
+  const id = await newCustomDeck(page);
+  const name = await page.getByTestId('deck-name').inputValue();
+  await test.step('add a card, so the new deck is kept', async () => {
+    await page.getByTestId('card-search').fill('elves');
+    await page.locator('[data-testid="result-card"][data-name="Llanowar Elves"]').click();
+    await expect(row(page, 'Llanowar Elves').getByTestId('row-count')).toHaveText('1');
+  });
+  await test.step('rename, then undo the rename', async () => {
+    await page.getByTestId('deck-name').fill('Renamed deck');
+    await page.getByTestId('deck-name').press('Enter');
+    await expect.poll(async () => (await stored(page, id))?.name).toBe('Renamed deck');
+    await page.getByTestId('deck-undo').click();
+    await expect(page.getByTestId('deck-name')).toHaveValue(name);
+  });
+  await test.step('DONE keeps the undone name', async () => {
+    await page.getByTestId('deck-done').click();
+    await expect(page.getByTestId('deck-library')).toBeVisible();
+    expect((await stored(page, id))?.name).toBe(name);
+  });
+});
+
+test('a card image that fails to load shows the neutral back', async ({ page }, info) => {
+  // Every Scryfall image answers 404 here: nothing reaches the network.
+  let failed = 0;
+  await page.route('https://cards.scryfall.io/**', (route) => {
+    failed++;
+    return route.fulfill({ status: 404, body: '' });
+  });
+  await openDecks(page, { profile: profileOf(info), faces: 'scryfall' });
+  await newCustomDeck(page);
+  await page.getByTestId('card-search').fill('elves');
+  const card = page.locator('[data-testid="result-card"][data-name="Llanowar Elves"]');
+  await expect(card).toBeVisible();
+  await expect.poll(() => failed).toBeGreaterThan(0);
+  await expect(card.locator('[data-face] [role="img"]')).toBeVisible();
+  await expect(card.locator('img[data-card-face]')).toHaveCount(0);
 });
 
 test('the flow works by keyboard alone', async ({ page }, info) => {

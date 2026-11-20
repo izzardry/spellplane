@@ -6,6 +6,7 @@
  * lock. Implementer: M8-P3.
  */
 import { mount as mountSvelte, unmount } from 'svelte';
+import { isFreeBasic } from '../../data/deck/analyse';
 import { ListCardDataSource } from '../../data/deck/list-source';
 import { createFaceSource } from '../../data/faces';
 import { listSetSource } from '../../data/sets';
@@ -70,7 +71,7 @@ async function start(target: HTMLElement): Promise<void> {
       for (const d of decks) await stores?.decks.put(d);
     },
     async seedLibrary(text) {
-      const r = importLibrary(text);
+      const r = importLibrary(text, { isFreeBasic: (ref) => isFreeBasic(cardData.peek(ref.sid)) });
       for (const d of r.decks) await stores?.decks.put(d);
       return r.decks.map((d) => d.id);
     },

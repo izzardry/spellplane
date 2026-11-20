@@ -152,6 +152,8 @@
       lookup,
       now: env.now,
       onchange: (x) => {
+        // Undo and redo of a rename carry the field along, so a later blur does not rename again.
+        if (!deck || x.name !== deck.name) nameDraft = x.name;
         deck = x;
         canUndo = editor?.canUndo ?? false;
         canRedo = editor?.canRedo ?? false;
@@ -164,7 +166,7 @@
     nameDraft = d.name;
     cardsVersion++;
     status = 'ready';
-    if (d.kind === 'sealed' && takeSuggest(d.id)) await suggest();
+    if (d.kind === 'sealed' && takeSuggest(d.id, d)) await suggest();
   }
 
   function apply(...steps: ((d: DeckRecord) => EditResult)[]): EditResult | null {
@@ -196,14 +198,20 @@
     if (!ref) return;
     addSid(ref.sid, 'main');
   }
-  function addSuggestedLands(): void {
-    if (!analysis) return;
+  /** The basics `+N LANDS` adds: empty without coloured costs or without basic printings (offline, no data). */
+  const landRefs = $derived.by((): CardRef[] => {
+    if (!analysis) return [];
     const split = suggestedBasics(analysis, size);
     const refs: CardRef[] = [];
     for (const c of COLOURS) {
       const ref = basics[BASIC_OF_COLOUR[c]];
       for (let i = 0; i < (split[c] ?? 0); i++) if (ref) refs.push(ref);
     }
+    return refs;
+  });
+  const noColours = $derived(!!analysis && COLOURS.every((c) => analysis.symbols[c] === 0));
+  function addSuggestedLands(): void {
+    const refs = landRefs;
     if (refs.length === 0) return;
     const r = apply(...refs.map((ref) => (d: DeckRecord) => add(d, ref, 'main', 1, lookup(ref))));
     if (r?.ok) say(`${refs.length} lands added.`);
@@ -259,6 +267,9 @@
     if (timer) clearTimeout(timer);
     timer = null;
     if (!go) {
+      // A request still in flight must not fill the grid under a cleared field.
+      searchSeq++;
+      searching = false;
       results = [];
       searched = false;
       return;
@@ -536,10 +547,13 @@
         {#if analysis}
           <div class="well lands" data-testid="land-helper">
             <span class="grow"><b>{analysis.lands} lands</b> <span class="ds-t-meta">· {suggested} suggested</span></span>
-            {#if landGap > 1}
-              <Button size="xs" data-testid="add-lands" onclick={addSuggestedLands}>+{landGap} lands</Button>
+            {#if landGap > 1 && landRefs.length > 0}
+              <Button size="xs" data-testid="add-lands" onclick={addSuggestedLands}>+{landRefs.length} lands</Button>
             {/if}
           </div>
+          {#if noColours && analysis.cards > 0}
+            <p class="ds-t-meta" data-testid="land-no-colours">No coloured costs. Add any lands you like.</p>
+          {/if}
           {#if Math.abs(landGap) > 1 && analysis.cards > 0}
             <StatusLine tone="danger" data-testid="land-note">{analysis.lands} lands. {suggested} fit this curve.</StatusLine>
           {/if}

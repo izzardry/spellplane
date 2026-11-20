@@ -58,8 +58,8 @@ function reseal(deck: DeckRecord): DeckRecord {
 }
 
 /**
- * Add `count` copies of `ref` to `board`. Sealed: only to `main`, and only a pool card still in the side (moved) or a
- * free basic (needs `card`; without data the answer is `sealed`). As many copies as the pool still holds are added; none
+ * Add `count` copies of `ref` to `board`. Sealed: only to `main`, and only a pool card still in the side (moved; the exact
+ * printing first, then any copy of the same card, foil or not) or a free basic (needs `card`; without data the answer is `sealed`). As many copies as the pool still holds are added; none
  * at all answers `notInPool`.
  */
 export function add(deck: DeckRecord, ref: CardRef, board: Board, count: number, card: CardData | null): EditResult {
@@ -71,13 +71,17 @@ export function add(deck: DeckRecord, ref: CardRef, board: Board, count: number,
     const basic = isFreeBasic(card);
     let added = 0;
     for (let i = 0; i < n; i++) {
-      const inSide = countOf(poolRemaining(out.seal!.pool, out.main), ref) > 0;
-      if (!inSide && !basic) break;
-      out.main.push(cleanRef(ref));
+      // The exact printing first, then any pool copy of the same card (a click on a pool row names the card, not
+      // whether this copy is the foil one).
+      const side = poolRemaining(out.seal!.pool, out.main);
+      const copy = side.find((r) => refKey(r) === refKey(ref)) ?? side.find((r) => r.sid === ref.sid);
+      if (copy) out.main.push(cleanRef(copy));
+      else if (basic) out.main.push(cleanRef(ref));
+      else break;
       added++;
     }
     if (added === 0) {
-      const inPool = out.seal!.pool.some((r) => refKey(r) === refKey(ref));
+      const inPool = out.seal!.pool.some((r) => r.sid === ref.sid);
       return refuse(!inPool && card === null ? 'sealed' : 'notInPool');
     }
     return { ok: true, deck: reseal(out) };

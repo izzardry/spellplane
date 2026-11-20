@@ -87,6 +87,8 @@ export class DeckLibrary {
     const d = this.decks.find((x) => x.id === id);
     if (!d) return null;
     const copy = duplicateDeck(d, this.deps.newId(), this.deps.now());
+    // The copy's own summary at once, so its tile and Home read it before the library loads again.
+    copy.summary = summarise(copy, (r) => this.deps.cardData.peek(r.sid));
     await this.deps.decks.put(copy);
     this.decks = [copy, ...this.decks];
     this.changed();

@@ -93,6 +93,9 @@ describe('DeckLibrary', () => {
     expect(JSON.stringify(decks.map.get('drafted-ur'))).toBe(before);
     const dup = await lib.duplicate('pasted-gw');
     expect(decks.map.get(dup!.id)?.name).toBe('Green-White Pasted (copy)');
+    // The copy carries its own summary at once (its tile and Home read it before the library loads again).
+    expect(decks.map.get(dup!.id)?.summary?.cards).toBe(decks.map.get('pasted-gw')!.main.length);
+    expect(lib.decks.find((d) => d.id === dup!.id)?.summary).toBeDefined();
     await lib.rename('pasted-gw', '  Selesnya  ');
     expect(decks.map.get('pasted-gw')?.name).toBe('Selesnya');
   });

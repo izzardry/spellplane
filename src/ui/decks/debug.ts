@@ -12,6 +12,7 @@
 import type { CardLookup } from '../../data/deck/analyse';
 import { applyEdit } from '../../data/deck/edit';
 import { summarise } from '../../data/deck/summary';
+import { settleEdited } from '../../store/decks';
 import type { CardData, CardDataSource } from '../../data/types';
 import type { DeckRecord, DeckStore, SettingsStore } from '../../store/types';
 import { registerDebug } from '../../util/debug';
@@ -80,7 +81,7 @@ export function registerDecksPart(decks: DeckStore | null): void {
         await load([...sid, ...d.main.map((r) => r.sid)]);
         const r = applyEdit(d, op, lookup());
         if (!r.ok) return r;
-        const saved: DeckRecord = { ...r.deck, updatedAt: deps.now() };
+        const saved: DeckRecord = { ...settleEdited(r.deck), updatedAt: deps.now() };
         saved.summary = summarise(saved, lookup());
         await store.put(saved);
         deps.onchange?.(id);
