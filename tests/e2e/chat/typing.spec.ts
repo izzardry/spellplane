@@ -49,6 +49,8 @@ test('who is typing shows beside the chat field and on the avatar; players and s
   await expect(a.getByTestId('start-game')).toBeVisible();
   await a.getByTestId('start-game').click();
   for (const p of [a, b]) await expect(p.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+  // M7-P2: the log is closed on entry; open it on every page so its chat field, tabs and typing line are there.
+  for (const p of [a, b]) await openLog(p);
   await openLog(a);
   await expect(a.getByTestId('chat-input')).toBeVisible();
   await expect(a.getByTestId('chat-tab-spectator')).toHaveCount(0);
@@ -86,6 +88,7 @@ test('who is typing shows beside the chat field and on the avatar; players and s
   // --- A spectator joins: the spectator tab appears ---------------------------------------------------------------
   await watchFromStart(v, freshProfile(info, 'tv'), 'Viv', watchLink);
   await expect(v.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+  await openLog(v);
   for (const p of [a, b]) await expect(p.getByTestId('chat-tab-spectator')).toBeVisible({ timeout: 15_000 });
   // The spectator has the table and spectator tabs (no team tab).
   await expect(v.getByTestId('chat-tab-table')).toBeVisible();
@@ -171,10 +174,13 @@ test('a draft on the spectator tab stays there when the last spectator leaves: E
   await expect(a.getByTestId('start-game')).toBeVisible();
   await a.getByTestId('start-game').click();
   for (const p of [a, b]) await expect(p.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+  // M7-P2: the log is closed on entry; open it on every page so its chat field, tabs and typing line are there.
+  for (const p of [a, b]) await openLog(p);
 
   // Viv watches; Ann starts a line to the spectators but has not sent it when Viv leaves.
   await watchFromStart(v, freshProfile(info, 'dv'), 'Viv', watchLink);
   await expect(v.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+  await openLog(v);
   await expect(a.getByTestId('chat-tab-spectator')).toBeVisible({ timeout: 15_000 });
   await a.bringToFront();
   await a.getByTestId('chat-tab-spectator').click();

@@ -138,11 +138,12 @@ test.describe('mouse', () => {
     await page.getByTestId('open-menu').click();
     const tray = page.getByTestId('clip-tray');
     await expect(tray).toBeVisible();
+    await closeHints(page);
+    if (!(await tray.isVisible())) await page.getByTestId('open-menu').click();
     await tray.hover();
     await frames(page);
-    await closeHints(page);
+    await page.getByTestId('menu-popover').screenshot({ path: `artifacts/shots/${M}/clip-tray-toolbar-${info.project.name}.png` });
     await shot(page, M, 'clip-tray', info.project.name);
-    await tray.locator('xpath=..').screenshot({ path: `artifacts/shots/${M}/clip-tray-toolbar-${info.project.name}.png` });
     await page.keyboard.press('Escape');
     await closeUp(page, 'a', 15, 10);
     await clipAB(page);

@@ -82,7 +82,6 @@ test('the start page loads offline with the saved tables, the storage section an
   await context.setOffline(true);
   await page.reload();
   await expect(page.getByTestId('start-page')).toBeVisible();
-  await page.getByTestId('start-storage').locator('summary').click();
   await expect(page.getByTestId('storage-panel')).toBeVisible();
   // The browser reports what the origin stores; with the precached app it is more than nothing.
   await expect(page.getByTestId('storage-estimate')).toContainText(/Spellplane stores [\d.]+ (kB|MB)/);

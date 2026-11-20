@@ -135,6 +135,7 @@ test.describe('chat in the timeline (DESIGN "Chat and voice", Text chat)', () =>
 
   test('the chat filter on a table without chat shows an empty-state line, not a blank panel', async ({ page }, info) => {
     await openSolo(page, freshProfile(info));
+    await openLog(page);
     await page.getByTestId('log-filter-chat').click();
     await expect(page.getByTestId('log-empty')).toHaveText('No chat yet.');
     await say(page, 'hello');

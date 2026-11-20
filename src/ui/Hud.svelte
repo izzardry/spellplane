@@ -380,6 +380,11 @@
     void vh;
     return safeAreaInsets();
   });
+  /**
+   * m8's stage (ui/flow/Stage.svelte) keeps its evening bar (Next game, New draft) in the bottom-left corner during a
+   * match while the shell passes no `evening` here; the own plate then sits above it instead of under it.
+   */
+  const eveningBarBelow = $derived(evening === undefined && session.evening !== undefined && st.stage === 'match');
   // The drawer opens over the table and never resizes it (m7-adjustments.md, M7-P2 "HUD layout": Activity), so the
   // table's framing ignores it.
   const fitInsets = $derived(fitInsetsFor(vh, false, teamFanShown, thumbShown ? THUMB_BAR_SPACE_PX : 0, safeInsets));
@@ -1549,7 +1554,7 @@
     {/if}
 
     {#if st.seats[me]}
-      <div class="own-avatar">{@render plate(st.seats[me], true)}</div>
+      <div class="own-avatar" class:over-evening={eveningBarBelow}>{@render plate(st.seats[me], true)}</div>
     {/if}
 
     <!-- Bottom right: Talk and the one primary button. -->
@@ -2092,6 +2097,12 @@
     left: var(--ds-edge);
     bottom: var(--ds-edge);
     z-index: 35;
+  }
+  /* Only where the plate sits at the bottom edge (wide windows); narrower, it already sits above the hand. */
+  @media (min-width: 1101px) {
+    .own-avatar.over-evening {
+      bottom: calc(var(--ds-edge) + 2 * var(--ds-control-sm) + 3 * var(--ds-space-sm));
+    }
   }
   .bottom-right {
     position: absolute;

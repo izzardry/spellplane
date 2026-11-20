@@ -53,6 +53,9 @@ test.describe('captions with the fake engine', () => {
     expect(tap).toMatchObject({ card, tapped: true });
     // Moving away: the caption follows the last touched card, not a hovered one.
     await a.mouse.move(720, 120);
+    // M7-P2: the log is a drawer, closed on entry. Open it before the talk key goes down: on a Mac a click with Ctrl
+    // held is a secondary click, so the activity button could not be pressed while talking.
+    for (const p of [a, b]) await openLog(p);
 
     await holdTalk(a);
     await expect.poll(() => engineOf(a)).toBe('fake');

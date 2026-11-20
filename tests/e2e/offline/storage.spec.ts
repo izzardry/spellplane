@@ -21,7 +21,6 @@ test('the storage section shows the estimate and persistence; the persistence pr
   await context.addInitScript({ content: fixturesScript() });
   const profile = freshProfile(info);
   await page.goto(appUrl({ profile, hash: '/lobby' }));
-  await page.getByTestId('start-storage').locator('summary').click();
   await expect(page.getByTestId('storage-panel')).toBeVisible();
   await expect(page.getByTestId('storage-estimate')).toContainText(/Spellplane stores [\d.]+ (B|kB|MB|GB)( of about [\d.]+ (MB|GB|TB) this browser allows it)?\./);
   const status = await page.evaluate(() => window.__spellplane!.storage!.status());
@@ -36,7 +35,6 @@ test('the storage section shows the estimate and persistence; the persistence pr
   await hint.getByTestId('hint-persist-later').click();
   await expect(hint).toHaveCount(0);
   await page.reload();
-  await page.getByTestId('start-storage').locator('summary').click();
   await expect(page.getByTestId('storage-panel')).toBeVisible();
   await expect(page.getByTestId('start-page')).toBeVisible();
   await expect(page.getByTestId('hint-persist')).toHaveCount(0);
@@ -62,7 +60,6 @@ test('export a backup, import it into a wiped profile: decks and the saved table
 
   // Export from the start page.
   await page.evaluate(() => (location.hash = '#/lobby'));
-  await page.getByTestId('start-storage').locator('summary').click();
   await expect(page.getByTestId('storage-panel')).toBeVisible();
   const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('backup-export').click()]);
   expect(download.suggestedFilename()).toMatch(/^spellplane-backup-\d{4}-\d{2}-\d{2}\.json$/);
@@ -79,7 +76,6 @@ test('export a backup, import it into a wiped profile: decks and the saved table
   const other = await context.newPage();
   const wiped = freshProfile(info, 'wiped');
   await other.goto(appUrl({ profile: wiped, hash: '/lobby' }));
-  await other.getByTestId('start-storage').locator('summary').click();
   await expect(other.getByTestId('storage-panel')).toBeVisible();
   await other.getByTestId('backup-file').setInputFiles(file);
   await expect(other.getByTestId('backup-preview')).toContainText('holds 0 decks and 1 saved table');
@@ -103,7 +99,6 @@ test('export a backup, import it into a wiped profile: decks and the saved table
 test('a file that is not a backup is reported, nothing is restored', async ({ context, page }, info) => {
   await noNetwork(context);
   await page.goto(appUrl({ profile: freshProfile(info), hash: '/lobby' }));
-  await page.getByTestId('start-storage').locator('summary').click();
   await expect(page.getByTestId('storage-panel')).toBeVisible();
   await page.getByTestId('backup-file').setInputFiles({ name: 'notes.json', mimeType: 'application/json', buffer: Buffer.from('{"hello": "world"}') });
   await expect(page.getByTestId('backup-read-errors')).toContainText('The file is not a Spellplane backup.');
@@ -167,7 +162,6 @@ test.describe('on an iPad', () => {
     await expect(hint).toHaveCount(0);
     await page.reload();
     await expect(page.getByTestId('start-page')).toBeVisible();
-    await page.getByTestId('start-storage').locator('summary').click();
     await expect(page.getByTestId('storage-panel')).toBeVisible();
     await expect(page.getByTestId('hint-home-screen')).toHaveCount(0);
   });
