@@ -225,3 +225,215 @@ describe('the five leak test files exist (contracts.md Part A)', () => {
     expect(fs.existsSync(path.join(ROOT, file))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Commit 2, "ui contracts and frame" (contracts.md Parts B and C).
+// ---------------------------------------------------------------------------------------------------------------------
+import { expectTypeOf, vi } from 'vitest';
+import { parseRoute, routeHash, isShellRoute, isTableRoute, type Route } from '../../src/ui/routes';
+import type { HudProps, HudShellProps } from '../../src/ui/props';
+import { HUD_SHELL } from '../../src/ui/hud/shell';
+import { HARNESSES, M8_HARNESS_OWNERS, isHarness } from '../../src/ui/harnesses';
+import { createToasts } from '../../src/ui/design/toasts';
+import { packArt } from '../../src/ui/design/pack-art';
+import { createNotices } from '../../src/ui/table/notices';
+import { menuTop } from '../../src/ui/table/menu-top';
+import { qrMatrix } from '../../src/ui/qr';
+import { summaryHash, newPracticeRoom } from '../../src/ui/play/launch';
+import { leaveTable, LEFT_NETWORKED, LEFT_SOLO } from '../../src/ui/play/leave';
+import { toasts } from '../../src/ui/design/toasts';
+import { seatPresence } from '../../src/ui/seat/presence';
+import { live, residue } from '../../src/util/lifecycle';
+
+describe('routes (contracts.md Part C; journey.md section 3; decks.md section 1)', () => {
+  const ROUTES: [string, Route][] = [
+    ['#/', { name: 'home' }],
+    ['#/decks', { name: 'decks' }],
+    ['#/decks/new', { name: 'deckNew' }],
+    ['#/decks/new/boosters', { name: 'deckNew', path: 'boosters' }],
+    ['#/decks/d-1', { name: 'deck', id: 'd-1' }],
+    ['#/decks/d-1/open', { name: 'deckOpen', id: 'd-1' }],
+    ['#/history', { name: 'history' }],
+    ['#/p/p-abc', { name: 'practice', room: 'p-abc' }],
+    ['#/c/c-abc', { name: 'computer', room: 'c-abc' }],
+    ['#/solo', { name: 'solo' }],
+    ['#/t/amber-fox-93/AAAAAAAAAAAAAAAAAAAAAA', { name: 'room', room: 'amber-fox-93', key: 'AAAAAAAAAAAAAAAAAAAAAA' }],
+    ['#/t/amber-fox-93/AAAAAAAAAAAAAAAAAAAAAA/watch', { name: 'room', room: 'amber-fox-93', key: 'AAAAAAAAAAAAAAAAAAAAAA', watch: true }],
+    ['#/t/amber-fox-93/AAAAAAAAAAAAAAAAAAAAAA/rejoin/s1/Jf0c1x9mQ2uVb7Yt3LrKzg', { name: 'room', room: 'amber-fox-93', key: 'AAAAAAAAAAAAAAAAAAAAAA', rejoin: { seat: 's1', token: 'Jf0c1x9mQ2uVb7Yt3LrKzg' } }],
+    ['#/lobby', { name: 'lobby' }],
+    ['#/settings', { name: 'settings' }],
+    ['#/about', { name: 'about' }],
+    ['#/diag', { name: 'diag' }],
+    ['#/diag/diag-a-b-c-10/AAAAAAAAAAAAAAAAAAAAAA', { name: 'diagJoin', room: 'diag-a-b-c-10', key: 'AAAAAAAAAAAAAAAAAAAAAA' }],
+  ];
+  it.each(ROUTES)('%s parses and round-trips', (hash, route) => {
+    expect(parseRoute(hash)).toEqual(route);
+    expect(routeHash(route)).toBe(hash);
+    expect(parseRoute(routeHash(route))).toEqual(route);
+  });
+  it('the empty hash is Home; #/build goes to Decks; #/lobby is its own route', () => {
+    expect(parseRoute('')).toEqual({ name: 'home' });
+    expect(parseRoute('#/build')).toEqual({ name: 'decks' });
+    expect(parseRoute('#/build/d-1')).toEqual({ name: 'deck', id: 'd-1' });
+    expect(parseRoute('#/lobby').name).toBe('lobby');
+    expect(parseRoute('#/t/x/k/rejoin/s1').name).toBe('notFound');
+  });
+  it('shell routes and table routes', () => {
+    expect(ROUTES.filter(([, r]) => isShellRoute(r)).map(([, r]) => r.name)).toEqual(['home', 'decks', 'deckNew', 'deckNew', 'deck', 'deckOpen', 'history', 'settings', 'about', 'diag', 'diagJoin']);
+    expect([...new Set(ROUTES.filter(([, r]) => isTableRoute(r)).map(([, r]) => r.name))]).toEqual(['practice', 'computer', 'solo', 'room']);
+  });
+});
+
+describe('the HUD seam (m7-adjustments.md section 2; contracts.md Part C)', () => {
+  it('HudProps accepts every HudShellProps member and requires none', () => {
+    type RequiredKeys<T> = { [K in keyof T]-?: object extends Pick<T, K> ? never : K }[keyof T];
+    expectTypeOf<RequiredKeys<HudShellProps>>().toEqualTypeOf<never>();
+    expectTypeOf<HudProps>().toMatchTypeOf<HudShellProps>();
+    // A HudProps literal with every shell member type-checks (the HUD takes each one).
+    const all: Required<HudShellProps> = {
+      onleave: () => undefined,
+      menuTop: () => [],
+      sandbox: true,
+      onchoosedeck: () => undefined,
+      seatPresence: { s0: 'here' },
+      plateMenuTop: (() => undefined) as never,
+      plateBadge: (() => undefined) as never,
+      status: (() => undefined) as never,
+      notice: null,
+      chrome: 'plates',
+      readOnly: true,
+      primaryOverride: { label: 'Attack', run: () => undefined },
+    };
+    const hud: Partial<HudProps> = { ...all };
+    expect(Object.keys(hud)).toHaveLength(12);
+    expect(HUD_SHELL).toBe(false);
+  });
+});
+
+describe('harness pages (contracts.md Part C)', () => {
+  it('every package has its harness name registered', () => {
+    for (const name of ['kit', 'ui', 'scene', 'home', 'history', 'decks', 'lobby', 'gather', 'computer', 'match']) {
+      expect(isHarness(name)).toBe(true);
+      expect(typeof HARNESSES[name as keyof typeof HARNESSES]).toBe('function');
+      expect(M8_HARNESS_OWNERS[name]).toMatch(/^M[78]-P\d/);
+    }
+    expect(isHarness('nonsense')).toBe(false);
+    expect(isHarness(null)).toBe(false);
+  });
+  it('each stub harness file exists at src/ui/<area>/harness.ts', () => {
+    for (const f of ['design', 'home', 'history', 'decks', 'lobby', 'gather', 'computer']) expect(fs.existsSync(path.join(ROOT, 'src/ui', f, 'harness.ts'))).toBe(true);
+    expect(fs.existsSync(path.join(ROOT, 'src/ui/play/match-harness.ts'))).toBe(true);
+  });
+});
+
+describe('every kit component of contracts.md Part B exists', () => {
+  const KIT = 'Button IconButton Segmented Field Stepper Chip Pip SeatGlyph PresenceDot StrengthPips Badge StatusLine Sheet Panel MenuPopover Toast ToastHost CoachMark Dialog QrPlate PileStack SealBand Sparkline CurveChart ColourBar CardFan ModeCard Countdown BoosterPack BoosterFan TableThumb'.split(' ');
+  it.each(KIT)('%s.svelte', (name) => {
+    expect(fs.existsSync(path.join(ROOT, 'src/ui/design', `${name}.svelte`))).toBe(true);
+  });
+  it('no blur or backdrop-filter in the kit', () => {
+    for (const f of fs.readdirSync(path.join(ROOT, 'src/ui/design'))) {
+      const text = fs.readFileSync(path.join(ROOT, 'src/ui/design', f), 'utf8');
+      expect(text, f).not.toMatch(/backdrop-filter\s*:|blur\(/);
+    }
+  });
+});
+
+describe('the shared UI glue (PLAN M8-C)', () => {
+  it('toasts: an undo toast lives 5 s and commits; a request stays until answered; one status slot', () => {
+    vi.useFakeTimers();
+    try {
+      const t = createToasts();
+      const commit = vi.fn();
+      const undo = vi.fn();
+      t.undo('Deck deleted', undo, { commit });
+      expect(t.list()).toHaveLength(1);
+      vi.advanceTimersByTime(5000);
+      expect(commit).toHaveBeenCalledOnce();
+      expect(t.list()).toHaveLength(0);
+      const allow = vi.fn();
+      t.request('Ben asks to see your hand', { allow, decline: vi.fn() });
+      t.status('Ben left');
+      t.status('Ben is back');
+      vi.advanceTimersByTime(60_000);
+      expect(t.list().map((e) => e.kind).sort()).toEqual(['request', 'status']);
+      t.list().find((e) => e.kind === 'request')!.actions.find((a) => a.primary)!.run();
+      expect(allow).toHaveBeenCalledOnce();
+      t.clear();
+      expect(t.list()).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('packArt is pure, seeded by set and index', () => {
+    expect(packArt('COR', 0)).toEqual(packArt('COR', 0));
+    expect(packArt('COR', 0)).not.toEqual(packArt('ALP', 0));
+    for (const code of ['M19', 'COR', 'ALP', 'DOM']) {
+      const a = packArt(code, 1);
+      expect(a.points).toBeGreaterThanOrEqual(5);
+      expect(a.points).toBeLessThanOrEqual(8);
+      expect(a.rings === 2 || a.rings === 3).toBe(true);
+    }
+  });
+  it('notices: one slot, a new one replaces the old', () => {
+    const n = createNotices();
+    const seen: (string | null)[] = [];
+    const off = n.subscribe((x) => seen.push(x?.text ?? null));
+    const a = n.show('Ben left the table. The game is saved.');
+    n.show('Ben is back.');
+    n.clear(a);
+    expect(n.current()?.text).toBe('Ben is back.');
+    n.clear();
+    off();
+    expect(seen).toEqual([null, 'Ben left the table. The game is saved.', 'Ben is back.', null]);
+  });
+  it('menuTop: Leave always; Concede for a seated player in a match without a result', () => {
+    const st = fresh();
+    const leave = vi.fn();
+    expect(menuTop('sandbox', st, 's0', { leave })[0]!.items.map((i) => i.id)).toEqual(['leave']);
+    const match = { ...st, stage: 'match' as const };
+    expect(menuTop('room', match, 's0', { leave, concede: vi.fn(), invite: vi.fn() })[0]!.items.map((i) => i.id)).toEqual(['leave', 'invite', 'concede']);
+    expect(menuTop('room', { ...match, settings: { ...match.settings, matched: true } }, 's0', { leave, invite: vi.fn() })[0]!.items.map((i) => i.id)).toEqual(['leave']);
+  });
+  it('qrMatrix: a square matrix for a link, null for a text too long', async () => {
+    const m = await qrMatrix('https://example.test/spellplane/#/t/amber-fox-93/AAAAAAAAAAAAAAAAAAAAAA');
+    expect(m).not.toBeNull();
+    expect(m!.length).toBeGreaterThan(20);
+    expect(m!.every((row) => row.length === m!.length)).toBe(true);
+    expect(await qrMatrix('x'.repeat(5000))).toBeNull();
+  });
+  it('History reopens a game by its kind', () => {
+    expect(summaryHash({ code: 'amber-fox-93', key: 'K', kind: 'private' })).toBe('#/t/amber-fox-93/K');
+    expect(summaryHash({ code: 'p-abc', key: '', kind: 'solo' })).toBe('#/p/p-abc');
+    expect(summaryHash({ code: 'c-abc', key: '', kind: 'solo', opponent: 'sparring' })).toBe('#/c/c-abc');
+    expect(newPracticeRoom(() => 0.5)).toMatch(/^p-[0-9a-z]{12}$/);
+  });
+  it('leaveTable: checkpoint, leave, Home, one toast by kind; the sandbox only goes Home', async () => {
+    const go = vi.fn();
+    const session = { leave: vi.fn(() => Promise.resolve()) } as never;
+    const now = vi.fn(() => Promise.resolve());
+    toasts.clear();
+    expect(await leaveTable({ session, kind: 'sandbox', code: null, games: null, go })).toBe('sandbox');
+    expect(toasts.list()).toEqual([]);
+    expect(await leaveTable({ session, kind: 'room', code: 'amber-fox-93', key: 'K', games: null, go, checkpointer: { now } })).toBe('left');
+    expect(now).toHaveBeenCalledWith('leave');
+    expect(go).toHaveBeenLastCalledWith('#/');
+    expect(toasts.list().map((t) => t.text)).toEqual([LEFT_NETWORKED]);
+    toasts.list()[0]!.actions[0]!.run();
+    expect(go).toHaveBeenLastCalledWith('#/t/amber-fox-93/K');
+    await leaveTable({ session, kind: 'practice', code: 'p-x', games: null, go });
+    expect(toasts.list().map((t) => t.text)).toEqual([LEFT_SOLO]);
+    toasts.clear();
+  });
+  it('seat presence: away from the state or the peer, connecting during the handshake', () => {
+    const st = fresh();
+    const seats = Object.fromEntries(Object.entries(st.seats).map(([id, s], i) => [id, { ...s, name: `P${i}`, peer: `peer${i}`, away: false }]));
+    const p = seatPresence({ ...st, seats }, [{ peerId: 'peer1', status: 'away' }], 's0');
+    expect(p['s0']).toBe('here');
+    expect(p['s1']).toBe('away');
+  });
+  it('on a page without a table every lifecycle count is 0 and the residue is all zeros', () => {
+    expect(Object.values(live()).every((n) => n === 0)).toBe(true);
+    expect(residue()).toEqual({ geometries: 0, textures: 0, programs: 0, disposals: 0 });
+  });
+});

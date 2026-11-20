@@ -53,7 +53,7 @@ describe('theme interface v2', () => {
   it('loads every theme lazily under its own id, the stubs naming their package', async () => {
     // Every theme package has landed (Dusk: M4-P3, Wyrm: M4-P4, Stonetable: M4-P5); no stub remains.
     // M7-C added the three looks' themes as stubs until M7-P1 builds them.
-    const stubs: Record<string, string> = { plain: 'M7-P1', kitchen: 'M7-P1', graphite: 'M7-P1', codex: 'M7-P1' }; // plain: [M8-P1]
+    const stubs: Record<string, string> = { plain: 'M7-P1', kitchen: 'M7-P1', graphite: 'M7-P1', codex: 'M7-P1' }; // plain: M8-C
     for (const id of THEME_IDS) {
       const t = await loadTheme(id);
       expect(t.id).toBe(id);
@@ -98,7 +98,8 @@ describe('theme interface v2', () => {
   it('reads unknown stored themes as Paper', () => {
     expect(themeIdOf('stonetable')).toBe('stonetable');
     expect(themeIdOf('neon')).toBe('paper');
-    expect(themeIdOf(DEFAULT_SETTINGS.theme)).toBe('paper');
+    // M8-C: the default theme is Plain's table world (PLAN Milestone 8, Decisions).
+    expect(themeIdOf(DEFAULT_SETTINGS.theme)).toBe('plain');
     expect(DEFAULT_SETTINGS.sound).toBe('theme');
   });
 });

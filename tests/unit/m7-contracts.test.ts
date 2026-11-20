@@ -39,7 +39,7 @@ const ALL: readonly SoundCue[] = ['slide', 'tap', 'shuffle', 'turnChime', 'promp
 import { LAYOUT, LOOKS, designCssVars, lookTokens, motionTokens } from '../../src/ui/design/tokens';
 
 describe('looks', () => {
-  it('has four looks (M8-P1 added Plain), each mapped to a registered theme that the picker lists; the M4 themes stay registered but unlisted', async () => {
+  it('has four looks (M8-C added Plain), each mapped to a registered theme that the picker lists; the M4 themes stay registered but unlisted', async () => {
     expect([...LOOK_IDS]).toEqual(['plain', 'kitchen', 'graphite', 'codex']);
     for (const look of LOOK_IDS) {
       const theme = LOOK_THEME[look];
@@ -56,13 +56,13 @@ describe('looks', () => {
     expect([...LISTED_THEME_IDS]).toEqual(['plain', 'kitchen', 'graphite', 'codex']);
   });
 
-  it('reads a stored look, anything unknown as the default look (Kitchen Table until the default moves to Plain)', () => {
-    expect(DEFAULT_LOOK).toBe('kitchen');
+  it('reads a stored look, anything unknown as the default look (Plain since M8-C)', () => {
+    expect(DEFAULT_LOOK).toBe('plain');
     expect(DEFAULT_SETTINGS.look).toBe(DEFAULT_LOOK);
+    expect(DEFAULT_SETTINGS.theme).toBe('plain');
     expect(lookIdOf('graphite')).toBe('graphite');
-    expect(lookIdOf('plain')).toBe('plain');
-    expect(lookIdOf('paper')).toBe('kitchen');
-    expect(lookIdOf(undefined)).toBe('kitchen');
+    expect(lookIdOf('paper')).toBe('plain');
+    expect(lookIdOf(undefined)).toBe('plain');
   });
 });
 
@@ -201,5 +201,13 @@ describe('affordances and coach marks', () => {
     expect(readBackup({ format: 'spellplane-backup', version: 1, settings: { tilt: null } }).settings).toEqual({ tilt: null });
     const bad = readBackup({ format: 'spellplane-backup', version: 1, settings: { tilt: 3, motion: 'wild' } });
     expect(bad.errors.map((e) => e.where).sort()).toEqual(['setting motion', 'setting tilt']);
+  });
+
+  it('M8-C: a backup accepts the look Plain and still the three older looks', () => {
+    for (const look of ['plain', 'kitchen', 'graphite', 'codex']) {
+      const r = readBackup({ format: 'spellplane-backup', version: 1, settings: { look, theme: look } });
+      expect(r.errors).toEqual([]);
+      expect(r.settings).toMatchObject({ look, theme: look });
+    }
   });
 });

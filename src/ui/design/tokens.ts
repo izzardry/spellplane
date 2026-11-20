@@ -69,7 +69,7 @@ export interface ColourTokens {
   seatB: string;
   /** Look-specific ornament colour: Codex's gilt, Kitchen's brass, Graphite's mint hairline. */
   ornament: string;
-  /** Over the arena still behind the shell (visual.md 2.3). Added by M8-P1 for M8-C. */
+  /** Over the arena still behind the shell (visual.md 2.3). Added by M8-C. */
   veil: string;
 }
 
@@ -82,7 +82,7 @@ export interface TypeTokens {
   /** Life totals and big numerals. */
   numeral: string;
   mono: string;
-  /** Paragraphs: rules text, notes, help over two lines (visual.md 2.3). Added by M8-P1 for M8-C. */
+  /** Paragraphs: rules text, notes, help over two lines (visual.md 2.3). Added by M8-C. */
   reading: string;
   weight: { regular: number; medium: number; bold: number; heavy: number };
   /** Heading weight (Kitchen 800, Graphite 650, Codex 600). */
@@ -128,19 +128,19 @@ export interface ElevationTokens {
   card: string;
   /** A card lifted in the DOM (hand hover, drag out of the hand). */
   cardLifted: string;
-  /** Sheets and tiles (visual.md 2.3). Added by M8-P1 for M8-C. */
+  /** Sheets and tiles (visual.md 2.3). Added by M8-C. */
   sheet: string;
-  /** Dialogs (visual.md 2.3). Added by M8-P1 for M8-C. */
+  /** Dialogs (visual.md 2.3). Added by M8-C. */
   dialog: string;
-  /** A pressed control (visual.md 2.4). Added by M8-P1 for M8-C. */
+  /** A pressed control (visual.md 2.4). Added by M8-C. */
   pressed: string;
-  /** Wells: fields, tracks, slots (visual.md 2.3). Added by M8-P1 for M8-C. */
+  /** Wells: fields, tracks, slots (visual.md 2.3). Added by M8-C. */
   well: string;
-  /** A pile of cards (visual.md 2.3). Added by M8-P1 for M8-C. */
+  /** A pile of cards (visual.md 2.3). Added by M8-C. */
   stack: string;
 }
 
-/** Static background textures of a look (visual.md 2.3): CSS images, never a filter at run time. Added by M8-P1 for M8-C. */
+/** Static background textures of a look (visual.md 2.3): CSS images, never a filter at run time. Added by M8-C. */
 export interface TextureTokens {
   /** The page's halftone or linen (a CSS image, or 'none'). */
   page: string;
@@ -164,7 +164,7 @@ export const FOILS: Readonly<Record<LookId, { stops: readonly [string, string, s
   codex: { stops: ['#141a2b', '#2b3552', '#171e33', '#34406a', '#0f1422'], line: '#c8a75e' },
 };
 
-/** The mana identity colours, the same in every look (visual.md 2.3). Added by M8-P1 for M8-C. */
+/** The mana identity colours, the same in every look (visual.md 2.3). Added by M8-C. */
 export const MANA_COLOURS = { W: '#f1ecd2', U: '#2f6fb5', B: '#2b2b2b', R: '#c8432f', G: '#2f7d4f', C: '#bdbdbd' } as const;
 
 /** CSS easing curves of a look (PLAN Milestone 7, A9 Sound and motion: "Easing, durations"). Added by M7-C. */
@@ -209,7 +209,7 @@ export interface LookTokens {
   elevation: ElevationTokens;
   motion: MotionTokens;
   sound: SoundTokens;
-  /** Added by M8-P1 for M8-C (visual.md 2.3). */
+  /** Added by M8-C (visual.md 2.3). */
   texture: TextureTokens;
 }
 
@@ -243,7 +243,7 @@ const EASE_OUT = 'cubic-bezier(0, 0, 0.2, 1)';
 
 /**
  * Plain (visual.md 2.3, complete; the `:root` block of mock.html): Ztyle on paper, grey-scale chrome, one monospace
- * face, pills and circles, depth from layered paper and pressed controls. The default look. Added by M8-P1 for M8-C; M8-P1 tunes.
+ * face, pills and circles, depth from layered paper and pressed controls. The default look. Added by M8-C; M8-P1 tunes.
  */
 const PLAIN: LookTokens = {
   id: 'plain',

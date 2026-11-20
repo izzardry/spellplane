@@ -2,12 +2,17 @@ import { mount } from 'svelte';
 import { createFaceSource, createSetDataSource, generatePack, parseDecklist, ScryfallCardDataSource, type CardDataSource, type SetDataSource } from './data/index';
 import { mtg } from './games/index';
 import { createTableScene } from './scene/index';
+import { registerBaseRender } from './scene/lifecycle';
 import { createSoloSession, LONE_WAIT_MS, openNetSession, openSpectatorSession, type NetSession, type TableSession } from './session/index';
 import { liveIdentity } from './session/live-identity';
 import { createPageTransport, KillableTransport, pageTransportKind } from './session/transports';
 import { createSetCache, openStores, requestPersistentStorage, SOLO_ROOM_ID, storageStatus, type LocalStores } from './store/index';
 import App from './ui/App.svelte';
 import { startProps } from './ui/lobby/start';
+import { HARNESSES, isHarness } from './ui/harnesses';
+import { createMatchmaker } from './session/matchmaker';
+import { createsMatchTable } from './session/match-room';
+import { createComputerGame, resumeComputerGame } from './session/computer';
 import { FakeAppUpdate, pageWorker } from './ui/storage/worker';
 import type { AppUpdate } from './ui/update';
 import { registerDebug } from './util/debug';
@@ -19,24 +24,13 @@ import type { AppProps, RoomLink, StartPageProps } from './ui/types';
 const target = document.getElementById('app');
 if (!target) throw new Error('#app missing');
 
-/** Module test pages (dev and test builds only): `?harness=scene`, `?harness=ui`, `?harness=confirm`, `?harness=voice` or `?harness=render` (M4-P2, lit pipeline) mounts that module's harness instead of the app. */
-const HARNESSES = {
-  scene: () => import('./scene/harness'),
-  ui: () => import('./ui/harness'),
-  confirm: () => import('./ui/confirm/harness'),
-  voice: () => import('./ui/voice/harness'),
-  render: () => import('./scene/render-harness'),
-  // M5-P5: settings, About, first-run hints, empty and error states.
-  settings: () => import('./ui/settings/harness'),
-  kit: () => import('./ui/design/harness'), // [M8-P1] the kit page (contracts.md Part C)
-} as const;
-
 const harness = __SPELLPLANE_DEBUG__ ? new URLSearchParams(location.search).get('harness') : null;
 
 /**
- * The app (PLAN M0-P7, M1-P8): stores, card data, faces, the solo session at `#/`, the networked session for a table
- * link `#/t/<room>/<key>` (joined by the table route through `openRoom`, over Trystero, or BroadcastChannel with
- * `?transport=local`), the debug hook, then the app shell.
+ * The app (PLAN M0-P7, M1-P8; M8-C, contracts.md Part C): stores (with M8's games, ratings and matches), card data,
+ * faces, one matchmaker, the sandbox's solo session (eager only at `#/solo`), practice and computer tables, the
+ * networked session for a table link `#/t/<room>/<key>` (joined by the table route through `openRoom`, over Trystero,
+ * or BroadcastChannel with `?transport=local`), the debug hook, then the app. `#/` is Home.
  */
 async function boot(el: HTMLElement): Promise<void> {
   if (__SPELLPLANE_PREVIEW__) previewLabel();
@@ -67,19 +61,56 @@ async function boot(el: HTMLElement): Promise<void> {
   // MTGJSON booster data for drafts and the lobby's set picker (M2-P1), cached in the `sets` store; injected fixtures in tests.
   const sets: SetDataSource = fixtureSets ?? createSetDataSource({ cache: stores ? createSetCache(stores.db) : null });
   const faces = createFaceSource(cardData);
-  const solo = await createSoloSession({ game: mtg, cardData, roomId: SOLO_ROOM_ID, ...(stores ? { store: stores.tables } : {}) });
 
   const debug = __SPELLPLANE_DEBUG__ ? await import('./debug/index') : null;
   // Input counters for the M7 gate's "no key pressed" (M7-C, debug/input.ts).
   debug?.registerInputDebug();
+  // The lifecycle counters are readable on every page, also before a table scene mounts (contracts.md Part C).
+  if (debug) registerBaseRender();
   const registerSession = (session: TableSession): void => {
     debug?.registerSessionDebug(session, { cardData, parseDecklist });
     debug?.registerDraftDebug(session);
     debug?.registerSpeechDebug(session);
   };
-  registerSession(solo);
+
+  // The table sandbox (`#/solo`, contracts.md Part C): created eagerly only when the page opens there, else the first
+  // time the route shows; it lives for the page (decision M8-C).
+  let sandbox: Promise<TableSession> | null = null;
+  let sandboxSession: TableSession | null = null;
+  const openSandbox = (): Promise<TableSession> => {
+    sandbox ??= createSoloSession({ game: mtg, cardData, roomId: SOLO_ROOM_ID, ...(stores ? { store: stores.tables } : {}) }).then((s) => {
+      sandboxSession = s;
+      registerSession(s);
+      return s;
+    });
+    return sandbox;
+  };
+  const solo = parseRoute(location.hash).name === 'solo' ? await openSandbox() : null;
+  /** After a table route went away, the hook points at the sandbox again when there is one. */
+  const backToSandbox = (): void => {
+    if (sandboxSession) registerSession(sandboxSession);
+  };
+
+  // A practice table (`#/p/<room>`, computer.md section 11): a solo session with its own room id, saved like any game.
+  const openPractice = async (roomId: string): Promise<TableSession> => {
+    const s = await createSoloSession({ game: mtg, cardData, roomId, ...(stores ? { store: stores.tables } : {}) });
+    registerSession(s);
+    const dispose = s.dispose.bind(s);
+    return Object.assign(s, {
+      dispose: () => {
+        dispose();
+        backToSandbox();
+      },
+    });
+  };
 
   const identity = stores ? liveIdentity(stores.identity) : null;
+
+  // One matchmaker per page (matchmaking.md 2.13; a stub with phase `off` until M8-P7).
+  const matchmaker = stores ? createMatchmaker({ settings: stores.settings, decks: stores.decks, ratings: stores.ratings, matches: stores.matches }) : null;
+  // The page's clock for networked sessions; specs pin it with `__spellplane.net.setClock` (dev and test builds).
+  const clock = debug?.pageClock() ?? null;
+  if (debug && matchmaker) debug.registerM8Debug({ matchmaker, decks: stores?.decks ?? null, games: stores?.games ?? null });
 
   /**
    * Rooms this tab created on its start page (kept for the tab, so a reload still knows): their creator may sit alone
@@ -107,6 +138,14 @@ async function boot(el: HTMLElement): Promise<void> {
    */
   async function openRoom(link: RoomLink, as: { watch?: boolean } = {}): Promise<NetSession> {
     if (!stores || !identity) throw new Error('this browser blocks local storage, which a table needs for your identity and your hidden cards');
+    // A matched room (matchmaking.md 2.9; contracts.md Part D): seat 0 of its MatchRecord creates the table, every
+    // other member never sits alone; so does a browser that opens a re-invite link (`rejoin`).
+    const me = await identity.identity();
+    const record = await stores.matches.get(link.roomId).catch(() => null);
+    const here = parseRoute(location.hash);
+    const rejoin = here.name === 'room' && here.room === link.roomId && !!here.rejoin;
+    const creator = record ? createsMatchTable(record, me.peerId) : createdHere(link.roomId);
+    const neverAlone = (!!record && !creator) || rejoin;
     let transport: KillableTransport | null = null;
     const joining = new AbortController();
     const onHash = (): void => {
@@ -122,7 +161,8 @@ async function boot(el: HTMLElement): Promise<void> {
         roomId: link.roomId,
         roomKey: link.roomKey,
         transport: () => (transport = new KillableTransport(createPageTransport())),
-        identity: await identity.identity(),
+        identity: me,
+        ...(clock ? { now: () => clock.now() } : {}),
         store: stores.tables,
         sets,
         generatePack,
@@ -136,7 +176,7 @@ async function boot(el: HTMLElement): Promise<void> {
         : await openNetSession(
             { ...options, voice },
             // BroadcastChannel peers connect at once; over Trystero they come up seconds after the join.
-            { createdHere: createdHere(link.roomId), loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS },
+            { createdHere: creator, neverAlone, loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS },
             joining.signal,
           );
     } finally {
@@ -144,22 +184,35 @@ async function boot(el: HTMLElement): Promise<void> {
     }
     if (debug) {
       registerSession(session);
-      debug.registerNetDebug(session, () => transport);
+      debug.registerNetDebug(session, () => transport, clock ?? undefined);
     }
     const leave = session.leave.bind(session);
-    // Leaving the route hands the debug hook back to the solo table (and drops the left room's `net` part).
-    const left = (): void => {
-      leave();
-      registerSession(solo);
-      debug?.clearNetDebug();
+    // Leaving the route hands the debug hook back to the sandbox (and drops the left room's `net` part).
+    let leaving: Promise<void> | null = null;
+    const left = (): Promise<void> => {
+      if (!leaving) {
+        leaving = leave();
+        backToSandbox();
+        debug?.clearNetDebug();
+      }
+      return leaving;
     };
-    return Object.assign(session, { leave: left, dispose: left });
+    return Object.assign(session, {
+      leave: left,
+      dispose: () => {
+        void left();
+      },
+    });
   }
 
   // `openRoom` reaches the table route (ui/lobby/RoomRoute.svelte, RoomOpener) through the props App hands it; it is
   // not part of the ui/types.ts contract (decision M1-P8).
-  const props: AppProps & { openRoom: typeof openRoom } = {
-    session: solo,
+  const start = stores && identity ? createdRooms(startProps({ identity: identity.store, tables: stores.tables }), markCreated) : null;
+  const props: Partial<AppProps> & { openRoom: typeof openRoom; newRoom?: () => RoomLink } = {
+    ...(solo ? { session: solo } : {}),
+    openSandbox,
+    openPractice,
+    openComputer: (roomId: string) => resumeComputerGame(roomId).catch(() => createComputerGame({ roomId, deckId: null })),
     createScene: createTableScene,
     faces,
     cardData,
@@ -169,7 +222,9 @@ async function boot(el: HTMLElement): Promise<void> {
     sets,
     diag: { createTransport: () => createPageTransport(), room: null, now: () => Date.now() },
     ...(update ? { update } : {}),
-    ...(stores && identity ? { settings: stores.settings, identity: identity.store, decks: stores.decks, start: createdRooms(startProps({ identity: identity.store, tables: stores.tables }), markCreated) } : {}),
+    ...(stores && identity && start ? { settings: stores.settings, identity: identity.store, decks: stores.decks, start, newRoom: () => start.newRoom() } : {}),
+    ...(stores ? { games: stores.games, ratings: stores.ratings, matches: stores.matches } : {}),
+    ...(matchmaker ? { matchmaker } : {}),
   };
   mount(App, { target: el, props });
 }
@@ -217,8 +272,8 @@ function createdRooms(start: StartPageProps, mark: (roomId: string) => void): St
   };
 }
 
-if (harness && Object.hasOwn(HARNESSES, harness)) {
-  void HARNESSES[harness as keyof typeof HARNESSES]().then((m) => m.mount(target));
+if (isHarness(harness)) {
+  void HARNESSES[harness]().then((m) => m.mount(target));
 } else {
   boot(target).catch((e: unknown) => {
     console.error('Spellplane failed to start', e);

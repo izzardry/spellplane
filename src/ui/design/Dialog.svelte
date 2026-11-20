@@ -68,8 +68,8 @@
 
 {#if open}
   <div class="ds-scrim ds-root" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && close()}>
-    <div bind:this={el} class="ds-dialog" role="dialog" aria-modal="true" aria-labelledby={id} aria-describedby={describedby} data-testid={testid} data-ds-layer="dialog" tabindex="-1" onkeydown={key}>
-      <h2 class="ds-t-heading" {id}>{heading}</h2>
+    <div bind:this={el} class="ds-pop ds-dialog" role="dialog" aria-modal="true" aria-labelledby={id} aria-describedby={describedby} data-testid={testid} data-ds-layer="dialog" tabindex="-1" onkeydown={key}>
+      <h2 class="ds-heading ds-t-heading" {id}>{heading}</h2>
       {@render children?.()}
       {#if foot}<div class="ds-dialog-actions ds-row">{@render foot()}</div>{/if}
     </div>

@@ -11,7 +11,7 @@
   const hex = '12,1.5 21.1,6.75 21.1,17.25 12,22.5 2.9,17.25 2.9,6.75';
 </script>
 
-<span class="ds-seat" role="img" aria-label={label ?? `Seat ${seat + 1}`} data-shape={computer ? 'hexagon' : shape} style:width="{size}px" style:height="{size}px" style:color={colour} style:border-radius={computer ? '0' : '50%'} style:background={computer ? 'transparent' : undefined} style:box-shadow={computer ? 'none' : 'inset 0 0 0 2px currentColor'} {...rest}>
+<span class="ds-seat" class:ds-seat--computer={computer} role="img" aria-label={label ?? `Seat ${seat + 1}`} data-shape={computer ? 'hexagon' : shape} style:width="{size}px" style:height="{size}px" style:color={colour} style:border-radius={computer ? '0' : '50%'} style:background={computer ? 'transparent' : undefined} style:box-shadow={computer ? 'none' : 'inset 0 0 0 2px currentColor'} {...rest}>
   <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
     {#if computer}<polygon points={hex} fill="var(--ds-panel-raised)" stroke="currentColor" stroke-width="2" />{/if}
     {#if shape === 'circle'}<circle cx="12" cy="12" r="4" fill="currentColor" />

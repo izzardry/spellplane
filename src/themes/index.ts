@@ -139,7 +139,7 @@ export async function loadTheme(id: ThemeId): Promise<Theme> {
       return (await import('./wyrm/index')).wyrm;
     case 'stonetable':
       return (await import('./stonetable/index')).stonetable;
-    // The looks' table worlds (M7-C stubs until M7-P1 builds them; Plain added by M8-P1 for M8-C).
+    // The looks' table worlds (M7-C stubs until M7-P1 builds them; Plain added by M8-C).
     case 'plain':
       return (await import('./plain/index')).plain;
     case 'kitchen':

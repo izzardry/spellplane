@@ -19,7 +19,7 @@ export const THEME_BLURBS: Readonly<Record<ThemeId, string>> = {
   dusk: 'Moody, a warm lamp on dark felt',
   wyrm: 'Dragon-themed obsidian and embers',
   stonetable: 'Carved stone, rendered in 3D',
-  // [M8-P1] the Plain look (visual.md 2.2).
+  // M8-C: the Plain look (visual.md 2.2), the default.
   plain: 'Ztyle on paper: grey-scale chrome, one monospace face',
   // The M7 looks (docs/design/m7-directions.html; M7-C, M7-P2 may reword).
   kitchen: 'Warm and tactile: an oatmeal playmat on walnut',
@@ -178,7 +178,7 @@ const KEY = Symbol('spellplane.theme');
  * picked Dusk does not first get Paper's scene); the start page and the connection check render at once.
  */
 export function waitsForStoredTheme(route: { name: string }): boolean {
-  return route.name === 'solo' || route.name === 'room';
+  return route.name === 'solo' || route.name === 'room' || route.name === 'practice' || route.name === 'computer'; // M8-C: every table route
 }
 
 export function setThemeContext(choice: ThemeChoice): void {

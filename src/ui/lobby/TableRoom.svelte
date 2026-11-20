@@ -1,42 +1,53 @@
 <!--
-  A networked table (`#/t/<room>/<key>`): the stage switch (ui/flow/Stage.svelte, M2-P7: lobby, draft, builder, match;
-  DESIGN "Specification: card data, packs and draft formats", Evening stages; PLAN M1-P5). In every stage the recovery
-  panel (ui/recovery, PLAN M1-P7) offers the lost-save recovery to a player whose browser lacks its hidden cards.
-  A spectator's session (`#/t/<room>/<key>/watch`, M3-P5) gets the spectator view instead; a player sees who watches
-  and may show them the hand (DESIGN "Players, seats and formats", Spectators).
+  A networked table (`#/t/<room>/<key>`): the table frame (ui/table/TableFrame.svelte, contracts.md Part C) with
+  `kind: 'room'` (the frame finds a MatchRecord itself and becomes a matched table), the room's link and the page's
+  stores; leaving goes through ui/play/leave.ts. M8-C replaced the body with the frame (the stage switch, the recovery
+  panel, the spectator parts and the notices moved into it); M8-P8 owns the file.
 -->
 <script lang="ts">
-  import { untrack } from 'svelte';
   import type { CardDataSource, FaceSource, SetDataSource } from '../../data/types';
   import type { CreateTableScene } from '../../scene/types';
-  import type { SettingsStore } from '../../store/types';
-  import { parsePlainList } from '../deck';
-  import Stage from '../flow/Stage.svelte';
-  import RecoveryPanel from '../recovery/RecoveryPanel.svelte';
+  import type { GameStore, MatchStore, RatingStore, SettingsStore } from '../../store/types';
+  import { leaveTable } from '../play/leave';
+  import TableFrame from '../table/TableFrame.svelte';
   import type { LobbyProps } from '../types';
-  import SpectatorPanel from './SpectatorPanel.svelte';
-  import SpectatorView from './SpectatorView.svelte';
-  import Hints from '../storage/Hints.svelte';
-  import UpdateNotice from '../storage/UpdateNotice.svelte';
   import type { AppUpdate } from '../update';
-  import VersionNotice from '../version/VersionNotice.svelte';
 
-  let props: LobbyProps & { createScene: CreateTableScene; faces: FaceSource; cardData: CardDataSource; settings?: SettingsStore | undefined; sets?: SetDataSource | undefined; update?: AppUpdate | undefined } = $props();
-  let stage = $state(untrack(() => props.session.getState().stage));
-  $effect(() => props.session.subscribe((s) => (stage = s.stage)));
+  let props: LobbyProps & {
+    createScene: CreateTableScene;
+    faces: FaceSource;
+    cardData: CardDataSource;
+    settings?: SettingsStore | undefined;
+    sets?: SetDataSource | undefined;
+    update?: AppUpdate | undefined;
+    games?: GameStore | null | undefined;
+    matches?: MatchStore | null | undefined;
+    ratings?: RatingStore | null | undefined;
+    go?: ((hash: string) => void) | undefined;
+  } = $props();
+  const go = (h: string): void => (props.go ? props.go(h) : void (location.hash = h));
+  const games = $derived(props.games ?? null);
 </script>
 
-{#if props.session.role === 'spectator'}
-  <SpectatorView {...props} />
-{:else}
-  <Stage {...props} />
-
-  <RecoveryPanel session={props.session} cardData={props.cardData} parse={props.parseDecklist ?? parsePlainList} />
-
-  {#if stage !== 'lobby'}<SpectatorPanel session={props.session} />{/if}
-{/if}
-
-<!-- M5-P3: a new version waits for the lobby (never mid-game), and the Home Screen hint shows in the lobby only, away from play. -->
-<UpdateNotice update={props.update} place={{ route: 'room', stage }} />
-{#if stage === 'lobby'}<Hints settings={props.settings} hints={['installHomeScreen']} placement="corner" />{/if}
-<VersionNotice session={props.session} />
+<TableFrame
+  session={props.session}
+  kind="room"
+  code={props.link.roomId}
+  {games}
+  link={props.link}
+  deps={{
+    createScene: props.createScene,
+    faces: props.faces,
+    cardData: props.cardData,
+    game: props.game,
+    settings: props.settings,
+    parseDecklist: props.parseDecklist,
+    sets: props.sets,
+    update: props.update,
+    identity: props.identity,
+    decks: props.decks,
+    matches: props.matches ?? null,
+    ratings: props.ratings ?? null,
+  }}
+  onleave={() => void leaveTable({ session: props.session, kind: 'room', code: props.link.roomId, key: props.link.roomKey, games, go })}
+/>

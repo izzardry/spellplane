@@ -38,12 +38,11 @@
 
   const checked = $derived<ThemeId>(st.loading ?? picking ?? st.theme.id);
   /**
-   * [M8-P1] The picker lists the four looks first (Plain, Kitchen Table, Graphite, Codex; themes/index.ts
-   * LISTED_THEME_IDS, PLAN Milestone 8 M8-P1), then the earlier M4 tables under their own heading, so a stored or
-   * scripted M4 theme (gates M4 and M5 pick them here) still shows what is on the table.
+   * The picker offers the three looks (PLAN Milestone 7, Owner decisions: the M4 themes leave the picker; themes/index.ts
+   * LISTED_THEME_IDS); a theme set otherwise (an older save, the debug hook) is shown too, so the radio group says what
+   * is on the table.
    */
-  const offered = $derived<ThemeId[]>([...LISTED_THEME_IDS]);
-  const earlier = $derived<ThemeId[]>(THEME_IDS.filter((id) => !LISTED_THEME_IDS.includes(id)));
+  const offered = $derived<ThemeId[]>(LISTED_THEME_IDS.includes(st.theme.id) ? [...LISTED_THEME_IDS] : [...LISTED_THEME_IDS, st.theme.id]);
   /** Picking a look also stores it as the HUD's look (ui/design/look.ts), so the HUD skin switches with the table. */
   const looks = lookContext();
 
@@ -68,21 +67,6 @@
   }
 </script>
 
-{#snippet option(id: ThemeId)}
-  {@const look = lookOfTheme(id)}
-  <label class="option" data-testid="theme-option" data-theme={id} data-look={look} class:current={st.theme.id === id}>
-    <input type="radio" name="sp-theme" value={id} checked={checked === id} bind:this={inputs[id]} onchange={() => pick(id)} />
-    {#if look}
-      {@const t = lookTokens(look)}
-      <span class="swatch" aria-hidden="true" style:background={t.colour.mat} style:border-color={t.colour.frame}><i style:background={t.colour.panel}></i><i style:background={t.colour.accent}></i></span>
-    {/if}
-    <span>
-      {THEME_LABELS[id]}
-      <small>— {THEME_BLURBS[id]}{#if st.loading === id}; loading…{/if}</small>
-    </span>
-  </label>
-{/snippet}
-
 <section class="theme" data-testid="theme-settings" aria-label="Theme settings" data-theme={st.theme.id} aria-busy={st.loading !== null}>
   <header>
     <h2>Look</h2>
@@ -90,16 +74,20 @@
   </header>
   <fieldset data-testid="theme-picker">
     <legend>Look of the table and the controls, for this browser</legend>
-    <span class="group" data-testid="look-group">Looks</span>
     {#each offered as id (id)}
-      {@render option(id)}
+      {@const look = lookOfTheme(id)}
+      <label class="option" data-testid="theme-option" data-theme={id} data-look={look} class:current={st.theme.id === id}>
+        <input type="radio" name="sp-theme" value={id} checked={checked === id} bind:this={inputs[id]} onchange={() => pick(id)} />
+        {#if look}
+          {@const t = lookTokens(look)}
+          <span class="look-swatch" aria-hidden="true" style:background={t.colour.mat} style:border-color={t.colour.frame}><i style:background={t.colour.panel}></i><i style:background={t.colour.accent}></i></span>
+        {/if}
+        <span>
+          {THEME_LABELS[id]}
+          <small>— {THEME_BLURBS[id]}{#if st.loading === id}; loading…{/if}</small>
+        </span>
+      </label>
     {/each}
-    {#if earlier.length}
-      <span class="group" data-testid="earlier-group">Earlier tables</span>
-      {#each earlier as id (id)}
-        {@render option(id)}
-      {/each}
-    {/if}
   </fieldset>
   {#if sound}
     <label class="sound">
@@ -174,15 +162,7 @@
   legend {
     padding: 0 4px;
   }
-  .group {
-    display: block;
-    margin: 8px 0 2px;
-    font-size: var(--ds-type-label, 11px);
-    text-transform: var(--ds-label-case, uppercase);
-    letter-spacing: var(--ds-label-spacing, 0.05em);
-    color: var(--ds-muted, var(--sp-muted, #5f5f5f));
-  }
-  .swatch {
+  .look-swatch {
     display: inline-flex;
     align-self: center;
     gap: 3px;
@@ -191,7 +171,7 @@
     border-radius: 6px;
     flex: none;
   }
-  .swatch i {
+  .look-swatch i {
     width: 10px;
     height: 14px;
     border-radius: 2px;
