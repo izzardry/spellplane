@@ -1,18 +1,48 @@
-<!-- Kit stub (contracts.md Part B) written by M8-P2 because M8-C's UI commit did not land; M8-P1's file replaces it. -->
+<!--
+  A text field of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): a well, 44 high, a leading icon; `square`
+  for a link field. `onenter` runs on Enter. Plain markup by M8-C; M8-P1 gives it its look.
+-->
 <script lang="ts">
   import type { Snippet } from 'svelte';
-  let { value = $bindable(), label, placeholder = undefined, readonly = false, square = false, icon = undefined, trailing = undefined, oninput = undefined, onenter = undefined, ...rest }: { value: string; label: string; placeholder?: string | undefined; readonly?: boolean; square?: boolean; icon?: Snippet | undefined; trailing?: Snippet | undefined; oninput?: ((v: string) => void) | undefined; onenter?: ((v: string) => void) | undefined; [key: string]: unknown } = $props();
+
+  let {
+    value = $bindable(),
+    label,
+    placeholder = undefined,
+    readonly = false,
+    square = false,
+    icon = undefined,
+    trailing = undefined,
+    oninput = undefined,
+    onenter = undefined,
+    ...rest
+  }: {
+    value: string;
+    label: string;
+    placeholder?: string | undefined;
+    readonly?: boolean;
+    square?: boolean;
+    icon?: Snippet | undefined;
+    trailing?: Snippet | undefined;
+    oninput?: ((value: string) => void) | undefined;
+    onenter?: ((value: string) => void) | undefined;
+    [attr: string]: unknown;
+  } = $props();
 </script>
 
-<label class="ds-field" class:square>
-  {@render icon?.()}
-  <input aria-label={label} {placeholder} {readonly} bind:value oninput={() => oninput?.(value)} onkeydown={(e) => e.key === 'Enter' && onenter?.(value)} {...rest} />
-  {@render trailing?.()}
+<label class="ds-field" class:ds-field--square={square}>
+  {#if icon}{@render icon()}{/if}
+  <input
+    class="ds-field__input"
+    aria-label={label}
+    {placeholder}
+    {readonly}
+    bind:value
+    oninput={() => oninput?.(value)}
+    onkeydown={(e) => {
+      if (e.key === 'Enter') onenter?.(value);
+    }}
+    {...rest}
+  />
+  {#if trailing}{@render trailing()}{/if}
 </label>
-
-<style>
-  .ds-field { display: flex; align-items: center; gap: 8px; box-sizing: border-box; height: 44px; padding: 0 16px; border-radius: 999px; background: var(--ds-chip); box-shadow: inset 0 1px 2px var(--ds-line); }
-  .ds-field.square { border-radius: 12px; }
-  .ds-field input { flex: 1; min-width: 0; height: 100%; border: 0; background: transparent; color: var(--ds-ink); font: inherit; font-size: 14px; outline: none; }
-  .ds-field:focus-within { box-shadow: 0 0 0 2px var(--ds-focus); }
-</style>

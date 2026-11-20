@@ -48,16 +48,49 @@ export interface CheckpointOptions {
   knownHead?: () => KnownHead | null;
   /** The state hash (default core/hash stateHash; tests pass a synchronous one under fake timers). */
   hash?: (state: TableState) => Promise<string>;
-  /** Meta for a game that has no summary yet. */
+  /** Meta for a game that has no summary yet (default: from the session; see `metaFor`). */
   meta?: Partial<GameSummary> & Pick<GameSummary, 'kind'>;
+  /** The room key of a networked table that has no summary yet (default: read from the page's `#/t/<room>/<key>`). */
+  key?: string;
+}
+
+/** The sandbox table (`#/solo`, store/tables.ts SOLO_ROOM_ID) is never listed in History. */
+const SANDBOX_ROOM = 'solo';
+
+/** The room key in the page's address when it shows `#/t/<room>/…` (a networked game joined by link has no summary yet). */
+function keyFromAddress(roomId: string): string {
+  const hash = typeof location !== 'undefined' ? location.hash : '';
+  const m = /^#\/t\/([^/]+)\/([^/]+)/.exec(hash);
+  return m && decodeURIComponent(m[1]!) === roomId ? decodeURIComponent(m[2]!) : '';
+}
+
+/** What a first summary of `session` says when no launcher created one (a table joined by link, a resumed practice). */
+function metaFor(session: TableSession, st: TableState, opts: CheckpointOptions): Parameters<GameStore['create']>[0] {
+  let solo: boolean;
+  try {
+    solo = session.netStatus().mode === 'solo';
+  } catch {
+    solo = /^[pc]-/.test(session.roomId);
+  }
+  const kind: GameSummary['kind'] = opts.meta?.kind ?? (solo ? 'solo' : st.settings.matched ? 'matched' : 'private');
+  const decks: GameSummary['decks'] = st.lobby?.draft ? 'draftLive' : 'constructed';
+  return { code: session.roomId, key: solo ? '' : (opts.key ?? keyFromAddress(session.roomId)), format: st.format, decks, ...opts.meta, kind };
+}
+
+/** A checkpointer that writes nothing: no store, or the sandbox. */
+function idle(state: SaveState): Checkpointer & CheckpointerExtras {
+  return { now: () => Promise.resolve(), stop: () => undefined, saveState: () => state, subscribe: () => () => undefined, writes: () => 0 };
 }
 
 /** Start checkpointing `session` into `games` (contracts.md Part E). With no store nothing is written and the state is `notSaving`. */
 export function createCheckpointer(session: TableSession, games: GameStore | null, opts: CheckpointOptions = {}): Checkpointer & CheckpointerExtras {
+  if (!games) return idle('notSaving');
+  if (session.roomId === SANDBOX_ROOM) return idle('saved');
+  const store: GameStore = games;
   const clock = opts.now ?? (() => Date.now());
   const doc = opts.doc !== undefined ? opts.doc : typeof document !== 'undefined' ? document : null;
   const win = opts.win !== undefined ? opts.win : typeof window !== 'undefined' ? window : null;
-  let state: SaveState = games ? 'saved' : 'notSaving';
+  let state: SaveState = 'saved';
   const listeners = new Set<(s: SaveState) => void>();
   let dirty = false;
   let played = false;
@@ -74,7 +107,6 @@ export function createCheckpointer(session: TableSession, games: GameStore | nul
   };
 
   async function write(reason: CheckpointReason): Promise<void> {
-    if (!games) return;
     const st = session.getState();
     let log: ReturnType<TableSession['log']> = [];
     try {
@@ -86,11 +118,11 @@ export function createCheckpointer(session: TableSession, games: GameStore | nul
     const hash = await (opts.hash ?? stateHash)(st);
     const attempt = async (): Promise<void> => {
       const prior =
-        (await games.get(session.roomId)) ??
-        blankSummary({ code: session.roomId, key: '', format: st.format, decks: 'constructed', kind: 'solo', ...opts.meta }, at);
+        (await store.get(session.roomId)) ??
+        blankSummary(metaFor(session, st, opts), at);
       const next = summarise(st, safeSecrets(session), prior, opts.knownHead?.() ?? null, { hash, actions: ownActions(log, session.seat), now: at, played });
       if (reason === 'leave') next.leftAt = at;
-      await games.put(next);
+      await store.put(next);
     };
     try {
       await attempt();

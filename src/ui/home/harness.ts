@@ -10,7 +10,9 @@ import { openStores, type LocalStores } from '../../store/stores';
 import type { DeckRecord, GameSummary } from '../../store/types';
 import type { Matchmaker, MatchmakerStatus } from '../../session/types';
 import { live } from '../../util/lifecycle';
+import '../design/base.css';
 import { designCssVars, LOOKS } from '../design/tokens';
+import type { LookId } from '../../themes/types';
 import { toasts } from '../design/toasts';
 import type { LaunchDeps } from '../play/launch';
 import { newRoom, pageBase } from '../lobby/room';
@@ -69,7 +71,10 @@ function fakeMatchmaker(): Matchmaker & { set(s: MatchmakerStatus): void; seeks:
 
 export function mount(target: HTMLElement, start: 'home' | 'history' = new URLSearchParams(location.search).get('harness') === 'history' ? 'history' : 'home'): void {
   const root = document.documentElement;
-  for (const [k, v] of Object.entries(designCssVars(LOOKS.kitchen))) root.style.setProperty(k, v);
+  const lookParam = new URLSearchParams(location.search).get('look');
+  const look: LookId = lookParam && lookParam in LOOKS ? (lookParam as LookId) : 'plain';
+  for (const [k, v] of Object.entries(designCssVars(LOOKS[look]))) root.style.setProperty(k, v);
+  root.dataset.look = look;
   document.body.style.margin = '0';
   document.body.style.background = 'var(--ds-mat)';
   if (start === 'history' && !location.hash) history.replaceState(null, '', '#/history');
@@ -78,7 +83,7 @@ export function mount(target: HTMLElement, start: 'home' | 'history' = new URLSe
   const mm = fakeMatchmaker();
   let starterMode: 'ok' | 'fail' = params.get('starter') === 'fail' ? 'fail' : 'ok';
   const shown: string[] = [];
-  toasts.items.subscribe((l) => {
+  toasts.subscribe((l) => {
     for (const t of l) if (!shown.includes(`${t.id}:${t.text}`)) shown.push(`${t.id}:${t.text}`);
   });
 

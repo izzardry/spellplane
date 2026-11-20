@@ -105,6 +105,7 @@ function fakeSession(roomId = 'p-test'): TableSession & { set(st: TableState): v
     left: 0,
     disposed: 0,
     getState: () => state,
+    netStatus: () => ({ mode: 'solo', connection: 'solo', peers: [], sequencer: null, seq: state.seq }),
     secrets: (): SecretStore => sampleSecrets(),
     log: () => log,
     subscribe(l: SessionListener) {
@@ -274,7 +275,7 @@ describe('leaveTable', () => {
     const toast = vi.fn();
     expect(await leaveTable({ session, kind: 'room', code: 'amber-fox-93', games, go, toast })).toBe('left');
     expect(toast.mock.calls[0]![0]).toBe(LEFT_NETWORKED);
-    expect(toast.mock.calls[0]![1].label).toBe('REJOIN');
+    expect(toast.mock.calls[0]![1].label).toBe('Rejoin');
     toast.mock.calls[0]![1].run();
     expect(go).toHaveBeenLastCalledWith('#/t/amber-fox-93/KEY');
     expect(await games.get('amber-fox-93')).not.toBeNull();

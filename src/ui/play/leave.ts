@@ -6,10 +6,11 @@
 import { ownActions } from '../../session/summary';
 import type { TableSession } from '../../session/types';
 import type { GameStore } from '../../store/types';
+import { toasts } from '../design/toasts';
+import type { TableKind } from '../table/types';
 import { computerHash, practiceHash, roomHash, type ToastAction } from './launch';
 
-/** The kinds of table (TableFrameProps.kind). */
-export type TableKind = 'room' | 'matched' | 'computer' | 'practice' | 'sandbox';
+export type { TableKind };
 
 /** The toast after leaving a networked table (journey.md 4.10). */
 export const LEFT_NETWORKED = 'You left the table. The game goes on; your seat is kept.';
@@ -27,7 +28,8 @@ export interface LeaveOptions {
   /** Navigate to a hash. */
   go(hash: string): void;
   /** The frame's checkpointer (its `now('leave')` runs first). */
-  checkpointer?: { now(reason: 'leave'): Promise<void>; stop(): void } | null;
+  checkpointer?: { now(reason: 'leave'): Promise<void>; stop?(): void } | null;
+  /** Show the one toast (default: the page's toast store). */
   toast?(text: string, action?: ToastAction): void;
   /** The room key of a networked table (else read from the game's summary). */
   key?: string;
@@ -56,6 +58,12 @@ function within<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
 
 /** Leave the table: save, leave, dispose, Home, one toast (contracts.md Part C). */
 export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
+  // The sandbox lives for the page (decision M8-C): leaving it only goes Home.
+  if (o.kind === 'sandbox' || o.code === null) {
+    o.go('#/');
+    return 'sandbox';
+  }
+  const toast = o.toast ?? ((text: string, action?: ToastAction): void => void toasts.info(text, action));
   const solo = o.kind === 'computer' || o.kind === 'practice';
   let actions = Infinity;
   if (solo) {
@@ -65,26 +73,25 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
       actions = Infinity;
     }
   }
-  const purge = solo && o.code !== null && actions < SOLO_KEEP_MIN_ACTIONS;
+  const purge = solo && actions < SOLO_KEEP_MIN_ACTIONS;
   if (!purge && o.checkpointer) await within(o.checkpointer.now('leave'), o.checkpointMs ?? 1500);
-  o.checkpointer?.stop();
+  o.checkpointer?.stop?.();
   await within(o.session.leave(), o.checkpointMs ?? 1500);
   try {
     o.session.dispose();
   } catch {
     /* already disposed by leave */
   }
-  if (purge && o.code !== null) await o.games?.purge(o.code).catch(() => undefined);
+  if (purge) await o.games?.purge(o.code).catch(() => undefined);
   o.go('#/');
-  if (o.kind === 'sandbox' || o.code === null) return 'sandbox';
   if (purge) return 'purged';
   const code = o.code;
   if (solo) {
     const hash = o.kind === 'computer' ? computerHash(code) : practiceHash(code);
-    o.toast?.(LEFT_SOLO, { label: 'CONTINUE', run: () => o.go(hash) });
+    toast(LEFT_SOLO, { label: 'Continue', run: () => o.go(hash) });
   } else {
     const key = o.key ?? (await o.games?.get(code).catch(() => null))?.key ?? '';
-    o.toast?.(LEFT_NETWORKED, { label: 'REJOIN', run: () => o.go(roomHash(code, key)) });
+    toast(LEFT_NETWORKED, { label: 'Rejoin', run: () => o.go(roomHash(code, key)) });
   }
   return 'left';
 }

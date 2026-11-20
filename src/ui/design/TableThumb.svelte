@@ -1,36 +1,20 @@
-<!-- Kit stub (contracts.md Part B) written by M8-P2 because M8-C's UI commit did not land; M8-P1's file replaces it. -->
+<!--
+  A table still for History (docs/design/m8/contracts.md Part B; visual.md 2.8 "Table still"): an SVG of the saved
+  public battlefield, one outline per card (rotated when tapped); no faces, no hands. Plain markup by M8-C; M8-P1 gives
+  it its look.
+-->
 <script lang="ts">
   import type { GameThumb } from '../../store/types';
-  let { thumb, seats, width = 128, ...rest }: { thumb: GameThumb | null; seats: { colour: string; life?: number; computer?: boolean }[]; width?: number; [key: string]: unknown } = $props();
-  const W = 128;
-  const H = 72;
-  const sx = $derived(thumb ? (W - 16) / Math.max(1, thumb.w) : 1);
-  const sy = $derived(thumb ? (H - 16) / Math.max(1, thumb.h) : 1);
-  const spots: [number, number][] = [[64, 62], [64, 10], [10, 36], [118, 36]];
+
+  let { thumb, seats, width = 128, ...rest }: { thumb: GameThumb | null; seats: { colour: string; life?: number; computer?: boolean }[]; width?: number; [attr: string]: unknown } = $props();
+  const w = $derived(thumb?.w ?? 16);
+  const h = $derived(thumb?.h ?? 9);
 </script>
 
-<svg class="ds-thumb" width={width} height={Math.round((width * H) / W)} viewBox="0 0 {W} {H}" aria-hidden="true" {...rest}>
-  <rect x="1" y="1" width={W - 2} height={H - 2} rx="8" class="mat" />
-  <line x1="8" y1={H / 2} x2={W - 8} y2={H / 2} class="mid" />
-  {#if thumb}
-    {#each thumb.cards as c, i (i)}
-      {@const x = c[0]}
-      {@const y = c[1]}
-      {@const t = c[2]}
-      <rect x={8 + x * sx - 3} y={8 + y * sy - 4} width="6" height="8" rx="1" class="card" transform={t ? `rotate(90 ${8 + x * sx} ${8 + y * sy})` : undefined} />
-    {/each}
-  {/if}
-  {#each seats.slice(0, 4) as s, i (i)}
-    <circle cx={spots[i]![0]} cy={spots[i]![1]} r="7" style:fill={s.colour} class="seat" />
-    {#if s.life !== undefined}<text x={spots[i]![0]} y={spots[i]![1] + 3} class="life">{s.life}</text>{/if}
+<svg class="ds-thumb" viewBox="0 0 {w} {h}" width={width} height={(width * 9) / 16} preserveAspectRatio="xMidYMid meet" role="img" aria-label="Table, {seats.length} players" {...rest}>
+  <rect x="0" y="0" width={w} height={h} rx={w * 0.04} fill="var(--ds-mat)" />
+  <line x1={w * 0.06} x2={w * 0.94} y1={h / 2} y2={h / 2} stroke="var(--ds-line)" />
+  {#each thumb?.cards ?? [] as c, i (i)}
+    <rect x={c[0] - w * 0.035} y={c[1] - h * 0.085} width={w * 0.07} height={h * 0.17} fill="var(--ds-panel-raised)" stroke={seats[c[3]]?.colour ?? 'var(--ds-ink)'} stroke-width={w * 0.004} transform={c[2] ? `rotate(90 ${c[0]} ${c[1]})` : undefined} />
   {/each}
 </svg>
-
-<style>
-  .ds-thumb { display: block; flex: none; }
-  .mat { fill: var(--ds-mat); stroke: var(--ds-line); }
-  .mid { stroke: var(--ds-line); stroke-dasharray: 2 3; }
-  .card { fill: none; stroke: var(--ds-ink); stroke-width: 0.8; }
-  .seat { stroke: var(--ds-panel); stroke-width: 1.5; }
-  .life { font-size: 7px; text-anchor: middle; fill: var(--ds-panel); font-weight: 700; }
-</style>

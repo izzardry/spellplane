@@ -5,7 +5,7 @@
   `homeView` (view.ts). M8-P2.
 -->
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import BoosterFan from '../design/BoosterFan.svelte';
   import Button from '../design/Button.svelte';
   import CardFan from '../design/CardFan.svelte';
@@ -20,8 +20,15 @@
   import StatusLine from '../design/StatusLine.svelte';
   import StrengthPips from '../design/StrengthPips.svelte';
   import HistoryList from '../history/HistoryList.svelte';
-  import { codeText, openHash, rowState, rowTitle } from '../history/rows';
-  import { launchDraft, launchEmpty, launchFirstRun, launchPrivate, launchQuick, launchSolo, type LaunchDeps } from '../play/launch';
+  import { codeText, rowState, rowTitle } from '../history/rows';
+  import { launchDraft, launchEmpty, launchFirstRun, launchPrivate, launchQuick, launchSolo, summaryHash, type LaunchDeps } from '../play/launch';
+  import { tableDeps } from '../table/context';
+  import type { RoomLink } from '../types';
+  import { COMPUTER_AVAILABLE } from '../../session/computer';
+  import { MATCHMAKING_AVAILABLE } from '../../session/matchmaker';
+  import type { TableSession } from '../../session/types';
+  import type { GameStore } from '../../store/types';
+  import { launchDeps, pageFaces } from './deps';
   import { isEnded } from '../../store/games';
   import type { CardRef } from '../../core/types';
   import type { Matchmaker, MatchmakerStatus } from '../../session/types';
@@ -29,31 +36,49 @@
   import { DRAFT_PLAYERS, FORMATS, heroPacks, homeView, MODES, stepDeck } from './view';
 
   let {
-    deps,
     matchmaker,
-    matchmakingAvailable = false,
-    computerAvailable = false,
-    storageOk = true,
+    games = null,
+    newRoom = undefined,
+    go = (h: string) => (location.hash = h),
+    deps: given = {},
+    openPractice = undefined,
+    matchmakingAvailable = MATCHMAKING_AVAILABLE,
+    computerAvailable = COMPUTER_AVAILABLE,
+    storageOk = undefined,
     online = typeof navigator !== 'undefined' ? navigator.onLine : true,
-    faceUrl = () => null,
+    faceUrl = undefined,
     now = () => Date.now(),
   }: {
-    /** Stores, navigation, toasts and the factories the launchers call (play/launch.ts). */
-    deps: LaunchDeps;
     matchmaker: Matchmaker;
+    games?: GameStore | null;
+    /** A fresh private table this browser creates (main.ts marks it created here). */
+    newRoom?: (() => RoomLink) | undefined;
+    go?: (hash: string) => void;
+    /** Overrides of the launchers' dependencies (the harness page passes its fakes); the rest comes from the page. */
+    deps?: Partial<LaunchDeps>;
+    /** Opens the practice table `roomId` (main.ts `openPractice`): SOLO · ALONE deals the deck into it before it shows. */
+    openPractice?: ((roomId: string) => Promise<TableSession>) | undefined;
     matchmakingAvailable?: boolean;
     computerAvailable?: boolean;
-    storageOk?: boolean;
+    /** Whether this browser keeps decks and games (default: a games store exists). */
+    storageOk?: boolean | undefined;
     online?: boolean;
-    /** The image of a card for the hero's fan, or null for a card back. */
-    faceUrl?: (ref: CardRef) => string | null;
+    /** The image of a card for the hero's fan, or null for a card back (default: the page's face source). */
+    faceUrl?: ((ref: CardRef) => Promise<string | null>) | undefined;
     now?: () => number;
   } = $props();
+
+  // The page's sources (App.svelte sets them for every table, ui/table/context.ts); the harness passes its own in `deps`.
+  const page = tableDeps();
+  const deps: LaunchDeps = untrack(() => launchDeps(given, { games, newRoom, go, openPractice, now, page, matchmaker }));
+  const keeps = $derived(storageOk ?? deps.games !== null);
+  const facesOf = untrack(() => faceUrl ?? pageFaces(page));
 
   let prefs: HomePrefs = $state(structuredClone(DEFAULT_HOME_PREFS));
   let decks: DeckRecord[] = $state([]);
   let searched = $state(false);
-  let status: MatchmakerStatus = $state(matchmaker.status());
+  const mm = untrack(() => matchmaker);
+  let status: MatchmakerStatus = $state(mm.status());
   let latest: GameSummary | null = $state(null);
   let recent = $state(0);
   let busy = $state(false);
@@ -63,12 +88,12 @@
   let alive = true;
   let clock: ReturnType<typeof setInterval> | null = null;
 
-  const offMm = matchmaker.subscribe((s) => {
+  const offMm = mm.subscribe((s) => {
     status = s;
     syncClock();
   });
 
-  const view = $derived(homeView(prefs, decks, online, storageOk, { available: matchmakingAvailable, status, searched }, { computer: computerAvailable }));
+  const view = $derived(homeView(prefs, decks, online, keeps, { available: matchmakingAvailable, status, searched }, { computer: computerAvailable }));
   const elapsed = $derived.by(() => {
     void tick;
     if (view.since === null) return '0:00';
@@ -191,11 +216,29 @@
     if (rankedTimer) clearTimeout(rankedTimer);
   });
 
-  const fan = $derived.by(() => {
+  /** The hero's fan: the summary's cover and fan cards, at most five, front first. */
+  const fanRefs = $derived.by((): CardRef[] => {
     const d = view.deck?.record;
     if (!d) return [];
-    const refs = d.summary?.fan?.length ? d.summary.fan : d.main.slice(0, 5);
-    return refs.slice(0, 5).map((r) => ({ src: faceUrl(r), alt: d.name }));
+    return (d.summary?.fan?.length ? d.summary.fan : d.main.slice(0, 5)).slice(0, 5);
+  });
+  let fanUrls = $state.raw<{ key: string; urls: (string | null)[] }>({ key: '', urls: [] });
+  $effect(() => {
+    const refs = fanRefs;
+    const key = refs.map((r) => r.sid).join(',');
+    if (key === fanUrls.key) return;
+    let cancelled = false;
+    void Promise.all(refs.map((r) => facesOf(r).catch(() => null))).then((urls) => {
+      if (!cancelled) fanUrls = { key, urls };
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+  const fan = $derived.by(() => {
+    const name = view.deck?.name ?? '';
+    const key = fanRefs.map((r) => r.sid).join(',');
+    return fanRefs.map((_, i) => ({ src: fanUrls.key === key ? (fanUrls.urls[i] ?? null) : null, alt: name }));
   });
   const curve = $derived(view.deck?.record.summary?.curve ?? []);
   const colours = $derived(view.deck?.record.summary?.colours ?? []);
@@ -229,7 +272,7 @@
       <p class="facts">A card table for Magic. No rules engine, no account.</p>
     {:else if view.deck}
       <span class="eyebrow" data-testid="hero-eyebrow">{view.deckLocked ? 'IN THE QUEUE WITH' : `YOUR DECK · ${view.deckIndex + 1} OF ${view.deckCount}`}</span>
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
       <div class="hero__row" tabindex="0" role="group" aria-label="Deck {view.deck.name}; Left and Right change deck" onkeydown={heroKey} data-testid="hero-row">
         <IconButton label="Previous deck" disabled={view.deckLocked || view.deckIndex <= 0} onclick={() => step(-1)} data-testid="home-prev">‹</IconButton>
         <PileStack count={6}>
@@ -304,7 +347,7 @@
   <!-- 4. The last unfinished game -->
   {#if continueGame}
     {@const g = continueGame}
-    <Button size="md" onclick={() => deps.go(openHash(g))} data-testid="home-continue">
+    <Button size="md" onclick={() => deps.go(summaryHash(g))} data-testid="home-continue">
       <span class="cont"><span class="cont__eyebrow">CONTINUE</span> <span class="cont__game" data-testid="home-continue-game">{rowTitle(g)} · {rowState(g)}</span> <span class="cont__code">{continueCode}</span></span>
     </Button>
   {/if}
@@ -312,7 +355,7 @@
   <!-- 5. Recent games, below the fold -->
   <section class="recent" class:empty={recent === 0} aria-label="Your games" data-testid="home-recent">
     {#if recent > 0}<h3 class="eyebrow">YOUR GAMES</h3>{/if}
-    <HistoryList games={deps.games} limit={5} {now} onopen={(g) => deps.go(openHash(g))} onchange={(n) => (recent = n)} />
+    <HistoryList games={deps.games} limit={5} {now} onopen={(g) => deps.go(summaryHash(g))} onchange={(n) => (recent = n)} />
     {#if recent > 5}<Button size="sm" variant="quiet" onclick={() => deps.go('#/history')}>{recent - 5} MORE GAMES</Button>{/if}
   </section>
 </div>

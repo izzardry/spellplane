@@ -12,3 +12,8 @@ export function navOf(route: ShellRoute): 'play' | 'decks' | 'history' | null {
   if (route.name === 'history') return 'history';
   return null;
 }
+
+/** The seat colours the profile popover offers, from the viewer's theme (none without one). */
+export function profileColours(theme: { tokens: { colours: { seats: { colour: string }[] } } } | null): string[] {
+  return theme ? theme.tokens.colours.seats.map((s) => s.colour) : [];
+}

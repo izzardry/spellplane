@@ -12,8 +12,9 @@
  */
 import type { Format, LobbySettings } from '../../core/types';
 import { buildStarterDeck as stubStarter, type StarterDeck, type StarterPoolSource } from '../../data/starter';
-import { newPracticeRoomId } from '../../session/practice';
-import type { Matchmaker } from '../../session/types';
+import { deckImportOfRecord } from '../../session/deck-build';
+import { newPracticeRoomId, PRACTICE_PREFIX, preparePractice } from '../../session/practice';
+import type { Matchmaker, TableSession } from '../../session/types';
 import type { DeckRecord, DeckStore, GameStore, GameSummary, HintId, HomePrefs, SettingsStore } from '../../store/types';
 import { boosterToLobby, deckKind, queuesFor } from '../home/view';
 
@@ -78,6 +79,12 @@ export interface LaunchDeps {
   /** Record that this tab created the room (its creator may sit alone at once). */
   markCreated?(roomId: string): void;
   newPracticeId?(): string;
+  /**
+   * Open the practice table `roomId` (main.ts `openPractice`: a solo session saved under that id). Given, SOLO · ALONE
+   * turns on the automatic setup, imports the deck and deals the opening hand into it (session/practice.ts) and closes
+   * it again before the route reopens it from the store.
+   */
+  openPractice?(roomId: string): Promise<TableSession>;
   /** Create a computer game for the deck and resolve to its room id (session/computer.ts via main.ts). Rejects without a computer. */
   openComputer?(opts: { deckId: string | null }): Promise<string>;
   matchmaker?: Matchmaker;
@@ -115,6 +122,19 @@ export function roomHash(roomId: string, roomKey: string): string {
   return `#/t/${encodeURIComponent(roomId)}/${encodeURIComponent(roomKey)}`;
 }
 
+/** A fresh practice room id (`p-` and 12 random base-36 characters; computer.md section 11). */
+export function newPracticeRoom(random: () => number = Math.random): string {
+  let id = '';
+  for (let i = 0; i < 12; i++) id += Math.floor(random() * 36).toString(36);
+  return PRACTICE_PREFIX + id;
+}
+
+/** The hash that reopens a game of History (persistence.md section 3): its room, practice table or computer game. */
+export function summaryHash(g: { code: string; key: string; kind: 'private' | 'matched' | 'solo'; opponent?: 'sparring' | 'dummy' | undefined }): string {
+  if (g.kind !== 'solo') return roomHash(g.code, g.key);
+  return g.code.startsWith(PRACTICE_PREFIX) && g.opponent !== 'sparring' ? practiceHash(g.code) : computerHash(g.code);
+}
+
 /** The toast when Sparring cannot start (computer.md: SOLO offers ALONE while the computer is missing). */
 export const SPARRING_FALLBACK = 'Sparring is not available here. You play alone.';
 
@@ -134,6 +154,15 @@ export async function launchSolo(deps: LaunchDeps, prefs: HomePrefs, deck: DeckR
     }
   }
   const roomId = (deps.newPracticeId ?? newPracticeRoomId)();
+  if (deps.openPractice) {
+    const session = await deps.openPractice(roomId);
+    try {
+      await preparePractice(session, deck ? deckImportOfRecord(deck) : null);
+      await session.whenSaved();
+    } finally {
+      session.dispose();
+    }
+  }
   await deps.games?.create({ code: roomId, key: '', kind: 'solo', format: '1v1', decks: deckSource(deck), opponent: 'dummy', ...(deck ? { deck: { id: deck.id, name: deck.name } } : {}) });
   // The newest three unfinished solo games stay resumable, the new one included (contracts.md Part G, History item 1).
   await deps.games?.endOlderSolo(3);

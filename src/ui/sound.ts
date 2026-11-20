@@ -8,6 +8,7 @@
  * the audio context is made on the viewer's first press or key; until then nothing plays and nothing is queued. Every
  * call into the theme's sources is guarded: a sound that fails never reaches the game.
  */
+import { track, untrack } from '../util/lifecycle';
 import type { LogEntry, SeatId } from '../core/types';
 import type { SoundCue, SoundSet } from '../themes/types';
 
@@ -130,7 +131,11 @@ export class ThemeSoundPlayer {
   /** A user gesture happened: audio may start now (browsers' autoplay rule). */
   unlock(): void {
     if (!this.enabled()) return;
-    if (!this.ctx) this.ctx = this.makeContext();
+    if (!this.ctx) {
+      this.ctx = this.makeContext();
+      // M8-C: the HUD's audio context is counted while it lives (contracts.md Part C).
+      if (this.ctx) track('audioContexts', this.ctx);
+    }
     if (!this.ctx) return;
     if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => undefined);
     this.sync();
@@ -157,6 +162,7 @@ export class ThemeSoundPlayer {
     this.disposed = true;
     const ctx = this.ctx;
     this.ctx = null;
+    if (ctx) untrack('audioContexts', ctx);
     ctx?.close().catch(() => undefined);
   }
 

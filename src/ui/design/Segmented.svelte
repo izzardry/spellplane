@@ -1,4 +1,8 @@
-<!-- Kit stub (contracts.md Part B) written by M8-P2 because M8-C's UI commit did not land; M8-P1's file replaces it. A radio group; arrow keys move. -->
+<!--
+  A segmented control of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): a well of options, one on the
+  thumb; a radio group (arrow keys move and select, skipping disabled options). Used for the nav, filters, formats and
+  option rows. Plain markup by M8-C; M8-P1 gives it its look and the sliding thumb.
+-->
 <script lang="ts">
   let {
     options,
@@ -6,7 +10,6 @@
     size = 'md',
     label,
     onchange = undefined,
-    disabled = false,
     ...rest
   }: {
     options: { value: string; label: string; disabled?: boolean; hint?: string }[];
@@ -14,42 +17,46 @@
     size?: 'sm' | 'md';
     label: string;
     onchange?: ((value: string) => void) | undefined;
-    disabled?: boolean;
-    [key: string]: unknown;
+    [attr: string]: unknown;
   } = $props();
+  const buttons: HTMLButtonElement[] = [];
 
-  function choose(v: string): void {
-    if (disabled || v === value) return;
+  function pick(v: string): void {
+    if (v === value) return;
     value = v;
     onchange?.(v);
   }
   function key(e: KeyboardEvent, i: number): void {
-    const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
-    if (!d) return;
+    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    if (!step) return;
     e.preventDefault();
-    const n = options.length;
-    for (let k = 1; k <= n; k++) {
-      const o = options[(i + d * k + n * k) % n];
+    for (let k = 1; k <= options.length; k++) {
+      const j = (i + step * k + options.length * k) % options.length;
+      const o = options[j];
       if (o && !o.disabled) {
-        choose(o.value);
-        ((e.currentTarget as HTMLElement).parentElement?.children[options.indexOf(o)] as HTMLElement | undefined)?.focus();
+        pick(o.value);
+        buttons[j]?.focus();
         return;
       }
     }
   }
 </script>
 
-<div class="ds-seg ds-seg--{size}" role="radiogroup" aria-label={label} aria-disabled={disabled || undefined} {...rest}>
+<div class="ds-seg{size === 'sm' ? ' ds-seg--sm' : ''}" role="radiogroup" aria-label={label} {...rest}>
   {#each options as o, i (o.value)}
-    <button type="button" role="radio" class="ds-seg__opt" class:on={o.value === value} aria-checked={o.value === value} tabindex={o.value === value ? 0 : -1} disabled={disabled || o.disabled} title={o.hint} onclick={() => choose(o.value)} onkeydown={(e) => key(e, i)}>{o.label}</button>
+    <button
+      type="button"
+      role="radio"
+      class="ds-seg__opt"
+      class:on={o.value === value}
+      aria-checked={o.value === value}
+      tabindex={o.value === value ? 0 : -1}
+      disabled={o.disabled || undefined}
+      title={o.hint}
+      data-value={o.value}
+      bind:this={buttons[i]}
+      onclick={() => pick(o.value)}
+      onkeydown={(e) => key(e, i)}>{o.label}</button
+    >
   {/each}
 </div>
-
-<style>
-  .ds-seg { display: inline-flex; box-sizing: border-box; padding: 4px; gap: 2px; border-radius: 999px; background: var(--ds-chip); height: 44px; }
-  .ds-seg--sm { height: 36px; padding: 3px; }
-  .ds-seg__opt { border: 0; border-radius: 999px; padding: 0 16px; background: transparent; color: var(--ds-muted); font: inherit; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer; white-space: nowrap; }
-  .ds-seg__opt.on { background: var(--ds-panel-raised); color: var(--ds-ink); box-shadow: var(--ds-elevation-raised); }
-  .ds-seg__opt:disabled { cursor: default; opacity: 0.5; }
-  .ds-seg__opt:focus-visible { outline: 2px solid var(--ds-focus); outline-offset: 1px; }
-</style>

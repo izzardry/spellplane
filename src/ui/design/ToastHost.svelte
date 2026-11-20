@@ -1,24 +1,18 @@
-<!-- Kit stub (contracts.md Part B) written by M8-P2 because M8-C's UI commit did not land; M8-P1's file replaces it. -->
+<!--
+  Where the page's toasts show (docs/design/m8/contracts.md Part B; visual.md 2.8): bottom centre in the shell, above
+  the primary button in a table. Reads `toasts` of ui/design/toasts.ts. Plain markup by M8-C; M8-P1 gives it its look.
+-->
 <script lang="ts">
-  import { toasts } from './toasts';
-  let { place = 'bottom-centre' }: { place?: 'bottom-centre' | 'above-primary' } = $props();
-  const items = toasts.items;
+  import Toast from './Toast.svelte';
+  import { toasts, type ToastEntry } from './toasts';
+
+  let { place = 'bottom-centre', ...rest }: { place?: 'bottom-centre' | 'above-primary'; [attr: string]: unknown } = $props();
+  let list = $state.raw<readonly ToastEntry[]>([]);
+  $effect(() => toasts.subscribe((l) => (list = l)));
 </script>
 
-<div class="ds-toasts ds-toasts--{place}" aria-live="polite">
-  {#each $items as t (t.id)}
-    <div class="ds-toast" data-testid="toast" data-kind={t.kind}>
-      <span class="ds-toast__text">{t.text}</span>
-      {#each t.actions as a (a.label)}<button type="button" class="ds-btn-xs" class:primary={a.primary} onclick={a.run}>{a.label}</button>{/each}
-      <button type="button" class="ds-toast__close" aria-label="Close" onclick={() => toasts.dismiss(t.id)}>×</button>
-    </div>
+<div class="ds-toast-host ds-toast-host--{place}" aria-live="polite" {...rest}>
+  {#each list as t (t.id)}
+    <Toast kind={t.kind} text={t.text} detail={t.detail} actions={t.actions} onclose={() => toasts.dismiss(t.id)} data-testid="toast" data-kind={t.kind} />
   {/each}
 </div>
-
-<style>
-  .ds-toasts { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 70; max-width: calc(100vw - 32px); }
-  .ds-toast { display: flex; align-items: center; gap: 12px; min-height: 52px; box-sizing: border-box; padding: 12px 16px; border-radius: 12px; background: var(--ds-panel-raised); color: var(--ds-ink); box-shadow: var(--ds-elevation-pop); font-size: 13px; }
-  .ds-btn-xs, .ds-toast__close { height: 28px; min-width: 28px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--ds-chip); color: var(--ds-ink); font: inherit; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; cursor: pointer; }
-  .ds-btn-xs.primary { background: var(--ds-ink); color: var(--ds-panel); }
-  .ds-toast__close { padding: 0; background: transparent; }
-</style>

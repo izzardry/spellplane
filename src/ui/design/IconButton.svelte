@@ -1,37 +1,58 @@
-<!-- Kit stub (contracts.md Part B) written by M8-P2 because M8-C's UI commit did not land; M8-P1's file replaces it. -->
+<!--
+  A round icon button of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): `label` is its accessible name
+  and tooltip, children (or the seed's `icon`) the icon. The seed's `icon`, `showLabel`, `key`, `badge` and `small`
+  stay optional. Plain markup by M8-C; M8-P1 gives it its look.
+-->
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import type { HTMLButtonAttributes } from 'svelte/elements';
+  import Icon from './Icon.svelte';
+  import type { IconName } from './icons';
+  import type { ButtonVariant, Size } from './types';
+
   let {
     label,
-    size = 'md',
+    size = undefined,
+    small = false,
     variant = 'secondary',
     pressed = undefined,
     disabled = false,
     onclick = undefined,
+    icon = undefined,
+    showLabel = false,
+    key = null,
+    badge = null,
     children,
+    class: extra = '',
     ...rest
-  }: {
+  }: Omit<HTMLButtonAttributes, 'onclick'> & {
     label: string;
-    size?: 'xs' | 'sm' | 'md' | 'lg';
-    variant?: 'primary' | 'secondary' | 'ghost' | 'quiet' | 'danger';
+    size?: Size | undefined;
+    small?: boolean;
+    variant?: ButtonVariant;
     pressed?: boolean | undefined;
-    disabled?: boolean;
-    onclick?: ((e: MouseEvent) => void) | undefined;
+    disabled?: boolean | null | undefined;
+    onclick?: ((e: MouseEvent) => void) | null | undefined;
+    icon?: IconName | undefined;
+    showLabel?: boolean;
+    key?: string | null;
+    badge?: number | null;
     children?: Snippet;
-    [key: string]: unknown;
   } = $props();
+  const s = $derived<Size>(size ?? (small ? 'xs' : 'md'));
+  const tip = $derived(key ? `${label} (${key})` : label);
 </script>
 
-<button type="button" class="ds-ib ds-ib--{size} ds-ib--{variant}" aria-label={label} title={label} aria-pressed={pressed} {disabled} {onclick} {...rest}>{@render children?.()}</button>
-
-<style>
-  .ds-ib { display: inline-grid; place-items: center; box-sizing: border-box; border: 0; border-radius: 50%; padding: 0; cursor: pointer; background: var(--ds-panel-raised); color: var(--ds-ink); box-shadow: var(--ds-elevation-raised); font: inherit; transition: transform 150ms; }
-  .ds-ib:disabled { background: var(--ds-chip); color: var(--ds-muted); box-shadow: none; cursor: default; }
-  .ds-ib:focus-visible { outline: 2px solid var(--ds-focus); outline-offset: 2px; }
-  .ds-ib--xs { width: 28px; height: 28px; }
-  .ds-ib--sm { width: 36px; height: 36px; }
-  .ds-ib--md { width: 44px; height: 44px; }
-  .ds-ib--lg { width: 56px; height: 56px; }
-  .ds-ib--ghost { background: transparent; box-shadow: inset 0 0 0 1px var(--ds-line); }
-  .ds-ib--quiet { background: transparent; box-shadow: none; }
-</style>
+<button
+  type="button"
+  class="ds-btn ds-btn--{variant} ds-btn--{s} ds-icon-btn {extra}"
+  class:ds-icon-only={!showLabel}
+  class:is-pressed={pressed}
+  aria-label={showLabel ? undefined : label}
+  aria-pressed={pressed}
+  title={tip}
+  disabled={disabled || undefined}
+  onclick={onclick ?? undefined}
+  {...rest}
+  >{#if icon}<Icon name={icon} />{/if}{@render children?.()}{#if showLabel}<span>{label}</span>{/if}{#if badge}<span class="ds-badge" aria-label="{badge} new">{badge}</span>{/if}</button
+>
