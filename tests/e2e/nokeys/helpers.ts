@@ -49,14 +49,14 @@ export function profileFor(info: TestInfo, tag: string): string {
   return `nokeys-${tag}-${info.project.name.slice(0, 3)}-${info.workerIndex}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-/** The front type line of a card this browser knows (own hand from its secrets, public cards from the state). */
+/** The front type line of a card this browser knows (own hand from its secrets, public cards from the state), read from the recorded fixture cards the page was given. */
 export async function typeLine(page: Page, id: InstanceId): Promise<string> {
   return page.evaluate((card) => {
     const d = window.__spellplane!;
     const c = d.state!().cards[card];
     const ref = c?.identity ?? d.secrets!().identities[card]?.card;
-    const s = d.session as unknown as { cardData(r: unknown): { type_line?: string; card_faces?: { type_line?: string }[] } | null };
-    const data = ref ? s.cardData(ref) : null;
+    const fx = (window as unknown as { __spellplaneFixtures?: { cards: { id: string; type_line?: string; card_faces?: { type_line?: string }[] }[] } }).__spellplaneFixtures;
+    const data = ref ? fx?.cards.find((x) => x.id === ref.sid) : undefined;
     return data?.type_line ?? data?.card_faces?.[0]?.type_line ?? '';
   }, id);
 }

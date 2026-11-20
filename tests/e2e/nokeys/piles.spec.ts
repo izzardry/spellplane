@@ -6,7 +6,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { hook } from '../helpers/app';
-import { affordances, goldfish, handIds, keydowns, pileCentre, settledTable, tableToScreen } from './helpers';
+import { affordances, goldfish, state, handIds, keydowns, pileCentre, settledTable, tableToScreen } from './helpers';
 
 const box = async (page: Page, testid: string) => (await page.getByTestId(testid).boundingBox())!;
 const overlap = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
@@ -22,7 +22,7 @@ test('resting the pointer on the library shows Draw, Shuffle and Search beside i
   // Beside the pile, never over it (the scene's anchor is the pile's drawn top card).
   const pile = (await affordances(page)).pile!;
   expect(pile).toMatchObject({ zone: 'library:s0', owner: 's0', via: 'hover' });
-  expect(pile.count).toBeGreaterThan(40);
+  expect(pile.count).toBe((await state(page)).zones['library:s0']!.ids.length);
   expect(overlap(await box(page, 'pile-actions'), pile.rect)).toBe(false);
   expect(Math.abs(lib.x - (pile.rect.x + pile.rect.width / 2))).toBeLessThan(4);
 

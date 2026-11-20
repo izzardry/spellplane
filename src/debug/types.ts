@@ -178,6 +178,8 @@ export interface CoachDebug {
   current(): CoachMarkId | null;
   /** Coach marks done or dismissed (stored in Settings.hintsSeen). */
   seen(): CoachMarkId[];
+  /** Resolves when every mark seen so far is stored. */ // [M7-P5]
+  saved?(): Promise<void>;
 }
 
 /** The full debug hook (DESIGN "Specification: code interfaces"). */

@@ -13,13 +13,13 @@
   let {
     coach,
     touch = false,
-    bottom = '0px',
+    bottom = null,
     hidden = false,
   }: {
     coach: CoachController;
     touch?: boolean;
     /** Where the slot above the hand starts, from the window's bottom edge (the HUD's above-hand offset). */
-    bottom?: string;
+    bottom?: string | null;
     /** Nothing is shown (a read-only table, a prompt in the slot); the mark waits and returns. */
     hidden?: boolean;
   } = $props();
@@ -45,6 +45,8 @@
   .coach {
     position: fixed;
     left: 50%;
+    /* The HUD's slot above the hand (Hud.svelte .above-hand) unless the HUD passes where it starts now. */
+    bottom: calc(22vh + 16px);
     z-index: 23;
     transform: translateX(-50%);
     margin-bottom: 8px;

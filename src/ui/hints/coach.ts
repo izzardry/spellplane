@@ -213,8 +213,16 @@ export class CoachController {
     const fresh = ids.filter((id) => !this.seen.includes(id));
     if (fresh.length === 0) return;
     this.seen = [...this.seen, ...fresh];
-    void this.store();
+    // One write after another, so a later one never lands before an earlier one.
+    this.writing = this.writing.then(() => this.store());
   }
+
+  /** Resolves when every mark seen so far is stored (tests reload only after it). */
+  saved(): Promise<void> {
+    return this.writing;
+  }
+
+  private writing: Promise<void> = Promise.resolve();
 
   private async store(): Promise<void> {
     if (!this.settings) return;

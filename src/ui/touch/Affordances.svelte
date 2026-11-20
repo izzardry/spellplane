@@ -94,7 +94,7 @@
 
   onMount(() => {
     void coach.load();
-    registerDebug({ coach: { current: () => coach.current(), seen: () => coach.done() } });
+    registerDebug({ coach: { current: () => coach.current(), seen: () => coach.done(), saved: () => coach.saved() } });
   });
 </script>
 

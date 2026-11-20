@@ -21,7 +21,7 @@
  */
 import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
-import { CAMERA, CLIP, SCREEN_LAYER } from '../core/geometry';
+import { CAMERA, CLIP, GEOMETRY, SCREEN_LAYER } from '../core/geometry';
 import { carryGroup, clipGroup, type DragGroup } from '../core/clips';
 import type { CardInstance, ClipId, InstanceId, Pose, SeatId, StackItemId, TableState, ZoneId } from '../core/types';
 import { parseZoneId } from '../core/ids';
@@ -2143,7 +2143,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const sl = seatLayoutOf(state, layout, tz.owner);
       const a = sl ? pileAnchor(sl, 'library') : null;
       libSlot = a ? { zone: t.zone, rect: libraryBottomSlot(a) } : null;
-    } else if (libSlot && !pointInRect(p, libSlot.rect)) libSlot = null;
+    } else if (libSlot) {
+      // The slot stays while the pointer crosses the gap between the library and the slot (and on the slot itself).
+      const m = GEOMETRY.gap + 6;
+      const r = libSlot.rect;
+      if (!pointInRect(p, { ...r, w: r.w + 2 * m, d: r.d + 2 * m })) libSlot = null;
+    }
     if (libSlot) {
       const r = libSlot.rect;
       const onSlot = !(t && tz?.kind === 'library') && pointInRect(p, r);

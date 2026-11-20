@@ -16,6 +16,15 @@ async function clearOfThePlayArea(page: Page): Promise<void> {
   const vp = page.viewportSize()!;
   expect(mark.y).toBeGreaterThan(vp.height * 0.55);
   for (const c of await shown(page)) if (c.visible && c.zone.startsWith('battlefield')) expect(overlap(mark, c.screen), `covers ${c.id}`).toBe(false);
+  // Never over the opponent's side: the mark's box and the opponent territory's screen box do not meet.
+  const view = await hook<{ seats: { seat: string; zones?: { territory?: ({ x: number; y: number } | null)[] } }[] } | null>(page, 'tableView');
+  const opp = view?.seats.find((s) => s.seat !== 's0')?.zones?.territory?.filter((p): p is { x: number; y: number } => !!p) ?? [];
+  if (opp.length) {
+    const xs = opp.map((p) => p.x);
+    const ys = opp.map((p) => p.y);
+    const box = { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
+    expect(overlap(mark, box), 'covers the opponent territory').toBe(false);
+  }
   // Not over the hand either.
   for (const h of await page.getByTestId('hand-card').all()) {
     const b = await h.boundingBox();
@@ -61,6 +70,7 @@ test('one coach mark at a time, at its moment, gone once done and never again: d
   await mark.getByTestId('coach-dismiss').click();
   await expect.poll(() => coachSeen(page)).toContain('coachTap');
   await expect(mark).toHaveAttribute('data-coach', 'coachSelect');
+  await page.evaluate(() => (window.__spellplane as unknown as { coach: { saved(): Promise<void> } }).coach.saved());
   await page.reload();
   await expect.poll(() => page.evaluate(() => typeof window.__spellplane?.coach?.current === 'function')).toBe(true);
   await expect.poll(() => coachNow(page)).toBe('coachSelect');
