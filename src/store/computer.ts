@@ -87,3 +87,13 @@ export function prefixedTableStore(inner: TableStore, prefix: string): TableStor
     },
   };
 }
+
+/**
+ * Delete the rows of a computer game (computer.md 2.5): the human's table, Sparring's `bot~` table and the computer
+ * record. A missing piece is no error. Callers with a game that may still be open use session/computer.ts
+ * `deleteComputerGame`, which first waits for the last saves of its sessions.
+ */
+export async function deleteComputerRows(stores: { tables: TableStore | null; computer: ComputerStore | null }, roomId: string): Promise<void> {
+  const room = isBotTable(roomId) ? roomId.slice(BOT_TABLE_PREFIX.length) : roomId;
+  await Promise.all([stores.tables?.deleteTable(room), stores.tables?.deleteTable(BOT_TABLE_PREFIX + room), stores.computer?.delete(room)]);
+}

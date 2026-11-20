@@ -68,17 +68,42 @@ async function drive(page: Page, done: (v: View) => boolean, what: string, round
   throw new Error(`Sparring never reached: ${what}`);
 }
 
-/** A creature in the human's hand (from the injected fixture cards). */
+/**
+ * A creature in the human's hand (from the injected fixture cards). The opening hand is shuffled for real, so a hand
+ * without one draws until it holds one (a deck of 40 holds about 17).
+ */
 async function creatureInHand(page: Page): Promise<{ id: string; power: number }> {
-  return page.evaluate(() => {
-    const sec = window.__spellplane!.secrets!();
-    const cards = window.__spellplaneFixtures!.cards;
-    for (const id of sec.hand) {
-      const c = cards.find((x) => x.id === sec.identities[id]?.card.sid);
-      if (c && /Creature/.test(c.type_line) && /^\d+$/.test(c.power ?? '')) return { id, power: Number(c.power) };
-    }
-    throw new Error('no creature in hand');
-  });
+  for (let i = 0; i < 34; i++) {
+    const found = await page.evaluate(() => {
+      const sec = window.__spellplane!.secrets!();
+      const cards = window.__spellplaneFixtures!.cards;
+      for (const id of sec.hand) {
+        const c = cards.find((x) => x.id === sec.identities[id]?.card.sid);
+        if (c && /Creature/.test(c.type_line) && /^\d+$/.test(c.power ?? '')) return { id, power: Number(c.power) };
+      }
+      return null;
+    });
+    if (found) return found;
+    const before = (await view(page)).hand;
+    await page.evaluate(() => window.__computerHarness!.draw(1));
+    await expect.poll(async () => (await view(page)).hand).toBe(before + 1);
+  }
+  throw new Error('no creature in the deck');
+}
+
+/**
+ * Sparring's turns until a card of its own is on its battlefield: a hand without a land passes back, and the human
+ * hands the turn over again (its opening hand is shuffled for real, so it may hold no land at first).
+ */
+async function sparringPlaysALand(page: Page): Promise<void> {
+  const landed = (x: View): boolean => x.cards.some((c) => c.zone === 'battlefield:s1' && c.owner === 's1');
+  for (let turn = 0; turn < 8; turn++) {
+    const v = await view(page);
+    if (landed(v)) return;
+    if (v.active === 's0') await page.evaluate(() => window.__spellplane!.dispatch!({ type: 'turnPass', to: 's1' } as never));
+    await drive(page, (x) => landed(x) || x.active === 's0', 'a land on its battlefield or the turn back');
+  }
+  throw new Error('Sparring played no land in eight turns');
 }
 
 async function openHarness(page: Page, profile: string): Promise<void> {
@@ -152,9 +177,7 @@ test.describe('Sparring on the computer harness', () => {
     });
 
     await test.step('Sparring plays a land on its turn', async () => {
-      const v = await view(page);
-      if (v.active === 's0') await page.evaluate(() => window.__spellplane!.dispatch!({ type: 'turnPass', to: 's1' } as never));
-      await drive(page, (x) => x.cards.some((c) => c.zone === 'battlefield:s1' && c.owner === 's1'), 'a land on its battlefield');
+      await sparringPlaysALand(page);
       await drive(page, (x) => x.active === 's0', 'passing the turn back');
       expect(await steps(page)).toBeGreaterThan(3);
     });
@@ -219,7 +242,7 @@ test.describe('Sparring on the computer harness', () => {
     expect(await steps(page)).toBe(before);
     await openMenu();
     await page.getByTestId('sparring-resumeSparring').click();
-    await drive(page, (x) => x.cards.some((c) => c.zone === 'battlefield:s1'), 'a land after resuming');
+    await sparringPlaysALand(page);
     expect(await steps(page)).toBeGreaterThan(before);
   });
 });

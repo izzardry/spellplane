@@ -107,6 +107,30 @@ describe('combatCue', () => {
     expect(damageCounted(table({ active: 's0', cards: [['a', 's0', 'attack']], confirm: { id: 'r3', responses: { s1: 'ok' } } }), direct, 's0', 's1')).toBe(true);
   });
 
+  it('a counted combat whose turn passed without Main 2 is not offered Attack again (no double booking)', () => {
+    const counted = [
+      act(1, { type: 'turnPass', by: 's1', to: 's0' }),
+      act(2, { type: 'moveTemp', by: 's0', card: 'a', combat: 'attack' }),
+      act(3, { type: 'ask', by: 's0', round: 'r1', label: 'Attack' }),
+      act(4, { type: 'ask', by: 's0', round: 'r2', label: 'Damage' }),
+      // The HUD's way of passing the turn: only a turnPass, the attacker stays marked.
+      act(5, { type: 'turnPass', by: 's0', to: 's1' }),
+    ];
+    const sparringsTurn = table({ active: 's1', cards: [['a', 's0', 'attack']], confirm: { id: 'r2', responses: { s1: 'ok' } } });
+    expect(combatCue(sparringsTurn, counted, 's0', 's1')).toBeNull();
+    // Sparring's turn reads "Sparring's turn", not Main 2.
+    expect(damageCounted(sparringsTurn, counted, 's0', 's1')).toBe(false);
+    // Back on the human's turn: Main 2 brings the attacker home; still no Attack.
+    const back = [...counted, act(6, { type: 'turnPass', by: 's1', to: 's0' })];
+    const humansTurn = table({ active: 's0', cards: [['a', 's0', 'attack']] });
+    expect(combatCue(humansTurn, back, 's0', 's1')).toBeNull();
+    expect(damageCounted(humansTurn, back, 's0', 's1')).toBe(true);
+    // A new declaration is a new combat.
+    const again = [...back, act(7, { type: 'moveTemp', by: 's0', card: 'a', combat: 'attack' })];
+    expect(combatCue(humansTurn, again, 's0', 's1')).toEqual({ kind: 'attack', label: 'Attack' });
+    expect(damageCounted(humansTurn, again, 's0', 's1')).toBe(false);
+  });
+
   it("on Sparring's turn its attack comes first: No blocks, Done blocking with a block line, nothing after Blocks done", () => {
     const log = [act(1, { type: 'turnPass', by: 's0', to: 's1' }), act(2, { type: 'moveTemp', by: 's1', card: 'b', combat: 'attack' })];
     // The human's card is still marked from its own last combat: no Attack cue on Sparring's turn.

@@ -7,12 +7,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManualClock } from '../../../src/bot/runner';
 import { stateHash } from '../../../src/core/hash';
-import { createComputerGame, MIRROR_NOTICE, openComputerGame, provideComputerDeps, resumeComputerGame } from '../../../src/session/computer';
+import { botSessionOf, createComputerGame, deleteComputerGame, MIRROR_NOTICE, openComputerGame, provideComputerDeps, resumeComputerGame } from '../../../src/session/computer';
 import type { NetTable } from '../../../src/session/net';
 import type { ComputerGame } from '../../../src/session/types';
+import { BOT_TABLE_PREFIX } from '../../../src/store/computer';
 import type { LocalStores } from '../../../src/store/stores';
 import { resetLifecycleForTests } from '../../../src/util/lifecycle';
-import { cards, FAKE_TIMERS, humanDeck, settle, simDeps, until } from './harness';
+import { cards, FAKE_TIMERS, fakeBotKeys, humanDeck, settle, simDeps, until } from './harness';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
@@ -31,7 +32,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-const botOf = (g: ComputerGame): NetTable => (g.handle as unknown as { __bot: NetTable }).__bot;
+const botOf = (g: ComputerGame): NetTable => botSessionOf(g.handle)!;
 const sidsOf = (s: NetTable): string[] => {
   const sec = s.secrets();
   return [...sec.hand, ...sec.libraryOrder].map((id) => sec.identities[id]!.card.sid).sort();
@@ -101,5 +102,44 @@ describe('opening #/c/<room>', () => {
     open.push({ game: g, stores });
     expect(await stores.computer.get('c-open-65')).not.toBeNull();
     await expect(resumeComputerGame('c-missing')).rejects.toThrow(/Sparring is gone/);
+  }, 60_000);
+
+  it('starts the game of a record whose first setup was cut off before the decks were committed', async () => {
+    const { deps, stores } = await simDeps(66);
+    const g = await settle(openComputerGame('c-open-66', { deps }), 120_000, 'the new game');
+    const deckSids = sidsOf(g.session as NetTable);
+    g.handle.dispose();
+    await vi.advanceTimersByTimeAsync(100);
+    // A reload in the first second: the record is written, nothing of the table is.
+    await stores.tables.deleteTable('c-open-66');
+    await stores.tables.deleteTable(`${BOT_TABLE_PREFIX}c-open-66`);
+    expect(await stores.computer.get('c-open-66')).not.toBeNull();
+    const { deps: again } = await simDeps(67, { stores });
+    const r = await settle(openComputerGame('c-open-66', { deps: again }), 20_000, 'the game of the cut-off record');
+    open.push({ game: r, stores });
+    const human = r.session as NetTable;
+    expect(human.secrets().hand).toHaveLength(7);
+    expect(human.getState().stage).toBe('match');
+    // The same starter deck again: it is made from the stored seed.
+    expect(sidsOf(human)).toEqual(deckSids);
+  }, 60_000);
+
+  it('a first setup that fails leaves no record behind', async () => {
+    const { deps, stores } = await simDeps(68);
+    deps.botKeys = { create: fakeBotKeys.create, open: () => Promise.reject(new Error('no key')) };
+    await expect(settle(createComputerGame({ roomId: 'c-open-68', deckId: null, deps }), 60_000, 'the failing game')).rejects.toThrow('no key');
+    expect(await stores.computer.get('c-open-68')).toBeNull();
+  }, 60_000);
+
+  it('deletes a computer game whole: both tables and the record', async () => {
+    const { deps, stores } = await simDeps(69);
+    const g = await settle(openComputerGame('c-open-69', { deps }), 120_000, 'the game');
+    g.handle.dispose();
+    // Right after leaving: the last saves are still on their way, the delete waits for them.
+    await settle(deleteComputerGame('c-open-69', stores), 20_000, 'the delete');
+    expect(await stores.tables.loadTable('c-open-69')).toBeNull();
+    expect(await stores.tables.loadTable(`${BOT_TABLE_PREFIX}c-open-69`)).toBeNull();
+    expect(await stores.computer.get('c-open-69')).toBeNull();
+    stores.close();
   }, 60_000);
 });

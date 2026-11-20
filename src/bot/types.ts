@@ -96,6 +96,8 @@ export interface BotView {
     /** No own action yet this turn (a fresh turn of the bot). */
     fresh: boolean;
     drew: boolean;
+    /** The starting player's first turn of the game: no draw (computer.md 5.2 row 3; view.ts firstTurnOfGame). */
+    firstOfGame: boolean;
     landPlayed: boolean;
     /** Own permanents that came onto the battlefield this turn. */
     arrived: InstanceId[];

@@ -19,7 +19,7 @@ import type { CardDataSource } from '../data/types';
 import { mtg } from '../games/index';
 import type { GameDefinition } from '../games/types';
 import { LocalNetwork } from '../net/local';
-import { BOT_TABLE_PREFIX, prefixedTableStore } from '../store/computer';
+import { BOT_TABLE_PREFIX, deleteComputerRows, prefixedTableStore } from '../store/computer';
 import { generateIdentity, toIdentityRecord } from '../store/identity';
 import type { ComputerGameRecord, ComputerStore, DeckStore, ExportedIdentity, OpponentDeckChoice, TableStore } from '../store/types';
 import { dealOpening, importIfNeeded, rollFirstPlayer } from './entry';
@@ -258,7 +258,7 @@ function handleOf(o: Opened, config: BotConfig, runner: BotRunner, record: Compu
     record.updatedAt = now();
     void deps.computer?.put(record).catch(() => undefined);
   });
-  const handle: ComputerHandle & { runner: BotRunner; botSeat(): string; __bot: NetTable } = {
+  const handle: ComputerHandle = {
     seat: o.bot.seat,
     config,
     status: (): ComputerStatus => runner.status(),
@@ -301,13 +301,15 @@ function handleOf(o: Opened, config: BotConfig, runner: BotRunner, record: Compu
       o.human.dispose();
       o.net.dispose();
     },
-    runner,
-    botSeat: () => o.bot.seat,
-    // Tests and the debug hook only; the route and the HUD never read it.
-    __bot: o.bot,
   };
+  // Sparring's runner and session stay out of the handle (computer.md section 3: the route never receives the bot
+  // session): only `runnerOf` and `botSessionOf` reach them, for tests and the debug hook.
+  internals.set(handle, { runner, bot: o.bot });
   return handle;
 }
+
+/** The runner and session behind each handle; module-private (see `runnerOf`, `botSessionOf`). */
+const internals = new WeakMap<ComputerHandle, { runner: BotRunner; bot: NetTable }>();
 
 /** Create a computer game (computer.md section 3). */
 export async function createComputerGame(opts: ComputerGameOptions): Promise<ComputerGame> {
@@ -345,7 +347,13 @@ export async function createComputerGame(opts: ComputerGameOptions): Promise<Com
     human: { deckId: opts.deckId, deckName: human.name },
   };
   await deps.computer?.put(record).catch(() => undefined);
-  return start(opts.roomId, deps, record, humanDeck);
+  try {
+    return await start(opts.roomId, deps, record, humanDeck);
+  } catch (e) {
+    // A first setup that failed leaves no half-made game behind: the next open of the room starts a new one.
+    await deleteComputerRows(deps, opts.roomId).catch(() => undefined);
+    throw e;
+  }
 }
 
 /** How long a resume waits at most for the last saves of the sessions that left the room. */
@@ -361,11 +369,17 @@ async function start(roomId: string, deps: ComputerDeps, record: ComputerGameRec
   const botIdentity: SessionIdentity = { keyPair: await keys.open(e), peerId: e.peerId, nickname: 'Sparring', seatColour: e.seatColour };
   const o = await openBoth(roomId, deps, botIdentity);
   try {
-    await setUp(o, humanDeck, { main: record.bot.deck.main, side: [] });
+    // A resume whose first setup was cut off before the human's deck was committed brings that deck again (the
+    // library deck of the record, else the starter deck, which the stored seed makes the same one).
+    const deck = humanDeck ?? (Object.hasOwn(o.human.getState().commitments, o.human.seat) ? null : (await humanDeckOf({ roomId, deckId: record.human.deckId, deckName: record.human.deckName }, deps, record.bot.config.seed)).deck);
+    if (deck) await deps.cardData.getMany([...new Set(deck.main.map((r) => r.sid))]);
+    await setUp(o, deck, { main: record.bot.deck.main, side: [] });
   } catch (err) {
+    const saved = Promise.race([Promise.all([o.human.whenSaved(), o.bot.whenSaved()]).catch(() => undefined), new Promise<void>((r) => setTimeout(r, LEAVE_SAVE_MS))]);
     o.bot.dispose();
     o.human.dispose();
     o.net.dispose();
+    await saved;
     throw err;
   }
   const runner = createBotRunner({ port: portOf(o.bot), config: record.bot.config, clock: deps.clock ?? pageClock, ctx: { seatIndex: o.bot.getState().seats[o.bot.seat]?.index ?? 1, seatRot: 180 }, ...(deps.onError ? { onError: deps.onError } : {}) });
@@ -380,9 +394,26 @@ export async function resumeComputerGame(roomId: string, deps?: ComputerDeps): P
   return start(roomId, d, record, null);
 }
 
-/** The bot behind a handle (tests and the debug hook only). */
+/**
+ * Delete a computer game whole (computer.md 2.5: "deleting a computer game deletes the human's table, the bot's table
+ * and the computer record together"): History's Remove and the short-game purge call it for a room that has a computer
+ * record (`ComputerStore.get`). It waits for the last saves of a game just left, so none of them writes a row back.
+ * Without `stores` it takes the page's (provideComputerDeps).
+ */
+export async function deleteComputerGame(roomId: string, stores?: { tables: TableStore | null; computer: ComputerStore | null }): Promise<void> {
+  const s = stores ?? (await needDeps(undefined));
+  await closing.get(roomId);
+  await deleteComputerRows(s, roomId);
+}
+
+/** The bot behind a handle (tests and the debug hook only: the runner's view holds Sparring's hand). */
 export function runnerOf(handle: ComputerHandle): BotRunner | null {
-  return (handle as ComputerHandle & { runner?: BotRunner }).runner ?? null;
+  return internals.get(handle)?.runner ?? null;
+}
+
+/** Sparring's session behind a handle (tests and the debug hook only: it holds Sparring's secrets). */
+export function botSessionOf(handle: ComputerHandle): NetTable | null {
+  return internals.get(handle)?.bot ?? null;
 }
 
 /**

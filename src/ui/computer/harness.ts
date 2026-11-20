@@ -42,6 +42,8 @@ export interface ComputerHarnessApi {
   went(): string[];
   /** The names of the cards in Sparring's hand (read from the bot session, for the hidden-information check only). */
   botHandNames(): string[];
+  /** The human draws `n` cards (specs that need a card kind in hand draw until they hold one). */
+  draw(n: number): Promise<void>;
 }
 
 declare global {
@@ -81,6 +83,8 @@ export function mount(target: HTMLElement): void {
   const room = /^#\/c\/([^/]+)$/.exec(location.hash)?.[1] ?? ROOM;
   const went: string[] = [];
   let current: ComputerGame | null = null;
+  /** Sparring's session of the current game (the harness reads its hand for the specs; the route never does). */
+  let currentBot: { secrets(): { hand: string[]; identities: Record<string, { card: { sid: string } }> } } | null = null;
 
   const stores = openStores();
   const tableDeps = stores.then(
@@ -93,7 +97,7 @@ export function mount(target: HTMLElement): void {
 
   /** Resume the saved game of the room, else a new one: the green starter against Sparring's red deck. */
   async function open(roomId: string): Promise<ComputerGame> {
-    const { createComputerGame, resumeComputerGame } = await import('../../session/computer');
+    const { botSessionOf, createComputerGame, resumeComputerGame } = await import('../../session/computer');
     const d = { ...(await deps) };
     const clock = botDebugClock();
     if (clock) d.clock = clock;
@@ -105,6 +109,7 @@ export function mount(target: HTMLElement): void {
           return createComputerGame({ roomId, deckId: null, deck: { main: human.main, side: [] }, deckName: human.name, colour: 'R', seed: 'harness', deps: d });
         })();
     current = g;
+    currentBot = botSessionOf(g.handle);
     return g;
   }
 
@@ -114,7 +119,10 @@ export function mount(target: HTMLElement): void {
     if (page) void unmount(page);
     page = null;
     shown = what;
-    if (what === 'home') current = null;
+    if (what === 'home') {
+      current = null;
+      currentBot = null;
+    }
     void Promise.all([tableDeps, stores]).then(([t, s]) => {
       if (shown !== what || page) return;
       page = mountSvelte(HarnessPage, {
@@ -141,8 +149,11 @@ export function mount(target: HTMLElement): void {
     live: () => ({ ...live() }),
     remount: () => show('table'),
     went: () => [...went],
+    draw: async (n) => {
+      await session()?.draw(n);
+    },
     botHandNames: () => {
-      const bot = (current?.handle as { __bot?: { secrets(): { hand: string[]; identities: Record<string, { card: { sid: string } }> } } } | undefined)?.__bot;
+      const bot = current ? currentBot : null;
       if (!bot || shown !== 'table') return [];
       const sec = bot.secrets();
       return sec.hand.flatMap((id) => {

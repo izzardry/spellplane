@@ -219,7 +219,7 @@ function turnStep(view: BotView, profile: BotProfile, seed: string, ctx: DecideC
   }
   if (phase === 'upkeep') return { kind: 'phase', phase: 'draw' };
   if (phase === 'draw') {
-    if (!t.drew && view.turn.number !== 1 && view.library > 0) return { kind: 'draw' };
+    if (!t.drew && !t.firstOfGame && view.library > 0) return { kind: 'draw' };
     return { kind: 'phase', phase: 'main1' };
   }
   if (MAIN.has(phase)) {

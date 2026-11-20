@@ -4,7 +4,9 @@
  * labels `Attack`, `Damage` and `Blocks done`, matched trimmed and case-insensitively. Pure.
  *
  * - The human's turn or not, whenever one of the human's cards is marked attacking: `Attack` until an Attack cue was
- *   asked after the latest attack declaration; then, once Sparring answered it, `Damage`; nothing after Damage.
+ *   asked after the latest attack declaration; then, once Sparring answered it, `Damage`; nothing after Damage. The
+ *   declaration and its cues are read across turns: attackers still marked after a counted combat (the turn passed
+ *   without `Main 2`) are not offered `Attack` again, so the same combat is never booked twice.
  * - Sparring's attackers are out and no `Blocks done` was asked since it declared them: `Blocks done` (labelled
  *   `No blocks` or `Done blocking` by whether the human drew a block line).
  */
@@ -50,17 +52,18 @@ const isCue = (a: Action, by: SeatId, kind: CueKind): a is ActionOf<'ask'> => a.
 /** Which cue the human's primary button offers now (computer.md 5.3). */
 export function combatCue(state: TableState, log: readonly LogEntry[], human: SeatId, bot: SeatId): CombatCue {
   if (state.result !== undefined || state.stage !== 'match') return null;
-  const window = turnWindow(actionsOf(log));
+  const all = actionsOf(log);
+  const window = turnWindow(all);
   const declared = (seat: SeatId): number => lastIndex(window, (a) => a.type === 'moveTemp' && a.by === seat && a.combat === 'attack');
   // Sparring's attack on its own turn comes first: a card of the human's still marked from its last combat is no attack.
   const botAttacks = attackersOf(state, bot).length > 0 && state.turn.active !== human;
   if (attackersOf(state, human).length > 0 && !botAttacks) {
-    const from = Math.max(0, declared(human));
-    const attack = lastIndex(window, (a) => isCue(a, human, 'attack'), from);
-    const damage = lastIndex(window, (a) => isCue(a, human, 'damage'), Math.max(from, attack));
+    const from = humanDeclared(all, human);
+    const attack = lastIndex(all, (a) => isCue(a, human, 'attack'), from);
+    const damage = lastIndex(all, (a) => isCue(a, human, 'damage'), Math.max(from, attack));
     if (damage >= 0) return null;
     if (attack < 0) return { kind: 'attack', label: CUE_LABELS.attack };
-    const round = (window[attack] as ActionOf<'ask'>).round;
+    const round = (all[attack] as ActionOf<'ask'>).round;
     const open = state.confirm;
     const waiting = open !== null && open.id === round && open.responses[bot] === undefined && open.holder !== bot && state.seats[bot]?.name !== '';
     return waiting ? null : { kind: 'damage', label: CUE_LABELS.damage };
@@ -74,19 +77,26 @@ export function combatCue(state: TableState, log: readonly LogEntry[], human: Se
   return null;
 }
 
+/** Where the human's latest attack declaration starts (any turn; 0 without one). */
+function humanDeclared(all: readonly Action[], human: SeatId): number {
+  return Math.max(0, lastIndex(all, (a) => a.type === 'moveTemp' && a.by === human && a.combat === 'attack'));
+}
+
 /**
  * Whether the human's combat was counted: its cards are still marked attacking and Sparring answered a `Damage` cue
- * asked after they were declared this turn. The primary button then offers `Main 2` (settle, then main 2; computer.md
- * 5.3).
+ * asked after their latest declaration. The primary button then offers `Main 2` (settle, then main 2; computer.md
+ * 5.3). Not on Sparring's turn when the combat was counted in an earlier turn: the button reads `Sparring's turn`
+ * there (computer.md 2.3), and `Main 2` comes back on the human's turn.
  */
 export function damageCounted(state: TableState, log: readonly LogEntry[], human: SeatId, bot: SeatId): boolean {
   if (state.result !== undefined || state.stage !== 'match' || attackersOf(state, human).length === 0) return false;
   if (attackersOf(state, bot).length > 0 && state.turn.active !== human) return false;
-  const window = turnWindow(actionsOf(log));
-  const from = Math.max(0, lastIndex(window, (a) => a.type === 'moveTemp' && a.by === human && a.combat === 'attack'));
-  const damage = lastIndex(window, (a) => isCue(a, human, 'damage'), from);
+  const all = actionsOf(log);
+  const from = humanDeclared(all, human);
+  const damage = lastIndex(all, (a) => isCue(a, human, 'damage'), from);
   if (damage < 0) return false;
-  const round = (window[damage] as ActionOf<'ask'>).round;
+  if (state.turn.active === bot && lastIndex(all, (a) => a.type === 'turnPass', damage) > damage) return false;
+  const round = (all[damage] as ActionOf<'ask'>).round;
   const open = state.confirm;
   return !(open !== null && open.id === round && open.responses[bot] === undefined);
 }

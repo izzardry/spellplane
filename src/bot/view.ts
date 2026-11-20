@@ -5,7 +5,7 @@
  */
 import type { Action } from '../core/actions';
 import { roundPassed } from '../core/reducer/confirm';
-import type { CardInstance, CardRef, LogEntry, SecretStore, SeatId, TableState } from '../core/types';
+import type { CardInstance, CardRef, LogEntry, RngRound, SecretStore, SeatId, TableState } from '../core/types';
 import type { CardData } from '../data/types';
 import { adjustedStats, readCard, unknownCard } from './cards';
 import { actionsOf, combatCue, cueOf, turnWindow } from './cues';
@@ -38,6 +38,35 @@ function permanent(c: CardInstance, base: BotCard, me: SeatId): BotPermanent {
   const p: BotPermanent = { ...base, ...s, tapped: c.tapped, pose: { ...c.pose }, displaced: c.home !== undefined, owned: c.owner === me };
   if (c.combat !== undefined) p.combat = c.combat;
   return p;
+}
+
+/**
+ * Whether the current turn is the starting player's first turn of the game (computer.md 5.2 row 3: "not (turn 1 and it
+ * is the starting player)"). Read from the table, not from `turn.number`: the first-player roll hands the turn over with
+ * a `turnPass` (session/entry.ts rollFirstPlayer), which raises the number to 2. The starter is the outcome of the
+ * newest `firstPlayer` round over the occupied seats in seat order (as the roll counts them); the first turn lasts
+ * while every `turnPass` since that round's commit went to the starter (the roll's own hand-over). Without a roll, it is
+ * turn 1 with no pass at all.
+ */
+export function firstTurnOfGame(state: TableState, actions: readonly Action[]): boolean {
+  let round: RngRound | undefined;
+  for (const r of Object.values(state.rng)) if (r.purpose === 'firstPlayer' && (round === undefined || r.startSeq > round.startSeq)) round = r;
+  if (round === undefined) return state.turn.number === 1 && !actions.some((a) => a.type === 'turnPass');
+  if (round.result === null) return true;
+  const seats = Object.values(state.seats)
+    .filter((s) => s.peer !== undefined || s.name !== '')
+    .sort((a, b) => a.index - b.index);
+  const first = seats[round.result] ?? seats[0];
+  if (first === undefined) return false;
+  const starter = first.team ?? first.id;
+  if (state.turn.active !== starter) return false;
+  const rid = round.id;
+  const from = actions.findIndex((a) => a.type === 'rngCommit' && a.rid === rid);
+  for (let i = Math.max(0, from); i < actions.length; i++) {
+    const a = actions[i]!;
+    if (a.type === 'turnPass' && a.to !== starter) return false;
+  }
+  return true;
 }
 
 /** Build the view (computer.md 4.1). */
@@ -157,7 +186,7 @@ export function buildView({ state, secrets, cardData, log, me }: ViewInput): Bot
       .filter((l) => l.kind === 'block' && l.from.kind === 'card' && l.to.kind === 'card')
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       .map((l) => ({ blocker: l.from.id, attacker: l.to.id })),
-    thisTurn: { fresh: !phased, drew, landPlayed, arrived: [...arrived].sort(), steps, attacked, combatDone },
+    thisTurn: { fresh: !phased, drew, firstOfGame: firstTurnOfGame(state, actions), landPlayed, arrived: [...arrived].sort(), steps, attacked, combatDone },
     opening: { pending: lastDealt >= 0 && !playedSinceDeal && state.stage === 'match', mulligans, bottomed },
     over: state.result !== undefined,
     cue: combatCue(state, log, opp, me),

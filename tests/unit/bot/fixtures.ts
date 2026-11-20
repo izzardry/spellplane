@@ -45,7 +45,7 @@ export function view(over: Partial<BotView> = {}): BotView {
     stack: [],
     round: null,
     blocks: [],
-    thisTurn: { fresh: false, drew: true, landPlayed: false, arrived: [], steps: 3, attacked: false, combatDone: false },
+    thisTurn: { fresh: false, drew: true, firstOfGame: false, landPlayed: false, arrived: [], steps: 3, attacked: false, combatDone: false },
     opening: { pending: false, mulligans: 0, bottomed: 0 },
     over: false,
     cue: null,

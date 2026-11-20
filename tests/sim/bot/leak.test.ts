@@ -5,12 +5,15 @@
  * of its own library.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readCard, unknownCard } from '../../../src/bot/cards';
+import type { BotCard, BotView } from '../../../src/bot/types';
 import { canonicalJson } from '../../../src/core/hash';
+import type { SecretStore, TableState } from '../../../src/core/types';
 import { runnerOf } from '../../../src/session/computer';
 import type { NetTable } from '../../../src/session/net';
-import { leakScan, scanPairs, type Disclosure } from '../../leak/leak';
+import { leakScan, type Disclosure } from '../../leak/leak';
 import { trackDisclosures } from '../session/harness';
-import { FAKE_TIMERS, newGame, scriptedHuman, type Sim } from './harness';
+import { cards, FAKE_TIMERS, newGame, scriptedHuman, type Sim } from './harness';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
@@ -31,6 +34,29 @@ async function observed(sim: Sim, who: NetTable, peer: string, botSide: boolean)
   const room = botSide ? `bot~${who.roomId}` : who.roomId;
   const saved = [await sim.stores.db.get('tables', room), await sim.stores.db.get('secrets', room), ...(await sim.stores.db.getAll('log', IDBKeyRange.bound([room, -Infinity], [room, Infinity])))];
   return [...delivered, ...received, who.getState(), who.engine.confirmedState(), who.log(), who.secrets(), ...saved];
+}
+
+/**
+ * What a BotView leaks of the human's hidden cards, in the form a view would leak them (a BotCard carries an instance id
+ * and a name, never a Scryfall id or a salt): any instance id of the human's hand or library, and any card entry of a
+ * human card whose identity is not public in the human's confirmed state that is not the unknown card.
+ */
+function viewLeaks(view: BotView, human: { state: TableState; secrets: SecretStore }): string[] {
+  const out: string[] = [];
+  const text = canonicalJson(view);
+  const hidden = [...human.secrets.hand.map((id) => ['hand', id] as const), ...human.secrets.libraryOrder.map((id) => ['library', id] as const)];
+  for (const [where, id] of hidden) if (text.includes(id)) out.push(`${where} card ${id}`);
+  const entries: (BotCard & { unknown?: true })[] = [...view.hand, ...view.mine, ...view.theirs];
+  for (const entry of entries) {
+    const c = human.state.cards[entry.id];
+    if (!c || c.owner === view.me || c.identity !== undefined) continue;
+    if (entry.name !== unknownCard(entry.id).name || entry.unknown !== true) out.push(`hidden card ${entry.id} read as ${entry.name}`);
+  }
+  for (const [id, s] of Object.entries(human.secrets.identities)) {
+    if (human.state.cards[id]?.identity !== undefined) continue;
+    if (text.includes(s.salt) || text.includes(s.card.sid)) out.push(`identity of ${id}`);
+  }
+  return out;
 }
 
 describe('computer opponent leaks (M8-P6)', () => {
@@ -65,14 +91,8 @@ describe('computer opponent leaks (M8-P6)', () => {
       const view = runner.view();
       const text = canonicalJson(view);
       views++;
-      // The human's hidden cards: no identity of a hidden human card in the view, neither by id nor paired.
-      const hs = sim.human.secrets();
-      const hst = sim.human.engine.confirmedState();
-      for (const [id, s] of Object.entries(hs.identities)) {
-        const c = hst.cards[id];
-        if (c && c.identity === undefined) expect(scanPairs([view], [{ pair: [id, s.card.sid], why: 'mapping' }])).toEqual([]);
-        expect(text).not.toContain(s.salt);
-      }
+      // The human's hidden cards: neither the ids of its hand and library nor a named entry for a card hidden from Sparring.
+      expect(viewLeaks(view, { state: sim.human.engine.confirmedState(), secrets: sim.human.secrets() })).toEqual([]);
       // The bot's library: neither its ids nor its order.
       const lib = sim.bot.secrets().libraryOrder;
       for (const id of lib) expect(text).not.toContain(id);
@@ -80,5 +100,22 @@ describe('computer opponent leaks (M8-P6)', () => {
       expect(view.hand.map((c) => c.id).every((id) => sim.bot.secrets().hand.includes(id))).toBe(true);
     }
     expect(views).toBeGreaterThan(100);
+  }, 60_000);
+
+  it("the BotView check catches a view that holds the human's hand", async () => {
+    const sim = await newGame(32);
+    sims.push(sim);
+    const view = runnerOf(sim.game.handle)!.view();
+    const human = { state: sim.human.engine.confirmedState(), secrets: sim.human.secrets() };
+    expect(viewLeaks(view, human)).toEqual([]);
+    expect(human.secrets.hand).toHaveLength(7);
+    // The leak a buggy view would make: the human's hand read as cards (instance id and name, as BotCards carry them).
+    const leaked: BotCard[] = human.secrets.hand.map((id) => readCard(id, cards().peek(human.secrets.identities[id]!.card.sid)));
+    expect(leaked.every((c) => c.name !== '' && c.name !== unknownCard(c.id).name)).toBe(true);
+    expect(viewLeaks({ ...view, hand: [...view.hand, ...leaked] }, human)).toHaveLength(14);
+    // A hidden card of the human shown on Sparring's side of the view under its name, without the id of the hand.
+    const named = { ...leaked[0]!, id: 'x-other', tapped: false, pose: { x: 0, y: 0, rot: 0 }, displaced: false, owned: false };
+    const stateWith = { ...human.state, cards: { ...human.state.cards, 'x-other': { ...human.state.cards[human.secrets.hand[0]!]!, id: 'x-other', zone: 'battlefield:s0' } } };
+    expect(viewLeaks({ ...view, theirs: [...view.theirs, named] }, { ...human, state: stateWith })).toEqual([`hidden card x-other read as ${leaked[0]!.name}`]);
   }, 60_000);
 });

@@ -13,13 +13,14 @@ import { canonicalJson } from '../../../src/core/hash';
 import { sha256Sync } from '../../../src/core/sha256';
 import type { InstanceId, TableState } from '../../../src/core/types';
 import { combatCue, actionsOf, turnWindow } from '../../../src/bot/cues';
+import { firstTurnOfGame } from '../../../src/bot/view';
 import { CUE_LABELS } from '../../../src/bot/types';
 import { buildStarterFromPool } from '../../../src/data/starter';
 import type { CardData } from '../../../src/data/types';
 import { fixtureStarterPool } from '../../../src/debug/fixture-starter';
 import { FixtureCardDataSource } from '../../../src/debug/fixture-cards';
 import { LocalNetwork, timeoutScheduler, type LocalDelivery } from '../../../src/net/local';
-import { createComputerGame, resumeComputerGame, type BotKeys, type ComputerDeps } from '../../../src/session/computer';
+import { botSessionOf, createComputerGame, resumeComputerGame, type BotKeys, type ComputerDeps } from '../../../src/session/computer';
 import type { NetTable } from '../../../src/session/net';
 import { memoryNonces } from '../../../src/session/nonces';
 import type { ComputerGame, DeckImport } from '../../../src/session/types';
@@ -127,7 +128,7 @@ export async function resumeGame(seed: number, stores: LocalStores, opts: { tap?
 
 /** The bot session (tests reach it through the runner's port only by state; here through the handle's internals). */
 function botOf(_net: LocalNetwork, game: ComputerGame): NetTable {
-  return (game.handle as unknown as { __bot?: NetTable }).__bot!;
+  return botSessionOf(game.handle)!;
 }
 
 const kindOf = (sid: string | undefined): string => (sid ? (cards().peek(sid)?.type_line ?? '') : '');
@@ -174,7 +175,7 @@ export function scriptedHuman(h: NetTable, botSeat: string): () => boolean {
       d({ type: 'phaseSet', phase: 'main1', group: g });
       return true;
     }
-    if (!mineDone('draw') && st.turn.number > 1) {
+    if (!mineDone('draw') && !firstTurnOfGame(st, actionsOf(h.log()))) {
       void h.draw(1);
       return true;
     }

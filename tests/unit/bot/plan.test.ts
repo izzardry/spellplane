@@ -19,7 +19,9 @@ describe('decide', () => {
   });
 
   it('turn 1 on the play does not draw; later turns draw once', () => {
-    expect(decide(view({ turn: { number: 1, active: 's1', phase: 'draw', mine: true }, thisTurn: { ...view().thisTurn, drew: false } }), steady, 's')).toEqual({ kind: 'phase', phase: 'main1' });
+    // The roll hands the turn to Sparring with a turnPass, so its first turn of the game is number 2 (view.ts firstTurnOfGame).
+    expect(decide(view({ turn: { number: 2, active: 's1', phase: 'draw', mine: true }, thisTurn: { ...view().thisTurn, drew: false, firstOfGame: true } }), steady, 's')).toEqual({ kind: 'phase', phase: 'main1' });
+    expect(decide(view({ turn: { number: 2, active: 's1', phase: 'draw', mine: true }, thisTurn: { ...view().thisTurn, drew: false } }), steady, 's')).toEqual({ kind: 'draw' });
     expect(decide(view({ turn: { number: 4, active: 's1', phase: 'draw', mine: true }, thisTurn: { ...view().thisTurn, drew: false } }), steady, 's')).toEqual({ kind: 'draw' });
   });
 

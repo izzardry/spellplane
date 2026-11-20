@@ -73,10 +73,13 @@
           g.handle.dispose();
           return;
         }
-        const { runnerOf } = await import('../../session/computer');
-        if (cancelled) return;
-        const runner = runnerOf(g.handle);
-        if (runner) setActiveComputer({ runner, config: g.handle.config });
+        if (__SPELLPLANE_DEBUG__) {
+          // The debug hook's `bot` part (dev and test builds): production never reaches Sparring's runner.
+          const { runnerOf } = await import('../../session/computer');
+          if (cancelled) return;
+          const runner = runnerOf(g.handle);
+          if (runner) setActiveComputer({ runner, config: g.handle.config });
+        }
         stop = pauseWhileHidden(g.handle, document);
         game = g;
         void record(roomId);
@@ -90,7 +93,7 @@
       stop?.();
       game = null;
       if (got) {
-        setActiveComputer(null);
+        if (__SPELLPLANE_DEBUG__) setActiveComputer(null);
         got.handle.dispose();
       }
     };
