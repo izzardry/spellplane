@@ -8,7 +8,7 @@ import type { QueueId } from '../../core/types';
 import type { LobbyView } from '../../net/lobby/types';
 import type { Matchmaker, MatchmakerStatus } from '../../session/types';
 import { plain } from '../../themes/plain/index';
-import '../design/base.css';
+import '../design/kit';
 import { lookCssVars } from '../design/css';
 import MatchHarness from './MatchHarness.svelte';
 

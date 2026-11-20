@@ -43,12 +43,15 @@
   }
   function close(refocus = true): void {
     if (!open) return;
+    // Read the anchor before `onclose`: the owner may drop the state its `anchor` prop is read from (Library's
+    // `menu = null`), and reading the prop afterwards would throw before the chosen item runs.
+    const at = anchor;
     open = false;
     onclose?.();
-    if (refocus && anchor) {
+    if (refocus && at) {
       // The anchor may be a wrapper around the button that opened the menu: focus that button.
       const sel = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
-      const back = anchor.matches(sel) ? anchor : (anchor.querySelector<HTMLElement>(sel) ?? anchor);
+      const back = at.matches(sel) ? at : (at.querySelector<HTMLElement>(sel) ?? at);
       back.focus({ preventScroll: true });
     }
   }

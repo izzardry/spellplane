@@ -258,7 +258,8 @@ test.describe('HudShellProps on ?harness=ui', () => {
 
   test('primaryOverride: shows its label, runs it, and the button returns to its own step when cleared', async ({ page }) => {
     const primary = page.getByTestId('primary-action');
-    const own = await primary.innerText();
+    // Its text as written (the kit draws button labels in capitals by CSS; toHaveText reads the text content).
+    const own = ((await primary.textContent()) ?? '').trim();
     await setShell(page, { primaryOverride: { label: 'Attack' } });
     await expect(primary).toHaveText('Attack');
     await page.evaluate(() => window.__uiHarness!.clear());

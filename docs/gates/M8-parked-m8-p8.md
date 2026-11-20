@@ -1,5 +1,7 @@
 # M8-P8 Journey integration: parked
 
+> **Update (20 Nov 2026, evening):** the gate fix round merged the seven parked dependencies into `m8`; M8-P8 itself was still not built (no journey specs, no page-wide soak). `tests/e2e/m8.gate.spec.ts` now walks the journey on the merged parts.
+
 - **Status:** parked, not started, not merged into `m8`. The pipeline's reason: "dependency not merged: M7-P2, M8-P1, M8-P2, M8-P3, M8-P4, M8-P5, M8-P6, M8-P7".
 - **That list is partly stale.** Checked on `m8` at `077e843` (20 Nov 2026, 18:23) with `git merge-base --is-ancestor`:
   - **Merged into `m8`:** M8-P4 (`64d5aa9`), M8-P5 (`63ede01`) and M7-P5 (`9ff5e47`).

@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 /**
  * PLAN M7-P2: the design system's tokens for the three looks (Principles: "One design system … accessibility
  * (contrast, focus, nothing by hue alone) is kept through the redesign"; A0: no blur or backdrop-filter). Every text
@@ -145,7 +147,9 @@ describe('the M8 kit tokens (PLAN M8-P1; visual.md 2.3, 2.12)', () => {
     expect(p.type.heading).toBe(p.type.body);
     expect(p.radius.button).toBeGreaterThanOrEqual(999);
     expect(p.colour.accent).toBe(p.colour.ink);
-    expect(designCssVars(p)['--ds-texture-grain']).toMatch(/^url\(".*grain.*\.png"\)$|^url\("data:image\/png/);
+    expect(designCssVars(p)['--ds-texture-grain']).toBe('var(--ds-grain-url)');
+    // The tile is bound once in the kit's stylesheet, so the tokens import no asset (Node loads them in e2e specs).
+    expect(fs.readFileSync(path.join('src', 'ui', 'design', 'base.css'), 'utf8')).toMatch(/--ds-grain-url:\s*url\('\.\/grain\.png'\)/);
     expect(designCssVars(LOOKS.graphite)['--ds-texture-grain']).toBe('none');
   });
 });

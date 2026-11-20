@@ -9,7 +9,8 @@
 import { hudCssVars, lookOfTheme } from '../../themes/index';
 import { DEFAULT_LOOK, type LookId, type Theme } from '../../themes/types';
 import { designCssVars, lookTokens, type LookTokens } from './tokens';
-import './kit';
+// The kit's side effects (stylesheet, bundled face) come from ./kit, imported by every page and kit component, not
+// here: this module stays loadable in Node, where the Playwright specs import it.
 
 /** The look the HUD wears: the table theme's own look, else the viewer's stored look. */
 export function hudLook(theme: Theme, stored: LookId = DEFAULT_LOOK): LookId {

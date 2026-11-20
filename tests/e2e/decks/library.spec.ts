@@ -7,6 +7,7 @@
  */
 import { expect, test } from '@playwright/test';
 import type { DeckRecord } from '../../../src/store/types';
+import { settleAnimations } from '../helpers/design-audit';
 import { deckAudit } from './audit';
 import { decks, domCounts, faceRatios, go, libraryV1, openDecks, profileOf, seenOpacity } from './helpers';
 
@@ -19,9 +20,14 @@ test('an empty library shows the new-deck tile and the four paths', async ({ pag
   await page.getByTestId('new-deck').click();
   await expect(page.getByTestId('new-deck-chooser')).toBeVisible();
   for (const w of ['boosters', 'custom', 'simple', 'import']) await expect(page.getByTestId(`way-${w}`)).toBeVisible();
-  // The starter generator is a stub on this branch: the entry says so and stays disabled.
-  await expect(page.getByTestId('simple-unavailable')).toHaveText('Not in this build yet.');
-  await expect(page.getByTestId('simple-G')).toBeDisabled();
+  // The starter generator is in this build (M8-P6): no 'Not in this build yet.', and a colour makes a simple deck of
+  // the fixture set's cards in the library.
+  await expect(page.getByTestId('simple-unavailable')).toHaveCount(0);
+  await expect(page.getByTestId('simple-G')).toBeEnabled();
+  await page.getByTestId('simple-G').click();
+  await expect(page.getByTestId('deck-library')).toBeVisible();
+  await expect(page.getByTestId('deck-tile')).toHaveCount(1);
+  await expect.poll(async () => ((await decks<{ main: unknown[] }[]>(page, 'list'))[0]?.main.length ?? 0)).toBeGreaterThan(0);
 });
 
 test.describe('a seeded library', () => {
@@ -152,6 +158,8 @@ test.describe('a seeded library', () => {
     await expect(locked.getByTestId('tile-reason')).toHaveText('Booster decks only');
     await expect(locked).toHaveAttribute('aria-disabled', 'true');
     await expect(locked.locator('img[data-card-face]')).toBeVisible();
+    // The sheet fades in (the kit's entry animation): measure once it has settled.
+    await settleAnimations(page);
     expect(await seenOpacity(page, '[data-testid="deck-picker"] [data-kind="custom"] img[data-card-face]')).toBe(1);
     expect(await seenOpacity(page, '[data-testid="deck-picker"] [data-kind="custom"] .text')).toBeLessThan(0.6);
     // Picking the locked one does nothing; the booster deck is picked.

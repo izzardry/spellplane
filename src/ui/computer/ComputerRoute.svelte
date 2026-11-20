@@ -33,6 +33,7 @@
     open = undefined,
     games = undefined,
     deps = undefined,
+    registerTable = undefined,
   }: {
     room: string;
     go?: (hash: string) => void;
@@ -42,6 +43,11 @@
     games?: GameStore | null | undefined;
     /** The page's sources and stores for the frame; default the context App sets. */
     deps?: TableDeps | undefined;
+    /**
+     * Dev and test builds: hand the human's session to the debug hook (main.ts registerSession) while the table is
+     * shown, so `state`, `session.hash()` and `dispatch` answer for it as for every other table; returns the undo.
+     */
+    registerTable?: ((session: ComputerGame['session']) => () => void) | undefined;
   } = $props();
 
   const ctx = untrack(() => deps ?? tableDeps());
@@ -66,6 +72,7 @@
     let cancelled = false;
     let got: ComputerGame | null = null;
     let stop: (() => void) | null = null;
+    let unregister: (() => void) | null = null;
     untrack(() => (open ?? openDefault)(roomId)).then(
       async (g) => {
         got = g;
@@ -79,6 +86,7 @@
           if (cancelled) return;
           const runner = runnerOf(g.handle);
           if (runner) setActiveComputer({ runner, config: g.handle.config });
+          unregister = untrack(() => registerTable)?.(g.session) ?? null;
         }
         stop = pauseWhileHidden(g.handle, document);
         game = g;
@@ -92,6 +100,7 @@
       cancelled = true;
       stop?.();
       game = null;
+      unregister?.();
       if (got) {
         if (__SPELLPLANE_DEBUG__) setActiveComputer(null);
         got.handle.dispose();

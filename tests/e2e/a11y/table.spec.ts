@@ -52,9 +52,13 @@ test.describe('the focus ring on the table (PLAN M5-P4)', () => {
         return r.x <= card.x && r.y <= card.y && r.x + r.w >= card.x + card.width && r.y + r.h >= card.y + card.height && r.w < card.width + 48;
       })
       .toBe(true);
-    // The ring is drawn in the theme's focus colour, which is not the hover outline's. Paper's selection outline has the
-    // same colour, so the ring is dashed (a selection outline is a solid line in the card shader) and stands off the card.
-    expect(await ring.locator('polygon').last().getAttribute('stroke')).toBe('#1f6fd1');
+    // The ring is drawn in the theme's focus colour (theme.tokens.colours.focus), which is not the hover outline's. The
+    // selection outline may have the same colour (Paper's does), so the ring is dashed (a selection outline is a solid
+    // line in the card shader) and stands off the card. Since M7-P1 the table opens in Plain, whose focus is its ink.
+    const FOCUS: Record<string, string> = { paper: '#1f6fd1', plain: '#0d0d0d' };
+    const shown = await hook<string>(page, 'theme.current');
+    expect(FOCUS[shown], `focus colour of ${shown}`).toBeDefined();
+    expect(await ring.locator('polygon').last().getAttribute('stroke')).toBe(FOCUS[shown]);
     expect(await ring.locator('polygon').last().getAttribute('stroke-dasharray')).toMatch(/^\d+(\.\d+)? \d+(\.\d+)?$/);
     expect(await ring.locator('polygon').first().getAttribute('stroke-dasharray')).toBeNull();
 

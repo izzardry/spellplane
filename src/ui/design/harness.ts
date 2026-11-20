@@ -6,6 +6,7 @@
 import { mount as mountSvelte } from 'svelte';
 import { LOOK_IDS, lookIdOf } from '../../themes/index';
 import type { LookId } from '../../themes/types';
+import './kit';
 import { applyLook } from './css';
 import { fontsReady } from './fonts';
 import KitPage from './KitPage.svelte';

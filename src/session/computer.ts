@@ -167,26 +167,36 @@ interface Opened {
   net: LocalNetwork;
 }
 
-async function openBoth(roomId: string, deps: ComputerDeps, botIdentity: SessionIdentity): Promise<Opened> {
+async function openBoth(roomId: string, deps: ComputerDeps, botIdentity: SessionIdentity, resuming: boolean): Promise<Opened> {
   const game = deps.game ?? mtg;
   const net = deps.network ?? new LocalNetwork();
   const base = { game, cardData: deps.cardData, roomId, roomKey: COMPUTER_ROOM_KEY, format: '1v1' as const, ...(deps.now ? { now: deps.now } : {}) };
-  let human: NetTable | null = null;
-  try {
-    human = await openNetSession(
-      { ...base, transport: () => net.create(deps.identity.peerId), identity: deps.identity, ...(deps.tables ? { store: deps.tables } : {}) },
-      { createdHere: true, settleMs: 0, loneWaitMs: 0, ...deps.internals?.human },
-    );
-    const bot = await openNetSession(
-      { ...base, transport: () => net.create(botIdentity.peerId), identity: botIdentity, ...(deps.tables ? { store: prefixedTableStore(deps.tables, BOT_TABLE_PREFIX) } : {}) },
-      { neverAlone: true, settleMs: 0, loneWaitMs: 0, ...deps.internals?.bot },
-    );
-    return { human, bot, net };
-  } catch (e) {
-    human?.dispose();
-    if (!deps.network) net.dispose();
-    throw e;
+  const humanOpts = { ...base, transport: () => net.create(deps.identity.peerId), identity: deps.identity, ...(deps.tables ? { store: deps.tables } : {}) };
+  const humanHow = { createdHere: true, settleMs: 0, loneWaitMs: 0, ...deps.internals?.human };
+  const botOpts = { ...base, transport: () => net.create(botIdentity.peerId), identity: botIdentity, ...(deps.tables ? { store: prefixedTableStore(deps.tables, BOT_TABLE_PREFIX) } : {}) };
+  const botHow = { neverAlone: true, settleMs: 0, loneWaitMs: 0, ...deps.internals?.bot };
+  if (!resuming) {
+    // A new game: the human's session creates the table, then Sparring's joins it.
+    let human: NetTable | null = null;
+    try {
+      human = await openNetSession(humanOpts, humanHow);
+      const bot = await openNetSession(botOpts, botHow);
+      return { human, bot, net };
+    } catch (e) {
+      human?.dispose();
+      if (!deps.network) net.dispose();
+      throw e;
+    }
   }
+  // A resumed game: both sessions open at once. The human's waits for the muster rule (M8-P5, net.ts awaitMuster)
+  // until the other seat's browser, here Sparring's session, connects and announces its head; opened one after the
+  // other the resume would first wait out MUSTER_WAIT_MS alone.
+  const [h, b] = await Promise.allSettled([openNetSession(humanOpts, humanHow), openNetSession(botOpts, botHow)]);
+  if (h.status === 'fulfilled' && b.status === 'fulfilled') return { human: h.value, bot: b.value, net };
+  if (h.status === 'fulfilled') h.value.dispose();
+  if (b.status === 'fulfilled') b.value.dispose();
+  if (!deps.network) net.dispose();
+  throw h.status === 'rejected' ? h.reason : (b as PromiseRejectedResult).reason;
 }
 
 /** The automatic setup (idempotent): decks, the match, opening hands, the first player. */
@@ -367,7 +377,7 @@ async function start(roomId: string, deps: ComputerDeps, record: ComputerGameRec
   const e = record.bot.identity;
   await closing.get(roomId);
   const botIdentity: SessionIdentity = { keyPair: await keys.open(e), peerId: e.peerId, nickname: 'Sparring', seatColour: e.seatColour };
-  const o = await openBoth(roomId, deps, botIdentity);
+  const o = await openBoth(roomId, deps, botIdentity, humanDeck === null);
   try {
     // A resume whose first setup was cut off before the human's deck was committed brings that deck again (the
     // library deck of the record, else the starter deck, which the stored seed makes the same one).

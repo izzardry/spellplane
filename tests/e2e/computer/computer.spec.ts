@@ -11,6 +11,17 @@
 import { expect, test, type Page } from '@playwright/test';
 import { fixturesScript } from '../offline/helpers';
 
+/** Sparring's plate (seat s1) in the HUD. */
+const sparringPlate = (page: Page) => page.locator('[data-testid="avatar"][data-seat="s1"]');
+
+/**
+ * Ten own actions that change nothing in the end (life −1 / +1): a solo game left after fewer own actions is purged
+ * instead of kept (contracts.md Part G "History and saving" item 2; ui/play/leave.ts SOLO_KEEP_MIN_ACTIONS).
+ */
+async function playEnoughToKeep(page: Page): Promise<void> {
+  for (let i = 0; i < 10; i++) await page.evaluate((d) => window.__spellplane!.dispatch!({ type: 'life', seat: 's0', delta: d } as never), i % 2 ? 1 : -1);
+}
+
 interface Card {
   id: string;
   zone: string;
@@ -185,6 +196,7 @@ test.describe('Sparring on the computer harness', () => {
     let saved: string | null = null;
     await test.step('leaving goes Home with the solo toast and releases the game', async () => {
       await drive(page, (x) => !x.confirm || x.confirm.responses.s1 !== undefined, 'the Damage round answered');
+      await playEnoughToKeep(page);
       saved = await hash(page);
       expect(saved).not.toBeNull();
       await page.locator('[data-testid="frame-leave"], [data-testid="leave"]').first().click();
@@ -220,7 +232,9 @@ test.describe('Sparring on the computer harness', () => {
     await test.step('Sparring concedes from its menu: the result is set', async () => {
       const chip = page.getByTestId('sparring-menu');
       if (await chip.count()) await chip.click();
-      else await page.getByTestId('plate-more').last().click();
+      else await sparringPlate(page).getByTestId('plate-more').click();
+      // The plate sits at Sparring's table edge, top centre, where the first-run hint may stand too: its open menu lies
+      // over the hint, so the click reaches the item.
       await page.getByTestId('sparring-sparringConcedes').click();
       await expect.poll(async () => (await view(page)).result).toEqual({ winners: ['s0'] });
     });
@@ -233,7 +247,7 @@ test.describe('Sparring on the computer harness', () => {
     const v = await view(page);
     if (v.active === 's0') await page.evaluate(() => window.__spellplane!.dispatch!({ type: 'turnPass', to: 's1' } as never));
     const chip = page.getByTestId('sparring-menu');
-    const openMenu = async () => ((await chip.count()) ? chip.click() : page.getByTestId('plate-more').last().click());
+    const openMenu = async () => ((await chip.count()) ? chip.click() : sparringPlate(page).getByTestId('plate-more').click());
     await openMenu();
     await page.getByTestId('sparring-pauseSparring').click();
     await expect(page.getByTestId('computer-paused').first()).toHaveText('PAUSED');

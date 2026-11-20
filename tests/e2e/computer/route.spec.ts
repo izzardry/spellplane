@@ -31,6 +31,14 @@ test('the app opens #/c/<room> against Sparring, leaves Home and continues the s
     await expect.poll(() => botView(page)).toMatchObject({ hand: 7, oppHand: 7, library: 33, oppLibrary: 33 });
     await expect(page.getByTestId('computer-badge').first()).toHaveText('COMPUTER');
     await expect.poll(async () => (await memory(page))?.botRunners).toBe(1);
+    // Ten own actions that change nothing in the end: a solo game left after fewer is purged instead of kept
+    // (contracts.md Part G "History and saving" item 2; ui/play/leave.ts SOLO_KEEP_MIN_ACTIONS).
+    const plate = page.locator('[data-testid="avatar"][data-seat="s0"]');
+    for (let i = 0; i < 5; i++) {
+      await plate.getByTestId('life-minus').click();
+      await plate.getByTestId('life-plus').click();
+    }
+    await expect.poll(() => page.evaluate(() => window.__spellplane!.session!.log().filter((e) => e.kind === 'action' && e.action.type === 'life').length)).toBe(10);
     before = await botView(page);
   });
 

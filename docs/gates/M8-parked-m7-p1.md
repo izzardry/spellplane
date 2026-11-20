@@ -1,5 +1,7 @@
 # M7-P1 Table worlds, tilt and the arena still: parked (second launch)
 
+> **Update (20 Nov 2026, evening): merged.** The M8 gate fix round merged this branch into `m8` without the second review (decision `[M8-G]` in docs/DECISIONS.md) and fixed the integration failures it found there. The text below is the parking record.
+
 - **Status:** parked, not merged into `m8`. The pipeline's reason: "did not converge after 1 review rounds". Review round 1 found two blocking issues (listed below). The implementer's fix commit `ced0808` answers both, but no second review ran, so nothing was merged.
 - **Branch:** `m7-p1` (worktree `spellplane-wt/m7-p1`). Its head is `d588061 Merge branch 'm8' into m7-p1`. The branch is local only, not on `origin`. The working tree is clean.
 - **Merge state:** `git diff m8...m7-p1 --stat` shows 73 files, +7697 / -2496. There are 30 `[M7-P1]` lines in its `docs/DECISIONS.md`. Since the branch last merged `m8`, `m8` has moved on to `68adaa9`: M8-P5, then M7-P5, were integrated. A trial `git merge-tree m8 m7-p1` reports **one conflicting file, `src/scene/table-scene.ts`, with four small hunks**:

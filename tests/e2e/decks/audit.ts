@@ -24,7 +24,8 @@ export async function deckAudit(page: Page, skip: string[] = []): Promise<string
     for (const c of controls) {
       if (c.closest('.ds-seg') && c.getAttribute('role') === 'radio') continue; // a segment sits in its track; the track is measured
       const box = c.closest('.ds-field') ?? c; // a field's input sits in its well; the well is the control
-      const h = box.getBoundingClientRect().height;
+      // The layout height, as the shared designAudit measures it: a pressed button's scale(0.98) is not its size.
+      const h = (box as HTMLElement).offsetHeight || box.getBoundingClientRect().height;
       if (!heights.some((x) => Math.abs(h - x) <= 0.5)) problems.push(`${c.tagName.toLowerCase()} "${(c.textContent ?? c.getAttribute('aria-label') ?? '').trim().slice(0, 30)}" is ${h.toFixed(1)} px high`);
     }
     for (const t of [...document.querySelectorAll('.ds-seg')].filter(visible)) {

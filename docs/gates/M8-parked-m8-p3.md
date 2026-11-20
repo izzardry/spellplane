@@ -1,5 +1,7 @@
 # M8-P3 Decks: parked (second launch)
 
+> **Update (20 Nov 2026, evening): merged.** The M8 gate fix round merged this branch into `m8` without the second review (decision `[M8-G]` in docs/DECISIONS.md) and fixed the integration failures it found there. The text below is the parking record.
+
 This note replaces the first launch's note. That launch parked M8-P3 because the UI contracts were missing from `m8`. They are on `m8` now, and the package has built its screens.
 
 - **Status:** parked, not merged into `m8`. The pipeline's reason: "did not converge after 1 review rounds". Review round 1 found blocking issues (listed below). The implementer's fix commit `f6521ac` answers all of them, but no second review ran, so nothing was merged.

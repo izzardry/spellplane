@@ -69,7 +69,9 @@ export async function offSizes(page: Page): Promise<string[]> {
       const r = b.getBoundingClientRect();
       const st = getComputedStyle(b);
       if (r.width === 0 || r.height === 0 || st.visibility === 'hidden' || st.display === 'none') continue;
-      if (!heights.some((h) => Math.abs(h - r.height) <= 0.5)) bad.push(`${b.dataset.testid ?? b.getAttribute('aria-label') ?? b.textContent?.trim().slice(0, 30)}: ${r.height}`);
+      // The layout height, as the shared designAudit measures it: a pressed button's scale(0.98) is not its size.
+      const h = b.offsetHeight || r.height;
+      if (!heights.some((x) => Math.abs(x - h) <= 0.5)) bad.push(`${b.dataset.testid ?? b.getAttribute('aria-label') ?? b.textContent?.trim().slice(0, 30)}: ${h}`);
     }
     return bad;
   }, FOREIGN);

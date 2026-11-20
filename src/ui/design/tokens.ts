@@ -12,8 +12,6 @@
  * box-shadow, motion animates transform and opacity only.
  */
 import { DEFAULT_LOOK, type LookId, type SoundCue } from '../../themes/types';
-// [M8-P1] The bundled paper grain (scripts/make-grain.mjs: 160 px, seeded, about 5 % ink).
-import GRAIN_URL from './grain.png';
 
 /** Colour roles of a look (docs/design/m7-directions.html, the `--t-*` variables of each direction). CSS colours. Added by M7-C. */
 export interface ColourTokens {
@@ -614,7 +612,9 @@ export function designCssVars(look: LookTokens, reduced = false): Record<string,
   vars['--ds-texture-page-size'] = look.texture.pageSize;
   vars['--ds-texture-dense'] = look.texture.dense;
   // [M8-P1] The grain tile on sheets and tiles (visual.md 2.4 rule 6); 'none' for a look without grain.
-  vars['--ds-texture-grain'] = look.texture.grain === 'none' ? 'none' : `url("${GRAIN_URL}")`;
+  // The tile itself (scripts/make-grain.mjs) is bound in base.css as --ds-grain-url, so this module imports no asset and
+  // loads in Node (the Playwright specs import the tokens).
+  vars['--ds-texture-grain'] = look.texture.grain === 'none' ? 'none' : 'var(--ds-grain-url)';
   for (const [k, v] of Object.entries(MANA_COLOURS)) vars[`--ds-mana-${k.toLowerCase()}`] = v;
   // [M8-P1] booster foil (visual.md 2.8).
   const foil = FOILS[look.id] ?? FOILS.plain;

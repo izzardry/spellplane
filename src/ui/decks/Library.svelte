@@ -191,7 +191,7 @@
 
   {#if menu && menuPos}
     <div class="menu" data-ds-layer="popover" style:left="{menuPos.left}px" style:top="{menuPos.top}px">
-      <MenuPopover open={true} anchor={menu.anchor} label="Deck actions" groups={groups(menu.deck)} testid="deck-menu" onclose={() => (menu = null)} />
+      <MenuPopover open={true} anchor={menu?.anchor ?? null} label="Deck actions" groups={menu ? groups(menu.deck) : []} testid="deck-menu" onclose={() => (menu = null)} />
     </div>
   {/if}
 

@@ -60,7 +60,10 @@ describe('opening #/c/<room>', () => {
     const hash = await stateHash(human.engine.confirmedState());
     const { deps: again } = await simDeps(62, { stores });
     again.clock = new ManualClock(); // Sparring waits, so the hash is the table's as it was left
+    // Both sessions reopen together, so the human’s muster sees Sparring at once: no wait for MUSTER_WAIT_MS (5 s; 7 s of fake time before the fix).
+    const t0 = Date.now();
     const r = await settle(openComputerGame('c-open-61', { deckId: 'd-other', deps: again }), 120_000, 'the resumed game');
+    expect(Date.now() - t0).toBeLessThan(5_000);
     open.push({ game: r, stores });
     await until(() => botOf(r).engine.seq() === (r.session as NetTable).engine.seq() && botOf(r).engine.pending().length === 0, 30_000, 'resumed');
     expect(await stateHash((r.session as NetTable).engine.confirmedState())).toBe(hash);

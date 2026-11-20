@@ -6,7 +6,7 @@ import fs from 'node:fs';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const milestone = (args[0] ?? '').toUpperCase();
-if (!/^M[0-5]$/.test(milestone)) {
+if (!/^M[0-9]$/.test(milestone)) {
   console.error('usage: pnpm shots -- M<n>');
   process.exit(2);
 }

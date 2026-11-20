@@ -7,6 +7,12 @@
  * Rewritten by M8-P1.
  */
 
+/* ---- The bundled paper grain (scripts/make-grain.mjs: 160 px, seeded, about 5 % ink); tokens.ts points
+ * --ds-texture-grain here for the looks with grain. */
+:root {
+  --ds-grain-url: url('./grain.png');
+}
+
 /* ---- Page, type roles ---------------------------------------------------------------------------------------- */
 .ds-root {
   font-family: var(--ds-font-body);
@@ -452,6 +458,10 @@
 }
 .ds-field__input::placeholder {
   color: var(--ds-muted);
+}
+.ds-field__input:disabled {
+  color: var(--ds-muted);
+  cursor: not-allowed;
 }
 
 /* ---- Stepper (Ztyle): eyebrow over value between two chevrons -------------------------------------------------- */
@@ -901,7 +911,8 @@
 .ds-coach__text {
   display: block;
   font-size: var(--ds-type-label);
-  color: var(--ds-muted);
+  /* The coach's own ink: the page's muted grey has no contrast on a light coach (Graphite's is #e9ecf0). */
+  color: var(--ds-coach-ink);
 }
 
 /* ---- Dialog and scrim: the scrim is flat (visual.md V11) ---------------------------------------------------------- */

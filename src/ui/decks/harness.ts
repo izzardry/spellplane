@@ -15,7 +15,7 @@ import { importLibrary } from '../../store/decks';
 import { openStores, type LocalStores } from '../../store/stores';
 import type { DeckRecord } from '../../store/types';
 import { live } from '../../util/lifecycle';
-import '../design/base.css';
+import '../design/kit';
 import { spVarsFromLook } from '../design/css';
 import { designCssVars, lookTokens } from '../design/tokens';
 import { registerDecksPart } from './debug';

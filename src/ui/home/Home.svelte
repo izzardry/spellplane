@@ -158,7 +158,8 @@
   /** Arrow keys move the mode (a radio group; the ends do not wrap, as the phone's stepper). */
   function modeKey(e: KeyboardEvent): void {
     const d = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
-    if (!d || view.optionsLocked) return;
+    // The kit's ModeCard moves the choice itself (M8-P1) and marks the key handled: one step per key, not two.
+    if (!d || view.optionsLocked || e.defaultPrevented) return;
     e.preventDefault();
     const group = e.currentTarget as HTMLElement;
     const i = MODES.findIndex((m) => m.value === view.mode);
@@ -362,7 +363,7 @@
         {#each colours as c (c)}<Pip colour={c} />{/each}
         <span>{view.deck.kind === 'sealed' ? 'BOOSTER DECK' : 'CUSTOM DECK'} · {view.deck.cards} CARDS</span>
         {#if view.deck.kind === 'sealed' && sealLabel}<SealBand packs={sealLabel} />{/if}
-        {#if curve.length}<Sparkline values={curve} label="Mana curve 0 to 7+: {curve.join(', ')}" data-testid="hero-curve" />{/if}
+        {#if curve.length}<Sparkline values={curve} label="Mana curve 0 to 7+" data-testid="hero-curve" />{/if}
         <span>STRENGTH</span><StrengthPips band={bandNo} score={strength?.score} />
       </div>
       <div class="hero__acts">

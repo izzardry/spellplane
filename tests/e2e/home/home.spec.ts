@@ -46,9 +46,6 @@ test('with a fixture deck the hero shows name, count and curve; switching mode c
     await page.getByTestId('mode-private').click();
     await expect(page.getByTestId('home-primary')).toHaveText('CREATE TABLE');
     await designAudit(page);
-    // JOIN A GAME… opens the lobby package's sheet; while that part draws nothing it says so.
-    await page.getByTestId('home-join').click();
-    await expect.poll(() => page.evaluate(() => window.__homeHarness!.toasts())).toContain('Joining by a pasted link is not in this build yet. Open the link itself.');
     // The mode cards are a radio group: the arrow keys move the mode.
     await page.getByTestId('mode-private').press('ArrowLeft');
     await expect(page.getByTestId('mode-quick')).toHaveAttribute('aria-checked', 'true');
@@ -57,6 +54,15 @@ test('with a fixture deck the hero shows name, count and curve; switching mode c
     await expect(page.getByTestId('home-status')).toHaveText('Connects your browser directly to other players who are looking. They see your name and network address.');
     await page.getByTestId('opt-ranked').getByRole('radio', { name: 'RANKED', exact: true }).click();
     await expect(page.getByTestId('home-status')).toHaveText('Ranked counts only when the loser concedes.');
+    await page.getByTestId('mode-private').click();
+    // JOIN A GAME… opens the lobby package's sheet (M8-P4, merged): a field for the pasted link; CANCEL closes it.
+    await page.getByTestId('home-join').click();
+    await expect(page.getByTestId('home-join-sheet').getByTestId('join-field')).toBeVisible();
+    await expect(page.getByTestId('join-go')).toBeDisabled();
+    expect(await page.evaluate(() => window.__homeHarness!.toasts())).not.toContain('Joining by a pasted link is not in this build yet. Open the link itself.');
+    await page.getByTestId('join-cancel').click();
+    await expect(page.getByTestId('home-join-sheet')).toHaveCount(0);
+    await page.getByTestId('mode-quick').click();
   });
 
   await test.step('the mode survives a reload', async () => {
@@ -90,10 +96,15 @@ test('the deck arrows and Left / Right step the library; Draft night shows three
   await expect(page.getByTestId('home-next')).toHaveCount(0);
   await expect(page.getByTestId('hero-name')).toHaveCount(0);
   await designAudit(page);
-  // CHANGE BOOSTERS opens the decks package's booster setup sheet; while that part draws nothing it says so.
+  // CHANGE BOOSTERS opens the decks package's booster setup sheet (M8-P3, merged): one pack fewer shows two boosters;
+  // DONE closes it and the setup is kept in the Home prefs.
   await page.getByTestId('home-change-boosters').click();
-  await expect.poll(() => page.evaluate(() => window.__homeHarness!.toasts())).toContain('Changing the boosters is not in this build yet.');
+  await expect(page.getByTestId('home-booster-sheet').getByTestId('booster-setup')).toBeVisible();
+  expect(await page.evaluate(() => window.__homeHarness!.toasts())).not.toContain('Changing the boosters is not in this build yet.');
+  await page.getByTestId('setup-packs').getByRole('button').first().click();
+  await page.getByTestId('setup-done').click();
   await expect(page.getByTestId('home-booster-sheet')).toHaveCount(0);
+  await expect(page.getByTestId('home-boosters').locator('svg')).toHaveCount(2);
 });
 
 test('with an unfinished game the CONTINUE strip names it and the primary still reads PLAY', async ({ page }) => {

@@ -18,7 +18,7 @@
   import type { KeymapOverride } from '../store/types';
   import { cssText } from '../themes/index';
   import type { SeatAnchor } from '../scene/types';
-  import './design/base.css';
+  import './design/kit';
   import { hudLook, lookCssVars } from './design/css';
   import { lookContext } from './design/look';
   import Icon from './design/Icon.svelte';
@@ -263,6 +263,8 @@
    * column"): closed, an activity button with an unread count and a ticker; it opens from that button or Enter.
    */
   let logOpen = $state(false);
+  /** Which seat plates have their "⋯" menu open (Avatar bind:moreOpen): kept here, as a plate is a new Avatar when it moves to its seat edge. */
+  let openPlates = $state<Record<string, boolean>>({});
   let preview = $state<{ card: InstanceId; x: number; y: number } | null>(null);
   let voice = $state<{ talking: 'talk' | 'teamTalk' | null; muted: boolean }>({ talking: null, muted: false });
   /** The modifier talk key's hold-alone state (shown on the talk indicator as data-hold). */
@@ -1455,6 +1457,7 @@
 
 {#snippet plate(seat: Seat, mine: boolean)}
   <Avatar
+    bind:moreOpen={openPlates[seat.id]}
     {seat}
     life={lifeOf(seat.id)}
     me={mine}
@@ -1576,7 +1579,7 @@
       <div class="plates-row">
         {#each others as seat (seat.id)}
           {#if !anchorOf(seat.id)}
-            <div class="plate-top">{@render plate(seat, false)}</div>
+            <div class="plate-top" class:menu-open={!!openPlates[seat.id]}>{@render plate(seat, false)}</div>
           {/if}
         {/each}
       </div>
@@ -1586,7 +1589,7 @@
       {@const a = anchorOf(seat.id)}
       {#if a?.at}
         <!-- At the seat's table edge (SceneEvents.seatAnchors), moved by a transform when the camera settles. -->
-        <div class="plate-anchor" class:plate-top={a.at.y < vh / 2} style:transform="translate({Math.round(Math.min(Math.max(a.at.x, 120), vw - 120))}px, {Math.round(Math.min(Math.max(a.at.y, 70), vh - 200))}px)">{@render plate(seat, false)}</div>
+        <div class="plate-anchor" class:plate-top={a.at.y < vh / 2} class:menu-open={!!openPlates[seat.id]} style:transform="translate({Math.round(Math.min(Math.max(a.at.x, 120), vw - 120))}px, {Math.round(Math.min(Math.max(a.at.y, 70), vh - 200))}px)">{@render plate(seat, false)}</div>
       {/if}
     {/each}
 
@@ -2176,6 +2179,15 @@
     /* The transform puts the plate's centre on the anchor. */
     translate: -50% -50%;
     transition: transform var(--ds-duration-slow) var(--ds-ease-standard);
+  }
+  /* A plate whose "⋯" menu is open lies over the first-run hint (z-index 55), which may sit over the far seat's edge. */
+  .plate-anchor.menu-open,
+  .plate-top.menu-open {
+    position: relative;
+    z-index: 56;
+  }
+  .plate-anchor.menu-open {
+    position: absolute;
   }
   .right {
     position: absolute;

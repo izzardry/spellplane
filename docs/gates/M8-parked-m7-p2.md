@@ -1,5 +1,7 @@
 # M7-P2 Table HUD and in-table panels: parked (second launch)
 
+> **Update (20 Nov 2026, evening): merged.** The M8 gate fix round merged this branch into `m8` without the second review (decision `[M8-G]` in docs/DECISIONS.md) and fixed the integration failures it found there. The text below is the parking record.
+
 - **Status:** parked, not merged into `m8`. The pipeline's reason: "did not converge after 1 review rounds". Review round 1 found two blocking issues (listed below). The implementer's fix commit `c2cbff7` (20 Nov, 15:57) answers both, and later commits on the branch build on it, but no second review ran, so nothing was merged.
 - **Branch:** `m7-p2` (worktree `spellplane-wt/m7-p2`). Its head is `5079589 Merge branch 'm8' into m7-p2`. The branch is local only, not on `origin`. The working tree is clean.
 - **Merge state:** the current `m8` (`874c0a6`) is an ancestor of `m7-p2`, so the branch merges into `m8` without conflicts. `git diff m8...m7-p2 --stat` shows 90 files, +4449 / -766. There are 37 `[M7-P2]` lines in its `docs/DECISIONS.md`.
