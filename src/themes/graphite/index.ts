@@ -32,7 +32,7 @@ export const GRAPHITE_SURFACE = '#16191e';
 export const GRAPHITE_BACKGROUND = '#0b0d10';
 
 /** The slate's colour, multiplied by the grain of SLATE.albedo. */
-export const SLATE_COLOUR = '#2a2f37';
+export const SLATE_COLOUR = '#0e1117';
 
 export const SLAB: MaterialSpec = {
   model: 'standard',

@@ -39,7 +39,7 @@ export const KITCHEN_SURFACE = '#d9ccb2';
 export const KITCHEN_BACKGROUND = '#2a1e16';
 
 /** The linen's colour, multiplied by the woven grey of LINEN.albedo. */
-export const LINEN_COLOUR = '#f2e6cc';
+export const LINEN_COLOUR = '#e6ecea';
 
 /** The playmat. */
 export const MAT: MaterialSpec = {

@@ -39,9 +39,12 @@ export const CODEX_BACKGROUND = '#0b0e17';
 export const GILT = '#c8a75e';
 
 /** The leather (its colour is in the albedo; this tints it). */
+/** The leather's colour under the warm lamp, multiplied by LEATHER.albedo: tuned so the table reads as the `mat` token from above. */
+export const LEATHER_COLOUR = '#a1c9ff';
+
 export const LEATHER_SPEC: MaterialSpec = {
   model: 'standard',
-  colour: '#ffffff',
+  colour: LEATHER_COLOUR,
   roughness: 0.8,
   metalness: 0,
   tileMm: LEATHER_TILE_MM,
@@ -120,8 +123,8 @@ export const CODEX_WORLD: Omit<WorldSpec, 'seats'> = {
   skirts: [{ growMm: LEATHER_MARGIN_MM, radiusMm: 3, spreadMm: 7, opacity: 0.5, at: -1.98, colour: '#000000' }],
   marks: {
     top: 0,
-    bed: { spec: { ...LEATHER_SPEC, colour: shade('#ffffff', 0.74) }, padMm: 3, radiusMm: 2 },
-    area: { spec: { ...LEATHER_SPEC, colour: shade('#ffffff', 0.86) }, radiusMm: 3 },
+    bed: { spec: { ...LEATHER_SPEC, colour: shade(LEATHER_COLOUR, 0.74) }, padMm: 3, radiusMm: 2 },
+    area: { spec: { ...LEATHER_SPEC, colour: shade(LEATHER_COLOUR, 0.86) }, radiusMm: 3 },
     territory: null,
     plaque: { spec: LEATHER_SPEC, lengthMm: 128, heightMm: 44, baseMm: -2, outline: GILT },
     glyph: { sizeMm: 14, offsetMm: 44 },
