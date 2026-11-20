@@ -415,7 +415,13 @@
   const eveningBarBelow = $derived(evening === undefined && session.evening !== undefined && st.stage === 'match');
   // The drawer opens over the table and never resizes it (m7-adjustments.md, M7-P2 "HUD layout": Activity), so the
   // table's framing ignores it.
-  const fitInsets = $derived(fitInsetsFor(vh, false, teamFanShown, thumbShown ? THUMB_BAR_SPACE_PX : 0, safeInsets));
+  /**
+   * Where the hand fan spans the width (a touch screen, a window up to 1100 px) the own plate and the primary button sit
+   * in a row just above the hand (see the CSS below): the table's fit keeps clear of that row too, so the primary never
+   * covers the own library or a card (m7-hud-proposal, iPad: "never over a card"). The primary is 56 px high, 16 px up.
+   */
+  const rowAboveHand = $derived(full && (touchUi || vw <= 1100) ? 56 + 16 : 0);
+  const fitInsets = $derived(fitInsetsFor(vh, false, teamFanShown, (thumbShown ? THUMB_BAR_SPACE_PX : 0) + rowAboveHand, safeInsets));
   /** Bottom of the block above the hand (toast, offer, prompt): above the teammate's fan and the thumb bar when shown. */
   const aboveHandBottom = $derived.by(() => {
     const thumb = thumbShown ? THUMB_BAR_SPACE_PX : 0;
