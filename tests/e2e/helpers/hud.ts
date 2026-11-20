@@ -46,3 +46,28 @@ export async function propose(page: Page, event: 'nextGame' | 'newDraft', how: P
   await menuItem(page, `propose-${event}`, how);
   await page.getByTestId('leave-ok')[how]();
 }
+
+/** Buttons that belong to other packages' components mounted inside the HUD (talk, thumb bar, hints, empty states, hand). */
+const FOREIGN = '.talk-cluster, .thumbs, [data-testid="hand"], [data-testid="hint"], .state, .theme-pop, .voice-pop, [data-testid="team-hands"], [data-testid="focus-mirror"]';
+
+/**
+ * Buttons and menu items under the HUD root whose height is none of the kit's four (--ds-control-xs … lg, ±0.5 px),
+ * skipping other packages' components mounted inside the HUD.
+ */
+export async function offSizes(page: Page): Promise<string[]> {
+  return page.getByTestId('hud').evaluate((root, foreign) => {
+    const css = getComputedStyle(root);
+    const heights = ['xs', 'sm', 'md', 'lg'].map((k) => parseFloat(css.getPropertyValue(`--ds-control-${k}`)));
+    if (heights.some((h) => !Number.isFinite(h))) return ['--ds-control-* variables missing'];
+    const bad: string[] = [];
+    for (const b of root.querySelectorAll<HTMLElement>('button, [role="menuitem"]')) {
+      if (b.closest(foreign)) continue;
+      const r = b.getBoundingClientRect();
+      const st = getComputedStyle(b);
+      if (r.width === 0 || r.height === 0 || st.visibility === 'hidden' || st.display === 'none') continue;
+      if (!heights.some((h) => Math.abs(h - r.height) <= 0.5)) bad.push(`${b.dataset.testid ?? b.getAttribute('aria-label') ?? b.textContent?.trim().slice(0, 30)}: ${r.height}`);
+    }
+    return bad;
+  }, FOREIGN);
+}
+

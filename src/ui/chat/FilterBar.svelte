@@ -24,13 +24,13 @@
   {#if tabs.length > 1}
     <div class="tabs" role="tablist" aria-label="Chat tabs">
       {#each tabs as t (t)}
-        <button type="button" role="tab" aria-selected={tab === t} data-testid="chat-tab-{t}" onclick={() => (tab = t)}>{TAB_LABEL[t]}</button>
+        <button class="ds-btn ds-btn--quiet sp-h-xs" type="button" role="tab" aria-selected={tab === t} data-testid="chat-tab-{t}" onclick={() => (tab = t)}>{TAB_LABEL[t]}</button>
       {/each}
     </div>
   {/if}
   <div class="filters" role="group" aria-label="Show">
     {#each TIMELINE_FILTERS as f (f)}
-      <button type="button" aria-pressed={filter === f} data-testid="log-filter-{f}" onclick={() => (filter = f)}>{FILTER_LABEL[f]}</button>
+      <button class="ds-btn ds-btn--quiet sp-h-xs" type="button" aria-pressed={filter === f} data-testid="log-filter-{f}" onclick={() => (filter = f)}>{FILTER_LABEL[f]}</button>
     {/each}
   </div>
 </div>

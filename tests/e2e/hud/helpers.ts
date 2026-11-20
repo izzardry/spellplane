@@ -18,7 +18,12 @@ export function state(page: Page): Promise<TableState> {
 
 /** Switch the look through the debug hook (HUD tokens and the table theme) and wait for the HUD to wear it. */
 export async function setLook(page: Page, look: LookId): Promise<void> {
-  await page.evaluate((l) => window.__spellplane!.look!.set(l), look);
+  // The app's look hook when the app wires looks (M8-C); else the look's own table theme, whose look the HUD wears.
+  await page.evaluate(async (l) => {
+    const hook = window.__spellplane as unknown as { look?: { set(x: string): Promise<void> | void }; theme: { set(x: string): Promise<void> } };
+    if (hook.look) await hook.look.set(l);
+    else await hook.theme.set(l);
+  }, look);
   await expect(page.getByTestId('hud')).toHaveAttribute('data-look', look);
 }
 

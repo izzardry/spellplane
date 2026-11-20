@@ -64,7 +64,7 @@
     <section class="audit" class:docked={lobby} aria-label="Audit" data-testid="audit-panel" data-game={shown.game.game}>
       <header>
         <h2>Audit of game {shown.game.game}</h2>
-        <button type="button" class="close" aria-label="Close the audit" data-testid="audit-close" onclick={() => (open = false)}>×</button>
+        <button type="button" class="ds-btn sp-h-xs close" aria-label="Close the audit" data-testid="audit-close" onclick={() => (open = false)}>×</button>
       </header>
       <p class="about" data-testid="audit-about">{about(shown)}</p>
       <ul class="seats">
@@ -101,13 +101,13 @@
       {#if games.length > 1}
         <nav class="games" aria-label="Games of the evening">
           {#each games as g (g.game.game)}
-            <button type="button" aria-pressed={g.game.game === shown.game.game} data-testid="audit-game" onclick={() => (picked = g.game.game)}>Game {g.game.game}</button>
+            <button class="ds-btn sp-h-xs" type="button" aria-pressed={g.game.game === shown.game.game} data-testid="audit-game" onclick={() => (picked = g.game.game)}>Game {g.game.game}</button>
           {/each}
         </nav>
       {/if}
     </section>
   {:else}
-    <button type="button" class="toggle" data-testid="audit-toggle" onclick={() => (open = true)}>Audit</button>
+    <button type="button" class="ds-btn sp-h-xs toggle" data-testid="audit-toggle" onclick={() => (open = true)}>Audit</button>
   {/if}
 {/if}
 

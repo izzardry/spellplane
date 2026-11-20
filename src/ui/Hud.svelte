@@ -1413,7 +1413,7 @@
   />
 {/snippet}
 
-<div class="root ds-root" class:touch-ui={touchUi} style:--thumb-space="{thumbShown ? THUMB_BAR_SPACE_PX : 0}px" data-look={look} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
+<div class="root ds-root sp-hud" class:touch-ui={touchUi} style:--thumb-space="{thumbShown ? THUMB_BAR_SPACE_PX : 0}px" data-look={look} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost} onpointerdowncapture={(e) => {
       pressOnTable();
       pressTalk.down(e.clientX, e.clientY);

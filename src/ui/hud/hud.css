@@ -46,3 +46,14 @@
 .sp-hud .sp-pill {
   border-radius: var(--ds-radius-pill);
 }
+/* A touch screen (docs/design/m8/m7-adjustments.md, M7-P2 "iPad portrait": all targets at least 44 px): the small
+   heights grow to md, still one of the kit's four. */
+.sp-hud.touch-ui .sp-h-xs,
+.sp-hud.touch-ui .sp-h-sm {
+  height: var(--ds-control-md);
+  min-height: var(--ds-control-md);
+}
+.sp-hud.touch-ui .sp-round.sp-h-xs,
+.sp-hud.touch-ui .sp-round.sp-h-sm {
+  width: var(--ds-control-md);
+}

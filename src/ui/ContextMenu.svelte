@@ -94,7 +94,7 @@
 >
   <div class="title">{title}</div>
   {#each entries as entry (entry.id)}
-    <button
+    <button class="ds-menu-item sp-h-sm"
       type="button"
       role="menuitem"
       tabindex="-1"
@@ -159,8 +159,9 @@
   }
   /* Thumb-sized entries on a touch screen (DESIGN "Input and interaction design", Touch; M5-P1). */
   @media (any-pointer: coarse) {
-    button {
-      min-height: 44px;
+    :global(.sp-hud) button.ds-menu-item {
+      height: var(--ds-control-md);
+      min-height: var(--ds-control-md);
       align-items: center;
     }
   }

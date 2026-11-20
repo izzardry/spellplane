@@ -53,8 +53,8 @@
   <header>
     <h2>Keys</h2>
     <span class="hint">Hover a card and press a key. Keys act on the selection when the hovered card is selected.</span>
-    <button type="button" onclick={onreset} data-testid="reset-keys">Reset to defaults</button>
-    <button type="button" onclick={onclose} aria-label="Close">×</button>
+    <button class="ds-btn sp-h-xs" type="button" onclick={onreset} data-testid="reset-keys">Reset to defaults</button>
+    <button class="ds-btn sp-h-xs" type="button" onclick={onclose} aria-label="Close">×</button>
   </header>
   {#if capturing}
     <p class="capture" data-testid="capture">Press the new key for “{capturing.label}”, or Esc to cancel. {message}</p>
@@ -76,7 +76,7 @@
                 <td>
                   <button
                     type="button"
-                    class="change"
+                    class="ds-btn sp-h-xs change"
                     aria-label="Change key for {row.label}"
                     onclick={() => {
                       message = '';

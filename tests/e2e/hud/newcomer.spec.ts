@@ -1,5 +1,5 @@
 /**
- * PLAN M7-P2 acceptance: "e2e that a newcomer path (play alone, import deck, play a turn) works without keys" (PLAN
+ * PLAN M7-P2 acceptance (m7-adjustments P2-4: "sandbox, choose a deck, play a turn, no key"): "e2e that a newcomer path works without keys" (PLAN
  * Milestone 7, Principles: "Obvious first use. A newcomer can start a solo game, play a land, draw, tap and attack
  * without reading anything"; Owner decisions: "Play without memorising keys … Keys stay as optional accelerators and
  * leave the primary UI"). Mouse only on desktop, touch only on an iPad; the debug hook asserts no key was pressed.
@@ -9,8 +9,7 @@ import { expect, test, type Page } from '@playwright/test';
 import type { InstanceId, TableState } from '../../../src/core/types';
 import { hook } from '../helpers/app';
 import { menuItem } from '../helpers/hud';
-import { open } from '../lobby/helpers';
-import { decklist } from '../solo/helpers';
+import { decklist, openSolo } from '../solo/helpers';
 import { IPAD_LANDSCAPE } from './helpers';
 import { card, centre, drag, longPress } from '../touch/helpers';
 
@@ -18,25 +17,21 @@ const state = (page: Page) => hook<TableState>(page, 'state');
 type Press = 'click' | 'tap';
 
 async function newcomerTurn(page: Page, how: Press, profile: string): Promise<void> {
-  // The start page: three ways in; "Play alone" opens the table.
-  await open(page, '/lobby', { profile });
-  await expect(page.getByTestId('start-page')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Play alone' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Play with friends' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Join a table' })).toBeVisible();
-  await page.evaluate(() => window.__spellplane!.input!.reset());
-  await page.getByTestId('play-alone')[how]();
-  await expect(page.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
-  await expect.poll(() => page.evaluate(() => typeof window.__spellplane?.session?.hash === 'function'), { timeout: 15_000 }).toBe(true);
-
-  // Import a deck from the Menu.
-  await menuItem(page, 'open-deck-import', how);
-  await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
-  await page.getByTestId('deck-check')[how]();
-  await expect(page.getByTestId('deck-import-go')).toBeEnabled({ timeout: 15_000 });
-  await page.getByTestId('deck-import-go')[how]();
-  await expect(page.getByTestId('deck-import')).toHaveCount(0);
-  await expect.poll(async () => (await state(page)).zones['library:s0']!.ids.length).toBe(60);
+  // The sandbox table (#/solo; Home is M8-P2's): a table without a deck says so and offers "Choose a deck".
+  await test.step('open the sandbox and choose a deck from the no-deck line', async () => {
+    await openSolo(page, profile);
+    await expect(page.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+    await page.evaluate(() => window.__spellplane!.input!.reset());
+    await expect(page.getByTestId('no-deck')).toContainText('No deck on this table.');
+    await page.getByTestId('empty-import-deck')[how]();
+    await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
+    await page.getByTestId('deck-check')[how]();
+    await expect(page.getByTestId('deck-import-go')).toBeEnabled({ timeout: 15_000 });
+    await page.getByTestId('deck-import-go')[how]();
+    await expect(page.getByTestId('deck-import')).toHaveCount(0);
+    await expect.poll(async () => (await state(page)).zones['library:s0']!.ids.length).toBe(60);
+    await expect(page.getByTestId('no-deck')).toHaveCount(0);
+  });
 
   // Shuffle and draw an opening hand from the Menu.
   await menuItem(page, 'menu-shuffle', how);
@@ -44,6 +39,9 @@ async function newcomerTurn(page: Page, how: Press, profile: string): Promise<vo
   await page.getByTestId('draw-n-input').fill('7');
   await page.getByTestId('draw-n-go')[how]();
   await expect(page.getByTestId('hand-card')).toHaveCount(7);
+  // KEEP over the opening hand.
+  await page.getByTestId('opening-keep')[how]();
+  await expect(page.getByTestId('opening-hand')).toHaveCount(0);
 
   // The turn: to main with the primary button.
   const primary = page.getByTestId('primary-action');
@@ -92,6 +90,9 @@ async function newcomerTurn(page: Page, how: Press, profile: string): Promise<vo
   const turn = (await state(page)).turn.number;
   await primary[how]();
   await expect.poll(async () => (await state(page)).turn.number).toBe(turn + 1);
+  // The sandbox's empty chair takes that turn; it comes back as another player would hand it over (no key).
+  await hook(page, 'dispatch', { type: 'turnPass', to: 's0' });
+  await hook(page, 'dispatch', { type: 'phaseSet', phase: 'untap' });
   // The next turn begins with untap and draw on one press.
   const hand = (await state(page)).zones['hand:s0']!.ids.length;
   await primary[how]();

@@ -144,7 +144,7 @@
       {#each shown as [kind, n] (kind)}<CounterChip {kind} value={n} {readonly} onchange={(d) => oncounter(kind, d)} />{/each}
     </div>
   {/if}
-  <button bind:this={moreButton} type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-sm more" data-testid="plate-more" aria-label="More for {seat.name}" title="{seat.name}: counters, piles and more" aria-haspopup="true" aria-expanded={moreOpen} onclick={() => (moreOpen = !moreOpen)}><Icon name="more" size={18} /></button>
+  <button bind:this={moreButton} type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-sm sp-round more" data-testid="plate-more" aria-label="More for {seat.name}" title="{seat.name}: counters, piles and more" aria-haspopup="true" aria-expanded={moreOpen} onclick={() => (moreOpen = !moreOpen)}><Icon name="more" size={18} /></button>
   {#if moreOpen}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
@@ -438,9 +438,6 @@
     gap: 2px;
   }
   .more {
-    width: var(--ds-control-sm);
-    padding: 0;
-    border-radius: 50%;
     color: var(--ds-muted);
   }
   .more:hover,

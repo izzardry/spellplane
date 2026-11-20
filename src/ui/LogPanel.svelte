@@ -108,7 +108,7 @@
 
 {#if !open}
   <div class="activity" data-testid="log" data-open="false">
-    <button type="button" class="ds-btn ds-icon-btn sp-h-md sp-round" data-testid="open-log" aria-label="Log and chat{unread ? ` (${unread} new)` : ''}" title="Log and chat" aria-expanded={false} onclick={ontoggle}><Icon name="chat" />{#if unread}<span class="ds-badge" data-testid="unread">{unread}</span>{/if}</button>
+    <button type="button" class="ds-btn ds-icon-btn sp-h-md sp-round" data-testid="open-log" title="Log and chat" aria-expanded={false} onclick={ontoggle}><Icon name="chat" /><span class="sp-sr">Log and chat</span>{#if unread}<span class="ds-badge" data-testid="unread">{unread}</span><span class="sp-sr"> new</span>{/if}</button>
     <!-- The ticker repeats lines the page's live region already announces (ui/a11y), so it is hidden from screen readers. -->
     <ol class="ticker" aria-hidden="true" data-testid="log-ticker">
       {#each ticker as l (l.key)}
@@ -152,6 +152,14 @@
     align-items: flex-end;
     gap: var(--ds-space-sm);
     pointer-events: none;
+  }
+  .sp-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
   }
   .activity > button {
     position: relative;

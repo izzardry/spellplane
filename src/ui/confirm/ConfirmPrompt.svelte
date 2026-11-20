@@ -114,15 +114,15 @@
     {@render ring()}
     <span class="what"><SeatGlyph colour={seatColour(model.round.askedBy)} /><b>{asker}</b> {what}</span>
     {#if holderName}<span class="holding" data-testid="confirm-holder">{holderName} is responding</span>{/if}
-    <button type="button" data-testid="prompt-ok" onclick={onok}>OK {#if keys.ok}<kbd>{keys.ok}</kbd>{/if}</button>
-    {#if !model.holder || model.holder === me}<button type="button" data-testid="prompt-hold" onclick={onhold}>Hold {#if keys.hold}<kbd>{keys.hold}</kbd>{/if}</button>{/if}
+    <button class="ds-btn sp-h-sm" type="button" data-testid="prompt-ok" onclick={onok}>OK {#if keys.ok}<kbd>{keys.ok}</kbd>{/if}</button>
+    {#if !model.holder || model.holder === me}<button class="ds-btn sp-h-sm" type="button" data-testid="prompt-hold" onclick={onhold}>Hold {#if keys.hold}<kbd>{keys.hold}</kbd>{/if}</button>{/if}
   </div>
 {:else if model.mode === 'holding'}
   <div class="prompt holding-me" data-testid="confirm-prompt" data-round={model.round.id} role="alertdialog" aria-label="Confirmation" style:--seat={colour(model.round.askedBy)}>
     {@render ring()}
     <span class="what"><SeatGlyph colour={seatColour(model.round.askedBy)} /><b>{asker}</b> {what}</span>
     <span>You hold the floor.</span>
-    <button type="button" data-testid="release" onclick={onrelease}>Release {#if keys.ok}<kbd>{keys.ok}</kbd>{/if}</button>
+    <button class="ds-btn sp-h-sm" type="button" data-testid="release" onclick={onrelease}>Release {#if keys.ok}<kbd>{keys.ok}</kbd>{/if}</button>
   </div>
 {:else if !model.allPassed}
   <div class="status" data-testid="confirm-status" data-round={model.round.id} role="status" aria-live="polite">
