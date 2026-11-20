@@ -64,7 +64,15 @@ export default defineConfig({
     },
     {
       name: 'webkit',
-      use: { ...devices['Desktop Safari'], viewport: { width: 1440, height: 900 } },
+      use: {
+        ...devices['Desktop Safari'],
+        viewport: { width: 1440, height: 900 },
+        // pw-guard sets this when a remote WebKit server is configured (scripts/pw-remote/README.md): the browser runs
+        // on that Mac and reaches this machine's test server through Playwright's connection.
+        ...(process.env.SPELLPLANE_PW_WEBKIT_WS
+          ? { connectOptions: { wsEndpoint: process.env.SPELLPLANE_PW_WEBKIT_WS, exposeNetwork: '<loopback>' } }
+          : {}),
+      },
     },
   ],
   webServer: {

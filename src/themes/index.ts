@@ -25,10 +25,10 @@ export const THEME_LISTED: Readonly<Record<ThemeId, boolean>> = { paper: false, 
 export const LISTED_THEME_IDS: readonly ThemeId[] = THEME_IDS.filter((id) => THEME_LISTED[id]);
 
 /** The three looks in the picker's order (PLAN Milestone 7; docs/design/m7-directions.html A, B, C). Added by M7-C. */
-export const LOOK_IDS: readonly LookId[] = ['kitchen', 'graphite', 'codex'];
+export const LOOK_IDS: readonly LookId[] = ['plain', 'kitchen', 'graphite', 'codex'];
 
 /** Names of the looks (docs/design/m7-directions.html). Added by M7-C. */
-export const LOOK_LABELS: Readonly<Record<LookId, string>> = { kitchen: 'Kitchen Table', graphite: 'Graphite', codex: 'Codex' };
+export const LOOK_LABELS: Readonly<Record<LookId, string>> = { plain: 'Plain', kitchen: 'Kitchen Table', graphite: 'Graphite', codex: 'Codex' };
 
 /** A stored setting as a look id; anything unknown is DEFAULT_LOOK (store/types.ts Settings.look is a string). Added by M7-C. */
 export function lookIdOf(value: unknown): LookId {

@@ -39,8 +39,8 @@ const ALL: readonly SoundCue[] = ['slide', 'tap', 'shuffle', 'turnChime', 'promp
 import { LAYOUT, LOOKS, designCssVars, lookTokens, motionTokens } from '../../src/ui/design/tokens';
 
 describe('looks', () => {
-  it('has three looks, each mapped to a registered theme that the picker lists; the M4 themes stay registered but unlisted', async () => {
-    expect([...LOOK_IDS]).toEqual(['kitchen', 'graphite', 'codex']);
+  it('has four looks (M8-C added Plain), each mapped to a registered theme that the picker lists; the M4 themes stay registered but unlisted', async () => {
+    expect([...LOOK_IDS]).toEqual(['plain', 'kitchen', 'graphite', 'codex']);
     for (const look of LOOK_IDS) {
       const theme = LOOK_THEME[look];
       expect(THEME_IDS).toContain(theme);
@@ -53,16 +53,16 @@ describe('looks', () => {
       expect(THEME_LISTED[id]).toBe(false);
       expect(lookOfTheme(id)).toBeNull();
     }
-    // M7-P1 added Plain, listed first (docs/design/m8/m7-adjustments.md, M7-P1).
     expect([...LISTED_THEME_IDS]).toEqual(['plain', 'kitchen', 'graphite', 'codex']);
   });
 
-  it('reads a stored look, anything unknown as the default look (Kitchen Table)', () => {
-    expect(DEFAULT_LOOK).toBe('kitchen');
+  it('reads a stored look, anything unknown as the default look (Plain since M8-C)', () => {
+    expect(DEFAULT_LOOK).toBe('plain');
     expect(DEFAULT_SETTINGS.look).toBe(DEFAULT_LOOK);
+    expect(DEFAULT_SETTINGS.theme).toBe('plain');
     expect(lookIdOf('graphite')).toBe('graphite');
-    expect(lookIdOf('paper')).toBe('kitchen');
-    expect(lookIdOf(undefined)).toBe('kitchen');
+    expect(lookIdOf('paper')).toBe('plain');
+    expect(lookIdOf(undefined)).toBe('plain');
   });
 });
 
@@ -83,7 +83,7 @@ describe('design tokens', () => {
       expect(t.sound.gain).toBeLessThanOrEqual(1);
     }
     // docs/design/m7-directions.html swatches.
-    expect(LOOKS.kitchen.colour).toMatchObject({ mat: '#d9ccb2', frame: '#5b3f2c', panel: '#f7f1e5', ink: '#2b2118', accent: '#c0532f', selection: '#b08a3e' });
+    expect(LOOKS.kitchen.colour).toMatchObject({ mat: '#d9ccb2', frame: '#5b3f2c', panel: '#f7f1e5', ink: '#2b2118', accent: '#b94f2c' /* M7-P2 tuned the directions' #c0532f to meet AA under the primary button's text */, selection: '#b08a3e' });
     expect(LOOKS.graphite.colour).toMatchObject({ mat: '#16191e', panel: '#20242b', border: '#323843', ink: '#e9ecf0', muted: '#9aa3ae', accent: '#3fd2a3' });
     expect(LOOKS.codex.colour).toMatchObject({ mat: '#1b2235', panel: '#242c42', ornament: '#c8a75e', ink: '#efe6d2', muted: '#a99f8c', accent: '#b8432f' });
   });
@@ -139,12 +139,8 @@ describe('the one continuous tilt', () => {
     expect(perspectiveToggleTilt(0.3)).toBe(1);
   });
 
-  it('starts each look at a tilt on the one continuous tilt (M7-P1 chose them; the stubs started bird’s-eye)', async () => {
-    for (const look of LOOK_IDS) {
-      const t = (await loadTheme(LOOK_THEME[look])).camera.tilt!;
-      expect(t).toBeGreaterThanOrEqual(0);
-      expect(t).toBeLessThanOrEqual(1);
-    }
+  it('starts the looks’ stub themes in bird’s-eye until M7-P1 and M7-P3 choose', async () => {
+    for (const look of LOOK_IDS) expect((await loadTheme(LOOK_THEME[look])).camera.tilt).toBe(1);
     expect(DEFAULT_SETTINGS.tilt).toBeNull();
   });
 });
@@ -205,5 +201,13 @@ describe('affordances and coach marks', () => {
     expect(readBackup({ format: 'spellplane-backup', version: 1, settings: { tilt: null } }).settings).toEqual({ tilt: null });
     const bad = readBackup({ format: 'spellplane-backup', version: 1, settings: { tilt: 3, motion: 'wild' } });
     expect(bad.errors.map((e) => e.where).sort()).toEqual(['setting motion', 'setting tilt']);
+  });
+
+  it('M8-C: a backup accepts the look Plain and still the three older looks', () => {
+    for (const look of ['plain', 'kitchen', 'graphite', 'codex']) {
+      const r = readBackup({ format: 'spellplane-backup', version: 1, settings: { look, theme: look } });
+      expect(r.errors).toEqual([]);
+      expect(r.settings).toMatchObject({ look, theme: look });
+    }
   });
 });

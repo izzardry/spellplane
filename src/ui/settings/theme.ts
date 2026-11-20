@@ -178,7 +178,7 @@ const KEY = Symbol('spellplane.theme');
  * picked Dusk does not first get Paper's scene); the start page and the connection check render at once.
  */
 export function waitsForStoredTheme(route: { name: string }): boolean {
-  return route.name === 'solo' || route.name === 'room';
+  return route.name === 'solo' || route.name === 'room' || route.name === 'practice' || route.name === 'computer'; // M8-C: every table route
 }
 
 export function setThemeContext(choice: ThemeChoice): void {

@@ -1,21 +1,25 @@
 <!--
-  App shell with hash routing (PLAN M0-P4): `#/` is the solo table, `#/t/<room>/<key>` a networked table
-  (ui/lobby/RoomRoute.svelte: lobby, then the HUD), `#/lobby` the start page (ui/lobby/StartRoute.svelte) and `#/diag`
-  or `#/diag/<room>/<key>` the connection check (ui/diag/DiagRoute.svelte) (PLAN M1-P5). Props come from main.ts
-  (ui/types.ts AppProps); without a session the shell shows the bootstrap stage.
+  The app with hash routing (docs/design/m8/contracts.md Part C; journey.md section 3): `#/` is Home; Home, Decks,
+  History, Settings, About and Diag sit inside the shell (ui/shell/Shell.svelte); every table route renders the table
+  frame: `#/solo` the sandbox and `#/p/<room>` a practice table (ui/play/SoloRoute.svelte), `#/c/<room>` a computer
+  game (ui/computer/ComputerRoute.svelte), `#/t/<room>/<key>` a networked table (ui/lobby/RoomRoute.svelte). `#/lobby`
+  keeps the legacy start page (frozen, linked from nowhere). The look (M7-P2's wiring, ui/design/look.ts) dresses every
+  page. Props come from main.ts (ui/types.ts AppProps). Revised by M8-C; M8-P8 owns the file.
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { cssText, hudCssVars } from '../themes/index';
+  import { cssText } from '../themes/index';
+  import './design/base.css';
+  import { lookCssVars } from './design/css';
+  import { LookChoice, registerLookDebug, setLookContext } from './design/look';
   import type { Theme } from '../themes/types';
   import { registerThemeDebug, setThemeContext, ThemeChoice, waitsForStoredTheme } from './settings/theme';
-  import type { AppProps } from './types';
-  import Hud from './Hud.svelte';
+  import type { AppProps, RoomLink } from './types';
   import Smoke from './Smoke.svelte';
   import DiagRoute from './diag/DiagRoute.svelte';
   import RoomRoute from './lobby/RoomRoute.svelte';
   import StartRoute from './lobby/StartRoute.svelte';
-  import { parseRoute, type Route } from './routes';
+  import { isShellRoute, parseRoute, routeHash, type Route } from './routes';
   import About from './about/About.svelte';
   import { HintController } from './hints/hints';
   import SettingsPage from './settings/SettingsPage.svelte';
@@ -25,10 +29,23 @@
   import type { Stage } from '../core/types';
   import { installReducedMotionCss } from './a11y/motion';
   import FrameMeter from './perf/FrameMeter.svelte';
+  import Shell from './shell/Shell.svelte';
+  import Home from './home/Home.svelte';
+  import HistoryList from './history/HistoryList.svelte';
+  import DecksRoute from './decks/DecksRoute.svelte';
+  import ComputerRoute from './computer/ComputerRoute.svelte';
+  import SoloRoute from './play/SoloRoute.svelte';
+  import { summaryHash } from './play/launch';
+  import { setTableDeps } from './table/context';
+  import { FakeMatchmaker } from './fakes';
+  import type { TableSession } from '../session/types';
 
-  let props: Partial<AppProps> = $props();
+  let props: Partial<AppProps> & { newRoom?: () => RoomLink } = $props();
 
   let route = $state<Route>(parseRoute(typeof location === 'undefined' ? '' : location.hash));
+  const go = (hash: string): void => {
+    location.hash = hash;
+  };
 
   // The viewer's theme (PLAN M4-P6): kept in this browser's settings, shared with the shells below through the
   // context, applied to the whole page as CSS custom properties. The table waits for the stored choice, so a page
@@ -36,82 +53,146 @@
   const choice = new ThemeChoice({ settings: untrack(() => props.settings) });
   setThemeContext(choice);
   let theme = $state.raw<Theme>(choice.current());
+  // The viewer's look (M7-P2, ui/design/look.ts): the HUD's and the pages' design tokens; picking one also picks its table.
+  const looks = new LookChoice(choice, untrack(() => props.settings));
+  setLookContext(looks);
+  let look = $state(looks.current());
   let ready = $state(false);
   /** The welcome hint on the start page (M5-P5 first-run hints); the start page decides when it shows (StartRoute). */
   const startHints = new HintController(untrack(() => props.settings), { where: 'start', touch: false, voice: false });
   void startHints.load();
-  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
+  const cssVars = $derived(cssText(lookCssVars(theme, look)));
+  // The page without a matchmaker (a harness, blocked storage) gets one that stays off.
+  const matchmaker = untrack(() => props.matchmaker ?? new FakeMatchmaker());
+  // What every table frame needs (ui/table/context.ts).
+  untrack(() => {
+    if (props.createScene && props.faces && props.cardData && props.game)
+      setTableDeps({
+        createScene: props.createScene,
+        faces: props.faces,
+        cardData: props.cardData,
+        game: props.game,
+        settings: props.settings,
+        parseDecklist: props.parseDecklist,
+        sets: props.sets,
+        update: props.update,
+        identity: props.identity,
+        decks: props.decks,
+        matches: props.matches ?? null,
+        ratings: props.ratings ?? null,
+      });
+  });
   onMount(() => {
     // Every animation cuts under prefers-reduced-motion, on every page of the app (M5-P4, ui/a11y/motion.ts).
     installReducedMotionCss();
     registerThemeDebug(choice);
+    registerLookDebug(looks);
     const off = choice.subscribe((s) => (theme = s.theme));
+    const offLook = looks.subscribe((l) => (look = l));
     void choice.ready.then(() => (ready = true));
-    return off;
+    return () => {
+      off();
+      offLook();
+    };
   });
-  // Updates only between games (M5-P3, ui/storage/UpdateNotice.svelte): the pages without a table and the solo table
-  // here; a networked table shows its own notice with its stage (ui/lobby/TableRoom.svelte).
-  let soloStage = $state<Stage | null>(null);
+  // `#/build[/<id>]` (M6-P5's routes) go to Decks (decks.md section 1).
   $effect(() => {
-    const s = props.session;
-    if (!s) return;
+    const canonical = routeHash(route);
+    if (/^#\/build(\/|$)/.test(location.hash) && canonical !== location.hash) history.replaceState(history.state, '', canonical);
+  });
+  // Updates only between games (M5-P3, ui/storage/UpdateNotice.svelte): the pages without a table and the sandbox
+  // here; a networked table shows its own notice with its stage (ui/table/TableFrame.svelte).
+  let soloStage = $state<Stage | null>(null);
+  let sandbox = $state.raw<TableSession | null>(untrack(() => props.session ?? null));
+  $effect(() => {
+    const s = sandbox;
+    if (!s || route.name !== 'solo') return;
     soloStage = s.getState().stage;
     return s.subscribe((st) => (soloStage = st.stage));
   });
   const updatePlace = $derived<UpdatePlace>(route.name === 'solo' ? { route: 'solo', stage: soloStage } : { route: route.name, stage: null });
-  // The page itself (body background, scrollbars, form controls) follows the theme too.
+  // The page itself (body background, scrollbars, form controls) follows the theme and the look too.
   $effect(() => {
     const root = document.documentElement;
-    for (const [k, v] of Object.entries(hudCssVars(theme.tokens))) root.style.setProperty(k, v);
+    for (const [k, v] of Object.entries(lookCssVars(theme, look))) root.style.setProperty(k, v);
     root.dataset.theme = theme.id;
+    root.dataset.look = look;
   });
+
+  /** The sandbox's session: main.ts's eager one at `#/solo`, else opened once when the route is first shown. */
+  function openSandbox(): Promise<TableSession> {
+    if (sandbox) return Promise.resolve(sandbox);
+    if (!props.openSandbox) return Promise.reject(new Error('this page has no table'));
+    return props.openSandbox().then((s) => (sandbox = s));
+  }
+  const tableReady = $derived(!!(props.createScene && props.faces && props.cardData && props.game));
+  const testid = (r: Route): string => `route-${r.name === 'diagJoin' ? 'diag' : r.name === 'deckNew' || r.name === 'deck' || r.name === 'deckOpen' ? 'decks' : r.name}`;
 </script>
 
 <svelte:window onhashchange={() => (route = parseRoute(location.hash))} />
 
-{#if route.name !== 'room'}<UpdateNotice update={props.update} place={updatePlace} />{/if}
+{#if route.name !== 'room' && route.name !== 'practice' && route.name !== 'computer'}<UpdateNotice update={props.update} place={updatePlace} />{/if}
 <OfflineNotice />
 <FrameMeter />
 
 {#if !ready && waitsForStoredTheme(route)}
   <!-- Reading the stored theme before a table builds its scene: a moment, at most a few seconds (ui/settings/theme.ts).
-       The pages without a scene (start page, connection check) do not wait. -->
+       The pages without a scene (Home, the start page, the connection check) do not wait. -->
   <p class="theme-wait" role="status" data-testid="theme-wait">Loading…</p>
 {:else if route.name === 'solo'}
-  {#if props.session && props.createScene && props.faces && props.cardData && props.game}
-    <Hud
-      session={props.session}
-      createScene={props.createScene}
-      faces={props.faces}
-      cardData={props.cardData}
-      game={props.game}
-      {theme}
-      settings={props.settings}
-      parseDecklist={props.parseDecklist}
-    />
+  {#if tableReady && (props.session || props.openSandbox)}
+    <SoloRoute kind="sandbox" code={null} open={openSandbox} games={props.games ?? null} {go} />
   {:else}
     <Smoke />
   {/if}
+{:else if route.name === 'practice'}
+  {#key route.room}
+    {@const room = route.room}
+    {#if tableReady && props.openPractice}
+      <SoloRoute kind="practice" code={room} open={() => props.openPractice!(room)} release={(s) => s.dispose()} games={props.games ?? null} {go} />
+    {:else}
+      <main class="sp-page" data-testid="route-practice"><p role="alert">This page cannot open a table.</p><p><a href="#/">Home</a></p></main>
+    {/if}
+  {/key}
+{:else if route.name === 'computer'}
+  {#key route.room}
+    <ComputerRoute room={route.room} {go} />
+  {/key}
 {:else if route.name === 'room'}
   {#key `${route.room}/${route.key}`}
     <RoomRoute app={props} room={route.room} roomKey={route.key} {cssVars} />
   {/key}
+{:else if isShellRoute(route)}
+  <Shell {route} settings={props.settings ?? null} {matchmaker} games={props.games ?? null} {go}>
+    <div class="ds-root shell-route" data-testid={testid(route)}>
+      {#if route.name === 'home'}
+        <Home {matchmaker} games={props.games ?? null} newRoom={props.newRoom} {go} />
+      {:else if route.name === 'decks' || route.name === 'deckNew' || route.name === 'deck' || route.name === 'deckOpen'}
+        <DecksRoute {route} decks={props.decks ?? null} settings={props.settings ?? null} />
+      {:else if route.name === 'history'}
+        <section class="sp-page">
+          <h1 class="ds-t-heading">History</h1>
+          <HistoryList games={props.games ?? null} onopen={(g) => go(summaryHash(g))} />
+        </section>
+      {:else if route.name === 'settings'}
+        <div class="sp-page"><SettingsPage settings={props.settings} keymap={props.game?.keymap ?? []} /></div>
+      {:else if route.name === 'about'}
+        <div class="sp-page"><About /></div>
+      {:else if route.name === 'diag' || route.name === 'diagJoin'}
+        <div class="sp-page"><DiagRoute diag={props.diag} room={route.name === 'diagJoin' ? { roomId: route.room, roomKey: route.key } : null} /></div>
+      {/if}
+    </div>
+  </Shell>
 {:else}
-  <main class="sp-page" style={cssVars} data-testid="route-{route.name === 'diagJoin' ? 'diag' : route.name}">
+  <main class="sp-page ds-root" style={cssVars} data-testid={testid(route)}>
     {#if route.name === 'lobby'}
       <StartRoute start={props.start} welcome={startHints} />
       <p class="links"><a href="#/settings" data-testid="link-settings">Settings</a> · <a href="#/about" data-testid="link-about">About Spellplane</a></p>
-    {:else if route.name === 'settings'}
-      <SettingsPage settings={props.settings} keymap={props.game?.keymap ?? []} />
-    {:else if route.name === 'about'}
-      <About />
-    {:else if route.name === 'diag' || route.name === 'diagJoin'}
-      <DiagRoute diag={props.diag} room={route.name === 'diagJoin' ? { roomId: route.room, roomKey: route.key } : null} />
-    {:else}
+    {:else if route.name === 'notFound'}
       <h1>Not found</h1>
       <p>There is nothing at {route.hash}.</p>
     {/if}
-    <p><a href="#/">Back to the solo table</a></p>
+    <p><a href="#/">Home</a></p>
   </main>
 {/if}
 
@@ -127,7 +208,7 @@
   :global(#app) {
     height: 100%;
   }
-  /* The page frame of the non-table routes (also used by ui/lobby/RoomRoute.svelte). */
+  /* The page frame of the pages outside a table (also used by ui/lobby/RoomRoute.svelte). */
   :global(.sp-page) {
     box-sizing: border-box;
     max-width: 40em;
@@ -139,8 +220,16 @@
     color: var(--sp-fg);
     background: var(--sp-bg);
   }
+  :global(.shell-route .sp-page) {
+    max-height: none;
+    background: transparent;
+    padding-top: 24px;
+  }
   :global(.sp-page a) {
     color: var(--sp-fg);
+  }
+  :global(.sp-page .links) {
+    font-size: var(--ds-type-small);
   }
   /* Shown only when reading the stored theme takes noticeably long, so a quick read does not flash it. */
   .theme-wait {

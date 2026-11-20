@@ -30,7 +30,7 @@ import type { NetMessageRecord } from '../../src/net/types';
 import type { DebugStackEntry } from '../../src/scene/stack';
 import type { SceneDebugCard } from '../../src/scene/table-scene';
 // The M4 gate covers the four M4 themes; the M7 looks have their own gate (M7-G).
-import { M4_THEME_IDS as THEME_IDS, THEME_LABELS, type M4ThemeId as ThemeId } from '../../src/themes/index';
+import { LISTED_THEME_IDS, M4_THEME_IDS as THEME_IDS, THEME_LABELS, type M4ThemeId as ThemeId } from '../../src/themes/index';
 import { scan } from '../leak/scan';
 import { hook, shot } from './helpers/app';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname } from './lobby/helpers';
@@ -221,6 +221,13 @@ async function dumpStores(page: Page, profile: string): Promise<unknown> {
 /** Pick a theme in the lobby's picker (DESIGN "Themes and rendering": themes are chosen per viewer). */
 async function pickLobbyTheme(page: Page, theme: ThemeId): Promise<void> {
   const details = page.getByTestId('lobby-theme');
+  // M8-C: an M4 theme left the picker (still loadable): the switch goes through the debug hook.
+  if (!(LISTED_THEME_IDS as readonly string[]).includes(theme)) {
+    await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
+    await expect.poll(() => currentTheme(page), { timeout: 20_000 }).toBe(theme);
+    await expect(details).toContainText(`Theme: ${THEME_LABELS[theme]}`);
+    return;
+  }
   await details.locator('summary').click();
   // The M4 themes left the picker in M7 (PLAN Milestone 7, Owner decisions) and stay loadable: the debug hook stores the
   // choice as the picker did; the lobby's picker shows the theme chosen.
@@ -233,6 +240,14 @@ async function pickLobbyTheme(page: Page, theme: ThemeId): Promise<void> {
 /** Pick a theme in the HUD's picker mid-game; resolves once the scene drew in it. */
 async function pickHudTheme(page: Page, theme: ThemeId): Promise<void> {
   const picker = page.getByTestId('theme-settings');
+  // M7-P2 (taken by M8-C): the picker offers the four looks; an M4 theme (out of the picker, still loadable) goes through the debug hook.
+  if (!(LISTED_THEME_IDS as readonly string[]).includes(theme)) {
+    await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
+    await expect.poll(() => hook<{ theme: string }>(page, 'render.stats').then((r) => r.theme), { timeout: 20_000 }).toBe(theme);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    await frames(page);
+    return;
+  }
   if (!(await picker.isVisible())) await page.getByTestId('open-theme-settings').click();
   await expect(picker).toBeVisible();
   // The M4 themes left the picker in M7 (PLAN Milestone 7, Owner decisions); the debug hook stores the choice as it did.

@@ -19,9 +19,9 @@
  * (DESIGN "Card faces are never restyled"). scene/theme-runtime.ts owns the theme, materials, post chain and quality.
  * Paper stays one cheap pass: no lights, boxes, shadows or post, the same draw calls as before.
  */
-import * as THREE from 'three';
 import { lifecycleRender, registerBaseRender, trackContext, untrackContext } from './lifecycle';
 import { track, untrack } from '../util/lifecycle';
+import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
 import { CAMERA, CLIP } from '../core/geometry';
 import { carryGroup, clipGroup, type DragGroup } from '../core/clips';
@@ -3125,6 +3125,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return screenToTable(x, y);
     },
     debug,
+    // M8-C: the read-only seam (m7-adjustments.md section 2); M7-P5 makes the scene propose nothing while it is on.
+    setReadOnly() {},
     dispose() {
       disposed = true;
       frameMeter.releaseRender(meterSource);
