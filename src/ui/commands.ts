@@ -144,8 +144,41 @@ export class Commands {
    * next press of the key on another card attaches them to it; any other action forgets them.
    */
   private pendingAttach: InstanceId[] | null = null;
+  /**
+   * Cards an on-card control acts on (the selection strip, M7-P5), whatever the pointer hovers: set only while
+   * `runFor` runs an action.
+   */
+  private explicit: readonly InstanceId[] | null = null;
 
   constructor(private readonly host: CommandHost) {}
+
+  /**
+   * Run a card action on `cards` (PLAN M7-P5: the selection strip; "new routes dispatch existing actions"): the same
+   * drafts the key dispatches for that selection, one per card with a shared group, whatever the pointer rests on.
+   */
+  runFor(cards: readonly InstanceId[], action: ActionId): void {
+    const prev = this.explicit;
+    this.explicit = cards.filter((id) => !!this.state.cards[id]);
+    try {
+      this.run(action);
+    } finally {
+      this.explicit = prev;
+    }
+  }
+
+  /** A counter of `kind` on each of `cards` (the strip's counter chips, M7-P5): one action per card, one group. */
+  counterOn(cards: readonly InstanceId[], kind: string, delta: number): void {
+    const st = this.state;
+    const drafts: ActionDraft[] = [];
+    for (const id of cards) {
+      const c = st.cards[id];
+      if (!c || !this.applies(delta > 0 ? 'counterAdd' : 'counterRemove', c)) continue;
+      // Taking one off a card without that counter does nothing (the reducer would drop it below zero).
+      if (delta < 0 && (c.counters[kind] ?? 0) <= 0) continue;
+      drafts.push({ type: 'counter', card: c.id, kind, delta });
+    }
+    this.dispatchAll(drafts);
+  }
 
   private get state(): TableState {
     return this.host.session.getState();
@@ -160,6 +193,7 @@ export class Commands {
    */
   targets(): CardInstance[] {
     const st = this.state;
+    if (this.explicit) return this.explicit.map((id) => st.cards[id]).filter((c): c is CardInstance => !!c);
     const { hovered, selection } = this.host.view();
     if (!hovered && this.hoveredMarker()) return [];
     const sel = selection.map((id) => st.cards[id]).filter((c): c is CardInstance => !!c);
@@ -172,6 +206,7 @@ export class Commands {
    * scene reports them on their own (scene/stack.ts hoveredStackItem). A spell in the lane is its hovered card.
    */
   private hoveredMarker(): StackItem | null {
+    if (this.explicit) return null;
     const view = this.host.view();
     if (view.hovered || view.keyFocus) return null;
     const id = hoveredStackItem(this.host.scene());
@@ -180,6 +215,7 @@ export class Commands {
   }
 
   private hoveredCard(): CardInstance | null {
+    if (this.explicit) return (this.explicit[0] !== undefined && this.state.cards[this.explicit[0]]) || null;
     const h = this.host.view().hovered;
     return (h && this.state.cards[h]) || null;
   }

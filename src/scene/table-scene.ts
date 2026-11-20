@@ -41,7 +41,7 @@ import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
 import { tapActions, toStoredPoses } from './gestures';
 import { carryDropActions, rigidPoses, tempCarryActions } from './carry';
 import { ClipView, clipCorners, clipFrame, clipHere, pointInClip, type ClipCard, type ClipDraw, type ClipFrame } from './clips';
-import { LAYER, cameraTable, compareSort, displayedRot, dropTable, dropTargets, faceOf, fitFrame, markings, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
+import { LAYER, cameraTable, compareSort, displayedRot, dropTable, dropTargets, faceOf, fitFrame, markings, pileAnchor, placeCards, presentationOf, seatLayoutOf, viewerAngle, type Placement } from './layout';
 import { blockPlan, fanAttacker, fanUnder, settleSlots, withUnblock, type CombatContext } from './combat';
 import { ghostSegments, markerSegments, markerSize } from './ghost';
 import { LineLayer, LineView, lineSourceOf, type DebugPing, type DebugSeatView, type DebugTableView, type DrawnLine, type LineDraw, type SceneDebugLine } from './lines';
@@ -52,12 +52,14 @@ import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { badgeItems, drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackCollapsed, stackEntries, stackSlotPose, type DebugStackEntry, type StackEntry } from './stack';
 import { StackBadgeView } from './stack-badge';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
+import { attackDrop, attackPose, inHandBand, libraryBottomSlot, opponents, samePileHover, sameSelectionAnchor, selectionAnchorOf, type AttackDrop } from './affordances';
 import { attachPressHold } from './press-hold';
 import { TextLayer, type TextSpec } from './text';
 import { recentGestures, TouchPointers } from './input/pointers';
 import type { TouchGesture } from './input/touch';
 import { FACE_BUDGET_HEADROOM, TEXTURE_CAP_BYTES, tierForScreenHeight } from './textures';
 import type {
+  AffordanceDebugState,
   CameraPose,
   CameraRig,
   ClipDebugState,
@@ -71,7 +73,10 @@ import type {
   DebugCamera,
   DebugCard,
   FrameStats,
+  PileHover,
   SceneDebugParts,
+  ScreenRect,
+  SelectionAnchor,
   ScreenPoint,
   SetRigOptions,
   TablePoint,
@@ -186,6 +191,11 @@ interface DragState {
   group: DragGroup | null;
   /** Ctrl held at the last pointer event (skips snapping; the preview follows it). */
   ctrl: boolean;
+  /**
+   * The top card of the own library, picked up to draw it (PLAN M7-P5: "drag from library to hand draws"): dropped in
+   * the hand it is drawn, anywhere else it springs back. Never shown to the others (scene/presence.ts mayShowDrag).
+   */
+  fromLibrary?: boolean;
 }
 
 /**
@@ -229,6 +239,14 @@ type Gesture =
   | { kind: 'drag' }
   /** Right-drag on empty table in the ego rig: pitch (DESIGN "Camera and navigation", Navigation gestures). */
   | { kind: 'pitch'; pointerId: number; last: { x: number; y: number } };
+
+/** What a drop in progress would do beyond the snap preview (M7-P5), with the ghost outlines it shows. */
+interface DragHint {
+  kind: 'draw' | 'hand' | 'top' | 'bottom' | 'attack';
+  /** Where its label stands on the table, or null: over the hand. */
+  at: TablePoint | null;
+  ghosts: Pose[];
+}
 
 const DRAG_THRESHOLD_PX = 4;
 /** Counter badge type size on the table (mm), its place on the card (over the art box) and its far-zoom floor. */
@@ -1005,6 +1023,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
           preview = next;
           changed = true;
         }
+        // The drop's own label and ghosts (M7-P5): draw, to hand, library top or bottom, attack.
+        const hint = computeDragHint(drag);
+        if (!sameDragHint(hint, dragHint)) {
+          dragHint = hint;
+          syncDragHint();
+          changed = true;
+        }
       }
     } else dragDrawn = null;
     // A press held still on an overlap clips at CLIP.holdMs; its ring fills from CLIP.ringFromMs (M6-P1).
@@ -1048,6 +1073,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       drewLastTick = true;
     }
     if (captionLayer.active) captionLayer.place();
+    syncAffordances();
   }
 
   // --- Coordinates --------------------------------------------------------------------------------------------------
@@ -1147,7 +1173,19 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   function targets() {
-    return state ? dropTargets(state, layout, viewerAngle(state, layout, viewerSeat), opts.game) : [];
+    if (!state) return [];
+    const out = dropTargets(state, layout, viewerAngle(state, layout, viewerSeat), opts.game);
+    // The command and emblem area is a drop target too (PLAN M7-P5: drag to every zone, "command"; DESIGN "Card
+    // manipulation", Move to zone: "Also by dragging onto the zone").
+    for (const z of opts.game.zones) {
+      if (z.scope !== 'seat' || z.presentation !== 'area') continue;
+      for (const seat of Object.values(state.seats)) {
+        const sl = seatLayoutOf(state, layout, seat.id);
+        const id = `${z.id}:${seat.id}`;
+        if (sl && state.zones[id]) out.push({ zone: id, rect: { ...sl.zones.command } });
+      }
+    }
+    return out;
   }
 
   // --- Paperclips (M6-P1; PLAN Milestone 6, owner decisions, Paperclips) ------------------------------------------
@@ -1303,13 +1341,15 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   /** The drop preview: a ghost outline at the landing spot and, for a tuck, the attach glyph at the peeking strip. */
   function syncPreview(cam: ReturnType<typeof rig.pose>): void {
     const pv = preview;
+    const colour = theme.tokens.colours.focus;
+    // The drag's own landing spots beyond the snap preview (M7-P5): the library's bottom slot, an attacker's spot.
+    const extra = dragHint ? dragHint.ghosts.flatMap((g) => ghostSegments(g, true).map((sgm) => ({ ...sgm, colour, widthPx: 1.5 }))) : [];
     if (!pv) {
-      previewLayer.sync([]);
+      previewLayer.sync(extra);
       if (glyphEl.style.display !== 'none') glyphEl.style.display = 'none';
       return;
     }
-    const colour = theme.tokens.colours.focus;
-    previewLayer.sync(ghostSegments(pv.pose, true).map((sgm) => ({ ...sgm, colour, widthPx: 1.5 })));
+    previewLayer.sync([...ghostSegments(pv.pose, true).map((sgm) => ({ ...sgm, colour, widthPx: 1.5 })), ...extra]);
     if (pv.kind !== 'tuck') {
       glyphEl.style.display = 'none';
       return;
@@ -1373,8 +1413,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const inst = rc.inst;
     const zoneObj = state.zones[inst.zone];
     const pres = presentationOf(opts.game, state, inst.zone);
-    // Library cards are drawn through the draw action (a private effect), other seats' hands are not ours to drag.
-    if (!external && zoneObj && zoneObj.visibility !== 'public') return false;
+    // Library cards are drawn through the draw action (a private effect), other seats' hands are not ours to drag. The
+    // top of the own library may be picked up to draw it (PLAN M7-P5: "drag from library to hand draws"): it is drawn
+    // by the session on a drop in the hand, never moved by an action of the scene.
+    const fromLibrary = !external && !!zoneObj && zoneObj.kind === 'library' && zoneObj.owner === viewerSeat && viewerSeat !== null && rc.place.kind === 'pile' && isPileTop(rc);
+    if (!external && zoneObj && zoneObj.visibility !== 'public' && !fromLibrary) return false;
     let ids: InstanceId[] = [rc.id];
     let group: DragGroup | null = null;
     if (pres === 'free') {
@@ -1394,7 +1437,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (r) start.set(id, { ...r.motion.pose, rot: r.place.rest.rot });
     }
     const a = anchor.motion.pose;
-    drag = { pointerId, ids, offset: { x: a.x - p.x, y: a.y - p.y }, start, keepPile, temp, last: { x, y }, external, added: [], group, ctrl: false };
+    drag = { pointerId, ids, offset: { x: a.x - p.x, y: a.y - p.y }, start, keepPile, temp, last: { x, y }, external, added: [], group, ctrl: false, ...(fromLibrary ? { fromLibrary: true } : {}) };
+    // The strip and the pile actions step aside while a card is held (they return when it lands).
+    syncAffordances(true);
     preview = null;
     previewFor = null;
     for (const id of ids) rcards.get(id)!.expect = null;
@@ -1508,6 +1553,253 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return null;
   }
 
+  // --- Affordances (PLAN M7-P5, Play without keys; scene/affordances.ts) -----------------------------------------------
+  /** The library's bottom slot while a dragged card is over that library (or over the slot itself). */
+  let libSlot: { zone: ZoneId; rect: Rect } | null = null;
+  /**
+   * What the drop in progress would do beyond the snap preview (draw, to hand, top or bottom of a library, attack), with
+   * the ghost outlines it shows; null when it is a plain move. Recomputed when the pointer moves, shown as one label.
+   */
+  let dragHint: DragHint | null = null;
+  /** The pile the pointer rests on or a click or tap chose (its actions show beside it). */
+  let pileWant: { zone: ZoneId; via: 'hover' | 'tap' } | null = null;
+  /** The selection anchor and pile hover last reported (null while things move). */
+  let selAnchorNow: SelectionAnchor | null = null;
+  let pileHoverNow: PileHover | null = null;
+  /** Something the anchors depend on changed (selection, state, pile under the pointer, viewport). */
+  let affordDirty = true;
+  /** Whether the camera, the selection or a drag moved at the last check, and the camera pose then. */
+  let affordMoving = false;
+  let affordCam = '';
+  /** The label of the drop in progress, over the canvas (no blur or backdrop filter: Safari). */
+  const hintEl = document.createElement('div');
+  hintEl.setAttribute('data-scene', 'drop-hint');
+  hintEl.setAttribute('data-testid', 'drop-hint');
+  Object.assign(hintEl.style, { position: 'absolute', left: '0', top: '0', display: 'none', pointerEvents: 'none', zIndex: '3', padding: '3px 10px', borderRadius: '999px', font: '600 13px/1.3 system-ui, sans-serif', whiteSpace: 'nowrap', transform: 'translate(-50%, -50%)' });
+  host.appendChild(hintEl);
+
+  /** The top card of its zone's pile (the one a press on the pile picks up). */
+  function isPileTop(rc: RCard): boolean {
+    const ids = state?.zones[rc.inst.zone]?.ids;
+    return !!ids && ids[ids.length - 1] === rc.id;
+  }
+
+  /** The own hand when a drop at this viewport point goes there: the hand band at the bottom of the screen, the hand fan, or the own avatar spot. */
+  function handDropAt(x: number, y: number, p: TablePoint): ZoneId | null {
+    if (!state || viewerSeat === null) return null;
+    const hand = opts.game.zones.find((z) => z.presentation === 'fan' && z.scope === 'seat');
+    const own: ZoneId = `${hand?.id ?? 'hand'}:${viewerSeat}`;
+    if (!state.zones[own]) return null;
+    if (zoneTargetAt(p, targets())?.zone === own) return own;
+    const vh = typeof window === 'undefined' ? canvasRect().bottom : window.innerHeight;
+    if (inHandBand(y, vh, vh)) return own;
+    const el = typeof document !== 'undefined' && typeof document.elementFromPoint === 'function' ? document.elementFromPoint(x, y) : null;
+    return el instanceof Element && el.closest('[data-testid="hand"]') ? own : null;
+  }
+
+  /** The attacker the drop would block (scene/combat.ts), as finishDrag decides it: a block wins over an attack. */
+  function blockTargetAt(d: DragState, p: TablePoint): InstanceId | null {
+    if (!state || d.external) return null;
+    const group = groupOf(d);
+    const blockers = d.ids.filter((id) => id === group.anchor || group.reason[id] === 'selection');
+    const under = pick(d.last.x, d.last.y, new Set(d.ids));
+    return (under ? fanAttacker(state, under.id) : null) ?? fanUnder(state, blockers, p, combatCtx);
+  }
+
+  /** The cards a drop would send into an attack, and the seat it names (scene/affordances.ts attackDrop), or null. */
+  function attackFor(d: DragState, p: TablePoint): { cards: CardInstance[]; target: AttackDrop['target'] } | null {
+    if (!state || d.temp || d.external || d.fromLibrary) return null;
+    if (blockTargetAt(d, p)) return null;
+    const st = state;
+    const group = groupOf(d);
+    const leads = d.ids
+      .filter((id) => id === group.anchor || group.reason[id] === 'selection')
+      .map((id) => st.cards[id])
+      .filter((c): c is CardInstance => !!c);
+    const avatar = seatElementAt(d.last.x, d.last.y) ?? lineView.avatarAt(p);
+    // The territories of the seats that are taken (an empty chair's half of a goldfish table is open table).
+    const territories = Object.values(st.seats)
+      .filter((s) => s.id === viewerSeat || s.name !== '' || s.peer !== undefined)
+      .map((s) => seatLayoutOf(st, layout, s.id)?.territory)
+      .filter((t): t is Rect => !!t);
+    const angle = viewerAngle(st, layout, viewerSeat);
+    const r = attackDrop(st, leads, p, {
+      viewer: viewerSeat,
+      seatLayout: (seat) => seatLayoutOf(st, layout, seat),
+      territories,
+      lane: { ...layout.stackLane, rot: layout.stackLane.rot + angle },
+      avatarSeat: avatar?.kind === 'seat' ? avatar.id : null,
+      battlefield: (z) => isBattlefield(z) === true,
+    });
+    return r ? { cards: leads, target: r.target } : null;
+  }
+
+  /** What the drag in progress would do beyond the snap rules, and the library slot it opened. */
+  function computeDragHint(d: DragState): DragHint | null {
+    if (!state || d.temp) {
+      libSlot = null;
+      return null;
+    }
+    const p = screenToTable(d.last.x, d.last.y);
+    const handZone = handDropAt(d.last.x, d.last.y, p);
+    if (d.fromLibrary) return handZone ? { kind: 'draw', at: null, ghosts: [] } : null;
+    if (handZone) {
+      libSlot = null;
+      return { kind: 'hand', at: null, ghosts: [] };
+    }
+    const t = zoneTargetAt(p, targets());
+    const tz = t ? state.zones[t.zone] : undefined;
+    if (t && tz?.kind === 'library') {
+      const sl = seatLayoutOf(state, layout, tz.owner);
+      const a = sl ? pileAnchor(sl, 'library') : null;
+      libSlot = a ? { zone: t.zone, rect: libraryBottomSlot(a) } : null;
+    } else if (libSlot && !pointInRect(p, libSlot.rect)) libSlot = null;
+    if (libSlot) {
+      const r = libSlot.rect;
+      const onSlot = !(t && tz?.kind === 'library') && pointInRect(p, r);
+      return { kind: onSlot ? 'bottom' : 'top', at: { x: r.x, y: r.y }, ghosts: [{ x: r.x, y: r.y, rot: r.rot }] };
+    }
+    const atk = attackFor(d, p);
+    if (atk) {
+      const ghosts = atk.cards.map((c) => {
+        const a = attackPose(c, seatAngleOf(c.controller));
+        return { ...a, rot: displayedRot({ pose: a, tapped: true }) };
+      });
+      return { kind: 'attack', at: ghosts[0] ? { x: ghosts[0].x, y: ghosts[0].y } : null, ghosts };
+    }
+    return null;
+  }
+
+  const sameDragHint = (a: DragHint | null, b: DragHint | null): boolean =>
+    a === b || (!!a && !!b && a.kind === b.kind && a.ghosts.length === b.ghosts.length && (a.at === b.at || (!!a.at && !!b.at && Math.abs(a.at.x - b.at.x) < 1e-6 && Math.abs(a.at.y - b.at.y) < 1e-6)));
+  const HINT_TEXT: Record<DragHint['kind'], string> = { draw: 'Draw', hand: 'To hand', top: 'Bottom ↓', bottom: 'Bottom of library', attack: 'Attack' };
+  /** Show the drop label for the current hint (only when the hint changes: no per-frame DOM writes). */
+  function syncDragHint(): void {
+    const h = dragHint;
+    if (!h) {
+      if (hintEl.style.display !== 'none') hintEl.style.display = 'none';
+      hintEl.removeAttribute('data-kind');
+      return;
+    }
+    const c = theme.tokens.colours;
+    const hr = host.getBoundingClientRect();
+    let x: number;
+    let y: number;
+    if (h.at) {
+      const s = worldToScreen({ x: h.at.x, y: h.at.y, z: 0 });
+      x = (s?.x ?? hr.left + hr.width / 2) - hr.left;
+      y = (s?.y ?? hr.top + hr.height / 2) - hr.top;
+    } else {
+      // Over the hand, at the pointer's side of the screen.
+      x = Math.min(Math.max(60, (drag?.last.x ?? hr.width / 2) - hr.left), hr.width - 60);
+      y = hr.height * (1 - 0.22) - 18;
+    }
+    hintEl.textContent = HINT_TEXT[h.kind];
+    hintEl.setAttribute('data-kind', h.kind);
+    const strong = h.kind !== 'top';
+    Object.assign(hintEl.style, {
+      display: 'block',
+      left: `${Math.round(x)}px`,
+      top: `${Math.round(y)}px`,
+      background: strong ? c.focus : c.surface,
+      color: strong ? c.surface : c.fg,
+      border: `1px solid ${c.focus}`,
+      opacity: strong ? '1' : '0.85',
+    });
+  }
+
+  /** The zone pile under a viewport point (library, graveyard, exile), or null. */
+  function pileUnder(x: number, y: number): ZoneId | null {
+    const rc = pick(x, y);
+    if (!rc || rc.place.kind !== 'pile' || rc.place.fanned) return null;
+    return rc.inst.zone;
+  }
+
+  function setPileWant(next: typeof pileWant): void {
+    if (next === pileWant || (next && pileWant && next.zone === pileWant.zone && next.via === pileWant.via)) return;
+    pileWant = next;
+    affordDirty = true;
+  }
+
+  /** The pointer moved over the table without a press: the pile under it, unless a click chose another. */
+  function hoverPile(x: number, y: number): void {
+    const z = pileUnder(x, y);
+    if (z) {
+      if (pileWant?.zone !== z) setPileWant({ zone: z, via: 'hover' });
+    } else if (pileWant?.via === 'hover') setPileWant(null);
+  }
+
+  /** The selection's screen anchor now (scene/affordances.ts), from the cards as drawn. */
+  function selectionAnchorNow(): SelectionAnchor | null {
+    // Cards drawn on the table and handled one by one: not another seat's hand row, not a card gone into a pile (a
+    // selected card put into the graveyard leaves the strip behind).
+    const ids = view.selection.filter((id) => {
+      const k = rcards.get(id)?.place.kind;
+      return k !== undefined && k !== 'hand' && k !== 'pile';
+    });
+    if (ids.length === 0) return null;
+    const r = canvasRect();
+    const rects: ScreenRect[] = [];
+    const zones: ZoneId[] = [];
+    for (const id of ids) {
+      const rc = rcards.get(id)!;
+      const b = screenRect(rc);
+      rects.push({ x: b.x, y: b.y, width: b.width, height: b.height });
+      zones.push(rc.inst.zone);
+    }
+    return selectionAnchorOf(ids, rects, zones, { x: r.left, y: r.top, width: r.width, height: r.height });
+  }
+
+  /** The chosen pile as it is drawn now, or null (an empty pile offers nothing). */
+  function pileHoverNowOf(want: NonNullable<typeof pileWant>): PileHover | null {
+    const zone = state?.zones[want.zone];
+    if (!zone || zone.ids.length === 0) return null;
+    const top = rcards.get(zone.ids[zone.ids.length - 1]!);
+    if (!top || top.place.kind !== 'pile') return null;
+    const b = screenRect(top);
+    const rect = { x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) };
+    return { zone: zone.id, pile: null, owner: zone.owner, count: zone.ids.length, rect, via: want.via };
+  }
+
+  /**
+   * Report the selection strip's anchor and the pile actions' anchor (SceneEvents.selectionAnchor, pileHover): null
+   * while the camera, a drag or the selected cards move, the new anchors once they rest, and on any change. Runs every
+   * tick but does work only around a change, so a still table reports nothing (Safari: no per-frame DOM or Svelte work).
+   */
+  function syncAffordances(force = false): void {
+    if (!state) return;
+    const cam = rig.pose();
+    const camKey = `${cam.position[0]},${cam.position[1]},${cam.position[2]},${cam.target[0]},${cam.target[1]},${cam.target[2]},${cam.fovDeg}`;
+    const camMoved = camKey !== affordCam;
+    affordCam = camKey;
+    const selMoving = view.selection.some((id) => {
+      const rc = rcards.get(id);
+      return !!rc && (rc.motion.moving || rc.lift.moving);
+    });
+    const handling = !!drag || !!clipDrag || !!itemDrag || (gesture !== null && gesture.kind !== 'press') || touchHold !== null;
+    const moving = camMoved || selMoving || handling;
+    if (!moving && !affordDirty && !affordMoving && !force) return;
+    affordMoving = moving;
+    affordDirty = false;
+    const sel = moving ? null : selectionAnchorNow();
+    if (!sameSelectionAnchor(sel, selAnchorNow)) {
+      selAnchorNow = sel;
+      opts.events.selectionAnchor?.(sel);
+    }
+    // The pile actions stay while only the selection moves (a tapped card turning); a drag or the camera hides them.
+    const ph = camMoved || handling || !pileWant ? null : pileHoverNowOf(pileWant);
+    if (!ph && pileWant && !camMoved && !handling) pileWant = null;
+    if (!samePileHover(ph, pileHoverNow)) {
+      pileHoverNow = ph;
+      opts.events.pileHover?.(ph);
+    }
+  }
+
+  /** The affordances as the debug hook reports them (PLAN M7-P5). */
+  function affordanceDebug(): AffordanceDebugState {
+    return { selection: selAnchorNow, pile: pileHoverNow, scrub: null };
+  }
+
   function finishDrag(ctrl: boolean, cancel = false): void {
     const d = drag;
     if (!d || !state) {
@@ -1530,6 +1822,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       sortOrder();
       dirty = true;
     };
+    const slot = libSlot;
+    libSlot = null;
+    dragHint = null;
+    syncDragHint();
     if (cancel || !anchorRc || insts.length === 0) return back();
     const p = screenToTable(d.last.x, d.last.y);
     const a0 = d.start.get(d.ids[0]!)!;
@@ -1537,6 +1833,36 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const group = groupOf(d);
     let actions: ActionDraft[];
     let predicted: Map<InstanceId, Pose> | null = null;
+    const handZone = handDropAt(d.last.x, d.last.y, p);
+    // The top of the own library dropped in the hand is drawn (PLAN M7-P5: "drag from library to hand draws"); the
+    // session draws it as the library's own action (the pile's first action, PILE_ACTIONS.library: draw), so the scene
+    // never names which hidden card that is. Anywhere else it goes back on the pile.
+    if (d.fromLibrary) {
+      back();
+      if (handZone !== null) opts.events.pileOpen?.(insts[0]!.zone);
+      return;
+    }
+    // Dropped in the hand at the bottom of the screen (or on the own avatar spot, rule 1): to the owner's hand, as H
+    // does (PLAN M7-P5: "drag to every zone (hand, …)").
+    if (handZone !== null && !d.temp) {
+      const zone = `hand:${insts[0]!.owner}`;
+      if (!state.zones[zone]) return back();
+      const drafts = toStoredPoses(state, carryDropActions(state, group, d.start, { rule: 1, kind: 'zone', zone }, { zone: insts[0]!.zone, controller: insts[0]!.controller }, { newId, presentation: (z) => presentationOf(opts.game, state!, z) }));
+      if (drafts.length === 0) return back();
+      lastDrop = { rule: 1, kind: 'zone', zone };
+      markLocal(d, null, now);
+      dispatch(withUnblock(state, drafts, d.ids, combatCtx));
+      return;
+    }
+    // Dropped on the bottom slot beside a library (shown while the card is over the library): its bottom.
+    if (slot && !d.temp && pointInRect(p, slot.rect)) {
+      const drafts = carryDropActions(state, group, d.start, { rule: 1, kind: 'zone', zone: slot.zone }, { zone: insts[0]!.zone, controller: insts[0]!.controller }, { newId, presentation: (z) => presentationOf(opts.game, state!, z) }).map((a): ActionDraft => (a.type === 'toZone' ? { ...a, position: 'bottom' } : a));
+      if (drafts.length === 0) return back();
+      lastDrop = { rule: 1, kind: 'zone', zone: slot.zone };
+      markLocal(d, null, now);
+      dispatch(withUnblock(state, drafts, d.ids, combatCtx));
+      return;
+    }
     // Dropped onto another seat's attacker (or its blocker fan): a block (DESIGN "Combat and annotation", Block). The
     // blockers are the grabbed card and the selection; their attachments come along (owner decisions, Combat).
     const blockers = d.ids.filter((id) => id === group.anchor || group.reason[id] === 'selection');
@@ -1553,6 +1879,29 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       }
       markLocal(d, predicted, now);
       dispatch(plan.actions);
+      return;
+    }
+    // Pushed toward an opponent: an attack, as the Attack shortcut does it (PLAN M7-P5; DESIGN "Combat and annotation").
+    const attack = d.temp || d.external ? null : attackFor(d, p);
+    if (attack) {
+      const leads = attack.cards;
+      const out: ActionDraft[] = leads.map((c): ActionDraft => ({ type: 'moveTemp', card: c.id, pose: attackPose(c, seatAngleOf(c.controller)), combat: 'attack', tap: true }));
+      // Several opponents: the attack line names the one it was pushed onto (Attack target 2).
+      if (attack.target !== null && viewerSeat !== null && opponents(state, viewerSeat).length > 1) {
+        for (const c of leads) out.push({ type: 'lineAdd', line: newId('ln'), kind: 'attack', from: { kind: 'card', id: c.id }, to: { kind: 'seat', id: attack.target } });
+      }
+      const g = out.length > 1 ? newId('g') : null;
+      const drafts = g ? out.map((a) => ({ ...a, group: g })) : out;
+      lastDrop = null;
+      const poses = new Map<InstanceId, Pose>();
+      for (const c of leads) {
+        const at = attackPose(c, seatAngleOf(c.controller));
+        poses.set(c.id, { ...at, rot: displayedRot({ pose: at, tapped: true }) });
+      }
+      // Riders that were carried along stay where they were.
+      for (const id of d.ids) if (!poses.has(id)) rcards.get(id)?.motion.moveTo(rcards.get(id)!.place.rest, 'spring', now, theme.motion, reduced());
+      markLocal({ ...d, ids: leads.map((c) => c.id) }, poses, now);
+      dispatch(drafts);
       return;
     }
     if (d.temp) {
@@ -1800,6 +2149,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const rc = clip ? null : pick(e.clientX, e.clientY);
       setHover(rc?.id ?? null);
       setHoverItem(clip ? null : itemAt(e.clientX, e.clientY, rc));
+      // The pile under the pointer offers its actions (PLAN M7-P5: "hovering … a pile shows its few actions").
+      if (clip) {
+        if (pileWant?.via === 'hover') setPileWant(null);
+      } else hoverPile(e.clientX, e.clientY);
       return;
     }
     if (e.pointerId !== ('pointerId' in gesture ? gesture.pointerId : -1)) return;
@@ -1966,6 +2319,15 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
    * "Camera and navigation": go to another seat, tap an avatar).
    */
   function clickAt(x: number, y: number, card: InstanceId | null, item: StackItemId | null, shift: boolean): void {
+    // A click or tap on a zone pile (library, graveyard, exile) shows its actions beside it and keeps them until the
+    // next click elsewhere (PLAN M7-P5: "a click on the library pile offers Draw"); it selects nothing.
+    const pileZone = card && !shift ? pileUnder(x, y) : null;
+    if (pileZone) {
+      setPileWant({ zone: pileZone, via: 'tap' });
+      if (view.selection.length) setSelection([]);
+      return;
+    }
+    if (pileWant?.via === 'tap') setPileWant(null);
     if (card) {
       if (shift) setSelection(view.selection.includes(card) ? view.selection.filter((id) => id !== card) : [...view.selection, card]);
       else if (!view.selection.includes(card) || view.selection.length > 1) setSelection([card]);
@@ -2385,6 +2747,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       setHoverClip(null);
       setHover(null);
       setHoverItem(null);
+      // The HUD keeps the pile's actions while the pointer moves onto them (ui/touch/PileActions.svelte).
+      if (pileWant?.via === 'hover') setPileWant(null);
     }
   }
 
@@ -2643,6 +3007,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     stackBadge: () => stackBadge.state(),
     // Paperclips, the hold ring, the drag group and the drop preview (M6-P1).
     clips: () => clipDebug(),
+    // The selection strip's and the pile actions' anchors (M7-P5).
+    affordances: () => affordanceDebug(),
   };
   registerDebug(debugParts);
 
@@ -2868,6 +3234,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         if (Object.values(next.seats).some((s) => prevState.seats[s.id]?.name !== s.name)) rebuildMarkings();
       }
       if (prevState !== next || openChanged) relayout(performance.now());
+      // The selection strip and the pile actions follow the state and the selection (M7-P5).
+      if (prevState !== next || viewChanged) affordDirty = true;
       if (prevState !== next && !formatLayout) requestFollow(followRequests(prevState, next, follow));
       if (viewChanged) dirty = true;
       if (nextView.captions || captionLayer.active) captionLayer.set(nextView.captions ?? []);
@@ -3018,6 +3386,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       previewLayer.dispose();
       ringEl.remove();
       glyphEl.remove();
+      hintEl.remove();
       captionLayer.dispose();
       markGeometry.dispose();
       markMaterial.dispose();

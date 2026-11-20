@@ -712,11 +712,12 @@ export interface PileHover {
 }
 
 /** The actions a pile offers on hover or tap (docs/design/m7-hud-proposal.md, Pile actions: "Library: Draw · Shuffle · Search…; Graveyard and Exile: Open"). Added by M7-C. */
-export type PileActionId = 'draw' | 'drawN' | 'shuffle' | 'search' | 'open' | 'mill';
+export type PileActionId = 'draw' | 'drawN' | 'shuffle' | 'search' | 'open' | 'mill' | 'revealTop';
 
 /** Pile actions by zone kind, the first is the double-click or tap action (docs/design/m7-hud-proposal.md: "Double-click a library draws"). Added by M7-C; M7-P5 may extend. */
 export const PILE_ACTIONS: Readonly<Record<'library' | 'graveyard' | 'exile' | 'command' | 'pile', readonly PileActionId[]>> = {
-  library: ['draw', 'shuffle', 'search'],
+  // M7-P5: Reveal top joins the library's actions (PLAN M7-P5: "Draw, Shuffle, Search, Reveal top").
+  library: ['draw', 'shuffle', 'search', 'revealTop'],
   graveyard: ['open'],
   exile: ['open'],
   command: ['open'],
