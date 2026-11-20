@@ -11,7 +11,7 @@ import App from './ui/App.svelte';
 import { startProps } from './ui/lobby/start';
 import { HARNESSES, isHarness } from './ui/harnesses';
 import { createMatchmaker } from './session/matchmaker';
-import { createsMatchTable } from './session/match-room';
+import { createsMatchTable, matchSessionInternals } from './session/match-room';
 import { createComputerGame, resumeComputerGame } from './session/computer';
 import { FakeAppUpdate, pageWorker } from './ui/storage/worker';
 import type { AppUpdate } from './ui/update';
@@ -160,6 +160,8 @@ async function boot(el: HTMLElement): Promise<void> {
         cardData,
         roomId: link.roomId,
         roomKey: link.roomKey,
+        // A matched room's table opens in its queue's format (a 4 FFA has four chairs; session/match-room.ts).
+        ...(record ? { format: matchSessionInternals(record, me.peerId).format } : {}),
         transport: () => (transport = new KillableTransport(createPageTransport())),
         identity: me,
         ...(clock ? { now: () => clock.now() } : {}),

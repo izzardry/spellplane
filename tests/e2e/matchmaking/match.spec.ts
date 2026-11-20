@@ -265,10 +265,9 @@ test.describe('quick match over a local lobby', () => {
     });
   });
 
-  // The table opens in the queue's format only once main.ts's openRoom passes `format` from the MatchRecord to
-  // openNetSession (matchSessionInternals in src/session/match-room.ts): without it the creator's table has two chairs
-  // and the third member reads "This table is full." A seam of main.ts, owned by M8-P8; reported in the hand-back.
-  test.fixme('four pages at one ffa4 table: four seats, 7 cards each, equal hashes', async ({ page }) => {
+  // The table opens in the queue's format: main.ts's openRoom passes `format` from the MatchRecord to openNetSession
+  // (matchSessionInternals in src/session/match-room.ts; the seam, fixed by the M8 gate round).
+  test('four pages at one ffa4 table: four seats, 7 cards each, equal hashes', async ({ page }) => {
     test.setTimeout(150_000);
     const pages = await openPages(page, 4, 'mm4t');
     const files = ['gw-m19-60.txt', 'ur-m19-60.mtga.txt', 'gw-m19-60.txt', 'ur-m19-60.mtga.txt'];

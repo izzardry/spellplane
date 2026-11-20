@@ -363,7 +363,7 @@ test.describe('@gate M8-G', () => {
               return s ? { stage: s.stage, matched: s.settings.matched === true, hands: [countOf(s, 'hand:s0'), countOf(s, 'hand:s1')] } : null;
             }, { timeout: 45_000 })
             .toEqual({ stage: 'match', matched: true, hands: [7, 7] });
-          await expect(p.getByTestId('waiting-room')).toHaveCount(0);
+          await expect(p.getByTestId('lobby')).toHaveCount(0);
         }
         await sameHash([a, b]);
         await shot(a, MS, '12-matched-table', project);
@@ -398,8 +398,13 @@ test.describe('@gate M8-G', () => {
     await page.evaluate((s) => window.__spellplane!.decks!.nextSeed!(s), SEED);
     let id = '';
     await test.step('six fixture boosters on a pinned seed: a locked booster deck with 40 cards', async () => {
-      await expect(page.getByTestId('open-setup')).toHaveText(/6 × M19/);
-      await page.getByTestId('open-boosters').click();
+      // The app offers the newest core set; the fixtures hold M19, chosen in the booster setup.
+      await expect(page.getByTestId('open-setup')).toHaveText(/^6 × /);
+      await page.getByTestId('open-setup').click();
+      const set = page.getByTestId('setup-set');
+      for (let i = 0; i < 60 && !((await set.textContent()) ?? '').includes('(M19)'); i++) await set.getByRole('button', { name: 'Next set' }).click();
+      await expect(set).toContainText('(M19)');
+      await page.getByTestId('setup-open').click();
       await expect(page.getByTestId('opening')).toBeVisible();
       id = decodeURIComponent((await page.evaluate(() => location.hash)).replace(/^#\/decks\//, '').replace(/\/open$/, ''));
       await page.getByTestId('open-all').click();
@@ -443,7 +448,7 @@ test.describe('@gate M8-G', () => {
     const prefs = (await page.evaluate(() => window.__spellplane!.home!.prefs!())) as { draft: { boosters: { how: string; packs: number; picks: number; sets: string[]; pickTimer: boolean } } } | null;
     await expect(page.getByTestId('home-primary')).toHaveText('OPEN DRAFT TABLE');
     await page.getByTestId('home-primary').click();
-    await expect(page.getByTestId('waiting-room')).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('lobby')).toBeVisible({ timeout: 20_000 });
     const b = prefs?.draft.boosters ?? { how: 'pass', packs: 3, picks: 1, sets: ['M19'], pickTimer: true };
     await expect
       .poll(async () => (await state(page)).lobby)
@@ -478,15 +483,18 @@ test.describe('@gate M8-G', () => {
     };
     try {
       await test.step('three players in a 4 FFA: decks, seven cards each, play to turn 3', async () => {
+        // Ann creates the table and makes it a four-player free-for-all before the others sit down.
+        await openSite(a, profiles.a, tableHash);
+        await expect.poll(() => a.evaluate(() => window.__spellplane?.session?.seat() ?? ''), { timeout: 20_000 }).toBe('s0');
+        await dispatch(a, { type: 'formatSet', format: 'ffa4', life: 20, by: 's0', cid: 'x' });
+        await expect.poll(async () => (await state(a)).format).toBe('ffa4');
         for (const [p, who] of [
-          [a, profiles.a],
           [b, profiles.b],
           [c0, profiles.c],
         ] as const) {
           await openSite(p, who, tableHash);
           await expect.poll(() => p.evaluate(() => window.__spellplane?.session?.seat() ?? ''), { timeout: 20_000 }).toMatch(/^s\d$/);
         }
-        await dispatch(a, { type: 'formatSet', format: 'ffa4', life: 20, by: 's0', cid: 'x' });
         await expect.poll(async () => Object.values((await state(a)).seats).filter((s) => s.peer !== undefined).length, { timeout: 20_000 }).toBe(3);
         for (const [p, file] of [
           [a, 'gw-m19-60.txt'],
@@ -604,7 +612,7 @@ test.describe('@gate M8-G', () => {
       await page.evaluate(() => (location.hash = '#/'));
       await mode(page, 'private');
       await page.getByTestId('home-primary').click();
-      await expect(page.getByTestId('waiting-room')).toBeVisible({ timeout: 20_000 });
+      await expect(page.getByTestId('lobby')).toBeVisible({ timeout: 20_000 });
       await check('the waiting room');
     });
     await test.step('the table HUD (a practice table)', async () => {

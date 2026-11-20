@@ -4,7 +4,6 @@
  */
 import type { CardRef } from '../../core/types';
 import type { StarterPoolSource } from '../../data/starter';
-import { createComputerGame } from '../../session/computer';
 import type { Matchmaker, TableSession } from '../../session/types';
 import type { GameStore } from '../../store/types';
 import { toasts } from '../design/toasts';
@@ -56,16 +55,10 @@ export function launchDeps(given: Partial<LaunchDeps>, home: HomePage): LaunchDe
         return { roomId: l.roomId, roomKey: l.roomKey };
       }),
     matchmaker: given.matchmaker ?? home.matchmaker,
-    // A computer game is created (and saved) here, then reopened by its route (`#/c/<room>`).
-    openComputer:
-      given.openComputer ??
-      (async ({ deckId }) => {
-        const roomId = newComputerRoom();
-        const g = await createComputerGame({ roomId, deckId });
-        g.handle.dispose();
-        g.session.dispose();
-        return roomId;
-      }),
+    // A new computer room: its route (`#/c/<room>`, ui/computer/ComputerRoute.svelte) creates the game with the page's
+    // services for the deck Home just selected (`touchDeck` stored it in the Home prefs). Creating it here needed the
+    // computer's page services, which nothing provides on Home, so SPARRING fell back to ALONE (M8 gate).
+    openComputer: given.openComputer ?? (() => Promise.resolve(newComputerRoom())),
     ...(given.markCreated ? { markCreated: given.markCreated } : {}),
     ...(given.newPracticeId ? { newPracticeId: given.newPracticeId } : {}),
     ...(starterSource ? { starterSource } : {}),

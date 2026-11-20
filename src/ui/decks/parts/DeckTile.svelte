@@ -81,15 +81,19 @@
   }
 </script>
 
+<!-- In a picker the tile is an option of its listbox; in the library it carries PLAY, EDIT and ⋯, so it is a group of
+     its own (an option may not hold buttons) and says "selected" in its name (M8 gate, axe). It keeps its tab stop:
+     Enter and Space select it, as a click does. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <div
   class="tile"
   class:selected
   class:locked={!!locked}
   class:incomplete={!!note}
-  role="option"
-  aria-selected={selected}
+  role={actions ? 'group' : 'option'}
+  aria-selected={actions ? undefined : selected}
   aria-disabled={locked ? 'true' : undefined}
-  aria-label="{deck.name}, {kind === 'sealed' ? 'booster deck' : 'custom deck'}, {cards} cards{locked ? `, ${locked}` : ''}"
+  aria-label="{deck.name}, {kind === 'sealed' ? 'booster deck' : 'custom deck'}, {cards} cards{locked ? `, ${locked}` : ''}{actions && selected ? ', selected' : ''}"
   tabindex="0"
   data-testid="deck-tile"
   data-deck-id={deck.id}

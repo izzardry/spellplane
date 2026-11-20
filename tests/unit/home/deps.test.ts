@@ -26,6 +26,12 @@ describe('launchDeps', () => {
     expect(over.go).not.toBe(go);
   });
 
+  it('SPARRING opens a new computer room without the computer services: its route creates the game (M8 gate)', async () => {
+    const page = { settings: null, decks: null, cardData: {} } as unknown as TableDeps;
+    const d = launchDeps({}, { games: null, go: vi.fn(), now: () => 7, page, matchmaker: mm });
+    await expect(d.openComputer!({ deckId: 'd1' })).resolves.toMatch(/^c-[0-9a-z]{12}$/);
+  });
+
   it('the starter pool is one set searched in the page card source; none without a search', async () => {
     const searchCards = vi.fn(async () => []);
     await starterSourceOf({ cardData: { searchCards } as unknown as CardDataSource } as TableDeps)!.pool('M19');

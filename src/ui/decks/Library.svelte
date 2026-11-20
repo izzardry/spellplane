@@ -154,7 +154,7 @@
         <Button onclick={() => void load()}>Try again</Button>
       </div>
     {:else}
-      <div class="grid" role="listbox" aria-label="Decks" data-testid="deck-grid">
+      <div class="grid" role="group" aria-label="Decks" data-testid="deck-grid">
         <a class="newtile" href="#/decks/new" data-testid="new-deck-tile">
           <span class="plus" aria-hidden="true">+</span>
           <span class="ds-t-list">New deck</span>
