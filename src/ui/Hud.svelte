@@ -11,6 +11,7 @@
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import { perspectiveToggleTilt, type ActivePing, type TableScene, type ViewState } from '../scene/types';
+  import type { PileHover, SelectionAnchor } from '../scene/types'; // M7-P5
   import { attachPresence, type PresenceHandle } from '../scene/presence';
   import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
@@ -51,6 +52,7 @@
   import { themeContext } from './settings/theme';
   import { ViewSettings, type ViewPrefs } from './settings/view';
   import { cuesFor, soundModeOf, soundOn, ThemeSoundPlayer, type SoundMode } from './sound';
+  import { shuffledZones } from './sound'; // M7-P5
   import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption, HoldAloneState } from '../voice/types';
   import EmptyState from './empty/EmptyState.svelte';
@@ -65,6 +67,10 @@
   import { recentGestures } from '../scene/input/pointers';
   import RadialMenu from './touch/RadialMenu.svelte';
   import ThumbBar from './touch/ThumbBar.svelte';
+  import Affordances from './touch/Affordances.svelte'; // M7-P5
+  import type { PileButton } from './touch/affordances'; // M7-P5
+  import CoachMark from './hints/CoachMark.svelte'; // M7-P5
+  import { CoachController } from './hints/coach'; // M7-P5
   import { RADIAL_SLOTS, THUMB_BAR, type RadialMenuState } from './touch/actions';
   import { blockPageGestures, safeAreaInsets, touchDevice } from './touch/device';
   import { THUMB_BAR_SPACE_PX } from './touch/fan';
@@ -155,6 +161,21 @@
   let toast = $state<{ text: string; id: number } | null>(null);
   /** The long-press radial menu (M5-P1; DESIGN "Input and interaction design", Touch). */
   let radial = $state<{ card: InstanceId; at: { x: number; y: number } } | null>(null);
+  let selAnchor = $state.raw<SelectionAnchor | null>(null); // M7-P5: where the selection strip stands (SceneEvents.selectionAnchor)
+  let pileHover = $state.raw<PileHover | null>(null); // M7-P5: the pile whose actions show (SceneEvents.pileHover)
+  let sceneReadOnly = $state(false); // M7-P5: look, do not touch (SceneEvents.readOnly): no coach mark, no on-card control
+  const coach = new CoachController(untrack(() => settings)); // M7-P5: the gesture coach marks, one at a time, above the hand
+  // M7-P5: a pile action button runs the same routes as the pile viewer's buttons and the keys.
+  function pileAction(b: PileButton, h: PileHover): void { // M7-P5: a pile action button runs the routes the pile viewer and the keys run
+    const zone = h.zone; // M7-P5
+    if (!zone) { if (h.pile) openPile = openPile === h.pile ? null : h.pile; return; } // M7-P5
+    if (b.id === 'draw') commands.run('draw'); // M7-P5
+    else if (b.id === 'drawN') commands.run('drawN'); // M7-P5
+    else if (b.id === 'shuffle') void session.shuffle(zone); // M7-P5
+    else if (b.id === 'revealTop') commands.revealTop(); // M7-P5
+    else if (b.id === 'search') { openViewer(zone); void libraryAction('search'); } // M7-P5
+    else openViewer(zone); // M7-P5
+  } // M7-P5
   /** A touch screen (or a finger touched the page): the thumb bar shows and the hand fan scrolls (ui/touch/device.ts). */
   let touchUi = $state(touchDevice());
   let untapOffer = $state(false);
@@ -1023,6 +1044,7 @@
     }
     // A log that shrank (a resume replaced it) rings nothing.
     if (log.length > seenLog) sound.play(cuesFor(log.slice(seenLog), me));
+    if (log.length > seenLog) for (const z of shuffledZones(log.slice(seenLog), st)) scene?.animate?.({ kind: 'shuffle', cards: [], from: z, cue: null }); // M7-P5: the pile riffles
     seenLog = log.length;
   }
 
@@ -1106,6 +1128,9 @@
             else openPile = openPile === id ? null : id;
           },
           selectionChange: (ids) => (selection = [...ids]),
+          selectionAnchor: (a) => (selAnchor = a), // M7-P5
+          pileHover: (h) => (pileHover = h), // M7-P5
+          readOnly: (on) => (sceneReadOnly = on), // M7-P5
           pressHold: (phase, kind) => pressTalk.hold(phase, kind),
           radialMenu: (id, at) => {
             menu = null;
@@ -1464,6 +1489,27 @@
       />
     {/if}
   {/if}
+
+  <!-- M7-P5 affordances -->
+  <Affordances
+    state={st}
+    me={st.seats[me] ? me : null}
+    {selection}
+    {commands}
+    anchor={selAnchor}
+    pile={pileHover}
+    touch={touchUi}
+    spectator={spectating}
+    readOnly={sceneReadOnly}
+    {vw}
+    {vh}
+    {coach}
+    identity={(c) => dataOf(refOf(c.id))}
+    onmore={(card, x, y) => openMenu(card, x, y)}
+    onpile={pileAction}
+  />
+  <CoachMark {coach} touch={touchUi} bottom={aboveHandBottom} hidden={sceneReadOnly || spectating || !!prompt || untapOffer} />
+  <!-- /M7-P5 -->
 
   {#if radial}
     <RadialMenu

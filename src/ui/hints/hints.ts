@@ -39,7 +39,9 @@ export function nextHint(seen: readonly string[], ctx: HintContext): FirstRunHin
       case 'welcome':
         return !(ctx.where === 'table' && ctx.networked);
       case 'tableKeys':
-        return ctx.where === 'table' && !ctx.touch && !ctx.spectator;
+        // Retired by M7-P5 (PLAN Milestone 7, Play without memorising keys: keys stay accelerators and "no hint text
+        // teaches keys"): the gesture coach marks (ui/hints/coach.ts) teach the table at the moment each gesture matters.
+        return false;
       case 'touchGestures':
         return ctx.where === 'table' && ctx.touch && !ctx.spectator;
       case 'talkKey':

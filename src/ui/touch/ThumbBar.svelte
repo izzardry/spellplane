@@ -59,7 +59,7 @@
     {#if b.hold}
       <button
         type="button"
-        class="hold"
+        class="ds-btn ds-btn--secondary ds-btn--md hold"
         class:on={holding?.action === b.action || (b.action === 'talk' && talking)}
         data-testid="thumb-{b.action}"
         aria-pressed={holding?.action === b.action}
@@ -72,6 +72,7 @@
     {:else}
       <button
         type="button"
+        class="ds-btn ds-btn--secondary ds-btn--md"
         class:waiting={b.action === 'resolve' && !resolveLit}
         data-testid="thumb-{b.action}"
         data-ready={b.action === 'resolve' ? String(resolveLit) : undefined}
