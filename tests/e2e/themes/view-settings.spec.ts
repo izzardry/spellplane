@@ -35,7 +35,7 @@ test('quality and follow toggles set in the picker reach the scene, survive a th
   // Paper has one level: the choice is kept, the level shown stays Paper's.
   await quality.selectOption('low');
   await expect.poll(() => choice(page)).toBe('low');
-  expect(await stats(page)).toMatchObject({ theme: 'paper', quality: 'high' });
+  expect(await stats(page)).toMatchObject({ theme: 'plain', quality: 'high' /* M8-C: Plain is the default table */ });
 
   // Keyboard: Space toggles a focused checkbox.
   await followStack.focus();
@@ -46,7 +46,7 @@ test('quality and follow toggles set in the picker reach the scene, survive a th
   await expect.poll(() => follow(page)).toEqual({ stack: false, activePlayer: true });
 
   // A theme switch keeps the choice; Dusk resolves it to its own low level (no shadows, no post-processing).
-  // M7-P2: Dusk left the picker (it stays loadable); the switch goes through the debug hook.
+  // M7-P2 (taken by M8-C with the seed's Theme.svelte): Dusk left the picker (it stays loadable); the switch goes through the debug hook.
   await page.evaluate(() => window.__spellplane!.theme!.set('dusk'));
   await expect.poll(async () => (await stats(page)).theme, { timeout: 15_000 }).toBe('dusk');
   await expect.poll(() => stats(page)).toMatchObject({ theme: 'dusk', quality: 'low', shadows: false, passes: [] });

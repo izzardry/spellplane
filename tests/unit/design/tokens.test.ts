@@ -12,7 +12,8 @@ import { WCAG_AA } from '../../../src/ui/a11y/index';
 import { hudLook, lookCssVars, spVarsFromLook } from '../../../src/ui/design/css';
 import { designCssVars, LAYOUT, LOOKS, lookTokens } from '../../../src/ui/design/tokens';
 
-const IDS: LookId[] = ['kitchen', 'graphite', 'codex'];
+// M8-C: four looks; Plain is the default (visual.md 2.2).
+const IDS: LookId[] = ['plain', 'kitchen', 'graphite', 'codex'];
 
 /** Text colour on surface, as the components pair them (ui/design/base.css and the HUD components). */
 const PAIRS: [ink: string, on: string, where: string][] = [
@@ -95,6 +96,6 @@ describe('applying a look (ui/design/css.ts)', () => {
   it("the HUD's look is the table theme's own look, else the stored one", () => {
     expect(hudLook(kitchenTheme, 'codex')).toBe('kitchen');
     expect(hudLook(paper, 'codex')).toBe('codex');
-    expect(hudLook(paper)).toBe('kitchen');
+    expect(hudLook(paper)).toBe('plain');
   });
 });

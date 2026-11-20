@@ -8,14 +8,42 @@
   import Icon from './Icon.svelte';
   import type { MenuGroup } from './menu';
 
-  let { groups, label, onclose, anchor = null, testid = 'menu-popover', autofocus = true }: { groups: MenuGroup[]; label: string; onclose: () => void; anchor?: HTMLElement | null; testid?: string; autofocus?: boolean } = $props();
+  import type { Snippet } from 'svelte';
+
+  let {
+    open = $bindable(true),
+    anchor = null,
+    groups,
+    top = undefined,
+    placement = 'auto',
+    label,
+    onclose = undefined,
+    testid = 'menu-popover',
+    autofocus = true,
+  }: {
+    open?: boolean;
+    anchor?: HTMLElement | null;
+    groups: MenuGroup[];
+    /** A section above the groups (the plate menu's invitation); its argument closes the menu. */
+    top?: Snippet<[() => void]> | undefined;
+    placement?: 'above' | 'below' | 'auto';
+    label: string;
+    /** Seed: called when the menu closes itself. */
+    onclose?: (() => void) | undefined;
+    testid?: string;
+    autofocus?: boolean;
+  } = $props();
+  function shut(): void {
+    open = false;
+    onclose?.();
+  }
   let el = $state<HTMLElement | undefined>();
 
   function items(): HTMLButtonElement[] {
     return el ? [...el.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')] : [];
   }
   function close(): void {
-    onclose();
+    shut();
     anchor?.focus({ preventScroll: true });
   }
   function key(e: KeyboardEvent): void {
@@ -33,7 +61,7 @@
       e.stopPropagation();
       close();
     } else if (e.key === 'Tab') {
-      onclose();
+      shut();
     }
   }
   onMount(() => {
@@ -41,18 +69,20 @@
     const away = (e: PointerEvent): void => {
       const t = e.target as Node | null;
       if (el?.contains(t) || anchor?.contains(t)) return;
-      onclose();
+      shut();
     };
     window.addEventListener('pointerdown', away, true);
     return () => window.removeEventListener('pointerdown', away, true);
   });
 </script>
 
-<div bind:this={el} class="ds-pop ds-menu" role="menu" aria-label={label} data-testid={testid} tabindex="-1" onkeydown={key}>
-  {#each groups as g (g.id)}
+{#if open}
+<div bind:this={el} class="ds-pop ds-menu ds-menu--{placement}" role="menu" aria-label={label} data-testid={testid} tabindex="-1" onkeydown={key}>
+  {#if top}<div class="ds-menu__top">{@render top(shut)}</div>{/if}
+  {#each groups as g, gi (g.id ?? gi)}
     {#if g.items.length}
-      <div class="ds-menu-group" role="group" aria-label={g.label} data-group={g.id}>
-        <span class="ds-label" aria-hidden="true">{g.label}</span>
+      <div class="ds-menu-group" role="group" aria-label={g.title ?? g.label} data-group={g.id}>
+        {#if g.title ?? g.label}<span class="ds-label" aria-hidden="true">{g.title ?? g.label}</span>{/if}
         {#each g.items as item (item.id)}
           <button
             type="button"
@@ -66,21 +96,22 @@
             onpointerdown={item.onpointerdown
               ? (e) => {
                   item.onpointerdown?.(e);
-                  onclose();
+                  shut();
                 }
               : undefined}
             onclick={() => {
               if (!item.run) return;
-              if (!item.keepOpen) onclose();
+              if (!item.keepOpen) shut();
               item.run();
             }}
-            >{#if item.icon}<Icon name={item.icon} size={18} />{/if}<span>{item.label}</span>{#if item.key}<span class="ds-key">{item.key}</span>{/if}</button
+            >{#if item.icon}<Icon name={item.icon} size={18} />{/if}<span>{item.label}</span>{#if item.hint ?? item.key}<span class="ds-key">{item.hint ?? item.key}</span>{/if}</button
           >
         {/each}
       </div>
     {/if}
   {/each}
 </div>
+{/if}
 
 <style>
   [role='menu'] {

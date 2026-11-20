@@ -956,7 +956,7 @@ test.describe('M5 gate @gate', () => {
     const page = await context.newPage();
     R.watch(page, 'Ann');
     const profile = fresh(info, 'off');
-    const url = (hash = '/') => `./?${new URLSearchParams({ faces: 'placeholder', profile, sw: 'on' }).toString()}#${hash}`;
+    const url = (hash = '/solo') => `./?${new URLSearchParams({ faces: 'placeholder', profile, sw: 'on' }).toString()}#${hash}`;
     let hash = '';
     let hidden: SecretStore | null = null;
     const online = await R.step('online: the first visit installs the worker; a deck is imported and played by touch, and saved', async () => {
@@ -1182,7 +1182,7 @@ test.describe('M5 gate @gate', () => {
       const page = await context.newPage();
       R.watch(page, `solo-${label}`);
       const profile = fresh(info, `ego${label}`);
-      await page.goto(`./?${new URLSearchParams({ faces: 'placeholder', profile }).toString()}`);
+      await page.goto(`./?${new URLSearchParams({ faces: 'placeholder', profile }).toString()}#/solo`);
       await expect.poll(() => page.evaluate(() => typeof window.__spellplane?.session?.hash === 'function'), { timeout: 20_000 }).toBe(true);
       const touch = label === 'ipad';
       const press = (l: ReturnType<Page['getByTestId']>) => (touch ? l.tap() : l.click());
@@ -1196,7 +1196,7 @@ test.describe('M5 gate @gate', () => {
       });
       for (const theme of ['wyrm', 'stonetable'] as const) {
         await R.step(`${label}, ${theme}: chosen in the theme picker, the default rig is ego and the own pile column, command area and battlefield row are on screen`, async () => {
-          // M7-P2: the M4 themes left the picker (they stay loadable); the switch goes through the debug hook.
+          // M7-P2 (taken by M8-C with the seed's Theme.svelte): the M4 themes left the picker (they stay loadable); the switch goes through the debug hook.
           await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
           await expect.poll(() => hook<{ theme: string }>(page, 'render.stats').then((s) => s.theme), { timeout: 20_000 }).toBe(theme);
           // A fresh table in this theme opens in its default rig: reload (the choice is kept).
@@ -1342,7 +1342,7 @@ test.describe('M5 gate @gate', () => {
         await shot(page, 'M5', 'empty-states-page', project);
       });
       await R.step('empty state on the table: no deck offers the deck import', async () => {
-        await page.goto(`./?faces=placeholder&profile=${fresh(info, 'empty')}`);
+        await page.goto(`./?faces=placeholder&profile=${fresh(info, 'empty')}#/solo`);
         // M7-P2: the HUD's no-deck line (docs/design/m8/m7-adjustments.md D7).
         await expect(page.getByTestId('no-deck')).toBeVisible({ timeout: 20_000 });
         await shot(page, 'M5', 'empty-state-no-deck-table', project);

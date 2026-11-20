@@ -1,19 +1,55 @@
 <!--
-  A button of the design system (PLAN Milestone 7, A1): `primary` is the one filled button on screen (the next move),
-  `secondary` the resting default, `quiet` a flat one inside panels. Keys never show on it; a tooltip may name one.
+  A button of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): `primary` is the one filled button of its
+  layer, `secondary` the raised default, `ghost` a ring, `quiet` no surface, `danger` a ring with red text. Four heights
+  (xs 28, sm 36, md 44, lg 56). `pressed` keeps it sunk; `waiting` is the searching state with `trailing` (the timer)
+  right. With `href` it renders a link. The seed's `small` stays as an alias of `xs`. Plain markup by M8-C; M8-P1 gives
+  it its look.
 -->
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import type { HTMLButtonAttributes } from 'svelte/elements';
+  import type { ButtonVariant, Size } from './types';
 
   let {
     variant = 'secondary',
+    size = undefined,
     small = false,
+    pressed = undefined,
+    waiting = false,
+    disabled = false,
+    type = 'button',
+    href = undefined,
+    onclick = undefined,
+    icon = undefined,
+    trailing = undefined,
     children,
     class: extra = '',
-    type = 'button',
     ...rest
-  }: HTMLButtonAttributes & { variant?: 'primary' | 'secondary' | 'quiet'; small?: boolean; children?: Snippet } = $props();
+  }: Omit<HTMLButtonAttributes, 'onclick'> & {
+    variant?: ButtonVariant;
+    size?: Size | undefined;
+    /** Seed alias of `size: 'xs'`. */
+    small?: boolean;
+    pressed?: boolean | undefined;
+    waiting?: boolean;
+    disabled?: boolean | null | undefined;
+    href?: string | undefined;
+    onclick?: ((e: MouseEvent) => void) | null | undefined;
+    icon?: Snippet | undefined;
+    trailing?: Snippet | undefined;
+    children?: Snippet;
+  } = $props();
+
+  const s = $derived<Size>(size ?? (small ? 'xs' : 'md'));
+  const cls = $derived(`ds-btn ds-btn--${variant} ds-btn--${s}${small ? ' ds-btn--small' : ''}${waiting ? ' is-waiting' : ''}${pressed ? ' is-pressed' : ''} ${extra}`.trim());
 </script>
 
-<button {type} class="ds-btn ds-btn--{variant} {extra}" class:ds-btn--small={small} {...rest}>{@render children?.()}</button>
+{#if href !== undefined && !disabled}
+  <a class={cls} {href} onclick={onclick ?? undefined} {...rest as Record<string, unknown>}
+    >{#if icon}{@render icon()}{/if}<span class="ds-btn__label">{@render children?.()}</span>{#if trailing}<span class="ds-btn__trailing">{@render trailing()}</span>{/if}</a
+  >
+{:else}
+  <button {type} class={cls} disabled={disabled || undefined} aria-pressed={pressed} aria-busy={waiting || undefined} onclick={onclick ?? undefined} {...rest}
+    >{#if waiting}<span class="ds-ring" aria-hidden="true"></span>{/if}{#if icon}{@render icon()}{/if}<span class="ds-btn__label">{@render children?.()}</span>{#if trailing}<span class="ds-btn__trailing">{@render trailing()}</span>{/if}</button
+  >
+{/if}

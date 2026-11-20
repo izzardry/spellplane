@@ -41,7 +41,6 @@ export interface HudShellProps {
   primaryOverride?: { label: string; run(): void; quiet?: boolean } | null;
 }
 
-
 export interface HudProps extends HudShellProps {
   session: TableSession;
   createScene: CreateTableScene;
