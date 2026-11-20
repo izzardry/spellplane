@@ -5,7 +5,8 @@
   `homeView` (view.ts). M8-P2.
 -->
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, tick as settled, untrack } from 'svelte';
+  import BoosterSetupSheet from '../decks/BoosterSetupSheet.svelte';
   import BoosterFan from '../design/BoosterFan.svelte';
   import Button from '../design/Button.svelte';
   import CardFan from '../design/CardFan.svelte';
@@ -20,7 +21,7 @@
   import StatusLine from '../design/StatusLine.svelte';
   import StrengthPips from '../design/StrengthPips.svelte';
   import HistoryList from '../history/HistoryList.svelte';
-  import { codeText, rowState, rowTitle } from '../history/rows';
+  import { relTime, rowState, rowTitle } from '../history/rows';
   import { launchDraft, launchEmpty, launchFirstRun, launchPrivate, launchQuick, launchSolo, summaryHash, type LaunchDeps } from '../play/launch';
   import { tableDeps } from '../table/context';
   import type { RoomLink } from '../types';
@@ -32,7 +33,7 @@
   import { isEnded } from '../../store/games';
   import type { CardRef } from '../../core/types';
   import type { Matchmaker, MatchmakerStatus } from '../../session/types';
-  import { DEFAULT_HOME_PREFS, type DeckRecord, type GameSummary, type HomeMode, type HomePrefs } from '../../store/types';
+  import { DEFAULT_HOME_PREFS, type BoosterSetup, type DeckRecord, type GameSummary, type HomeMode, type HomePrefs } from '../../store/types';
   import { DRAFT_PLAYERS, FORMATS, heroPacks, homeView, MODES, stepDeck } from './view';
 
   let {
@@ -79,7 +80,7 @@
   let searched = $state(false);
   const mm = untrack(() => matchmaker);
   let status: MatchmakerStatus = $state(mm.status());
-  let latest: GameSummary | null = $state(null);
+  let latest = $state<GameSummary | null>(null);
   let recent = $state(0);
   let busy = $state(false);
   let firstRunFailed = $state(false);
@@ -100,8 +101,7 @@
     const s = Math.max(0, Math.floor((now() - view.since) / 1000));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   });
-  const continueGame = $derived(latest && !isEnded(latest) ? latest : null);
-  const continueCode = $derived(continueGame ? codeText((continueGame as GameSummary).code) : '');
+  const continueGame = $derived<GameSummary | null>(latest && !isEnded(latest) ? latest : null);
 
   function syncClock(): void {
     const on = status.phase === 'seeking';
@@ -168,6 +168,19 @@
       rankedNote = 'Ranked is 1v1 for now.';
       if (rankedTimer) clearTimeout(rankedTimer);
       rankedTimer = setTimeout(() => (rankedNote = null), 4000);
+    }
+  }
+
+  // CHANGE BOOSTERS opens the booster setup sheet (decks' BoosterSetupSheet, mode 'draft'); while that part draws
+  // nothing in this build the button says so instead of doing nothing.
+  let boostersOpen = $state(false);
+  let boosterHost: HTMLElement | null = $state(null);
+  async function openBoosters(): Promise<void> {
+    boostersOpen = true;
+    await settled();
+    if (boosterHost && boosterHost.childElementCount === 0) {
+      boostersOpen = false;
+      deps.toast('Changing the boosters is not in this build yet.');
     }
   }
 
@@ -262,7 +275,7 @@
       <h2 class="hero__name">{packs.length === 3 ? 'THREE' : packs.length} BOOSTERS · {packs[0]}</h2>
       <p class="facts">BOOSTER DRAFT · PICK {prefs.draft.boosters.picks}{prefs.draft.boosters.pickTimer ? '' : ' · NO TIMER'}</p>
       <div class="hero__acts">
-        <Button size="sm" disabled title="Not in this build yet." data-testid="home-change-boosters">CHANGE BOOSTERS</Button>
+        <Button size="sm" onclick={() => void openBoosters()} data-testid="home-change-boosters">CHANGE BOOSTERS</Button>
       </div>
     {:else if view.hero === 'empty'}
       <span class="eyebrow">YOUR DECK</span>
@@ -348,7 +361,7 @@
   {#if continueGame}
     {@const g = continueGame}
     <Button size="md" onclick={() => deps.go(summaryHash(g))} data-testid="home-continue">
-      <span class="cont"><span class="cont__eyebrow">CONTINUE</span> <span class="cont__game" data-testid="home-continue-game">{rowTitle(g)} · {rowState(g)}</span> <span class="cont__code">{continueCode}</span></span>
+      <span class="cont"><span class="cont__eyebrow">↩ CONTINUE</span> <span class="cont__game" data-testid="home-continue-game">{rowTitle(g)} · {rowState(g)}</span> <span class="cont__code" data-testid="home-continue-time">{relTime(g.lastPlayedAt, now())}</span></span>
     </Button>
   {/if}
 
@@ -359,6 +372,12 @@
     {#if recent > 5}<Button size="sm" variant="quiet" onclick={() => deps.go('#/history')}>{recent - 5} MORE GAMES</Button>{/if}
   </section>
 </div>
+
+{#if boostersOpen}
+  <div class="booster-sheet" bind:this={boosterHost} data-testid="home-booster-sheet">
+    <BoosterSetupSheet value={$state.snapshot(prefs.draft.boosters) as BoosterSetup} mode="draft" onchange={(b) => void save({ ...prefs, draft: { ...prefs.draft, boosters: b } })} onclose={() => (boostersOpen = false)} />
+  </div>
+{/if}
 
 {#if firstRunFailed}
   <div class="scrim" data-ds-layer="sheet" data-testid="first-run-sheet">

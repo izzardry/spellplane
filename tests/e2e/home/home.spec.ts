@@ -82,6 +82,10 @@ test('the deck arrows and Left / Right step the library; Draft night shows three
   await expect(page.getByTestId('home-next')).toHaveCount(0);
   await expect(page.getByTestId('hero-name')).toHaveCount(0);
   await designAudit(page);
+  // CHANGE BOOSTERS opens the decks package's booster setup sheet; while that part draws nothing it says so.
+  await page.getByTestId('home-change-boosters').click();
+  await expect.poll(() => page.evaluate(() => window.__homeHarness!.toasts())).toContain('Changing the boosters is not in this build yet.');
+  await expect(page.getByTestId('home-booster-sheet')).toHaveCount(0);
 });
 
 test('with an unfinished game the CONTINUE strip names it and the primary still reads PLAY', async ({ page }) => {
@@ -92,6 +96,7 @@ test('with an unfinished game the CONTINUE strip names it and the primary still 
   await page.reload();
   await expect.poll(() => page.evaluate(() => window.__homeHarness?.ready === true)).toBe(true);
   await expect(page.getByTestId('home-continue-game')).toHaveText("VS BEN · Turn 3 · Ben's turn");
+  await expect(page.getByTestId('home-continue-time')).toHaveText('1 min');
   await expect(page.getByTestId('home-primary')).toHaveText('PLAY');
   await expect(page.getByTestId('home-recent').getByTestId('history-row')).toHaveCount(1);
   await page.getByTestId('home-continue').click();
@@ -215,4 +220,26 @@ test('the real app opens at ./ on Home, not a table: shell, nav, primary; no can
   const counts = await page.evaluate(() => window.__spellplane?.home?.live?.() ?? null);
   expect(counts).not.toBeNull();
   expect(Object.values(counts!).every((n) => n === 0)).toBe(true);
+});
+
+test('the profile chip: a made-up nickname, renamed in the popover and kept over a reload; the gear opens Settings', async ({ page }) => {
+  const profile = uniq('nick');
+  await openHomeHarness(page, { profile });
+  const chip = page.getByTestId('profile-name-chip');
+  await expect(chip).toHaveText(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
+  await page.getByTestId('profile-chip').click();
+  const popover = page.getByTestId('profile-popover');
+  await expect(popover).toBeVisible();
+  await designAudit(page);
+  const field = popover.getByRole('textbox', { name: 'Nickname' });
+  await field.fill('Quiet Heron');
+  await field.press('Enter');
+  await expect(chip).toHaveText('Quiet Heron');
+  await expect.poll(() => page.evaluate(() => window.__homeHarness!.nickname())).toBe('Quiet Heron');
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => window.__homeHarness?.ready === true)).toBe(true);
+  await expect(page.getByTestId('profile-name-chip')).toHaveText('Quiet Heron');
+  await page.getByTestId('shell-gear').click();
+  await page.getByTestId('gear-menu').getByRole('menuitem', { name: 'Settings' }).click();
+  await expect(page.getByTestId('harness-stub-settings')).toBeVisible();
 });

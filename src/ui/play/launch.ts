@@ -10,6 +10,7 @@
  * - QUICK MATCH: `matchmaker.seek` with the queues of the Home prefs and the deck.
  * - First run: one press with no deck builds a starter deck, saves it, selects it and starts.
  */
+import { GAME_START } from '../../core/stage';
 import type { Format, LobbySettings } from '../../core/types';
 import { buildStarterDeck as stubStarter, type StarterDeck, type StarterPoolSource } from '../../data/starter';
 import { deckImportOfRecord } from '../../session/deck-build';
@@ -49,6 +50,26 @@ export function takePendingSetup(roomId: string, store: Pick<Storage, 'getItem' 
   } catch {
     return null;
   }
+}
+
+/**
+ * Apply the setup Home kept for a room this tab created (`takePendingSetup`): automatic setup on, the format and the
+ * lobby settings of the mode. The table route calls it once its session is open (M8-P8 wires it in the frame); it does
+ * nothing for a room without a kept setup or past its lobby. Resolves to whether it applied one.
+ */
+export function applyPendingSetup(session: Pick<TableSession, 'roomId' | 'getState' | 'dispatch'>, store: Pick<Storage, 'getItem' | 'removeItem'> | null = safeSession()): boolean {
+  const setup = takePendingSetup(session.roomId, store);
+  if (!setup) return false;
+  const st = session.getState();
+  if (st.stage !== 'lobby') return false;
+  if (st.settings.autoSetup !== true) session.dispatch({ type: 'settings', settings: { autoSetup: true } });
+  if (st.format !== setup.format) {
+    // The starting life of the format; the reducer holds no game definition (core/stage.ts GAME_START mirrors it).
+    const life = (Object.hasOwn(GAME_START, st.game) ? GAME_START[st.game]!.life[setup.format] : undefined) ?? 20;
+    session.dispatch({ type: 'formatSet', format: setup.format, life });
+  }
+  session.dispatch({ type: 'lobbySet', lobby: structuredClone(setup.lobby) });
+  return true;
 }
 
 function safeSession(): Storage | null {

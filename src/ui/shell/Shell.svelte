@@ -9,6 +9,10 @@
   - The queue bar renders QueueChip while the matchmaker is not off; one ToastHost.
   - `#/history` renders the History sheet when the route has no children of its own.
 -->
+<script lang="ts" module>
+  let purgedThisPage = false;
+</script>
+
 <script lang="ts">
   import { onDestroy, onMount, type Snippet } from 'svelte';
   import Button from '../design/Button.svelte';
@@ -76,6 +80,11 @@
   const chipColour = $derived(swatches[colour] ?? 'var(--ds-accent)');
 
   onMount(() => {
+    // Removals whose undo window the last page did not outlive are purged once per page load (persistence.md section 3).
+    if (!purgedThisPage && games?.purgeRemoved) {
+      purgedThisPage = true;
+      void games.purgeRemoved().catch(() => undefined);
+    }
     const mm = matchmaker;
     status = mm.status();
     const offMm = mm.subscribe((s) => (status = s));

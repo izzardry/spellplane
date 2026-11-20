@@ -30,6 +30,7 @@ export interface HomeHarnessApi {
   allGames(): Promise<GameSummary[]>;
   decks(): Promise<DeckRecord[]>;
   homePrefs(): Promise<unknown>;
+  nickname(): Promise<string | null>;
   live(): Record<string, number>;
   toasts(): string[];
 }
@@ -137,6 +138,7 @@ export function mount(target: HTMLElement, start: 'home' | 'history' = new URLSe
       allGames: async () => (stores ? stores.db.getAll('games') : []),
       decks: async () => (await stores?.decks.list()) ?? [],
       homePrefs: async () => stores?.settings.get('home') ?? null,
+      nickname: async () => (stores ? (await stores.identity.get()).nickname : null),
       live: () => ({ ...live() }),
       toasts: () => shown.map((s) => s.slice(s.indexOf(':') + 1)),
     };

@@ -12,6 +12,7 @@
   import StatusLine from '../design/StatusLine.svelte';
   import TableThumb from '../design/TableThumb.svelte';
   import { toasts } from '../design/toasts';
+  import { themeContext } from '../settings/theme';
   import { isEnded } from '../../store/games';
   import type { GameStore, GameSummary } from '../../store/types';
   import { summaryHash } from '../play/launch';
@@ -35,17 +36,13 @@
     onchange?: ((count: number) => void) | undefined;
   } = $props();
 
-  /** The undo window: the kit's undo toast lives 5 s (visual.md 2.8); the records are purged when it ends. */
-  const UNDO_MS = 5000;
-
   let rows: GameSummary[] = $state([]);
   let loaded = $state(false);
   let failed = $state(false);
   let filter: HistoryFilter = $state('all');
-  // Not reactive state: timers of removals in their undo window.
-  // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const pending = new Map<string, ReturnType<typeof setTimeout>>();
   let alive = true;
+  // The seat colours of the viewer's theme (App.svelte's context); the kit's accent and ink without one (a harness).
+  const theme = themeContext();
 
   const shown = $derived(rows.filter((g) => shows(g, limit !== undefined ? 'all' : filter)).slice(0, limit ?? Infinity));
   const withFilter = $derived(showFilter ?? limit === undefined);
@@ -68,6 +65,11 @@
     onchange?.(rows.filter((g) => shows(g, 'all')).length);
   }
 
+  /**
+   * Remove with an undo toast (persistence.md section 3): the row is soft-deleted at once and purged when the toast
+   * runs out unanswered (the toast store's own timer, so leaving the page does not cut the undo short); a page closed
+   * in the window leaves a soft-deleted row that the next start purges (GameStore `purgeRemoved`).
+   */
   async function remove(g: GameSummary): Promise<void> {
     if (!games) return;
     const store = games;
@@ -75,32 +77,23 @@
     rows = rows.filter((r) => r.code !== g.code);
     onchange?.(rows.filter((r) => shows(r, 'all')).length);
     const text = isEnded(g) ? 'Game removed' : 'Game removed. Your hand in it goes with it.';
-    const timer = setTimeout(() => {
-      pending.delete(g.code);
-      void store.purge(g.code);
-    }, UNDO_MS);
-    pending.set(g.code, timer);
-    toasts.undo(text, () => {
-      const t = pending.get(g.code);
-      if (t !== undefined) clearTimeout(t);
-      pending.delete(g.code);
-      void store.restore(g.code).then(load);
-    });
+    toasts.undo(
+      text,
+      () => {
+        void store.restore(g.code).then(() => (alive ? load() : undefined));
+      },
+      { commit: () => void store.purge(g.code).catch(() => undefined) },
+    );
   }
 
-  function seatColour(i: number): string {
-    return i % 2 === 0 ? 'var(--ds-seat-a)' : 'var(--ds-seat-b)';
+  function seatColour(colour: number, i: number): string {
+    const seats = theme?.current().tokens.colours.seats;
+    return seats?.[colour]?.colour ?? (i === 0 ? 'var(--ds-accent)' : 'var(--ds-ink)');
   }
 
   onMount(() => void load());
   onDestroy(() => {
     alive = false;
-    // A removal still in its undo window is purged now: the page that could undo it is gone.
-    for (const [code, t] of pending) {
-      clearTimeout(t);
-      void games?.purge(code);
-    }
-    pending.clear();
   });
 </script>
 
@@ -138,7 +131,7 @@
               onopen(g);
             }}
           >
-            <TableThumb thumb={g.thumb ?? null} seats={g.players.map((p, i) => ({ colour: seatColour(i), life: p.life, computer: g.opponent === 'sparring' && !p.me }))} width={128} />
+            <TableThumb thumb={g.thumb ?? null} seats={g.players.map((p, i) => ({ colour: seatColour(p.colour, i), life: p.life, computer: g.opponent === 'sparring' && !p.me }))} width={128} />
             <span class="hrow__text">
               <span class="hrow__title" data-testid="history-title">{rowTitle(g)}</span>
               <span class="hrow__line">{rowLine(g)}</span>
