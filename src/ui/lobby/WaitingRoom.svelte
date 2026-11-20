@@ -1,14 +1,1139 @@
 <!--
-  The waiting room of a private table or a draft night (journey.md 4.8; matchmaking.md 2.12): seats, the deck slot,
-  READY and the self-pressing START. Stub by M8-C: today's lobby (ui/lobby/Lobby.svelte), so every M1 lobby scenario
-  keeps working. M8-P4 owns the file.
+  The waiting room of a private table or a draft night (docs/design/m8/journey.md 4.8, 4.9; matchmaking.md 2.12;
+  visual.md 2.8 "Seat row", "Invite sheet"; mock.html board 5). Calm and in one order: the seats around a table outline
+  in the format's positions (an empty seat invites), my deck slot (the deck selected on Home, CHANGE DECK, or in a draft
+  night the closed boosters), the one primary READY (it commits the deck), the line that always says what is missing,
+  the creator's pill (WAITING · 1 OPEN SEAT, WAITING · 1 OF 2 READY, START · 3 that presses itself), the setup summary
+  (the creator edits it), nickname and seat colour, and the invite sheet beside the room (open by itself for the
+  creator, never covering the room). A pair that cannot connect is named calmly after 15 s. Never another player's deck
+  name: only its state and, after Ready, its size. No log, chat panel or table tools here.
+  The rules of seats.ts, ready.ts and connectivity.ts stay; the data-testids of the M1 lobby are kept. M8-P4.
 -->
 <script lang="ts">
-  import type { SettingsStore } from '../../store/types';
+  import { onMount, untrack, type Component } from 'svelte';
+  import type { Format, SeatId, TableState } from '../../core/types';
+  import { toViewerFrame } from '../../games/frame';
+  import type { BoosterSetup, DeckRecord, HomePrefs, SettingsStore } from '../../store/types';
+  import { DEFAULT_BOOSTER_SETUP } from '../../store/types';
+  import type { SessionNetStatus } from '../../session/types';
+  import { paper } from '../../themes/paper/index';
+  import { themeContext } from '../settings/theme';
+  import ThemePicker from '../settings/Theme.svelte';
+  import { checkDeck, parsePlainList, type CheckedDeck } from '../deck';
   import type { LobbyProps } from '../types';
-  import Lobby from './Lobby.svelte';
+  import Button from '../design/Button.svelte';
+  import BoosterFan from '../design/BoosterFan.svelte';
+  import Field from '../design/Field.svelte';
+  import PresenceDot from '../design/PresenceDot.svelte';
+  import SeatGlyph from '../design/SeatGlyph.svelte';
+  import Segmented from '../design/Segmented.svelte';
+  import Sheet from '../design/Sheet.svelte';
+  import StatusLine from '../design/StatusLine.svelte';
+  import DeckPickerSheet from '../decks/DeckPickerSheet.svelte';
+  import BoosterSetupSheet from '../decks/BoosterSetupSheet.svelte';
+  import { ConnectivityCheck, type ConnectivityReport } from './connectivity';
+  import { pastedDeckId, readyVerdict } from './ready';
+  import SpectatorPanel from './SpectatorPanel.svelte';
+  import InviteSheet from './InviteSheet.svelte';
+  import { chairChoice, chairs, colourClash, colourTakenBy, hostSeat, nicknameProblem, normaliseNickname, pickColour, readiness, seatOf, startProblem, SEAT_COLOURS, teamGroups, type Chair } from './seats';
+  import {
+    boostersFromLobby,
+    codeLabel,
+    countdownMayRun,
+    deckAllow,
+    deckKindOf,
+    deckRuleOf,
+    draftPacks,
+    isLiveDraft,
+    lobbyFromBoosters,
+    missingLine,
+    START_COUNT,
+    startPill,
+    type DeckRule,
+  } from './waiting';
 
-  let { session, game, link, identity, decks, cardData, parseDecklist, settings: _settings = undefined }: LobbyProps & { settings?: SettingsStore | undefined } = $props();
+  type PickerProps = { allow?: ((deck: DeckRecord) => true | string) | undefined; onpick: (deck: DeckRecord) => void; onclose?: (() => void) | undefined };
+  type BoosterProps = { value: BoosterSetup; mode: 'deck' | 'draft'; onchange?: ((value: BoosterSetup) => void) | undefined; onclose?: (() => void) | undefined };
+
+  let {
+    session,
+    game,
+    link,
+    identity,
+    decks,
+    cardData,
+    parseDecklist,
+    settings = undefined,
+    deckRule: ruleFallback = undefined,
+    starter = undefined,
+    picker = DeckPickerSheet as unknown as Component<PickerProps>,
+    boosterSheet = BoosterSetupSheet as unknown as Component<BoosterProps>,
+  }: LobbyProps & {
+    /** The viewer's settings: the deck selected on Home (Settings.home.deckId) and, for the creator, Home's deck rule. */
+    settings?: SettingsStore | undefined;
+    /** The table's deck rule when the table does not carry one; default: Home's choice for a private game, else any. */
+    deckRule?: DeckRule | undefined;
+    /** Makes a starter deck for USE A STARTER DECK (M8-P6's generator); absent or rejecting: the slot says so. */
+    starter?: (() => Promise<DeckRecord>) | undefined;
+    /** The deck picker sheet (M8-P3's DeckPickerSheet; a harness passes a fake). */
+    picker?: Component<PickerProps>;
+    /** The booster setup sheet (M8-P3's BoosterSetupSheet in mode 'draft'; a harness passes a fake). */
+    boosterSheet?: Component<BoosterProps>;
+  } = $props();
+
+  // The viewer's theme (PLAN M4-P6): its seat colours colour the glyphs; Paper where no app shell provides the choice.
+  const themeChoice = themeContext();
+  let theme = $state.raw(themeChoice?.current() ?? paper);
+  onMount(() => themeChoice?.subscribe((s) => (theme = s.theme)));
+  const seatColours = $derived(theme.tokens.colours.seats);
+
+  let st = $state.raw<TableState>(untrack(() => session.getState()));
+  let net = $state.raw<SessionNetStatus>(untrack(() => session.netStatus()));
+  let selfPeer = $state('');
+  let nickname = $state('');
+  let savedNickname = $state('');
+  let preferredColour = $state(0);
+  let now = $state(Date.now());
+  const check = new ConnectivityCheck();
+
+  let savedDecks = $state.raw<DeckRecord[]>([]);
+  let homePrefs = $state.raw<HomePrefs | null>(null);
+  let deckChoice = $state<string>('paste');
+  let pasting = $state(false);
+  let deckText = $state('');
+  let checked = $state.raw<CheckedDeck | null>(null);
+  let checkedText = $state('');
+  let busy = $state(false);
+  let failure = $state('');
+  let note = $state('');
+  let inviteOpen = $state(false);
+  let invitedOnce = false;
+  let pickerOpen = $state(false);
+  let setupOpen = $state(false);
+  let boostersOpen = $state(false);
+  /** The creator's own rule choice when the table cannot carry it yet (the reducer does not take `decks`; M8-P8 seam). */
+  let ruleLocal = $state<DeckRule | null>(null);
+  /** READY ✓ tapped again: this browser holds the start (journey.md 4.8: "any player can stop it by un-readying"). */
+  let held = $state(false);
+  let count = $state<number | null>(null);
+  let counter: ReturnType<typeof setInterval> | null = null;
+
+  const mySeat = $derived(selfPeer ? seatOf(st, selfPeer) : null);
+  const me = $derived(mySeat ? st.seats[mySeat] : undefined);
+  /** The table as the start rules read it on this browser: a held READY counts as not ready. */
+  const view = $derived.by((): TableState => {
+    if (!held || !mySeat || !st.seats[mySeat]?.ready) return st;
+    return { ...st, seats: { ...st.seats, [mySeat]: { ...st.seats[mySeat]!, ready: false } } };
+  });
+  const list = $derived(chairs(st, selfPeer));
+  const teams = $derived(teamGroups(st, selfPeer));
+  const ready = $derived(readiness(st));
+  const report: ConnectivityReport = $derived(selfPeer ? check.observe(net, st, selfPeer, now) : { overall: 'checking', pairs: [], problems: [] });
+  const present = (seat: SeatId): boolean => {
+    const peer = st.seats[seat]?.peer;
+    if (!peer) return false;
+    if (peer === selfPeer) return true;
+    return net.peers.some((p) => p.peerId === peer && p.status === 'connected');
+  };
+  const host = $derived(hostSeat(st, present));
+  const isHost = $derived(mySeat !== null && mySeat === host);
+  const startBlocked = $derived(startProblem(view, mySeat, host));
+  const nickProblem = $derived(nicknameProblem(nickname));
+  /** Every seated player's browser is connected to this one. */
+  const connected = $derived(list.filter((c) => c.occupied).every((c) => present(c.seat)));
+  const rule = $derived(deckRuleOf(st, ruleLocal ?? ruleFallback ?? (isHost ? (homePrefs?.private.decks ?? 'any') : 'any')));
+  const allow = $derived(deckAllow(rule));
+  const drafting = $derived(isLiveDraft(st));
+  const packs = $derived(draftPacks(st));
+  const pill = $derived(startPill({ state: view, connected, count }));
+  const line = $derived(
+    !drafting || st.stage !== 'lobby'
+      ? missingLine(view, mySeat, host, connected, count)
+      : open > 0
+        ? missingLine(view, mySeat, host, connected, count)
+        : isHost
+          ? 'Everyone is here. Start the draft when you are ready.'
+          : `Waiting for ${(host && st.seats[host]?.name) || 'the host'} to start the draft.`,
+  );
+  const failedPeers = $derived(new Set(report.pairs.filter((p) => p.state === 'failed').map((p) => p.peer)));
+  const code = $derived(codeLabel(link.roomId));
+  const open = $derived(list.filter((c) => !c.occupied).length);
+  const seatedCount = $derived(list.filter((c) => c.occupied).length);
+  const watchLink = $derived(`${link.url}/watch`);
+  const FORMAT_LABEL: Record<Format, string> = { '1v1': '1V1', ffa3: '3 FFA', ffa4: '4 FFA', '2hg': '2V2' };
+  const passLabel = $derived(st.settings.passTimerMs === null ? 'PASS OFF' : `PASS ${Math.round(st.settings.passTimerMs / 1000)} S`);
+  const decksLabel = $derived(drafting ? 'LIVE DRAFT' : rule === 'booster' ? 'BOOSTER DECKS ONLY' : 'ANY DECK');
+  const summary = $derived(`${drafting ? 'DRAFT NIGHT' : 'PRIVATE GAME'} · ${FORMAT_LABEL[st.format]} · ${decksLabel} · ${passLabel}`);
+  const hostName = $derived((host && st.seats[host]?.name) || 'The host');
+  const boosters = $derived(boostersFromLobby(st.lobby, homePrefs?.draft.boosters ?? DEFAULT_BOOSTER_SETUP));
+  /** Fewer players than chairs, at least two of them ready: START WITH n PLAYERS (journey.md 4.8). */
+  const shortStart = $derived(isHost && open > 0 && seatedCount >= 2 && (drafting || list.filter((c) => c.occupied).every((c) => view.seats[c.seat]?.ready)));
+
+  // The table from above, turned so the own chair is at the bottom (DESIGN "Players, seats and formats").
+  const layout = $derived(game.layout(st.format));
+  const viewerAngle = $derived(mySeat ? (layout.seats[st.seats[mySeat]?.index ?? 0]?.angle ?? 0) : 0);
+  const MARGIN = 300;
+  const rightAngled = $derived(layout.seats.every((s) => s.angle % 90 === 0));
+  const box = $derived(!rightAngled ? { w: layout.table.w, d: layout.table.d } : (viewerAngle / 90) % 2 === 1 ? { w: layout.table.d, d: layout.table.w } : { w: layout.table.w, d: layout.table.d });
+  const outer = $derived({ w: box.w + 2 * MARGIN, d: box.d + 2 * MARGIN });
+  function place(x: number, y: number): { left: number; top: number } {
+    const p = toViewerFrame({ x, y, rot: 0 }, viewerAngle);
+    return { left: ((p.x + outer.w / 2) / outer.w) * 100, top: ((outer.d / 2 - p.y) / outer.d) * 100 };
+  }
+
+  const selected = $derived(deckChoice === 'paste' ? null : (savedDecks.find((d) => d.id === deckChoice) ?? null));
+  const showPaste = $derived(deckChoice === 'paste' && (pasting || savedDecks.length === 0 || !!deckText));
+  const deckRefs = $derived.by(() => {
+    if (deckChoice === 'paste') return checked && checkedText === deckText && checked.resolved.main.length ? { main: checked.resolved.main, side: checked.resolved.side } : null;
+    return selected && selected.main.length && allow(selected) === true ? { main: selected.main, side: selected.side } : null;
+  });
+  const committed = $derived(mySeat ? (st.commitments[mySeat]?.instanceIds.length ?? 0) : 0);
+  /** The deck this browser committed: its name is shown only here, on its owner's screen. */
+  let readyDeckName = $state('');
+
+  onMount(() => {
+    const unsub = session.subscribe((s) => (st = s));
+    const unsubNet = session.subscribeNet((n) => (net = n));
+    st = session.getState();
+    net = session.netStatus();
+    const timer = setInterval(() => (now = Date.now()), 1000);
+    void identity.get().then((r) => {
+      selfPeer = r.peerId;
+      nickname = r.nickname;
+      savedNickname = r.nickname;
+      preferredColour = r.seatColour;
+    });
+    const home = settings ? settings.get('home').catch(() => null) : Promise.resolve(null);
+    void Promise.all([decks.list().catch(() => [] as DeckRecord[]), home]).then(([d, h]) => {
+      savedDecks = d;
+      homePrefs = h;
+      if (deckChoice !== 'paste' || deckText) return;
+      // The deck selected on Home, else the newest deck with cards (as the M1 lobby took the first saved deck).
+      const want = h?.deckId ? d.find((x) => x.id === h.deckId) : undefined;
+      const first = want ?? [...d].sort((a, b) => b.updatedAt - a.updatedAt).find((x) => x.main.length > 0);
+      if (first) deckChoice = first.id;
+    });
+    return () => {
+      unsub();
+      unsubNet();
+      clearInterval(timer);
+      stopCount();
+    };
+  });
+
+  // The invite sheet opens by itself for the creator while seats are open (journey.md 4.8), once per visit.
+  $effect(() => {
+    if (invitedOnce || !isHost || st.stage !== 'lobby') return;
+    invitedOnce = true;
+    if (open > 0) inviteOpen = true;
+  });
+
+  // A held READY is let go when the seat is no longer ready (a new game, a seat change).
+  $effect(() => {
+    if (held && !me?.ready) held = false;
+  });
+
+  // Two players who picked the same colour at once: the later chair gives way (ui/lobby/seats.ts colourClash).
+  let clashFixed = '';
+  $effect(() => {
+    if (!mySeat) return;
+    const next = colourClash(st, mySeat);
+    const key = `${st.seq}:${next}`;
+    if (next === null || clashFixed === key) return;
+    clashFixed = key;
+    untrack(() => session.takeSeat(mySeat, next));
+  });
+
+  // START · 3 presses itself on the creator's browser when every seat is taken, ready and connected (journey.md 4.8).
+  function stopCount(): void {
+    if (counter) clearInterval(counter);
+    counter = null;
+    count = null;
+  }
+  $effect(() => {
+    const may = isHost && !drafting && countdownMayRun(view, connected);
+    untrack(() => {
+      if (!may) return stopCount();
+      if (counter) return;
+      count = START_COUNT;
+      counter = setInterval(() => {
+        if (count === null) return;
+        count -= 1;
+        if (count <= 0) {
+          stopCount();
+          start();
+        }
+      }, 1000);
+    });
+  });
+
+  async function saveNickname(): Promise<void> {
+    if (nickProblem) return;
+    const n = normaliseNickname(nickname);
+    nickname = n;
+    if (n === savedNickname) return;
+    await identity.setNickname(n);
+    savedNickname = n;
+    if (mySeat && me) session.takeSeat(mySeat, me.colour);
+  }
+
+  function takeChair(seat: SeatId): void {
+    failure = '';
+    if (seat === mySeat) return;
+    const ok = chairChoice(st, seat, selfPeer);
+    if (!ok.ok) {
+      failure = ok.reason;
+      return;
+    }
+    session.takeSeat(seat, pickColour(st, seat, me?.colour ?? preferredColour, mySeat));
+  }
+
+  async function pickSeatColour(c: number): Promise<void> {
+    if (!mySeat || colourTakenBy(st, c, mySeat) !== null) return;
+    preferredColour = c;
+    session.takeSeat(mySeat, c);
+    await identity.setSeatColour(c).catch(() => undefined);
+  }
+
+  async function checkPasted(): Promise<void> {
+    busy = true;
+    failure = '';
+    try {
+      checkedText = deckText;
+      checked = await checkDeck(deckText, parseDecklist ?? parsePlainList, cardData);
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+      checked = null;
+    } finally {
+      busy = false;
+    }
+  }
+
+  let confirmedText = $state<string | null>(null);
+  async function pressReady(): Promise<void> {
+    failure = '';
+    note = '';
+    if (deckChoice === 'paste' && (!checked || checkedText !== deckText)) await checkPasted();
+    if (!mySeat) return;
+    if (deckChoice === 'paste') {
+      if (failure) return;
+      const verdict = readyVerdict(checked && checkedText === deckText ? checked : null, deckText, confirmedText);
+      if (verdict.kind !== 'go') {
+        failure = verdict.message;
+        if (verdict.kind === 'confirm') confirmedText = deckText;
+        return;
+      }
+    } else if (selected && allow(selected) !== true) {
+      failure = String(allow(selected));
+      return;
+    }
+    const deck = deckRefs;
+    if (!deck) {
+      failure = 'This deck has no cards. Choose another deck or paste a list.';
+      return;
+    }
+    busy = true;
+    try {
+      await session.importDeck({ main: [...deck.main], side: [...deck.side] });
+      readyDeckName = selected?.name ?? 'Pasted list';
+      if (deckChoice === 'paste') {
+        const at = Date.now();
+        const first = deckText.split(/\r?\n/).find((l) => l.trim() && !/^(deck|sideboard|main)/i.test(l.trim()));
+        await decks
+          .put({ id: pastedDeckId(deckText), name: first ? `Deck with ${first.replace(/^\s*\d+x?\s+/, '').trim()}` : 'Pasted deck', main: deck.main, side: deck.side, source: 'pasted', text: deckText, createdAt: at, updatedAt: at })
+          .catch(() => undefined);
+      }
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+    } finally {
+      busy = false;
+    }
+  }
+
+  /**
+   * READY ✓ tapped: take it back. The deck stays committed to the chair (the table has no action that withdraws a
+   * commitment, DECISIONS [M1-P5]); the start waits for this browser until READY is pressed again.
+   */
+  function toggleHeld(): void {
+    held = !held;
+    note = held ? 'Your deck stays locked to your seat. The game does not start until you press READY again.' : '';
+  }
+
+  function start(): void {
+    if (startProblem(view, mySeat, host)) return;
+    stopCount();
+    if (drafting && session.evening) session.evening.start();
+    else session.dispatch({ type: 'stageSet', stage: 'match' });
+  }
+
+  /** START WITH n PLAYERS: the empty chairs stay empty (the table cannot change its format once a player is Ready). */
+  function startShort(): void {
+    stopCount();
+    try {
+      if (drafting && session.evening) session.evening.start();
+      else session.dispatch({ type: 'stageSet', stage: 'match' });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function useStarter(): Promise<void> {
+    note = '';
+    if (!starter) {
+      note = 'Starter decks are not in this build yet. Paste a list instead.';
+      pasting = true;
+      return;
+    }
+    try {
+      const d = await starter();
+      await decks.put(d);
+      savedDecks = [...savedDecks.filter((x) => x.id !== d.id), d];
+      deckChoice = d.id;
+    } catch {
+      note = 'The starter deck could not be made. Paste a list instead.';
+      pasting = true;
+    }
+  }
+
+  function pickDeck(d: DeckRecord): void {
+    const ok = allow(d);
+    if (ok !== true) {
+      failure = ok;
+      return;
+    }
+    failure = '';
+    if (!savedDecks.some((x) => x.id === d.id)) savedDecks = [...savedDecks, d];
+    deckChoice = d.id;
+    pasting = false;
+    pickerOpen = false;
+  }
+
+  function setFormat(f: string): void {
+    if (f === st.format) return;
+    try {
+      session.dispatch({ type: 'formatSet', format: f as Format, life: game.startingLife(f as Format) });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+    }
+  }
+  function setDecks(v: string): void {
+    note = '';
+    if (v === 'draft') {
+      if (!drafting) setLobby(lobbyFromBoosters(boosters));
+      return;
+    }
+    if (drafting) setLobby({ draft: null, sets: st.lobby?.sets ?? ['M19'], pickTimer: false });
+    const r: DeckRule = v === 'booster' ? 'booster' : 'any';
+    ruleLocal = r;
+    try {
+      session.dispatch({ type: 'settings', settings: { decks: r } as never });
+    } catch {
+      // The table does not carry the rule yet: it holds for this browser's picker only.
+    }
+  }
+  function setLobby(lobby: NonNullable<TableState['lobby']>): void {
+    try {
+      if (session.evening) session.evening.setLobby(lobby);
+      else session.dispatch({ type: 'lobbySet', lobby });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+    }
+  }
+  function setPass(v: string): void {
+    const ms = v === 'off' ? null : Number(v);
+    try {
+      session.dispatch({ type: 'settings', settings: { passTimerMs: ms } });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function seatState(c: Chair): string {
+    if (!c.occupied) return 'OPEN SEAT';
+    if (c.ready) {
+      const n = st.commitments[c.seat]?.instanceIds.length ?? 0;
+      return n ? `DECK READY · ${n}` : 'READY';
+    }
+    if (c.away) return 'AWAY';
+    return drafting ? 'HERE' : 'CHOOSING A DECK';
+  }
+  function seatPresence(c: Chair): 'here' | 'connecting' | 'away' {
+    if (c.mine) return 'here';
+    if (c.away) return 'away';
+    return present(c.seat) ? 'here' : 'connecting';
+  }
+  function cannotConnect(c: Chair): boolean {
+    if (!c.peer) return false;
+    if (c.mine) return failedPeers.size > 0;
+    return failedPeers.has(c.peer);
+  }
 </script>
 
-<Lobby {session} {game} {link} {identity} {decks} {cardData} {parseDecklist} />
+<main class="room ds-root" data-testid="lobby" aria-labelledby="lobby-title" data-invite={inviteOpen}>
+  <header class="top">
+    <Button variant="ghost" size="sm" data-testid="room-home" onclick={() => (location.hash = '#/')}>← HOME</Button>
+    <div class="title">
+      <h1 id="lobby-title" class="ds-t-title">
+        <span class="code" data-testid="room-code">{code}</span>
+        <PresenceDot state={connected ? 'here' : 'connecting'} label={connected ? 'Everyone here is connected' : 'Connecting'} />
+      </h1>
+      <p class="ds-t-eyebrow" data-testid="setup-summary">{summary}</p>
+    </div>
+    <div class="top-actions">
+      {#if isHost}<Button variant="ghost" size="sm" data-testid="setup-edit" onclick={() => (setupOpen = true)}>SETUP ✎</Button>{/if}
+      <Button variant="ghost" size="sm" data-testid="invite-open" aria-expanded={inviteOpen} onclick={() => (inviteOpen = !inviteOpen)}>INVITE ⇪</Button>
+    </div>
+  </header>
+
+  <div class="body">
+    <div class="main">
+      {#if !isHost && host}<p class="ds-t-meta who-sets" data-testid="setup-owner">{hostName} chooses the setup.</p>{/if}
+
+      <section class="seats" aria-label="Seats">
+        <div class="table-box" style:aspect-ratio="{outer.w} / {outer.d}">
+          <svg viewBox="{-outer.w / 2} {-outer.d / 2} {outer.w} {outer.d}" aria-hidden="true">
+            <rect class="table" x={-box.w / 2} y={-box.d / 2} width={box.w} height={box.d} rx="60" />
+          </svg>
+          {#each list as c (c.seat)}
+            {@const a = layout.seats[c.index]?.zones.avatar}
+            {@const pos = a ? place(a.x, a.y) : { left: 50, top: 50 }}
+            {@const sc = seatColours[c.colour]}
+            {@const failed = cannotConnect(c)}
+            <div class="seat" style:left="{pos.left}%" style:top="{pos.top}%">
+              {#if c.occupied}
+                <button
+                  type="button"
+                  class="plate"
+                  class:mine={c.mine}
+                  data-testid="chair"
+                  data-seat={c.seat}
+                  data-occupied="true"
+                  data-mine={c.mine}
+                  data-ready={c.ready}
+                  data-colour={c.colour}
+                  data-team={c.team ?? ''}
+                  data-connect={failed ? 'failed' : ''}
+                  aria-pressed={c.mine}
+                  onclick={() => takeChair(c.seat)}
+                >
+                  <SeatGlyph seat={c.index} colour={sc?.colour ?? 'currentColor'} size={36} label="Seat colour of {c.name}" />
+                  <span class="who">
+                    <span class="name">{c.name}{c.mine ? ' (you)' : ''}{c.seat === host ? ' · host' : ''}</span>
+                    <span class="state" data-testid="seat-state">
+                      <PresenceDot state={failed ? 'away' : seatPresence(c)} label={failed ? 'cannot connect' : seatPresence(c)} />
+                      {failed ? 'CANNOT CONNECT' : seatState(c)}
+                    </span>
+                  </span>
+                  {#if c.ready}<span class="check" aria-hidden="true">✓</span>{/if}
+                </button>
+              {:else}
+                {@const choice = chairChoice(st, c.seat, selfPeer)}
+                <button
+                  type="button"
+                  class="plate free"
+                  data-testid="chair"
+                  data-seat={c.seat}
+                  data-occupied="false"
+                  data-mine="false"
+                  data-ready="false"
+                  data-colour=""
+                  data-team={c.team ?? ''}
+                  disabled={!choice.ok && !mySeat}
+                  onclick={() => (mySeat ? (choice.ok ? takeChair(c.seat) : (inviteOpen = true)) : takeChair(c.seat))}
+                >
+                  <span class="plus" aria-hidden="true">＋</span>
+                  <span class="who"><span class="name">OPEN SEAT</span><span class="state">{mySeat && choice.ok ? 'MOVE HERE' : 'SIT HERE'}</span></span>
+                </button>
+                <Button variant="quiet" size="xs" data-testid="seat-invite" onclick={() => (inviteOpen = true)}>INVITE A PLAYER</Button>
+              {/if}
+              {#if c.team !== null}<span class="ds-t-meta team" data-testid="chair-team">{teams.find((g) => g.team === c.team)?.label ?? ''}</span>{/if}
+            </div>
+          {/each}
+        </div>
+        {#if teams.length > 0}
+          <ul class="teams ds-t-meta" data-testid="lobby-teams" aria-label="Teams">
+            {#each teams as g (g.team)}
+              <li data-team={g.team} data-mine={g.mine} data-full={g.full}><strong>{g.label}{g.mine ? ' (your team)' : ''}</strong>: {g.chairs.map((c) => (c.occupied ? c.name : 'open seat')).join(' & ')}</li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+
+      <div class="deck-and-start">
+        <section class="slot" aria-label="Your deck" data-testid="deck-slot" data-kind={drafting ? 'boosters' : me?.ready ? 'ready' : selected ? 'deck' : 'empty'}>
+          {#if drafting}
+            <p class="ds-t-eyebrow">LIVE BOOSTER DRAFT</p>
+            <BoosterFan sets={packs} count={packs.length} width={72} label="Closed boosters: your deck is drafted at this table" data-testid="slot-boosters" />
+            <p class="ds-t-meta">{packs.length} boosters each. Nothing to choose: your deck is drafted here.</p>
+          {:else if me?.ready}
+            <p class="ds-t-eyebrow">YOUR DECK</p>
+            <p class="deck-name" data-testid="slot-deck-name">{readyDeckName || 'Your deck'}</p>
+            <p class="ds-t-meta" data-testid="ready-done">You are ready. Your deck of {committed} cards is committed and locked to your chair.</p>
+          {:else}
+            <p class="ds-t-eyebrow">YOUR DECK</p>
+            {#if selected && !showPaste}
+              <p class="deck-name" data-testid="slot-deck-name">{selected.name}</p>
+              <p class="ds-t-meta">{deckKindOf(selected) === 'sealed' ? 'BOOSTER DECK' : 'CUSTOM DECK'} · {selected.main.length}</p>
+              {#if allow(selected) !== true}<StatusLine tone="danger" data-testid="slot-reason">{allow(selected)}</StatusLine>{/if}
+              <div class="offers">
+                <Button size="sm" data-testid="change-deck" onclick={() => (pickerOpen = true)}>CHANGE DECK</Button>
+                <Button size="sm" variant="quiet" data-testid="paste-instead" onclick={() => ((deckChoice = 'paste'), (pasting = true))}>PASTE A LIST</Button>
+              </div>
+            {:else}
+              {#if !showPaste || savedDecks.length === 0}
+                <div class="offers">
+                  {#if rule !== 'booster'}<Button size="sm" data-testid="use-starter" onclick={useStarter}>USE A STARTER DECK</Button>{/if}
+                  <Button size="sm" data-testid="open-boosters" onclick={() => (location.hash = '#/decks/new')}>OPEN SIX BOOSTERS</Button>
+                  {#if savedDecks.length > 0}<Button size="sm" data-testid="change-deck" onclick={() => (pickerOpen = true)}>CHANGE DECK</Button>{/if}
+                </div>
+              {/if}
+              {#if rule !== 'booster'}
+                <label class="ds-t-eyebrow paste-label" for="lobby-deck-text">PASTE A LIST</label>
+                <textarea id="lobby-deck-text" bind:value={deckText} rows="5" spellcheck="false" data-testid="lobby-deck-text" placeholder="4 Llanowar Elves&#10;20 Forest"></textarea>
+                <div class="offers">
+                  <Button size="sm" data-testid="lobby-deck-check" disabled={busy || !deckText.trim()} onclick={checkPasted}>CHECK THE LIST</Button>
+                  {#if savedDecks.length > 0}<Button size="sm" variant="quiet" data-testid="paste-cancel" onclick={() => ((pasting = false), (deckText = ''), (deckChoice = selected?.id ?? savedDecks[0]?.id ?? 'paste'))}>BACK TO MY DECK</Button>{/if}
+                </div>
+                {#if checked && checkedText === deckText}
+                  <p class="ds-t-meta" data-testid="lobby-deck-summary">
+                    {checked.resolved.main.length} cards in the deck{#if checked.resolved.side.length}, {checked.resolved.side.length} in the sideboard{/if}.{#if checked.errors.length}
+                      {checked.errors.length} line{checked.errors.length === 1 ? '' : 's'} not found: {checked.errors.map((e) => `line ${e.line}`).join(', ')}.{/if}
+                  </p>
+                {/if}
+              {/if}
+            {/if}
+          {/if}
+        </section>
+
+        <section class="primary" aria-label="Ready and start">
+          {#if me?.ready}
+            <Button size="lg" pressed={!held} data-testid="ready-on" data-held={held} onclick={toggleHeld}>{held ? 'READY' : 'READY ✓'}</Button>
+          {:else if !drafting}
+            <Button
+              variant={isHost && pill.kind === 'start' ? 'secondary' : 'primary'}
+              size="lg"
+              data-testid="ready"
+              disabled={busy || !mySeat || (deckChoice !== 'paste' && !deckRefs) || (deckChoice === 'paste' && !deckText.trim())}
+              onclick={pressReady}>READY</Button
+            >
+          {/if}
+          {#if isHost && drafting}
+            {#if open === 0}
+              <Button variant="primary" size="lg" data-testid="start-draft" onclick={() => startShort()}>START THE DRAFT</Button>
+            {:else if shortStart}
+              <Button variant="ghost" size="lg" data-testid="start-short" onclick={startShort}>START WITH {seatedCount} PLAYERS</Button>
+            {:else}
+              <span class="pill ds-t-eyebrow" role="status" data-testid="start-pill">{pill.label}</span>
+            {/if}
+          {:else if isHost}
+            {#if pill.kind === 'start' && !startBlocked}
+              <Button variant="primary" size="lg" data-testid="start-game" data-counting={pill.counting} onclick={start}>{pill.label}</Button>
+            {:else if shortStart}
+              <Button variant="ghost" size="lg" data-testid="start-short" onclick={startShort}>START WITH {seatedCount} PLAYERS</Button>
+            {:else}
+              <span class="pill ds-t-eyebrow" role="status" data-testid="start-pill">{pill.label}</span>
+            {/if}
+          {/if}
+          <p class="line" role="status" data-testid="missing-line">{line}</p>
+          <p class="ds-t-meta" data-testid="ready-count">{ready.ready} of {Object.keys(st.seats).length} players ready.</p>
+          {#if startBlocked && !drafting}<p class="ds-t-meta" data-testid="start-blocked">{startBlocked}</p>{/if}
+          {#if failure}<p class="ds-status ds-status--danger" role="alert" data-testid="lobby-failure">{failure}</p>{/if}
+          {#if note}<StatusLine data-testid="lobby-note">{note}</StatusLine>{/if}
+        </section>
+      </div>
+
+      {#if report.problems.length}
+        <section class="calm" role="status" data-testid="connectivity-problem">
+          {#each report.problems as p (p.kind + (p.peer ?? ''))}<p class="ds-t-reading">{p.text}</p>{/each}
+        </section>
+      {:else if report.notice}
+        <p class="calm ds-t-reading" role="status" data-testid="connectivity-waiting">{report.notice}</p>
+      {/if}
+
+      <section class="you" aria-label="Name and seat colour" data-testid="lobby-you">
+        <div class="you-row">
+          <div class="nick">
+            <Field
+              bind:value={nickname}
+              label="Nickname"
+              placeholder="Your name at the table"
+              maxlength={40}
+              aria-invalid={!!nickProblem}
+              data-testid="lobby-nickname"
+              onblur={saveNickname}
+              onenter={() => void saveNickname()}
+            />
+            {#if nickProblem}<p class="ds-status ds-status--danger">{nickProblem}</p>{/if}
+          </div>
+          <fieldset class="colours" disabled={!mySeat}>
+            <legend class="ds-sr-only">Seat colour</legend>
+            {#each Array.from({ length: SEAT_COLOURS }, (_, i) => i) as c (c)}
+              {@const sc = seatColours[c]}
+              {@const takenBy = colourTakenBy(st, c, mySeat)}
+              <label class="swatch" title={takenBy ? `Taken by ${st.seats[takenBy]?.name}` : `Colour ${c + 1}`}>
+                <input type="radio" name="seat-colour" value={c} checked={me?.colour === c} disabled={takenBy !== null} data-testid="colour" data-colour={c} onchange={() => pickSeatColour(c)} />
+                <span class="dot" style:background={sc?.colour ?? 'currentColor'} aria-hidden="true"></span>
+                <span class="ds-sr-only">Colour {c + 1}{takenBy ? `, taken by ${st.seats[takenBy]?.name}` : ''}</span>
+              </label>
+            {/each}
+          </fieldset>
+        </div>
+        {#if themeChoice}
+          <details class="theme-choice" data-testid="lobby-theme">
+            <summary class="ds-t-meta">Look: {theme.label}</summary>
+            <ThemePicker choice={themeChoice} />
+          </details>
+        {/if}
+      </section>
+
+      <div class="spect"><SpectatorPanel {session} {link} inline /></div>
+    </div>
+
+    {#if inviteOpen}
+      <aside class="invite" aria-label="Invite">
+        <InviteSheet
+          title="Invite players"
+          text="Send this link, or let them scan the code. Whoever opens it sits down at your table."
+          link={link.url}
+          code={codeLabel(link.roomId)}
+          spectatorLink={watchLink}
+          status={open > 0 ? `Waiting for players · ${seatedCount} of ${Object.keys(st.seats).length} here` : `Everyone is here · ${seatedCount} of ${Object.keys(st.seats).length}`}
+          onclose={() => (inviteOpen = false)}
+        />
+      </aside>
+    {/if}
+  </div>
+
+  {#if pickerOpen}
+    {@const Picker = picker}
+    <div class="layer" role="presentation" data-testid="picker-layer" onclick={(e) => e.target === e.currentTarget && (pickerOpen = false)} onkeydown={(e) => e.key === 'Escape' && (pickerOpen = false)}>
+      <Picker {allow} onpick={pickDeck} onclose={() => (pickerOpen = false)} />
+    </div>
+  {/if}
+
+  {#if setupOpen && isHost}
+    <div class="layer" role="presentation" onclick={(e) => e.target === e.currentTarget && (setupOpen = false)} onkeydown={(e) => e.key === 'Escape' && (setupOpen = false)}>
+      <Sheet label="Table setup" width="narrow" onclose={() => (setupOpen = false)} data-testid="setup-sheet">
+        {#snippet header()}<h2 class="ds-t-title">Table setup</h2>{/snippet}
+        <p class="ds-t-eyebrow">TABLE</p>
+        <Segmented
+          label="Table"
+          size="sm"
+          value={st.format}
+          options={(['1v1', 'ffa3', 'ffa4', '2hg'] as const).map((f) => ({ value: f, label: FORMAT_LABEL[f], disabled: ready.ready > 0 }))}
+          onchange={setFormat}
+          data-testid="setup-format"
+        />
+        <p class="ds-t-eyebrow">DECKS</p>
+        <Segmented
+          label="Decks"
+          size="sm"
+          value={drafting ? 'draft' : rule}
+          options={[
+            { value: 'any', label: 'OWN DECKS' },
+            { value: 'booster', label: 'BOOSTER DECKS' },
+            { value: 'draft', label: 'LIVE DRAFT' },
+          ]}
+          onchange={setDecks}
+          data-testid="setup-decks"
+        />
+        {#if drafting}
+          <div class="setup-boosters" data-testid="setup-boosters">
+            <BoosterFan sets={packs} width={44} label="The boosters of this draft" />
+            <Button size="sm" data-testid="setup-boosters-edit" onclick={() => (boostersOpen = true)}>BOOSTERS…</Button>
+          </div>
+        {/if}
+        <p class="ds-t-eyebrow">PASS TIMER</p>
+        <Segmented
+          label="Pass timer"
+          size="sm"
+          value={st.settings.passTimerMs === null ? 'off' : String(st.settings.passTimerMs)}
+          options={[
+            { value: 'off', label: 'OFF' },
+            { value: '3000', label: '3 S' },
+            { value: '5000', label: '5 S' },
+            { value: '10000', label: '10 S' },
+          ]}
+          onchange={setPass}
+          data-testid="setup-pass"
+        />
+      </Sheet>
+    </div>
+  {/if}
+  {#if boostersOpen && isHost}
+    {@const Boosters = boosterSheet}
+    <div class="layer" role="presentation" data-testid="boosters-layer" onclick={(e) => e.target === e.currentTarget && (boostersOpen = false)} onkeydown={(e) => e.key === 'Escape' && (boostersOpen = false)}>
+      <Boosters value={boosters} mode="draft" onchange={(b) => setLobby(lobbyFromBoosters(b))} onclose={() => (boostersOpen = false)} />
+    </div>
+  {/if}
+
+</main>
+
+<style>
+  .room {
+    box-sizing: border-box;
+    height: 100%;
+    overflow-y: auto;
+    padding: var(--ds-space-xl) var(--ds-space-lg) var(--ds-space-xxxl);
+    display: grid;
+    gap: var(--ds-space-lg);
+    align-content: start;
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-body);
+    color: var(--ds-ink);
+    background: var(--ds-mat);
+  }
+  .top {
+    display: flex;
+    align-items: center;
+    gap: var(--ds-space-md);
+    flex-wrap: wrap;
+  }
+  .title {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+  }
+  h1 {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ds-space-sm);
+  }
+  .code {
+    font-family: var(--ds-font-mono);
+    letter-spacing: 0.12em;
+  }
+  .top-actions {
+    display: flex;
+    gap: var(--ds-space-sm);
+  }
+  .body {
+    display: grid;
+    gap: var(--ds-space-xl);
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+  }
+  .room[data-invite='true'] .body {
+    grid-template-columns: minmax(0, 1fr) 336px;
+  }
+  .main {
+    display: grid;
+    gap: var(--ds-space-lg);
+    min-width: 0;
+    max-width: 880px;
+    width: 100%;
+    justify-self: center;
+  }
+  .who-sets {
+    margin: 0;
+    text-align: center;
+  }
+  .seats {
+    display: grid;
+    gap: var(--ds-space-md);
+  }
+  .table-box {
+    position: relative;
+    width: 100%;
+    max-height: 46vh;
+    margin: 0 auto;
+  }
+  .table-box svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .table {
+    fill: var(--ds-frame);
+    stroke: var(--ds-line);
+    stroke-width: 8;
+  }
+  .seat {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    display: grid;
+    justify-items: center;
+    gap: var(--ds-space-xs);
+  }
+  /* A seat plate (visual.md 2.8 "Seat row"): a raised pill, 56 high; an open seat is a dashed well. */
+  .plate {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ds-space-md);
+    width: 232px;
+    height: var(--ds-control-lg);
+    padding: 0 var(--ds-space-lg) 0 var(--ds-space-sm);
+    border: 0;
+    border-radius: var(--ds-radius-plate);
+    background: var(--ds-panel-raised);
+    color: var(--ds-ink);
+    box-shadow: var(--ds-elevation-raised);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: transform var(--ds-duration-fast, 120ms) var(--ds-ease-out, ease-out);
+  }
+  .plate:focus-visible {
+    outline: 2px solid var(--ds-focus);
+    outline-offset: 2px;
+  }
+  .plate.mine {
+    box-shadow:
+      0 0 0 2px var(--ds-ink),
+      var(--ds-elevation-raised);
+    cursor: default;
+  }
+  .plate.free {
+    background: transparent;
+    box-shadow: inset 0 0 0 2px var(--ds-border);
+    color: var(--ds-muted);
+  }
+  .plate:disabled {
+    cursor: default;
+  }
+  .plus {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--ds-chip);
+  }
+  .who {
+    display: grid;
+    gap: var(--ds-space-xxs);
+    min-width: 0;
+    flex: 1;
+  }
+  .name {
+    font-weight: var(--ds-weight-bold);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .state {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ds-space-xs);
+    font-size: var(--ds-type-label);
+    letter-spacing: 0.08em;
+    color: var(--ds-muted);
+  }
+  .plate[data-connect='failed'] .state {
+    color: var(--ds-danger);
+  }
+  .check {
+    font-weight: var(--ds-weight-bold);
+  }
+  .teams {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    gap: var(--ds-space-lg);
+    justify-content: center;
+  }
+  .deck-and-start {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--ds-space-lg);
+    align-items: start;
+  }
+  .slot {
+    display: grid;
+    justify-items: center;
+    gap: var(--ds-space-sm);
+    padding: var(--ds-space-lg);
+    border-radius: var(--ds-radius-sheet);
+    background: var(--ds-panel);
+    box-shadow: var(--ds-elevation-sheet);
+    text-align: center;
+  }
+  .slot p {
+    margin: 0;
+  }
+  .deck-name {
+    font-size: var(--ds-type-title);
+    font-weight: var(--ds-weight-bold);
+  }
+  .offers {
+    display: flex;
+    gap: var(--ds-space-sm);
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .paste-label {
+    justify-self: start;
+  }
+  textarea {
+    box-sizing: border-box;
+    width: 100%;
+    padding: var(--ds-space-md) var(--ds-space-lg);
+    border: 0;
+    border-radius: var(--ds-radius-card);
+    background: var(--ds-chip);
+    box-shadow: var(--ds-elevation-well, none);
+    color: var(--ds-ink);
+    font-family: var(--ds-font-mono);
+    font-size: var(--ds-type-small);
+    resize: vertical;
+  }
+  textarea:focus-visible {
+    outline: 2px solid var(--ds-focus);
+    outline-offset: 2px;
+  }
+  .primary {
+    display: grid;
+    justify-items: center;
+    align-content: start;
+    gap: var(--ds-space-sm);
+    padding-top: var(--ds-space-lg);
+  }
+  .primary p {
+    margin: 0;
+    text-align: center;
+  }
+  .primary :global(.ds-btn--lg) {
+    min-width: 220px;
+  }
+  .pill {
+    display: inline-grid;
+    place-items: center;
+    box-sizing: border-box;
+    min-width: 220px;
+    height: var(--ds-control-sm);
+    padding: 0 var(--ds-space-lg);
+    border-radius: var(--ds-radius-pill);
+    box-shadow: inset 0 0 0 1px var(--ds-border);
+  }
+  .line {
+    font-size: var(--ds-type-body);
+  }
+  .calm {
+    margin: 0;
+    padding: var(--ds-space-md) var(--ds-space-lg);
+    border-radius: var(--ds-radius-card);
+    background: var(--ds-panel);
+    box-shadow: var(--ds-elevation-sheet);
+  }
+  .calm p {
+    margin: 0;
+  }
+  .you {
+    display: grid;
+    gap: var(--ds-space-sm);
+    padding: var(--ds-space-md) var(--ds-space-lg);
+    border-radius: var(--ds-radius-sheet);
+    background: var(--ds-panel);
+    box-shadow: var(--ds-elevation-sheet);
+  }
+  .you-row {
+    display: flex;
+    gap: var(--ds-space-lg);
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .nick {
+    flex: 1 1 220px;
+    display: grid;
+    gap: var(--ds-space-xs);
+  }
+  .colours {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--ds-space-xs);
+    border: 0;
+    padding: 0;
+    margin: 0;
+  }
+  .swatch {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: var(--ds-control-sm);
+    height: var(--ds-control-sm);
+    border-radius: 50%;
+    background: var(--ds-chip);
+    cursor: pointer;
+  }
+  .swatch .dot {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+  }
+  .swatch input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    margin: 0;
+    cursor: pointer;
+  }
+  .swatch:has(input:checked) {
+    box-shadow: inset 0 0 0 2px var(--ds-ink);
+  }
+  .swatch:has(input:disabled) {
+    opacity: 0.4;
+  }
+  .swatch:has(input:focus-visible) {
+    outline: 2px solid var(--ds-focus);
+    outline-offset: 2px;
+  }
+  .invite {
+    position: sticky;
+    top: 0;
+  }
+  .layer {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: grid;
+    place-items: center;
+    padding: var(--ds-space-lg);
+    background: var(--ds-overlay);
+  }
+  .setup-boosters {
+    display: flex;
+    align-items: center;
+    gap: var(--ds-space-md);
+  }
+  /* The legacy spectator panel (not this package's) wears the kit's smallest height here. */
+  .spect :global(button),
+  .spect :global(input:not([type='checkbox']):not([type='radio'])) {
+    box-sizing: border-box;
+    height: 28px;
+  }
+  @media (max-width: 1100px) {
+    .room[data-invite='true'] .body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .invite {
+      position: static;
+      order: -1;
+      justify-self: center;
+    }
+  }
+  @media (max-width: 720px) {
+    .deck-and-start {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .plate {
+      width: 176px;
+    }
+    .table-box {
+      aspect-ratio: auto !important;
+      display: grid;
+      gap: var(--ds-space-md);
+      justify-items: center;
+      max-height: none;
+    }
+    .table-box svg {
+      display: none;
+    }
+    .seat {
+      position: static;
+      transform: none;
+    }
+  }
+</style>
