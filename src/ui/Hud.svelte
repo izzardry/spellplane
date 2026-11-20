@@ -20,11 +20,16 @@
   import './design/base.css';
   import { hudLook, lookCssVars } from './design/css';
   import { lookContext } from './design/look';
-  import IconButton from './design/IconButton.svelte';
   import Icon from './design/Icon.svelte';
   import Button from './design/Button.svelte';
   import Dialog from './design/Dialog.svelte';
-  import MenuPopover from './design/MenuPopover.svelte';
+  import HudMenu from './hud/HudMenu.svelte';
+  import { shellGroups } from './hud/menu-model';
+  import './hud/hud.css';
+  import NoDeck from './hud/NoDeck.svelte';
+  import OpeningHand from './hud/OpeningHand.svelte';
+  import ViewControl from './hud/ViewControl.svelte';
+  import { gameNumber, openingHandShown } from './hud/opening';
   import { primaryAction } from './hud/turn';
   import { tickerText } from './hud/ticker';
   import { hudMenu, type HudMenuId } from './menu';
@@ -87,7 +92,55 @@
   import { installReducedMotionCss, prefersReducedMotion, watchReducedMotion } from './a11y/motion';
   import FocusMirror from './a11y/FocusMirror.svelte';
 
-  let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId, evening }: HudProps = $props();
+  let {
+    session,
+    createScene,
+    faces,
+    cardData,
+    game,
+    theme,
+    settings,
+    parseDecklist,
+    onVoice,
+    newId,
+    evening,
+    // HudShellProps (src/ui/props.ts): what the shell tells the HUD; all optional (docs/design/m8/m7-adjustments.md section 2).
+    onleave,
+    menuTop,
+    sandbox,
+    onchoosedeck,
+    seatPresence,
+    plateMenuTop,
+    plateBadge,
+    status,
+    notice,
+    chrome = 'full',
+    readOnly = false,
+    primaryOverride = null,
+  }: HudProps = $props();
+  /** Everything but the plates, their menus and the status line (HudShellProps.chrome 'plates': a waiting room, a gathering). */
+  const full = $derived(chrome !== 'plates');
+  /**
+   * "Import deck…" and the paste dialog (D7: set-up belongs to Home; only the sandbox imports). A HUD mounted without a
+   * shell (no `onleave`: the pages from before M8, the harness) keeps offering it unless `sandbox` says otherwise.
+   */
+  const importOffered = $derived(sandbox ?? onleave === undefined);
+  /** A seat's player is away: the table says so (Seat.away) or the shell does (seatPresence). */
+  const isAway = (seat: string): boolean => seatPresence?.[seat] === 'away' || st.seats[seat]?.away === true;
+  /** The shell's notice, shown once per id (HudShellProps.notice). */
+  let shownNotice = $state<{ id: number; text: string; action?: { label: string; run: () => void } } | null>(null);
+  const seenNotices = new Set<number>();
+  $effect(() => {
+    const n = notice;
+    if (!n || seenNotices.has(n.id)) return;
+    seenNotices.add(n.id);
+    shownNotice = n;
+    untrack(() => later(() => {
+      if (shownNotice?.id === n.id) shownNotice = null;
+    }, n.action ? 10000 : 6000));
+  });
+  /** KEEP was pressed for this game (the chips leave; ui/hud/opening.ts). */
+  let keptGame = $state<number | null>(null);
 
   // --- Shared state, as views of the session (the HUD is mounted per session; it never swaps sessions) ----------
   const me = untrack(() => session.seat);
@@ -147,6 +200,11 @@
   }
   let sceneReady = $state(false);
   let sceneError = $state('');
+  // Look, do not touch (HudShellProps.readOnly): the scene proposes no action (TableScene.setReadOnly, M7-P5).
+  $effect(() => {
+    const ro = readOnly;
+    if (sceneReady) (scene as unknown as { setReadOnly?: (on: boolean) => void } | null)?.setReadOnly?.(ro);
+  });
   /** The viewer's reduced-motion setting, followed live (M5-P4 reduced-motion audit; ui/a11y/motion.ts). */
   let reducedMotion = $state(prefersReducedMotion());
 
@@ -243,7 +301,6 @@
   let quotaError = $state(false);
   let storageFullDismissed = $state(false);
   /** No deck dismissed by the player (M5-P5 empty states). */
-  let noDeckDismissed = $state(false);
   /** The viewer's theme picker (PLAN M4-P6): present when the app shell provides the choice, not in harness pages. */
   const themeChoice = themeContext();
   let themeOpen = $state(false);
@@ -437,13 +494,21 @@
   });
   const engine = new KeyEngine(
     untrack(() => game.keymap),
-    { start: (b) => commands.run(b.action, 'start'), end: (b) => commands.run(b.action, 'end') },
+    {
+      start: (b) => keyAllowed(b.action) && commands.run(b.action, 'start'),
+      end: (b) => keyAllowed(b.action) && commands.run(b.action, 'end'),
+    },
     () => promptKeys(session.getState(), me),
   );
   $effect(() => {
     engine.setKeymap(keymap);
   });
 
+  /** Look, do not touch (HudShellProps.readOnly): only keys that move the view or show something still work. */
+  const READ_ONLY_KEYS: ReadonlySet<ActionId> = new Set<ActionId>(['perspective', 'fitTable', 'zoomTo', 'inspect', 'help']);
+  function keyAllowed(action: ActionId): boolean {
+    return !readOnly || READ_ONLY_KEYS.has(action);
+  }
   /** Run an action as if `card` were hovered (context menu entries). */
   function runOn(card: InstanceId, action: ActionId) {
     forcedHover = card;
@@ -685,6 +750,13 @@
     const group = r.cards.length > 1 ? makeId('g') : null;
     for (const id of r.cards) session.dispatch(group ? { type: 'revealTo', instanceId: id, seats, group } : { type: 'revealTo', instanceId: id, seats });
   }
+  /** The plate menu's "Reveal my hand to them": the existing reveal path (revealTo) for every card in the own hand, one group. */
+  function revealHandTo(seats: string[]): void {
+    if (hand.length === 0 || seats.length === 0) return;
+    const group = hand.length > 1 ? makeId('g') : null;
+    for (const id of hand) session.dispatch(group ? { type: 'revealTo', instanceId: id, seats, group } : { type: 'revealTo', instanceId: id, seats });
+    notify(`Revealed your hand to ${seats.map((x) => st.seats[x]?.name ?? x).join(', ')}`);
+  }
   const otherSeats = $derived(
     Object.values(st.seats)
       .filter((s) => s.id !== me)
@@ -789,7 +861,13 @@
   const mineTurn = $derived(isOwnTurn(st, me));
   /** The one primary button: the next move for this moment (ui/hud/turn.ts). */
   const primary = $derived(primaryAction({ mine: mineTurn, phase: st.turn.phase, phases: game.phases, activeName, offer: untapOffer, spectator: spectating }));
+  /** The primary button's label and kind: the shell's override (the computer game's cues) wins over the turn step. */
+  const primaryShown = $derived(primaryOverride ? { label: primaryOverride.label, kind: 'override', disabled: false, quiet: primaryOverride.quiet === true } : { label: primary.label, kind: primary.kind, disabled: !!primary.disabled, quiet: !!primary.disabled });
   function runPrimary(): void {
+    if (primaryOverride) {
+      primaryOverride.run();
+      return;
+    }
     const p = primary;
     if (p.disabled) return;
     if (p.kind === 'untapDraw') {
@@ -813,7 +891,7 @@
   const offers = $derived(evening ? proposals(st, me) : []);
   const menuGroups = $derived(
     hudMenu(
-      { spectator: spectating, voice: !!liveVoice, captions: !!session.captions, proposals: offers, muted: voice.muted },
+      { spectator: spectating || readOnly, voice: !!liveVoice, captions: !!session.captions, proposals: readOnly ? [] : offers, muted: voice.muted, importDeck: importOffered },
       (a) => keyOf(a),
       runMenu,
       spectating ? {} : { clip: clipTrayDown },
@@ -1325,8 +1403,13 @@
     oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: seat.id, kind, delta })}
     onopenzone={openViewer}
     ongoto={() => scene?.camera.goToSeat(seat.id)}
-    readonly={spectating}
+    readonly={spectating || readOnly}
     compact={!mine && otherAvatars >= 3}
+    away={isAway(seat.id)}
+    badge={plateBadge}
+    menuTop={plateMenuTop}
+    voiceControls={!mine && !!liveVoice}
+    onrevealhand={!mine && !spectating && !readOnly && hand.length > 0 ? () => revealHandTo([seat.id]) : undefined}
   />
 {/snippet}
 
@@ -1348,20 +1431,28 @@
 
   <div class="layer">
     <!-- Top left: the Menu and Undo (docs/design/m7-hud-proposal.md, Always visible). -->
+    {#if full}
     <div class="top-left">
-      <nav class="toolbar" aria-label="Table tools">
+      <nav class="toolbar sp-bar" aria-label="Table tools" data-testid="hud-bar">
+        {#if onleave}
+          <button type="button" class="ds-btn ds-icon-btn ds-btn--quiet sp-h-md sp-round" data-testid="leave" aria-label="Leave" title="Leave: the game is kept in your history" onclick={() => onleave?.()}
+            ><svg class="sp-arrow" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></button
+          >
+          <span class="sp-divider" aria-hidden="true"></span>
+        {/if}
         <button
           bind:this={menuButton}
           type="button"
-          class="ds-btn ds-icon-btn"
+          class="ds-btn ds-icon-btn ds-btn--quiet sp-h-md sp-pill"
           data-testid="open-menu"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
-          title="Menu: deck, tokens, dice, view, voice, keys, settings"
-          onclick={() => (menuOpen = !menuOpen)}><Icon name="menu" /><span>Menu</span></button
+          aria-label="Menu"
+          title="Menu: this game, deck, tokens, dice, view, voice, keys, settings"
+          onclick={() => (menuOpen = !menuOpen)}><Icon name="menu" /><span class="sp-word">Menu</span></button
         >
-        {#if !spectating}
-          <IconButton icon="undo" label="Undo" showLabel data-testid="undo" title="{undoTip}{keyOf('undo') ? ` (${keyOf('undo')})` : ''}" onclick={() => commands.run('undo')} />
+        {#if !spectating && !readOnly}
+          <button type="button" class="ds-btn ds-icon-btn ds-btn--quiet sp-h-md sp-pill" data-testid="undo" aria-label="Undo" title="{undoTip}{keyOf('undo') ? ` (${keyOf('undo')})` : ''}" onclick={() => commands.run('undo')}><Icon name="undo" /><span class="sp-word">Undo</span></button>
         {/if}
         {#if !liveVoice}
           {#if voice.talking}<span class="ds-chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
@@ -1370,7 +1461,7 @@
       </nav>
       {#if menuOpen}
         <div class="menu-pop">
-          <MenuPopover groups={menuGroups} label="Menu" anchor={menuButton ?? null} onclose={() => (menuOpen = false)} />
+          <HudMenu groups={[...shellGroups(menuTop?.()), ...menuGroups]} label="Menu" anchor={menuButton ?? null} onclose={() => (menuOpen = false)} />
         </div>
       {/if}
       {#if themeChoice && themeOpen}
@@ -1380,9 +1471,11 @@
         <div class="voice-pop"><VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} /></div>
       {/if}
     </div>
+    {/if}
 
     <!-- Top centre: the turn tracker; the stack's controls appear under it only while something is on the stack. -->
     <div class="top-centre">
+      {#if full}
       <TurnStrip
         turn={st.turn.number}
         {activeName}
@@ -1391,9 +1484,11 @@
         phases={game.phases}
         current={st.turn.phase}
         nextPhaseKey={keyOf('nextPhase')}
-        onphase={(phase) => session.dispatch({ type: 'phaseSet', phase })}
+        onphase={(phase) => !readOnly && session.dispatch({ type: 'phaseSet', phase })}
       />
-      {#if top}
+      {/if}
+      {#if status}<div class="sp-status" data-testid="hud-status">{@render status()}</div>{/if}
+      {#if top && full}
         <div class="stack-chip ds-panel" data-testid="stack-chip">
           <span class="ds-label">Stack {st.stack.length}</span>
           <button type="button" class="ds-btn ds-btn--small" class:lit={resolveLit} data-testid="resolve" title="Resolve{keyOf('resolve') ? ` (${keyOf('resolve')})` : ''}" onclick={() => commands.run('resolve')}>Resolve</button>
@@ -1426,6 +1521,7 @@
     {/each}
 
     <!-- Top right: the activity button and its ticker; the drawer opens over the right edge. -->
+    {#if full}
     <div class="right" class:open={logOpen}>
       <LogPanel
         bind:this={logPanel}
@@ -1444,33 +1540,43 @@
           hudHover = card;
         }}
       />
+      {#if !logOpen}
+        <div class="view-slot"><ViewControl camera={() => scene?.camera ?? null} /></div>
+      {/if}
     </div>
+    {/if}
 
     {#if st.seats[me]}
       <div class="own-avatar">{@render plate(st.seats[me], true)}</div>
     {/if}
 
     <!-- Bottom right: Talk and the one primary button. -->
+    {#if full}
     <div class="bottom-right">
       {#if liveVoice}
         <div class="talk-cluster">
           <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} hold={talkHold} ontogglepanel={() => (voicePanel = !voicePanel)} />
         </div>
       {/if}
-      {#if !spectating}
-        <Button
-          variant="primary"
+      {#if !spectating && !readOnly}
+        <button
+          type="button"
+          class="ds-btn sp-h-lg sp-pill sp-primary"
+          class:ds-btn--primary={!primaryShown.quiet}
+          class:sp-primary-quiet={primaryShown.quiet}
           data-testid="primary-action"
-          data-kind={primary.kind}
-          aria-disabled={primary.disabled ? 'true' : undefined}
-          title={primary.kind === 'endTurn' && keyOf('nextTurn') ? `End the turn (${keyOf('nextTurn')})` : primary.kind === 'untapDraw' ? 'Untap all your permanents and draw a card (U)' : primary.label}
-          onclick={runPrimary}>{primary.label}</Button
+          data-kind={primaryShown.kind}
+          aria-disabled={primaryShown.disabled ? 'true' : undefined}
+          title={primaryOverride ? primaryOverride.label : primary.kind === 'endTurn' && keyOf('nextTurn') ? `End the turn (${keyOf('nextTurn')})` : primary.kind === 'untapDraw' ? 'Untap all your permanents and draw a card (U)' : primary.label}
+          onclick={runPrimary}>{primaryShown.label}</button
         >
       {/if}
     </div>
+    {/if}
 
     <!-- Above the hand, centred (DESIGN "Specification: geometry, layout and motion", Screen layer); with a teammate's fan shown, above that fan too. -->
-    {#if thumbShown}
+    {#if full}
+    {#if thumbShown && !readOnly}
       <div class="thumbs" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
         <ThumbBar run={(a, phase) => commands.run(a, phase)} keyOf={(a) => keyOf(a)} talking={voice.talking === 'talk'} {resolveLit} />
       </div>
@@ -1479,25 +1585,48 @@
       {#if storageFull && !storageFullDismissed}
         <div class="state"><EmptyState id="storageFull" action={{ label: 'Storage settings', run: () => openSettings('storage'), testid: 'empty-storage-settings' }} ondismiss={() => (storageFullDismissed = true)} /></div>
       {/if}
-      {#if noDeck && !noDeckDismissed && !deckOpen}
-        <div class="state"><EmptyState id="noDeck" action={{ label: 'Import a deck', run: () => (deckOpen = true), testid: 'empty-import-deck' }} ondismiss={() => (noDeckDismissed = true)} /></div>
+      {#if noDeck && !deckOpen && !readOnly}
+        <NoDeck onchoose={onchoosedeck} onpaste={importOffered ? () => (deckOpen = true) : undefined} />
       {/if}
-      {#if toast}<p class="ds-toast" role="status" data-testid="toast">{toast.text}</p>{/if}
-      {#if untapOffer}
+      {#if !readOnly && openingHandShown(st, me, hand.length, keptGame)}
+        <OpeningHand
+          onkeep={() => (keptGame = gameNumber(st))}
+          onmulligan={() => commands.run('mulligan')}
+        />
+      {/if}
+      {#if shownNotice}
+        <div class="ds-toast sp-notice" role="status" data-testid="hud-notice" data-notice={shownNotice.id}>
+          <span>{shownNotice.text}</span>
+          {#if shownNotice.action}
+            {@const act = shownNotice.action}
+            <button
+              type="button"
+              class="ds-btn sp-h-xs sp-pill"
+              data-testid="hud-notice-action"
+              onclick={() => {
+                shownNotice = null;
+                act.run();
+              }}>{act.label}</button
+            >
+          {/if}
+          <button type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-xs sp-round" aria-label="Dismiss" data-testid="hud-notice-close" onclick={() => (shownNotice = null)}><Icon name="close" size={14} /></button>
+        </div>
+      {:else if toast}<p class="ds-toast" role="status" data-testid="toast">{toast.text}</p>{/if}
+      {#if untapOffer && !readOnly}
         <!-- The new turn's offer (DESIGN "Turn flow and confirmation": offered, never done for them); the primary button
              does the same, so this is a quiet line with its own button and a dismiss. -->
         <div class="offer ds-pop" data-testid="untap-offer">
           <span>Your turn.</span>
           <button
             type="button"
-            class="ds-btn ds-btn--small"
+            class="ds-btn sp-h-xs sp-pill"
             title="Untap all and draw (U)"
             onclick={() => {
               untapOffer = false;
               commands.untapAndDraw();
             }}>Untap all and draw</button
           >
-          <IconButton icon="close" label="Dismiss" variant="quiet" class="x" onclick={() => (untapOffer = false)} />
+          <button type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-xs sp-round x" aria-label="Dismiss" title="Dismiss" onclick={() => (untapOffer = false)}><Icon name="close" size={14} /></button>
         </div>
       {/if}
       <FocusMirror
@@ -1514,7 +1643,7 @@
           if (!menu) openKeyMenu();
         }}
       />
-      {#if prompt}
+      {#if prompt && !readOnly}
         <ConfirmPrompt
           model={prompt}
           {me}
@@ -1557,6 +1686,9 @@
       <!-- Two-Headed Giant: the teammate's hand above the own fan (M3-P2, ui/hand/*). -->
       <TeamHands team={session.team} state={st} {faces} {vw} {vh} oninspect={(id, ref) => ((inspectId = id), (inspectRef = ref))} />
     {/if}
+    {/if}
+    <!-- M7-P5 affordances: M7-P5 mounts its affordance layer and coach marks here (after the plates, before the dialogs). -->
+    <!-- /M7-P5 -->
   </div>
 
   {#if viewer}
@@ -1748,8 +1880,8 @@
           : 'This game and the drafted pools end for everyone at the table once all agree, and the table goes back to the lobby.'}
       </p>
       {#snippet actions()}
-        <Button variant="quiet" data-testid="leave-cancel" onclick={() => (leaving = null)}>Keep playing</Button>
-        <Button variant="primary" data-testid="leave-ok" onclick={() => void confirmLeave()}>{leaving === 'nextGame' ? PROPOSAL_LABELS.nextGame : PROPOSAL_LABELS.newDraft}</Button>
+        <Button variant="quiet" class="sp-h-md" data-testid="leave-cancel" onclick={() => (leaving = null)}>Keep playing</Button>
+        <Button variant="primary" class="sp-h-md" data-testid="leave-ok" onclick={() => void confirmLeave()}>{leaving === 'nextGame' ? PROPOSAL_LABELS.nextGame : PROPOSAL_LABELS.newDraft}</Button>
       {/snippet}
     </Dialog>
   {/if}
@@ -1789,8 +1921,8 @@
     user-select: none;
     -webkit-touch-callout: none;
     color-scheme: var(--sp-hud-scheme, light);
-    background: var(--sp-bg, #fff);
-    color: var(--sp-fg, #111);
+    background: var(--ds-mat);
+    color: var(--ds-ink);
     font-family: var(--ds-font-body);
   }
   .scene {
@@ -1802,7 +1934,7 @@
     top: 50%;
     width: 100%;
     text-align: center;
-    color: var(--sp-muted, #5f5f5f);
+    color: var(--ds-muted);
   }
   .root :global(input),
   .root :global(textarea),
@@ -1816,10 +1948,7 @@
     /* Inside the iPad's safe area (rounded corners, home indicator); zero elsewhere. */
     inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
     pointer-events: none;
-    font-size: var(--sp-font-size-small, 12px);
-  }
-  .inline :global(button) {
-    font: inherit;
+    font-size: var(--ds-type-small);
   }
   .top-left {
     position: absolute;
@@ -1839,11 +1968,59 @@
     pointer-events: auto;
     align-items: center;
   }
+  /* The pill bar (Ztyle chrome bar): round buttons, short dividers. */
+  .sp-bar {
+    background: var(--ds-panel);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-pill);
+    box-shadow: var(--ds-elevation-raised);
+    padding: 2px;
+    gap: 2px;
+  }
+  .sp-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--ds-line);
+  }
+  /* Menu and Undo show their word from 1024 px, icon only below. */
+  @media (max-width: 1023px) {
+    .sp-word {
+      display: none;
+    }
+  }
+  .sp-status {
+    pointer-events: auto;
+    display: flex;
+    justify-content: center;
+  }
+  .sp-status:empty {
+    display: none;
+  }
+  .view-slot {
+    position: absolute;
+    top: calc(var(--ds-control-md) + var(--ds-space-sm));
+    right: 0;
+  }
+  .sp-primary {
+    min-width: 200px;
+    pointer-events: auto;
+  }
+  .sp-primary-quiet {
+    background: var(--ds-chip);
+    color: var(--ds-muted);
+    box-shadow: var(--ds-elevation-raised);
+  }
+  .sp-notice {
+    display: flex;
+    align-items: center;
+    gap: var(--ds-space-sm);
+    pointer-events: auto;
+  }
   .menu-pop,
   .theme-pop,
   .voice-pop {
     position: absolute;
-    top: calc(var(--ds-control-height) + var(--ds-space-sm));
+    top: calc(var(--ds-control-md) + var(--ds-space-sm));
     left: 0;
     z-index: 60;
     pointer-events: auto;
@@ -1981,12 +2158,14 @@
   .inline {
     position: fixed;
     z-index: 66;
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    border: 1px solid var(--sp-fg, #111);
-    border-radius: var(--sp-radius-md, 4px);
+    background: var(--ds-panel-raised);
+    color: var(--ds-ink);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-md);
+    box-shadow: var(--ds-elevation-pop);
     padding: 6px 8px;
-    font: var(--sp-font-size-small, 12px) / 1.4 var(--sp-font, system-ui);
+    font-size: var(--ds-type-small);
+    line-height: 1.4;
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
@@ -2020,7 +2199,7 @@
     width: 200px;
     height: 279px;
     pointer-events: none;
-    box-shadow: 0 0 0 1px var(--sp-fg, #111);
+    box-shadow: 0 0 0 1px var(--ds-ink);
     border-radius: 4.76% / 3.41%;
   }
 </style>

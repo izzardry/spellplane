@@ -7,7 +7,7 @@ import type { ActionId, Keymap } from '../games/types';
 import { COUNTER_KINDS, type Commands } from './commands';
 import { keyLabel } from './keymap';
 import type { IconName } from './design/icons';
-import type { MenuGroup } from './design/menu';
+import type { HudMenuGroup } from './hud/menu-model';
 
 /** One menu entry. */
 export interface MenuEntry {
@@ -145,7 +145,7 @@ export const HUD_MENU: readonly { id: HudMenuGroupId; label: string; items: read
     items: [
       { id: 'fitTable', label: 'Fit table', icon: 'fit', action: 'fitTable', testid: 'menu-fit-table' },
       { id: 'perspective', label: 'Switch perspective', icon: 'view', action: 'perspective', testid: 'perspective' },
-      { id: 'look', label: 'Look and sound…', icon: 'palette', testid: 'open-theme-settings' },
+      { id: 'look', label: 'Look…', icon: 'palette', testid: 'open-theme-settings' },
     ],
   },
   {
@@ -178,6 +178,11 @@ export interface HudMenuContext {
   proposals: readonly ('nextGame' | 'newDraft')[];
   /** Muted now (the Mute item reads "Unmute"). */
   muted?: boolean;
+  /**
+   * "Import deck…" is offered (docs/design/m8/m7-adjustments.md D7: only in the sandbox, HudShellProps.sandbox). Absent
+   * means offered, for the menu's own callers from before M8.
+   */
+  importDeck?: boolean;
 }
 
 /** Whether a Menu item is offered in this context. */
@@ -186,6 +191,8 @@ export function hudMenuOffers(id: HudMenuId, ctx: HudMenuContext): boolean {
     case 'nextGame':
     case 'newDraft':
       return ctx.proposals.includes(id);
+    case 'importDeck':
+      return ctx.importDeck !== false && !ctx.spectator;
     case 'voice':
       return ctx.voice;
     case 'mute':
@@ -207,7 +214,7 @@ export function hudMenuOffers(id: HudMenuId, ctx: HudMenuContext): boolean {
  * The Menu as popover groups: the offered items, each with the key of its action (muted on the right) and `run` from
  * the HUD. `pointerdown` handles items that start a drag (the paperclip).
  */
-export function hudMenu(ctx: HudMenuContext, keyOf: (a: ActionId) => string | null, run: (id: HudMenuId) => void, pointerdown: Partial<Record<HudMenuId, (e: PointerEvent) => void>> = {}): MenuGroup[] {
+export function hudMenu(ctx: HudMenuContext, keyOf: (a: ActionId) => string | null, run: (id: HudMenuId) => void, pointerdown: Partial<Record<HudMenuId, (e: PointerEvent) => void>> = {}): HudMenuGroup[] {
   return HUD_MENU.map((g) => ({
     id: g.id,
     label: g.label,

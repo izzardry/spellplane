@@ -7,7 +7,8 @@
   States read without hue: a speaking ring, a dotted typing tag, "away", "asks", "responding".
 -->
 <script lang="ts">
-  import type { Seat, ZoneId } from '../core/types';
+  import type { Snippet } from 'svelte';
+  import type { Seat, SeatId, ZoneId } from '../core/types';
   import CounterChip from './hud/CounterChip.svelte';
   import Icon from './design/Icon.svelte';
   import LifePlate from './hud/LifePlate.svelte';
@@ -30,6 +31,11 @@
     ongoto,
     readonly = false,
     compact = false,
+    away = false,
+    badge,
+    menuTop,
+    voiceControls = false,
+    onrevealhand,
   }: {
     seat: Seat;
     life: number;
@@ -55,6 +61,16 @@
     readonly?: boolean;
     /** A smaller plate (three or more opponents). */
     compact?: boolean;
+    /** Added by M7-P2: the player is away (Seat.away or the shell's seatPresence): the plate at 60 % with the word AWAY. */
+    away?: boolean;
+    /** Added by M7-P2: the shell's badges beside the name (HudShellProps.plateBadge). */
+    badge?: Snippet<[SeatId]> | undefined;
+    /** Added by M7-P2: the shell's section at the top of the "⋯" menu (HudShellProps.plateMenuTop); gets the close callback. */
+    menuTop?: Snippet<[SeatId, () => void]> | undefined;
+    /** Added by M7-P2: the table has live voice; another player's menu offers volume and mute in the voice panel. */
+    voiceControls?: boolean;
+    /** Added by M7-P2: "Reveal my hand to them" in another player's menu; absent when there is nothing to reveal. */
+    onrevealhand?: (() => void) | undefined;
   } = $props();
 
   let moreOpen = $state(false);
@@ -88,7 +104,7 @@
   class="plate"
   class:active
   class:me
-  class:away={seat.away === true}
+  class:away
   class:speaking
   class:compact
   class:asking
@@ -97,24 +113,25 @@
   data-testid="avatar"
   data-seat={seat.id}
   data-line-seat={seat.id}
-  data-away={seat.away === true ? 'true' : 'false'}
-  aria-label="{seat.name}{me ? ' (you)' : ''}{seat.away ? ' (away)' : ''}"
-  style:--seat="var(--sp-seat-{seat.colour}, #555)"
-  style:--seat-ink="var(--sp-seat-{seat.colour}-ink, #fff)"
+  data-away={away ? 'true' : 'false'}
+  aria-label="{seat.name}{me ? ' (you)' : ''}{away ? ' (away)' : ''}"
+  style:--seat="var(--sp-seat-{seat.colour}, var(--ds-muted))"
+  style:--seat-ink="var(--sp-seat-{seat.colour}-ink, var(--ds-panel))"
 >
   <span class="disc" aria-hidden="true"><span class="glyph {glyph}"></span></span>
   <div class="body">
     <header>
       {#if ongoto}
-        <button type="button" class="name goto" data-testid="avatar-goto" title="Look at {me ? 'your' : `${seat.name}'s`} side of the table" onclick={ongoto}>{seat.name}</button>
+        <button type="button" class="ds-btn ds-btn--quiet sp-h-xs name goto" data-testid="avatar-goto" title="Look at {me ? 'your' : `${seat.name}'s`} side of the table" onclick={ongoto}>{seat.name}</button>
       {:else}
         <span class="name">{seat.name}</span>
       {/if}
       {#if me}<span class="you">you</span>{/if}
+      {#if badge}<span class="badges" data-testid="plate-badges">{@render badge(seat.id)}</span>{/if}
       {#if handCount !== null}<span class="hand" data-testid="hand-count" title="{handCount} cards in hand" aria-label="{handCount} cards in hand"><Icon name="hand" size={14} /><b>{handCount}</b></span>{/if}
     </header>
     <div class="tags">
-      {#if seat.away}<span class="tag inverse" data-testid="away" title="Disconnected: public cards stay; hand and library are unavailable until this player returns">away</span>{/if}
+      {#if away}<span class="tag inverse" data-testid="away" title="Away: public cards stay; hand and library are unavailable until this player returns">AWAY</span>{/if}
       {#if responding}<span class="tag" data-testid="responding">responding</span>{/if}
       {#if asking}<span class="tag inverse" data-testid="asking">asks</span>{/if}
       {#if typing}<span class="tag typing" data-testid="avatar-typing" title="Typing a chat line" aria-label="typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>{/if}
@@ -127,14 +144,15 @@
       {#each shown as [kind, n] (kind)}<CounterChip {kind} value={n} {readonly} onchange={(d) => oncounter(kind, d)} />{/each}
     </div>
   {/if}
-  <button bind:this={moreButton} type="button" class="more" data-testid="plate-more" aria-label="More for {seat.name}: counters and piles" title="Counters and piles" aria-expanded={moreOpen} onclick={() => (moreOpen = !moreOpen)}><Icon name="more" size={18} /></button>
+  <button bind:this={moreButton} type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-sm more" data-testid="plate-more" aria-label="More for {seat.name}" title="{seat.name}: counters, piles and more" aria-haspopup="true" aria-expanded={moreOpen} onclick={() => (moreOpen = !moreOpen)}><Icon name="more" size={18} /></button>
   {#if moreOpen}
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
       class="ds-pop pop"
       role="group"
-      aria-label="{seat.name}: counters and piles"
+      aria-label="{seat.name}: plate menu"
       data-testid="plate-details"
+      data-seat={seat.id}
       onkeydown={(e) => {
         if (e.key === 'Escape') {
           e.stopPropagation();
@@ -142,14 +160,25 @@
         }
       }}
     >
+      {#if menuTop}
+        <div class="top" data-testid="plate-menu-top">{@render menuTop(seat.id, closeMore)}</div>
+        <div class="divider" role="separator"></div>
+      {/if}
+      {#if !me && (ongoto || onrevealhand || voiceControls)}
+        <div class="rows">
+          {#if ongoto}<button type="button" class="ds-menu-item sp-h-sm" data-testid="plate-look" onclick={() => (closeMore(), ongoto?.())}>Look at their side</button>{/if}
+          {#if onrevealhand}<button type="button" class="ds-menu-item sp-h-sm" data-testid="plate-reveal-hand" onclick={() => (closeMore(), onrevealhand?.())}>Reveal my hand to them</button>{/if}
+          {#if voiceControls}<span class="ds-key hint" data-testid="plate-voice">Volume and mute: Menu, Voice</span>{/if}
+        </div>
+      {/if}
       <span class="ds-label">Counters</span>
       <ul class="counters">
         {#each allCounters as [kind, n] (kind)}
           <li data-testid="player-counter" data-kind={kind}>
             <span class="kind">{kind}</span>
-            {#if !readonly}<button type="button" class="ds-btn ds-btn--quiet ds-btn--small" aria-label="Remove one {kind}" disabled={n <= 0 && kind === 'poison'} onclick={() => oncounter(kind, -1)}>−</button>{/if}
+            {#if !readonly}<button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-round" aria-label="Remove one {kind}" disabled={n <= 0 && kind === 'poison'} onclick={() => oncounter(kind, -1)}>−</button>{/if}
             <b class="n">{n}</b>
-            {#if !readonly}<button type="button" class="ds-btn ds-btn--quiet ds-btn--small" aria-label="Add one {kind}" onclick={() => oncounter(kind, 1)}>+</button>{/if}
+            {#if !readonly}<button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-round" aria-label="Add one {kind}" onclick={() => oncounter(kind, 1)}>+</button>{/if}
           </li>
         {/each}
       </ul>
@@ -172,7 +201,7 @@
             onblur={() => (newCounter = null)}
           />
         {:else}
-          <button type="button" class="ds-btn ds-btn--quiet ds-btn--small add" data-testid="add-counter" onclick={() => (newCounter = '')}>+ counter</button>
+          <button type="button" class="ds-btn ds-btn--quiet sp-h-xs add" data-testid="add-counter" onclick={() => (newCounter = '')}>+ counter</button>
         {/if}
       {/if}
       {#if zones.length}
@@ -181,7 +210,7 @@
           {#each zones as z (z.id)}
             <button
               type="button"
-              class="ds-btn ds-btn--small"
+              class="ds-btn sp-h-xs sp-pill"
               data-testid="zone-button"
               data-zone={z.id}
               onclick={() => {
@@ -297,9 +326,35 @@
   .goto {
     background: none;
     border: 0;
-    padding: 0;
-    cursor: pointer;
-    text-align: left;
+    box-shadow: none;
+    padding: 0 var(--ds-space-xs);
+    justify-content: flex-start;
+  }
+  /* Away (HudShellProps.seatPresence, Seat.away): the plate at 60 %, AWAY in words. */
+  .plate.away > :not(.pop) {
+    opacity: 0.6;
+  }
+  .badges {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ds-space-xs);
+    max-height: var(--ds-control-xs);
+    overflow: hidden;
+  }
+  .top {
+    display: grid;
+    gap: var(--ds-space-xs);
+  }
+  .divider {
+    height: 1px;
+    margin: 0 var(--ds-space-sm);
+    background: var(--ds-line);
+  }
+  .rows {
+    display: grid;
+  }
+  .hint {
+    padding: 0 var(--ds-space-md);
   }
   .goto:hover {
     text-decoration: underline;
@@ -383,16 +438,10 @@
     gap: 2px;
   }
   .more {
-    display: grid;
-    place-items: center;
-    width: 30px;
-    height: 30px;
+    width: var(--ds-control-sm);
     padding: 0;
-    border: 0;
     border-radius: 50%;
-    background: transparent;
     color: var(--ds-muted);
-    cursor: pointer;
   }
   .more:hover,
   .more[aria-expanded='true'] {
@@ -435,8 +484,8 @@
     font-variant-numeric: tabular-nums;
   }
   .new {
-    font: inherit;
-    min-height: 30px;
+    font-size: inherit;
+    min-height: var(--ds-control-xs);
     padding: 0 8px;
     border: 1px solid var(--ds-border);
     border-radius: var(--ds-radius-sm);

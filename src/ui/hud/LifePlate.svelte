@@ -76,7 +76,7 @@
 
 <div class="life {size}" class:readonly class:scrubbing data-testid="life-plate" onwheel={wheel}>
   {#if !readonly}
-    <button type="button" class="step" aria-label="Lose 1 life" title="Lose 1 life" data-testid="life-minus" onclick={() => onlife(-1)}><Icon name="minus" size={16} /></button>
+    <button type="button" class="ds-btn ds-btn--quiet sp-h-xs step" aria-label="Lose 1 life" title="Lose 1 life" data-testid="life-minus" onclick={() => onlife(-1)}><Icon name="minus" size={16} /></button>
   {/if}
   {#if editing !== null}
     <input
@@ -117,7 +117,7 @@
     {#if pending !== 0}<span class="delta" aria-hidden="true">{pending > 0 ? `+${pending}` : pending}</span>{/if}
   {/if}
   {#if !readonly}
-    <button type="button" class="step" aria-label="Gain 1 life" title="Gain 1 life" data-testid="life-plus" onclick={() => onlife(1)}><Icon name="plus" size={16} /></button>
+    <button type="button" class="ds-btn ds-btn--quiet sp-h-xs step" aria-label="Gain 1 life" title="Gain 1 life" data-testid="life-plus" onclick={() => onlife(1)}><Icon name="plus" size={16} /></button>
   {/if}
 </div>
 
@@ -154,7 +154,6 @@
     padding: 0;
     border: 1px solid var(--ds-focus);
     background: var(--ds-panel-raised);
-    font: inherit;
     font-family: var(--ds-font-numeral);
     font-size: var(--ds-type-heading);
     cursor: text;
@@ -174,14 +173,13 @@
   .step {
     display: inline-grid;
     place-items: center;
-    width: var(--ds-control-stepper);
-    height: var(--ds-control-stepper);
+    width: var(--ds-control-xs);
+    height: var(--ds-control-xs);
+    min-height: var(--ds-control-xs);
     padding: 0;
-    border: 1px solid var(--ds-border);
     border-radius: 50%;
     background: var(--ds-chip);
-    color: var(--ds-ink);
-    cursor: pointer;
+    box-shadow: none;
     opacity: 0;
     transition: opacity var(--ds-duration-fast) var(--ds-ease-standard);
     pointer-events: auto;
@@ -194,11 +192,15 @@
   @media (hover: none) {
     .step {
       opacity: 1;
-      width: var(--ds-control-touch);
-      height: var(--ds-control-touch);
+      width: var(--ds-control-md);
+      height: var(--ds-control-md);
+      min-height: var(--ds-control-md);
     }
   }
   :global(.touch-ui) .step {
     opacity: 1;
+    width: var(--ds-control-md);
+    height: var(--ds-control-md);
+    min-height: var(--ds-control-md);
   }
 </style>

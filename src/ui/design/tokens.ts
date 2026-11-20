@@ -171,7 +171,7 @@ export const LAYOUT = {
   space: { xxs: 2, xs: 4, sm: 8, md: 12, lg: 16, xl: 24, xxl: 32 },
   type: { label: 11, small: 12, body: 14, control: 15, title: 17, heading: 20, display: 34, life: 48, brand: 56 },
   lineHeight: { tight: 1.15, body: 1.35 },
-  control: { height: 40, primary: 52, talk: 52, tracker: 44, touch: 44, stripAction: 34, stepper: 30, avatar: 52, avatarSmall: 38 },
+  control: { xs: 28, sm: 36, md: 44, lg: 56, height: 40, primary: 52, talk: 52, tracker: 44, touch: 44, stripAction: 34, stepper: 30, avatar: 52, avatarSmall: 38 }, // [M7-P2] xs…lg: the four control heights (visual.md V4)
   /** HUD edge inset from the window. */
   edge: 16,
   /** Stacking order of the HUD layers (critique, Start page 4: "Nothing defines what may cover what"). */
