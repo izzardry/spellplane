@@ -172,7 +172,9 @@ if (A.contracts) {
     { label: `contracts:${M}`, phase: 'Contracts', schema: CONTRACTS_SCHEMA },
   )
   if (!contracts || !contracts.committed) {
-    log(`Contracts for ${M} failed: ${contracts ? contracts.summary : 'agent died'}. Packages will still try against whatever is on ${BR}.`)
+    // Packages built on half-landed contracts waste the whole run (M8, 20 Nov 2026): stop here instead.
+    log(`Contracts for ${M} failed: ${contracts ? contracts.summary : 'agent died'}. Stopping before the packages start.`)
+    return { contracts, stopped: 'contracts not committed' }
   }
 }
 
