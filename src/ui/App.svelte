@@ -27,6 +27,7 @@
   import type { UpdatePlace } from './update';
   import type { Stage } from '../core/types';
   import { installReducedMotionCss } from './a11y/motion';
+  import FrameMeter from './perf/FrameMeter.svelte';
 
   let props: Partial<AppProps> = $props();
 
@@ -83,6 +84,7 @@
 
 {#if route.name !== 'room'}<UpdateNotice update={props.update} place={updatePlace} />{/if}
 <OfflineNotice />
+<FrameMeter />
 
 {#if !ready && waitsForStoredTheme(route)}
   <!-- Reading the stored theme before a table builds its scene: a moment, at most a few seconds (ui/settings/theme.ts).

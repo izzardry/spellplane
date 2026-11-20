@@ -156,6 +156,8 @@ export function createPresenceLayer(host: HTMLElement, scene: Pick<TableScene, '
   let shapes: PresenceShape[] = [];
   let raf = 0;
   let painted = false;
+  /** What the canvas shows (shapesKey), '' for nothing painted. */
+  let paintedKey = '';
   let disposed = false;
   const active = (): boolean => peers.some((p) => drawable(p, now(), opts.selfSeat, PRESENCE_STALE_MS));
   const wake = (): void => {
@@ -177,6 +179,7 @@ export function createPresenceLayer(host: HTMLElement, scene: Pick<TableScene, '
         ctx.clearRect(0, 0, canvas.width, canvas.height);
       }
       painted = false;
+      paintedKey = '';
       return;
     }
     raf = requestAnimationFrame(draw);
@@ -184,15 +187,32 @@ export function createPresenceLayer(host: HTMLElement, scene: Pick<TableScene, '
     const dpr = window.devicePixelRatio || 1;
     const w = Math.max(1, Math.round(rect.width * dpr));
     const h = Math.max(1, Math.round(rect.height * dpr));
+    let resized = false;
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
+      resized = true;
     }
+    const before = shapes;
     shapes = presenceShapes(peers, (p) => scene.worldToScreen(p), opts, now(), opts.selfSeat);
     if (!ctx) return;
+    // Repaint only what changed (M7-A0): a full-window 2D canvas cleared and redrawn every frame costs Safari a full
+    // layer upload per frame on a large Retina display, while the cursors mostly rest. Unchanged shapes draw nothing;
+    // changed ones clear and redraw the boxes around their old and new places.
+    const key = shapesKey(shapes, rect);
+    if (!resized && key === paintedKey) return;
+    const dirty = resized || !painted ? [{ x: rect.left, y: rect.top, w: rect.width, h: rect.height }] : [...before, ...shapes].map(shapeBounds);
+    paintedKey = key;
     ctx.setTransform(dpr, 0, 0, dpr, -rect.left * dpr, -rect.top * dpr);
-    ctx.clearRect(rect.left, rect.top, rect.width, rect.height);
+    ctx.save();
+    ctx.beginPath();
+    for (const b of dirty) {
+      ctx.clearRect(b.x, b.y, b.w, b.h);
+      ctx.rect(b.x, b.y, b.w, b.h);
+    }
+    ctx.clip();
     for (const s of shapes) paint(ctx, s);
+    ctx.restore();
     painted = true;
   }
   wake();
@@ -210,6 +230,46 @@ export function createPresenceLayer(host: HTMLElement, scene: Pick<TableScene, '
   };
   registerDebug({ presence: { drawn: () => layer.drawn(), running: () => layer.running() } });
   return layer;
+}
+
+/** The widest name label paint draws, CSS px (a longer name is drawn narrower). */
+const LABEL_MAX_PX = 220;
+/** Room a cursor's arrow and name label take around its tip, CSS px. */
+const CURSOR_BOX = { left: 4, top: 4, right: 14 + LABEL_MAX_PX + 14, bottom: 40 };
+
+/** A box (viewport CSS px) holding everything `paint` draws for a shape, with a margin for strokes and antialiasing. */
+export function shapeBounds(s: PresenceShape): { x: number; y: number; w: number; h: number } {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const g of s.ghosts) {
+    for (const c of g.corners) {
+      x0 = Math.min(x0, c.x - 4);
+      y0 = Math.min(y0, c.y - 4);
+      x1 = Math.max(x1, c.x + 4);
+      y1 = Math.max(y1, c.y + 4);
+    }
+  }
+  if (s.cursor) {
+    x0 = Math.min(x0, s.cursor.x - CURSOR_BOX.left);
+    y0 = Math.min(y0, s.cursor.y - CURSOR_BOX.top);
+    x1 = Math.max(x1, s.cursor.x + CURSOR_BOX.right);
+    y1 = Math.max(y1, s.cursor.y + CURSOR_BOX.bottom);
+  }
+  if (!(x1 > x0 && y1 > y0)) return { x: 0, y: 0, w: 0, h: 0 };
+  return { x: Math.floor(x0), y: Math.floor(y0), w: Math.ceil(x1 - Math.floor(x0)), h: Math.ceil(y1 - Math.floor(y0)) };
+}
+
+/** What a set of shapes looks like on a host at `rect`, to a quarter pixel: equal keys paint the same. */
+export function shapesKey(shapes: readonly PresenceShape[], rect: { left: number; top: number; width: number; height: number }): string {
+  const q = (v: number): number => Math.round(v * 4);
+  const parts = [`${q(rect.left)},${q(rect.top)},${q(rect.width)},${q(rect.height)}`];
+  for (const s of shapes) {
+    parts.push(`${s.peer}|${s.colour}|${s.label}|${s.cursor ? `${q(s.cursor.x)},${q(s.cursor.y)}` : '-'}`);
+    for (const g of s.ghosts) parts.push(g.corners.map((c) => `${q(c.x)},${q(c.y)}`).join(' '));
+  }
+  return parts.join(';');
 }
 
 function paint(ctx: CanvasRenderingContext2D, s: PresenceShape): void {
@@ -247,13 +307,13 @@ function paint(ctx: CanvasRenderingContext2D, s: PresenceShape): void {
     ctx.stroke();
     if (s.label) {
       ctx.font = '600 12px system-ui, sans-serif';
-      const tw = ctx.measureText(s.label).width;
+      const tw = Math.min(LABEL_MAX_PX - 10, ctx.measureText(s.label).width);
       ctx.fillStyle = s.colour;
       ctx.beginPath();
       ctx.roundRect(x + 14, y + 16, tw + 10, 18, 4);
       ctx.fill();
       ctx.fillStyle = '#fff';
-      ctx.fillText(s.label, x + 19, y + 29);
+      ctx.fillText(s.label, x + 19, y + 29, tw);
     }
   }
   ctx.restore();

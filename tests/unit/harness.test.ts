@@ -7,8 +7,12 @@ import { PROTOCOL_VERSION } from '../../src/net/messages';
 
 describe('flags', () => {
   it('parses the harness flags', () => {
-    expect(parseFlags('?profile=a&transport=local&faces=placeholder')).toEqual({ profile: 'a', transport: 'local', faces: 'placeholder', speech: null });
-    expect(parseFlags('')).toEqual({ profile: null, transport: 'trystero', faces: 'scryfall', speech: null });
+    expect(parseFlags('?profile=a&transport=local&faces=placeholder')).toEqual({ profile: 'a', transport: 'local', faces: 'placeholder', speech: null, fps: false, render: [] });
+    expect(parseFlags('')).toEqual({ profile: null, transport: 'trystero', faces: 'scryfall', speech: null, fps: false, render: [] });
+    expect(parseFlags('?fps').fps).toBe(true);
+    expect(parseFlags('?faces=placeholder&fps=1').fps).toBe(true);
+    expect(parseFlags('?fps=0').fps).toBe(false);
+    expect(parseFlags('?render=NoAdapt,fullpr,,bad!').render).toEqual(['noadapt', 'fullpr']);
     expect(parseFlags('?profile=../x').profile).toBeNull();
   });
   it('namespaces the database by profile', () => {
