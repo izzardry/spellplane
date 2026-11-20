@@ -84,7 +84,7 @@ describe('ConnectivityCheck', () => {
     expect(c.observe(s, st, A, 0).pairs).toEqual([{ peer: B, name: 'Ben', seat: null, state: 'connecting' }]);
     const r = c.observe(s, st, A, CONNECT_CHECK_MS);
     expect(r.pairs[0]!.state).toBe('failed');
-    expect(r.problems.find((p) => p.kind === 'pair')?.text).toMatch(/cannot finish connecting to Ben/);
+    expect(r.problems.find((p) => p.kind === 'pair')?.text).toMatch(/^You and Ben cannot connect directly\. Try another network/);
   });
 
   it('per pair: a seated player another peer relays but this browser cannot reach directly', () => {
@@ -100,7 +100,7 @@ describe('ConnectivityCheck', () => {
     ]);
     const r = c.observe(s, st, A, CONNECT_CHECK_MS);
     expect(r.overall).toBe('failed');
-    expect(r.problems).toEqual([{ kind: 'pair', peer: C, seat: 's2', text: expect.stringMatching(/Cat is at this table, but your browser cannot connect to theirs directly/) }]);
+    expect(r.problems).toEqual([{ kind: 'pair', peer: C, seat: 's2', text: expect.stringMatching(/^You and Cat cannot connect directly\./) }]);
     expect(r.problems[0]!.text).toMatch(REMEDY);
   });
 
