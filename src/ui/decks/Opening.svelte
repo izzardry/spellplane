@@ -7,15 +7,14 @@
 -->
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { CardRef, SetCode } from '../../core/types';
-  import type { SetData } from '../../data/types';
+  import type { CardRef } from '../../core/types';
   import { packsOfSeal } from '../../draft/solo-sealed';
   import type { DeckRecord } from '../../store/types';
   import Button from '../design/Button.svelte';
   import StatusLine from '../design/StatusLine.svelte';
   import type { DecksEnv } from './env';
   import CardImage from './parts/CardImage.svelte';
-  import { markSuggest, saveRevealed } from './state/open';
+  import { loadSets, markSuggest, saveRevealed } from './state/open';
 
   let { env, id }: { env: DecksEnv; id: string } = $props();
 
@@ -36,11 +35,7 @@
       env.go(`#/decks/${encodeURIComponent(d.id)}`);
       return;
     }
-    const data = new Map<SetCode, SetData>();
-    for (const code of new Set(d.seal.sets)) {
-      const s = env.sets.peek(code) ?? (await env.sets.get(code).catch(() => null));
-      if (s) data.set(code, s);
-    }
+    const data = await loadSets(env.sets, d.seal.sets);
     const generated = packsOfSeal(d.seal, data);
     if (generated && generated.length === total) {
       packs = generated.map((p) => p.cards.map((c) => (c.ref.foil ? { sid: c.ref.sid, foil: true as const } : { sid: c.ref.sid })));

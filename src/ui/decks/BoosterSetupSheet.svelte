@@ -79,7 +79,7 @@
 </script>
 
 <div class="ds-scrim" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && onclose?.()}>
-  <section
+  <div
     role="dialog"
     aria-modal="true"
     tabindex="-1"
@@ -147,7 +147,7 @@
         <Button variant="primary" data-testid="setup-done" onclick={() => onclose?.()}>Done</Button>
       {/if}
     </div>
-  </section>
+  </div>
 </div>
 
 <style>

@@ -57,7 +57,7 @@
 </script>
 
 <div class="ds-scrim" role="presentation" onpointerdown={(e) => e.target === e.currentTarget && onclose?.()}>
-  <section
+  <div
     role="dialog"
     aria-modal="true"
     tabindex="-1"
@@ -84,7 +84,7 @@
         {/each}
       </div>
     {/if}
-  </section>
+  </div>
 </div>
 
 <style>

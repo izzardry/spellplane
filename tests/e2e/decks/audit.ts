@@ -32,7 +32,7 @@ export async function deckAudit(page: Page): Promise<string[]> {
     }
     const layers = new Map<Element, number>();
     for (const b of [...document.querySelectorAll('.ds-btn--primary')].filter(visible)) {
-      const layer = b.closest('[role="dialog"], .ds-scrim, [role="menu"]') ?? document.body;
+      const layer = b.closest('[role="dialog"], .ds-scrim, [role="menu"], .ds-toast') ?? document.body;
       layers.set(layer, (layers.get(layer) ?? 0) + 1);
     }
     for (const [layer, n] of layers) if (n > 1) problems.push(`${n} primary buttons in one layer (${layer.tagName.toLowerCase()})`);

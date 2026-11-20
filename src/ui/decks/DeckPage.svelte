@@ -10,7 +10,7 @@
 <script lang="ts">
   import { onDestroy, onMount, untrack } from 'svelte';
   import type { CardRef } from '../../core/types';
-  import { analyse, BASIC_LAND_NAMES, BASIC_OF_COLOUR, bucketOf, COLOURS, curveText, isCreatureCard, isLandCard, manaCosts, type BasicLandName, type Colour, type ManaSymbol } from '../../data/deck/analyse';
+  import { analyse, BASIC_LAND_NAMES, BASIC_OF_COLOUR, COLOURS, curveText, isLandCard, manaCosts, type BasicLandName, type ManaSymbol } from '../../data/deck/analyse';
   import { add, countSid, remove, rename, setMain, setSize, type Board, type EditResult } from '../../data/deck/edit';
   import { suggestedBasics, suggestedLands, recipeFor } from '../../data/deck/lands';
   import { compileQuery, matchesQuery, QUICK_CHIPS, quickQuery, type QuickChip, type TypeChip } from '../../data/deck/query';
@@ -37,6 +37,7 @@
   import { cardLabel } from './env';
   import CardImage from './parts/CardImage.svelte';
   import { DeckEditor } from './state/editor';
+  import { groupsOf, overCopies, rowsOf } from './state/rows';
   import { takeFresh } from './state/library';
   import { basicRefs, suggestFor, suggestionText, takeSuggest } from './state/open';
 
@@ -98,57 +99,13 @@
   const curveTotals = $derived(curve.cr.map((n, i) => n + (curve.sp[i] ?? 0)));
   const copies = $derived.by(() => {
     void cardsVersion;
-    if (!deck || sealed) return null;
-    const by = new Map<string, number>();
-    for (const r of deck.main) {
-      const c = lookup(r);
-      if (c && isLandCard(c) && /\bBasic\b/.test(c.type_line)) continue;
-      const k = c?.name ?? r.sid;
-      by.set(k, (by.get(k) ?? 0) + 1);
-    }
-    const limit = size >= 100 ? 1 : 4;
-    const over = [...by.entries()].filter(([, n]) => n > limit).sort((a, b) => b[1] - a[1])[0];
-    return over ? { name: over[0], n: over[1], limit } : null;
+    return deck && !sealed ? overCopies(deck.main, lookup, size) : null;
   });
 
-  interface Row {
-    sid: string;
-    card: CardData | null;
-    n: number;
-    mv: number;
-  }
-  interface Group {
-    title: string;
-    rows: Row[];
-    n: number;
-  }
-  function rowsOf(list: readonly CardRef[]): Row[] {
-    const by = new Map<string, Row>();
-    for (const r of list) {
-      const row = by.get(r.sid);
-      if (row) row.n++;
-      else {
-        const card = lookup(r);
-        by.set(r.sid, { sid: r.sid, card, n: 1, mv: card ? Math.round(card.cmc) : 0 });
-      }
-    }
-    return [...by.values()].sort((a, b) => a.mv - b.mv || (a.card?.name ?? a.sid).localeCompare(b.card?.name ?? b.sid));
-  }
-  function groupsOf(list: readonly CardRef[]): Group[] {
-    const g: Record<string, Row[]> = { Creatures: [], Spells: [], Other: [], Lands: [], Unknown: [] };
-    for (const row of rowsOf(list)) {
-      const c = row.card;
-      const key = !c ? 'Unknown' : isLandCard(c) ? 'Lands' : isCreatureCard(c) ? 'Creatures' : /\b(Instant|Sorcery)\b/.test(c.type_line) ? 'Spells' : 'Other';
-      g[key]!.push(row);
-    }
-    return Object.entries(g)
-      .filter(([, rows]) => rows.length > 0)
-      .map(([title, rows]) => ({ title, rows, n: rows.reduce((s, r) => s + r.n, 0) }));
-  }
   const listGroups = $derived.by(() => {
     void cardsVersion;
     if (!deck) return [];
-    return groupsOf(board === 'side' ? deck.side : deck.main);
+    return groupsOf(board === 'side' ? deck.side : deck.main, lookup);
   });
 
   // The pool (booster decks): the cards not in the deck, filtered locally by the chips.
@@ -156,7 +113,7 @@
     void cardsVersion;
     if (!deck || !sealed) return [];
     const q = compileQuery({ colours, types });
-    return rowsOf(deck.side).filter((r) => !q || (r.card ? matchesQuery(r.card, q) : false));
+    return rowsOf(deck.side, lookup).filter((r) => !q || (r.card ? matchesQuery(r.card, q) : false));
   });
 
   // ---- loading -------------------------------------------------------------------------------------------------

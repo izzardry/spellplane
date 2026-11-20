@@ -148,3 +148,13 @@ export async function saveRevealed(decks: DeckStore, deck: DeckRecord, revealed:
   await decks.put(next);
   return next;
 }
+
+/** The set data of each distinct set (cache first); a set without data is left out. */
+export async function loadSets(sets: SetDataSource, codes: readonly SetCode[]): Promise<Map<SetCode, SetData>> {
+  const data = new Map<SetCode, SetData>();
+  for (const code of new Set(codes)) {
+    const s = sets.peek(code) ?? (await sets.get(code).catch(() => null));
+    if (s) data.set(code, s);
+  }
+  return data;
+}
