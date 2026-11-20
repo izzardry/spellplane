@@ -141,6 +141,8 @@ export interface Seat {
   invite?: { h: string; by: SeatId; atSeq: number; exp: number };
   /** Added by M8-C. How often a new key pair took this seat through `seatClaim` (persistence.md section 7). */
   takeovers?: number;
+  /** The last re-invite of this seat that was closed (used by a claim, taken back, or void because the seat's own browser came back), so a later claim with its token is refused with that reason (persistence.md section 7). */ // [M8-P5]
+  closedInvite?: { h: string; end: 'used' | 'takenBack' | 'void' }; // [M8-P5]
   /** Added by M8-C. The game number (TableState.games ?? 0) for which this seat's opening hand was dealt; set by `dealt` (contracts.md Part D). */
   dealt?: number;
 }

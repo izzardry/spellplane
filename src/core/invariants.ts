@@ -146,6 +146,12 @@ export function checkInvariants(state: TableState): string[] {
   for (const [key, s] of Object.entries(state.seats)) {
     if (s.id !== key) bad(`seat ${key} has id ${s.id}`);
     if (s.team !== undefined && !state.teams[s.team]?.seats.includes(s.id)) bad(`seat ${s.id} is not listed by team ${s.team}`);
+    // M8-P5 (persistence.md section 7): an open invite belongs to an occupied seat marked away and was made by another seat.
+    if (s.invite !== undefined) {
+      if (s.peer === undefined || s.away !== true) bad(`seat ${s.id} has an open invite but is not an occupied seat marked away`);
+      if (!Object.hasOwn(state.seats, s.invite.by) || s.invite.by === s.id) bad(`seat ${s.id}'s invite was made by ${s.invite.by}`);
+    }
+    if (s.takeovers !== undefined && (!Number.isInteger(s.takeovers) || s.takeovers < 0)) bad(`seat ${s.id} has ${s.takeovers} take-overs`);
   }
   for (const [key, t] of Object.entries(state.teams)) {
     if (t.id !== key) bad(`team ${key} has id ${t.id}`);

@@ -280,14 +280,14 @@
       <span class="spacer"></span>
       {#if note}<span class="note" role="status" data-testid="draft-note">{note}</span>{/if}
       {#if winstonTurn}
-        <button type="button" data-testid="pile-take" onclick={() => pile(true)}>Take this pile</button>
-        <button type="button" data-testid="pile-pass" onclick={() => pile(false)}>Add a card, next pile</button>
+        <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" data-testid="pile-take" onclick={() => pile(true)}>Take this pile</button>
+        <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" data-testid="pile-pass" onclick={() => pile(false)}>Add a card, next pile</button>
       {/if}
       {#if pv.pack}
         {#if marked.length}
-          <button type="button" class="quiet" data-testid="draft-clear" onclick={() => draft.mark([])} title="Escape">Clear</button>
+          <button type="button" class="ds-btn ds-btn--quiet ds-btn--sm" data-testid="draft-clear" onclick={() => draft.mark([])} title="Escape">Clear</button>
         {/if}
-        <button type="button" class="primary" data-testid="draft-confirm" disabled={!status.confirmable} onclick={confirmMarked} title="Enter">
+        <button type="button" class="ds-btn ds-btn--primary ds-btn--sm" data-testid="draft-confirm" disabled={!status.confirmable} onclick={confirmMarked} title="Enter">
           {need > 1 ? `Take ${need}` : 'Take'}
         </button>
       {/if}
@@ -405,28 +405,5 @@
     border-radius: 1px;
     box-shadow: 2px -2px 0 -1px var(--sp-bg), 2px -2px 0 0 currentColor;
   }
-  button {
-    font: inherit;
-    padding: 4px 12px;
-    border-radius: var(--sp-radius-sm, 4px);
-    border: 1px solid var(--sp-border);
-    background: var(--sp-bg);
-    color: var(--sp-fg);
-    cursor: pointer;
-  }
-  button.primary {
-    border-color: var(--sp-fg);
-    font-weight: var(--sp-font-weight-bold, 600);
-  }
-  button.quiet {
-    color: var(--sp-muted);
-  }
-  button:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
-  button:focus-visible {
-    outline: 2px solid var(--sp-focus);
-    outline-offset: 1px;
-  }
+  /* Swept to the kit (contracts.md Part G "Visual" item 4): the buttons are kit buttons (ds-btn, 36 px). */
 </style>

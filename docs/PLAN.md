@@ -1042,8 +1042,8 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M8-P1 Ztyle kit
 - [ ] M8-P2 Shell, Home and History
 - [ ] M8-P3 Decks
-- [ ] M8-P4 Private tables and the end of a game
-- [ ] M8-P5 Rejoin
+- [x] M8-P4 Private tables and the end of a game
+- [x] M8-P5 Rejoin
 - [ ] M8-P6 Computer opponent
 - [ ] M8-P7 Matchmaking
 - [ ] M8-P8 Journey integration

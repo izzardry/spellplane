@@ -57,6 +57,8 @@ export interface TablePersistenceOptions {
   play?: () => number;
   /** Added by M8-C: the play count of the stored snapshot this save continues. */
   snapshotPlay?: number | undefined;
+  /** M8-P5: the newest head heard of, written with every table record (TableRecord.knownHead). */
+  knownHead?: () => TableRecord['knownHead'];
 }
 
 /**
@@ -146,6 +148,8 @@ export class TablePersistence {
         const snapshotSeq = rebase ? state.seq : this.snapshotSeq;
         const snapshotPlay = rebase ? play : this.snapshotPlay;
         await store.saveAction(this.o.roomId, entry, { ...this.record(state, snapshot, snapshotSeq, lastSeq, at), snapshotPlay }, secrets);
+        this.failing = false;
+        this.savedAt = this.o.now();
         this.snapshot = snapshot;
         this.snapshotSeq = snapshotSeq;
         this.snapshotPlay = snapshotPlay;
@@ -197,7 +201,26 @@ export class TablePersistence {
       .catch((e: unknown) => this.failed(e));
   }
 
+  /** M8-P5: whether the last write failed (persistence.md section 2, `NOT SAVING`); a later successful write clears it. */
+  failing = false;
+  /** M8-P5: when a write last succeeded (`Saved · 4 s ago`), null before the first. */
+  savedAt: number | null = null;
+
+  /** M8-P5: write the table record again (the newest head heard of changed without an action). */
+  saveRecord(): void {
+    const store = this.o.store;
+    if (!store) return;
+    this.writes = this.writes
+      .then(async () => {
+        await store.saveSnapshot({ ...this.record(this.snapshot, this.snapshot, this.snapshotSeq, this.lastSeq, this.o.now()), snapshotPlay: this.snapshotPlay }, null);
+        this.failing = false;
+        this.savedAt = this.o.now();
+      })
+      .catch((e: unknown) => this.failed(e));
+  }
+
   private failed(e: unknown): void {
+    this.failing = true;
     this.broken = true;
     this.o.onError(`Could not save the table: ${errorText(e)}`);
   }
@@ -216,6 +239,7 @@ export class TablePersistence {
       // mismatch; net/version.ts roomProtocol, roomVersionNotice): an older page saving a room a newer one wrote never
       // lowers it, so the notice comes again at every reload instead of once.
       protocol: Math.max(this.o.protocol ?? PROTOCOL_VERSION, PROTOCOL_VERSION),
+      ...(this.o.knownHead ? { knownHead: this.o.knownHead() ?? null } : {}),
     };
   }
 }

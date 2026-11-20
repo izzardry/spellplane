@@ -89,7 +89,7 @@ describe('the lobby (matchmaking.md 2.4; contracts.md Part E)', () => {
   });
 });
 
-describe('the rejoin actions are refused until M8-P5 (contracts.md Part D)', () => {
+describe('the rejoin actions refuse what does not apply and say why (contracts.md Part D; filled by M8-P5)', () => {
   it.each([
     ['seatInvite', act('seatInvite', { seat: 's1', h: 'x'.repeat(43), exp: 1 })],
     ['seatClaim', act('seatClaim', { seat: 's1', claim: 'c', peer: 'p', name: 'Ben' }, 's1')],
@@ -98,7 +98,8 @@ describe('the rejoin actions are refused until M8-P5 (contracts.md Part D)', () 
     const s = { ...fresh(), stage: 'match' as const };
     const before = canonicalJson(s);
     expect(reduce(s, action as Action)).toBe(s);
-    expect(explain(s, action as Action)).toMatch(/M8-P5/);
+    // M8-P5 filled rejoin.ts: these unseated and uninvited cases are refused with a reason (tests/unit/rejoin).
+    expect(explain(s, action as Action)).toMatch(/\S/);
     expect(canonicalJson(s)).toBe(before);
   });
   it('a matched table refuses seat invites for good', () => {
