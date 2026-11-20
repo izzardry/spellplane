@@ -42,6 +42,9 @@ test('a click selects a card and its strip stands above it, off the card, with n
 });
 
 test('the strip hides while the camera moves and comes back beside the card when it rests', async ({ page }, info) => {
+  // Reduced motion: no pan inertia on release. WebKit's quick synthetic drag flung the camera to the table's edge
+  // (M7-P1's rig), the selected card left the view and the strip rightly stayed away.
+  await page.emulateMedia({ reducedMotion: 'reduce' });
   const { creature } = await goldfish(page, info);
   await onTable(page, [creature]);
   const c = centreOf((await shownCard(page, creature)).screen);
