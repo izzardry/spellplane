@@ -73,6 +73,12 @@ test('an imported deck: the curve text, the land note and +N LANDS as one undo s
   await expect(page.getByTestId('land-helper')).toContainText('24 lands');
   await expect(page.getByTestId('land-helper')).toContainText('23 suggested');
   await expect(page.getByTestId('land-note')).toHaveCount(0);
+  // The strength number is the stored summary's; the GW list is a simple deck (two colours, creatures, lands on target).
+  const id = decodeURIComponent((await page.evaluate(() => location.hash)).replace('#/decks/', ''));
+  await expect.poll(async () => (await decks<{ strength: { score: number } | null } | null>(page, 'summary', id))?.strength?.score).toBe(40);
+  await expect(page.getByTestId('deck-strength')).toHaveAttribute('data-score', '40');
+  await expect(page.getByTestId('deck-strength')).toContainText('Casual');
+  await expect(page.getByTestId('simple-chip')).toBeVisible();
   // Remove six basics.
   for (let i = 0; i < 3; i++) await row(page, 'Forest').getByTestId('row-minus').click();
   for (let i = 0; i < 3; i++) await row(page, 'Plains').getByTestId('row-minus').click();
@@ -87,6 +93,35 @@ test('an imported deck: the curve text, the land note and +N LANDS as one undo s
   await expect(page.getByTestId('land-note')).toHaveCount(0);
   await page.getByTestId('deck-undo').click();
   await expect(page.getByTestId('land-helper')).toContainText('18 lands');
+  await page.getByTestId('deck-redo').click();
+  await expect(page.getByTestId('land-helper')).toContainText(`${18 + n} lands`);
+  // Undo every edit: the imported 60 cards again; back in the library the tile carries the mark too.
+  while (await page.getByTestId('deck-undo').isEnabled()) await page.getByTestId('deck-undo').click();
+  await expect(page.getByTestId('land-helper')).toContainText('24 lands');
+  await page.getByTestId('deck-done').click();
+  await expect(page.getByTestId('deck-tile').getByTestId('simple-chip')).toBeVisible();
+});
+
+test('the search runs 350 ms after the last key', async ({ page }, info) => {
+  await openDecks(page, { profile: profileOf(info) });
+  await newCustomDeck(page);
+  await page.clock.install();
+  await page.getByTestId('card-search').fill('elves');
+  await page.clock.runFor(300);
+  await expect(page.getByTestId('result-card')).toHaveCount(0);
+  await page.getByTestId('card-search').fill('llanowar');
+  await page.clock.runFor(300);
+  await expect(page.getByTestId('result-card')).toHaveCount(0);
+  await page.clock.runFor(100);
+  await expect(page.locator('[data-testid="result-card"][data-name="Llanowar Elves"]')).toBeVisible();
+  // Type chips compile to query terms: creatures only.
+  await page.getByTestId('card-search').fill('');
+  await page.getByTestId('chip-type-creature').click();
+  await page.getByTestId('chip-colour-G').click();
+  await page.clock.runFor(400);
+  await expect(page.getByTestId('result-card').first()).toBeVisible();
+  const types = await page.getByTestId('result-card').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label') ?? ''));
+  expect(types.every((t) => /Creature/.test(t))).toBe(true);
 });
 
 test('offline: the search is disabled and the list still edits', async ({ page }, info) => {
