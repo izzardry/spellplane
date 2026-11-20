@@ -105,7 +105,10 @@ test('an imported deck: the curve text, the land note and +N LANDS as one undo s
 test('the search runs 350 ms after the last key', async ({ page }, info) => {
   await openDecks(page, { profile: profileOf(info) });
   await newCustomDeck(page);
-  await page.clock.install();
+  // The fake clock stands still between runFor calls (install alone lets time flow, and a slow browser then runs
+  // past the 350 ms on its own).
+  await page.clock.install({ time: new Date('2026-11-20T12:00:00Z') });
+  await page.clock.pauseAt(new Date('2026-11-20T12:00:01Z'));
   await page.getByTestId('card-search').fill('elves');
   await page.clock.runFor(300);
   await expect(page.getByTestId('result-card')).toHaveCount(0);
