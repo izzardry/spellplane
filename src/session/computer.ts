@@ -208,7 +208,27 @@ async function setUp(o: Opened, humanDeck: DeckImport | null, botDeck: DeckImpor
   await when(bot, (s) => s.stage === 'match', 30_000, 'the match at Sparring');
   await dealOpening(human);
   await dealOpening(bot);
-  await rollFirstPlayer(human, { creator: true });
+  const first = await rollFirstPlayer(human, { creator: true });
+  // The setup is over only when both copies hold it: a game left at once then resumes without a half-done shuffle.
+  const game = (s: TableState): number => s.games ?? 0;
+  const dealt = (s: TableState): boolean => s.seats[human.seat]?.dealt === game(s) && s.seats[bot.seat]?.dealt === game(s);
+  const quiet = (): boolean => human.engine.pending().length === 0 && bot.engine.pending().length === 0 && human.engine.seq() === bot.engine.seq();
+  const started = (t: TableState): boolean => first === null || t.turn.active === (t.seats[first]?.team ?? first);
+  await poll(() => dealt(human.getState()) && dealt(bot.getState()) && started(human.getState()) && started(bot.getState()) && quiet(), 30_000, 'the opening hands');
+}
+
+/** Resolve when `pred` holds, looking every 20 ms (the engines settle without a state change of their own). */
+function poll(pred: () => boolean, ms: number, what: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let waited = 0;
+    const look = (): void => {
+      if (pred()) return resolve();
+      if (waited >= ms) return reject(new Error(`M8-P6: timed out waiting for ${what}`));
+      waited += 20;
+      setTimeout(look, 20);
+    };
+    look();
+  });
 }
 
 /** The bot session as the runner's port. */
@@ -264,6 +284,18 @@ function handleOf(o: Opened, config: BotConfig, runner: BotRunner, record: Compu
         record.updatedAt = now();
         void deps.computer?.put(record).catch(() => undefined);
       }
+      // Both saves finish in the background; a resume of this room waits for them (up to 10 s, should storage hang),
+      // so it never reads a save that is behind the table and never deals or rolls a second time.
+      const saved = Promise.all([o.human.whenSaved(), o.bot.whenSaved()]).then(
+        () => undefined,
+        () => undefined,
+      );
+      let cap: ReturnType<typeof setTimeout> | undefined;
+      const done = Promise.race([saved, new Promise<void>((r) => (cap = setTimeout(r, LEAVE_SAVE_MS)))]).finally(() => {
+        clearTimeout(cap);
+        if (closing.get(o.human.roomId) === done) closing.delete(o.human.roomId);
+      });
+      closing.set(o.human.roomId, done);
       void o.bot.leave().catch(() => undefined);
       o.bot.dispose();
       o.human.dispose();
@@ -316,10 +348,16 @@ export async function createComputerGame(opts: ComputerGameOptions): Promise<Com
   return start(opts.roomId, deps, record, humanDeck);
 }
 
+/** How long a resume waits at most for the last saves of the sessions that left the room. */
+const LEAVE_SAVE_MS = 10_000;
+/** Rooms whose sessions were just disposed, until their last saves are written. */
+const closing = new Map<string, Promise<void>>();
+
 /** Open both sessions, run the (idempotent) setup and start the runner. */
 async function start(roomId: string, deps: ComputerDeps, record: ComputerGameRecord, humanDeck: DeckImport | null): Promise<ComputerGame> {
   const keys = deps.botKeys ?? WEB_CRYPTO_BOT_KEYS;
   const e = record.bot.identity;
+  await closing.get(roomId);
   const botIdentity: SessionIdentity = { keyPair: await keys.open(e), peerId: e.peerId, nickname: 'Sparring', seatColour: e.seatColour };
   const o = await openBoth(roomId, deps, botIdentity);
   try {
