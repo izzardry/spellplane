@@ -112,7 +112,7 @@
 </script>
 
 {#if visible && !importing}
-  <aside class="recovery" data-testid="recovery" data-phase={status.phase} data-running={running || busy} aria-live="polite">
+  <aside class="recovery ds-root" data-testid="recovery" data-phase={status.phase} data-running={running || busy} aria-live="polite">
     {#if title}<h2 data-testid="recovery-title">{title}</h2>{/if}
 
     {#if status.phase === 'lost' && !running}
@@ -135,6 +135,7 @@
         <label>
           New hand
           <input
+            class="ds-input"
             type="number"
             min="0"
             max={status.maxHand}
@@ -149,7 +150,7 @@
         </span>
       </div>
       <div class="row">
-        <button type="button" class="primary" data-testid="recovery-start" onclick={() => (importing = true)}>
+        <button type="button" class="ds-btn ds-btn--primary ds-btn--sm" data-testid="recovery-start" onclick={() => (importing = true)}>
           {status.phase === 'agreed' && count === status.hand ? 'Re-import deck and finish' : 'Re-import deck and propose'}
         </button>
       </div>
@@ -158,7 +159,7 @@
     {#if status.phase === 'committed' && !running && !busy}
       <p data-testid="recovery-committed">{committedText(status)}</p>
       <div class="row">
-        <button type="button" class="primary" data-testid="recovery-finish" onclick={finish}>Finish recovery</button>
+        <button type="button" class="ds-btn ds-btn--primary ds-btn--sm" data-testid="recovery-finish" onclick={finish}>Finish recovery</button>
       </div>
     {/if}
 
@@ -166,7 +167,7 @@
     {#if done && status.phase === 'none' && !running}
       <p data-testid="recovery-done">
         Recovered: a new library of {done.library} and a hand of {done.hand}.
-        <button type="button" class="close" aria-label="Dismiss" onclick={() => (done = null)}>×</button>
+        <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" aria-label="Dismiss" onclick={() => (done = null)}>×</button>
       </p>
     {/if}
   </aside>
@@ -179,80 +180,71 @@
 {/if}
 
 <style>
+  /* Swept to the kit (contracts.md Part G "Visual" item 4): kit buttons and heights, --ds-* variables; not restructured. */
   .recovery {
     position: fixed;
     z-index: 64;
     top: 56px;
     left: 50%;
     transform: translateX(-50%);
-    width: min(560px, 92vw);
+    width: min(560px, calc(100vw - 32px));
     box-sizing: border-box;
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    border: 1px solid var(--sp-danger, #b3261e);
-    border-radius: var(--sp-radius-lg, 8px);
-    padding: 10px 14px;
-    font: var(--sp-font-size-small, 12px) / 1.45 var(--sp-font, system-ui);
+    background: var(--ds-panel);
+    color: var(--ds-ink);
+    box-shadow: var(--ds-elevation-pop);
+    border-left: 4px solid var(--ds-danger);
+    border-radius: var(--ds-radius-md);
+    padding: var(--ds-space-md) var(--ds-space-lg);
+    font: var(--ds-type-small);
   }
   h2 {
-    margin: 0 0 6px;
-    font-size: var(--sp-font-size, 14px);
+    margin: 0 0 var(--ds-space-sm);
+    font: var(--ds-type-title);
   }
   p {
-    margin: 4px 0;
+    margin: var(--ds-space-xs) 0;
   }
   .answers {
     list-style: none;
     padding: 0;
-    margin: 6px 0;
+    margin: var(--ds-space-sm) 0;
     display: flex;
     flex-wrap: wrap;
-    gap: 6px 14px;
+    gap: var(--ds-space-xs) var(--ds-space-lg);
   }
   .answers li {
     display: flex;
-    gap: 6px;
+    gap: var(--ds-space-sm);
   }
   .name {
-    font-weight: var(--sp-font-weight-bold, 600);
+    font-weight: var(--ds-weight-bold);
   }
   li[data-state='holding'] .state {
-    color: var(--sp-danger, #b3261e);
+    color: var(--ds-danger);
   }
   .row {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--ds-space-sm);
     align-items: center;
-    margin-top: 6px;
+    margin-top: var(--ds-space-sm);
   }
-  input {
-    width: 4em;
-    font: inherit;
-    margin: 0 4px;
-  }
-  button {
-    font: inherit;
-    background: none;
-    color: inherit;
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-sm, 2px);
-    padding: 2px 10px;
-    cursor: pointer;
-  }
-  button.primary {
-    background: var(--sp-fg, #111);
-    color: var(--sp-bg, #fff);
-    border-color: var(--sp-fg, #111);
-  }
-  .close {
-    border: 0;
-    padding: 0 4px;
+  .ds-input {
+    box-sizing: border-box;
+    width: 5em;
+    height: 36px;
+    margin: 0 var(--ds-space-xs);
+    padding: 0 var(--ds-space-sm);
+    border: none;
+    border-radius: var(--ds-radius-sm);
+    background: var(--ds-chip);
+    color: var(--ds-ink);
+    font: var(--ds-type-body);
   }
   .muted {
-    color: var(--sp-muted, #5f5f5f);
+    color: var(--ds-muted);
   }
   .error {
-    color: var(--sp-danger, #b3261e);
+    color: var(--ds-danger);
   }
 </style>

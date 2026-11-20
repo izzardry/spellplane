@@ -31,6 +31,19 @@ export interface TeamPort {
   confirmedState(): TableState;
   secrets(): SecretStore;
   now(): number;
+  /**
+   * M8-P5 (contracts.md Part G item 1): where the take-overs this browser confirmed are kept, per teammate seat (the
+   * `claim` slot of session/nonces.ts, id `team:<seat>`). Absent: kept in memory for the page.
+   */
+  confirmed?: { get(seat: SeatId): number; set(seat: SeatId, n: number): void };
+}
+
+/** A teammate whose seat a new browser took over: its hand goes there only once this browser's player says so. */
+export interface WithheldSeat {
+  seat: SeatId;
+  name: string;
+  /** The name of the player who made the link, if the log still shows it. */
+  by: string | null;
 }
 
 /** Most team chat lines kept for the timeline. */
@@ -63,8 +76,53 @@ export class TeamView implements TeamControls {
   private chat: LogEntry[] = [];
   private readonly listeners = new Set<() => void>();
   private disposed = false;
+  /** Take-overs confirmed per teammate seat when the port keeps none. */
+  private readonly confirmedHere = new Map<SeatId, number>();
+  /** Seats whose prompt the player answered NOT YET in this page. */
+  private readonly notYet = new Set<SeatId>();
 
   constructor(private readonly port: TeamPort) {}
+
+  private confirmedOf(seat: SeatId): number {
+    return this.port.confirmed ? this.port.confirmed.get(seat) : (this.confirmedHere.get(seat) ?? 0);
+  }
+
+  /**
+   * Whether this browser withholds its hand from teammate `seat` (contracts.md Part G item 1): a new browser took the
+   * seat over (`takeovers`) more often than this player confirmed.
+   */
+  withholds(seat: SeatId): boolean {
+    const n = this.port.confirmedState().seats[seat]?.takeovers ?? 0;
+    return n > this.confirmedOf(seat);
+  }
+
+  /** Teammates waiting for this player's answer to `Ben is back from a new browser … Show him your hand?`. */
+  withheld(): WithheldSeat[] {
+    const st = this.port.confirmedState();
+    return teammatesOf(st, this.port.seat())
+      .filter((seat) => this.withholds(seat) && !this.notYet.has(seat))
+      .map((seat) => ({ seat, name: st.seats[seat]?.name ?? seat, by: this.makers.get(seat) ?? null }));
+  }
+
+  /** Who made the link a seat was claimed with (session/net.ts notes it from the log). */
+  readonly makers = new Map<SeatId, string>();
+
+  /** `SHOW`: the hand goes to that teammate from now on. */
+  showHand(seat: SeatId): void {
+    const n = this.port.confirmedState().seats[seat]?.takeovers ?? 0;
+    if (this.port.confirmed) this.port.confirmed.set(seat, n);
+    else this.confirmedHere.set(seat, n);
+    this.notYet.delete(seat);
+    this.lastSent.delete(seat);
+    this.sync(true);
+    this.changed();
+  }
+
+  /** `NOT YET`: the prompt goes away for this page; the hand stays withheld. */
+  holdHand(seat: SeatId): void {
+    this.notYet.add(seat);
+    this.changed();
+  }
 
   /** Follow `engine`'s pair channel (again after a rejoin); returns the unsubscribers. */
   attach(engine: TeamChannelHost): Unsubscribe[] {
@@ -116,6 +174,11 @@ export class TeamView implements TeamControls {
     const payload = ownHandPayload(st, this.port.secrets(), me);
     const key = payload.cards.map((c) => `${c.instanceId}:${c.ref.sid}:${c.ref.foil === true ? 'f' : 'n'}`).join(',');
     for (const to of mates) {
+      // A teammate's seat taken over by a new browser gets nothing until this player confirms (contracts.md Part G item 1).
+      if (this.withholds(to)) {
+        this.lastSent.delete(to);
+        continue;
+      }
       if (this.lastSent.get(to) === key) continue;
       // Remembered only once it went out: a hand the engine could not send yet (the teammate's peer not connected or
       // not verified) goes again on the next sync, whatever event that is.

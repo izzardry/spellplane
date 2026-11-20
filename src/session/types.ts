@@ -167,6 +167,12 @@ export interface TeamControls {
   subscribe(listener: () => void): () => void;
   /** Team chat lines received and sent, as log entries for this browser's timeline (never in the shared log). */
   chatLog(): LogEntry[];
+  /** Teammates whose seat a new browser took over and who get no hand until this player confirms (contracts.md Part G item 1). */ // [M8-P5]
+  withheld?(): { seat: SeatId; name: string; by: string | null }[]; // [M8-P5]
+  /** `SHOW`: send the own hand to that teammate again. */ // [M8-P5]
+  showHand?(seat: SeatId): void; // [M8-P5]
+  /** `NOT YET`: keep withholding; the prompt goes away for this page. */ // [M8-P5]
+  holdHand?(seat: SeatId): void; // [M8-P5]
 }
 
 /**
@@ -340,7 +346,26 @@ export interface SessionMuster {
   invite(seat: SeatId): Promise<string>;
   takeInviteBack(seat: SeatId): Promise<void>;
   saveState(): SaveState;
+  /** The re-invite link this page made for `seat` while the invite is open (the token lives in this page's memory only). */ // [M8-P5]
+  inviteLink?(seat: SeatId): string | null; // [M8-P5]
+  /** The claim of the re-invite link this page was opened with, while it is not made: the seat, its name and why it would be refused now (a reason with a `[claim:…]` code), or null. */ // [M8-P5]
+  claim?(): ClaimView | null; // [M8-P5]
+  /** `SIT DOWN HERE AS BEN`: claim the seat with the link's token; rejects with the refusal reason. */ // [M8-P5]
+  sitDown?(name: string): Promise<void>; // [M8-P5]
+  /** Drop the claim of the link (`OPEN MY SEAT`, `NOT NOW`). */ // [M8-P5]
+  dismissClaim?(): void; // [M8-P5]
+  /** Plain notices of the table (`Ben left. The game goes on; Ben can come back.`, a repaired fork). */ // [M8-P5]
+  onNotice?(listener: (text: string) => void): () => void; // [M8-P5]
+  /** The team view, for the prompt after a teammate's seat was taken over (contracts.md Part G "Rejoin" item 1). */ // [M8-P5]
+  team?(): TeamControls | null; // [M8-P5]
+  /** When this browser last saved the table (ms epoch), for `Saved · 4 s ago`; null before the first write. */ // [M8-P5]
+  savedAt?(): number | null; // [M8-P5]
+  /** When the shared log marked `seat` away (ms epoch, the sequencer's stamp), for `Away for 3 min`; null when it is not away. */ // [M8-P5]
+  awaySince?(seat: SeatId): number | null; // [M8-P5]
 }
+
+/** The claim page's view of a re-invite link (persistence.md section 7). */ // [M8-P5]
+export interface ClaimView { seat: SeatId; name: string; refusal: string | null } // [M8-P5]
 
 /** The cue the human's primary button shows against Sparring (computer.md 5.3; contracts.md Part G item 1). */
 export type CombatCue = { kind: 'attack' | 'damage' | 'blocksDone'; label: string } | null;

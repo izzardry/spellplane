@@ -38,6 +38,10 @@ function isTableState(v: unknown): boolean {
   );
 }
 
+/** The keys of a `head` message (persistence.md section 6, contracts.md Part D). */
+export const HEAD_KEYS: ReadonlySet<string> = new Set(['v', 't', 'seq', 'play', 'h', 'turn', 'stage', 'live', 'saving']);
+const STAGES: ReadonlySet<string> = new Set(['lobby', 'draft', 'build', 'match']);
+
 const PRESENCE_TYPES = new Set(['cursor', 'drag', 'speaking', 'typing', 'captionInterim']);
 
 /** Whether the payload of a message whose envelope `asWireMessage` accepted has the fields the engine reads. */
@@ -70,15 +74,29 @@ export function validPayload(m: WireMessage): boolean {
         (r.snapshot.play === undefined || isSeq(r.snapshot.play))
       );
     }
-    // Added by M8-C (persistence.md section 6): the head announcement, public facts only. M8-P5 may tighten it.
+    // The head announcement (persistence.md section 6; M8-P5): public facts only, exactly these keys, so nothing else
+    // rides along (leak scenario PL-2).
     case 'head':
-      return isSeq(r.seq) && isSeq(r.play) && isId(r.h) && isSeq(r.turn) && typeof r.stage === 'string' && typeof r.live === 'boolean' && typeof r.saving === 'boolean';
+      return (
+        Object.keys(r).length === HEAD_KEYS.size &&
+        Object.keys(r).every((k) => HEAD_KEYS.has(k)) &&
+        isSeq(r.seq) &&
+        isSeq(r.play) &&
+        r.play <= r.seq &&
+        typeof r.h === 'string' &&
+        /^[A-Za-z0-9_-]{43}$/.test(r.h) &&
+        isSeq(r.turn) &&
+        typeof r.stage === 'string' &&
+        STAGES.has(r.stage) &&
+        typeof r.live === 'boolean' &&
+        typeof r.saving === 'boolean'
+      );
     case 'hb':
-      return isSeq(r.seq) && (r.sequencer === null || isId(r.sequencer));
+      return isSeq(r.seq) && (r.sequencer === null || isId(r.sequencer)) && (r.play === undefined || isSeq(r.play));
     case 'claim':
-      return isSeq(r.fromSeq) && typeof r.seat === 'string';
+      return isSeq(r.fromSeq) && typeof r.seat === 'string' && (r.play === undefined || isSeq(r.play));
     case 'claimAck':
-      return isSeq(r.lastSeq);
+      return isSeq(r.lastSeq) && (r.lastPlay === undefined || isSeq(r.lastPlay));
     case 'hash':
       return isSeq(r.seq) && isId(r.h);
     case 'bye':

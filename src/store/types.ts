@@ -313,6 +313,8 @@ export interface TableRecord {
   protocol?: number;
   /** Added by M8-C. The play count at `snapshotSeq` (contracts.md Part D: moves only, never hashed); absent on saves made before M8 (read as 0). */
   snapshotPlay?: number;
+  /** The newest head a verified peer ever reported for this table (persistence.md section 5; contracts.md Part G item 3); kept with the save, cleared by a claim that replaces that peer and by `playOn`. */ // [M8-P5]
+  knownHead?: { play: number; seq: number; peer: string; seat: SeatId | null } | null; // [M8-P5]
 }
 
 /** `log` store record, key [roomId, seq] (DESIGN "Local persistence"). */

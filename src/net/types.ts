@@ -239,6 +239,14 @@ export interface NetEngine {
   readonly identity: NetIdentity;
   /** Added by M8-C: the play count of the confirmed state (contracts.md Part D); optional so test doubles need not count. */
   play?(): number;
+  /** The flags this browser announces in its `head` (persistence.md section 6): `live` (the muster rule) also gates what a standby sequencer sequences (contracts.md Part G item 5). Default live and saving. */ // [M8-P5]
+  setHead?(flags: { live?: boolean; saving?: boolean }): void; // [M8-P5]
+  /** This replica gave up part of its history for another copy (a fork repaired): from which seq, how many own actions it proposes again, and whose copy won (persistence.md section 6). */ // [M8-P5]
+  onAdopt?(l: (e: { forkSeq: number; abandonedOwn: number; from: string }) => void): Unsubscribe; // [M8-P5]
+  /** Replace the clock the sequencer's checks read (the 24 hours of an invite, the 30 seconds of absence); tests and the debug hook (`net.setClock`). */ // [M8-P5]
+  setClock?(now: () => number): void; // [M8-P5]
+  /** A verified peer said `bye { reason: 'leave' }`: it left the table on purpose (persistence.md section 5). */ // [M8-P5]
+  onLeave?(l: (peerId: string, seat: SeatId | null) => void): Unsubscribe; // [M8-P5]
   /** Join the room and start the handshake; resolves when joined (not when a peer connected). */
   join(): Promise<void>;
   /** Send `bye`, leave the room and stop timers. */
