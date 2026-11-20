@@ -350,7 +350,6 @@
   </section>
 
   <!-- 2. Modes and options -->
-  <!-- svelte-ignore a11y_interactive_supports_focus -->
   <div class="modes" role="radiogroup" aria-label="How to play" tabindex="-1" onkeydown={modeKey} data-testid="home-modes">
     {#each MODES as m (m.value)}
       <ModeCard
