@@ -80,7 +80,7 @@
         <input type="radio" name="sp-theme" value={id} checked={checked === id} bind:this={inputs[id]} onchange={() => pick(id)} />
         {#if look}
           {@const t = lookTokens(look)}
-          <span class="swatch" aria-hidden="true" style:background={t.colour.mat} style:border-color={t.colour.frame}><i style:background={t.colour.panel}></i><i style:background={t.colour.accent}></i></span>
+          <span class="look-swatch" aria-hidden="true" style:background={t.colour.mat} style:border-color={t.colour.frame}><i style:background={t.colour.panel}></i><i style:background={t.colour.accent}></i></span>
         {/if}
         <span>
           {THEME_LABELS[id]}
@@ -162,7 +162,7 @@
   legend {
     padding: 0 4px;
   }
-  .swatch {
+  .look-swatch {
     display: inline-flex;
     align-self: center;
     gap: 3px;
@@ -171,7 +171,7 @@
     border-radius: 6px;
     flex: none;
   }
-  .swatch i {
+  .look-swatch i {
     width: 10px;
     height: 14px;
     border-radius: 2px;

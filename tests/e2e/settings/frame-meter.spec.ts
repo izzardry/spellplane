@@ -25,10 +25,11 @@ test.describe('frame meter (M7-A0)', () => {
     const vp = page.viewportSize()!;
     expect(s.render!.width).toBeGreaterThan(0);
     expect(Math.abs(s.render!.width / s.render!.pixelRatio - vp.width)).toBeLessThan(2);
-    expect(s.render!.theme).toBe('paper');
+    // M8-C: Plain (Paper's stub until M7-P1) is the default table.
+    expect(s.render!.theme).toBe('plain');
     await expect(meter).toContainText(`${s.render!.width}×${s.render!.height}`);
-    await expect(meter).toContainText('paper · high');
-    // Paper draws on demand: once the table settles, the meter says idle.
+    await expect(meter).toContainText('plain · high');
+    // Plain draws on demand: once the table settles, the meter says idle.
     await expect.poll(async () => (await snapshot(page)).idle, { timeout: 10_000 }).toBe(true);
     await expect(meter).toContainText('idle');
     // A phase measured through the hook.
