@@ -54,7 +54,7 @@ export const MAT: MaterialSpec = {
 
 /** The walnut board (its colour is in the planks' albedo). */
 /** The board under the lamp, multiplied by the walnut's albedo: tuned so the frame reads as the `frame` token from above. */
-export const BOARD_COLOUR = '#949785';
+export const BOARD_COLOUR = '#d7d4d4';
 export const BOARD: MaterialSpec = { model: 'standard', colour: BOARD_COLOUR, roughness: 0.5, metalness: 0, tileMm: WALNUT_TILE_MM, maps: { albedo: { kind: 'procedural', source: WALNUT } } };
 
 /** Width of the walnut beyond the playmat on every side, mm: wider than the avatar spots outside each edge. */

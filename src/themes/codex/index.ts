@@ -52,8 +52,8 @@ export const LEATHER_SPEC: MaterialSpec = {
   maps: { albedo: { kind: 'procedural', source: LEATHER.albedo }, normal: { kind: 'procedural', source: LEATHER.normal } },
 };
 
-/** The desk under the lamp, multiplied by the ebony's albedo: tuned so the frame reads as the `frame` token from above. */
-export const DESK_COLOUR = '#c8c9c2';
+/** The ebony's own colour: under the warm lamp it reads browner and, from above, brighter than the navy `frame` token (the looks spec states how far). */
+export const DESK_COLOUR = '#ffffff';
 export const DESK: MaterialSpec = { model: 'standard', colour: DESK_COLOUR, roughness: 0.42, metalness: 0, tileMm: EBONY_TILE_MM, maps: { albedo: { kind: 'procedural', source: EBONY } } };
 
 /** The gilt of the corner diamonds: a warm, slightly metallic leaf that catches the lamp. */

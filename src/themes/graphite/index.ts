@@ -44,8 +44,8 @@ export const SLAB: MaterialSpec = {
   maps: { albedo: { kind: 'procedural', source: SLATE.albedo }, normal: { kind: 'procedural', source: SLATE.normal } },
 };
 
-/** The plinth under the lights, multiplied by its albedo: tuned so the frame reads as the `frame` token from above. */
-export const PLINTH_COLOUR = '#07080b';
+/** The plinth's colour: its sheen under the lights keeps it a little above the `frame` token from above (the looks spec states how far). */
+export const PLINTH_COLOUR = '#15181d';
 export const PLINTH_SPEC: MaterialSpec = {
   model: 'standard',
   colour: PLINTH_COLOUR,
