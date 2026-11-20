@@ -57,7 +57,7 @@ export function claimScreen(reason: string, seatName: string): ClaimScreen {
     case 'expired':
       return { kind, title: 'Link expired', text: 'This link has expired. Ask for a new one.' };
     case 'otherDevice':
-      return { kind, title: `${name} is still here`, text: `${name} is still connected from another browser. Close the game there first, or ask for a new link later.` };
+      return { kind, title: `${name} is still here`, text: `${name} is still connected from his other browser.` };
     case 'present':
       return { kind, title: `${name} is at the table`, text: `${name} is at the table, so this link cannot be used. Ask for a new one if you need it.` };
     case 'seated':
