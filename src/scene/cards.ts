@@ -180,11 +180,11 @@ void main() {
     c.rgb = mix(c.rgb, badge, 1.0 - smoothstep(-baa, baa, bd));
   }
   float inside = 1.0 - smoothstep(-aa, aa, d);
-  float gk = floor(vHi.a / 1000.0);
+  float gk = floor(vHi.a / 1000.0); // [M7-P1] the double ring's gap
   float outer = vHi.a - gk * 1000.0;
   float gap = gk / 100.0;
   float ring = outer > 0.0 ? 1.0 - smoothstep(outer - aa, outer + aa, d) : 0.0;
-  vec3 ringRgb = gap > 0.0 ? mix(uBg, vHi.rgb, smoothstep(gap - aa, gap + aa, d)) : vHi.rgb;
+  vec3 ringRgb = gap > 0.0 ? mix(uBg, vHi.rgb, smoothstep(gap - aa, gap + aa, d)) : vHi.rgb; // [M7-P1]
   vec4 col = mix(vec4(ringRgb, ring), vec4(c.rgb, 1.0), inside);
   if (col.a < 0.004) discard;
   gl_FragColor = col;
@@ -306,7 +306,7 @@ export class CardLayer {
         hi[q] = tmpColour.r;
         hi[q + 1] = tmpColour.g;
         hi[q + 2] = tmpColour.b;
-        // The gap rides in the thousands of the width (in hundredths of a mm): one attribute, no extra upload.
+        // [M7-P1] The gap rides in the thousands of the width (in hundredths of a mm): one attribute, no extra upload.
         hi[q + 3] = Math.min(PAD_MM, d.highlight.width) + 1000 * Math.round(Math.max(0, Math.min(d.highlight.width, d.highlight.gap ?? 0)) * 100);
       } else {
         hi[q] = hi[q + 1] = hi[q + 2] = hi[q + 3] = 0;

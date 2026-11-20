@@ -84,6 +84,8 @@ export interface TableRigOptions {
   lateral?: number;
   /** The HUD's insets at the start (the fitted view keeps clear of them). */
   insets?: Insets;
+  /** The look's own tilt (Theme.camera.tilt): a stop a released drag or a resting wheel snaps to, like the presets. */
+  homeTilt?: number;
 }
 
 /** A tilt move in progress (spring toward `target`). */
@@ -128,7 +130,16 @@ export class TableRig {
   /** The table point a tilt move or drag holds under its screen point; null holds the view centre's. */
   private anchor: Anchor | null = null;
   /** A tilt dragged directly (right or middle drag, two-finger swipe): it follows the input, no spring. */
-  private drag: { source: TiltSource } | null = null;
+  private drag: {
+    source: TiltSource;
+    /** The tilt the drag started at; the drag counts (events, snap, anchor) only once the tilt left it. */
+    from: number;
+    /** The press point, held once the tilt first moves. */
+    press: ScreenPoint | null;
+    moved: boolean;
+  } | null = null;
+  /** The look's own tilt (TableRigOptions.homeTilt): a snap stop besides the presets, or null. */
+  private homeTilt: number | null = null;
   /** When a wheel tilt snaps to a near preset (ms, the step clock), or null; and how long that snap eases. */
   private wheelSnapAt: number | null = null;
   private wheelDur = 1;
@@ -158,6 +169,7 @@ export class TableRig {
     this.tTarget = start;
     this.look = { x: 0, y: 0, half: 1 };
     this.look = this.fitAt(start);
+    if (o.homeTilt !== undefined) this.setHomeTilt(o.homeTilt);
   }
 
   get angle(): number {
@@ -255,30 +267,48 @@ export class TableRig {
     this.move = null;
     this.tv = 0;
     this.tTarget = this.t;
-    if (anchor) this.setAnchor(anchor);
-    else this.anchor = null;
-    if (!this.fitted) this.lookMove = null;
-    this.drag = { source };
-    this.begin(source);
+    // Nothing else changes until the tilt moves: a right-drag with no vertical travel leaves the view as it was
+    // (PLAN M7 owner decisions: "horizontal movement does not turn the view").
+    this.drag = { source, from: this.t, press: anchor ? { x: anchor.x, y: anchor.y } : null, moved: false };
+  }
+
+  /** Whether the drag in progress has moved the tilt (a drag that never did leaves the view and the viewer's choice alone). */
+  tiltDragMoved(): boolean {
+    return this.drag?.moved ?? false;
   }
 
   /** Tilt a drag by `dt` (positive toward bird's-eye). */
   tiltDragBy(dt: number): void {
-    if (!this.drag || !Number.isFinite(dt) || dt === 0) return;
+    const d = this.drag;
+    if (!d || !Number.isFinite(dt) || dt === 0) return;
     const next = unitTilt(this.t + dt);
     if (next === this.t) return;
+    if (!d.moved) {
+      d.moved = true;
+      if (d.press) this.setAnchor(d.press);
+      else this.anchor = null;
+      if (!this.fitted) this.lookMove = null;
+      this.begin(d.source);
+    }
     const prev = this.t;
     this.t = next;
     this.tTarget = next;
     this.applyTilt(prev);
   }
 
-  /** The drag ended: a tilt near a preset eases onto it (soft snap), else it stays where the viewer left it. */
+  /**
+   * The drag ended: a tilt near a stop (a preset or the look's own tilt) eases onto it (soft snap), else it stays where
+   * the viewer left it. A drag that never moved the tilt changes nothing (no snap, no events).
+   */
   endTiltDrag(now: number, dur: number): void {
     const d = this.drag;
     if (!d) return;
     this.drag = null;
-    const snapped = snapTilt(this.t, this.presets(), TILT_SNAP_RADIUS);
+    if (!d.moved) {
+      this.settleIfIdle();
+      return;
+    }
+    const snapped = snapTilt(this.t, this.snapStops(), TILT_SNAP_RADIUS);
     if (snapped === this.t) {
       this.settleIfIdle();
       return;
@@ -303,6 +333,18 @@ export class TableRig {
   /** The tilt presets' values (first person, the middle view, bird's-eye). */
   presets(): number[] {
     return TILT_PRESETS.map((p) => p.tilt);
+  }
+
+  /** Where a released drag or a resting wheel snaps: the presets and the look's own tilt. */
+  private snapStops(): number[] {
+    const stops = this.presets();
+    if (this.homeTilt !== null) stops.push(this.homeTilt);
+    return stops;
+  }
+
+  /** The look's own tilt (Theme.camera.tilt), a snap stop besides the presets; null: the presets only. */
+  setHomeTilt(t: number | null): void {
+    this.homeTilt = t !== null && Number.isFinite(t) ? unitTilt(t) : null;
   }
 
   /** Switch to an old rig (P before M7; setRig): the tilt goes to that end. */
@@ -541,7 +583,7 @@ export class TableRig {
     let changed = false;
     if (this.wheelSnapAt !== null && now >= this.wheelSnapAt && !this.drag) {
       this.wheelSnapAt = null;
-      const snapped = snapTilt(this.tTarget, this.presets(), TILT_SNAP_RADIUS);
+      const snapped = snapTilt(this.tTarget, this.snapStops(), TILT_SNAP_RADIUS);
       if (snapped !== this.tTarget) {
         this.tTarget = snapped;
         this.begin('wheel');

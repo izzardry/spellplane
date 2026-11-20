@@ -18,7 +18,7 @@ import { CODEX_WORLD } from '../../../../src/themes/codex/index';
 import { GRAPHITE_WORLD } from '../../../../src/themes/graphite/index';
 import { loadTheme, type Theme } from '../../../../src/themes/index';
 import { KITCHEN_WORLD } from '../../../../src/themes/kitchen/index';
-import { PLAIN_WORLD } from '../../../../src/themes/plain/index';
+import { PLAIN_INK, PLAIN_WORLD } from '../../../../src/themes/plain/index';
 import { openRender, rh, settle } from '../../render/helpers';
 import { LOOKS, type LookTheme, avg, capture, delta, evidence, fmt, hex255, lum, onScreen, patch, setTilt, toScreen, type Capture } from './helpers';
 
@@ -27,6 +27,8 @@ const ASSET_EXTENSIONS = /\.(png|jpe?g|webp|avif|gif|ktx2|basis|hdr|exr|dds|glb|
 
 const WORLDS = { plain: PLAIN_WORLD, kitchen: KITCHEN_WORLD, graphite: GRAPHITE_WORLD, codex: CODEX_WORLD } as const;
 const TILTS = [0, 0.5, 1] as const;
+/** How far (largest channel, 0..255) a lit look's frame may read from its `frame` token from above: grain and sheen. */
+const FRAME_TOKEN_TOLERANCE = 16;
 const layout = harnessLayout();
 const TABLE = layout.table;
 
@@ -98,6 +100,9 @@ for (const look of LOOKS) {
         info.annotations.push({ type: `surround ${t}`, description: `frame ${fmt(frame)} token ${WORLDS[look].surround}` });
         // Plain's room is its desk (one colour to the horizon, the frame token); the others frame the table against a darker room.
         if (look === 'plain') expect(delta(frame, hex255(WORLDS[look].surround)), `desk is the frame token at tilt ${t}`).toBeLessThan(12);
+        // The lit looks' frame materials are tuned so the frame reads as the `frame` token from above (as their surfaces
+        // read as `mat`); at lower tilts the lamp's angle moves it, so only bird's-eye is held to the token.
+        else if (t === 1) expect(delta(frame, hex255(WORLDS[look].surround)), `frame ${fmt(frame)} is the frame token ${WORLDS[look].surround} from above`).toBeLessThan(FRAME_TOKEN_TOLERANCE);
         else expect(delta(frame, background), `frame vs room at tilt ${t}`).toBeGreaterThan(4);
         expect(delta(mat, background), `table vs room at tilt ${t}`).toBeGreaterThan(10);
       }
@@ -231,3 +236,37 @@ for (const look of LOOKS) {
     });
   });
 }
+
+test.describe('plain: the double selection ring', () => {
+  test('a selected card shows a band of mat, then ink, outside its border (m7-adjustments.md, The Plain table world)', async ({ page }, info) => {
+    const errors = await openRender(page, { theme: 'plain', scenario: 'empty' });
+    await page.evaluate(() => window.__renderHarness!.addCard('c1', 'fx-3', { x: 0, y: 0, rot: 0 }));
+    await setTilt(page, 1);
+    // Close in on the card: the 0.6 mm band and the 0.9 mm ring are a few pixels each.
+    await page.evaluate(() => window.__renderHarness!.camera.zoomTo('c1'));
+    await settle(page);
+    const sample = async () => {
+      const r = (await cards(page)).find((x) => x.id === 'c1')!.screen;
+      const c = await capture(page);
+      const k = r.height / 88;
+      // One-pixel columns at the middle of each band, along the card's left edge, clear of its rounded corners.
+      const at = (mm: number) => avg(c, { x: r.x - mm * k - 0.5, y: r.y + r.height * 0.35, width: 1, height: r.height * 0.3 });
+      return { k, band: at(0.3), ring: at(1.05), out: at(4), c };
+    };
+    const plainView = await sample();
+    await page.evaluate(() => window.__renderHarness!.setView({ selection: ['c1'] }));
+    await settle(page);
+    const sel = await sample();
+    evidence(info, 'plain-selection-ring', sel.c.png);
+    info.annotations.push({ type: 'ring', description: `${sel.k.toFixed(2)} px/mm; band ${fmt(sel.band)} ring ${fmt(sel.ring)} out ${fmt(sel.out)}; unselected ring column ${fmt(plainView.ring)}` });
+    expect(sel.k, 'close enough to resolve a 0.6 mm band').toBeGreaterThan(5);
+    const ink = hex255(PLAIN_INK);
+    // The band is the mat (a little darker in the card's contact shadow), the ring is ink, and beyond it the mat again.
+    expect(delta(sel.band, sel.out), 'the band next to the card is the mat').toBeLessThan(40);
+    expect(delta(sel.ring, ink), 'the ring is ink').toBeLessThan(40);
+    expect(lum(sel.band) - lum(sel.ring)).toBeGreaterThan(120);
+    // Unselected, the ring's column is no ink (the mat in the card's contact shadow): the ring is the selection's.
+    expect(lum(plainView.ring) - lum(ink)).toBeGreaterThan(120);
+    expect(errors).toEqual([]);
+  });
+});

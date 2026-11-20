@@ -3,7 +3,8 @@
  * `backdrop-filter` and no `filter: blur()` in the shell or over a table"; PLAN M7 A0: CSS blur over the WebGL canvas
  * is a measured cost in Safari; PLAN Milestone 8, M7-P1 Lifecycle). With a table mounted and the HUD's menu-like panels,
  * the log drawer, a dialog and a toast open in turn, no element whose box intersects the scene host computes a
- * `backdrop-filter` (or its WebKit prefix) other than none, or a `filter` with a blur.
+ * `backdrop-filter` (or its WebKit prefix) other than none, or a `filter` with a blur. Each surface is scanned only once
+ * it is on screen; a menu, a drawer and a dialog must each have been scanned (a toast where the HUD shows one).
  */
 import { expect, test, type Page } from '@playwright/test';
 import { freshProfile, openSolo } from '../solo/helpers';
@@ -36,44 +37,86 @@ function offenders(page: Page): Promise<Offender[]> {
   });
 }
 
+type Kind = 'menu' | 'drawer' | 'dialog' | 'toast';
+type Loc = ReturnType<Page['getByTestId']>;
+/** A way to open one surface: what to click (or null: already open), and the surface's own element. */
+interface Opener {
+  kind: Kind;
+  name: string;
+  open: (page: Page) => Promise<boolean>;
+  panel: (page: Page) => Loc;
+}
+
+/** Click `loc` if it is on screen; whether it was. */
+async function clickIfVisible(loc: Loc): Promise<boolean> {
+  if (!(await loc.isVisible().catch(() => false))) return false;
+  await loc.click();
+  return true;
+}
+
+// Candidates per kind: the table HUD before and after its rebuild from the kit (M7-P2) name its controls differently.
+// A candidate whose control is on screen must open its surface (asserted visible before the scan).
+const OPENERS: Opener[] = [
+  {
+    kind: 'menu',
+    name: 'table context menu',
+    open: async (page) => {
+      const box = (await page.getByTestId('scene-host').boundingBox())!;
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2, { button: 'right' });
+      return true;
+    },
+    panel: (page) => page.getByRole('menu').first(),
+  },
+  { kind: 'menu', name: 'menu button', open: (page) => clickIfVisible(page.getByRole('button', { name: /^menu$/i }).first()), panel: (page) => page.getByRole('menu').first() },
+  {
+    kind: 'drawer',
+    name: 'log drawer',
+    open: async (page) => {
+      const log = page.locator('[data-testid="log"]');
+      if (!(await log.isVisible().catch(() => false))) return clickIfVisible(page.getByRole('button', { name: /^(log|activity)/i }).first());
+      // Open at a wide window already; else its toggle opens it.
+      if (await log.evaluate((el) => el.classList.contains('closed'))) await log.getByRole('button', { name: /^log$/i }).click();
+      return true;
+    },
+    panel: (page) => page.locator('[data-testid="log"]:not(.closed)'),
+  },
+  { kind: 'dialog', name: 'settings', open: (page) => clickIfVisible(page.getByTestId('open-settings')), panel: (page) => page.getByTestId('settings').or(page.getByRole('dialog')).first() },
+  { kind: 'dialog', name: 'keys panel', open: (page) => clickIfVisible(page.getByTestId('open-cheat-sheet')), panel: (page) => page.getByTestId('cheat-sheet') },
+  { kind: 'dialog', name: 'theme picker', open: (page) => clickIfVisible(page.getByTestId('open-theme-settings')), panel: (page) => page.getByTestId('theme-picker').or(page.locator('.theme-pop')).first() },
+  {
+    kind: 'toast',
+    name: 'toast',
+    open: async (page) => {
+      // The kit's toast host (M7-P2 mounts it over the table) or the old HUD's toast: whichever this HUD has showing.
+      return page.getByTestId('toast').first().isVisible().catch(() => false);
+    },
+    panel: (page) => page.getByTestId('toast').first(),
+  },
+];
+
+/** The kinds the acceptance names that the HUD on this branch can open without another package's code. */
+const REQUIRED: Kind[] = ['menu', 'drawer', 'dialog'];
+
 test('no element over the table computes a backdrop filter or a blur, whatever is open', async ({ page }, info) => {
   test.setTimeout(90_000);
   await openSolo(page, freshProfile(info));
   await expect(page.getByTestId('scene-host')).toBeVisible();
   const opened: string[] = [];
+  const kinds = new Set<Kind>();
   await test.step('at rest', async () => {
     expect(await offenders(page)).toEqual([]);
   });
-  // Each opener runs only if its control is on screen (the HUD is being rebuilt from the kit; M7-P2): every panel that
-  // opens is scanned, and at least three of them must have opened.
-  const openers: [string, () => Promise<boolean>][] = [
-    ['menu', async () => clickIfVisible(page, page.getByRole('button', { name: /^menu$/i }).first())],
-    ['keys panel', async () => clickIfVisible(page, page.getByTestId('open-cheat-sheet'))],
-    ['log drawer', async () => clickIfVisible(page, page.getByRole('button', { name: /^(log|activity)/i }).first())],
-    ['settings dialog', async () => clickIfVisible(page, page.getByTestId('open-settings'))],
-    ['theme dialog', async () => clickIfVisible(page, page.getByTestId('open-theme-settings'))],
-    [
-      'toast',
-      async () => {
-        // The view toggle names the new view in a toast where the HUD has one; the scene host must stay clear either way.
-        const ok = await clickIfVisible(page, page.getByTestId('perspective'));
-        return ok && (await page.getByTestId('toast').or(page.getByRole('status')).first().isVisible().catch(() => false));
-      },
-    ],
-  ];
-  for (const [name, open] of openers)
-    await test.step(name, async () => {
-      if (!(await open())) return;
-      opened.push(name);
-      expect(await offenders(page), `${name} open`).toEqual([]);
+  for (const o of OPENERS)
+    await test.step(o.name, async () => {
+      if (!(await o.open(page))) return;
+      // Scanned only once the surface itself is on screen: a click that opened nothing does not count.
+      await expect(o.panel(page), `${o.name} is open`).toBeVisible();
+      opened.push(o.name);
+      kinds.add(o.kind);
+      expect(await offenders(page), `${o.name} open`).toEqual([]);
       await page.keyboard.press('Escape');
     });
   info.annotations.push({ type: 'opened', description: opened.join(', ') });
-  expect(opened.length).toBeGreaterThanOrEqual(3);
+  // The toast joins REQUIRED once the rebuilt HUD (M7-P2) shows the kit's toast host over the table.
+  expect([...kinds].filter((k) => REQUIRED.includes(k)).sort()).toEqual([...REQUIRED].sort());
 });
-
-async function clickIfVisible(page: Page, loc: ReturnType<Page['getByTestId']>): Promise<boolean> {
-  if (!(await loc.isVisible().catch(() => false))) return false;
-  await loc.click();
-  return true;
-}

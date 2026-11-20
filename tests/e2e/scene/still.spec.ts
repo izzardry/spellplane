@@ -45,13 +45,38 @@ test.describe('the arena still', () => {
     expect(after.disposals - before.disposals).toBe(LOOKS.length);
   });
 
-  test('contains no card: the still is drawn from the empty world, with no table state', async ({ page }) => {
+  test('contains no card: a still taken beside a table full of cards equals one taken with no table mounted', async ({ page }, info) => {
     await openScene(page, { scenario: 'demo' });
     // A table with cards is mounted; the still is its own world, built without state, so the cards cannot reach it.
     const before = (await memory(page)).contexts;
-    const r = (await page.evaluate(() => window.__sceneHarness!.arenaStill('plain', 640))) as ArenaStillReport | null;
-    expect(r).not.toBeNull();
-    expect((await memory(page)).contexts).toBe(before);
+    const still = (id: string) => page.evaluate(([look]) => window.__sceneHarness!.arenaStill(look!, 640), [id] as const) as Promise<ArenaStillReport | null>;
+    for (const look of LOOKS)
+      await test.step(look, async () => {
+        const withTable = await still(look);
+        expect(withTable).not.toBeNull();
+        expect((await memory(page)).contexts).toBe(before);
+        await page.evaluate(() => window.__sceneHarness!.dispose());
+        const bare = await still(look);
+        expect(bare).not.toBeNull();
+        info.annotations.push({ type: look, description: `with a table: ${withTable!.bytes} B, sharp ${withTable!.sharpDiff.toFixed(4)}; none: ${bare!.bytes} B, sharp ${bare!.sharpDiff.toFixed(4)}` });
+        // The same frame, measured on its unsoftened pixels and on the PNG: no card got into the one beside the table.
+        expect({ w: withTable!.width, h: withTable!.height, fw: withTable!.frame.width, fh: withTable!.frame.height }).toEqual({ w: bare!.width, h: bare!.height, fw: bare!.frame.width, fh: bare!.frame.height });
+        expect(Math.abs(withTable!.sharpDiff - bare!.sharpDiff)).toBeLessThanOrEqual(0.01 * Math.max(1, bare!.sharpDiff));
+        expect(Math.abs(withTable!.bytes - bare!.bytes)).toBeLessThanOrEqual(0.02 * bare!.bytes);
+        // Mount the table again for the next look.
+        await openScene(page, { scenario: 'demo' });
+      });
+  });
+
+  test('an odd window width (1366 px) still halves four times to a sixteenth, not a thirty-second', async ({ page }) => {
+    await openScene(page);
+    await page.evaluate(() => window.__sceneHarness!.dispose());
+    for (const width of [1366, 1030, 390]) {
+      const r = (await page.evaluate(([w]) => window.__sceneHarness!.arenaStill('kitchen', w!), [width] as const)) as ArenaStillReport | null;
+      expect(r, `${width}`).not.toBeNull();
+      expect(r!.frame.width).toBe(width);
+      expect(Math.abs(r!.width - width / 16), `${width} px gives ${r!.width}`).toBeLessThanOrEqual(1);
+    }
   });
 
   test('resolves null when WebGL is unavailable', async ({ page }) => {

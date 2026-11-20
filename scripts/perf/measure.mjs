@@ -25,7 +25,9 @@
 //                                front while it runs (a hidden or covered window is throttled); close the tab after.
 //   With --safari or --safari-open and no --browsers, only Safari runs (no Playwright, no guard).
 // Options:
-//   --themes paper,dusk,wyrm,stonetable   (default all four)
+//   --themes plain,kitchen,graphite,codex  (default: the four looks; the unlisted M4 themes paper, dusk, wyrm and
+//                                          stonetable still load for before/after comparisons)
+// The scenario opens the table sandbox (#/solo; #/ is Home since M8).
 //   --quality high|medium|low             set the quality level first (default: what the build chooses)
 //   --size 2560x1440  viewport in CSS px (default: a full window on a 27" 5K display); Safari's window is set to it
 //                     with --safari, and is whatever it is with --safari-open
@@ -65,7 +67,9 @@ const has = (name) => argv.includes(`--${name}`);
 const safari = has('safari');
 const safariOpen = has('safari-open');
 const browsers = (opt('browsers', safari || safariOpen ? '' : 'webkit,chromium') || '').split(',').filter(Boolean);
-const THEMES = opt('themes', 'paper,dusk,wyrm,stonetable').split(',').filter(Boolean);
+const LOOKS = ['plain', 'kitchen', 'graphite', 'codex'];
+const M4_THEMES = ['paper', 'dusk', 'wyrm', 'stonetable'];
+const THEMES = opt('themes', LOOKS.join(',')).split(',').filter(Boolean);
 const quality = opt('quality', null);
 const [W, H] = opt('size', '2560x1440').split('x').map(Number);
 const DPR = Number(opt('dpr', '2'));
@@ -75,7 +79,7 @@ const SYNC = !has('no-sync');
 const FACES = opt('faces', 'placeholder');
 const jsonOut = opt('json', null);
 for (const b of browsers) if (!['webkit', 'chromium'].includes(b)) usage(`unknown browser ${b}`);
-for (const t of THEMES) if (!['paper', 'dusk', 'wyrm', 'stonetable'].includes(t)) usage(`unknown theme ${t}`);
+for (const t of THEMES) if (![...LOOKS, ...M4_THEMES].includes(t)) usage(`unknown theme ${t}`);
 if (!browsers.length && !safari && !safariOpen) usage('no browser chosen');
 if (quality && !['high', 'medium', 'low'].includes(quality)) usage(`unknown quality ${quality}`);
 if (!(W > 0 && H > 0 && DPR > 0 && PHASE_MS > 0)) usage('bad --size, --dpr or --phase-ms');
@@ -340,7 +344,7 @@ function scenarioUrl(base, run, sync = false) {
   const q = new URLSearchParams(run.query);
   if (sync) q.set('render', [...(q.get('render') ?? '').split(',').filter(Boolean), 'sync'].join(','));
   const extra = q.toString();
-  return `${base}?faces=${FACES}&fps&profile=perf${run.id.replace(/[^a-z0-9]/gi, '')}&perfrun=${run.id}${extra ? `&${extra}` : ''}#/`;
+  return `${base}?faces=${FACES}&fps&profile=perf${run.id.replace(/[^a-z0-9]/gi, '')}&perfrun=${run.id}${extra ? `&${extra}` : ''}#/solo`;
 }
 const timeoutMs = () => 60_000 + THEMES.length * (3 * PHASE_MS + 6000) * 3;
 

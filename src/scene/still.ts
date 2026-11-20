@@ -70,10 +70,14 @@ export function boxBlur(data: Uint8ClampedArray, w: number, h: number, r: number
       }
 }
 
-/** Halve `src` by averaging 2 × 2 pixels until it is at most `target` px wide; the last canvas. */
+/**
+ * Halve `src` by averaging 2 × 2 pixels while another halving stays at or above `target` px wide (four times for one
+ * sixteenth); the last canvas. Halving rounds up, so a loop that ran while wider than the target would halve a fifth time
+ * where the fourth lands a pixel above it (1366 px wide: 86 > 85, then 43).
+ */
 function halveDown(src: HTMLCanvasElement, target: number): HTMLCanvasElement | null {
   let cur = src;
-  while (cur.width > target) {
+  while (cur.width >= 2 * target) {
     const w = Math.max(1, Math.ceil(cur.width / 2));
     const h = Math.max(1, Math.ceil(cur.height / 2));
     const from = cur.getContext('2d', { willReadFrequently: true });

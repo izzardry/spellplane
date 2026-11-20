@@ -50,14 +50,19 @@ test.describe('tilt by mouse', () => {
 
   test('a horizontal right-drag leaves yaw (and tilt) unchanged: no free look-around', async ({ page }) => {
     await openScene(page);
-    for (const t of [0, 0.5, 1]) {
+    // The presets, and the looks' own default tilts (Plain and Kitchen Table 0.55, Graphite 0.8, Codex 0.5) and a tilt
+    // between stops: a drag with no vertical travel must not snap any of them to a nearby preset.
+    for (const t of [0, 0.5, 1, 0.55, 0.8, 0.3]) {
       await setTilt(page, t);
       const h0 = await heading(page);
       const p0 = await pose(page);
       await rightDrag(page, await emptyPoint(page), 220, 0);
       expect(Math.abs((await heading(page)) - h0), `heading at tilt ${t}`).toBeLessThan(1e-3);
-      expect((await pose(page)).pitchDeg).toBeCloseTo(p0.pitchDeg, 3);
-      expect(await tilt(page)).toBeCloseTo(t, 3);
+      const p1 = await pose(page);
+      expect(p1.pitchDeg, `pitch at tilt ${t}`).toBeCloseTo(p0.pitchDeg, 3);
+      expect(p1.fovDeg, `field of view at tilt ${t}`).toBeCloseTo(p0.fovDeg, 3);
+      for (let i = 0; i < 3; i++) expect(p1.position[i], `camera position at tilt ${t}`).toBeCloseTo(p0.position[i]!, 1);
+      expect(await tilt(page), `tilt ${t}`).toBeCloseTo(t, 3);
     }
   });
 

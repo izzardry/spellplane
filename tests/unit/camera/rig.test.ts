@@ -28,6 +28,22 @@ const backOf = (rig: TableRig) => {
   const p = rig.pose().position;
   return -(p[0] * f.x + p[1] * f.y);
 };
+/** Record the rig's tilt events. */
+const record = (rig: TableRig) => {
+  const events: TiltEvent[] = [];
+  rig.onTilt = (e) => events.push(e);
+  return events;
+};
+/** Step the rig until it rests. */
+const settle = (rig: TableRig, from = 0) => {
+  let now = from;
+  while (now < from + 5000 && rig.moving) {
+    now += 16;
+    rig.step(now, 16);
+  }
+  return now;
+};
+
 /** The frame's corners (the fitted view must show them). */
 const frameCorners = (rig: TableRig) => tableCorners({ w: rig.frame.w, d: rig.frame.d, ...(rig.frame.rot ? { rot: rig.frame.rot } : {}) }).map((p) => ({ x: p.x + rig.frame.x, y: p.y + rig.frame.y }));
 
@@ -483,6 +499,49 @@ describe('direct tilt (drag, two-finger swipe) and the wheel', () => {
     expect(rig.tilt()).toBeCloseTo(0.27, 12);
   });
 
+  it('a right-drag with no vertical travel changes nothing at any look\'s default tilt: no snap, no events, still fitted', () => {
+    // Plain and Kitchen Table open at 0.55, Graphite at 0.8, Codex at 0.5 (src/themes/*/index.ts camera.tilt); 0.55 is
+    // within the snap radius of the 0.5 preset, so a release that snapped regardless would move the default view.
+    for (const t0 of [0.55, 0.8, 0.5, 0.3]) {
+      for (const dur of [0, BLEND_MS]) {
+        const rig = makeRig({ tilt: t0 });
+        const events = record(rig);
+        const pose = JSON.stringify(rig.pose());
+        rig.beginTiltDrag({ x: 700, y: 450 }, 'drag');
+        for (let i = 0; i < 10; i++) rig.tiltDragBy(0);
+        expect(rig.tiltDragMoved()).toBe(false);
+        rig.endTiltDrag(0, dur);
+        settle(rig);
+        expect(rig.tilt(), `${t0} ${dur}`).toBe(t0);
+        expect(rig.switching).toBe(false);
+        expect(rig.isFitted()).toBe(true);
+        expect(JSON.stringify(rig.pose())).toBe(pose);
+        expect(events).toEqual([]);
+      }
+    }
+  });
+
+  it('the look\'s own tilt is a snap stop: a drag released near it eases back onto it, not onto the nearby preset', () => {
+    const rig = makeRig({ tilt: 0.55 });
+    rig.setHomeTilt(0.55);
+    rig.beginTiltDrag(null, 'drag');
+    rig.tiltDragBy(0.03);
+    expect(rig.tiltDragMoved()).toBe(true);
+    rig.endTiltDrag(0, 0);
+    expect(rig.tilt()).toBe(0.55);
+    // Nearer the preset than the home tilt: the preset wins.
+    rig.beginTiltDrag(null, 'drag');
+    rig.tiltDragBy(-0.04);
+    rig.endTiltDrag(0, 0);
+    expect(rig.tilt()).toBe(0.5);
+    // Without a home tilt, the presets only.
+    const bare = makeRig({ tilt: 0.55 });
+    bare.beginTiltDrag(null, 'drag');
+    bare.tiltDragBy(0.03);
+    bare.endTiltDrag(0, 0);
+    expect(bare.tilt()).toBe(0.5);
+  });
+
   it('a drag past either end stops there (no tilt below first person, none past straight down)', () => {
     const rig = makeRig({ tilt: 0.5 });
     rig.beginTiltDrag(null, 'drag');
@@ -519,20 +578,6 @@ describe('direct tilt (drag, two-finger swipe) and the wheel', () => {
 });
 
 describe('tilt events (SceneEvents.tilt): start, change and end, never per frame', () => {
-  const record = (rig: TableRig) => {
-    const events: TiltEvent[] = [];
-    rig.onTilt = (e) => events.push(e);
-    return events;
-  };
-  const settle = (rig: TableRig, from = 0) => {
-    let now = from;
-    while (now < from + 5000 && rig.moving) {
-      now += 16;
-      rig.step(now, 16);
-    }
-    return now;
-  };
-
   it('a preset move: start when it begins, end when it settles, nothing in between', () => {
     const rig = makeRig({ tilt: 1 });
     const events = record(rig);

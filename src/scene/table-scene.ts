@@ -355,6 +355,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     angle: viewerAngle(null, layout, viewerSeat),
     inertiaMs: theme.motion.panInertiaMs,
     tilt: startTilt(opts, theme),
+    homeTilt: startTilt({}, theme),
     ego: theme.camera.ego,
     tiltDeg: theme.camera.birdseyeTiltDeg,
     insets: readInsets(),
@@ -1919,9 +1920,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if ((g.button === 2 || g.button === 1) && !rc && !g.badge) {
         menuPending = null;
         gesture = { kind: 'tilt', pointerId: g.pointerId, last: { x: e.clientX, y: e.clientY } };
-        rigChosen = true;
         rig.beginTiltDrag(toCanvas(g.x0, g.y0), 'drag');
         rig.tiltDragBy((e.clientY - g.y0) * TILT_PER_DRAG_PX);
+        // Only a drag that moved the tilt is the viewer's choice (a horizontal right-drag leaves the view alone).
+        if (rig.tiltDragMoved()) rigChosen = true;
         setHover(null);
         dirty = true;
         return;
@@ -1962,6 +1964,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     if (gesture.kind === 'tilt') {
       rig.tiltDragBy((e.clientY - gesture.last.y) * TILT_PER_DRAG_PX);
+      if (rig.tiltDragMoved()) rigChosen = true;
       gesture.last = { x: e.clientX, y: e.clientY };
       dirty = true;
     } else if (gesture.kind === 'pan') {
@@ -2230,11 +2233,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
             dirty = true;
             return;
           }
-          if (!rig.tiltDragging()) {
-            rigChosen = true;
-            rig.beginTiltDrag(toCanvas(g.centre.x - g.pan.dx, g.centre.y - g.pan.dy), 'touch');
-          }
+          if (!rig.tiltDragging()) rig.beginTiltDrag(toCanvas(g.centre.x - g.pan.dx, g.centre.y - g.pan.dy), 'touch');
           rig.tiltDragBy(g.pan.dy * TILT_PER_SWIPE_PX);
+          if (rig.tiltDragMoved()) rigChosen = true;
           dirty = true;
           return;
         }
@@ -3074,6 +3075,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       // The theme's camera defaults: its first-person lens and bird's-eye tilt, and its tilt unless the viewer chose one.
       rig.setTheme(theme.camera.ego, theme.camera.birdseyeTiltDeg);
       const themeTilt = startTilt({}, theme);
+      rig.setHomeTilt(themeTilt);
       if (!rigChosen && rig.tiltTarget() !== themeTilt) rig.setTilt(themeTilt, performance.now(), blend(), null, 'theme');
       dirty = true;
     },

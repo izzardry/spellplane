@@ -25,8 +25,9 @@ test.describe('lifecycle soak', () => {
     expect(mounted.rafLoops).toBe(1);
     await page.evaluate(() => window.__sceneHarness!.dispose());
     const before = await memory(page);
-    expect(before.contexts).toBe(0);
-    expect(before.rafLoops).toBe(0);
+    // The harness page mounts a table on load, so the state "before the first mount" is the page with it disposed: the
+    // Home condition, every live count 0. Asserted outright, so nothing the first mount leaves behind hides in the baseline.
+    expect(live(before), 'every live count is 0 once the first table is disposed').toEqual({ contexts: 0, sessions: 0, engines: 0, transports: 0, audioContexts: 0, workers: 0, rafLoops: 0, botRunners: 0, timers: 0 });
     const start = before.disposals;
     for (let i = 1; i <= 20; i++) {
       await test.step(`cycle ${i}`, async () => {
@@ -35,7 +36,8 @@ test.describe('lifecycle soak', () => {
         const m = await memory(page);
         expect(m.contexts, 'one WebGL context while mounted').toBe(1);
         expect(m.rafLoops, 'one frame loop while mounted').toBe(1);
-        expect(m.workers, 'at most one worker while mounted').toBeLessThanOrEqual(1);
+        // No worker is tracked by the table scene (nothing under src/scene calls track('workers', …)): the acceptance's
+        // "one worker while mounted" belongs to the surfaces that start one; here the live counts after dispose cover it.
         await page.evaluate(() => window.__sceneHarness!.dispose());
         const after = await memory(page);
         expect(live(after), `live counts after dispose ${i}`).toEqual(live(before));
