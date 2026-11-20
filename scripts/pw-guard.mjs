@@ -12,6 +12,17 @@
 //    below SPELLPLANE_PW_MIN_FREE_PCT, default 25) or the run's own processes grow past
 //    SPELLPLANE_PW_MAX_RSS_MB (default: a third of physical memory), instead of letting browsers
 //    swap the machine to death;
+//  - a browser watchdog: every Playwright browser process (paths under its ms-playwright cache) is measured by its
+//    physical footprint (macOS `footprint`), not its resident size, because WebKit's GPU, WebContent and Networking
+//    helpers are XPC services started by launchd, outside the run's process group, and keep their GPU buffers out of
+//    `ps`. One over SPELLPLANE_PW_MAX_BROWSER_MB (default 4096), or all of them together over the run limit above,
+//    aborts the run (exit 4) and the offenders are killed, whichever run they belong to (launchd's XPC helpers
+//    cannot be traced to a run; one that size is the leak). On 19 Nov 2026 WebKit GPU helpers grew to 40–60 GB each
+//    during two full e2e runs and swapped the machine to a standstill (oomph incident 20261119-035310);
+//  - strays: when no other run holds a slot, Playwright browser processes left from earlier runs are killed before a
+//    run starts and after it ends;
+//  - oomph (if installed, https://github.com/kleinzeug/oomph): the run reserves SPELLPLANE_PW_RESERVE (default 3G) in
+//    the machine-wide queue Claude sessions share, waits for its turn, and releases it at the end;
 //  - a load guard: no run starts while the 1-minute load average is above SPELLPLANE_PW_MAX_LOAD
 //    (default 3 × CPUs; it waits instead), and a running one is aborted (exit 5) when the load stays above
 //    SPELLPLANE_PW_ABORT_LOAD (default 8 × CPUs) for 30 s. Both machine crashes so far were macOS watchdog
@@ -153,6 +164,109 @@ function memoryShortage(pgid) {
   return null;
 }
 
+const MAX_BROWSER_MB = Number(process.env.SPELLPLANE_PW_MAX_BROWSER_MB ?? 4096);
+
+/** Playwright's browser processes on this machine (any run): their executables live in its ms-playwright cache. */
+function browserProcesses() {
+  const out = spawnSync('ps', ['-axo', 'pid=,comm='], { encoding: 'utf8' }).stdout ?? '';
+  const procs = [];
+  for (const line of out.split('\n')) {
+    const m = line.trim().match(/^(\d+)\s+(.*)$/);
+    if (m && m[2].includes('/ms-playwright/') && Number(m[1]) !== process.pid) procs.push({ pid: Number(m[1]), name: path.basename(m[2]) });
+  }
+  return procs;
+}
+
+const UNIT_MB = { KB: 1 / 1024, MB: 1, GB: 1024 };
+
+/** A process's physical footprint in MiB (GPU buffers included); its resident size where `footprint` cannot tell. */
+function footprintMb(pid) {
+  if (process.platform === 'darwin') {
+    const out = spawnSync('footprint', ['--noCategories', '-p', String(pid)], { encoding: 'utf8', timeout: 5000 }).stdout ?? '';
+    const m = out.match(/Footprint:\s*([\d.]+)\s*(KB|MB|GB)/);
+    if (m) return Number(m[1]) * UNIT_MB[m[2]];
+  }
+  return rssMb([pid]);
+}
+
+/** Browser processes that are too big ({procs, why}), or null. */
+function browserBloat() {
+  const procs = browserProcesses().map((p) => ({ ...p, mb: footprintMb(p.pid) }));
+  const total = procs.reduce((sum, p) => sum + p.mb, 0);
+  const over = procs.filter((p) => p.mb > MAX_BROWSER_MB);
+  const list = (ps) => ps.map((p) => `${p.name} [${p.pid}] ${Math.round(p.mb)} MiB`).join(', ');
+  if (over.length) return { procs: over, why: `a browser process grew past ${MAX_BROWSER_MB} MiB: ${list(over)}` };
+  if (total > MAX_RSS_MB) return { procs, why: `Playwright's browsers use ${Math.round(total)} MiB together (limit ${MAX_RSS_MB} MiB): ${list(procs)}` };
+  return null;
+}
+
+function killPids(pids) {
+  for (const pid of pids) {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+/** Kills Playwright browser processes left from earlier runs, but only while no other run holds a slot. */
+function sweepStrays(when) {
+  for (let i = 0; i < SLOTS; i++) {
+    const dir = slotDir(i);
+    if (dir === LOCK) continue;
+    const o = readOwner(dir);
+    if (o && alive(o.pid)) return;
+  }
+  const strays = browserProcesses();
+  if (strays.length === 0) return;
+  killPids(strays.map((p) => p.pid));
+  console.error(`[pw-guard] killed ${strays.length} stray Playwright browser process(es) ${when}: ${[...new Set(strays.map((p) => p.name))].join(', ')}`);
+}
+
+// --- oomph: the machine-wide memory queue shared with other Claude sessions (optional) ------------------------------
+const RESERVE = process.env.SPELLPLANE_PW_RESERVE ?? '3G';
+const oomphBin = () => {
+  if (process.platform !== 'darwin' || process.env.SPELLPLANE_PW_NO_OOMPH) return null;
+  const r = spawnSync('sh', ['-c', 'command -v oomph'], { encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.trim() : null;
+};
+
+/** Waits for an oomph grant (returns its id), or null without oomph; exits 75 when it never comes. */
+async function oomphReserve() {
+  const bin = oomphBin();
+  if (!bin) return null;
+  const started = Date.now();
+  let ticket = null;
+  let lastNote = 0;
+  for (;;) {
+    const args = ['reserve', RESERVE, '--for', `spellplane playwright (${path.basename(process.cwd())})`, '--wait', '2m', '--ttl', '120m'];
+    if (ticket) args.push('--ticket', ticket);
+    const r = spawnSync(bin, args, { encoding: 'utf8' });
+    const text = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+    ticket = text.match(/\b(r\d+)\b/)?.[1] ?? ticket;
+    if (r.status === 0) return ticket;
+    if (/refused/i.test(text) || r.status === null || (r.status !== 75 && r.status !== 0)) {
+      console.error(`[pw-guard] oomph did not grant ${RESERVE} (${text.trim().split('\n')[0]}); going on without a reservation`);
+      return null;
+    }
+    if (Date.now() - started > MAX_WAIT_MS) {
+      release();
+      console.error(`[pw-guard] waited ${MAX_WAIT_MS / 60_000} min for oomph to grant ${RESERVE}; giving up`);
+      process.exit(75);
+    }
+    if (Date.now() - lastNote > 60_000) {
+      console.error(`[pw-guard] waiting for memory in oomph's queue: ${text.trim().split('\n')[0]}`);
+      lastNote = Date.now();
+    }
+  }
+}
+
+function oomphRelease(id) {
+  const bin = id ? oomphBin() : null;
+  if (bin) spawnSync(bin, ['release', id], { encoding: 'utf8' });
+}
+
 const CPUS = os.cpus().length;
 const MAX_LOAD = Number(process.env.SPELLPLANE_PW_MAX_LOAD ?? 3 * CPUS);
 const ABORT_LOAD = Number(process.env.SPELLPLANE_PW_ABORT_LOAD ?? 8 * CPUS);
@@ -232,9 +346,17 @@ function release() {
 
 /** Runs `pnpm exec playwright <args>` under the guard and exits with its status. */
 export async function runPlaywright(args, extraEnv = {}) {
+  await runGuarded('pnpm', ['exec', 'playwright', ...args], extraEnv);
+}
+
+/**
+ * Runs `command <args>` under the guard (a slot, the prompt, memory and load watchdogs) and exits with its status: for
+ * a script that drives browsers through Playwright's library API itself (scripts/perf/measure.mjs).
+ */
+export async function runGuarded(command, args, extraEnv = {}) {
   const env = { ...process.env, ...extraEnv, SPELLPLANE_PW_GUARD: '1' };
   if (process.env.CI) {
-    const r = spawnSync('pnpm', ['exec', 'playwright', ...args], { stdio: 'inherit', env });
+    const r = spawnSync(command, args, { stdio: 'inherit', env });
     process.exit(r.status ?? 1);
   }
   const prompt = securityPromptShowing();
@@ -255,7 +377,9 @@ export async function runPlaywright(args, extraEnv = {}) {
     console.error(`[pw-guard] macOS is showing a prompt (${promptAfterWait}). Not starting Playwright until it is answered.`);
     process.exit(3);
   }
-  const child = spawn('pnpm', ['exec', 'playwright', ...args], { stdio: 'inherit', env, detached: true });
+  sweepStrays('before this run');
+  const lease = await oomphReserve();
+  const child = spawn(command, args, { stdio: 'inherit', env, detached: true });
   fs.writeFileSync(OWNER, JSON.stringify({ ...readOwner(), pgid: child.pid }));
 
   let aborted = null;
@@ -276,8 +400,19 @@ export async function runPlaywright(args, extraEnv = {}) {
     }, 5000).unref();
   };
   let overloadSince = null;
+  let tick = 0;
   const watchdog = setInterval(() => {
     if (aborted) return;
+    if (++tick % 5 === 0) {
+      const bloat = browserBloat();
+      if (bloat) {
+        console.error(`\n[pw-guard] ${bloat.why}. Aborting this Playwright run and killing those processes before the machine runs out of memory.`);
+        killPids(bloat.procs.map((p) => p.pid));
+        exitCode = 4;
+        stop('browser memory');
+        return;
+      }
+    }
     if (load1() > ABORT_LOAD) {
       overloadSince ??= Date.now();
       if (Date.now() - overloadSince > 30_000) {
@@ -312,6 +447,7 @@ export async function runPlaywright(args, extraEnv = {}) {
     process.on(sig, () => {
       stop(sig);
       setTimeout(() => {
+        oomphRelease(lease);
         release();
         process.exit(130);
       }, 5500).unref();
@@ -320,6 +456,8 @@ export async function runPlaywright(args, extraEnv = {}) {
   const status = await new Promise((resolve) => child.on('exit', (code) => resolve(code ?? 1)));
   clearInterval(watchdog);
   killGroup(child.pid, 'SIGKILL'); // leftovers (browsers, preview server) of this run
+  sweepStrays('after this run');
+  oomphRelease(lease);
   release();
   process.exit(aborted ? exitCode : status);
 }

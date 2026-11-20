@@ -23,6 +23,16 @@ const TONE_MAPPING: Record<Theme['lighting']['toneMapping'], THREE.ToneMapping> 
   neutral: THREE.NeutralToneMapping,
 };
 
+/**
+ * An optional member of a theme's instance (M7-A0): whether anything of the theme moves by itself (particles, a breathing
+ * glow, a time uniform). A still lit theme draws only when something changes; without the member a lit theme counts as
+ * animated, as before. It belongs in themes/types.ts ThemeInstance; until a contracts package adds it there, a theme
+ * returns `ThemeInstance & StillAware`.
+ */
+export interface StillAware {
+  animating?(): boolean;
+}
+
 export interface ThemeRuntimeOptions {
   /** Post-processing on this surface (the table); the pre-game surfaces render without it. */
   post: boolean;
@@ -68,6 +78,10 @@ export class ThemeRuntime {
   private time = 0;
   private size = { w: 1, h: 1 };
   private sized = false;
+  /** The adaptive render scale on the pixel ratio (scene/resolution.ts), 1 = the level's. */
+  private scale = 1;
+  /** A cap on the pixel ratio (scene/switches.ts `pr=`), or null. */
+  private pixelRatioCap: number | null = null;
 
   constructor(
     private renderer: THREE.WebGLRenderer,
@@ -109,12 +123,54 @@ export class ThemeRuntime {
     this.scene.fog = lit && t.lighting.fog ? new THREE.Fog(t.lighting.fog.colour, t.lighting.fog.near, t.lighting.fog.far) : null;
   }
 
+  /** The level's pixel ratio within the cap: what the scene draws at rest. */
+  get fullPixelRatio(): number {
+    const pr = this.effective.pixelRatio;
+    return this.pixelRatioCap !== null ? Math.min(pr, this.pixelRatioCap) : pr;
+  }
+
+  /** The adaptive render scale in effect. */
+  get renderScale(): number {
+    return this.scale;
+  }
+
+  /** Cap the pixel ratio (null: the level's). */
+  setPixelRatioCap(cap: number | null): void {
+    this.pixelRatioCap = cap !== null && cap > 0 ? cap : null;
+    this.applyPixelRatio();
+  }
+
+  /**
+   * Draw at `scale` times the full pixel ratio (scene/resolution.ts). Resizes the canvas and the post targets (without
+   * rebuilding the chain); returns whether anything changed.
+   */
+  setRenderScale(scale: number): boolean {
+    const s = scale > 0 ? Math.min(1, scale) : 1;
+    if (s === this.scale) return false;
+    this.scale = s;
+    return this.applyPixelRatio();
+  }
+
+  /** The pixel ratio for the level, cap and scale on the renderer and the post targets; whether it changed. */
+  private applyPixelRatio(): boolean {
+    const pr = this.fullPixelRatio * this.scale;
+    const changed = this.renderer.getPixelRatio() !== pr;
+    if (changed) {
+      this.renderer.setPixelRatio(pr);
+      if (this.sized) this.renderer.setSize(this.size.w, this.size.h, false);
+    }
+    this.post.setSamplesBasis(this.fullPixelRatio);
+    this.post.setSize(this.size.w, this.size.h, this.renderer.getPixelRatio());
+    return changed;
+  }
+
   /** What the quality level sets: pixel ratio, shadow maps, the post chain and anisotropy. */
   private applyLevel(): void {
     const t = this.theme;
     const before = this.renderer.getPixelRatio();
-    applyQuality(this.renderer, this.level, t.shadows);
+    applyQuality(this.renderer, this.level, t.shadows, this.fullPixelRatio * this.scale);
     if (this.sized && this.renderer.getPixelRatio() !== before) this.renderer.setSize(this.size.w, this.size.h, false);
+    this.post.setSamplesBasis(this.fullPixelRatio);
     this.post.setSize(this.size.w, this.size.h, this.renderer.getPixelRatio());
     const postLevel: QualityLevel = { ...this.level, post: this.opts.post && this.level.post };
     this.post.configure(this.opts.post ? t.post : { bloom: null, vignette: null }, postLevel);
@@ -225,6 +281,17 @@ export class ThemeRuntime {
     this.size = { w: Math.max(1, width), h: Math.max(1, height) };
     this.sized = true;
     this.post.setSize(this.size.w, this.size.h, this.renderer.getPixelRatio());
+  }
+
+  /**
+   * Whether the theme changes with time with nothing else changing (scene/table-scene.ts draws ambient frames for it):
+   * a lit theme does unless its instance says it is still and no light flickers. Paper (unlit) never does.
+   */
+  animating(): boolean {
+    if (!this.theme.lighting.lit) return false;
+    if (this.rig?.flickers) return true;
+    const still = this.instance as (ThemeInstance & StillAware) | null;
+    return still?.animating ? still.animating() : true;
   }
 
   /** Advance the theme (particles, flicker) by `dtMs`. */

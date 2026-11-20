@@ -7,6 +7,7 @@
  */
 import * as THREE from 'three';
 import type { MaterialSpec, SceneContext, ThemeInstance } from '../types';
+import type { StillAware } from '../../scene/theme-runtime';
 import { FELT_ALBEDO, FELT_NORMAL, FELT_TILE_MM } from './textures';
 
 /** The felt's colour (multiplied by the grey nap of FELT_ALBEDO). */
@@ -53,7 +54,7 @@ function railGeometry(w: number, d: number, rail: number): THREE.ShapeGeometry {
 }
 
 /** Build Dusk's table into the scene (Theme.build). */
-export function buildDusk(ctx: SceneContext): ThemeInstance {
+export function buildDusk(ctx: SceneContext): ThemeInstance & StillAware {
   const { w, d } = ctx.table;
   const owned: THREE.Material[] = [];
   const material = (spec: MaterialSpec): THREE.Material => {
@@ -89,6 +90,8 @@ export function buildDusk(ctx: SceneContext): ThemeInstance {
     update() {
       // A still room: the lamp does not flicker and nothing drifts.
     },
+    // So the table draws only when something changes (M7-A0: no frames while nothing moves).
+    animating: () => false,
     setQuality() {
       // Nothing of the table depends on the level; the pipeline drops contact shadows and post itself.
     },
