@@ -6,11 +6,12 @@
  */
 import type { Page } from '@playwright/test';
 
-export async function deckAudit(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
+export async function deckAudit(page: Page, skip: string[] = []): Promise<string[]> {
+  return page.evaluate((skip) => {
     const problems: string[] = [];
     const heights = [28, 36, 44, 56];
     const visible = (e: Element): boolean => {
+      if (skip.some((sel) => e.closest(sel))) return false;
       const r = e.getBoundingClientRect();
       if (r.width === 0 || r.height === 0) return false;
       for (let x: Element | null = e; x; x = x.parentElement) {
@@ -43,5 +44,5 @@ export async function deckAudit(page: Page): Promise<string[]> {
       if (/blur\(/.test(s.filter)) problems.push(`blur on ${e.tagName.toLowerCase()}`);
     }
     return problems;
-  });
+  }, skip);
 }

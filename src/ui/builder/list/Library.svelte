@@ -182,11 +182,11 @@
   <h2>Deck library</h2>
   <div class="save">
     <input type="text" placeholder={current?.name ?? 'Deck name'} aria-label="Deck name" data-testid="library-name" bind:value={listUi.name} maxlength="200" />
-    <button type="button" data-testid="library-save" disabled={busy || !loaded} onclick={() => save(false)}>{current ? 'Save changes' : 'Save to library'}</button>
-    {#if current}<button type="button" data-testid="library-save-new" disabled={busy || !loaded} onclick={() => save(true)}>Save as new</button>{/if}
+    <button class="ds-btn ds-btn--secondary ds-btn--xs" type="button" data-testid="library-save" disabled={busy || !loaded} onclick={() => save(false)}>{current ? 'Save changes' : 'Save to library'}</button>
+    {#if current}<button class="ds-btn ds-btn--secondary ds-btn--xs" type="button" data-testid="library-save-new" disabled={busy || !loaded} onclick={() => save(true)}>Save as new</button>{/if}
   </div>
   <div class="files">
-    <button type="button" data-testid="library-export-all" disabled={records.length === 0} onclick={() => download(records)}>Export all</button>
+    <button class="ds-btn ds-btn--secondary ds-btn--xs" type="button" data-testid="library-export-all" disabled={records.length === 0} onclick={() => download(records)}>Export all</button>
     <label class="file">
       Import file…
       <input
@@ -224,18 +224,18 @@
             <span class="confirm" role="group" aria-label="Confirm">
               {#if confirming.kind === 'open'}
                 Replace the builder's cards?
-                <button type="button" data-testid="library-confirm" onclick={() => open(r)}>Replace</button>
+                <button class="ds-btn ds-btn--secondary ds-btn--xs" type="button" data-testid="library-confirm" onclick={() => open(r)}>Replace</button>
               {:else}
                 Delete for good?
-                <button type="button" data-testid="library-confirm" onclick={() => remove(r)}>Delete</button>
+                <button class="ds-btn ds-btn--secondary ds-btn--xs" type="button" data-testid="library-confirm" onclick={() => remove(r)}>Delete</button>
               {/if}
-              <button type="button" onclick={() => (confirming = null)}>Cancel</button>
+              <button class="ds-btn ds-btn--secondary ds-btn--xs" type="button" onclick={() => (confirming = null)}>Cancel</button>
             </span>
           {:else}
             <span class="actions">
-              <button type="button" data-testid="library-open" onclick={() => (build.cards.length === 0 ? open(r) : (confirming = { id: r.id, kind: 'open' }))}>Open</button>
-              <button type="button" data-testid="library-export" onclick={() => download([r])}>Export</button>
-              <button type="button" data-testid="library-delete" onclick={() => (confirming = { id: r.id, kind: 'delete' })}>Delete</button>
+              <button class="ds-btn ds-btn--secondary ds-btn--xs" type="button" data-testid="library-open" onclick={() => (build.cards.length === 0 ? open(r) : (confirming = { id: r.id, kind: 'open' }))}>Open</button>
+              <button class="ds-btn ds-btn--secondary ds-btn--xs" type="button" data-testid="library-export" onclick={() => download([r])}>Export</button>
+              <button class="ds-btn ds-btn--secondary ds-btn--xs" type="button" data-testid="library-delete" onclick={() => (confirming = { id: r.id, kind: 'delete' })}>Delete</button>
             </span>
           {/if}
         </li>
@@ -254,8 +254,7 @@
     margin: 0 0 6px;
     font-size: 1.1em;
   }
-  input,
-  button {
+  input {
     font: inherit;
     color: inherit;
   }
@@ -272,23 +271,19 @@
     padding: 4px 6px;
     border: 1px solid var(--sp-border, #d8d8d8);
     border-radius: var(--sp-radius-sm, 2px);
-    min-height: 32px;
+    height: 28px;
     box-sizing: border-box;
     background: var(--sp-surface, #fff);
   }
-  button,
+  /* Swept to the kit (contracts.md Part G "Visual" 4; M8-P3): buttons are kit buttons, controls 28 px high. */
   .file {
-    border: 1px solid var(--sp-border, #d8d8d8);
-    background: var(--sp-surface, #fff);
-    border-radius: var(--sp-radius-sm, 2px);
-    padding: 4px 10px;
-    min-height: 32px;
+    border: 1px solid var(--ds-border);
+    background: var(--ds-panel);
+    border-radius: var(--ds-radius-md);
+    padding: 0 10px;
+    height: 28px;
     box-sizing: border-box;
     cursor: pointer;
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
   .file {
     display: inline-flex;

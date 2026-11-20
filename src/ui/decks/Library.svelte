@@ -65,6 +65,8 @@
   });
   onDestroy(() => {
     document.removeEventListener('visibilitychange', onVisible);
+    // Leaving the library makes the deletions final; their undo toasts go with it.
+    for (const t of undoToasts) toasts.dismiss(t);
     void lib.dispose();
   });
 
@@ -89,9 +91,12 @@
     // A booster deck whose packs are not all shown resumes the opening.
     env.go(`#/decks/${encodeURIComponent(d.id)}${isOpening(d) ? '/open' : ''}`);
   }
+  // Not reactive: only read when the page is left.
+  const undoToasts: number[] = [];
   function remove(d: DeckRecord): void {
     if (!lib.remove(d.id)) return;
-    toasts.undo(`${d.name} removed`, () => lib.undoRemove(d.id));
+    const t = toasts.undo(`${d.name} removed`, () => lib.undoRemove(d.id));
+    undoToasts.push(t);
   }
   function groups(d: DeckRecord): MenuGroup[] {
     return [
