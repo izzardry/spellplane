@@ -36,6 +36,7 @@ import { lookCssVars } from '../../src/ui/design/css';
 import { DEFAULT_SETTINGS } from '../../src/store/types';
 import { changedFraction, crop, decodePng, encodePng, measurePair, unionRect, type PairMeasure, type Pixels, type Rect } from '../unit/themes/conformance/pixels';
 import { hook } from './helpers/app';
+import { menuItem } from './helpers/hud';
 import { chair, decklist, freshRoom, openTable, setNickname } from './lobby/helpers';
 import { freshProfile, openSolo } from './solo/helpers';
 
@@ -662,7 +663,7 @@ test.describe('theme switcher', () => {
     expect(await loadedThemes(page)).toEqual(['paper']);
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'paper');
 
-    await page.getByTestId('open-theme-settings').click();
+    await menuItem(page, 'open-theme-settings', 'click');
     const picker = page.getByTestId('theme-settings');
     await expect(picker).toBeVisible();
     const option = (id: ThemeId) => picker.locator(`[data-testid="theme-option"][data-theme="${id}"] input`);
@@ -695,12 +696,12 @@ test.describe('theme switcher', () => {
     await expect(picker).toHaveCount(0);
     expect(await currentTheme(page)).toBe('kitchen');
     // It is a dismissible popover: Esc closes it, and so does a press outside it (here on the table).
-    await page.getByTestId('open-theme-settings').click();
+    await menuItem(page, 'open-theme-settings', 'click');
     await expect(picker).toBeVisible();
     await option('graphite').focus();
     await page.keyboard.press('Escape');
     await expect(picker).toHaveCount(0);
-    await page.getByTestId('open-theme-settings').click();
+    await menuItem(page, 'open-theme-settings', 'click');
     await expect(picker).toBeVisible();
     // A press inside it leaves it open.
     await picker.getByTestId('theme-picker').locator('legend').click();
@@ -732,19 +733,18 @@ test.describe('theme switcher', () => {
       expect(await hash(page)).toBe(before);
       expect((await cards(page)).filter((c) => c.id === 'm1' || c.id === 'm2').map((c) => c.visible)).toEqual([true, true]);
       // HUD token mapping: the HUD root and the page carry the theme's custom properties.
-      // M7-P2 (taken by M8-C): a look's own theme dresses the HUD from the look's tokens (ui/design/css.ts); an M4 theme keeps its own.
+      // M7-P2: a look's own theme dresses the HUD from the look's tokens (ui/design/css.ts); an M4 theme keeps its own.
       const loaded = await loadTheme(id);
       const look = lookOfTheme(id);
-      // The HUD of this branch still carries the theme's own tokens (M7-P2 moves it onto the look's).
-      const expected = hudCssVars(loaded.tokens);
-      const page$ = look ? lookCssVars(loaded, look) : expected;
+      const expected = look ? lookCssVars(loaded, look) : hudCssVars(loaded.tokens);
+      const page$ = expected;
       for (const k of ['--sp-bg', '--sp-fg', '--sp-surface', '--sp-hud-panel', '--sp-seat-0', '--sp-seat-1', '--sp-seat-7', '--sp-seat-2-ink', '--sp-font-size']) {
         expect(await cssVar('[data-testid="hud"]', k), `${id} ${k} on the HUD`).toBe(expected[k]);
         expect(await cssVar('html', k), `${id} ${k} on the page`).toBe(page$[k]);
       }
       // Per-theme seat colours reach the HUD: the own avatar's seat stripe is the theme's colour for its seat.
       const seatColour = (await state(page)).seats.s0!.colour;
-      const stripe = await page.locator('[data-testid="avatar"][data-seat="s0"]').evaluate((el) => getComputedStyle(el).borderLeftColor);
+      const stripe = await page.locator('[data-testid="avatar"][data-seat="s0"] .disc').evaluate((el) => getComputedStyle(el).backgroundColor);
       const hex = expected[`--sp-seat-${seatColour}`]!;
       const rgb = `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
       expect(stripe, `${id}: seat ${seatColour} stripe`).toBe(rgb);
@@ -766,7 +766,7 @@ test.describe('theme switcher', () => {
     // From now on new scripts fail, as an offline page would for a chunk it never fetched.
     let block = true;
     await page.route('**/*.js', (route) => (block ? route.abort('internetdisconnected') : route.continue()));
-    await page.getByTestId('open-theme-settings').click();
+    await menuItem(page, 'open-theme-settings', 'click');
     const option = (id: ThemeId) => page.locator(`[data-testid="theme-option"][data-theme="${id}"] input`);
     // A click, not check(): the radio springs back to Paper as soon as the load fails, which may be before check() looks.
     await option('codex').click();
@@ -795,7 +795,7 @@ test.describe('theme switcher', () => {
     await page.reload();
     await expect(page.getByTestId('hud')).toBeVisible();
     expect(await currentTheme(page)).toBe('paper');
-    await page.getByTestId('open-theme-settings').click();
+    await menuItem(page, 'open-theme-settings', 'click');
     await option('codex').check();
     await expect.poll(() => currentTheme(page)).toBe('codex');
     await expect(page.getByTestId('theme-error')).toHaveCount(0);

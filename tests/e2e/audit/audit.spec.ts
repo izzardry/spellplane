@@ -12,6 +12,7 @@ import { expect, test, type Page } from '@playwright/test';
 import type { AuditBundle, AuditVerdict } from '../../../src/core/audit';
 import type { LogEntry, SecretStore, TableState } from '../../../src/core/types';
 import { hook, shot } from '../helpers/app';
+import { propose } from '../helpers/hud';
 import { setsScript } from '../flow/helpers';
 import { chair, decklist, freshProfile, freshRoom, openTable, setNickname, twoPages } from '../lobby/helpers';
 
@@ -59,7 +60,7 @@ test('a two-player game ends in the audit panel: both players verified on both p
   await expect(a.getByTestId('audit-panel')).toHaveCount(0);
 
   // "Next game": Anna proposes from the evening bar, Ben confirms in the HUD's prompt.
-  await a.getByTestId('propose-nextGame').click();
+  await propose(a, 'nextGame', 'click');
   await expect(b.getByTestId('confirm-prompt')).toBeVisible({ timeout: 15_000 });
   await b.getByTestId('prompt-ok').click();
   for (const p of [a, b]) await expect(p.getByTestId('stage')).toHaveAttribute('data-stage', 'build', { timeout: 30_000 });

@@ -17,6 +17,7 @@ import type { TalkIndicatorState, VoiceTrackState } from '../../../src/voice/typ
 import { hook, openApp } from '../helpers/app';
 import { centreOf, drawn, lastAction, playCard, say, startTable, type Table } from '../captions/helpers';
 import { chair, decklist, freshProfile, freshRoom, openTable, setNickname, twoPages } from '../lobby/helpers';
+import { handPoint, settledTable } from '../nokeys/helpers';
 
 const tracks = (page: Page) => hook<VoiceTrackState[]>(page, 'voice.tracks');
 const enabled = async (page: Page) => (await tracks(page)).map((t) => t.enabled);
@@ -158,12 +159,14 @@ test('with "Talk while I hold or drag" on, a held drag talks until release and a
   const handCard = (await hook<{ hand: InstanceId[] }>(a, 'secrets')).hand[1]!;
   const inHand = a.locator(`[data-testid="hand-card"][data-card="${handCard}"]`);
   await expect(inHand).toBeVisible();
-  const hb = (await inHand.boundingBox())!;
+  // Once the drawn cards rest in the hand (M7-P4's draw flight), at a point of the card its neighbours do not cover.
+  await settledTable(a);
+  const grab = await handPoint(a, handCard);
   const drop = await tablePoint(a, OPEN_TABLE);
   await record(a);
-  await a.mouse.move(hb.x + hb.width / 2, hb.y + hb.height - 12, { steps: 3 });
+  await a.mouse.move(grab.x, grab.y, { steps: 3 });
   await a.mouse.down();
-  await a.mouse.move(hb.x + hb.width / 2, hb.y - 80, { steps: 4 });
+  await a.mouse.move(grab.x, grab.y - 120, { steps: 4 });
   await a.mouse.move(drop.x, drop.y, { steps: 8 });
   await expect.poll(() => enabled(a)).toEqual([true]);
   expect(await pressHeld(a)).toBe(true);
@@ -186,7 +189,9 @@ test('with "Talk while I hold or drag" on, a held drag talks until release and a
   await a.mouse.up();
   await expect.poll(() => enabled(a)).toEqual([false]);
 
-  // A press on the HUD (the log panel) is not a table press.
+  // A press on the HUD (the log panel, opened from its activity button since M7-P2) is not a table press.
+  await a.getByTestId('open-log').click();
+  await expect(a.locator('[data-testid="log"][data-open="true"]')).toBeVisible();
   await record(a);
   const log = a.getByTestId('log');
   const box = (await log.boundingBox())!;
@@ -195,6 +200,7 @@ test('with "Talk while I hold or drag" on, a held drag talks until release and a
   await a.waitForTimeout(500);
   await a.mouse.up();
   expect(await seen(a)).toEqual([]);
+  await a.getByTestId('close-log').click();
 
   // Ben never turned it on: his held drag stays silent.
   await b.bringToFront();

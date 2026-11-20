@@ -2,10 +2,13 @@
   Action log with chat (DESIGN "Turn flow and confirmation", Action log: one line per state change with seat colour,
   actor and card names; hovering a card name previews it and highlights the card on the table; chat interleaves in the
   same timeline. "Input and interaction design", Accessibility: the log is a live region). M1-P6: the timeline, its
-  filters and chat tabs and the `[[card name]]` previews live in ui/chat/.
+  filters and chat tabs and the `[[card name]]` previews live in ui/chat/. M7-P2 (docs/design/m7-hud-proposal.md,
+  Activity button and Activity drawer): closed, it is one button with an unread count and a quiet ticker of the last
+  two or three lines, which fade after about six seconds; open, a drawer over the right edge of the table with the
+  timeline, its tabs and the chat field. Never a permanent column.
 -->
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy, untrack, type Snippet } from 'svelte';
   import type { ChatTab, TimelineFilter } from '../core/log';
   import type { InstanceId } from '../core/types';
   import type { CardDataSource, FaceSource } from '../data/types';
@@ -16,6 +19,9 @@
   import { TypingSender, type Typer } from './chat/typing';
   import TypingLine from './chat/TypingLine.svelte';
   import type { LogLine } from './describe';
+  import Icon from './design/Icon.svelte';
+  import SeatGlyph from './a11y/SeatGlyph.svelte';
+  import { tickerText, TICKER_LINES, TICKER_MS } from './hud/ticker';
 
   let {
     lines,
@@ -29,6 +35,7 @@
     tabs = ['table'],
     typers = [],
     ontyping,
+    under,
   }: {
     lines: LogLine[];
     open: boolean;
@@ -46,6 +53,8 @@
     typers?: Typer[];
     /** Added by M6-P2: announce this field's typing on presence (Presence.typing); absent at the solo table. */
     ontyping?: (channel: ChatTab | null) => void;
+    /** Added by M7-P2: controls stacked under the Activity button and above the ticker (the View control). */
+    under?: Snippet;
   } = $props();
 
   let text = $state('');
@@ -78,6 +87,20 @@
     input?.focus();
   }
 
+  // --- Unread count and ticker (closed drawer) -------------------------------------------------------------------
+  /** Lines the viewer has seen: all of them while the drawer is open, else as many as when it closed. */
+  let seen = $state(untrack(() => lines.length));
+  $effect(() => {
+    if (open) seen = lines.length;
+  });
+  // A log that shrank (a resume replaced it) counts from there.
+  $effect(() => {
+    if (lines.length < seen) seen = lines.length;
+  });
+  const unread = $derived(open ? 0 : Math.max(0, lines.length - seen));
+  /** The newest unread lines, at most TICKER_LINES, each shown for TICKER_MS (a CSS fade; no timers, no per-frame state). */
+  const ticker = $derived(open ? [] : lines.slice(Math.max(seen, lines.length - TICKER_LINES)));
+
   function send() {
     const t = text.trim();
     if (t) onchat(t, tab);
@@ -86,81 +109,152 @@
   }
 </script>
 
-<aside class="log" class:closed={!open} data-testid="log" aria-label="Log and chat">
-  <header>
-    <h2>Log</h2>
-    {#if open}<FilterBar bind:filter bind:tab tabs={shownTabs} />{/if}
-    <button type="button" onclick={ontoggle} aria-expanded={open}>{open ? 'Hide' : 'Log'}</button>
-  </header>
-  {#if open}
+{#if !open}
+  <div class="activity" data-testid="log" data-open="false">
+    <button type="button" class="ds-btn ds-icon-btn sp-h-md sp-round" data-testid="open-log" title="Log and chat" aria-expanded={false} onclick={ontoggle}><Icon name="chat" /><span class="sp-sr">Log and chat</span>{#if unread}<span class="ds-badge" data-testid="unread">{unread}</span><span class="sp-sr"> new</span>{/if}</button>
+    {#if under}<div class="under">{@render under()}</div>{/if}
+    <!-- The ticker repeats lines the page's live region already announces (ui/a11y), so it is hidden from screen readers. -->
+    <ol class="ticker" aria-hidden="true" data-testid="log-ticker">
+      {#each ticker as l (l.key)}
+        <li class="tick" style:--seat={l.colour === null ? 'transparent' : `var(--sp-seat-${l.colour})`} style:animation-duration="{TICKER_MS}ms"><SeatGlyph colour={l.colour} />{tickerText(l)}</li>
+      {/each}
+    </ol>
+  </div>
+{:else}
+  <aside class="log ds-pop" data-testid="log" data-open="true" aria-label="Log and chat">
+    <header>
+      <h2 class="ds-heading">Activity</h2>
+      <FilterBar bind:filter bind:tab tabs={shownTabs} />
+      <button type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-sm sp-round" data-testid="close-log" aria-label="Hide the log" title="Hide the log" aria-expanded={true} onclick={ontoggle}><Icon name="close" /></button>
+    </header>
     <ChatLines {lines} {filter} {tab} {onhovercard} {resolver} {faces} {back} />
-  {/if}
-  <input
-    bind:this={input}
-    bind:value={text}
-    class="chat"
-    data-testid="chat-input"
-    maxlength="500"
-    placeholder={tab === 'table' ? 'Chat (Enter), [[card name]] previews' : `${tab === 'team' ? 'Team' : 'Spectator'} chat (Enter)`}
-    aria-label="Chat message"
-    oninput={(e) => typing.input(e.currentTarget.value, tab)}
-    onblur={() => typing.stop()}
-    onkeydown={(e) => {
-      if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
-        e.preventDefault();
-        send();
-      } else if (e.key === 'Escape') input?.blur();
-    }}
-  />
-  <TypingLine {typers} {tab} tabs={shownTabs} />
-</aside>
+    <input
+      bind:this={input}
+      bind:value={text}
+      class="chat"
+      data-testid="chat-input"
+      maxlength="500"
+      placeholder={tab === 'table' ? 'Chat (Enter), [[card name]] previews' : `${tab === 'team' ? 'Team' : 'Spectator'} chat (Enter)`}
+      aria-label="Chat message"
+      oninput={(e) => typing.input(e.currentTarget.value, tab)}
+      onblur={() => typing.stop()}
+      onkeydown={(e) => {
+        if (e.key === 'Enter' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+          e.preventDefault();
+          send();
+        } else if (e.key === 'Escape') input?.blur();
+      }}
+    />
+    <TypingLine {typers} {tab} tabs={shownTabs} />
+  </aside>
+{/if}
 
 <style>
+  .activity {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--ds-space-sm);
+    pointer-events: none;
+  }
+  .sp-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .under {
+    pointer-events: auto;
+  }
+  .activity > button {
+    position: relative;
+    pointer-events: auto;
+  }
+  .activity .ds-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+  }
+  .ticker {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    max-width: min(320px, 60vw);
+  }
+  .tick {
+    padding: 4px 10px;
+    border-radius: var(--ds-radius-md);
+    border-left: 3px solid var(--seat);
+    background: var(--ds-panel);
+    color: var(--ds-ink);
+    box-shadow: var(--ds-elevation-raised);
+    font-size: var(--ds-type-small);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+    box-sizing: border-box;
+    opacity: 0;
+    animation-name: tick;
+    animation-timing-function: linear;
+    animation-fill-mode: forwards;
+  }
+  @keyframes tick {
+    0% {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    4% {
+      opacity: 1;
+      transform: none;
+    }
+    85% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
   .log {
     display: flex;
     flex-direction: column;
-    width: 300px;
+    width: min(340px, calc(100vw - 32px));
     max-height: 100%;
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-md, 4px);
-    font: var(--sp-font-size-small, 12px) / 1.4 var(--sp-font, system-ui);
+    box-sizing: border-box;
+    font: var(--ds-type-small) / 1.4 var(--ds-font-body);
     pointer-events: auto;
-  }
-  .log.closed {
-    width: 200px;
-    /* Hidden, it is a small bar (header and chat input), not a full-height box over the table. */
-    align-self: flex-start;
+    overflow: hidden;
   }
   header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 2px 8px;
-    border-bottom: 1px solid var(--sp-border, #d8d8d8);
+    gap: var(--ds-space-sm);
+    padding: var(--ds-space-xs) var(--ds-space-xs) var(--ds-space-xs) var(--ds-space-md);
+    border-bottom: 1px solid var(--ds-line);
+  }
+  header :global(.ds-icon-btn) {
+    margin-left: auto;
   }
   h2 {
-    margin: 0;
-    font-size: inherit;
-    font-variant: small-caps;
-    letter-spacing: 0.05em;
-  }
-  button {
-    font: inherit;
-    background: none;
-    border: 0;
-    color: var(--sp-muted, #5f5f5f);
-    cursor: pointer;
+    font-size: var(--ds-type-body);
   }
   .chat {
-    margin: 4px;
+    margin: var(--ds-space-sm);
     font: inherit;
-    padding: 3px 6px;
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-sm, 2px);
+    min-height: 34px;
+    padding: 0 var(--ds-space-md);
+    color: var(--ds-ink);
+    background: var(--ds-panel);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-sm);
   }
   .chat:focus {
-    outline: 2px solid var(--sp-focus, #1f6fd1);
+    outline: 2px solid var(--ds-focus);
   }
 </style>

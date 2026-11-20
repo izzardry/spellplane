@@ -690,6 +690,7 @@ export class RecordingScene implements TableScene {
   lastState: TableState | null = null;
   lastView: ViewState | null = null;
   private currentRig: CameraRig = 'birdseye';
+  private currentTilt: number | null = null;
   private currentQuality: QualityId = 'high';
   private currentFollow: FollowOptions = { stack: false, activePlayer: false };
   readonly camera: TableCameraControls;
@@ -707,6 +708,7 @@ export class RecordingScene implements TableScene {
       zoomTo: rec('camera.zoomTo'),
       setRig: (rig: CameraRig) => {
         this.currentRig = rig;
+        this.currentTilt = null;
         this.calls.push({ method: 'camera.setRig', args: [rig] });
       },
       rig: () => this.currentRig,
@@ -719,13 +721,16 @@ export class RecordingScene implements TableScene {
       blend: () => null,
       pose: () => ({ position: [0, 0, 0], target: [0, 0, 0], fovDeg: 6, pitchDeg: 90 }),
       // The one continuous tilt (M7-C): recorded like setRig; the fake's rig follows the nearer end.
-      tilt: () => tiltForRig(this.currentRig),
+      // M7-P2: the fake keeps the tilt itself (the View control reads it back), and the rig follows the nearer end.
+      tilt: () => this.currentTilt ?? tiltForRig(this.currentRig),
       setTilt: (t: number) => {
-        this.currentRig = rigForTilt(clampTilt(t));
+        this.currentTilt = clampTilt(t);
+        this.currentRig = rigForTilt(this.currentTilt);
         this.calls.push({ method: 'camera.setTilt', args: [t] });
       },
       tiltBy: (dt: number) => {
-        this.currentRig = rigForTilt(clampTilt(tiltForRig(this.currentRig) + dt));
+        this.currentTilt = clampTilt((this.currentTilt ?? tiltForRig(this.currentRig)) + dt);
+        this.currentRig = rigForTilt(this.currentTilt);
         this.calls.push({ method: 'camera.tiltBy', args: [dt] });
       },
       tiltPresets: () => TILT_PRESETS,

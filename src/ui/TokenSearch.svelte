@@ -85,7 +85,7 @@
     <h3>Related to {near?.name}</h3>
     <ul>
       {#each shownRelated as t (t.id)}
-        <li><button type="button" data-testid="token-result" data-related="true" onclick={() => onpick(t)}>{t.name} <span class="muted">{t.type_line}{t.power !== undefined ? ` ${t.power}/${t.toughness}` : ''}</span></button></li>
+        <li><button class="ds-menu-item sp-h-sm" type="button" data-testid="token-result" data-related="true" onclick={() => onpick(t)}>{t.name} <span class="muted">{t.type_line}{t.power !== undefined ? ` ${t.power}/${t.toughness}` : ''}</span></button></li>
       {/each}
     </ul>
   {/if}
@@ -93,7 +93,7 @@
     <h3>Tokens</h3>
     <ul>
       {#each shownResults as t (t.id)}
-        <li><button type="button" data-testid="token-result" onclick={() => onpick(t)}>{t.name} <span class="muted">{t.type_line}{t.power !== undefined ? ` ${t.power}/${t.toughness}` : ''}</span></button></li>
+        <li><button class="ds-menu-item sp-h-sm" type="button" data-testid="token-result" onclick={() => onpick(t)}>{t.name} <span class="muted">{t.type_line}{t.power !== undefined ? ` ${t.power}/${t.toughness}` : ''}</span></button></li>
       {/each}
     </ul>
   {:else if query.trim() && !shownRelated.length}

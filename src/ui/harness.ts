@@ -10,7 +10,8 @@ import type { SceneEvents, TableSceneOptions, ViewState } from '../scene/types';
 import { paper } from '../themes/paper/index';
 import { FakeCardData, FakeFaces, FakeSession, MemorySettings, RecordingScene, fakeGame, tableWith, type FakeCardSpec, type SceneCall, type SessionCall } from './fakes';
 import Hud from './Hud.svelte';
-import type { HudProps } from './props';
+import type { HudProps, HudShellProps } from './props';
+import { HarnessShell, type ShellPartial } from './hud/harness-shell.svelte';
 import type { Settings } from '../store/types';
 
 /** The page's harness API (Playwright reads it with page.evaluate). */
@@ -37,7 +38,13 @@ export interface UiHarness {
   /** Let the HUD's scene report a hover (as pointer moves over a card on the table would). */
   hover(id: InstanceId | null): void;
   select(ids: InstanceId[]): void;
+  /** Set members of HudShellProps (M7-P2 seams); the HUD follows. Slots take fixture snippets, callbacks are recorded. */
+  setShell(partial: ShellPartial): void;
+  /** The shell callbacks the HUD ran, in order. */
+  shellCalls(): string[];
 }
+
+const SHELL_KEYS: readonly (keyof HudShellProps)[] = ['onleave', 'menuTop', 'sandbox', 'onchoosedeck', 'seatPresence', 'plateMenuTop', 'plateBadge', 'status', 'notice', 'chrome', 'readOnly', 'primaryOverride'];
 
 declare global {
   interface Window {
@@ -208,6 +215,8 @@ export function mount(target: HTMLElement): void {
       onVoice: (action, phase) => voice.push({ action, phase }),
       newId: (p) => `${p}${++n}`,
   };
+  const shell = new HarnessShell();
+  for (const key of SHELL_KEYS) Object.defineProperty(props, key, { get: () => shell.props[key], enumerable: true, configurable: true });
   mountSvelte(Hud, { target: host, props });
 
   window.__uiHarness = {
@@ -236,5 +245,7 @@ export function mount(target: HTMLElement): void {
     },
     hover: (id) => scene?.opts.events.hover?.(id),
     select: (ids) => scene?.opts.events.selectionChange?.(ids),
+    setShell: (partial) => shell.set(partial),
+    shellCalls: () => [...shell.calls],
   };
 }

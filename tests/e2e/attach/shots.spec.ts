@@ -8,6 +8,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { LISTED_THEME_IDS, THEME_IDS, type ThemeId } from '../../../src/themes/index';
 import { hook, shot } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { freshProfile, openSolo } from '../solo/helpers';
 import { IPAD } from '../touch/helpers';
 import { SIDS, centre, clipCentre, clips, creature, dispatch, hover, idle, mouseDrag, pxPerMm, shown, state } from './helpers';
@@ -74,7 +75,7 @@ async function pickHudTheme(page: Page, theme: ThemeId): Promise<void> {
     await frames(page);
     return;
   }
-  if (!(await picker.isVisible())) await page.getByTestId('open-theme-settings').click();
+  if (!(await picker.isVisible())) await menuItem(page, 'open-theme-settings', 'click');
   await expect(picker).toBeVisible();
   await picker.locator(`[data-testid="theme-option"][data-theme="${theme}"] input`).check();
   await expect.poll(() => hook<ThemeId>(page, 'theme.current'), { timeout: 20_000 }).toBe(theme);
@@ -133,13 +134,17 @@ test.describe('mouse', () => {
 
   test('the clip tray in the toolbar, and the hover outline of a clipped group', async ({ page }, info) => {
     await table(page);
+    // M7-P2: the clip tray is an item of the Menu.
+    await page.getByTestId('open-menu').click();
     const tray = page.getByTestId('clip-tray');
     await expect(tray).toBeVisible();
+    await closeHints(page);
+    if (!(await tray.isVisible())) await page.getByTestId('open-menu').click();
     await tray.hover();
     await frames(page);
-    await closeHints(page);
+    await page.getByTestId('menu-popover').screenshot({ path: `artifacts/shots/${M}/clip-tray-toolbar-${info.project.name}.png` });
     await shot(page, M, 'clip-tray', info.project.name);
-    await tray.locator('xpath=..').screenshot({ path: `artifacts/shots/${M}/clip-tray-toolbar-${info.project.name}.png` });
+    await page.keyboard.press('Escape');
     await closeUp(page, 'a', 15, 10);
     await clipAB(page);
     await hover(page, await clipCentre(page));

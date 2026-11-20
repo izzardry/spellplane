@@ -24,13 +24,13 @@
   {#if tabs.length > 1}
     <div class="tabs" role="tablist" aria-label="Chat tabs">
       {#each tabs as t (t)}
-        <button type="button" role="tab" aria-selected={tab === t} data-testid="chat-tab-{t}" onclick={() => (tab = t)}>{TAB_LABEL[t]}</button>
+        <button class="ds-btn ds-btn--quiet sp-h-xs" type="button" role="tab" aria-selected={tab === t} data-testid="chat-tab-{t}" onclick={() => (tab = t)}>{TAB_LABEL[t]}</button>
       {/each}
     </div>
   {/if}
   <div class="filters" role="group" aria-label="Show">
     {#each TIMELINE_FILTERS as f (f)}
-      <button type="button" aria-pressed={filter === f} data-testid="log-filter-{f}" onclick={() => (filter = f)}>{FILTER_LABEL[f]}</button>
+      <button class="ds-btn ds-btn--quiet sp-h-xs" type="button" aria-pressed={filter === f} data-testid="log-filter-{f}" onclick={() => (filter = f)}>{FILTER_LABEL[f]}</button>
     {/each}
   </div>
 </div>
@@ -45,28 +45,23 @@
   .tabs,
   .filters {
     display: inline-flex;
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-sm, 2px);
-    overflow: hidden;
+    gap: 2px;
+    padding: 2px;
+    background: var(--ds-chip);
+    border-radius: var(--ds-radius-pill);
   }
   button {
-    font: inherit;
-    background: none;
+    background: transparent;
     border: 0;
-    padding: 0 6px;
-    color: var(--sp-muted, #5f5f5f);
-    cursor: pointer;
-  }
-  button + button {
-    border-left: 1px solid var(--sp-border, #d8d8d8);
+    box-shadow: none;
+    padding: 0 var(--ds-space-md);
+    border-radius: var(--ds-radius-pill);
+    color: var(--ds-ink);
+    font-weight: var(--ds-weight-medium);
   }
   button[aria-pressed='true'],
   button[aria-selected='true'] {
-    background: var(--sp-fg, #111);
-    color: var(--sp-surface, #fff);
-  }
-  button:focus-visible {
-    outline: 2px solid var(--sp-focus, #1f6fd1);
-    outline-offset: -2px;
+    background: var(--ds-on);
+    color: var(--ds-on-ink);
   }
 </style>

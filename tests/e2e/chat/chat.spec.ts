@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { SecretStore, TableState } from '../../../src/core/types';
 import { hook } from '../helpers/app';
+import { openZone, openLog } from '../helpers/hud';
 import { call, decklist, freshProfile, openSolo } from '../solo/helpers';
 import { hoverCard, openHud } from '../ui/harness';
 
@@ -41,6 +42,7 @@ test.describe('chat in the timeline (DESIGN "Chat and voice", Text chat)', () =>
     await call(page, 'draw', 2);
 
     await say(page, 'Watch out for [[leonin warleader]] and [[Not A Real Card]]!');
+    await openLog(page);
     const line = lines(page).last();
     await expect(line).toHaveAttribute('data-kind', 'chat');
     const me = (await state(page)).seats.s0!.name;
@@ -48,6 +50,7 @@ test.describe('chat in the timeline (DESIGN "Chat and voice", Text chat)', () =>
     // The chat line is part of the shared log, after the draws.
     const log = await hook<{ kind: string; action?: { type: string; text?: string } }[]>(page, 'session.log');
     expect(log.at(-1)).toMatchObject({ kind: 'action', action: { type: 'chat', text: 'Watch out for [[leonin warleader]] and [[Not A Real Card]]!' } });
+    await openLog(page);
     await expect(lines(page).filter({ hasText: 'draws 2 cards' })).toHaveCount(1);
 
     // Hovering the bracketed name previews the card face resolved through the card data source.
@@ -88,6 +91,7 @@ test.describe('chat in the timeline (DESIGN "Chat and voice", Text chat)', () =>
     await say(page, 'second');
     await call(page, 'shuffle');
 
+    await openLog(page);
     const kinds = async () => lines(page).evaluateAll((els) => els.map((e) => e.getAttribute('data-kind')));
     const all = await kinds();
     expect(all.filter((k) => k === 'chat')).toHaveLength(2);
@@ -109,6 +113,7 @@ test.describe('chat in the timeline (DESIGN "Chat and voice", Text chat)', () =>
     expect(await call<string>(page, 'hash')).toBe(hash);
     await expect(page.getByTestId('log-filter-chat')).toHaveAttribute('aria-pressed', 'true');
     await expect.poll(kinds).toEqual(['chat', 'chat']);
+    await openLog(page);
     await expect(lines(page)).toHaveText([/: first$/, /: second$/]);
 
     await page.getByTestId('log-filter-actions').click();
@@ -117,8 +122,10 @@ test.describe('chat in the timeline (DESIGN "Chat and voice", Text chat)', () =>
 
     // A chat line sent while actions only are shown is in the log but hidden until the filter allows it.
     await say(page, 'third');
+    await openLog(page);
     await expect(lines(page).filter({ hasText: 'third' })).toHaveCount(0);
     await page.getByTestId('log-filter-all').click();
+    await openLog(page);
     await expect(lines(page).filter({ hasText: 'third' })).toHaveCount(1);
     await expect.poll(async () => (await kinds()).length).toBe(all.length + 1);
 
@@ -128,10 +135,12 @@ test.describe('chat in the timeline (DESIGN "Chat and voice", Text chat)', () =>
 
   test('the chat filter on a table without chat shows an empty-state line, not a blank panel', async ({ page }, info) => {
     await openSolo(page, freshProfile(info));
+    await openLog(page);
     await page.getByTestId('log-filter-chat').click();
     await expect(page.getByTestId('log-empty')).toHaveText('No chat yet.');
     await say(page, 'hello');
     await expect(page.getByTestId('log-empty')).toHaveCount(0);
+    await openLog(page);
     await expect(lines(page)).toHaveCount(1);
   });
 });
@@ -166,15 +175,18 @@ test.describe('log wording (M0-G findings)', () => {
     await expect(el).toHaveClass(/hovered/);
     await page.keyboard.press('Shift+KeyL');
     await expect.poll(async () => (await secrets(page)).libraryOrder.at(-1)).toBe(bottomed);
+    await openLog(page);
     await expect(lines(page).last()).toContainText(`puts ${name} on the bottom of their library`);
     // The card stays hidden in shared state: the name comes from this browser only.
     expect((await state(page)).cards[bottomed]!.identity).toBeUndefined();
 
     await page.mouse.move(720, 120);
-    await page.locator('[data-testid="avatar"][data-seat="s0"] [data-testid="zone-button"][data-zone="library:s0"]').click();
+    await openZone(page, 'library:s0', 'click');
     await page.getByTestId('search-library').click();
     await expect(page.getByTestId('pile-card')).toHaveCount(54);
+    await openLog(page);
     await expect(lines(page).last()).toContainText('searches their library');
+    await openLog(page);
     await expect(lines(page).filter({ hasText: 'looks at the top' })).toHaveCount(0);
   });
 });

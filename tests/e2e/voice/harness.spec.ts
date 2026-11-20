@@ -13,6 +13,7 @@
  * Only Chromium gets media (fake device and fake permission UI from playwright.config.ts); WebKit would show the macOS
  * microphone prompt, so on WebKit only the chat test runs, without joining voice.
  */
+import { openLog } from '../helpers/hud';
 import { expect, test, type Page } from '@playwright/test';
 import type { SentStream, VoiceHarness } from '../../../src/ui/voice/harness';
 
@@ -173,6 +174,7 @@ test.describe('voice on Chromium fake media (PLAN M3-P3)', () => {
     // Open the chat once (Enter) and come back to the table, so its field exists.
     await toTable(page);
     await page.keyboard.press('Enter');
+    await openLog(page);
     const chat = page.getByTestId('chat-input');
     await expect(chat).toBeFocused();
     await page.keyboard.press('Escape');
@@ -256,6 +258,7 @@ test('no talk key event leaks into chat while typing, and typing never opens the
 
   // In the chat: V and Shift+V type, Ctrl held alone does nothing, nothing talks.
   await page.keyboard.press('Enter');
+  await openLog(page);
   const chat = page.getByTestId('chat-input');
   await expect(chat).toBeFocused();
   await page.keyboard.down('v');

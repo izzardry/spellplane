@@ -307,7 +307,7 @@ describe('the HUD seam (m7-adjustments.md section 2; contracts.md Part C)', () =
     };
     const hud: Partial<HudProps> = { ...all };
     expect(Object.keys(hud)).toHaveLength(12);
-    expect(HUD_SHELL).toBe(false);
+    expect(HUD_SHELL).toBe(true); // [M7-P2] the HUD honours every shell prop (tests/e2e/hud/seams.spec.ts)
   });
 });
 

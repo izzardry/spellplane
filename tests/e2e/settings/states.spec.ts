@@ -6,6 +6,7 @@
  */
 import { expect, test } from '@playwright/test';
 import { openApp } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { drafts, hoverCard, openHud } from '../ui/harness';
 import { openHudSettings, openSettingsHarness } from './helpers';
 
@@ -51,9 +52,10 @@ test.describe('empty and error states in the settings harness', () => {
 });
 
 test.describe('empty and error states on the table (HUD harness)', () => {
-  test('no deck: an inline notice offers the deck import, can be dismissed, and goes once cards are there', async ({ page }) => {
+  // M7-P2 (docs/design/m8/m7-adjustments.md D7): the HUD's no-deck line, "No deck on this table." with "Choose a deck".
+  test('no deck: an inline line offers the deck import and goes once cards are there', async ({ page }) => {
     await openHud(page);
-    await expect(page.locator('[data-testid="empty-state"][data-state="noDeck"]')).toHaveCount(0);
+    await expect(page.getByTestId('no-deck')).toHaveCount(0);
     await page.evaluate(() =>
       window.__uiHarness!.update((s, sec) => {
         sec.hand = [];
@@ -66,14 +68,19 @@ test.describe('empty and error states on the table (HUD harness)', () => {
         }
       }),
     );
-    const notice = page.locator('[data-testid="empty-state"][data-state="noDeck"]');
-    await expect(notice).toBeVisible();
+    const notice = page.getByTestId('no-deck');
+    await expect(notice).toContainText('No deck on this table.');
     await notice.getByTestId('empty-import-deck').click();
     await expect(page.getByTestId('deck-import')).toBeVisible();
     await expect(notice).toHaveCount(0);
     await page.getByTestId('deck-import').getByRole('button', { name: 'Close' }).click();
     await expect(notice).toBeVisible();
-    await notice.getByTestId('empty-state-dismiss').click();
+    await page.evaluate(() =>
+      window.__uiHarness!.update((s) => {
+        s.cards['back1'] = { ...Object.values(s.cards)[0]!, id: 'back1', owner: 's0', zone: 'graveyard:s0' };
+        s.zones['graveyard:s0']!.ids.push('back1');
+      }),
+    );
     await expect(notice).toHaveCount(0);
   });
 
@@ -189,7 +196,7 @@ test.describe('first-run hints', () => {
 test.describe('one settings panel', () => {
   test('on the table: display, voice, dictation, keys, card back, storage and About; the theme popover stays a shortcut', async ({ page }) => {
     await openHud(page);
-    await page.getByTestId('open-settings').click();
+    await menuItem(page, 'open-settings', 'click');
     const panel = page.getByTestId('settings');
     await expect(panel.getByTestId('settings-tab')).toHaveText(['Display and sound', 'Voice', 'Dictation', 'Keys', 'Card back', 'Storage', 'About']);
     await expect(panel.getByTestId('theme-picker')).toBeVisible();
@@ -208,9 +215,9 @@ test.describe('one settings panel', () => {
 
   test('in the app the theme popover stays as a shortcut beside the settings button', async ({ page }) => {
     await openApp(page);
-    await page.getByTestId('open-theme-settings').click();
+    await menuItem(page, 'open-theme-settings', 'click');
     await expect(page.getByTestId('theme-settings')).toBeVisible();
-    await page.getByTestId('open-settings').click();
+    await menuItem(page, 'open-settings', 'click');
     // The popover closed (its × is the popover's own); the panel holds the same picker.
     await expect(page.getByTestId('theme-close')).toHaveCount(0);
     await expect(page.getByTestId('settings').getByTestId('theme-picker')).toBeVisible();
@@ -224,7 +231,7 @@ test.describe('one settings panel', () => {
     await expect(page.locator('[data-testid="key-row"][data-action="tap"]').getByTestId('key-current')).toHaveText(['J']);
     await page.goto(page.url().replace(/#.*$/, '#/solo'));
     await expect(page.getByTestId('hud')).toBeVisible();
-    await page.getByTestId('open-cheat-sheet').click();
+    await menuItem(page, 'open-cheat-sheet', 'click');
     await expect(page.locator('[data-testid="cheat-row"][data-action="tap"]').getByTestId('cheat-key')).toHaveText(['J']);
   });
 });

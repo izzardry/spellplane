@@ -10,6 +10,7 @@ import { expect, test, type Page } from '@playwright/test';
 import type { CardFocus } from '../../../src/ui/a11y/index';
 import type { ViewState } from '../../../src/scene/types';
 import { hook } from '../helpers/app';
+import { menuItem, openZone, openLog } from '../helpers/hud';
 import { drafts, hoverCard, hoverNothing, openHud, ui } from '../ui/harness';
 
 const focus = (page: Page) => hook<CardFocus | null>(page, 'a11y.focus');
@@ -153,7 +154,7 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
 
   test('cards of the own library shown by Search take focus: H puts the focused one into the hand, Shift+L the next to the bottom', async ({ page }) => {
     await openHud(page);
-    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
+    await openZone(page, 'library:s0', 'click');
     const viewer = page.getByTestId('pile-viewer');
     await viewer.getByTestId('search-library').click();
     await expect(viewer.getByTestId('pile-card')).toHaveCount(3);
@@ -224,6 +225,8 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     // H returns it to the hand: the log now has a line naming it, earlier in the DOM than the hand fan.
     await page.keyboard.press('KeyH');
     await expect.poll(async () => (await ui<{ cards: Record<string, { zone: string }> }>(page, 'state')).cards.bf1?.zone).toBe('hand:s0');
+    // M7-P2: the log is closed on entry; open it so its line names the card.
+    await openLog(page);
     const logCard = page.locator('[data-testid="log"] [data-card="bf1"]').first();
     await expect(logCard).toBeVisible();
     await page.keyboard.press('ArrowUp');
@@ -243,7 +246,7 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
   test('arrows and Page keys leave the table focus alone while the cheat sheet is open or the log lines scroll', async ({ page }) => {
     await openHud(page);
     await hoverNothing(page);
-    await page.getByTestId('open-cheat-sheet').click();
+    await menuItem(page, 'open-cheat-sheet', 'click');
     await expect(page.getByTestId('cheat-sheet')).toBeVisible();
     await page.keyboard.press('ArrowDown');
     await page.keyboard.press('PageDown');
@@ -251,6 +254,7 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByTestId('cheat-sheet')).toHaveCount(0);
     // A key pressed in the log lines (a scroller Chromium lets the keyboard focus) scrolls them instead.
+    await openLog(page);
     for (const key of ['PageDown', 'ArrowDown']) await page.getByTestId('log-lines').dispatchEvent('keydown', { key, code: key, bubbles: true, cancelable: true });
     expect(await focus(page)).toBeNull();
     await page.keyboard.press('ArrowRight');
@@ -288,7 +292,7 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
   test('arrows and Page keys in the settings panel stay in the panel (M5 review)', async ({ page }) => {
     await openHud(page);
     await hoverNothing(page);
-    await page.getByTestId('open-settings').click();
+    await menuItem(page, 'open-settings', 'click');
     await expect(page.getByTestId('settings')).toBeVisible();
     // A plain button of the panel (the close button) holds DOM focus: not a tab list, nor a text field.
     await page.getByTestId('settings-close').focus();
@@ -302,6 +306,7 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
   test('arrows in a text field stay in the field; focusing the table mirror puts focus on the first card', async ({ page }) => {
     await openHud(page);
     await hoverNothing(page);
+    await openLog(page);
     await page.getByTestId('chat-input').focus();
     await page.keyboard.type('hi');
     await page.keyboard.press('ArrowLeft');
@@ -315,6 +320,7 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
 test.describe('the log as a live region (PLAN M5-P4)', () => {
   test('a new log line is announced once, politely; a filter change announces nothing; the log list itself is not live', async ({ page }) => {
     await openHud(page);
+    await openLog(page);
     await expect(page.getByTestId('live-polite')).toHaveAttribute('aria-live', 'polite');
     await expect(page.getByTestId('live-assertive')).toHaveAttribute('aria-live', 'assertive');
     expect(await page.getByTestId('log-lines').getAttribute('aria-live')).toBeNull();
@@ -348,9 +354,10 @@ test.describe('seat glyphs beside seat colours (PLAN M5-P4)', () => {
     await openHud(page);
     await hoverCard(page, 'bf1');
     await page.keyboard.press('KeyT');
+    await openLog(page);
     const line = page.getByTestId('log-line').last();
     await expect(line.getByTestId('seat-glyph')).toHaveAttribute('data-glyph', 'circle');
-    await expect(page.getByTestId('active-player').getByTestId('seat-glyph')).toHaveAttribute('data-glyph', 'circle');
+    await expect(page.getByTestId('whose-turn').getByTestId('seat-glyph')).toHaveAttribute('data-glyph', 'circle');
     // Decorative for screen readers: the name next to it says who it is.
     await expect(line.getByTestId('seat-glyph')).toHaveAttribute('aria-hidden', 'true');
   });

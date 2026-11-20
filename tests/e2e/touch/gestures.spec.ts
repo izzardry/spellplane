@@ -416,7 +416,9 @@ test('nothing moves the camera while a finger drags a card: a second finger is i
   const { bf } = await tableWithCards(page, info);
   const p0 = await pose(page);
   const from = centre(await card(page, bf[0]!));
-  const to = { x: from.x + 60, y: from.y - 80 };
+  // A short way up: since M7-P2 the table is fitted above the plate and primary row over the iPad's hand, so it is drawn
+  // smaller and the drop stays near the own row.
+  const to = { x: from.x + 50, y: from.y - 55 };
   // The second finger lands on empty table, right of the row of cards.
   const c2 = await card(page, bf[2]!);
   const f2 = { x: Math.round(c2.screen.x + c2.screen.width + 80), y: Math.round(c2.screen.y - 40) };

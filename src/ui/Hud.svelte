@@ -7,7 +7,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
   import { mergeTimeline, type ChatTab } from '../core/log';
-  import type { Anchor, CardInstance, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
+  import type { Anchor, CardInstance, Seat, CardRef, InstanceId, LogEntry, StackItemId, ZoneId } from '../core/types';
   import type { CardData } from '../data/types';
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import { perspectiveToggleTilt, type ActivePing, type TableScene, type ViewState } from '../scene/types';
@@ -16,8 +16,26 @@
   import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
   import type { KeymapOverride } from '../store/types';
-  import { cssText, hudCssVars } from '../themes/index';
-  import { Commands, isEmptyChair, isOwnTurn, promptKeys, promptShowing, roundPassed, untapOfferOnOpen, type UiHooks } from './commands';
+  import { cssText } from '../themes/index';
+  import type { SeatAnchor } from '../scene/types';
+  import './design/base.css';
+  import { hudLook, lookCssVars } from './design/css';
+  import { lookContext } from './design/look';
+  import Icon from './design/Icon.svelte';
+  import Button from './design/Button.svelte';
+  import Dialog from './design/Dialog.svelte';
+  import HudMenu from './hud/HudMenu.svelte';
+  import { shellGroups } from './hud/menu-model';
+  import './hud/hud.css';
+  import NoDeck from './hud/NoDeck.svelte';
+  import OpeningHand from './hud/OpeningHand.svelte';
+  import ViewControl from './hud/ViewControl.svelte';
+  import { gameNumber, openingHandShown } from './hud/opening';
+  import { passTarget, primaryAction } from './hud/turn';
+  import { tickerText } from './hud/ticker';
+  import { hudMenu, type HudMenuId } from './menu';
+  import { proposals, PROPOSAL_LABELS } from './flow/model';
+  import { Commands, isEmptyChair, isOwnTurn, nextActive, promptKeys, promptShowing, roundPassed, untapOfferOnOpen, type UiHooks } from './commands';
   import ConfirmPrompt from './confirm/ConfirmPrompt.svelte';
   import { promptModel, roundWhat } from './confirm/model';
   import { parsePlainList } from './deck';
@@ -80,7 +98,62 @@
   import { installReducedMotionCss, prefersReducedMotion, watchReducedMotion } from './a11y/motion';
   import FocusMirror from './a11y/FocusMirror.svelte';
 
-  let { session, createScene, faces, cardData, game, theme, settings, parseDecklist, onVoice, newId }: HudProps = $props();
+  let {
+    session,
+    createScene,
+    faces,
+    cardData,
+    game,
+    theme,
+    settings,
+    parseDecklist,
+    onVoice,
+    newId,
+    evening,
+    // HudShellProps (src/ui/props.ts): what the shell tells the HUD; all optional (docs/design/m8/m7-adjustments.md section 2).
+    onleave,
+    menuTop,
+    sandbox,
+    onchoosedeck,
+    seatPresence,
+    plateMenuTop,
+    plateBadge,
+    status,
+    notice,
+    chrome = 'full',
+    readOnly = false,
+    primaryOverride = null,
+  }: HudProps = $props();
+  /** Everything but the plates, their menus and the status line (HudShellProps.chrome 'plates': a waiting room, a gathering). */
+  const full = $derived(chrome !== 'plates');
+  /**
+   * Nothing on this HUD may change the table: the shell's readOnly ("Look, do not touch", m7-adjustments section 2), or
+   * chrome 'plates' (a waiting room or a gathering shows no hand, Undo or primary, so no route acts behind them).
+   * Every acting route (keys, card and table menus, the radial menu, pile actions, drags, the stack's buttons) checks it.
+   */
+  const viewOnly = $derived(readOnly || !full);
+  /**
+   * "Import deck…" and the paste dialog (D7: set-up belongs to Home; only the sandbox imports). A HUD mounted without a
+   * shell (no `onleave`: the pages from before M8, the harness) keeps offering it unless `sandbox` says otherwise.
+   */
+  const importOffered = $derived(sandbox ?? onleave === undefined);
+  /** A seat's player is away: the table says so (Seat.away) or the shell does (seatPresence). */
+  const isAway = (seat: string): boolean => seatPresence?.[seat] === 'away' || st.seats[seat]?.away === true;
+  /** The shell's notice, shown once per id (HudShellProps.notice). */
+  let shownNotice = $state.raw<{ id: number; text: string; action?: { label: string; run: () => void } } | null>(null);
+  /** Notice ids shown already (plain, not reactive). */
+  const seenNotices: number[] = [];
+  $effect(() => {
+    const n = notice;
+    if (!n || seenNotices.includes(n.id)) return;
+    seenNotices.push(n.id);
+    shownNotice = n;
+    untrack(() => later(() => {
+      if (shownNotice?.id === n.id) shownNotice = null;
+    }, n.action ? 10000 : 6000));
+  });
+  /** KEEP was pressed for this game (the chips leave; ui/hud/opening.ts). */
+  let keptGame = $state<number | null>(null);
 
   // --- Shared state, as views of the session (the HUD is mounted per session; it never swaps sessions) ----------
   const me = untrack(() => session.seat);
@@ -132,7 +205,7 @@
   let presence: PresenceHandle | null = null;
   /** Hand a drag out of the hand fan or a pile viewer to the scene, and show it to the others (M1-P5 presence). */
   function dragOut(id: InstanceId, x: number, y: number): void {
-    if (!scene) return;
+    if (!scene || viewOnly) return;
     // The drag becomes a table press ("Talk while I hold or drag", M6-P2): captions said meanwhile attach to this card.
     pressTalk.dragOut(id);
     scene.startDrag(id, x, y);
@@ -140,6 +213,11 @@
   }
   let sceneReady = $state(false);
   let sceneError = $state('');
+  // Look, do not touch (HudShellProps.readOnly): the scene proposes no action (TableScene.setReadOnly, M7-P5).
+  $effect(() => {
+    const ro = readOnly;
+    if (sceneReady) (scene as unknown as { setReadOnly?: (on: boolean) => void } | null)?.setReadOnly?.(ro);
+  });
   /** The viewer's reduced-motion setting, followed live (M5-P4 reduced-motion audit; ui/a11y/motion.ts). */
   let reducedMotion = $state(prefersReducedMotion());
 
@@ -169,6 +247,7 @@
   function pileAction(b: PileButton, h: PileHover): void { // M7-P5: a pile action button runs the routes the pile viewer and the keys run
     const zone = h.zone; // M7-P5
     if (!zone) { if (h.pile) openPile = openPile === h.pile ? null : h.pile; return; } // M7-P5
+    if (viewOnly) return openViewer(zone); // M7-P2: look, do not touch — a pile button only opens the pile
     if (b.id === 'draw') commands.run('draw'); // M7-P5
     else if (b.id === 'drawN') commands.run('drawN'); // M7-P5
     else if (b.id === 'shuffle') void session.shuffle(zone); // M7-P5
@@ -180,19 +259,10 @@
   let touchUi = $state(touchDevice());
   let untapOffer = $state(false);
   /**
-   * Below this width (a tablet held upright) the log starts hidden, so the table, the turn strip and the toolbar are
-   * not crowded under it (M5 gate, iPad portrait); the Log tab opens it. Crossing the width (turning the tablet) opens
-   * or hides it again.
+   * The log and chat drawer (docs/design/m7-hud-proposal.md, Activity drawer: "Full history on demand, never a permanent
+   * column"): closed, an activity button with an unread count and a ticker; it opens from that button or Enter.
    */
-  const NARROW_HUD_PX = 900;
-  let logOpen = $state(untrack(() => vw) >= NARROW_HUD_PX);
-  let narrowWas = untrack(() => vw) < NARROW_HUD_PX;
-  $effect(() => {
-    const narrow = vw < NARROW_HUD_PX;
-    if (narrow === narrowWas) return;
-    narrowWas = narrow;
-    logOpen = !narrow;
-  });
+  let logOpen = $state(false);
   let preview = $state<{ card: InstanceId; x: number; y: number } | null>(null);
   let voice = $state<{ talking: 'talk' | 'teamTalk' | null; muted: boolean }>({ talking: null, muted: false });
   /** The modifier talk key's hold-alone state (shown on the talk indicator as data-hold). */
@@ -230,7 +300,19 @@
   let noteInput = $state<HTMLInputElement | undefined>();
   let drawInput = $state<HTMLInputElement | undefined>();
 
-  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
+  /** The viewer's look (ui/design/look.ts): the HUD's design tokens; in a harness page without the app shell, the theme's own look. */
+  const lookChoice = lookContext();
+  let storedLook = $state(untrack(() => lookChoice?.current() ?? hudLook(theme)));
+  const look = $derived(lookChoice ? storedLook : hudLook(theme));
+  $effect(() => lookChoice?.subscribe((l) => (storedLook = l)));
+  const cssVars = $derived(cssText(lookCssVars(theme, look, reducedMotion)));
+  /** The Menu (docs/design/m7-hud-proposal.md, In the menu): every rare tool, one step away. */
+  let menuOpen = $state(false);
+  let menuButton = $state<HTMLButtonElement | undefined>();
+  /** "Next game" and "New draft" leave the game: they ask first (critique, Top 10, 9: destructive actions). */
+  let leaving = $state<'nextGame' | 'newDraft' | null>(null);
+  /** Each seat's table edge on screen (SceneEvents.seatAnchors), where its plate sits; empty until the scene reports them. */
+  let anchors = $state.raw<SeatAnchor[]>([]);
   /** The settings panel (M5-P5, ui/settings/Settings.svelte); the theme popover below stays as its shortcut. */
   let settingsOpen = $state(false);
   let settingsSection = $state<SettingsSection>('display');
@@ -248,7 +330,6 @@
   let quotaError = $state(false);
   let storageFullDismissed = $state(false);
   /** No deck dismissed by the player (M5-P5 empty states). */
-  let noDeckDismissed = $state(false);
   /** The viewer's theme picker (PLAN M4-P6): present when the app shell provides the choice, not in harness pages. */
   const themeChoice = themeContext();
   let themeOpen = $state(false);
@@ -327,12 +408,25 @@
     void vh;
     return safeAreaInsets();
   });
-  const fitInsets = $derived(fitInsetsFor(vh, logOpen, teamFanShown, thumbShown ? THUMB_BAR_SPACE_PX : 0, safeInsets));
+  /**
+   * m8's stage (ui/flow/Stage.svelte) keeps its evening bar (Next game, New draft) in the bottom-left corner during a
+   * match while the shell passes no `evening` here; the own plate then sits above it instead of under it.
+   */
+  const eveningBarBelow = $derived(evening === undefined && session.evening !== undefined && st.stage === 'match');
+  // The drawer opens over the table and never resizes it (m7-adjustments.md, M7-P2 "HUD layout": Activity), so the
+  // table's framing ignores it.
+  /**
+   * Where the hand fan spans the width (a touch screen, a window up to 1100 px) the own plate and the primary button sit
+   * in a row just above the hand (see the CSS below): the table's fit keeps clear of that row too, so the primary never
+   * covers the own library or a card (m7-hud-proposal, iPad: "never over a card"). The primary is 56 px high, 16 px up.
+   */
+  const rowAboveHand = $derived(full && (touchUi || vw <= 1100) ? 56 + 16 : 0);
+  const fitInsets = $derived(fitInsetsFor(vh, false, teamFanShown, (thumbShown ? THUMB_BAR_SPACE_PX : 0) + rowAboveHand, safeInsets));
   /** Bottom of the block above the hand (toast, offer, prompt): above the teammate's fan and the thumb bar when shown. */
   const aboveHandBottom = $derived.by(() => {
     const thumb = thumbShown ? THUMB_BAR_SPACE_PX : 0;
     if (teamFanShown) return `${teamFanTop(vh) + 8 + thumb}px`;
-    return thumb ? `calc(22vh + ${16 + thumb}px)` : null;
+    return thumb ? `calc(22vh + ${16 + thumb}px + var(--sp-above-row, 0px))` : null;
   });
 
   // --- Card identity as this browser may know it ----------------------------------------------------------------
@@ -442,13 +536,23 @@
   });
   const engine = new KeyEngine(
     untrack(() => game.keymap),
-    { start: (b) => commands.run(b.action, 'start'), end: (b) => commands.run(b.action, 'end') },
+    {
+      start: (b) => keyAllowed(b.action) && commands.run(b.action, 'start'),
+      end: (b) => keyAllowed(b.action) && commands.run(b.action, 'end'),
+    },
     () => promptKeys(session.getState(), me),
   );
   $effect(() => {
     engine.setKeymap(keymap);
   });
 
+  /** Look, do not touch (HudShellProps.readOnly): only keys that move the view or show something still work. */
+  const READ_ONLY_KEYS: ReadonlySet<ActionId> = new Set<ActionId>(['perspective', 'fitTable', 'zoomTo', 'inspect', 'help']);
+  function keyAllowed(action: ActionId): boolean {
+    return !viewOnly || READ_ONLY_KEYS.has(action);
+  }
+  /** The card and table menu entries that only look (inspect, zoom, fit, the key sheet): all a view-only menu keeps. */
+  const lookOnly = (entries: MenuEntry[]): MenuEntry[] => entries.filter((e) => READ_ONLY_KEYS.has(e.id as ActionId));
   /** Run an action as if `card` were hovered (context menu entries). */
   function runOn(card: InstanceId, action: ActionId) {
     forcedHover = card;
@@ -466,6 +570,8 @@
    */
   function closeTop(promptUp: boolean): boolean {
     if (radial) radial = null;
+    else if (leaving) leaving = null;
+    else if (menuOpen) menuOpen = false;
     else if (menu) menu = null;
     else if (themeOpen) themeOpen = false;
     else if (settingsOpen) settingsOpen = false;
@@ -491,7 +597,7 @@
       e.preventDefault();
       return;
     }
-    if (untapOffer && !e.repeat && RESERVED_KEYS.some((r) => matchesChord(r.chord, e))) {
+    if (untapOffer && !viewOnly && !e.repeat && RESERVED_KEYS.some((r) => matchesChord(r.chord, e))) {
       e.preventDefault();
       untapOffer = false;
       commands.untapAndDraw();
@@ -551,7 +657,7 @@
   }
   async function libraryAction(what: 'draw' | 'drawN' | 'shuffle' | 'look' | 'search' | 'mulligan' | 'mill' | 'revealTop', n?: number) {
     const v = viewer;
-    if (!v) return;
+    if (!v || viewOnly) return;
     if (what === 'draw') commands.run('draw');
     else if (what === 'drawN') commands.run('drawN');
     else if (what === 'mill') commands.mill(n ?? 1);
@@ -585,9 +691,12 @@
   // --- Menus ----------------------------------------------------------------------------------------------------
   function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false, point: { x: number; y: number } | null = keyboard ? null : { x, y }) {
     const c = card ? st.cards[card] : undefined;
-    menu = c
+    const next = c
       ? { title: focusName(c.id), entries: [...cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), ...clipHereEntry(c.id, point)], x, y, keyboard }
       : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y, keyboard };
+    // Look, do not touch: only the entries that look; no menu at all when none is left.
+    if (viewOnly) next.entries = lookOnly(next.entries);
+    menu = next.entries.length > 0 ? next : null;
   }
   /**
    * "Clip here" where the menu's point (the right-click, or the long-press that opened the touch radial menu) covers two
@@ -608,7 +717,7 @@
   function openClipMenu(clip: string, at: { x: number; y: number }): void {
     radial = null;
     const c = st.clips?.[clip];
-    if (!c || spectating) return;
+    if (!c || spectating || viewOnly) return;
     menu = { title: `Paperclip: ${c.cards.map((id) => nameOf(id)).join(', ')}`, entries: [{ id: 'removeClip', label: 'Remove clip', key: null, run: () => session.dispatch({ type: 'clipRemove', clip }) }], x: at.x, y: at.y, keyboard: false };
   }
   /** The clip tray (M6-P1): a press on it hands a new paperclip to the table, which follows the pointer until dropped. */
@@ -688,6 +797,13 @@
     const group = r.cards.length > 1 ? makeId('g') : null;
     for (const id of r.cards) session.dispatch(group ? { type: 'revealTo', instanceId: id, seats, group } : { type: 'revealTo', instanceId: id, seats });
   }
+  /** The plate menu's "Reveal my hand to them": the existing reveal path (revealTo) for every card in the own hand, one group. */
+  function revealHandTo(seats: string[]): void {
+    if (hand.length === 0 || seats.length === 0) return;
+    const group = hand.length > 1 ? makeId('g') : null;
+    for (const id of hand) session.dispatch(group ? { type: 'revealTo', instanceId: id, seats, group } : { type: 'revealTo', instanceId: id, seats });
+    notify(`Revealed your hand to ${seats.map((x) => st.seats[x]?.name ?? x).join(', ')}`);
+  }
   const otherSeats = $derived(
     Object.values(st.seats)
       .filter((s) => s.id !== me)
@@ -711,8 +827,17 @@
     ['library', 'hand', 'graveyard', 'exile']
       .map((kind) => ({ id: `${kind}:${seat}`, label: kind[0]!.toUpperCase() + kind.slice(1), count: st.zones[`${kind}:${seat}`]?.ids.length ?? 0 }))
       .filter((z) => st.zones[z.id] && !(z.id === `hand:${me}`));
+  /** Another player's personal volume and mute for their plate menu (DESIGN "Chat and voice", Live voice). */
+  const peerAudioOf = (peer: string) => ({
+    get: () => liveVoice!.peerAudio(peer),
+    set: (setting: { volume: number; muted: boolean }) => void liveVoice!.setPeerAudio(peer, setting).catch(() => {}),
+  });
   const glyphOf = (colour: number) => theme.tokens.colours.seats[colour]?.glyph ?? 'circle';
-  const activeName = $derived(st.seats[st.turn.active]?.name ?? st.teams[st.turn.active]?.seats.map((s) => st.seats[s]?.name).join(' & ') ?? st.turn.active);
+  /** The active seat is an empty chair (the sandbox's second seat): the tracker says so and the primary passes it on. */
+  const activeEmpty = $derived(st.turn.active !== me && isEmptyChair(st, st.turn.active));
+  const activeName = $derived(
+    activeEmpty ? 'Empty seat' : (st.seats[st.turn.active]?.name || (st.teams[st.turn.active]?.seats.map((s) => st.seats[s]?.name).join(' & ') ?? st.turn.active)),
+  );
   const activeColour = $derived(st.seats[st.turn.active]?.colour ?? st.seats[st.teams[st.turn.active]?.seats[0] ?? '']?.colour ?? null);
   const prompt = $derived(promptModel(st, me));
   /** A manual round (not about a stack item) that still waits makes its asker's avatar pulse (DESIGN "Turn flow and confirmation", Prompt). */
@@ -787,6 +912,110 @@
   const noDeck = $derived(!spectating && !!st.seats[me] && st.stage === 'match' && !Object.values(st.cards).some((c) => c.owner === me));
   const storageFull = $derived(quotaError || entries.some(isStorageFullLine));
   const keyOf = (a: ActionId, ctx: KeyContext = 'table') => keyLabel(keymap, a, ctx);
+
+  // --- The always-visible HUD (docs/design/m7-hud-proposal.md, Always visible) ------------------------------------
+  const mineTurn = $derived(isOwnTurn(st, me));
+  /** The one primary button: the next move for this moment (ui/hud/turn.ts). */
+  const primary = $derived(primaryAction({ mine: mineTurn, phase: st.turn.phase, phases: game.phases, activeName, offer: untapOffer, spectator: spectating, emptyChair: activeEmpty }));
+  /** The primary button's label and kind: the shell's override (the computer game's cues) wins over the turn step. */
+  const primaryShown = $derived(primaryOverride ? { label: primaryOverride.label, kind: 'override', disabled: false, quiet: primaryOverride.quiet === true } : { label: primary.label, kind: primary.kind, disabled: !!primary.disabled, quiet: !!primary.disabled });
+  function runPrimary(): void {
+    if (primaryOverride) {
+      primaryOverride.run();
+      return;
+    }
+    const p = primary;
+    if (p.disabled) return;
+    if (p.kind === 'untapDraw') {
+      untapOffer = false;
+      commands.untapAndDraw();
+    }
+    // End turn passes over empty chairs (ui/hud/turn.ts passTarget): at the sandbox it comes straight back.
+    if (p.kind === 'endTurn') session.dispatch({ type: 'turnPass', to: passTarget(st, nextActive, isEmptyChair) });
+    else if (p.phase) session.dispatch({ type: 'phaseSet', phase: p.phase });
+  }
+  /** Undo's tooltip names the action it takes back (docs/design/m7-hud-proposal.md, Undo: "Undo: tap Forest"). */
+  const undoTip = $derived.by(() => {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const l = lines[i]!;
+      if (l.kind === 'action' && l.seat === me) return `Undo: ${tickerText({ ...l, actor: '' })}`;
+    }
+    return 'Undo';
+  });
+  /** Another player's hand count on their plate (docs/design/m7-hud-proposal.md, Opponent plate). */
+  const handCountOf = (seat: string): number | null => (seat === me ? null : (st.zones[`hand:${seat}`]?.ids.length ?? null));
+  /** The evening's proposals open now (Next game, New draft), offered in the Menu behind a confirmation. */
+  const offers = $derived(evening ? proposals(st, me) : []);
+  const menuGroups = $derived(
+    hudMenu(
+      { spectator: spectating || readOnly, voice: !!liveVoice, captions: !!session.captions, proposals: readOnly ? [] : offers, muted: voice.muted, importDeck: importOffered },
+      (a) => keyOf(a),
+      runMenu,
+      spectating || readOnly ? {} : { clip: clipTrayDown },
+    ),
+  );
+  function runMenu(id: HudMenuId): void {
+    switch (id) {
+      case 'drawN':
+        commands.run('drawN');
+        return;
+      case 'mulligan':
+      case 'shuffle':
+      case 'untapAll':
+      case 'token':
+      case 'rollDie':
+      case 'flipCoin':
+      case 'tidy':
+      case 'ask':
+      case 'fitTable':
+        commands.run(id);
+        return;
+      case 'mute':
+        if (liveVoice) liveVoice.toggleMute();
+        else hooks.voice('mute', 'start');
+        return;
+      case 'importDeck':
+        deckOpen = true;
+        return;
+      case 'nextGame':
+      case 'newDraft':
+        leaving = id;
+        return;
+      case 'perspective':
+        scene?.camera.setTilt(perspectiveToggleTilt(scene.camera.tilt()), { source: 'handle' });
+        return;
+      case 'look':
+        themeOpen = true;
+        return;
+      case 'voice':
+        voicePanel = true;
+        return;
+      case 'dictation':
+        speechTop = 56;
+        speechOpen = true;
+        return;
+      case 'keys':
+        cheatOpen = true;
+        return;
+      case 'settings':
+        openSettings();
+        return;
+      case 'clip':
+        return;
+    }
+  }
+  async function confirmLeave(): Promise<void> {
+    const event = leaving;
+    leaving = null;
+    if (!event || !evening) return;
+    const moved = await evening.propose(event);
+    if (!moved) notify(event === 'nextGame' ? 'The next game did not go ahead.' : 'The new draft did not go ahead.');
+  }
+  /** Plates at their seat's edge (docs/design/m7-hud-proposal.md, Opponent plate); the own plate stays bottom left. */
+  const anchorOf = (seat: string): SeatAnchor | null => {
+    const a = anchors.find((x) => x.seat === seat);
+    return a?.at ? a : null;
+  };
 
   // On Next turn, offer the new active player (or team) untap-and-draw; close the offer once the turn moves on
   // (DESIGN "Turn flow and confirmation": offered a single key, never done for them).
@@ -1123,17 +1352,24 @@
           pileOpen: (id) => {
             const kind = id.split(':')[0];
             // Double-click draws from the own library and opens any other pile (DESIGN "Input and interaction design", Mouse).
-            if (id === `library:${me}`) commands.run('draw');
+            if (id === `library:${me}` && !viewOnly) commands.run('draw');
             else if (st.zones[id] && (kind === 'library' || kind === 'graveyard' || kind === 'exile')) openViewer(id);
             else openPile = openPile === id ? null : id;
           },
           selectionChange: (ids) => (selection = [...ids]),
+          seatAnchors: (a) => (anchors = a),
           selectionAnchor: (a) => (selAnchor = a), // M7-P5
           pileHover: (h) => (pileHover = h), // M7-P5
           readOnly: (on) => (sceneReadOnly = on), // M7-P5
           pressHold: (phase, kind) => pressTalk.hold(phase, kind),
           radialMenu: (id, at) => {
             menu = null;
+            // Look, do not touch: a long-press opens the look-only menu (inspect, zoom) instead of the acting ring.
+            if (viewOnly) {
+              radial = null;
+              if (id && st.cards[id]) openMenu(id, at.x, at.y);
+              return;
+            }
             radial = id && !spectating && st.cards[id] ? { card: id, at: { x: at.x, y: at.y } } : null;
             if (radial) radialPoint = { ...radial.at };
           },
@@ -1217,7 +1453,35 @@
 />
 <svelte:document onvisibilitychange={() => document.visibilityState === 'visible' && syncView()} />
 
-<div class="root" class:touch-ui={touchUi} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
+{#snippet plate(seat: Seat, mine: boolean)}
+  <Avatar
+    {seat}
+    life={lifeOf(seat.id)}
+    me={mine}
+    active={st.turn.active === seat.id || st.turn.active === seat.team}
+    speaking={speaks(seat.id)}
+    typing={!mine && typingAt.has(seat.id)}
+    responding={st.confirm?.holder === seat.id}
+    asking={asking(seat.id)}
+    glyph={glyphOf(seat.colour)}
+    zones={zoneButtons(seat.id)}
+    handCount={handCountOf(seat.id)}
+    onlife={(delta) => session.dispatch({ type: 'life', seat: seat.id, delta })}
+    oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: seat.id, kind, delta })}
+    onopenzone={openViewer}
+    ongoto={() => scene?.camera.goToSeat(seat.id)}
+    readonly={spectating || readOnly}
+    compact={!mine && otherAvatars >= 3}
+    away={isAway(seat.id)}
+    badge={plateBadge}
+    menuTop={plateMenuTop}
+    voiceControls={!mine && !!liveVoice}
+    peerAudio={!mine && liveVoice && seat.peer ? peerAudioOf(seat.peer) : undefined}
+    onrevealhand={!mine && !spectating && !readOnly && hand.length > 0 ? () => revealHandTo([seat.id]) : undefined}
+  />
+{/snippet}
+
+<div class="root ds-root sp-hud" class:touch-ui={touchUi} style:--thumb-space="{thumbShown ? THUMB_BAR_SPACE_PX : 0}px" data-look={look} style={cssVars} data-testid="hud" data-sound={soundState} data-card-back={backState.status}>
   <div class="scene" data-testid="scene-host" data-fit-insets={fitInsets} bind:this={sceneHost} onpointerdowncapture={(e) => {
       pressOnTable();
       pressTalk.down(e.clientX, e.clientY);
@@ -1234,107 +1498,105 @@
   />
 
   <div class="layer">
+    <!-- Top left: the Menu and Undo (docs/design/m7-hud-proposal.md, Always visible). -->
+    {#if full}
     <div class="top-left">
-      <nav class="toolbar" aria-label="Table tools">
-        <button type="button" data-testid="open-deck-import" onclick={() => (deckOpen = !deckOpen)}>Import deck</button>
-        <button type="button" onclick={() => commands.run('token')}>Token {#if keyOf('token')}<kbd>{keyOf('token')}</kbd>{/if}</button>
-        <button type="button" onclick={() => commands.run('undo')}>Undo {#if keyOf('undo')}<kbd>{keyOf('undo')}</kbd>{/if}</button>
-        {#if !spectating}
-          <!-- The clip tray (M6-P1): drag a paperclip from here onto overlapping cards. -->
-          <button type="button" class="clip-tray" data-testid="clip-tray" title="Drag a paperclip onto overlapping cards" onpointerdown={clipTrayDown}
-            ><svg width="12" height="16" viewBox="0 0 12 22" aria-hidden="true"><path d="M4 7v9a2 2 0 0 0 4 0V5a3 3 0 0 0-6 0v12a4 4 0 0 0 8 0V7" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
-            Clip</button
+      <nav class="toolbar sp-bar" aria-label="Table tools" data-testid="hud-bar">
+        {#if onleave}
+          <button type="button" class="ds-btn ds-icon-btn ds-btn--quiet sp-h-md sp-round" data-testid="leave" aria-label="Leave" title="Leave: the game is kept in your history" onclick={() => onleave?.()}
+            ><svg class="sp-arrow" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M19 12H5m6-6-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /></svg></button
           >
+          <span class="sp-divider" aria-hidden="true"></span>
         {/if}
-        <button type="button" data-testid="perspective" title="Switch between bird's-eye and ego view" onclick={() => scene?.camera.setTilt(perspectiveToggleTilt(scene.camera.tilt()), { source: 'handle' })}>View {#if keyOf('perspective')}<kbd>{keyOf('perspective')}</kbd>{/if}</button>
-        <button type="button" data-testid="open-cheat-sheet" onclick={() => (cheatOpen = !cheatOpen)}>Keys {#if keyOf('help')}<kbd>{keyOf('help')}</kbd>{/if}</button>
-        <button type="button" data-testid="open-settings" aria-pressed={settingsOpen} aria-expanded={settingsOpen} aria-label="Settings" title="Settings" onclick={() => (settingsOpen ? (settingsOpen = false) : openSettings())}>⚙</button>
-        {#if themeChoice}
-          <span class="theme-anchor" bind:this={themeAnchor}>
-            <button type="button" data-testid="open-theme-settings" aria-pressed={themeOpen} aria-expanded={themeOpen} aria-label="Theme" title="Theme" onclick={() => (themeOpen = !themeOpen)}>◐</button>
-            {#if themeOpen}<div class="theme-pop"><ThemePicker choice={themeChoice} sound={{ mode: soundMode ?? 'theme', set: setSoundMode }} view={{ prefs: viewPrefs, set: (name, value) => void view.set(name, value).catch(() => {}) }} onclose={() => (themeOpen = false)} /></div>{/if}
-          </span>
+        <button
+          bind:this={menuButton}
+          type="button"
+          class="ds-btn ds-icon-btn ds-btn--quiet sp-h-md sp-pill"
+          data-testid="open-menu"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label="Menu"
+          title="Menu: this game, deck, tokens, dice, view, voice, keys, settings"
+          onclick={() => (menuOpen = !menuOpen)}><Icon name="menu" /><span class="sp-word">Menu</span></button
+        >
+        {#if !spectating && !readOnly}
+          <button type="button" class="ds-btn ds-icon-btn ds-btn--quiet sp-h-md sp-pill" data-testid="undo" aria-label="Undo" title="{undoTip}{keyOf('undo') ? ` (${keyOf('undo')})` : ''}" onclick={() => commands.run('undo')}><Icon name="undo" /><span class="sp-word">Undo</span></button>
         {/if}
         {#if !liveVoice}
-          {#if voice.talking}<span class="chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
-          {#if voice.muted}<span class="chip" data-testid="muted">Muted</span>{/if}
+          {#if voice.talking}<span class="ds-chip" data-testid="talking">{voice.talking === 'teamTalk' ? 'Team talk' : 'Talking'}</span>{/if}
+          {#if voice.muted}<span class="ds-chip" data-testid="muted">Muted</span>{/if}
         {/if}
       </nav>
-      {#if liveVoice || (session.captions && !spectating)}
-        <!-- The voice row: the talk-mode indicator (M3-P3) and the speech settings (M3-P4), so the shared toolbar keeps
-             its layout and the avatar column below stays short. A spectator only sees captions. -->
-        <div class="toolbar voice-row">
-          {#if liveVoice}
-            <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} hold={talkHold} ontogglepanel={() => (voicePanel = !voicePanel)} />
-          {/if}
-          {#if session.captions && !spectating}
-            <button
-              type="button"
-              data-testid="open-speech-settings"
-              aria-pressed={speechOpen}
-              onclick={(e) => {
-                speechTop = Math.round((e.currentTarget as HTMLElement).getBoundingClientRect().bottom + 6);
-                speechOpen = !speechOpen;
-              }}>Dictation</button
-            >
-          {/if}
-          {#if liveVoice && voicePanel}
-            <!-- Drops down over the avatar column instead of pushing it into the own avatar (M3-G). -->
-            <div class="voice-pop"><VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} /></div>
-          {/if}
+      {#if menuOpen}
+        <div class="menu-pop">
+          <HudMenu groups={[...shellGroups(menuTop?.()), ...menuGroups]} label="Menu" anchor={menuButton ?? null} onclose={() => (menuOpen = false)} />
         </div>
       {/if}
-      {#each others as seat (seat.id)}
-        <Avatar
-          {seat}
-          life={lifeOf(seat.id)}
-          me={false}
-          active={st.turn.active === seat.id || st.turn.active === seat.team}
-          speaking={speaks(seat.id)}
-          typing={typingAt.has(seat.id)}
-          responding={st.confirm?.holder === seat.id}
-          asking={asking(seat.id)}
-          glyph={glyphOf(seat.colour)}
-          zones={zoneButtons(seat.id)}
-          onlife={(delta) => session.dispatch({ type: 'life', seat: seat.id, delta })}
-          oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: seat.id, kind, delta })}
-          onopenzone={openViewer}
-          ongoto={() => scene?.camera.goToSeat(seat.id)}
-          readonly={spectating}
-          compact={otherAvatars >= 3}
-        />
-      {/each}
+      {#if themeChoice && themeOpen}
+        <div class="theme-pop" bind:this={themeAnchor}><ThemePicker choice={themeChoice} sound={{ mode: soundMode ?? 'theme', set: setSoundMode }} view={{ prefs: viewPrefs, set: (name, value) => void view.set(name, value).catch(() => {}) }} onclose={() => (themeOpen = false)} /></div>
+      {/if}
+      {#if liveVoice && voicePanel}
+        <div class="voice-pop"><VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} /></div>
+      {/if}
     </div>
+    {/if}
 
+    <!-- Top centre: the turn tracker; the stack's controls appear under it only while something is on the stack. -->
     <div class="top-centre">
+      {#if full}
       <TurnStrip
         turn={st.turn.number}
         {activeName}
         {activeColour}
+        mine={mineTurn}
         phases={game.phases}
         current={st.turn.phase}
         nextPhaseKey={keyOf('nextPhase')}
-        nextTurnKey={keyOf('nextTurn')}
-        onphase={(phase) => session.dispatch({ type: 'phaseSet', phase })}
-        onnextturn={() => commands.run('nextTurn')}
+        onphase={(phase) => !readOnly && session.dispatch({ type: 'phaseSet', phase })}
       />
-      {#if top}
-        <div class="stack-chip" data-testid="stack-chip">
-          Stack {st.stack.length}
-          <button type="button" class:lit={resolveLit} data-testid="resolve" onclick={() => commands.run('resolve')}>Resolve {#if keyOf('resolve')}<kbd>{keyOf('resolve')}</kbd>{/if}</button>
+      {/if}
+      {#if status}<div class="sp-status" data-testid="hud-status">{@render status()}</div>{/if}
+      {#if top && full}
+        <div class="stack-chip ds-panel" data-testid="stack-chip">
+          <span class="ds-label">Stack {st.stack.length}</span>
+          {#if !readOnly}
+          <button type="button" class="ds-btn sp-h-xs sp-pill" class:lit={resolveLit} data-testid="resolve" title="Resolve{keyOf('resolve') ? ` (${keyOf('resolve')})` : ''}" onclick={() => commands.run('resolve')}>Resolve</button>
           {#if resolveTargets.length}
             <span class="to" data-testid="resolve-to">to
               {#each resolveTargets as t (t.zone)}
-                <button type="button" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
+                <button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-pill" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
               {/each}
             </span>
           {/if}
-          <button type="button" onclick={() => commands.run('counterTop')}>Counter {#if keyOf('counterTop')}<kbd>{keyOf('counterTop')}</kbd>{/if}</button>
+          <button type="button" class="ds-btn sp-h-xs sp-pill" title="Counter{keyOf('counterTop') ? ` (${keyOf('counterTop')})` : ''}" onclick={() => commands.run('counterTop')}>Counter</button>
+          {/if}
         </div>
       {/if}
+      <!-- Other players' plates without a reported seat edge sit in a row under the tracker. -->
+      <div class="plates-row">
+        {#each others as seat (seat.id)}
+          {#if !anchorOf(seat.id)}
+            <div class="plate-top">{@render plate(seat, false)}</div>
+          {/if}
+        {/each}
+      </div>
     </div>
 
-    <div class="right">
+    {#each others as seat (seat.id)}
+      {@const a = anchorOf(seat.id)}
+      {#if a?.at}
+        <!-- At the seat's table edge (SceneEvents.seatAnchors), moved by a transform when the camera settles. -->
+        <div class="plate-anchor" class:plate-top={a.at.y < vh / 2} style:transform="translate({Math.round(Math.min(Math.max(a.at.x, 120), vw - 120))}px, {Math.round(Math.min(Math.max(a.at.y, 70), vh - 200))}px)">{@render plate(seat, false)}</div>
+      {/if}
+    {/each}
+
+    <!-- Top right: the activity button and its ticker; the drawer opens over the right edge. -->
+    {#if full}
+    <div class="right" class:open={logOpen}>
+      {#if logOpen}
+        <!-- The tilt keeps its visible handle while the drawer is open: beside the drawer, at the Activity button's place. -->
+        <div class="view-beside"><ViewControl camera={() => scene?.camera ?? null} /></div>
+      {/if}
       <LogPanel
         bind:this={logPanel}
         {lines}
@@ -1351,55 +1613,98 @@
           preview = card ? { card, x, y } : null;
           hudHover = card;
         }}
-      />
+      >
+        {#snippet under()}<ViewControl camera={() => scene?.camera ?? null} />{/snippet}
+      </LogPanel>
     </div>
+    {/if}
 
     {#if st.seats[me]}
-      <div class="own-avatar">
-        <Avatar
-          seat={st.seats[me]}
-          life={lifeOf(me)}
-          me={true}
-          active={st.turn.active === me || st.turn.active === st.seats[me].team}
-          speaking={speaks(me)}
-          responding={st.confirm?.holder === me}
-          asking={asking(me)}
-          glyph={glyphOf(st.seats[me].colour)}
-          zones={zoneButtons(me)}
-          onlife={(delta) => session.dispatch({ type: 'life', seat: me, delta })}
-          oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: me, kind, delta })}
-          onopenzone={openViewer}
-          ongoto={() => scene?.camera.goToSeat(me)}
-          readonly={spectating}
-        />
-      </div>
+      <div class="own-avatar" class:over-evening={eveningBarBelow}>{@render plate(st.seats[me], true)}</div>
+    {/if}
+
+    <!-- Bottom right: Talk and the one primary button. -->
+    {#if full}
+    <div class="bottom-right">
+      {#if liveVoice}
+        <div class="talk-cluster">
+          <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} hold={talkHold} ontogglepanel={() => (voicePanel = !voicePanel)} />
+        </div>
+      {/if}
+      {#if !spectating && !readOnly}
+        <button
+          type="button"
+          class="ds-btn sp-h-lg sp-pill sp-primary"
+          class:ds-btn--primary={!primaryShown.quiet}
+          class:sp-primary-quiet={primaryShown.quiet}
+          data-testid="primary-action"
+          data-kind={primaryShown.kind}
+          aria-disabled={primaryShown.disabled ? 'true' : undefined}
+          title={primaryOverride ? primaryOverride.label : primary.kind === 'endTurn' && keyOf('nextTurn') ? `End the turn (${keyOf('nextTurn')})` : primary.kind === 'untapDraw' ? 'Untap all your permanents and draw a card (U)' : primary.label}
+          onclick={runPrimary}>{primaryShown.label}</button
+        >
+      {/if}
+    </div>
     {/if}
 
     <!-- Above the hand, centred (DESIGN "Specification: geometry, layout and motion", Screen layer); with a teammate's fan shown, above that fan too. -->
-    {#if thumbShown}
+    {#if full && thumbShown && !readOnly}
       <div class="thumbs" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
         <ThumbBar run={(a, phase) => commands.run(a, phase)} keyOf={(a) => keyOf(a)} talking={voice.talking === 'talk'} {resolveLit} />
       </div>
     {/if}
+    <!-- The shell's notice shows in every chrome (a waiting room's "Ben left the table"); the rest only at the full HUD. -->
     <div class="above-hand" data-testid="above-hand" style:bottom={aboveHandBottom}>
+      {#if full}
       {#if storageFull && !storageFullDismissed}
         <div class="state"><EmptyState id="storageFull" action={{ label: 'Storage settings', run: () => openSettings('storage'), testid: 'empty-storage-settings' }} ondismiss={() => (storageFullDismissed = true)} /></div>
       {/if}
-      {#if noDeck && !noDeckDismissed && !deckOpen}
-        <div class="state"><EmptyState id="noDeck" action={{ label: 'Import a deck', run: () => (deckOpen = true), testid: 'empty-import-deck' }} ondismiss={() => (noDeckDismissed = true)} /></div>
+      {#if noDeck && !deckOpen && !readOnly}
+        <NoDeck onchoose={onchoosedeck} onpaste={importOffered ? () => (deckOpen = true) : undefined} />
       {/if}
-      {#if toast}<p class="toast" role="status" data-testid="toast">{toast.text}</p>{/if}
-      {#if untapOffer}
-        <div class="offer" data-testid="untap-offer">
-          Your turn.
+      {#if !readOnly && openingHandShown(st, me, hand.length, keptGame)}
+        <OpeningHand
+          onkeep={() => (keptGame = gameNumber(st))}
+          onmulligan={() => commands.run('mulligan')}
+        />
+      {/if}
+      {/if}
+      {#if shownNotice}
+        <div class="ds-toast sp-notice" role="status" data-testid="hud-notice" data-notice={shownNotice.id}>
+          <span>{shownNotice.text}</span>
+          {#if shownNotice.action}
+            {@const act = shownNotice.action}
+            <button
+              type="button"
+              class="ds-btn sp-h-xs sp-pill"
+              data-testid="hud-notice-action"
+              onclick={() => {
+                const run = act.run;
+                shownNotice = null;
+                run();
+              }}>{act.label}</button
+            >
+          {/if}
+          <button type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-xs sp-round" aria-label="Dismiss" data-testid="hud-notice-close" onclick={() => (shownNotice = null)}><Icon name="close" size={14} /></button>
+        </div>
+      {/if}
+      {#if toast && full}<p class="ds-toast" role="status" data-testid="toast">{toast.text}</p>{/if}
+      {#if full}
+      {#if untapOffer && !readOnly}
+        <!-- The new turn's offer (DESIGN "Turn flow and confirmation": offered, never done for them); the primary button
+             does the same, so this is a quiet line with its own button and a dismiss. -->
+        <div class="offer ds-pop" data-testid="untap-offer">
+          <span>Your turn.</span>
           <button
             type="button"
+            class="ds-btn sp-h-xs sp-pill"
+            title="Untap all and draw (U)"
             onclick={() => {
               untapOffer = false;
               commands.untapAndDraw();
-            }}>Untap all and draw <kbd>U</kbd></button
+            }}>Untap all and draw</button
           >
-          <button type="button" class="x" aria-label="Dismiss" onclick={() => (untapOffer = false)}>×</button>
+          <button type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-xs sp-round x" aria-label="Dismiss" title="Dismiss" onclick={() => (untapOffer = false)}><Icon name="close" size={14} /></button>
         </div>
       {/if}
       <FocusMirror
@@ -1416,7 +1721,7 @@
           if (!menu) openKeyMenu();
         }}
       />
-      {#if prompt}
+      {#if prompt && !readOnly}
         <ConfirmPrompt
           model={prompt}
           {me}
@@ -1430,8 +1735,9 @@
           onrelease={() => commands.run('confirmOk')}
         />
       {/if}
+      {/if}
     </div>
-
+    {#if full}
     <HandFan
       ids={hand}
       {refOf}
@@ -1452,6 +1758,11 @@
       insets={safeInsets}
       onradial={(id, x, y) => {
         menu = null;
+        if (viewOnly) {
+          radial = null;
+          if (id) openMenu(id, x, y);
+          return;
+        }
         radial = id && !spectating ? { card: id, at: { x, y } } : null;
       }}
     />
@@ -1459,6 +1770,9 @@
       <!-- Two-Headed Giant: the teammate's hand above the own fan (M3-P2, ui/hand/*). -->
       <TeamHands team={session.team} state={st} {faces} {vw} {vh} oninspect={(id, ref) => ((inspectId = id), (inspectRef = ref))} />
     {/if}
+    {/if}
+    <!-- M7-P5 affordances: M7-P5 mounts its affordance layer and coach marks here (after the plates, before the dialogs). -->
+    <!-- /M7-P5 -->
   </div>
 
   {#if viewer}
@@ -1468,7 +1782,7 @@
         title={`${zone.owner && zone.owner !== me ? `${st.seats[zone.owner]?.name ?? zone.owner}'s ` : ''}${zone.kind[0]!.toUpperCase()}${zone.kind.slice(1)}`}
         count={zone.ids.length}
         kind={zone.kind}
-        own={zone.owner === me}
+        own={zone.owner === me && !viewOnly}
         hidden={zone.visibility !== 'public'}
         cards={viewerCards}
         looking={viewer.looking}
@@ -1500,7 +1814,7 @@
     pile={pileHover}
     touch={touchUi}
     spectator={spectating}
-    readOnly={sceneReadOnly}
+    readOnly={sceneReadOnly || viewOnly}
     {vw}
     {vh}
     {coach}
@@ -1508,7 +1822,7 @@
     onmore={(card, x, y) => openMenu(card, x, y)}
     onpile={pileAction}
   />
-  <CoachMark {coach} touch={touchUi} bottom={aboveHandBottom} hidden={sceneReadOnly || spectating || !!prompt || untapOffer} />
+  <CoachMark {coach} touch={touchUi} bottom={aboveHandBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
   <!-- /M7-P5 -->
 
   {#if radial}
@@ -1577,6 +1891,7 @@
       <!-- Asks without a key (touch): the press keeps the field's focus, so its blur does not close it first. -->
       <button
         type="button"
+        class="ds-btn sp-h-xs"
         data-testid="ask-submit"
         onmousedown={(e) => e.preventDefault()}
         onpointerdown={(e) => e.preventDefault()}
@@ -1593,7 +1908,7 @@
     <div class="inline draw-n" data-testid="draw-n">
       <label>{drawN.what === 'mill' ? 'Mill how many?' : 'Draw how many?'} <input bind:this={drawInput} bind:value={drawN.text} data-testid="draw-n-input" inputmode="numeric" enterkeyhint="go" onkeydown={(e) => (e.key === 'Enter' ? submitDrawN() : e.key === 'Escape' && (drawN = null))} onblur={() => (drawN = null)} /></label>
       <!-- The button for a screen without an Enter key (a tablet): its press keeps the focus in the field, whose blur would close it. -->
-      <button type="button" data-testid="draw-n-go" onmousedown={(e) => e.preventDefault()} onclick={() => submitDrawN()}>{drawN.what === 'mill' ? 'Mill' : 'Draw'}</button>
+      <button type="button" class="ds-btn sp-h-xs" data-testid="draw-n-go" onmousedown={(e) => e.preventDefault()} onclick={() => submitDrawN()}>{drawN.what === 'mill' ? 'Mill' : 'Draw'}</button>
     </div>
   {/if}
 
@@ -1604,12 +1919,12 @@
         <p class="muted">No other players at the table.</p>
       {:else}
         {#each otherSeats as s (s.id)}
-          <button type="button" data-seat={s.id} onclick={() => doRevealTo([s.id])}>{s.name}</button>
+          <button type="button" class="ds-btn sp-h-xs" data-seat={s.id} onclick={() => doRevealTo([s.id])}>{s.name}</button>
         {/each}
-        {#each teamRevealChoices(st, me) as c (c.id)}<button type="button" data-seat={c.id} onclick={() => doRevealTo(c.seats)}>{c.label}</button>{/each}
-        {#if otherSeats.length > 1}<button type="button" data-seat="all" onclick={() => doRevealTo(otherSeats.map((s) => s.id))}>Everyone</button>{/if}
+        {#each teamRevealChoices(st, me) as c (c.id)}<button type="button" class="ds-btn sp-h-xs" data-seat={c.id} onclick={() => doRevealTo(c.seats)}>{c.label}</button>{/each}
+        {#if otherSeats.length > 1}<button type="button" class="ds-btn sp-h-xs" data-seat="all" onclick={() => doRevealTo(otherSeats.map((s) => s.id))}>Everyone</button>{/if}
       {/if}
-      <button type="button" class="x" onclick={() => (revealTo = null)}>Cancel</button>
+      <button type="button" class="ds-btn ds-btn--quiet sp-h-xs x" onclick={() => (revealTo = null)}>Cancel</button>
     </div>
   {/if}
 
@@ -1663,6 +1978,20 @@
 
   <Hint {hints} keyOf={(a) => keyOf(a)} />
 
+  {#if leaving}
+    <Dialog title={leaving === 'nextGame' ? 'Start the next game?' : 'Start a new draft?'} testid="leave-confirm" onclose={() => (leaving = null)}>
+      <p class="dialog-text">
+        {leaving === 'nextGame'
+          ? 'This game ends for everyone at the table once they agree, and you go back to your decks to sideboard.'
+          : 'This game and the drafted pools end for everyone at the table once all agree, and the table goes back to the lobby.'}
+      </p>
+      {#snippet actions()}
+        <Button variant="quiet" class="sp-h-md" data-testid="leave-cancel" onclick={() => (leaving = null)}>Keep playing</Button>
+        <Button variant="primary" class="sp-h-md" data-testid="leave-ok" onclick={() => void confirmLeave()}>{leaving === 'nextGame' ? PROPOSAL_LABELS.nextGame : PROPOSAL_LABELS.newDraft}</Button>
+      {/snippet}
+    </Dialog>
+  {/if}
+
   {#if cheatOpen}
     <CheatSheet {keymap} onremap={remap} onreset={resetKeys} onclose={() => (cheatOpen = false)} />
   {/if}
@@ -1698,9 +2027,9 @@
     user-select: none;
     -webkit-touch-callout: none;
     color-scheme: var(--sp-hud-scheme, light);
-    background: var(--sp-bg, #fff);
-    color: var(--sp-fg, #111);
-    font-family: var(--sp-font, system-ui);
+    background: var(--ds-mat);
+    color: var(--ds-ink);
+    font-family: var(--ds-font-body);
   }
   .scene {
     position: absolute;
@@ -1711,7 +2040,7 @@
     top: 50%;
     width: 100%;
     text-align: center;
-    color: var(--sp-muted, #5f5f5f);
+    color: var(--ds-muted);
   }
   .root :global(input),
   .root :global(textarea),
@@ -1725,151 +2054,189 @@
     /* Inside the iPad's safe area (rounded corners, home indicator); zero elsewhere. */
     inset: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
     pointer-events: none;
-    font-size: var(--sp-font-size-small, 12px);
-  }
-  .layer :global(button),
-  .inline :global(button) {
-    font: inherit;
+    font-size: var(--ds-type-small);
   }
   .top-left {
     position: absolute;
-    top: 8px;
-    left: 8px;
+    top: var(--ds-edge);
+    left: var(--ds-edge);
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--ds-space-sm);
     align-items: flex-start;
+    z-index: 40;
   }
+  /* One row that never wraps (critique, iPad 1: "The toolbar breaks into four rows"). */
   .toolbar {
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
+    flex-wrap: nowrap;
+    gap: var(--ds-space-sm);
     pointer-events: auto;
     align-items: center;
-    /* Clear of the turn strip centred above the table (about 640 px wide): the tools wrap to a second row rather than
-       slide under it (the View button of M4-P1 made the row too long at 1440 px). */
-    max-width: max(220px, calc(50vw - 336px));
   }
-  .toolbar button,
-  .stack-chip button,
-  .offer button,
-  .inline button {
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-sm, 2px);
-    padding: 2px 8px;
-    cursor: pointer;
+  /* The pill bar (Ztyle chrome bar): round buttons, short dividers. */
+  .sp-bar {
+    background: var(--ds-panel);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-pill);
+    box-shadow: var(--ds-elevation-raised);
+    padding: 2px;
+    gap: 2px;
   }
-  .voice-row {
-    position: relative;
+  .sp-divider {
+    width: 1px;
+    height: 20px;
+    background: var(--ds-line);
   }
-  .clip-tray {
-    display: inline-flex;
+  /* Menu and Undo show their word from 1024 px, icon only below. */
+  @media (max-width: 1023px) {
+    .sp-word {
+      display: none;
+    }
+  }
+  /* The shell's status line: no box of its own, so what it renders sits under the tracker as the column's own item, and
+     a status that renders nothing (or only hidden elements) adds neither height nor a gap. */
+  .sp-status {
+    pointer-events: auto;
+    display: contents;
+  }
+  .sp-primary {
+    min-width: 200px;
+    pointer-events: auto;
+  }
+  .sp-primary-quiet {
+    background: var(--ds-chip);
+    color: var(--ds-muted);
+    box-shadow: var(--ds-elevation-raised);
+  }
+  .sp-notice {
+    display: flex;
     align-items: center;
-    gap: 3px;
-    touch-action: none;
-    cursor: grab;
+    gap: var(--ds-space-sm);
+    pointer-events: auto;
   }
-  .theme-anchor {
-    position: relative;
-  }
-  .theme-pop {
-    position: absolute;
-    top: calc(100% + 4px);
-    left: 0;
-    z-index: 70;
-  }
+  .menu-pop,
+  .theme-pop,
   .voice-pop {
     position: absolute;
-    top: calc(100% + 4px);
+    top: calc(var(--ds-control-md) + var(--ds-space-sm));
     left: 0;
-    z-index: 30;
+    z-index: 60;
+    pointer-events: auto;
     max-height: calc(100vh - 96px);
     overflow-y: auto;
   }
-  kbd {
-    font-family: var(--sp-font-mono, monospace);
-    opacity: 0.7;
+  .stack-chip button.lit {
+    background: var(--ds-on);
+    color: var(--ds-on-ink);
+    border-color: var(--ds-on);
   }
-  /* A touch screen has no keyboard to press: the toolbar names no keys there (M5 gate; the cheat sheet still lists them
-     for a hardware keyboard). */
-  .touch-ui .toolbar kbd,
-  .touch-ui .top-centre :global(kbd) {
-    display: none;
-  }
-  .chip {
-    border: 1px solid var(--sp-fg, #111);
-    border-radius: 999px;
-    padding: 0 8px;
-    background: var(--sp-surface, #fff);
+  .stack-chip .to button.default {
+    border-color: var(--ds-ink);
   }
   .top-centre {
     position: absolute;
-    top: 8px;
+    top: var(--ds-edge);
     left: 50%;
     transform: translateX(-50%);
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
+    gap: var(--ds-space-sm);
+    z-index: 30;
   }
   .stack-chip {
     pointer-events: auto;
     display: flex;
-    gap: 6px;
+    gap: var(--ds-space-sm);
     align-items: center;
-    background: var(--sp-surface, #fff);
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-md, 4px);
-    padding: 2px 8px;
-  }
-  /* A Resolve that is not ready and Counter keep full-contrast text (Paper meets WCAG AA throughout); a lit Resolve
-     stands out by a heavier border in the foreground colour instead of the others being dimmed. */
-  .stack-chip button.lit {
-    border-color: var(--sp-fg, #111);
-    box-shadow: inset 0 0 0 1px var(--sp-fg, #111);
-    font-weight: 600;
+    padding: var(--ds-space-xs) var(--ds-space-sm) var(--ds-space-xs) var(--ds-space-md);
   }
   .stack-chip .to {
     display: inline-flex;
     gap: 2px;
     align-items: center;
-    color: var(--sp-muted, #5f5f5f);
+    color: var(--ds-muted);
   }
-  .stack-chip .to button {
-    padding: 0 4px;
+  .plates-row {
+    display: flex;
+    gap: var(--ds-space-sm);
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: min(900px, calc(100vw - 2 * var(--ds-edge)));
   }
-  .stack-chip .to button.default {
-    border-color: var(--sp-fg, #111);
+  .plates-row:empty {
+    display: none;
+  }
+  .plate-anchor {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 10;
+    /* The transform puts the plate's centre on the anchor. */
+    translate: -50% -50%;
+    transition: transform var(--ds-duration-slow) var(--ds-ease-standard);
   }
   .right {
     position: absolute;
-    top: 8px;
-    right: 8px;
-    bottom: calc(22vh + 16px);
+    top: var(--ds-edge);
+    right: var(--ds-edge);
     display: flex;
+    z-index: 50;
   }
-  /* A narrow screen (an upright tablet): the turn strip packs tighter, so it clears the toolbar and the log (M5 gate). */
-  @media (max-width: 1000px) {
-    .top-centre :global([data-testid='turn-strip']) {
-      gap: 4px;
-      padding: 4px 6px;
-    }
-    .top-centre :global([data-testid='turn-strip'] button) {
-      padding: 1px 3px;
-    }
+  .right.open {
+    bottom: calc(22vh + 16px);
+    gap: var(--ds-space-sm);
   }
-  /* An upright tablet: the thumb bar spans under the log, so the log (its chat input) ends above it (M5 gate). */
-  @media (max-width: 1000px) {
-    .touch-ui .right {
-      bottom: calc(22vh + 16px + 64px);
-    }
+  .view-beside {
+    align-self: flex-start;
+    pointer-events: auto;
   }
   .own-avatar {
     position: absolute;
-    left: 8px;
-    bottom: calc(22vh + 16px);
+    left: var(--ds-edge);
+    bottom: var(--ds-edge);
+    z-index: 35;
+  }
+  /* Only where the plate sits at the bottom edge (wide windows); narrower, it already sits above the hand. */
+  @media (min-width: 1101px) {
+    .own-avatar.over-evening {
+      bottom: calc(var(--ds-edge) + 2 * var(--ds-control-sm) + 3 * var(--ds-space-sm));
+    }
+  }
+  .bottom-right {
+    position: absolute;
+    right: var(--ds-edge);
+    bottom: var(--ds-edge);
+    display: flex;
+    align-items: center;
+    gap: var(--ds-space-sm);
+    z-index: 35;
+  }
+  /* Where the hand fan spans the width (a narrow window, a touch screen's scrolling fan), the plate and the primary
+     button sit just above the hand, within thumb reach, never over a card (docs/design/m7-hud-proposal.md, iPad). */
+  @media (max-width: 1100px) {
+    .own-avatar,
+    .bottom-right {
+      bottom: calc(22vh + 16px);
+    }
+    /* The chips and prompts move above that row, so the plate never covers KEEP. */
+    .above-hand {
+      --sp-above-row: calc(var(--ds-control-lg) + 24px);
+      bottom: calc(22vh + 16px + var(--sp-above-row));
+    }
+  }
+  .touch-ui .own-avatar,
+  .touch-ui .bottom-right {
+    bottom: calc(22vh + 16px + var(--thumb-space, 0px));
+  }
+  .touch-ui .above-hand {
+    --sp-above-row: calc(var(--ds-control-lg) + 24px);
+    bottom: calc(22vh + 16px + var(--thumb-space, 0px) + var(--sp-above-row));
+  }
+  /* Talk keeps its states and buttons; shortcut text stays out of the primary UI (tooltips name the keys). */
+  .talk-cluster :global(kbd) {
+    display: none;
   }
   .above-hand {
     position: absolute;
@@ -1896,35 +2263,28 @@
     bottom: calc(22vh + 8px);
     transform: translateX(-50%);
   }
-  .toast {
-    margin: 0;
-    padding: 4px 12px;
-    background: var(--sp-fg, #111);
-    color: var(--sp-bg, #fff);
-    border-radius: var(--sp-radius-md, 4px);
-  }
   .offer {
     pointer-events: auto;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    background: var(--sp-surface, #fff);
-    border: 1px solid var(--sp-fg, #111);
-    border-radius: var(--sp-radius-md, 4px);
+    gap: var(--ds-space-sm);
+    padding: var(--ds-space-xs) var(--ds-space-xs) var(--ds-space-xs) var(--ds-space-md);
   }
-  .x {
-    border: 0 !important;
+  .dialog-text {
+    margin: 0;
+    color: var(--ds-ink);
   }
   .inline {
     position: fixed;
     z-index: 66;
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    border: 1px solid var(--sp-fg, #111);
-    border-radius: var(--sp-radius-md, 4px);
+    background: var(--ds-panel-raised);
+    color: var(--ds-ink);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-md);
+    box-shadow: var(--ds-elevation-pop);
     padding: 6px 8px;
-    font: var(--sp-font-size-small, 12px) / 1.4 var(--sp-font, system-ui);
+    font-size: var(--ds-type-small);
+    line-height: 1.4;
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
@@ -1950,7 +2310,7 @@
     width: min(18em, 60vw);
   }
   .muted {
-    color: var(--sp-muted, #5f5f5f);
+    color: var(--ds-muted);
   }
   .preview {
     position: fixed;
@@ -1958,7 +2318,7 @@
     width: 200px;
     height: 279px;
     pointer-events: none;
-    box-shadow: 0 0 0 1px var(--sp-fg, #111);
+    box-shadow: 0 0 0 1px var(--ds-ink);
     border-radius: 4.76% / 3.41%;
   }
 </style>

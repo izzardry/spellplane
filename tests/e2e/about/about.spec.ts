@@ -6,6 +6,7 @@
  */
 import { expect, test, type Locator } from '@playwright/test';
 import { openApp } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { openHud } from '../ui/harness';
 
 async function expectAbout(about: Locator): Promise<void> {
@@ -37,7 +38,7 @@ test('the start page links to About, which shows the Fan Content notice and the 
 
 test('the settings panel on the table has the same About section', async ({ page }) => {
   await openHud(page);
-  await page.getByTestId('open-settings').click();
+  await menuItem(page, 'open-settings', 'click');
   await page.locator('[data-testid="settings-tab"][data-section="about"]').click();
   await expectAbout(page.getByTestId('settings').getByTestId('about'));
 });

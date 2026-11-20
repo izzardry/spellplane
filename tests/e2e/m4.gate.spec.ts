@@ -33,6 +33,7 @@ import type { SceneDebugCard } from '../../src/scene/table-scene';
 import { LISTED_THEME_IDS, M4_THEME_IDS as THEME_IDS, THEME_LABELS, type M4ThemeId as ThemeId } from '../../src/themes/index';
 import { scan } from '../leak/scan';
 import { hook, shot } from './helpers/app';
+import { menuItem, openZone } from './helpers/hud';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname } from './lobby/helpers';
 import { openRender, rh, settle as settleRender } from './render/helpers';
 
@@ -246,7 +247,7 @@ async function pickHudTheme(page: Page, theme: ThemeId): Promise<void> {
     await frames(page);
     return;
   }
-  if (!(await picker.isVisible())) await page.getByTestId('open-theme-settings').click();
+  if (!(await picker.isVisible())) await menuItem(page, 'open-theme-settings', 'click');
   await expect(picker).toBeVisible();
   await picker.locator(`[data-testid="theme-option"][data-theme="${theme}"] input`).check();
   await expect.poll(() => currentTheme(page), { timeout: 20_000 }).toBe(theme);
@@ -976,7 +977,7 @@ async function tutorFromLibrary(
   byId: (id: string) => boolean = () => true,
 ): Promise<string> {
   await page.bringToFront();
-  await page.locator(`[data-testid="avatar"][data-seat="${seat}"] [data-testid="zone-button"][data-zone="library:${seat}"]`).click();
+  await openZone(page, `library:${seat}`, 'click');
   await expect(page.getByTestId('pile-viewer')).toBeVisible();
   await page.getByTestId('search-library').click();
   const sec = await secrets(page);
