@@ -10,6 +10,7 @@ import { cacheName, dbName } from '../../../src/store/profile';
 import { openStores, type LocalStores } from '../../../src/store/stores';
 import { SOLO_ROOM_ID } from '../../../src/store/tables';
 import { logEntry, sampleSecrets, sampleState, tableRecord, uniqueDbName } from './helpers';
+import { DEFAULT_SETTINGS } from '../../../src/store/types';
 
 const open: LocalStores[] = [];
 afterEach(() => {
@@ -109,7 +110,7 @@ describe('profile namespacing', () => {
     await a.tables.saveAction(SOLO_ROOM_ID, logEntry(SOLO_ROOM_ID, 1), tableRecord(SOLO_ROOM_ID, 1, sampleState(1), 1), sampleSecrets());
 
     for (const other of [b, plain]) {
-      expect(await other.settings.get('theme')).toBe('paper');
+      expect(await other.settings.get('theme')).toBe(DEFAULT_SETTINGS.theme); // M8-C: Plain is the default
       expect(await other.decks.list()).toEqual([]);
       expect(await other.tables.loadTable(SOLO_ROOM_ID)).toBeNull();
       expect(await other.db.count('log')).toBe(0);

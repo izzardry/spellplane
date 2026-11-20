@@ -33,6 +33,6 @@ export interface AppUpdate {
  * Implementer: M5-P3. Added by M5-C.
  */
 export function updateMayApply(place: UpdatePlace): boolean {
-  if (place.stage === null) return place.route !== 'solo' && place.route !== 'room';
+  if (place.stage === null) return place.route !== 'solo' && place.route !== 'room' && place.route !== 'practice' && place.route !== 'computer'; // M8-C: the new table routes
   return place.stage === 'lobby';
 }

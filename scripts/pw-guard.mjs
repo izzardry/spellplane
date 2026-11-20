@@ -32,6 +32,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 
 // Up to SLOTS runs at once (SPELLPLANE_PW_SLOTS, default 2), one lock directory per slot. Slot 0 keeps the
 // original single-lock path, so an older guard (a worktree branched before the slots) still counts against it.
@@ -233,6 +234,109 @@ const oomphBin = () => {
 };
 
 /** Waits for an oomph grant (returns its id), or null without oomph; exits 75 when it never comes. */
+/**
+ * Remote WebKit: when ~/.config/spellplane/pw-remote.json names a browser server ({"webkitWs": "ws://127.0.0.1:39333/"},
+ * normally an SSH tunnel to another Mac running scripts/pw-remote/serve.sh), WebKit runs there and this machine's
+ * GPU is spared. A configured but unreachable server makes the run wait (and give up with 75), never fall back to
+ * a local WebKit silently.
+ */
+const REMOTE_FILE = path.join(os.homedir(), '.config', 'spellplane', 'pw-remote.json');
+/** The e2e port, computed as playwright.config.ts does (PW_PORT, else a hash of the worktree path). */
+function e2ePort() {
+  if (process.env.PW_PORT) return Number(process.env.PW_PORT);
+  let h = 0;
+  for (const ch of process.cwd()) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return 4200 + (h % 700);
+}
+/**
+ * The remote browser must reach this machine's test server as http://localhost:<port> (a secure context; WebKit sends
+ * localhost past Playwright's network relay): a reverse SSH tunnel per run maps the browser Mac's localhost:<port>
+ * to ours. Needs "sshHost" in the remote file.
+ */
+let tunnel = null;
+async function openTunnel(host, ports) {
+  const args = ['-N', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes', '-o', 'ServerAliveInterval=15'];
+  for (const p of ports) args.push("-R", `${p}:localhost:${p}`);
+  tunnel = spawn('ssh', [...args, host], { stdio: ['ignore', 'ignore', 'inherit'] });
+  const exited = await Promise.race([new Promise((r) => tunnel.once('exit', () => r(true))), sleep(2500).then(() => false)]);
+  if (exited) {
+    tunnel = null;
+    console.error(`[pw-guard] could not open the reverse tunnel for port(s) ${ports.join(', ')} to ${host} (port taken there, or SSH failed)`);
+    release();
+    process.exit(75);
+  }
+}
+function closeTunnel() {
+  if (tunnel) tunnel.kill('SIGTERM');
+  tunnel = null;
+}
+process.on('exit', closeTunnel);
+
+function remoteWebkitWs() {
+  if (process.env.SPELLPLANE_PW_LOCAL_WEBKIT) return null;
+  try {
+    const c = JSON.parse(fs.readFileSync(REMOTE_FILE, 'utf8'));
+    return c.webkitWs ? c : null;
+  } catch {
+    return null;
+  }
+}
+function canConnect(ws) {
+  const u = new URL(ws);
+  return new Promise((resolve) => {
+    const sock = net.connect({ host: u.hostname, port: Number(u.port) || 80 });
+    const done = (ok) => { sock.destroy(); resolve(ok); };
+    sock.setTimeout(3000, () => done(false));
+    sock.once('connect', () => done(true));
+    sock.once('error', () => done(false));
+  });
+}
+async function waitForRemote(ws) {
+  const started = Date.now();
+  let lastNote = 0;
+  while (!(await canConnect(ws))) {
+    if (Date.now() - started > MAX_WAIT_MS) {
+      release();
+      console.error(`[pw-guard] the remote WebKit server ${ws} stayed unreachable for ${MAX_WAIT_MS / 60_000} min; giving up`);
+      process.exit(75);
+    }
+    if (Date.now() - lastNote > 60_000) {
+      console.error(`[pw-guard] waiting for the remote WebKit server ${ws} (configured in ${REMOTE_FILE})`);
+      lastNote = Date.now();
+    }
+    await sleep(15_000);
+  }
+}
+
+/**
+ * Graphics memory of killed WebKit GPU helpers is not freed at once: on 20 Nov 2026 it stayed
+ * "unowned" (held by no process) for about an hour, 37 GB after six aborted runs. Starting more
+ * browsers meanwhile stacks it up, so wait until oomph sees it given back.
+ */
+const MAX_UNOWNED_GB = Number(process.env.SPELLPLANE_PW_MAX_UNOWNED_GB ?? 6);
+async function waitForReclaim() {
+  const bin = oomphBin();
+  if (!bin) return;
+  const started = Date.now();
+  let lastNote = 0;
+  for (;;) {
+    const r = spawnSync(bin, ['status', '--json'], { encoding: 'utf8' });
+    let unowned;
+    try { unowned = Number(JSON.parse(r.stdout).unowned_gb) || 0; } catch { return; }
+    if (unowned <= MAX_UNOWNED_GB) return;
+    if (Date.now() - started > MAX_WAIT_MS) {
+      release();
+      console.error(`[pw-guard] ${unowned} GB of graphics memory still not given back after ${MAX_WAIT_MS / 60_000} min; giving up (exit 4)`);
+      process.exit(4);
+    }
+    if (Date.now() - lastNote > 60_000) {
+      console.error(`[pw-guard] waiting: ${unowned} GB of memory is held by no process (graphics memory of killed browsers); starting only when it is under ${MAX_UNOWNED_GB} GB`);
+      lastNote = Date.now();
+    }
+    await sleep(30_000);
+  }
+}
+
 async function oomphReserve() {
   const bin = oomphBin();
   if (!bin) return null;
@@ -377,7 +481,16 @@ export async function runGuarded(command, args, extraEnv = {}) {
     console.error(`[pw-guard] macOS is showing a prompt (${promptAfterWait}). Not starting Playwright until it is answered.`);
     process.exit(3);
   }
+  const remote = remoteWebkitWs();
+  if (remote) {
+    await waitForRemote(remote.webkitWs);
+    const ports = [Number(extraEnv.SPELLPLANE_PW_TUNNEL_PORT ?? e2ePort())];
+    if (remote.sshHost) await openTunnel(remote.sshHost, ports);
+    env.SPELLPLANE_PW_WEBKIT_WS = remote.webkitWs;
+    console.error(`[pw-guard] WebKit runs on the remote browser server ${remote.webkitWs}${remote.sshHost ? ` (${remote.sshHost}, localhost:${ports.join(',')} tunnelled back)` : ''}`);
+  }
   sweepStrays('before this run');
+  await waitForReclaim();
   const lease = await oomphReserve();
   const child = spawn(command, args, { stdio: 'inherit', env, detached: true });
   fs.writeFileSync(OWNER, JSON.stringify({ ...readOwner(), pgid: child.pid }));
@@ -448,6 +561,7 @@ export async function runGuarded(command, args, extraEnv = {}) {
       stop(sig);
       setTimeout(() => {
         oomphRelease(lease);
+        closeTunnel();
         release();
         process.exit(130);
       }, 5500).unref();
@@ -458,6 +572,7 @@ export async function runGuarded(command, args, extraEnv = {}) {
   killGroup(child.pid, 'SIGKILL'); // leftovers (browsers, preview server) of this run
   sweepStrays('after this run');
   oomphRelease(lease);
+  closeTunnel();
   release();
   process.exit(aborted ? exitCode : status);
 }

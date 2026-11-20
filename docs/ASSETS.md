@@ -24,6 +24,10 @@ Every file the app bundles or fetches for a theme is listed here (DESIGN "Themes
 
 Libraries that bundle no asset file but are recorded here because they ship with the app (M8-C): `qrcode-generator` 2.0.4 (MIT, https://github.com/kazuhikoarase/qrcode-generator), loaded lazily by `src/ui/qr.ts` to draw invite QR codes as a module matrix; no image is bundled.
 
+## Plain
+
+No bundled assets: a stub of Paper's flat plane under the id `plain` until M7-P1 builds the Plain table world (added by M8-C).
+
 ## Paper
 
 No bundled assets: a flat white plane drawn by `src/themes/paper/index.ts`.

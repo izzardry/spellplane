@@ -562,24 +562,31 @@ test.describe('confirmation prompt (DESIGN "Turn flow and confirmation", Confirm
   });
 });
 
-test.describe('app shell routes (PLAN M0-P4: #/ solo table, room for #/t/<room>/<key>, #/diag, #/lobby)', () => {
+test.describe('app shell routes (M8-C, contracts.md Part C: #/ Home, #/solo the table sandbox, room for #/t/<room>/<key>, #/diag, #/lobby)', () => {
   for (const [hash, id] of [
     ['/lobby', 'route-lobby'],
     ['/diag', 'route-diag'],
     ['/t/abc/key123', 'route-room'],
     ['/nowhere', 'route-notFound'],
   ] as const) {
-    test(`#${hash} shows its page`, async ({ page }) => {
+    test(`#${hash} shows its page and a way Home`, async ({ page }) => {
       await page.goto(`./?faces=placeholder#${hash}`);
       await expect(page.getByTestId(id)).toBeVisible();
-      await page.getByRole('link', { name: /solo table/i }).click();
+      await page.locator('a[href="#/"]').first().click();
       await expect(page.getByTestId(id)).toHaveCount(0);
-      await expect(page.getByTestId('hud')).toBeVisible();
+      await expect(page.getByTestId('route-home')).toBeVisible();
+      await expect(page.getByTestId('hud')).toHaveCount(0);
     });
   }
 
-  test('#/ keeps the solo table', async ({ page }) => {
+  test('#/ is Home, not a table', async ({ page }) => {
     await openApp(page, { hash: '/' });
+    await expect(page.getByTestId('route-home')).toBeVisible();
+    await expect(page.getByTestId('hud')).toHaveCount(0);
+  });
+
+  test('#/solo is the table sandbox', async ({ page }) => {
+    await openApp(page, { hash: '/solo' });
     await expect(page.getByTestId('hud')).toBeVisible();
   });
 });
