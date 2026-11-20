@@ -135,6 +135,15 @@ test('offline: the search is disabled and the list still edits', async ({ page }
   await expect(page.getByTestId('search-offline')).toBeVisible();
   await row(page, 'Llanowar Elves').getByTestId('row-plus').click();
   await expect(row(page, 'Llanowar Elves').getByTestId('row-count')).toHaveText('5');
+  // IN DECK needs no connection: the deck's own cards, whole, filtered locally.
+  await page.getByTestId('search-scope').getByRole('radio', { name: 'In deck' }).click();
+  await expect(page.getByTestId('card-search')).toBeEnabled();
+  await expect(page.getByTestId('result-card')).toHaveCount(17);
+  await page.getByTestId('card-search').fill('elves');
+  await expect(page.getByTestId('result-card')).toHaveCount(1);
+  await expect(page.locator('[data-testid="result-card"][data-name="Llanowar Elves"] [data-testid="result-count-badge"]')).toHaveText('×5');
+  await page.getByTestId('search-scope').getByRole('radio', { name: 'All cards' }).click();
+  await expect(page.getByTestId('card-search')).toBeDisabled();
   await page.evaluate(() => window.__spellplane!.decks!.setOffline(false));
   await expect(page.getByTestId('card-search')).toBeEnabled();
 });

@@ -73,6 +73,8 @@
   let types = $state<TypeChip[]>([]);
   let sort = $state<'edhrec' | 'cmc' | 'name'>('edhrec');
   let quick = $state<QuickChip | null>(null);
+  /** ALL CARDS searches Scryfall; IN DECK shows the deck's own cards, filtered locally (mock board 3). */
+  let scope = $state<'all' | 'deck'>('all');
   let results = $state.raw<CardData[]>([]);
   let searching = $state(false);
   let searchError = $state<string | null>(null);
@@ -107,6 +109,17 @@
     if (!deck) return [];
     return groupsOf(board === 'side' ? deck.side : deck.main, lookup);
   });
+
+  // IN DECK: the deck's cards (main and side), whole, filtered by the same text and chips without a request.
+  const inDeck = $derived.by(() => {
+    void cardsVersion;
+    if (!deck || sealed || scope !== 'deck') return [];
+    const q = compileQuery({ text, colours, types });
+    return rowsOf([...deck.main, ...deck.side], lookup)
+      .map((r) => r.card)
+      .filter((c): c is CardData => !!c && (!q || matchesQuery(c, q)));
+  });
+  const shown = $derived(scope === 'deck' ? inDeck : results);
 
   // The pool (booster decks): the cards not in the deck, filtered locally by the chips.
   const poolRows = $derived.by(() => {
@@ -241,7 +254,7 @@
   const canSearch = $derived(!!quick || text.trim().length >= 2 || colours.length > 0 || types.length > 0);
   $effect(() => {
     const q = query;
-    const go = canSearch && !sealed && !offline;
+    const go = canSearch && !sealed && !offline && scope === 'all';
     const order = sort;
     if (timer) clearTimeout(timer);
     timer = null;
@@ -413,13 +426,23 @@
             <span class="search">
               <Field
                 label="Search any card"
-                placeholder={offline ? 'Card search needs a connection' : 'Search any card: name, type or text'}
+                placeholder={scope === 'deck' ? 'Filter the deck: name, type or text' : offline ? 'Card search needs a connection' : 'Search any card: name, type or text'}
                 bind:value={text}
                 oninput={() => (quick = null)}
-                disabled={offline || undefined}
+                disabled={(offline && scope === 'all') || undefined}
                 data-testid="card-search"
               />
             </span>
+            <Segmented
+              label="Show"
+              value={scope}
+              onchange={(v) => (scope = v as 'all' | 'deck')}
+              data-testid="search-scope"
+              options={[
+                { value: 'all', label: 'All cards' },
+                { value: 'deck', label: 'In deck' },
+              ]}
+            />
             <Segmented
               label="Sort"
               value={sort}
@@ -448,7 +471,7 @@
             <Chip size="sm" variant={types.includes(t.value) ? 'on' : 'line'} pressed={types.includes(t.value)} onclick={() => toggleType(t.value)} data-testid="chip-type-{t.value}">{t.label}</Chip>
           {/each}
           <span class="grow"></span>
-          <span class="ds-t-meta" data-testid="result-count">{sealed ? `${poolRows.reduce((s, r) => s + r.n, 0)} cards` : searched ? `${results.length} cards` : ''}</span>
+          <span class="ds-t-meta" data-testid="result-count">{sealed ? `${poolRows.reduce((s, r) => s + r.n, 0)} cards` : scope === 'deck' ? `${inDeck.length} cards` : searched ? `${results.length} cards` : ''}</span>
         </div>
         {#if sealed}
           <div class="row36" role="group" aria-label="Basic lands">
@@ -466,14 +489,16 @@
             {/each}
           </div>
         {:else}
-          {#if !text.trim() && colours.length === 0 && types.length === 0}
+          {#if scope === 'all' && !text.trim() && colours.length === 0 && types.length === 0}
             <div class="row36" role="group" aria-label="Quick searches">
               {#each Object.entries(QUICK_CHIPS) as [k, q] (k)}
                 <Chip size="sm" variant={quick === k ? 'on' : 'line'} pressed={quick === k} onclick={() => (quick = quick === k ? null : (k as QuickChip))} data-testid="quick-{k}">{q.label}</Chip>
               {/each}
             </div>
           {/if}
-          {#if offline}
+          {#if scope === 'deck'}
+            {#if inDeck.length === 0}<StatusLine>No cards in the deck match.</StatusLine>{/if}
+          {:else if offline}
             <StatusLine tone="danger" data-testid="search-offline">Card search needs a connection</StatusLine>
           {:else if searchError}
             <StatusLine tone="danger">{searchError}</StatusLine>
@@ -485,7 +510,7 @@
             <StatusLine>Search any card, or start from a chip.</StatusLine>
           {/if}
           <div class="grid" role="listbox" aria-label="Search results: click a card to add it" data-testid="result-grid">
-            {#each results as card (card.id)}
+            {#each shown as card (card.id)}
               {@const n = countSid(deck.main, card.id) + countSid(deck.side, card.id)}
               <div class="cell" role="option" aria-selected={n > 0} tabindex="0" aria-label={cardLabel(card, n)} data-testid="result-card" data-sid={card.id} data-name={card.name}
                 onclick={(e) => cardClick(e, card)} onkeydown={(e) => cardKey(e, card)}>
@@ -494,7 +519,7 @@
               </div>
             {/each}
           </div>
-          {#if results.length >= 175}<p class="ds-t-meta">Showing the first 175. Narrow the search for more.</p>{/if}
+          {#if scope === 'all' && results.length >= 175}<p class="ds-t-meta">Showing the first 175. Narrow the search for more.</p>{/if}
         {/if}
       </section>
 
