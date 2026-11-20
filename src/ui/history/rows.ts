@@ -74,9 +74,3 @@ export function shows(g: GameSummary, f: HistoryFilter): boolean {
   if (f === 'finished') return isEnded(g);
   return !(g.kind === 'solo' && isEnded(g));
 }
-
-/** The route that reopens a game. */
-export function openHash(g: GameSummary): string {
-  if (g.kind === 'solo') return g.opponent === 'sparring' ? `#/c/${encodeURIComponent(g.code)}` : `#/p/${encodeURIComponent(g.code)}`;
-  return `#/t/${encodeURIComponent(g.code)}/${encodeURIComponent(g.key)}`;
-}

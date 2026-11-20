@@ -21,7 +21,7 @@ test('a fresh profile sees Home, the nav, the empty hero and PLAY enabled; nothi
   await expect(page.getByTestId('home-primary')).toBeEnabled();
   await expect(page.getByTestId('home-status')).toHaveText('No deck yet: you get a starter deck.');
   // The profile chip carries a made-up nickname.
-  await expect(page.getByTestId('profile-chip')).toHaveText(/[A-Z][a-z]+ [A-Z][a-z]+$/);
+  await expect(page.getByTestId('profile-name-chip')).toHaveText(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
   // No CONTINUE strip and no recent games without a game.
   await expect(page.getByTestId('home-continue')).toHaveCount(0);
   expect(Object.values(await page.evaluate(() => window.__homeHarness!.live())).every((n) => n === 0)).toBe(true);
@@ -77,7 +77,7 @@ test('the deck arrows and Left / Right step the library; Draft night shows three
   await page.getByTestId('mode-draft').click();
   await expect(page.getByTestId('home-primary')).toHaveText('OPEN DRAFT TABLE');
   await expect(page.getByTestId('home-boosters').locator('svg')).toHaveCount(3);
-  await expect(page.getByTestId('home-boosters').locator('svg').first()).toHaveAttribute('data-set', 'M19');
+  await expect(page.getByTestId('home-boosters').locator('svg').first()).toHaveAttribute('aria-label', 'M19 booster');
   await expect(page.getByTestId('home-prev')).toHaveCount(0);
   await expect(page.getByTestId('home-next')).toHaveCount(0);
   await expect(page.getByTestId('hero-name')).toHaveCount(0);
@@ -135,17 +135,23 @@ test('searching: the pill is pressed with the timer, the deck is locked, and the
     await expect(page.getByTestId('home-change-deck')).toBeDisabled();
     await expect(page.getByTestId('mode-solo')).toBeDisabled();
     await expect(page.getByTestId('home-cancel')).toBeVisible();
-    await expect(page.getByTestId('queue-bar')).toBeVisible();
+    // Home shows the search itself; the bar follows the player everywhere else (journey.md 4.5).
+    await expect(page.getByTestId('queue-bar')).toHaveCount(0);
   });
 
   await test.step('the queue bar on Decks and History', async () => {
     await page.getByTestId('shell-nav').getByRole('radio', { name: 'DECKS' }).click();
     await expect(page.getByTestId('harness-stub-decks')).toBeVisible();
-    await expect(page.getByTestId('queue-bar')).toBeVisible();
+    // The bar's content is the queue chip (M8-P7's; a stub that draws nothing here): the slot is there.
+    await expect(page.getByTestId('queue-bar')).toHaveCount(1);
     await page.getByTestId('shell-nav').getByRole('radio', { name: 'HISTORY' }).click();
     await expect(page.getByTestId('history-page')).toBeVisible();
-    await expect(page.getByTestId('queue-bar')).toBeVisible();
-    await page.getByTestId('queue-chip').getByRole('button', { name: 'CANCEL' }).click();
+    await expect(page.getByTestId('queue-bar')).toHaveCount(1);
+    await page.getByTestId('shell-nav').getByRole('radio', { name: 'PLAY' }).click();
+    await page.getByTestId('home-cancel').click();
+    await expect.poll(() => page.evaluate(() => window.__homeHarness!.status().phase)).toBe('off');
+    await page.getByTestId('shell-nav').getByRole('radio', { name: 'HISTORY' }).click();
+    await expect(page.getByTestId('history-page')).toBeVisible();
     await expect(page.getByTestId('queue-bar')).toHaveCount(0);
   });
 });
@@ -195,4 +201,18 @@ test('at 390 px nothing scrolls sideways', async ({ page }) => {
     await page.evaluate((h) => (location.hash = h), hash);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   }
+});
+
+test('the real app opens at ./ on Home, not a table: shell, nav, primary; no canvas and nothing alive', async ({ page }) => {
+  await page.goto(`./?profile=${uniq('app')}&faces=placeholder&transport=local`);
+  await expect(page.getByTestId('route-home')).toBeVisible();
+  await expect(page.getByTestId('shell')).toBeVisible();
+  await expect(page.getByTestId('shell-nav').getByRole('radio', { name: 'PLAY' })).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('home-primary')).toBeVisible();
+  await expect(page.getByTestId('scene-host')).toHaveCount(0);
+  await expect(page.locator('canvas')).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__spellplane?.home?.route())).toBe('home');
+  const counts = await page.evaluate(() => window.__spellplane?.home?.live?.() ?? null);
+  expect(counts).not.toBeNull();
+  expect(Object.values(counts!).every((n) => n === 0)).toBe(true);
 });

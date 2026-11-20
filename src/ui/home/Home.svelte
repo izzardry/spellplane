@@ -361,7 +361,7 @@
 </div>
 
 {#if firstRunFailed}
-  <div class="scrim" data-testid="first-run-sheet">
+  <div class="scrim" data-ds-layer="sheet" data-testid="first-run-sheet">
     <Sheet label="A first deck" width="narrow" onclose={() => (firstRunFailed = false)}>
       {#snippet header()}<h2 class="sheet__title">A first deck needs a connection once.</h2>{/snippet}
       <p class="sheet__text">The starter deck's cards could not be fetched. Try again, paste a deck list, or open a table without a deck.</p>

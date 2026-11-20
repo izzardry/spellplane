@@ -53,7 +53,7 @@ test('rows newest first, named by the other players, with the state line; ended 
   await designAudit(page);
 
   await test.step('opening a row goes to its table', async () => {
-    await rows.nth(0).getByRole('button', { name: /^Open/ }).click();
+    await rows.nth(0).getByRole('link', { name: /^Open/ }).click();
     await expect(page.getByTestId('harness-table')).toHaveAttribute('data-hash', '#/t/amber-fox-river-93/a2V5LWtleS1rZXkta2V5AA');
   });
 });

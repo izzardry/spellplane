@@ -14,6 +14,7 @@
   import { toasts } from '../design/toasts';
   import { isEnded } from '../../store/games';
   import type { GameStore, GameSummary } from '../../store/types';
+  import { summaryHash } from '../play/launch';
   import { codeText, relTime, rowLine, rowState, rowTitle, shows, type HistoryFilter } from './rows';
 
   let {
@@ -128,14 +129,22 @@
     <ul class="history__rows">
       {#each shown as g (g.code)}
         <li class="hrow" data-testid="history-row" data-code={g.code}>
-          <button type="button" class="hrow__open" aria-label="Open {rowTitle(g)}" onclick={() => onopen(g)}>
+          <a
+            class="hrow__open"
+            href={summaryHash(g)}
+            aria-label="Open {rowTitle(g)}"
+            onclick={(e) => {
+              e.preventDefault();
+              onopen(g);
+            }}
+          >
             <TableThumb thumb={g.thumb ?? null} seats={g.players.map((p, i) => ({ colour: seatColour(i), life: p.life, computer: g.opponent === 'sparring' && !p.me }))} width={128} />
             <span class="hrow__text">
               <span class="hrow__title" data-testid="history-title">{rowTitle(g)}</span>
               <span class="hrow__line">{rowLine(g)}</span>
               <span class="hrow__state" data-testid="history-state">{rowState(g)}</span>
             </span>
-          </button>
+          </a>
           <span class="hrow__right">
             <span class="hrow__time">{relTime(g.lastPlayedAt, now())}</span>
             <span class="hrow__code">{codeText(g.code)}</span>
@@ -153,7 +162,7 @@
   .history__rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
   .history__empty { margin: 0; color: var(--ds-muted); font-size: 13px; }
   .hrow { display: flex; align-items: stretch; gap: 12px; box-sizing: border-box; min-height: 88px; padding: 8px 12px 8px 8px; border-radius: 12px; background: var(--ds-panel-raised); box-shadow: var(--ds-elevation-raised); }
-  .hrow__open { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ds-ink); font: inherit; text-align: left; cursor: pointer; border-radius: 8px; }
+  .hrow__open { display: flex; align-items: center; gap: 16px; flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ds-ink); font: inherit; text-align: left; text-decoration: none; cursor: pointer; border-radius: 8px; }
   .hrow__open:focus-visible { outline: 2px solid var(--ds-focus); outline-offset: 2px; }
   .hrow__text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .hrow__title { font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

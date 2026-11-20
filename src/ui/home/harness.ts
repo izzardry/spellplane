@@ -21,6 +21,7 @@ import HomeHarness from './HomeHarness.svelte';
 export interface HomeHarnessApi {
   ready: boolean;
   setStatus(s: MatchmakerStatus): void;
+  status(): MatchmakerStatus;
   seeks(): { queues: string[]; deckId: string }[];
   starter(mode: 'ok' | 'fail'): void;
   seedDecks(decks: DeckRecord[]): Promise<void>;
@@ -121,6 +122,7 @@ export function mount(target: HTMLElement, start: 'home' | 'history' = new URLSe
     window.__homeHarness = {
       ready: true,
       setStatus: (s) => mm.set(s),
+      status: () => mm.status(),
       seeks: () => mm.seeks,
       starter: (m) => {
         starterMode = m;

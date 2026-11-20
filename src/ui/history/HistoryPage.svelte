@@ -3,7 +3,7 @@
   import Sheet from '../design/Sheet.svelte';
   import type { GameStore, GameSummary } from '../../store/types';
   import HistoryList from './HistoryList.svelte';
-  import { openHash } from './rows';
+  import { summaryHash } from '../play/launch';
 
   let { games, go = (h: string) => (location.hash = h), now = () => Date.now() }: { games: GameStore | null; go?: (hash: string) => void; now?: () => number } = $props();
   let count = $state<number | null>(null);
@@ -14,7 +14,7 @@
     <h2 class="title">HISTORY</h2>
     {#if count !== null}<span class="count">{count} {count === 1 ? 'GAME' : 'GAMES'}</span>{/if}
   {/snippet}
-  <HistoryList {games} {now} onopen={(g: GameSummary) => go(openHash(g))} onchange={(n) => (count = n)} />
+  <HistoryList {games} {now} onopen={(g: GameSummary) => go(summaryHash(g))} onchange={(n) => (count = n)} />
 </Sheet>
 
 <style>
