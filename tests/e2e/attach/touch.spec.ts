@@ -35,6 +35,8 @@ test.beforeEach(async ({ page }, info) => {
 });
 
 test('a finger drags a clip out of the tray onto an overlap; a double-tap on the clip takes it off', async ({ page }) => {
+  // M7-P2: the clip tray is an item of the Menu, dragged out of it.
+  await page.getByTestId('open-menu').tap();
   const box = (await page.getByTestId('clip-tray').boundingBox())!;
   const from = round({ x: box.x + box.width / 2, y: box.y + box.height / 2 });
   const to = await overlap(page);

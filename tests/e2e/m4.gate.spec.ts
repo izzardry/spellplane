@@ -33,6 +33,7 @@ import type { SceneDebugCard } from '../../src/scene/table-scene';
 import { LISTED_THEME_IDS, M4_THEME_IDS as THEME_IDS, THEME_LABELS, type M4ThemeId as ThemeId } from '../../src/themes/index';
 import { scan } from '../leak/scan';
 import { hook, shot } from './helpers/app';
+import { menuItem, openZone } from './helpers/hud';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname } from './lobby/helpers';
 import { openRender, rh, settle as settleRender } from './render/helpers';
 
@@ -229,7 +230,9 @@ async function pickLobbyTheme(page: Page, theme: ThemeId): Promise<void> {
     return;
   }
   await details.locator('summary').click();
-  await details.locator(`[data-testid="theme-option"][data-theme="${theme}"] input`).check();
+  // The M4 themes left the picker in M7 (PLAN Milestone 7, Owner decisions) and stay loadable: the debug hook stores the
+  // choice as the picker did; the lobby's picker shows the theme chosen.
+  await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
   await expect.poll(() => currentTheme(page), { timeout: 20_000 }).toBe(theme);
   await expect(details).toContainText(`Theme: ${THEME_LABELS[theme]}`);
   await details.locator('summary').click();
@@ -246,9 +249,10 @@ async function pickHudTheme(page: Page, theme: ThemeId): Promise<void> {
     await frames(page);
     return;
   }
-  if (!(await picker.isVisible())) await page.getByTestId('open-theme-settings').click();
+  if (!(await picker.isVisible())) await menuItem(page, 'open-theme-settings', 'click');
   await expect(picker).toBeVisible();
-  await picker.locator(`[data-testid="theme-option"][data-theme="${theme}"] input`).check();
+  // The M4 themes left the picker in M7 (PLAN Milestone 7, Owner decisions); the debug hook stores the choice as it did.
+  await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
   await expect.poll(() => currentTheme(page), { timeout: 20_000 }).toBe(theme);
   await expect.poll(() => renderTheme(page), { timeout: 20_000 }).toBe(theme);
   await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
@@ -976,7 +980,7 @@ async function tutorFromLibrary(
   byId: (id: string) => boolean = () => true,
 ): Promise<string> {
   await page.bringToFront();
-  await page.locator(`[data-testid="avatar"][data-seat="${seat}"] [data-testid="zone-button"][data-zone="library:${seat}"]`).click();
+  await openZone(page, `library:${seat}`, 'click');
   await expect(page.getByTestId('pile-viewer')).toBeVisible();
   await page.getByTestId('search-library').click();
   const sec = await secrets(page);

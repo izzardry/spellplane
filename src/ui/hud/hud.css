@@ -1,0 +1,69 @@
+/*
+ * The HUD's control heights (docs/design/m8/m7-adjustments.md, M7-P2 "HUD layout"; visual.md V4): every HUD control is
+ * one of the kit's four heights, xs 28, sm 36, md 44, lg 56, read from the --ds-control-* variables. The classes sit on
+ * kit buttons (.ds-btn, .ds-icon-btn, .ds-chip) and fix their height, so the kit's own size rules never disagree.
+ */
+.sp-hud .sp-h-xs,
+.sp-h-xs {
+  height: var(--ds-control-xs);
+  min-height: var(--ds-control-xs);
+}
+.sp-hud .sp-h-sm,
+.sp-h-sm {
+  height: var(--ds-control-sm);
+  min-height: var(--ds-control-sm);
+}
+.sp-hud .sp-h-md,
+.sp-h-md {
+  height: var(--ds-control-md);
+  min-height: var(--ds-control-md);
+}
+.sp-hud .sp-h-lg,
+.sp-h-lg {
+  height: var(--ds-control-lg);
+  min-height: var(--ds-control-lg);
+}
+/* A round control: as wide as it is high. */
+.sp-hud .sp-round {
+  padding: 0;
+  border-radius: 50%;
+  aspect-ratio: 1;
+  justify-content: center;
+}
+.sp-hud .sp-round.sp-h-xs {
+  width: var(--ds-control-xs);
+}
+.sp-hud .sp-round.sp-h-sm {
+  width: var(--ds-control-sm);
+}
+.sp-hud .sp-round.sp-h-md {
+  width: var(--ds-control-md);
+}
+.sp-hud .sp-round.sp-h-lg {
+  width: var(--ds-control-lg);
+}
+/* A pill: fully round ends (Ztyle chrome bar). */
+.sp-hud .sp-pill {
+  border-radius: var(--ds-radius-pill);
+}
+/* A touch screen (docs/design/m8/m7-adjustments.md, M7-P2 "iPad portrait": all targets at least 44 px): the small
+   heights grow to md, still one of the kit's four. */
+.sp-hud.touch-ui .sp-h-xs,
+.sp-hud.touch-ui .sp-h-sm {
+  height: var(--ds-control-md);
+  min-height: var(--ds-control-md);
+}
+.sp-hud.touch-ui .sp-round.sp-h-xs,
+.sp-hud.touch-ui .sp-round.sp-h-sm {
+  width: var(--ds-control-md);
+}
+/*
+ * Surfaces keep the look's panel radius. The kit's .ds-pop and .ds-panel round with --ds-radius-md, which is the
+ * button radius (a pill in Plain); on a tall drawer a pill radius clipped the header's corners, and its controls with
+ * them (overflow hidden clips hit testing too). Reported to M8-P1.
+ */
+.sp-hud .ds-pop,
+.sp-hud .ds-panel,
+.sp-panel-radius {
+  border-radius: var(--ds-radius-panel);
+}

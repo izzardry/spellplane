@@ -328,8 +328,8 @@
   <header class="bar" data-testid="builder-bar">
     <span class="title">Deck building</span>
     <div class="switch" role="group" aria-label="View">
-      <button type="button" data-testid="view-table" aria-pressed={viewKind === 'table'} disabled={!!surfaceError} onclick={() => showView('table')}>Table</button>
-      <button type="button" data-testid="view-list" aria-pressed={viewKind === 'list'} onclick={() => showView('list')}>List</button>
+      <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" data-testid="view-table" aria-pressed={viewKind === 'table'} disabled={!!surfaceError} onclick={() => showView('table')}>Table</button>
+      <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" data-testid="view-list" aria-pressed={viewKind === 'list'} onclick={() => showView('list')}>List</button>
     </div>
     {#if viewKind === 'table'}
       <div class="sorts" role="group" aria-label="Sort into columns">
@@ -337,6 +337,7 @@
         {#each SORTS as s (s.key)}
           <button
             type="button"
+            class="ds-btn ds-btn--secondary ds-btn--sm"
             data-testid="sort-{s.key}"
             aria-pressed={sortShowing === s.key}
             disabled={locked}
@@ -352,7 +353,7 @@
     {#if locked}
       <span class="locked" data-testid="builder-locked">Ready · deck locked</span>
     {:else}
-      <button type="button" class="primary" data-testid="builder-ready" disabled={!build || readying || !stats || stats.cards === 0} onclick={() => void ready()} title="Lock the deck and publish its commitment">
+      <button type="button" class="ds-btn ds-btn--primary ds-btn--sm" data-testid="builder-ready" disabled={!build || readying || !stats || stats.cards === 0} onclick={() => void ready()} title="Lock the deck and publish its commitment">
         {readying ? 'Locking…' : 'Ready'}
       </button>
     {/if}
@@ -366,8 +367,8 @@
         <div class="basic" data-testid="dispenser-row" data-basic={name}>
           <span class="bname">{name}</span>
           <span class="count" data-testid="dispenser-count">{counts[name]}</span>
-          <button type="button" class="pm" data-testid="dispenser-remove" aria-label="Return a {name} to the dispenser" disabled={locked || counts[name] === 0} onclick={() => removeBasic(name)}>−</button>
-          <button type="button" class="pm" data-testid="dispenser-add" aria-label="Add a {name} to the deck" disabled={locked || !chosen[name]} onclick={() => addBasic(name)}>+</button>
+          <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs ds-icon-btn ds-icon-only pm" data-testid="dispenser-remove" aria-label="Return a {name} to the dispenser" disabled={locked || counts[name] === 0} onclick={() => removeBasic(name)}>−</button>
+          <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs ds-icon-btn ds-icon-only pm" data-testid="dispenser-add" aria-label="Add a {name} to the deck" disabled={locked || !chosen[name]} onclick={() => addBasic(name)}>+</button>
           <select data-testid="dispenser-printing" aria-label="{name} printing" bind:value={chosen[name]} disabled={printings[name].length < 2}>
             {#if printings[name].length === 0}<option value="">Loading…</option>{/if}
             {#each printings[name] as p (p.ref.sid)}
@@ -500,15 +501,16 @@
   }
   .pm {
     padding: 0;
-    height: 22px;
   }
   select {
+    box-sizing: border-box;
+    height: 28px;
     font: inherit;
     min-width: 0;
-    color: var(--sp-fg);
-    background: var(--sp-bg);
-    border: 1px solid var(--sp-border);
-    border-radius: var(--sp-radius-sm, 4px);
+    color: var(--ds-ink);
+    background: var(--ds-panel);
+    border: 1px solid var(--ds-border);
+    border-radius: var(--ds-radius-sm, 4px);
   }
   .help,
   .empty,
@@ -519,27 +521,7 @@
   .error {
     color: var(--sp-danger);
   }
-  button {
-    font: inherit;
-    padding: 4px 10px;
-    border-radius: var(--sp-radius-sm, 4px);
-    border: 1px solid var(--sp-border);
-    background: var(--sp-bg);
-    color: var(--sp-fg);
-    cursor: pointer;
-  }
-  button[aria-pressed='true'] {
-    border-color: var(--sp-fg);
-    font-weight: var(--sp-font-weight-bold, 600);
-  }
-  button.primary {
-    border-color: var(--sp-fg);
-    font-weight: var(--sp-font-weight-bold, 600);
-  }
-  button:disabled {
-    opacity: 0.45;
-    cursor: default;
-  }
+  /* Swept to the kit (contracts.md Part G "Visual" 4; M8-P3): buttons are kit buttons, controls 28 or 36 px high. */
   button:focus-visible,
   select:focus-visible {
     outline: 2px solid var(--sp-focus);

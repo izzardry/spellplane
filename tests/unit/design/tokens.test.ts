@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 /**
  * PLAN M7-P2: the design system's tokens for the three looks (Principles: "One design system … accessibility
  * (contrast, focus, nothing by hue alone) is kept through the redesign"; A0: no blur or backdrop-filter). Every text
@@ -7,12 +9,12 @@ import { describe, expect, it } from 'vitest';
 import { paper } from '../../../src/themes/paper/index';
 import { contrastRatio } from '../../../src/themes/signals';
 import { stubTheme } from '../../../src/themes/stub';
-import type { LookId } from '../../../src/themes/types';
+import { DEFAULT_LOOK, type LookId } from '../../../src/themes/types';
 import { WCAG_AA } from '../../../src/ui/a11y/index';
 import { hudLook, lookCssVars, spVarsFromLook } from '../../../src/ui/design/css';
 import { designCssVars, LAYOUT, LOOKS, lookTokens } from '../../../src/ui/design/tokens';
 
-// M8-C: four looks; Plain is the default (visual.md 2.2).
+// Four looks (visual.md 2.2).
 const IDS: LookId[] = ['plain', 'kitchen', 'graphite', 'codex'];
 
 /** Text colour on surface, as the components pair them (ui/design/base.css and the HUD components). */
@@ -96,6 +98,58 @@ describe('applying a look (ui/design/css.ts)', () => {
   it("the HUD's look is the table theme's own look, else the stored one", () => {
     expect(hudLook(kitchenTheme, 'codex')).toBe('kitchen');
     expect(hudLook(paper, 'codex')).toBe('codex');
-    expect(hudLook(paper)).toBe('plain');
+    expect(hudLook(paper)).toBe(DEFAULT_LOOK);
+  });
+});
+
+describe('the M8 kit tokens (PLAN M8-P1; visual.md 2.3, 2.12)', () => {
+  const keysOf = (o: object, prefix = ''): string[] =>
+    Object.entries(o).flatMap(([k, v]) => (v && typeof v === 'object' && !Array.isArray(v) ? keysOf(v as object, `${prefix}${k}.`) : [`${prefix}${k}`]));
+
+  it('every look defines every token, none empty', () => {
+    const want = keysOf(LOOKS.plain).sort();
+    for (const id of IDS) {
+      expect(keysOf(LOOKS[id]).sort(), id).toEqual(want);
+      for (const [k, v] of Object.entries(designCssVars(LOOKS[id]))) expect(String(v).trim(), `${id} ${k}`).not.toBe('');
+    }
+    for (const k of ['--ds-veil', '--ds-font-reading', '--ds-radius-button', '--ds-radius-panel', '--ds-radius-card', '--ds-radius-sheet', '--ds-elevation-sheet', '--ds-elevation-dialog', '--ds-elevation-pressed', '--ds-elevation-well', '--ds-elevation-stack', '--ds-texture-page', '--ds-texture-dense', '--ds-texture-grain', '--ds-mana-w', '--ds-mana-c', '--ds-control-xs', '--ds-control-lg', '--ds-space-xxxl', '--ds-space-huge', '--ds-foil-0', '--ds-foil-line']) {
+      for (const id of IDS) expect(designCssVars(LOOKS[id])[k], `${id} ${k}`).toBeTruthy();
+    }
+  });
+
+  it('control heights are 28, 36, 44 and 56 only', () => {
+    expect([LAYOUT.control.xs, LAYOUT.control.sm, LAYOUT.control.md, LAYOUT.control.lg]).toEqual([28, 36, 44, 56]);
+    for (const v of Object.values(LAYOUT.control)) expect([28, 36, 44, 56]).toContain(v);
+  });
+
+  it("Plain's ink, muted, danger and success reach 4.5:1 on mat, chip, panel and panelRaised", () => {
+    const c = LOOKS.plain.colour;
+    for (const ink of [c.ink, c.muted, c.danger, c.success]) for (const on of [c.mat, c.chip, c.panel, c.panelRaised]) expect(contrastRatio(ink, on), `${ink} on ${on}`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('every look: ink and muted on panel and panelRaised, accentInk on accent 4.5:1, the focus ring 3:1', () => {
+    for (const id of IDS) {
+      const c = LOOKS[id].colour;
+      for (const ink of [c.ink, c.muted]) for (const on of [c.panel, c.panelRaised]) expect(contrastRatio(ink, on), `${id}: ${ink} on ${on}`).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(c.accentInk, c.accent), `${id} primary`).toBeGreaterThanOrEqual(4.5);
+      for (const on of [c.panel, c.panelRaised, c.mat]) expect(contrastRatio(c.focus, on), `${id} focus on ${on}`).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('no token contains blur( or backdrop', () => {
+    for (const id of IDS) expect(JSON.stringify(LOOKS[id])).not.toMatch(/blur\(|backdrop/i);
+    for (const id of IDS) for (const v of Object.values(designCssVars(LOOKS[id]))) expect(v).not.toMatch(/blur\(|backdrop/i);
+  });
+
+  it('Plain is Ztyle on paper: one monospace face, round buttons, grey-scale chrome', () => {
+    const p = LOOKS.plain;
+    expect(p.type.body.startsWith('"Fira Code"')).toBe(true);
+    expect(p.type.heading).toBe(p.type.body);
+    expect(p.radius.button).toBeGreaterThanOrEqual(999);
+    expect(p.colour.accent).toBe(p.colour.ink);
+    expect(designCssVars(p)['--ds-texture-grain']).toBe('var(--ds-grain-url)');
+    // The tile is bound once in the kit's stylesheet, so the tokens import no asset (Node loads them in e2e specs).
+    expect(fs.readFileSync(path.join('src', 'ui', 'design', 'base.css'), 'utf8')).toMatch(/--ds-grain-url:\s*url\('\.\/grain\.png'\)/);
+    expect(designCssVars(LOOKS.graphite)['--ds-texture-grain']).toBe('none');
   });
 });

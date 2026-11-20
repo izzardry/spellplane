@@ -2,6 +2,7 @@
  * Helpers for the M5-P5 browser tests: the settings harness page, a stubbed backs.scryfall.io (tests never use the
  * network; the official card back is served from a PNG made here), and opening the settings panel on the HUD harness.
  */
+import { menuItem } from '../helpers/hud';
 import { expect, type Page, type Route } from '@playwright/test';
 import zlib from 'node:zlib';
 
@@ -65,7 +66,7 @@ export async function stubBacks(page: Page, mode: { fail: boolean } = { fail: fa
 
 /** Open the settings panel on the HUD (toolbar ⚙) at a section. */
 export async function openHudSettings(page: Page, section: string): Promise<void> {
-  if ((await page.getByTestId('settings').count()) === 0) await page.getByTestId('open-settings').click();
+  if ((await page.getByTestId('settings').count()) === 0) await menuItem(page, 'open-settings', 'click');
   await page.locator(`[data-testid="settings-tab"][data-section="${section}"]`).click();
   await expect(page.getByTestId('settings')).toHaveAttribute('data-section', section);
 }

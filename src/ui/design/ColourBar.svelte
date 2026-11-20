@@ -1,19 +1,26 @@
 <!--
-  The colour split of a deck (docs/design/m8/contracts.md Part B; visual.md 2.8 "Colour bar"): one bar split by mana
-  symbol count, and per colour a pip, the count and the number of sources. Plain markup by M8-C; M8-P1 gives it its look.
+  The colour bar (docs/design/m8/contracts.md Part B; visual.md 2.8): one 8 px bar split by mana symbol count in the
+  identity colours, and under it per colour a lettered pip, the symbol count and the number of sources. Added by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
   import Pip from './Pip.svelte';
+  import type { ManaColour } from './types';
 
-  type C = 'W' | 'U' | 'B' | 'R' | 'G';
-  let { symbols, sources = undefined, ...rest }: { symbols: Partial<Record<C, number>>; sources?: Partial<Record<C, number>> | undefined; [attr: string]: unknown } = $props();
-  const parts = $derived((['W', 'U', 'B', 'R', 'G'] as const).filter((c) => (symbols[c] ?? 0) > 0).map((c) => ({ c, n: symbols[c] ?? 0, s: sources?.[c] })));
-  const total = $derived(parts.reduce((a, p) => a + p.n, 0) || 1);
+  const ORDER: ManaColour[] = ['W', 'U', 'B', 'R', 'G'];
+  let { symbols, sources = undefined, ...rest }: { symbols: Partial<Record<ManaColour, number>>; sources?: Partial<Record<ManaColour, number>> | undefined; [attr: string]: unknown } = $props();
+  const parts = $derived(ORDER.filter((c) => (symbols[c] ?? 0) > 0));
+  const total = $derived(parts.reduce((s, c) => s + (symbols[c] ?? 0), 0));
 </script>
 
 <div class="ds-colourbar" {...rest}>
-  <div class="ds-cbar" aria-hidden="true">{#each parts as p (p.c)}<i class="ds-cbar__item" style:flex-grow={p.n / total} style:background="var(--ds-mana-{p.c.toLowerCase()})"></i>{/each}</div>
-  <ul class="ds-cbar__legend">
-    {#each parts as p (p.c)}<li><Pip colour={p.c} /> {p.n}{#if p.s !== undefined} · {p.s} sources{/if}</li>{/each}
-  </ul>
+  <div class="ds-cbar" aria-hidden="true">
+    {#each parts as c (c)}<span style:flex-grow={symbols[c] ?? 0} style:background="var(--ds-mana-{c.toLowerCase()})"></span>{/each}
+  </div>
+  <div class="ds-cbar__legend">
+    {#each parts as c (c)}
+      <span class="ds-cbar__item" data-colour={c}><Pip colour={c} size={14} /><span>{symbols[c]} {(symbols[c] ?? 0) === 1 ? 'symbol' : 'symbols'}{#if sources} · {sources[c] ?? 0} {(sources[c] ?? 0) === 1 ? 'source' : 'sources'}{/if}</span></span>
+    {/each}
+    {#if total === 0}<span>No coloured symbols</span>{/if}
+  </div>
 </div>

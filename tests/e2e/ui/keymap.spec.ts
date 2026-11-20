@@ -3,6 +3,7 @@
  * hovered card (real pointer hover, real key events); no key fires while the chat or a note field has focus; the cheat
  * sheet lists every bound key. Runs on the `?harness=ui` page (fake session and fake scene).
  */
+import { menuItem, openLog } from '../helpers/hud';
 import { expect, test, type Page } from '@playwright/test';
 import { MTG_KEYMAP, chordToString } from '../../../src/games/mtg/keymap';
 import { RESERVED_KEYS } from '../../../src/ui/keymap';
@@ -230,6 +231,7 @@ test.describe('no key fires while a text field has focus (PLAN M0-P4)', () => {
   test('chat field: every bound key is typed, not run', async ({ page }) => {
     await openHud(page);
     await hoverCard(page, 'bf1');
+    await openLog(page);
     await page.getByTestId('chat-input').focus();
     // A prompt is showing, so the prompt bindings (Enter, Esc, H) are live too.
     await page.evaluate(promptByBen);
@@ -314,7 +316,7 @@ test.describe('cheat sheet (PLAN M0-P4)', () => {
 
   test('remapping a key changes what fires, shows in the sheet, persists through settings and survives a reload', async ({ page }) => {
     await openHud(page);
-    await page.getByTestId('open-cheat-sheet').click();
+    await menuItem(page, 'open-cheat-sheet', 'click');
     const row = page.locator('[data-testid="cheat-row"][data-action="tap"]');
     await row.getByRole('button', { name: /change/i }).click();
     await expect(page.getByTestId('capture')).toBeVisible();

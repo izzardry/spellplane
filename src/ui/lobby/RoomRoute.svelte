@@ -17,6 +17,7 @@
   import { pageBase, parseRoomLink } from './room';
   import { parseRoute, routeHash } from '../routes';
   import { lobbyStores } from './start';
+  import { applyPendingSetup } from '../play/launch';
 
   /**
    * Joins the networked table of a room link and resolves once this browser holds a chair (main.ts, over the page's
@@ -70,6 +71,9 @@
     Promise.all([session, lobbyDeps()]).then(
       ([s, deps]) => {
         if (cancelled) return;
+        // A room Home just created (PRIVATE GAME, DRAFT NIGHT): its creator applies the automatic setup, the format and
+        // the lobby settings of the booster setup once (ui/play/launch.ts; contracts.md Part C). Nothing for a joiner.
+        if (!watch && s.seat) applyPendingSetup(s);
         room = { session: s, link: l, ...deps };
         joinState = 'none';
       },

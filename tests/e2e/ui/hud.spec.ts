@@ -5,6 +5,7 @@
  */
 import { expect, test } from '@playwright/test';
 import { openApp } from '../helpers/app';
+import { menuItem, openZone, plateDetails, openLog } from '../helpers/hud';
 import { drafts, hoverCard, hoverNothing, openHud, ui } from './harness';
 
 test.describe('hand fan (DESIGN "Specification: geometry, layout and motion", Screen layer)', () => {
@@ -123,7 +124,7 @@ test.describe('pile viewers (DESIGN "Table model", "Card manipulation" library a
 
   test('the library shows only its count until you look; look at top N is logged through the session', async ({ page }) => {
     await openHud(page);
-    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
+    await openZone(page, 'library:s0', 'click');
     const viewer = page.getByTestId('pile-viewer');
     await expect(viewer.getByTestId('pile-count')).toHaveText('3');
     await expect(viewer.getByTestId('pile-card')).toHaveCount(0);
@@ -139,7 +140,7 @@ test.describe('pile viewers (DESIGN "Table model", "Card manipulation" library a
 
   test('searching the library shuffles it on close by default', async ({ page }) => {
     await openHud(page);
-    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
+    await openZone(page, 'library:s0', 'click');
     const viewer = page.getByTestId('pile-viewer');
     await viewer.getByTestId('search-library').click();
     await expect(viewer.getByTestId('pile-card')).toHaveCount(3);
@@ -164,7 +165,7 @@ test.describe('pile viewers (DESIGN "Table model", "Card manipulation" library a
 
   test('mill N moves the top N cards to the graveyard as one group; reveal top shows the top card to the others', async ({ page }) => {
     await openHud(page);
-    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
+    await openZone(page, 'library:s0', 'click');
     const viewer = page.getByTestId('pile-viewer');
     await viewer.getByTestId('library-n').fill('2');
     await viewer.getByTestId('mill').click();
@@ -196,7 +197,7 @@ test.describe('pile viewers (DESIGN "Table model", "Card manipulation" library a
 
   test('another player\'s hand shows its count and a hidden note, not "Empty."', async ({ page }) => {
     await openHud(page);
-    await page.locator('[data-testid="zone-button"][data-zone="hand:s1"]').click();
+    await openZone(page, 'hand:s1', 'click');
     const viewer = page.getByTestId('pile-viewer');
     await expect(viewer.getByTestId('pile-count')).toHaveText('1');
     await expect(viewer.getByTestId('hidden-note')).toHaveText('Hidden. Only the count is known.');
@@ -205,7 +206,7 @@ test.describe('pile viewers (DESIGN "Table model", "Card manipulation" library a
 
   test('another player\'s library shows its count only, without look or search', async ({ page }) => {
     await openHud(page);
-    await page.locator('[data-testid="zone-button"][data-zone="library:s1"]').click();
+    await openZone(page, 'library:s1', 'click');
     const viewer = page.getByTestId('pile-viewer');
     await expect(viewer.getByTestId('pile-count')).toHaveText('1');
     await expect(viewer.getByTestId('look-top')).toHaveCount(0);
@@ -239,7 +240,7 @@ test.describe('stale hover (DESIGN "Input and interaction design": a bare key ac
 test.describe('inspect (DESIGN "Card manipulation", Inspect; Screen layer: 85% of viewport height)', () => {
   test('hold Space on a looked-at library card shows its face', async ({ page }) => {
     await openHud(page);
-    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
+    await openZone(page, 'library:s0', 'click');
     const viewer = page.getByTestId('pile-viewer');
     await viewer.getByTestId('look-top').click();
     await viewer.locator('[data-card="lib1"]').hover();
@@ -326,7 +327,9 @@ test.describe('avatar (DESIGN "Turn flow and confirmation", Life and player coun
     const d = await drafts(page);
     expect(d.map((a) => a.delta)).toEqual([1, -1, -1, -1, -4]);
     expect(d.every((a) => a.type === 'life' && a.seat === 's0')).toBe(true);
-    await me.locator('[data-kind="poison"]').getByRole('button', { name: /add/i }).click();
+    // M7-P2: every counter and "+ counter" sit under the plate's "⋯".
+    await plateDetails(page, 's0');
+    await me.locator('[data-testid="player-counter"][data-kind="poison"]').getByRole('button', { name: /add/i }).click();
     expect((await drafts(page)).at(-1)).toEqual({ type: 'playerCounter', seat: 's0', kind: 'poison', delta: 1 });
     await me.getByRole('button', { name: '+ counter' }).click();
     await me.getByTestId('counter-name').fill('energy');
@@ -345,7 +348,7 @@ test.describe('avatar (DESIGN "Turn flow and confirmation", Life and player coun
       }),
     );
     await expect(ben).toHaveAttribute('data-away', 'true');
-    await expect(ben.getByTestId('away')).toHaveText('away');
+    await expect(ben.getByTestId('away')).toHaveText('AWAY');
     await expect(ben).toHaveAttribute('aria-label', /away/);
     await page.evaluate(() =>
       window.__uiHarness!.update((s) => {
@@ -364,6 +367,7 @@ test.describe('avatar (DESIGN "Turn flow and confirmation", Life and player coun
       ['life', 's1', -1],
       ['life', 's1', -1],
     ]);
+    await openLog(page);
     const lines = page.getByTestId('log-line');
     await expect(lines).toHaveCount(1);
     await expect(lines.first()).toContainText('Ben: 20 → 17');
@@ -371,19 +375,22 @@ test.describe('avatar (DESIGN "Turn flow and confirmation", Life and player coun
 });
 
 test.describe('turn strip (DESIGN "Turn flow and confirmation", Turn and phase strip)', () => {
-  test('shows turn number, active player and seven steps; Tab advances, clicking a step moves the marker', async ({ page }) => {
+  test('shows turn number, active player and seven steps; Tab advances, clicking a step moves the marker; the primary button ends the turn', async ({ page }) => {
     await openHud(page);
     const strip = page.getByTestId('turn-strip');
     await expect(strip.getByTestId('turn-number')).toHaveText('Turn 1');
     await expect(strip.getByTestId('active-player')).toHaveText('Anna');
     await expect(strip.locator('[data-phase]')).toHaveCount(7);
-    await expect(strip.locator('[aria-current="step"]')).toHaveText('Main 1');
+    // M7-P2: five grouped steps (Beginning, Main, Combat, Main 2, End); main 1 reads "Main".
+    await expect(strip.locator('[aria-current="step"]')).toHaveText('Main');
     await hoverNothing(page);
     await page.keyboard.press('Tab');
     await expect(strip.locator('[aria-current="step"]')).toHaveText('Combat');
     await strip.locator('[data-phase="end"]').click();
     await expect(strip.locator('[aria-current="step"]')).toHaveText('End');
-    await strip.getByTestId('next-turn').click();
+    // M7-P2: the one primary button passes the turn ("End turn ▸" in Main 2 or End).
+    await expect(page.getByTestId('primary-action')).toHaveText('End turn ▸');
+    await page.getByTestId('primary-action').click();
     await expect(strip.getByTestId('turn-number')).toHaveText('Turn 2');
     await expect(strip.getByTestId('active-player')).toHaveText('Ben');
     expect(await drafts(page)).toEqual([
@@ -445,6 +452,7 @@ test.describe('log (DESIGN "Turn flow and confirmation", Action log)', () => {
     await hoverCard(page, 'bf1');
     await page.keyboard.press('KeyT');
     await page.keyboard.press('KeyG');
+    await openLog(page);
     const lines = page.getByTestId('log-line');
     await expect(lines).toHaveCount(2);
     await expect(lines.nth(0)).toContainText('Anna taps Test Bear');
@@ -470,16 +478,16 @@ test.describe('log (DESIGN "Turn flow and confirmation", Action log)', () => {
 test.describe('focus and keys (DESIGN "Input and interaction design")', () => {
   test('after a mouse click on a HUD button, Enter still focuses the chat; a keyboard-focused button takes its own Enter', async ({ page }) => {
     await openHud(page);
-    await page.getByTestId('open-deck-import').click();
+    await menuItem(page, 'open-deck-import', 'click');
     await page.getByTestId('deck-import').getByRole('button', { name: 'Close' }).click();
     await expect(page.getByTestId('deck-import')).toHaveCount(0);
     await hoverNothing(page);
     await page.keyboard.press('Enter');
     await expect(page.getByTestId('chat-input')).toBeFocused();
     await page.keyboard.press('Escape');
-    await page.getByTestId('open-cheat-sheet').focus();
+    await page.getByTestId('open-menu').focus();
     await page.keyboard.press('Enter');
-    await expect(page.getByTestId('cheat-sheet')).toBeVisible();
+    await expect(page.getByTestId('menu-popover')).toBeVisible();
     await expect(page.getByTestId('chat-input')).not.toBeFocused();
   });
 });
@@ -487,7 +495,7 @@ test.describe('focus and keys (DESIGN "Input and interaction design")', () => {
 test.describe('deck import (DESIGN "Pre-game", Constructed decks)', () => {
   test('paste a list, see unresolved lines with near matches, fix one and import into the session', async ({ page }) => {
     await openHud(page);
-    await page.getByTestId('open-deck-import').click();
+    await menuItem(page, 'open-deck-import', 'click');
     await page.getByTestId('deck-text').fill('4 Test Bear\n2 Spark Jolts\n20 Verdant Field\nnot a card line\n\nSideboard\n1 Moon Sage');
     await page.getByTestId('deck-check').click();
     const errors = page.getByTestId('deck-error');
@@ -506,13 +514,14 @@ test.describe('deck import (DESIGN "Pre-game", Constructed decks)', () => {
     expect(calls[0]!.args[0].main).toHaveLength(26);
     expect(calls[0]!.args[0].main.filter((r) => r.sid === 'sid-bolt')).toHaveLength(2);
     expect(calls[0]!.args[0].side).toEqual([{ sid: 'sid-dfc' }]);
+    await plateDetails(page, 's0');
     await expect(page.locator('[data-testid="zone-button"][data-zone="library:s0"] b')).toHaveText('29');
   });
 
   test('typing in the decklist never fires keys', async ({ page }) => {
     await openHud(page);
     await hoverCard(page, 'bf1');
-    await page.getByTestId('open-deck-import').click();
+    await menuItem(page, 'open-deck-import', 'click');
     await page.getByTestId('deck-text').focus();
     await page.keyboard.type('4 Test Bear tgedsa?');
     expect(await ui(page, 'actions')).toEqual([]);

@@ -9,6 +9,7 @@ import { expect, test, type Page } from '@playwright/test';
 import type { LogEntry, SecretStore, TableState } from '../../../src/core/types';
 import type { NetMessageRecord } from '../../../src/net/types';
 import { hook, shot } from '../helpers/app';
+import { openLog } from '../helpers/hud';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname, startPageLoaded } from '../lobby/helpers';
 
 /** Join a table as a spectator from the start page: nickname, then the pasted watch link. */
@@ -101,11 +102,13 @@ test('a spectator watches by the watch link without a chair, chats and pings, ca
   expect(actionsBy(await hook<LogEntry[]>(a, 'session.log'), vivId)).toEqual([]);
 
   // Chat from the chat field, and a ping: both players log them under Viv's name.
+  await openLog(v);
   await v.getByTestId('chat-input').fill('gl hf');
   await v.getByTestId('chat-input').press('Enter');
   await v.evaluate(() => window.__spellplane!.dispatch!({ type: 'ping', target: { kind: 'card', id: 'tok-1' } } as never));
   for (const p of [a, b]) {
     await expect.poll(async () => actionsBy(await hook<LogEntry[]>(p, 'session.log'), vivId).map((x) => x.type)).toEqual(['chat', 'ping']);
+    await openLog(p);
     await expect(p.getByTestId('log-line').filter({ hasText: 'gl hf' })).toContainText('Viv (spectator)');
   }
 

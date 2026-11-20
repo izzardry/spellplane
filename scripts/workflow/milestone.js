@@ -332,7 +332,8 @@ async function runPackage(pkg) {
         break
       }
       log(`${pkg.id}: review ${round} found ${open.length} blocking finding(s)`)
-      lastFix = await ag(fixPrompt(pkg, [...open, ...minor.slice(0, 8)], round), { label: `fix${round}:${pkg.id}`, phase: 'Packages', schema: FIX_SCHEMA })
+      // The last round fixes blocking findings only, so its not_fixed list decides acceptance on those alone.
+      lastFix = await ag(fixPrompt(pkg, round < maxRounds ? [...open, ...minor.slice(0, 8)] : open, round), { label: `fix${round}:${pkg.id}`, phase: 'Packages', schema: FIX_SCHEMA })
       if (lastFix) decisions = decisions.concat(lastFix.decisions || [])
       if (!lastFix || !lastFix.check_green) {
         open = open.concat([{ severity: 'blocking', issue: `fixer round ${round} left pnpm check red or died` }])

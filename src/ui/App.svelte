@@ -9,7 +9,7 @@
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
   import { cssText } from '../themes/index';
-  import './design/base.css';
+  import './design/kit';
   import { lookCssVars } from './design/css';
   import { LookChoice, registerLookDebug, setLookContext } from './design/look';
   import type { Theme } from '../themes/types';
@@ -40,7 +40,7 @@
   import { FakeMatchmaker } from './fakes';
   import type { TableSession } from '../session/types';
 
-  let props: Partial<AppProps> & { newRoom?: () => RoomLink } = $props();
+  let props: Partial<AppProps> & { newRoom?: () => RoomLink; registerTable?: (session: TableSession) => () => void } = $props();
 
   let route = $state<Route>(parseRoute(typeof location === 'undefined' ? '' : location.hash));
   const go = (hash: string): void => {
@@ -156,7 +156,7 @@
   {/key}
 {:else if route.name === 'computer'}
   {#key route.room}
-    <ComputerRoute room={route.room} {go} />
+    <ComputerRoute room={route.room} {go} registerTable={props.registerTable} />
   {/key}
 {:else if route.name === 'room'}
   {#key `${route.room}/${route.key}`}

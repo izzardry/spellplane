@@ -1,6 +1,5 @@
 /**
- * Whether the table HUD honours every `HudShellProps` member (docs/design/m8/contracts.md Part C; PLAN M8-C "HUD and
- * scene seam"). False until M7-P2 rebuilds the HUD: while false, the table frame (ui/table/TableFrame.svelte) shows its
- * fallback bar (Leave, the `primaryOverride` button, the status). M7-P2 sets it true. Added by M8-C.
+ * Whether the HUD honours every member of HudShellProps (src/ui/props.ts; PLAN Milestone 8, M8-C "HUD and scene
+ * seam"). The table frame hides its fallback bar (Leave, the cue button, the status) when this is true. Set by M7-P2.
  */
-export const HUD_SHELL: boolean = false;
+export const HUD_SHELL: boolean = true;

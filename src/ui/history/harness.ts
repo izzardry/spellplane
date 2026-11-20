@@ -1,8 +1,6 @@
-/**
- * The `?harness=history` page (docs/design/m8/contracts.md Part C "Harness pages"). Stub by M8-C; M8-P2 writes it.
- */
-import { stubHarness } from '../harness-stub';
+/** History module test page (`?harness=history`, dev and test builds only): the home harness opened at `#/history` (contracts.md Part C). M8-P2. */
+import { mount as mountHome } from '../home/harness';
 
 export function mount(target: HTMLElement): void {
-  stubHarness(target, 'history', 'M8-P2');
+  mountHome(target, 'history');
 }

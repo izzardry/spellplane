@@ -1,12 +1,33 @@
 <!--
-  Deck strength as five bars (docs/design/m8/contracts.md Part B; decks.md section 5): `band` 1 to 5 filled, null for a
-  deck too small to judge. Plain markup by M8-C; M8-P1 gives it its look.
+  Deck strength (docs/design/m8/contracts.md Part B; visual.md 2.7): five 4 × 12 px bars, filled for the band, and the
+  number and band name in eyebrow type (`54 SOLID`; bands from decks.md D19: Rough, Casual, Solid, Tuned, Fierce).
+  `null` is an unknown strength (a deck under half size). `label` is the accessible name, as in the seed; `text={false}`
+  draws the bars alone (a deck tile). Added by M8-P1.
 -->
 <script lang="ts">
-  let { band, score = undefined, label = undefined, ...rest }: { band: 1 | 2 | 3 | 4 | 5 | null; score?: number | undefined; label?: string | undefined; [attr: string]: unknown } = $props();
-  const name = $derived(label ?? (band === null ? 'Strength not rated' : `Strength ${band} of 5${score !== undefined ? ` (${score})` : ''}`));
+  import './kit';
+  import { bandName } from './strength';
+
+  let {
+    band,
+    score = undefined,
+    label = undefined,
+    text = true,
+    ...rest
+  }: {
+    band: 1 | 2 | 3 | 4 | 5 | null;
+    score?: number | undefined;
+    label?: string | undefined;
+    /** [M8-P1] show the number and band name beside the bars (default true) */
+    text?: boolean;
+    [attr: string]: unknown;
+  } = $props();
+  const name = $derived(band ? bandName(band) : null);
+  const shown = $derived(band ? `${score ?? ''} ${name}`.trim() : 'No strength yet');
+  const aria = $derived(label || (band ? `Strength ${score !== undefined ? `${score}, ` : ''}${name}, band ${band} of 5` : 'Strength unknown'));
 </script>
 
-<span class="ds-strength" role="img" aria-label={name} {...rest}
-  ><span class="ds-str">{#each [1, 2, 3, 4, 5] as i (i)}<b class="ds-str__bar" class:ds-str__bar--off={band === null || i > band}></b>{/each}</span></span
->
+<span class="ds-strength" role="img" aria-label={aria} data-band={band ?? 0} {...rest}>
+  <span class="ds-str" aria-hidden="true">{#each [1, 2, 3, 4, 5] as b (b)}<span class="ds-str__bar" class:ds-str__bar--off={!band || b > band}></span>{/each}</span>
+  {#if text}<span class="ds-t-eyebrow" aria-hidden="true">{shown}</span>{/if}
+</span>

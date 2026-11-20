@@ -28,6 +28,7 @@ export const STORED_CARD_FIELDS = [
   'card_faces',
   'all_parts',
   'artist',
+  'edhrec_rank',
 ] as const;
 
 /**
@@ -141,6 +142,9 @@ export function trimCard(raw: unknown): CardData | null {
     if (parts.length > 0) card.all_parts = parts;
   }
   setIf(card, 'artist', str(raw.artist));
+  // M8-P3: Scryfall's EDHREC rank, kept when it is a positive integer (decks.md section 7).
+  const rank = raw.edhrec_rank;
+  if (typeof rank === 'number' && Number.isInteger(rank) && rank > 0) card.edhrec_rank = rank;
   // Re-order keys to the design's field order so records compare and serialise stably.
   const ordered: Obj = {};
   for (const k of STORED_CARD_FIELDS) if ((card as unknown as Obj)[k] !== undefined) ordered[k] = (card as unknown as Obj)[k];

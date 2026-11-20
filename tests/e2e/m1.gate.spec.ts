@@ -27,6 +27,7 @@ import type { DebugStackEntry } from '../../src/scene/stack';
 import type { SceneDebugCard } from '../../src/scene/table-scene';
 import { scan } from '../leak/scan';
 import { hook, shot } from './helpers/app';
+import { openZone } from './helpers/hud';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname } from './lobby/helpers';
 
 /** sid -> name and type line from the recorded fixtures. */
@@ -383,7 +384,7 @@ test.describe('M1 gate @gate', () => {
       if (have) return have;
       const page = p.page;
       await focus(p);
-      await page.locator(`[data-testid="avatar"][data-seat="${p.seat}"] [data-testid="zone-button"][data-zone="library:${p.seat}"]`).click();
+      await openZone(page, `library:${p.seat}`, 'click');
       await expect(page.getByTestId('pile-viewer')).toBeVisible();
       await page.getByTestId('search-library').click();
       const sec = await secrets(page);

@@ -7,6 +7,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { hook } from '../helpers/app';
+import { openZone } from '../helpers/hud';
 import { IPAD, card, centre, fingers, holdDown, lastActions, path, radial, settled, state, tableWithCards, thumbBar, type Pt } from './helpers';
 
 test.skip(({ browserName }) => browserName !== 'webkit', 'the iPad is emulated in WebKit (PLAN M5, owner decisions)');
@@ -34,7 +35,7 @@ test.describe('on an iPad', () => {
 
   test('Draw N works without a keyboard: the field has a Draw button (no return key needed)', async ({ page }, info) => {
     const { hand } = await tableWithCards(page, info, { battlefield: 0, hand: 1 });
-    await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').tap();
+    await openZone(page, 'library:s0', 'tap');
     await expect(page.getByTestId('pile-viewer')).toHaveAttribute('data-kind', 'library');
     await page.getByTestId('pile-viewer').getByRole('button', { name: /^Draw N/ }).tap();
     await expect(page.getByTestId('draw-n-input')).toBeVisible();
@@ -201,5 +202,35 @@ test.describe('on an iPad', () => {
       return e.defaultPrevented;
     });
     expect(prevented).toBe(true);
+  });
+});
+
+/**
+ * PLAN Milestone 8, M7-P2 acceptance (docs/design/m8/m7-adjustments.md, "iPad portrait"): the same controls; no row
+ * wraps at 768 px width; every HUD target is at least 44 px.
+ */
+test.describe('the M7-P2 HUD on an iPad in portrait', () => {
+  test.use({ ...IPAD, viewport: { width: 768, height: 1024 } });
+
+  test('no wrapped row at 768 px and every HUD target at least 44 px', async ({ page }, info) => {
+    await tableWithCards(page, info);
+    await expect(page.getByTestId('hud')).toHaveClass(/touch-ui/);
+    const rows = await page.getByTestId('hud').evaluate((root) => {
+      const tops = (sel: string) => [...root.querySelectorAll<HTMLElement>(`${sel} > *`)].filter((e) => e.getBoundingClientRect().height > 0).map((e) => Math.round(e.getBoundingClientRect().top + e.getBoundingClientRect().height / 2));
+      return { bar: tops('[data-testid="hud-bar"]'), steps: tops('[data-testid="turn-strip"] ol') };
+    });
+    for (const row of [rows.bar, rows.steps]) {
+      expect(row.length).toBeGreaterThan(0);
+      expect(Math.max(...row) - Math.min(...row)).toBeLessThanOrEqual(2);
+    }
+    const small = await page.getByTestId('hud').evaluate((root) =>
+      [...root.querySelectorAll<HTMLElement>('.top-left button, .top-centre button, .right button, .own-avatar button, .bottom-right button')]
+        .filter((b) => b.getBoundingClientRect().width > 0 && !b.closest('.talk-cluster'))
+        .filter((b) => b.getBoundingClientRect().height < 43.5 || b.getBoundingClientRect().width < 43.5)
+        .map((b) => `${b.dataset.testid ?? b.getAttribute('aria-label') ?? b.textContent}: ${Math.round(b.getBoundingClientRect().width)}×${Math.round(b.getBoundingClientRect().height)}`),
+    );
+    expect(small).toEqual([]);
+    // Nothing runs off the screen sideways.
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(768);
   });
 });

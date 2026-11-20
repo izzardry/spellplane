@@ -8,6 +8,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { LogEntry } from '../../../src/core/types';
 import { hook } from '../helpers/app';
+import { openLog } from '../helpers/hud';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname, startPageLoaded } from '../lobby/helpers';
 
 async function watchFromStart(page: Page, profile: string, nickname: string, watchLink: string): Promise<void> {
@@ -48,11 +49,15 @@ test('who is typing shows beside the chat field and on the avatar; players and s
   await expect(a.getByTestId('start-game')).toBeVisible();
   await a.getByTestId('start-game').click();
   for (const p of [a, b]) await expect(p.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+  // M7-P2: the log is closed on entry; open it on every page so its chat field, tabs and typing line are there.
+  for (const p of [a, b]) await openLog(p);
+  await openLog(a);
   await expect(a.getByTestId('chat-input')).toBeVisible();
   await expect(a.getByTestId('chat-tab-spectator')).toHaveCount(0);
   await expect(typing(a)).toHaveText('');
 
   // --- Who is typing, between the two players --------------------------------------------------------------------
+  await openLog(a);
   const annInput = a.getByTestId('chat-input');
   await a.bringToFront();
   await annInput.click();
@@ -70,6 +75,7 @@ test('who is typing shows beside the chat field and on the avatar; players and s
   await expect(typing(b)).toHaveText('Ann is typing…');
   await annInput.press('Enter');
   await expect(typing(b)).toHaveText('');
+  await openLog(b);
   await expect(line(b, 'good game')).toHaveCount(1);
   // Leaving the field with text in it stops it too (the text stays).
   await annInput.pressSequentially('one more');
@@ -82,6 +88,7 @@ test('who is typing shows beside the chat field and on the avatar; players and s
   // --- A spectator joins: the spectator tab appears ---------------------------------------------------------------
   await watchFromStart(v, freshProfile(info, 'tv'), 'Viv', watchLink);
   await expect(v.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+  await openLog(v);
   for (const p of [a, b]) await expect(p.getByTestId('chat-tab-spectator')).toBeVisible({ timeout: 15_000 });
   // The spectator has the table and spectator tabs (no team tab).
   await expect(v.getByTestId('chat-tab-table')).toBeVisible();
@@ -100,6 +107,7 @@ test('who is typing shows beside the chat field and on the avatar; players and s
   // Viv writes on the spectator tab: the players see her typing there, by her nickname.
   await v.bringToFront();
   await v.getByTestId('chat-tab-spectator').click();
+  await openLog(v);
   const vivInput = v.getByTestId('chat-input');
   await vivInput.click();
   await vivInput.pressSequentially('nice pla');
@@ -111,10 +119,14 @@ test('who is typing shows beside the chat field and on the avatar; players and s
   const vivId = await hook<string>(v, 'session.seat');
   for (const p of [a, b, v]) await expect.poll(() => chats(p)).toContainEqual({ text: 'nice play', channel: 'spectator', by: vivId });
   // On the players' table tab it is not shown; on their spectator tab it is.
+  await openLog(a);
   await expect(line(a, 'nice play')).toHaveCount(0);
   await a.getByTestId('chat-tab-spectator').click();
+  await openLog(a);
   await expect(line(a, 'nice play')).toHaveCount(1);
+  await openLog(a);
   await expect(line(a, 'nice play')).toContainText('Viv (spectator)');
+  await openLog(v);
   await expect(line(v, 'nice play')).toHaveCount(1);
 
   // Ann answers on the spectator tab: Viv sees her typing there and reads the line; Ben reads it on his spectator tab.
@@ -126,13 +138,18 @@ test('who is typing shows beside the chat field and on the avatar; players and s
   await annInput.pressSequentially('s');
   await annInput.press('Enter');
   for (const p of [a, b, v]) await expect.poll(() => chats(p)).toContainEqual({ text: 'thanks', channel: 'spectator', by: 's0' });
+  await openLog(v);
   await expect(line(v, 'thanks')).toHaveCount(1);
+  await openLog(b);
   await expect(line(b, 'thanks')).toHaveCount(0);
   await b.getByTestId('chat-tab-spectator').click();
+  await openLog(b);
   await expect(line(b, 'thanks')).toHaveCount(1);
   // The table tab keeps table talk only.
   await v.getByTestId('chat-tab-table').click();
+  await openLog(v);
   await expect(line(v, 'good game')).toHaveCount(1);
+  await openLog(v);
   await expect(line(v, 'thanks')).toHaveCount(0);
   expect(errors).toEqual([]);
   await context.close();
@@ -157,13 +174,17 @@ test('a draft on the spectator tab stays there when the last spectator leaves: E
   await expect(a.getByTestId('start-game')).toBeVisible();
   await a.getByTestId('start-game').click();
   for (const p of [a, b]) await expect(p.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+  // M7-P2: the log is closed on entry; open it on every page so its chat field, tabs and typing line are there.
+  for (const p of [a, b]) await openLog(p);
 
   // Viv watches; Ann starts a line to the spectators but has not sent it when Viv leaves.
   await watchFromStart(v, freshProfile(info, 'dv'), 'Viv', watchLink);
   await expect(v.getByTestId('hud')).toBeVisible({ timeout: 15_000 });
+  await openLog(v);
   await expect(a.getByTestId('chat-tab-spectator')).toBeVisible({ timeout: 15_000 });
   await a.bringToFront();
   await a.getByTestId('chat-tab-spectator').click();
+  await openLog(a);
   const annInput = a.getByTestId('chat-input');
   await annInput.click();
   await annInput.pressSequentially('thanks for watching');
@@ -177,6 +198,7 @@ test('a draft on the spectator tab stays there when the last spectator leaves: E
   await annInput.press('Enter');
   for (const p of [a, b]) await expect.poll(() => chats(p)).toContainEqual({ text: 'thanks for watching', channel: 'spectator', by: 's0' });
   expect((await chats(a)).filter((c) => c.text === 'thanks for watching').map((c) => c.channel)).toEqual(['spectator']);
+  await openLog(b);
   await expect(line(b, 'thanks for watching')).toHaveCount(0);
   expect(errors).toEqual([]);
   await context.close();

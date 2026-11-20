@@ -55,6 +55,7 @@ import type { TalkIndicatorState, TalkState, VoiceTrackState } from '../../src/v
 import { scan } from '../leak/scan';
 import { setsScript } from './flow/helpers';
 import { hook, shot } from './helpers/app';
+import { openZone, openLog } from './helpers/hud';
 import { chair, decklist, fixturesScript, freshRoom, setNickname, startPageLoaded } from './lobby/helpers';
 
 /** sid -> name and type line from the recorded fixtures. */
@@ -435,7 +436,7 @@ test.describe('M3 gate @gate', () => {
       if (have) return have;
       const page = p.page;
       await focus(page);
-      await page.locator(`[data-testid="avatar"][data-seat="${p.seat}"] [data-testid="zone-button"][data-zone="library:${p.seat}"]`).click();
+      await openZone(page, `library:${p.seat}`, 'click');
       await expect(page.getByTestId('pile-viewer')).toBeVisible();
       await page.getByTestId('search-library').click();
       const sec = await secrets(page);
@@ -951,6 +952,7 @@ test.describe('M3 gate @gate', () => {
       }
       // The log tells it with that action (DESIGN "Chat and voice", Record: "Anna casts Shock: '…'"), not as "Anna: …".
       for (const q of [A, C]) {
+        await openLog(q.page);
         await expect(q.page.getByTestId('log-line').filter({ hasText: text })).toHaveText([new RegExp(`^Anna [a-z][^:]*: '${text}'$`)]);
       }
     });

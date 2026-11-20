@@ -1,5 +1,7 @@
 # M8-P2 Shell, Home and History: parked
 
+> **Update (20 Nov 2026, evening): merged.** The M8 gate fix round merged this branch into `m8` without the second review (decision `[M8-G]` in docs/DECISIONS.md) and fixed the integration failures it found there. The text below is the parking record.
+
 - **Status:** parked, not merged into `m8`. The pipeline's reason: "did not converge after 1 review rounds". The review found three blocking issues (listed below). The implementer's fix commit `57768de` answers all three, but no second review ran, so nothing was merged.
 - **Branch:** `m8-p2` (worktree `spellplane-wt/m8-p2`), head `57768de fix(m8-p2): keep reopened solo games on leave, reopen summaries on a rematch, lock Home's options while searching`. The branch is local only (not on `origin`). `m8` (`108e759`) is an ancestor of it, so today it merges as a fast-forward. The working tree is clean. `git diff m8...m8-p2 --stat`: 32 files, +4112 / -194. There are 22 lines of `[M8-P2]` decisions in its `docs/DECISIONS.md`.
 - **Checked by the integrator at parking (20 Nov 2026, about 15:12, in the worktree):** `npx vitest run tests/unit/games tests/unit/home` (through `oomph run --reserve 1G`) passed: 7 files and 168 tests. I did not run the full `pnpm check` or any e2e (`tests/e2e/home/home.spec.ts`, `tests/e2e/history/history.spec.ts`, gate M0) at parking.

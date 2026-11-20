@@ -1,14 +1,15 @@
 <!--
-  A round icon button of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): `label` is its accessible name
-  and tooltip, children (or the seed's `icon`) the icon. The seed's `icon`, `showLabel`, `key`, `badge` and `small`
-  stay optional. Plain markup by M8-C; M8-P1 gives it its look.
+  A round icon button (docs/design/m8/contracts.md Part B; visual.md A4): a circle of the row's height, its `label` the
+  accessible name and the tooltip. The icon is the children, or the seed's `icon` name. Seed props kept: `icon`,
+  `showLabel` (a pill with the label beside the icon), `key` (shortcut in the tooltip only), `badge`. Rewritten by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
   import type { Snippet } from 'svelte';
   import type { HTMLButtonAttributes } from 'svelte/elements';
   import Icon from './Icon.svelte';
   import type { IconName } from './icons';
-  import type { ButtonVariant, Size } from './types';
+  import { ICON_PX, type ButtonVariant, type Size } from './types';
 
   let {
     label,
@@ -46,6 +47,7 @@
 <button
   type="button"
   class="ds-btn ds-btn--{variant} ds-btn--{s} ds-icon-btn {extra}"
+  class:ds-btn--icon={!showLabel}
   class:ds-icon-only={!showLabel}
   class:is-pressed={pressed}
   aria-label={showLabel ? undefined : label}
@@ -54,5 +56,5 @@
   disabled={disabled || undefined}
   onclick={onclick ?? undefined}
   {...rest}
-  >{#if icon}<Icon name={icon} />{/if}{@render children?.()}{#if showLabel}<span>{label}</span>{/if}{#if badge}<span class="ds-badge" aria-label="{badge} new">{badge}</span>{/if}</button
+  >{#if icon}<Icon name={icon} size={ICON_PX[s]} />{/if}{@render children?.()}{#if showLabel}<span>{label}</span>{/if}{#if badge}<span class="ds-badge" aria-label="{badge} new">{badge}</span>{/if}</button
 >

@@ -1,5 +1,7 @@
 # M8-P1 Ztyle kit: parked
 
+> **Update (20 Nov 2026, evening): merged.** The M8 gate fix round merged this branch into `m8` without the second review (decision `[M8-G]` in docs/DECISIONS.md) and fixed the integration failures it found there. The text below is the parking record.
+
 - **Status:** parked, not merged into `m8`. The pipeline's reason: "did not converge after 1 review rounds". The review found three blocking issues (listed below). The implementer's fix commit `c10c49a` answers all three, but no second review ran, so nothing was merged.
 - **Branch:** `m8-p1` (worktree `spellplane-wt/m8-p1`), head `c10c49a fix(m8-p1): review round 1 — band names, 16:9 still, seed seams, button scan, audit gaps`. The branch is local only (not on `origin`). `m8` (`5240e98`) is an ancestor of it, so it merges as a fast-forward with no conflicts. The working tree is clean. `git diff m8...m8-p1 --stat`: 58 files, +4387 / -938. There are 17 `[M8-P1]` lines in its `docs/DECISIONS.md`.
 - **Checked by the integrator at parking (20 Nov 2026, about 14:50, in the worktree):** `pnpm check` (run through `oomph run --reserve 2G`) is **green**: tsc, svelte-check (0 errors, 1 warning: an unused selector `.deck-split > .tiles` in `KitPage.svelte`), eslint and vitest (254 files and 3739 tests passed, 21 todo). I did not run any e2e (`tests/e2e/design/kit.spec.ts`, gate M0) at parking.

@@ -73,7 +73,9 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
     expect(link).toMatch(new RegExp(`#/t/${room.roomId}/${room.roomKey}$`));
     expect(link).not.toContain('profile=');
     await expect(a.getByTestId('qr-plate')).toBeVisible();
-    expect(await a.getByTestId('qr-plate').locator('rect').first().evaluate((r) => getComputedStyle(r).fill)).toBe('rgb(255, 255, 255)');
+    // The kit's QrPlate (M8-P1): black modules on a white plate in every look.
+    expect(await a.getByTestId('qr-plate').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(255, 255, 255)');
+    expect(await a.getByTestId('qr-plate').locator('svg path').first().getAttribute('fill')).toBe('#000');
     await a.getByTestId('copy-link').click();
     await expect(a.getByTestId('copy-link')).toHaveText('COPIED ✓');
     expect(await a.evaluate(() => (window as unknown as { __copied: string[] }).__copied)).toEqual([link]);

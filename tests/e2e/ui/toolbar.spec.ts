@@ -1,6 +1,8 @@
 // The HUD's table tools stay reachable (DESIGN "Camera and navigation", Screen-anchored layer): every toolbar button is
 // the topmost element at its centre, never under the turn strip centred above the table (the View button of M4-P1
-// made the row long enough to slide the theme button under the strip at 1440 px).
+// made the row long enough to slide the theme button under the strip at 1440 px). M7-P2: the toolbar is Menu and
+// Undo; the look picker is one step away in the Menu.
+import { menuItem } from '../helpers/hud';
 import { expect, test } from '@playwright/test';
 import { freshProfile, openSolo } from '../solo/helpers';
 
@@ -9,7 +11,7 @@ for (const width of [1440, 1280, 1920]) {
     await page.setViewportSize({ width, height: 900 });
     await openSolo(page, freshProfile(info));
     await expect(page.getByTestId('hud')).toBeVisible();
-    await expect(page.getByTestId('open-theme-settings')).toBeVisible();
+    await expect(page.getByTestId('open-menu')).toBeVisible();
     const covered = await page.evaluate(() =>
       [...document.querySelectorAll<HTMLElement>('nav.toolbar button')]
         .filter((b) => {
@@ -20,7 +22,7 @@ for (const width of [1440, 1280, 1920]) {
         .map((b) => b.textContent?.trim() || b.getAttribute('aria-label') || '?'),
     );
     expect(covered).toEqual([]);
-    await page.getByTestId('open-theme-settings').click();
+    await menuItem(page, 'open-theme-settings', 'click');
     await expect(page.getByTestId('theme-settings')).toBeVisible();
   });
 }

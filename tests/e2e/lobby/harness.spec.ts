@@ -187,7 +187,9 @@ test.describe('lobby harness (M8-P4)', () => {
     await freeze(page);
     const plate = page.getByTestId('qr-plate');
     await expect(plate).toBeVisible();
-    expect(await plate.locator('rect').first().evaluate((r) => getComputedStyle(r).fill)).toBe('rgb(255, 255, 255)');
+    // The kit's QrPlate (M8-P1): black modules on a white plate in every look.
+    expect(await plate.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgb(255, 255, 255)');
+    expect(await plate.locator('svg path').first().getAttribute('fill')).toBe('#000');
     await expect(page.getByTestId('invite-code')).toContainText('AMBER FOX 93');
     const link = await page.getByTestId('share-link').inputValue();
     expect(link).toMatch(/#\/t\/amber-fox-93\/A{22}$/);

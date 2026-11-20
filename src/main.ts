@@ -11,7 +11,7 @@ import App from './ui/App.svelte';
 import { startProps } from './ui/lobby/start';
 import { HARNESSES, isHarness } from './ui/harnesses';
 import { createMatchmaker } from './session/matchmaker';
-import { createsMatchTable } from './session/match-room';
+import { createsMatchTable, matchSessionInternals } from './session/match-room';
 import { createComputerGame, resumeComputerGame } from './session/computer';
 import { FakeAppUpdate, pageWorker } from './ui/storage/worker';
 import type { AppUpdate } from './ui/update';
@@ -160,6 +160,8 @@ async function boot(el: HTMLElement): Promise<void> {
         cardData,
         roomId: link.roomId,
         roomKey: link.roomKey,
+        // A matched room's table opens in its queue's format (a 4 FFA has four chairs; session/match-room.ts).
+        ...(record ? { format: matchSessionInternals(record, me.peerId).format } : {}),
         transport: () => (transport = new KillableTransport(createPageTransport())),
         identity: me,
         ...(clock ? { now: () => clock.now() } : {}),
@@ -208,7 +210,7 @@ async function boot(el: HTMLElement): Promise<void> {
   // `openRoom` reaches the table route (ui/lobby/RoomRoute.svelte, RoomOpener) through the props App hands it; it is
   // not part of the ui/types.ts contract (decision M1-P8).
   const start = stores && identity ? createdRooms(startProps({ identity: identity.store, tables: stores.tables }), markCreated) : null;
-  const props: Partial<AppProps> & { openRoom: typeof openRoom; newRoom?: () => RoomLink } = {
+  const props: Partial<AppProps> & { openRoom: typeof openRoom; newRoom?: () => RoomLink; registerTable?: (s: TableSession) => () => void } = {
     ...(solo ? { session: solo } : {}),
     openSandbox,
     openPractice,
@@ -219,6 +221,15 @@ async function boot(el: HTMLElement): Promise<void> {
     game: mtg,
     parseDecklist,
     openRoom,
+    // Dev and test builds: a computer table's human session answers the debug hook while it is shown (ui/computer/ComputerRoute.svelte).
+    ...(debug
+      ? {
+          registerTable: (s: TableSession) => {
+            registerSession(s);
+            return backToSandbox;
+          },
+        }
+      : {}),
     sets,
     diag: { createTransport: () => createPageTransport(), room: null, now: () => Date.now() },
     ...(update ? { update } : {}),

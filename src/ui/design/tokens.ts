@@ -150,6 +150,18 @@ export interface TextureTokens {
   grain: 'paper' | 'leather' | 'none';
 }
 
+/**
+ * The booster foil of each look (visual.md 2.8 "Booster pack": black foil with silver lines in Plain and Graphite, kraft
+ * with ink lines in Kitchen Table, navy with gilt lines in Codex): five gradient stops and the line colour, emitted as
+ * --ds-foil-0 … --ds-foil-4 and --ds-foil-line. Added by M8-P1.
+ */
+export const FOILS: Readonly<Record<LookId, { stops: readonly [string, string, string, string, string]; line: string }>> = {
+  plain: { stops: ['#1a1a1a', '#3a3a3a', '#141414', '#4a4a4a', '#101010'], line: '#d9d9d9' },
+  kitchen: { stops: ['#a07a4b', '#c39d6c', '#b08a5a', '#cfa977', '#94703f'], line: '#2b2118' },
+  graphite: { stops: ['#15181c', '#353b45', '#111316', '#424955', '#0d0f12'], line: '#cfd6de' },
+  codex: { stops: ['#141a2b', '#2b3552', '#171e33', '#34406a', '#0f1422'], line: '#c8a75e' },
+};
+
 /** The mana identity colours, the same in every look (visual.md 2.3). Added by M8-C. */
 export const MANA_COLOURS = { W: '#f1ecd2', U: '#2f6fb5', B: '#2b2b2b', R: '#c8432f', G: '#2f7d4f', C: '#bdbdbd' } as const;
 
@@ -599,9 +611,15 @@ export function designCssVars(look: LookTokens, reduced = false): Record<string,
   vars['--ds-texture-page'] = look.texture.page;
   vars['--ds-texture-page-size'] = look.texture.pageSize;
   vars['--ds-texture-dense'] = look.texture.dense;
-  // No grain image is bundled yet (M8-P1 adds it); the variable exists so recipes can name it.
-  vars['--ds-texture-grain'] = 'none';
+  // [M8-P1] The grain tile on sheets and tiles (visual.md 2.4 rule 6); 'none' for a look without grain.
+  // The tile itself (scripts/make-grain.mjs) is bound in base.css as --ds-grain-url, so this module imports no asset and
+  // loads in Node (the Playwright specs import the tokens).
+  vars['--ds-texture-grain'] = look.texture.grain === 'none' ? 'none' : 'var(--ds-grain-url)';
   for (const [k, v] of Object.entries(MANA_COLOURS)) vars[`--ds-mana-${k.toLowerCase()}`] = v;
+  // [M8-P1] booster foil (visual.md 2.8).
+  const foil = FOILS[look.id] ?? FOILS.plain;
+  foil.stops.forEach((c, i) => (vars[`--ds-foil-${i}`] = c));
+  vars['--ds-foil-line'] = foil.line;
   for (const [k, v] of Object.entries(look.elevation)) vars[`--ds-elevation-${kebab(k)}`] = v;
   const m = motionTokens(look, reduced);
   for (const [k, v] of Object.entries(m.duration)) vars[`--ds-duration-${k}`] = `${v}ms`;

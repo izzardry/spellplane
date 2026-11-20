@@ -46,9 +46,17 @@ test.describe('the M8 frame', () => {
       await expect.poll(async () => (await memory(page))?.sessions).toBe(1);
     });
     await test.step('Leave goes Home with the solo toast', async () => {
-      await page.getByTestId('frame-leave').click();
+      // Ten own actions first: a solo game left after fewer is purged instead and shows no toast (contracts.md Part G
+      // "History and saving" item 2; ui/play/leave.ts SOLO_KEEP_MIN_ACTIONS).
+      const plate = page.locator('[data-testid="avatar"][data-seat="s0"]');
+      for (let i = 0; i < 5; i++) {
+        await plate.getByTestId('life-minus').click();
+        await plate.getByTestId('life-plus').click();
+      }
+      // M7-P2: with HUD_SHELL the HUD's back arrow (top left) is Leave; the frame's fallback bar is gone.
+      await page.getByTestId('leave').click();
       await expect(page.getByTestId('route-home')).toBeVisible();
-      await expect(page.getByTestId('toast')).toContainText('Game saved. Continue any time.');
+      await expect(page.getByTestId('toast').filter({ hasText: 'Game saved. Continue any time.' })).toHaveCount(1);
       await expect.poll(() => nonZero(page)).toEqual({});
     });
   });

@@ -1,18 +1,19 @@
 <!--
-  Where the page's toasts show (docs/design/m8/contracts.md Part B; visual.md 2.8): bottom centre in the shell, above
-  the primary button in a table. Reads `toasts` of ui/design/toasts.ts. Plain markup by M8-C; M8-P1 gives it its look.
+  The toast host (docs/design/m8/contracts.md Part B; visual.md 2.8): renders `toasts.ts` bottom centre in the shell or
+  above the primary, right-aligned, in a table. A polite live region; a request toast is an alert. Added by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
   import Toast from './Toast.svelte';
-  import { toasts, type ToastEntry } from './toasts';
+  import { toasts as pageToasts, type ToastEntry, type ToastStore } from './toasts';
 
-  let { place = 'bottom-centre', ...rest }: { place?: 'bottom-centre' | 'above-primary'; [attr: string]: unknown } = $props();
-  let list = $state.raw<readonly ToastEntry[]>([]);
-  $effect(() => toasts.subscribe((l) => (list = l)));
+  let { place = 'bottom-centre', store = pageToasts, ...rest }: { place?: 'bottom-centre' | 'above-primary'; /** [M8-P1] another store (tests, harness) */ store?: ToastStore; [attr: string]: unknown } = $props();
+  let list = $state<readonly ToastEntry[]>([]);
+  $effect(() => store.subscribe((l) => (list = l)));
 </script>
 
-<div class="ds-toast-host ds-toast-host--{place}" aria-live="polite" {...rest}>
+<div class="ds-toast-host ds-toast-host--{place} ds-root" aria-live="polite" data-testid="toast-host" {...rest}>
   {#each list as t (t.id)}
-    <Toast kind={t.kind} text={t.text} detail={t.detail} actions={t.actions} onclose={() => toasts.dismiss(t.id)} data-testid="toast" data-kind={t.kind} />
+    <Toast kind={t.kind} text={t.text} detail={t.detail} actions={t.actions} onclose={t.kind === 'request' ? undefined : () => store.dismiss(t.id)} data-toast={t.id} data-testid="toast" />
   {/each}
 </div>

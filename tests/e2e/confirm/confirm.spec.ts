@@ -8,6 +8,7 @@
  * DESIGN "The effect stack" (Stack and confirmation, Resolving), "Turn flow and confirmation" (Confirmation rounds),
  * "Specification: network protocol and secrecy" (Timers).
  */
+import { openLog } from '../helpers/hud';
 import { expect, test, type Page } from '@playwright/test';
 import type { Action, ActionDraft } from '../../../src/core/actions';
 import type { TableState } from '../../../src/core/types';
@@ -112,7 +113,9 @@ test.describe('a stack item starts a round; silence passes after the configured 
     await expect(prompt).toHaveCount(0);
     expect((await lane(page))[0]!.pending).toBe(false);
     // The log names Ben, who passed, not the sequencer.
+    await openLog(page);
     await expect(page.getByTestId('log-line').last()).toContainText('Ben');
+    await openLog(page);
     await expect(page.getByTestId('log-line').last()).toContainText('passes (timer)');
   });
 
@@ -221,6 +224,7 @@ test.describe('resolve before all-pass requires the second press and logs it', (
     await page.keyboard.press('KeyR');
     await expect.poll(async () => (await state(page)).stack.length).toBe(0);
     expect((await acted(page)).at(-1)).toMatchObject({ type: 'stackResolve', force: true, by: 's0' });
+    await openLog(page);
     await expect(page.getByTestId('log-line').last()).toContainText('before everyone passed');
   });
 

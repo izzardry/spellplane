@@ -20,13 +20,10 @@ Every file the app bundles or fetches for a theme is listed here (DESIGN "Themes
 | `public/icons/icon-512.png` | web app manifest (installable app, M5-P3) | texture | https://github.com/izzardry/spellplane/blob/main/scripts/make-icons.mjs | MIT (this repository) | 512 × 512, drawn by `scripts/make-icons.mjs` |
 | `public/icons/icon-512-maskable.png` | web app manifest, maskable icon (M5-P3) | texture | https://github.com/izzardry/spellplane/blob/main/scripts/make-icons.mjs | MIT (this repository) | 512 × 512, full bleed with the mark in the safe zone, drawn by `scripts/make-icons.mjs` |
 | `public/icons/apple-touch-icon.png` | iOS Home Screen icon (`index.html`, M5-P3) | texture | https://github.com/izzardry/spellplane/blob/main/scripts/make-icons.mjs | MIT (this repository) | 180 × 180, opaque, drawn by `scripts/make-icons.mjs` |
+| `src/ui/design/grain.png` | the design kit's paper grain on sheets and tiles (M8, `--ds-texture-grain`) | texture | https://github.com/izzardry/spellplane/blob/main/scripts/make-grain.mjs | MIT (this repository) | 160 × 160 tile, seeded value noise at about 5 % ink, drawn by `scripts/make-grain.mjs` (added by M8-P1) |
 | `node_modules/@fontsource/fira-code/index.css` | the design kit's one monospace face, every look's chrome (M8, `src/ui/design`) | font | https://github.com/fontsource/font-files/tree/main/fonts/google/fira-code | OFL-1.1 (`node_modules/@fontsource/fira-code/LICENSE`) | `@fontsource/fira-code` 5.3.0 from npm: woff2 files bundled by Vite with the app, nothing fetched at runtime (added by M8-C) |
 
 Libraries that bundle no asset file but are recorded here because they ship with the app (M8-C): `qrcode-generator` 2.0.4 (MIT, https://github.com/kazuhikoarase/qrcode-generator), loaded lazily by `src/ui/qr.ts` to draw invite QR codes as a module matrix; no image is bundled.
-
-## Plain
-
-No bundled assets: a stub of Paper's flat plane under the id `plain` until M7-P1 builds the Plain table world (added by M8-C).
 
 ## Paper
 
@@ -64,14 +61,38 @@ No bundled files: every texture and sound is generated in the browser by the mod
 | `src/themes/stonetable/motes.ts` | Stonetable dust motes | shader | procedural | MIT (this repository) | Point sprites drifting in a vertex shader, lit inside the torch's cone |
 | `src/themes/stonetable/sounds.ts` | Stonetable sound set | sound | procedural | MIT (this repository) | Web Audio: filtered seeded noise and sine partials (slide, tap, shuffle, turn chime, prompt tick, torch crackle) |
 
+## Plain
+
+No bundled files: every texture and sound is drawn or synthesised in the browser by the modules below.
+
+| Asset | Used by | Kind | Source | Licence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/themes/plain/textures.ts` | Plain table, desk and card back | texture | procedural | MIT (this repository) | `TABLE_HALFTONE` and `DESK_HALFTONE`: 256 × 256 white tiles with a 0.5 mm dot every 4 mm at 5 % and 3 % ink (antialiased by coverage, so every mip level keeps the tone), one tile per 16 mm; `PLAIN_BACK`: 488 × 680 pale paper, grey hairline frame and a ring of ink dots, geometric only |
+| `src/themes/kit/sounds.ts` | Plain sound set | sound | procedural | MIT (this repository) | `soundSet` with a dry, light timbre (paper on a desk): every table and card-feel cue synthesised with Web Audio; no audio files |
+
 ## Kitchen Table
 
-No bundled assets yet: a stub of Paper's table until M7-P1 builds the look's table world (M7-C).
+No bundled files: every texture and sound is drawn or synthesised in the browser by the modules below.
+
+| Asset | Used by | Kind | Source | Licence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/themes/kitchen/textures.ts` | Kitchen Table playmat, board and card back | texture | procedural | MIT (this repository) | `LINEN`: 256 × 256 plain weave (a thread every 2 mm, slubs, mottling) as grey albedo and normal map, one tile per 64 mm (generator `src/themes/kit/surfaces.ts`); `WALNUT`: 512 × 512 walnut boards with grain and rings, one tile per 440 mm; `KITCHEN_BACK`: 488 × 680, brick stripes, cream frame and a paper medallion, geometric only, not the official back |
+| `src/themes/kit/sounds.ts` | Kitchen Table sound set | sound | procedural | MIT (this repository) | `soundSet` with the look's timbre: every table and card-feel cue synthesised with Web Audio from band-passed seeded noise and soft partials; no audio files |
 
 ## Graphite
 
-No bundled assets yet: a stub of Paper's table until M7-P1 builds the look's table world (M7-C).
+No bundled files: every texture and sound is drawn or synthesised in the browser by the modules below.
+
+| Asset | Used by | Kind | Source | Licence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/themes/graphite/textures.ts` | Graphite slab, plinth and card back | texture | procedural | MIT (this repository) | `SLATE`: 360 × 360 fine stone grain with a dot every 20 mm as grey albedo and normal map, one tile per 120 mm; `PLINTH`: the same grain without dots (generator `src/themes/kit/surfaces.ts`); `GRAPHITE_BACK`: 488 × 680 gradient field, hairline frame and mint ring, geometric only |
+| `src/themes/kit/sounds.ts` | Graphite sound set | sound | procedural | MIT (this repository) | `soundSet` with the look's timbre: every table and card-feel cue synthesised with Web Audio from band-passed seeded noise and soft partials; no audio files |
 
 ## Codex
 
-No bundled assets yet: a stub of Paper's table until M7-P1 builds the look's table world (M7-C).
+No bundled files: every texture and sound is drawn or synthesised in the browser by the modules below.
+
+| Asset | Used by | Kind | Source | Licence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/themes/codex/textures.ts` | Codex leather, desk and card back | texture | procedural | MIT (this repository) | `LEATHER`: 256 × 256 pebbled midnight leather with a ±45° lattice tooled in (faintly gilt grooves) as albedo and normal map, one tile per 64 mm; `EBONY`: 512 × 512 dark boards, one tile per 480 mm (generators `src/themes/kit/surfaces.ts`); `CODEX_BACK`: 488 × 680 navy chequer, gilt frame with diamond corners and a vermilion seal, geometric only |
+| `src/themes/kit/sounds.ts` | Codex sound set | sound | procedural | MIT (this repository) | `soundSet` with the look's timbre: every table and card-feel cue synthesised with Web Audio from band-passed seeded noise and soft partials; no audio files |

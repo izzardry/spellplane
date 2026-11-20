@@ -1,18 +1,24 @@
 <!--
-  A countdown ring (docs/design/m8/contracts.md Part B; visual.md 2.8 "Match found"): the seconds left in a ring; the
-  parent steps `seconds` once a second (nothing runs per frame). Plain markup by M8-C; M8-P1 gives it its look.
+  A countdown ring (docs/design/m8/contracts.md Part B; visual.md 2.8 "Match found"): a conic ring for the time left
+  and the seconds inside. The parent steps `seconds` once a second; the ring runs no timer and no animation frame loop
+  of its own. Added by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
+
   let { seconds, total, size = 56, label, ...rest }: { seconds: number; total: number; size?: number; label: string; [attr: string]: unknown } = $props();
-  const deg = $derived(total > 0 ? Math.max(0, Math.min(1, seconds / total)) * 360 : 0);
+  const left = $derived(Math.max(0, Math.min(total, Math.ceil(seconds))));
+  const pct = $derived(total > 0 ? (left / total) * 100 : 0);
 </script>
 
 <span
   class="ds-count"
   role="timer"
-  aria-label="{label}: {seconds}"
+  aria-label="{label}: {left} {left === 1 ? 'second' : 'seconds'}"
+  data-seconds={left}
   style:width="{size}px"
   style:height="{size}px"
-  style:background="conic-gradient(currentColor {deg}deg, transparent 0)"
-  {...rest}><span>{seconds}</span></span
+  style:font-size="{Math.round(size * 0.32)}px"
+  style:background="conic-gradient(var(--ds-ink) 0 {pct}%, var(--ds-chip) {pct}% 100%)"
+  {...rest}><span aria-hidden="true">{left}</span></span
 >

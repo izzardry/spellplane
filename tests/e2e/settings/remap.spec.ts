@@ -5,6 +5,7 @@
  * design": all keys remappable, no chord twice within one context, keys never fire while a text field has focus).
  * Runs on the HUD harness (`?harness=ui`: fake session, fake DOM scene, the real key engine).
  */
+import { menuItem } from '../helpers/hud';
 import { expect, test, type Page } from '@playwright/test';
 import { MTG_KEYMAP } from '../../../src/games/mtg/keymap';
 import type { KeymapOverride } from '../../../src/store/types';
@@ -50,7 +51,7 @@ test.describe('key remapping in the settings panel', () => {
     await expect.poll(() => drafts(page)).toEqual([{ type: 'tap', card: 'bf1', tapped: true }]);
 
     // The cheat sheet reads the same keymap.
-    await page.getByTestId('open-cheat-sheet').click();
+    await menuItem(page, 'open-cheat-sheet', 'click');
     await expect(page.locator('[data-testid="cheat-row"][data-action="tap"]').getByTestId('cheat-key')).toHaveText(['J']);
     await page.keyboard.press('Escape');
 

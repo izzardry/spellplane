@@ -14,6 +14,8 @@
  * (W, U, B, R, G, multicolour, colourless, land), cascade offset 14 per card, compressed when a column runs long.
  */
 import * as THREE from 'three';
+import { trackContext, untrackContext } from './lifecycle';
+import { track, untrack } from '../util/lifecycle';
 import { CAMERA, GEOMETRY } from '../core/geometry';
 import { seatsInOrder } from '../core/selectors';
 import type { CardRef, DraftCard, InstanceId, PackId, Pose, SeatId, TableState } from '../core/types';
@@ -365,6 +367,10 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
 
   // --- Three.js -------------------------------------------------------------------------------------------------
   const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
+  // Counted while it lives (contracts.md Part C lifecycle counters).
+  trackContext(renderer);
+  /** The frame loop's identity in the lifecycle counters. */
+  const frameLoop = {};
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, theme.quality[0]?.pixelRatio ?? 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const canvas = renderer.domElement;
@@ -1126,6 +1132,7 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
   };
 
   raf = requestAnimationFrame(tick);
+  track('rafLoops', frameLoop);
 
   return {
     update(nextState, nextView) {
@@ -1197,6 +1204,8 @@ export function createDraftSurfaceImpl(host: HTMLElement, opts: DraftSurfaceOpti
       outlineGeometry.dispose();
       outlineMaterial.dispose();
       renderer.dispose();
+      untrackContext(renderer);
+      untrack('rafLoops', frameLoop);
       // Free the WebGL context now, not at GC: browsers cap live contexts.
       renderer.forceContextLoss();
       canvas.remove();

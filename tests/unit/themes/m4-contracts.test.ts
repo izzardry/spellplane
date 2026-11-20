@@ -68,7 +68,8 @@ describe('theme interface v2', () => {
       else if (id !== 'paper') {
         // Compared by value, so a copy of Paper's lighting (`{ ...paper.lighting }`) does not pass as a real theme's.
         expect(t.build, `${id} builds its own table`).not.toBe(paper.build);
-        expect(t.lighting.lit, `${id} is lit`).toBe(true);
+        // Plain is unlit by design (docs/design/m8/visual.md 2.2: "Unlit materials … the cheapest look to draw").
+        if (id !== 'plain') expect(t.lighting.lit, `${id} is lit`).toBe(true);
         expect(t.lighting, `${id} has its own lighting`).not.toEqual(paper.lighting);
       }
     }

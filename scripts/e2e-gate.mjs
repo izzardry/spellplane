@@ -5,8 +5,8 @@ import { runPlaywright } from './pw-guard.mjs';
 
 const args = process.argv.slice(2).filter((a) => a !== '--');
 const milestone = (args.shift() ?? '').toUpperCase();
-if (!/^M[0-5]$/.test(milestone)) {
-  console.error('usage: pnpm e2e:gate -- M<n>   (n = 0..5)');
+if (!/^M[0-9]$/.test(milestone)) {
+  console.error('usage: pnpm e2e:gate -- M<n>   (n = 0..9)');
   process.exit(2);
 }
 const spec = `tests/e2e/${milestone.toLowerCase()}.gate.spec.ts`;

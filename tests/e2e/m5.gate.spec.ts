@@ -44,6 +44,7 @@ import { UPDATE_NOTICE } from '../../src/util/pwa';
 import type { VoiceTrackState } from '../../src/voice/types';
 import { packLeakScan } from '../leak/draft';
 import { hook, shot } from './helpers/app';
+import { menuItem, openZone, propose } from './helpers/hud';
 
 // --------------------------------------------------------------------------------------------------------------------
 // Fixtures and devices
@@ -601,7 +602,7 @@ test.describe('M5 gate @gate', () => {
       return sec.hand.find((id) => isLand(lookup(sec.identities[id]!.card))) ?? null;
     };
     const openLibrary = async (p: Player) => {
-      await p.page.locator(`[data-testid="zone-button"][data-zone="library:${p.seat}"]`).tap();
+      await openZone(p.page, `library:${p.seat}`, 'tap');
       await expect(p.page.getByTestId('pile-viewer')).toHaveAttribute('data-kind', 'library');
     };
     const viewerButton = (page: Page, name: RegExp) => page.getByTestId('pile-viewer').getByRole('button', { name });
@@ -793,7 +794,7 @@ test.describe('M5 gate @gate', () => {
     // ---- Next game, the audit ----------------------------------------------------------------------------------------
     const backOk = await step('next game (touch): Ann taps "Next game", Ben taps OK in the HUD prompt; both return to their builds; the update still waits', async () => {
       await front(A);
-      await A.page.getByTestId('propose-nextGame').tap();
+      await propose(A.page, 'nextGame', 'tap');
       await front(B);
       await expect(B.page.getByTestId('confirm-prompt')).toBeVisible({ timeout: 15_000 });
       await B.page.getByTestId('prompt-ok').tap();
@@ -859,7 +860,7 @@ test.describe('M5 gate @gate', () => {
     // ---- Sealed, then Rochester -----------------------------------------------------------------------------------
     const sealedOk = await step('sealed (touch): Ben taps "New draft", Ann taps OK; the update applies at the lobby; Ann opens six sealed packs each', async () => {
       await front(B);
-      await B.page.getByTestId('propose-newDraft').tap();
+      await propose(B.page, 'newDraft', 'tap');
       await front(A);
       await expect(A.page.getByTestId('confirm-prompt')).toBeVisible({ timeout: 15_000 });
       await A.page.getByTestId('prompt-ok').tap();
@@ -893,7 +894,7 @@ test.describe('M5 gate @gate', () => {
     const rochesterPicks: PickRec[] = [];
     await step('Rochester (touch): Ann taps "New draft" in the builder, Ben taps OK; one pack each on the shared table, picked tap-tap in snake order', async () => {
       await front(A);
-      await A.page.getByTestId('propose-newDraft').tap();
+      await propose(A.page, 'newDraft', 'tap');
       await front(B);
       await expect(B.page.getByTestId('evening-ok')).toBeVisible({ timeout: 15_000 });
       await B.page.getByTestId('evening-ok').tap();
@@ -964,13 +965,13 @@ test.describe('M5 gate @gate', () => {
       await expect
         .poll(() => page.evaluate(() => !!navigator.serviceWorker?.controller && navigator.serviceWorker.controller.state === 'activated'), { timeout: 30_000 })
         .toBe(true);
-      await page.getByTestId('open-deck-import').tap();
+      await menuItem(page, 'open-deck-import', 'tap');
       await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
       await page.getByTestId('deck-check').tap();
       await expect(page.getByTestId('deck-import-go')).toBeEnabled({ timeout: 15_000 });
       await page.getByTestId('deck-import-go').tap();
       await expect.poll(async () => (await secrets(page)).libraryOrder.length, { timeout: 15_000 }).toBe(60);
-      await page.locator('[data-testid="zone-button"][data-zone="library:s0"]').tap();
+      await openZone(page, 'library:s0', 'tap');
       await page.getByTestId('pile-viewer').getByRole('button', { name: /^Shuffle/ }).tap();
       for (let i = 1; i <= 7; i++) {
         await page.getByTestId('pile-viewer').getByRole('button', { name: /^Draw(?! N)/ }).tap();
@@ -1186,7 +1187,7 @@ test.describe('M5 gate @gate', () => {
       const touch = label === 'ipad';
       const press = (l: ReturnType<Page['getByTestId']>) => (touch ? l.tap() : l.click());
       await R.step(`${label}: a deck imported through the deck dialog`, async () => {
-        await press(page.getByTestId('open-deck-import'));
+        await menuItem(page, 'open-deck-import', touch ? 'tap' : 'click');
         await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
         await press(page.getByTestId('deck-check'));
         await expect(page.getByTestId('deck-import-go')).toBeEnabled({ timeout: 15_000 });
@@ -1293,7 +1294,7 @@ test.describe('M5 gate @gate', () => {
         await page.evaluate(() => localStorage.clear());
         await page.reload();
         await expect(page.getByTestId('hud')).toBeVisible();
-        await page.getByTestId('open-settings').tap();
+        await menuItem(page, 'open-settings', 'tap');
         const tabs = page.getByTestId('settings-tab');
         await expect(tabs.first()).toBeVisible();
         for (const t of await tabs.all()) expect((await t.boundingBox())!.height).toBeGreaterThanOrEqual(44);
@@ -1311,7 +1312,7 @@ test.describe('M5 gate @gate', () => {
         await page.evaluate(() => localStorage.clear());
         await page.reload();
         await expect(page.getByTestId('hud')).toBeVisible();
-        await page.getByTestId('open-settings').click();
+        await menuItem(page, 'open-settings', 'click');
         await page.locator('[data-testid="settings-tab"][data-section="keys"]').click();
         await expect(page.getByTestId('settings')).toHaveAttribute('data-section', 'keys');
         await shot(page, 'M5', 'settings-panel-keys', project);
@@ -1342,7 +1343,8 @@ test.describe('M5 gate @gate', () => {
       });
       await R.step('empty state on the table: no deck offers the deck import', async () => {
         await page.goto(`./?faces=placeholder&profile=${fresh(info, 'empty')}#/solo`);
-        await expect(page.locator('[data-testid="empty-state"][data-state="noDeck"]')).toBeVisible({ timeout: 20_000 });
+        // M7-P2: the HUD's no-deck line (docs/design/m8/m7-adjustments.md D7).
+        await expect(page.getByTestId('no-deck')).toBeVisible({ timeout: 20_000 });
         await shot(page, 'M5', 'empty-state-no-deck-table', project);
       });
       await context.close();

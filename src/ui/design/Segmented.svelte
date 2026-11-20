@@ -1,9 +1,15 @@
 <!--
-  A segmented control of the kit (docs/design/m8/contracts.md Part B; visual.md 2.8): a well of options, one on the
-  thumb; a radio group (arrow keys move and select, skipping disabled options). Used for the nav, filters, formats and
-  option rows. Plain markup by M8-C; M8-P1 gives it its look and the sliding thumb.
+  A segmented control (docs/design/m8/contracts.md Part B; visual.md V3, 2.8): a well with one raised thumb that slides
+  200 ms (transform only). A radio group: arrow keys, Home and End move and select, skipping disabled options; one tab
+  stop. Used for the nav, filters, formats and option rows. With `onchange` the control is controlled: it reports the
+  pick and shows whatever `value` the parent then passes (a parent that refuses a pick keeps its option on the thumb);
+  without `onchange` it writes `value` itself (`bind:value`). Added by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
+  import { tick } from 'svelte';
+  import { stepOption } from './segmented';
+
   let {
     options,
     value = $bindable(),
@@ -19,38 +25,59 @@
     onchange?: ((value: string) => void) | undefined;
     [attr: string]: unknown;
   } = $props();
+
+  let track = $state<HTMLElement | undefined>();
   const buttons: HTMLButtonElement[] = [];
+  let thumb = $state<{ x: number; w: number } | null>(null);
+
+  function place(): void {
+    const i = options.findIndex((o) => o.value === value);
+    const b = buttons[i];
+    thumb = b ? { x: b.offsetLeft, w: b.offsetWidth } : null;
+  }
+
+  $effect(() => {
+    // Re-measure when the value or the options (their labels too) change (never per frame).
+    void value;
+    for (const o of options) void o.label;
+    void tick().then(place);
+  });
+
+  $effect(() => {
+    if (!track || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => place());
+    ro.observe(track);
+    return () => ro.disconnect();
+  });
 
   function pick(v: string): void {
     if (v === value) return;
-    value = v;
-    onchange?.(v);
+    if (onchange) onchange(v);
+    else value = v;
   }
+
   function key(e: KeyboardEvent, i: number): void {
-    const step = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
-    if (!step) return;
+    const next = stepOption(options, i, e.key);
+    if (next === null) return;
     e.preventDefault();
-    for (let k = 1; k <= options.length; k++) {
-      const j = (i + step * k + options.length * k) % options.length;
-      const o = options[j];
-      if (o && !o.disabled) {
-        pick(o.value);
-        buttons[j]?.focus();
-        return;
-      }
-    }
+    const o = options[next];
+    if (!o) return;
+    pick(o.value);
+    buttons[next]?.focus();
   }
+
+  const current = $derived(Math.max(0, options.findIndex((o) => o.value === value)));
 </script>
 
-<div class="ds-seg{size === 'sm' ? ' ds-seg--sm' : ''}" role="radiogroup" aria-label={label} {...rest}>
+<div bind:this={track} class="ds-seg ds-seg--{size}" role="radiogroup" aria-label={label} {...rest}>
+  {#if thumb}<span class="ds-seg__thumb" aria-hidden="true" style:width="{thumb.w}px" style:transform="translateX({thumb.x}px)"></span>{/if}
   {#each options as o, i (o.value)}
     <button
       type="button"
-      role="radio"
       class="ds-seg__opt"
-      class:on={o.value === value}
+      role="radio"
       aria-checked={o.value === value}
-      tabindex={o.value === value ? 0 : -1}
+      tabindex={i === current ? 0 : -1}
       disabled={o.disabled || undefined}
       title={o.hint}
       data-value={o.value}

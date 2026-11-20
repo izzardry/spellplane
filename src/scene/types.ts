@@ -467,6 +467,8 @@ export interface RenderDebug {
   liveContexts?(): number;
   /** Added by M8-C (contracts.md Part C): what disposed renderers still held and every live count. */
   memory?(): RenderMemory;
+  /** The zones marked only while used that are marked now (`exile:s0`, `command:s1`, `stack`; scene/table-marks.ts). */ // [M7-P1]
+  zoneMarks?(): string[]; // [M7-P1]
 }
 
 /** The lifecycle counters as the render part reports them (contracts.md Part C: `{ ...residue(), ...live() }`). Added by M8-C. */

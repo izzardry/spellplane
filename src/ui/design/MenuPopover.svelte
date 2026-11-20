@@ -1,14 +1,15 @@
 <!--
-  A menu popover (PLAN Milestone 7, A1 and A8: one pattern for menus; docs/design/m7-hud-proposal.md, In the menu:
-  "Grouped, with icons, keys shown on the right in muted type"). Arrow keys move through the items, Esc and a press
-  outside close it, and focus returns to the button that opened it.
+  A menu popover (docs/design/m8/contracts.md Part B; visual.md 2.8 "Pop / menu"): white, radius `panel`, `pop`;
+  groups of rows 36 px high with an eyebrow each, a value or key right in muted type; an optional `top` section
+  (the plate menu's invitation) above them. Opens below or above its anchor (`placement`), clamped to the window.
+  Arrow keys, Home and End move through the items; Tab stays inside; Escape and a press outside close it and focus
+  returns to the anchor. `open` is bindable; the seed's `onclose`, `testid` and `autofocus` stay. Rewritten by M8-P1.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import './kit';
+  import { tick, type Snippet } from 'svelte';
   import Icon from './Icon.svelte';
-  import type { MenuGroup } from './menu';
-
-  import type { Snippet } from 'svelte';
+  import { popoverPlace, type MenuGroup } from './menu';
 
   let {
     open = $bindable(true),
@@ -24,27 +25,35 @@
     open?: boolean;
     anchor?: HTMLElement | null;
     groups: MenuGroup[];
-    /** A section above the groups (the plate menu's invitation); its argument closes the menu. */
     top?: Snippet<[() => void]> | undefined;
     placement?: 'above' | 'below' | 'auto';
     label: string;
-    /** Seed: called when the menu closes itself. */
     onclose?: (() => void) | undefined;
     testid?: string;
     autofocus?: boolean;
   } = $props();
-  function shut(): void {
-    open = false;
-    onclose?.();
-  }
   let el = $state<HTMLElement | undefined>();
+  let pos = $state<{ left: number; top: number; side: 'above' | 'below' } | null>(null);
 
+  function focusables(): HTMLElement[] {
+    return el ? [...el.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')] : [];
+  }
   function items(): HTMLButtonElement[] {
     return el ? [...el.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')] : [];
   }
-  function close(): void {
-    shut();
-    anchor?.focus({ preventScroll: true });
+  function close(refocus = true): void {
+    if (!open) return;
+    // Read the anchor before `onclose`: the owner may drop the state its `anchor` prop is read from (Library's
+    // `menu = null`), and reading the prop afterwards would throw before the chosen item runs.
+    const at = anchor;
+    open = false;
+    onclose?.();
+    if (refocus && at) {
+      // The anchor may be a wrapper around the button that opened the menu: focus that button.
+      const sel = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
+      const back = at.matches(sel) ? at : (at.querySelector<HTMLElement>(sel) ?? at);
+      back.focus({ preventScroll: true });
+    }
   }
   function key(e: KeyboardEvent): void {
     const list = items();
@@ -61,62 +70,101 @@
       e.stopPropagation();
       close();
     } else if (e.key === 'Tab') {
-      shut();
+      // Focus stays inside the popover (visual.md 2.12).
+      const all = focusables();
+      if (!all.length) return;
+      const at = all.indexOf(document.activeElement as HTMLElement);
+      e.preventDefault();
+      all[(at + (e.shiftKey ? -1 : 1) + all.length) % all.length]?.focus();
     }
   }
-  onMount(() => {
-    if (autofocus) items()[0]?.focus({ preventScroll: true });
+  function place(): void {
+    if (!el || !anchor) {
+      pos = null;
+      return;
+    }
+    const r = anchor.getBoundingClientRect();
+    pos = popoverPlace(r, { width: el.offsetWidth, height: el.offsetHeight }, { width: window.innerWidth, height: window.innerHeight }, placement);
+  }
+
+  $effect(() => {
+    if (!open || !el) return;
+    void tick()
+      .then(() => {
+        place();
+        // The popover is hidden until it is placed: focus after the placed state reached the DOM.
+        return tick();
+      })
+      .then(() => {
+        if (autofocus && open) (items()[0] ?? focusables()[0])?.focus({ preventScroll: true });
+      });
     const away = (e: PointerEvent): void => {
       const t = e.target as Node | null;
       if (el?.contains(t) || anchor?.contains(t)) return;
-      shut();
+      close(false);
     };
+    const resize = (): void => place();
     window.addEventListener('pointerdown', away, true);
-    return () => window.removeEventListener('pointerdown', away, true);
+    window.addEventListener('resize', resize);
+    // An ancestor that was animating in (a sheet rises 16 px) moved the anchor: place again once it has settled.
+    window.addEventListener('animationend', resize, true);
+    return () => {
+      window.removeEventListener('animationend', resize, true);
+      window.removeEventListener('pointerdown', away, true);
+      window.removeEventListener('resize', resize);
+    };
   });
 </script>
 
 {#if open}
-<div bind:this={el} class="ds-pop ds-menu ds-menu--{placement}" role="menu" aria-label={label} data-testid={testid} tabindex="-1" onkeydown={key}>
-  {#if top}<div class="ds-menu__top">{@render top(shut)}</div>{/if}
-  {#each groups as g, gi (g.id ?? gi)}
-    {#if g.items.length}
-      <div class="ds-menu-group" role="group" aria-label={g.title ?? g.label} data-group={g.id}>
-        {#if g.title ?? g.label}<span class="ds-label" aria-hidden="true">{g.title ?? g.label}</span>{/if}
-        {#each g.items as item (item.id)}
-          <button
-            type="button"
-            role="menuitem"
-            class="ds-menu-item"
-            class:ds-danger={item.danger}
-            data-item={item.id}
-            data-testid={item.testid}
-            disabled={item.disabled}
-            title={item.title}
-            onpointerdown={item.onpointerdown
-              ? (e) => {
-                  item.onpointerdown?.(e);
-                  shut();
-                }
-              : undefined}
-            onclick={() => {
-              if (!item.run) return;
-              if (!item.keepOpen) shut();
-              item.run();
-            }}
-            >{#if item.icon}<Icon name={item.icon} size={18} />{/if}<span>{item.label}</span>{#if item.hint ?? item.key}<span class="ds-key">{item.hint ?? item.key}</span>{/if}</button
-          >
-        {/each}
-      </div>
-    {/if}
-  {/each}
-</div>
+  <div
+    bind:this={el}
+    class="ds-pop ds-menu"
+    class:ds-menu--inline={!anchor}
+    role="menu"
+    aria-label={label}
+    data-testid={testid}
+    data-ds-layer="popover"
+    data-side={pos?.side}
+    tabindex="-1"
+    style:left={pos ? `${pos.left}px` : undefined}
+    style:top={pos ? `${pos.top}px` : undefined}
+    style:visibility={anchor && !pos ? 'hidden' : undefined}
+    onkeydown={key}
+  >
+    {#if top}<div class="ds-menu__top">{@render top(() => close())}</div>{/if}
+    {#each groups as g, gi (g.id ?? gi)}
+      {#if g.items.length}
+        {@const eyebrow = g.title ?? g.label}
+        <div class="ds-menu-group" role="group" aria-label={eyebrow} data-group={g.id ?? gi}>
+          {#if eyebrow}<span class="ds-label" aria-hidden="true">{eyebrow}</span>{/if}
+          {#each g.items as item (item.id)}
+            {@const right = item.hint ?? item.key}
+            <button
+              type="button"
+              role="menuitem"
+              class="ds-menu-item"
+              class:ds-danger={item.danger}
+              data-item={item.id}
+              data-testid={item.testid}
+              disabled={item.disabled}
+              title={item.title}
+              onpointerdown={item.onpointerdown
+                ? (e) => {
+                    item.onpointerdown?.(e);
+                    close(false);
+                  }
+                : undefined}
+              onclick={() => {
+                if (!item.run) return;
+                if (!item.keepOpen) close();
+                item.run();
+              }}
+              >{#if item.icon}<Icon name={item.icon} size={16} />{/if}<span>{item.label}</span>{#if right}<span class="ds-key">{right}</span>{/if}</button
+            >
+          {/each}
+        </div>
+      {/if}
+    {/each}
+  </div>
 {/if}
-
-<style>
-  [role='menu'] {
-    max-height: calc(100vh - 80px);
-    overflow-y: auto;
-    box-sizing: border-box;
-  }
-</style>

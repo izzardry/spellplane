@@ -93,23 +93,23 @@
     <h2>{title} <span class="count" data-testid="pile-count">{count}</span></h2>
     {#if kind === 'library' && own}
       <div class="actions">
-        <button type="button" onclick={() => onlibrary('draw')}>Draw{k('draw')}</button>
-        <button type="button" onclick={() => onlibrary('drawN')}>Draw N{k('drawN')}</button>
-        <button type="button" onclick={() => onlibrary('shuffle')}>Shuffle{k('shuffle')}</button>
+        <button class="ds-btn sp-h-xs" type="button" onclick={() => onlibrary('draw')}>Draw{k('draw')}</button>
+        <button class="ds-btn sp-h-xs" type="button" onclick={() => onlibrary('drawN')}>Draw N{k('drawN')}</button>
+        <button class="ds-btn sp-h-xs" type="button" onclick={() => onlibrary('shuffle')}>Shuffle{k('shuffle')}</button>
         <span class="look">
           <input type="number" min="1" max={count} bind:value={lookN} aria-label="How many cards (N)" data-testid="library-n" />
-          <button type="button" data-testid="look-top" onclick={() => onlibrary('look', lookN)}>Look at top N</button>
-          <button type="button" data-testid="mill" onclick={() => onlibrary('mill', lookN)}>Mill N</button>
+          <button class="ds-btn sp-h-xs" type="button" data-testid="look-top" onclick={() => onlibrary('look', lookN)}>Look at top N</button>
+          <button class="ds-btn sp-h-xs" type="button" data-testid="mill" onclick={() => onlibrary('mill', lookN)}>Mill N</button>
         </span>
-        <button type="button" data-testid="reveal-top" onclick={() => onlibrary('revealTop')}>Reveal top</button>
-        <button type="button" data-testid="search-library" onclick={() => onlibrary('search')}>Search</button>
-        <button type="button" onclick={() => onlibrary('mulligan')}>Mulligan{k('mulligan')}</button>
+        <button class="ds-btn sp-h-xs" type="button" data-testid="reveal-top" onclick={() => onlibrary('revealTop')}>Reveal top</button>
+        <button class="ds-btn sp-h-xs" type="button" data-testid="search-library" onclick={() => onlibrary('search')}>Search</button>
+        <button class="ds-btn sp-h-xs" type="button" onclick={() => onlibrary('mulligan')}>Mulligan{k('mulligan')}</button>
         {#if looking === 'search'}
           <label><input type="checkbox" bind:checked={shuffleOnClose} data-testid="shuffle-on-close" /> shuffle when closed</label>
         {/if}
       </div>
     {/if}
-    <button type="button" class="close" onclick={onclose} aria-label="Close {title}">×</button>
+    <button type="button" class="ds-btn sp-h-xs close" onclick={onclose} aria-label="Close {title}">×</button>
   </header>
   {#if hidden && !looking}
     <p class="hidden-note" data-testid="hidden-note">{own && kind === 'library' ? 'Hidden. Look at the top cards or search to see them.' : 'Hidden. Only the count is known.'}</p>

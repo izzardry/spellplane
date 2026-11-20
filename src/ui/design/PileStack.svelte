@@ -1,12 +1,13 @@
 <!--
-  A pile of cards (docs/design/m8/contracts.md Part B; visual.md 2.3 `stack`): what lies on top, with an edge as thick
-  as `count` (0 to 60). Plain markup by M8-C; M8-P1 gives it its look.
+  A pile (docs/design/m8/contracts.md Part B; visual.md 2.4 rule 5): what lies on top, with the `stack` elevation's
+  alternating edges under it when the pile has cards (`count`, 0 to 60). Added by M8-P1.
 -->
 <script lang="ts">
+  import './kit';
   import type { Snippet } from 'svelte';
 
   let { count = 0, children, ...rest }: { count?: number; children?: Snippet; [attr: string]: unknown } = $props();
-  const depth = $derived(Math.max(0, Math.min(60, Math.round(count))));
+  const n = $derived(Math.max(0, Math.min(60, Math.round(count))));
 </script>
 
-<div class="ds-pilestack" class:ds-pile={depth > 0} data-count={depth} {...rest}>{@render children?.()}</div>
+<span class="ds-pilestack" class:ds-pile={n > 1} data-count={n} {...rest}>{@render children?.()}</span>
