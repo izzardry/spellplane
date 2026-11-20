@@ -42,7 +42,16 @@
 
   // The link is shown in place once BRING … BACK was pressed, or at once when this page made an open one.
   let showing = $state(untrack(() => muster.inviteLink?.(seat) != null));
-  const model = $derived(seatMenuModel(table, seat, me, { now: now(), awaySince, savedAt, notSaving: muster.saveState() === 'notSaving', ...(presence ? { presence } : {}) }));
+  // The menu opens fresh each time, so the times are read when it renders.
+  const model = $derived(
+    seatMenuModel(table, seat, me, {
+      now: now(),
+      awaySince: awaySince ?? muster.awaySince?.(seat) ?? null,
+      savedAt: savedAt ?? muster.savedAt?.() ?? null,
+      notSaving: muster.saveState() === 'notSaving',
+      ...(presence ? { presence } : {}),
+    }),
+  );
 </script>
 
 {#if model}

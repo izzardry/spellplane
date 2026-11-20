@@ -358,6 +358,10 @@ export interface SessionMuster {
   onNotice?(listener: (text: string) => void): () => void; // [M8-P5]
   /** The team view, for the prompt after a teammate's seat was taken over (contracts.md Part G "Rejoin" item 1). */ // [M8-P5]
   team?(): TeamControls | null; // [M8-P5]
+  /** When this browser last saved the table (ms epoch), for `Saved · 4 s ago`; null before the first write. */ // [M8-P5]
+  savedAt?(): number | null; // [M8-P5]
+  /** When the shared log marked `seat` away (ms epoch, the sequencer's stamp), for `Away for 3 min`; null when it is not away. */ // [M8-P5]
+  awaySince?(seat: SeatId): number | null; // [M8-P5]
 }
 
 /** The claim page's view of a re-invite link (persistence.md section 7). */ // [M8-P5]

@@ -149,6 +149,7 @@ export class TablePersistence {
         const snapshotPlay = rebase ? play : this.snapshotPlay;
         await store.saveAction(this.o.roomId, entry, { ...this.record(state, snapshot, snapshotSeq, lastSeq, at), snapshotPlay }, secrets);
         this.failing = false;
+        this.savedAt = this.o.now();
         this.snapshot = snapshot;
         this.snapshotSeq = snapshotSeq;
         this.snapshotPlay = snapshotPlay;
@@ -202,6 +203,8 @@ export class TablePersistence {
 
   /** M8-P5: whether the last write failed (persistence.md section 2, `NOT SAVING`); a later successful write clears it. */
   failing = false;
+  /** M8-P5: when a write last succeeded (`Saved · 4 s ago`), null before the first. */
+  savedAt: number | null = null;
 
   /** M8-P5: write the table record again (the newest head heard of changed without an action). */
   saveRecord(): void {
@@ -211,6 +214,7 @@ export class TablePersistence {
       .then(async () => {
         await store.saveSnapshot({ ...this.record(this.snapshot, this.snapshot, this.snapshotSeq, this.lastSeq, this.o.now()), snapshotPlay: this.snapshotPlay }, null);
         this.failing = false;
+        this.savedAt = this.o.now();
       })
       .catch((e: unknown) => this.failed(e));
   }

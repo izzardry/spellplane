@@ -96,6 +96,7 @@ import type { Channel, Message } from '../net/transport';
 import type { VoiceControls } from '../voice/types';
 import { INVITE_TTL_MS } from '../net/engine';
 import { knownIsNewer, musterStatus } from './muster';
+import { adoptNotice, leftNotice } from './divergence';
 import { claimFromLocation, newClaimToken, rejoinLink } from './invite';
 import type { ClaimView, KnownHead, MusterStatus, SaveState, SessionMuster } from './types';
 import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus, TeamControls } from './types';
@@ -536,8 +537,7 @@ class NetTable implements NetSession, SessionRecovery {
             engine.onLeave((peerId) => {
               const seat = Object.values(this.engine.confirmedState().seats).find((x) => x.peer === peerId);
               if (!seat) return;
-              const name = seat.name || 'A player';
-              this.notice(`${name} left. The game goes on; ${name} can come back.`);
+              this.notice(leftNotice(seat.name));
             }),
           ]
         : []),
@@ -545,7 +545,8 @@ class NetTable implements NetSession, SessionRecovery {
       ...(engine.onAdopt
         ? [
             engine.onAdopt((e) => {
-              if (e.abandonedOwn > 0) this.notice("The table with more moves is kept; the other side's moves are played again on top where they still fit.");
+              const text = adoptNotice(e);
+              if (text !== null) this.notice(text);
             }),
           ]
         : []),
@@ -2288,6 +2289,18 @@ class NetTable implements NetSession, SessionRecovery {
     return { ...c, refusal };
   }
 
+  /** When the confirmed log last marked `seat` away (the entry's time), null when the seat is not away now. */
+  awaySinceOf(seat: SeatId): number | null {
+    if (this.engine.confirmedState().seats[seat]?.away !== true) return null;
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      const e = this.entries[i]!;
+      if (e.kind !== 'action') continue;
+      const a = e.action;
+      if ((a.type === 'away' && a.seat === seat && a.away) || (a.type === 'playOn' && a.without.includes(seat))) return e.at;
+    }
+    return null;
+  }
+
   /** Drop the claim of the link (`OPEN MY SEAT`, `NOT NOW`). */
   dismissClaim(): void {
     this.claimOtherSeat = null;
@@ -2351,6 +2364,8 @@ class NetTable implements NetSession, SessionRecovery {
       dismissClaim: () => this.dismissClaim(),
       onNotice: (l) => this.onNotice(l),
       team: () => this.team ?? null,
+      savedAt: () => this.saves.savedAt,
+      awaySince: (seat) => this.awaySinceOf(seat),
     };
   }
 

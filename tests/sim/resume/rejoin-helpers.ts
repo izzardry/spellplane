@@ -7,6 +7,7 @@ import { expect, vi } from 'vitest';
 import type { MusterStatus } from '../../../src/session/types';
 import type { LoopbackNetwork } from '../../../src/net/loopback';
 import { browser, hashOf, open, settle, until, waitConverged, type Browser, type NetTable } from '../session/harness';
+import { claimOfLink, leave as leaveTable, replaceBrowser as replaceWith, returnFromSave } from '../../leak/minitable';
 
 export const NAMES = ['Ann', 'Ben', 'Cy', 'Dana'] as const;
 
@@ -49,15 +50,12 @@ export async function moves(b: Browser, n: number): Promise<void> {
 
 /** Leave the table on purpose (bye leave); the save is flushed first. */
 export async function leave(b: Browser): Promise<void> {
-  const s = b.session!;
-  await settle(s.whenSaved());
-  await settle(s.leave());
-  b.session = null;
+  await settle(leaveTable(b));
 }
 
 /** Open the table again from the browser's save (History, the link, a reload). */
 export async function comeBack(network: LoopbackNetwork, b: Browser): Promise<NetTable> {
-  return open(network, b, { settleMs: 200 });
+  return returnFromSave(() => open(network, b, { settleMs: 200 }));
 }
 
 /** Wait until the browser is live by the muster rule. */
@@ -69,16 +67,14 @@ export const confirmedHash = (b: Browser): string => hashOf(b.session!.engine.co
 
 /** The token of a re-invite link (persistence.md section 7). */
 export function tokenOf(link: string): { seat: string; token: string } {
-  const m = /\/rejoin\/(s[0-3])\/([\w-]+)$/.exec(link);
-  if (!m) throw new Error(`not a re-invite link: ${link}`);
-  return { seat: m[1]!, token: m[2]! };
+  return claimOfLink(link);
 }
 
 /** A blank browser (new key pair, empty profile) opens a re-invite link and waits on the claim page. */
 export async function replaceBrowser(network: LoopbackNetwork, browsers: Browser[], link: string, name = 'fresh'): Promise<Browser> {
   const b = await browser(name, `peer-${name}`, name);
   browsers.push(b);
-  await open(network, b, { settleMs: 200, claim: tokenOf(link) });
+  await replaceWith(link, (claim) => open(network, b, { settleMs: 200, claim }));
   return b;
 }
 

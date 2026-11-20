@@ -126,6 +126,7 @@ test('bring Ann back: her own profile resumes without a claim; a fresh profile s
       await expect(fresh.getByTestId('claim-page')).toHaveCount(0);
       await expect(fresh.getByTestId('recovery')).toHaveAttribute('data-phase', 'lost', { timeout: 20_000 });
       expect(await seriousViolations(fresh, '[data-testid="recovery"]')).toEqual([]);
+      await designAudit(fresh, '[data-testid="recovery"]');
       const seat = (await state(b)).seats.s0!;
       expect(seat.takeovers).toBe(1);
       expect(seat.peer).not.toBe(annPeer);

@@ -157,6 +157,8 @@ describe('newest by moves (contracts.md Part G item 2)', () => {
     await moves(ben!, 3);
     expect(ann!.session!.engine.seq()).toBeGreaterThan(0);
     const benPlay = ben!.session!.engine.play!();
+    const annNotices: string[] = [];
+    ann!.session!.onNotice((t) => annNotices.push(t));
     network.revive('peer-a');
     await waitConverged([ann!.session!, ben!.session!], 'the split healed');
     // Ben's three moves are the table; Ann's chat lines were played again on top.
@@ -164,6 +166,8 @@ describe('newest by moves (contracts.md Part G item 2)', () => {
     expect(lifeOf(ann!, 's1')).toBe(17);
     const chats = ann!.session!.log().flatMap((e) => (e.kind === 'action' && e.action.type === 'chat' ? [e.action.text] : []));
     expect(chats).toEqual(expect.arrayContaining(['alone 0', 'alone 1', 'alone 2', 'alone 3']));
+    // The losing side is told in plain words (contracts.md Part G item 2).
+    expect(annNotices).toContain("The table with more moves is kept; the other side's moves are played again on top where they still fit.");
   });
 });
 
