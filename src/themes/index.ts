@@ -8,7 +8,7 @@ export * from './types';
 export * from './signals';
 
 /** Theme ids that exist today (DESIGN "Themes and rendering"); M7-C added the three looks' themes. */
-export const THEME_IDS: readonly ThemeId[] = ['paper', 'dusk', 'wyrm', 'stonetable', 'kitchen', 'graphite', 'codex'];
+export const THEME_IDS: readonly ThemeId[] = ['paper', 'dusk', 'wyrm', 'stonetable', 'plain', 'kitchen', 'graphite', 'codex'];
 
 /** The four M4 themes in their M4 order (their gates and screenshot matrices run over these). Added by M7-C. */
 export const M4_THEME_IDS: readonly M4ThemeId[] = ['paper', 'dusk', 'wyrm', 'stonetable'];
@@ -19,16 +19,16 @@ export const M4_THEME_IDS: readonly M4ThemeId[] = ['paper', 'dusk', 'wyrm', 'sto
  * go"). An unlisted theme still loads (a stored setting, the debug hook's `theme.set`, tests). Added by M7-C; the picker
  * reads it from M7-P2 on.
  */
-export const THEME_LISTED: Readonly<Record<ThemeId, boolean>> = { paper: false, dusk: false, wyrm: false, stonetable: false, kitchen: true, graphite: true, codex: true };
+export const THEME_LISTED: Readonly<Record<ThemeId, boolean>> = { paper: false, dusk: false, wyrm: false, stonetable: false, plain: true, kitchen: true, graphite: true, codex: true };
 
 /** The themes the picker offers, in THEME_IDS order (PLAN Milestone 7, Owner decisions). Added by M7-C. */
 export const LISTED_THEME_IDS: readonly ThemeId[] = THEME_IDS.filter((id) => THEME_LISTED[id]);
 
 /** The three looks in the picker's order (PLAN Milestone 7; docs/design/m7-directions.html A, B, C). Added by M7-C. */
-export const LOOK_IDS: readonly LookId[] = ['kitchen', 'graphite', 'codex'];
+export const LOOK_IDS: readonly LookId[] = ['plain', 'kitchen', 'graphite', 'codex'];
 
 /** Names of the looks (docs/design/m7-directions.html). Added by M7-C. */
-export const LOOK_LABELS: Readonly<Record<LookId, string>> = { kitchen: 'Kitchen Table', graphite: 'Graphite', codex: 'Codex' };
+export const LOOK_LABELS: Readonly<Record<LookId, string>> = { plain: 'Plain', kitchen: 'Kitchen Table', graphite: 'Graphite', codex: 'Codex' };
 
 /** A stored setting as a look id; anything unknown is DEFAULT_LOOK (store/types.ts Settings.look is a string). Added by M7-C. */
 export function lookIdOf(value: unknown): LookId {
@@ -114,6 +114,7 @@ export const THEME_LABELS: Readonly<Record<ThemeId, string>> = {
   dusk: 'Dusk',
   wyrm: 'Wyrm',
   stonetable: 'Stonetable',
+  plain: 'Plain',
   kitchen: 'Kitchen Table',
   graphite: 'Graphite',
   codex: 'Codex',
@@ -138,7 +139,9 @@ export async function loadTheme(id: ThemeId): Promise<Theme> {
       return (await import('./wyrm/index')).wyrm;
     case 'stonetable':
       return (await import('./stonetable/index')).stonetable;
-    // The looks' table worlds (M7-C stubs until M7-P1 builds them).
+    // The looks' table worlds (M7-C stubs until M7-P1 builds them; Plain added by M8-P1 for M8-C).
+    case 'plain':
+      return (await import('./plain/index')).plain;
     case 'kitchen':
       return (await import('./kitchen/index')).kitchen;
     case 'graphite':

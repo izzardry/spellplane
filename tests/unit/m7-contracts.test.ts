@@ -39,8 +39,8 @@ const ALL: readonly SoundCue[] = ['slide', 'tap', 'shuffle', 'turnChime', 'promp
 import { LAYOUT, LOOKS, designCssVars, lookTokens, motionTokens } from '../../src/ui/design/tokens';
 
 describe('looks', () => {
-  it('has three looks, each mapped to a registered theme that the picker lists; the M4 themes stay registered but unlisted', async () => {
-    expect([...LOOK_IDS]).toEqual(['kitchen', 'graphite', 'codex']);
+  it('has four looks (M8-P1 added Plain), each mapped to a registered theme that the picker lists; the M4 themes stay registered but unlisted', async () => {
+    expect([...LOOK_IDS]).toEqual(['plain', 'kitchen', 'graphite', 'codex']);
     for (const look of LOOK_IDS) {
       const theme = LOOK_THEME[look];
       expect(THEME_IDS).toContain(theme);
@@ -53,13 +53,14 @@ describe('looks', () => {
       expect(THEME_LISTED[id]).toBe(false);
       expect(lookOfTheme(id)).toBeNull();
     }
-    expect([...LISTED_THEME_IDS]).toEqual(['kitchen', 'graphite', 'codex']);
+    expect([...LISTED_THEME_IDS]).toEqual(['plain', 'kitchen', 'graphite', 'codex']);
   });
 
-  it('reads a stored look, anything unknown as the default look (Kitchen Table)', () => {
+  it('reads a stored look, anything unknown as the default look (Kitchen Table until the default moves to Plain)', () => {
     expect(DEFAULT_LOOK).toBe('kitchen');
     expect(DEFAULT_SETTINGS.look).toBe(DEFAULT_LOOK);
     expect(lookIdOf('graphite')).toBe('graphite');
+    expect(lookIdOf('plain')).toBe('plain');
     expect(lookIdOf('paper')).toBe('kitchen');
     expect(lookIdOf(undefined)).toBe('kitchen');
   });
@@ -82,7 +83,7 @@ describe('design tokens', () => {
       expect(t.sound.gain).toBeLessThanOrEqual(1);
     }
     // docs/design/m7-directions.html swatches.
-    expect(LOOKS.kitchen.colour).toMatchObject({ mat: '#d9ccb2', frame: '#5b3f2c', panel: '#f7f1e5', ink: '#2b2118', accent: '#c0532f', selection: '#b08a3e' });
+    expect(LOOKS.kitchen.colour).toMatchObject({ mat: '#d9ccb2', frame: '#5b3f2c', panel: '#f7f1e5', ink: '#2b2118', accent: '#b94f2c' /* M7-P2 tuned the directions' #c0532f to meet AA under the primary button's text */, selection: '#b08a3e' });
     expect(LOOKS.graphite.colour).toMatchObject({ mat: '#16191e', panel: '#20242b', border: '#323843', ink: '#e9ecf0', muted: '#9aa3ae', accent: '#3fd2a3' });
     expect(LOOKS.codex.colour).toMatchObject({ mat: '#1b2235', panel: '#242c42', ornament: '#c8a75e', ink: '#efe6d2', muted: '#a99f8c', accent: '#b8432f' });
   });

@@ -28,6 +28,7 @@ const HARNESSES = {
   render: () => import('./scene/render-harness'),
   // M5-P5: settings, About, first-run hints, empty and error states.
   settings: () => import('./ui/settings/harness'),
+  kit: () => import('./ui/design/harness'), // [M8-P1] the kit page (contracts.md Part C)
 } as const;
 
 const harness = __SPELLPLANE_DEBUG__ ? new URLSearchParams(location.search).get('harness') : null;

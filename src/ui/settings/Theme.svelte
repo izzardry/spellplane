@@ -7,7 +7,9 @@
 -->
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
-  import { THEME_IDS, THEME_LABELS, type ThemeId } from '../../themes/index';
+  import { LISTED_THEME_IDS, lookOfTheme, THEME_IDS, THEME_LABELS, type ThemeId } from '../../themes/index';
+  import { lookContext } from '../design/look';
+  import { lookTokens } from '../design/tokens';
   import { SOUND_MODES, type SoundMode } from '../sound';
   import { THEME_BLURBS, type ThemeChoice, type ThemeChoiceState } from './theme';
   import { QUALITY_OPTIONS, qualityIdOf, type ViewPrefs } from './view';
@@ -35,13 +37,24 @@
   );
 
   const checked = $derived<ThemeId>(st.loading ?? picking ?? st.theme.id);
+  /**
+   * [M8-P1] The picker lists the four looks first (Plain, Kitchen Table, Graphite, Codex; themes/index.ts
+   * LISTED_THEME_IDS, PLAN Milestone 8 M8-P1), then the earlier M4 tables under their own heading, so a stored or
+   * scripted M4 theme (gates M4 and M5 pick them here) still shows what is on the table.
+   */
+  const offered = $derived<ThemeId[]>([...LISTED_THEME_IDS]);
+  const earlier = $derived<ThemeId[]>(THEME_IDS.filter((id) => !LISTED_THEME_IDS.includes(id)));
+  /** Picking a look also stores it as the HUD's look (ui/design/look.ts), so the HUD skin switches with the table. */
+  const looks = lookContext();
 
   const inputs: Partial<Record<ThemeId, HTMLInputElement>> = {};
 
   function pick(id: ThemeId): void {
     picking = id;
     // A failed load is reported through the state (st.error); the theme shown stays.
-    choice.set(id).catch(async () => {
+    const look = lookOfTheme(id);
+    const done = look && looks ? looks.set(look) : choice.set(id);
+    done.catch(async () => {
       picking = null;
       // A load that fails fast (a cached failed import) can take `checked` from the shown theme to the pick and back
       // inside one update, so Svelte never re-applies it and the browser keeps the clicked radio checked. Put the DOM
@@ -55,22 +68,38 @@
   }
 </script>
 
+{#snippet option(id: ThemeId)}
+  {@const look = lookOfTheme(id)}
+  <label class="option" data-testid="theme-option" data-theme={id} data-look={look} class:current={st.theme.id === id}>
+    <input type="radio" name="sp-theme" value={id} checked={checked === id} bind:this={inputs[id]} onchange={() => pick(id)} />
+    {#if look}
+      {@const t = lookTokens(look)}
+      <span class="swatch" aria-hidden="true" style:background={t.colour.mat} style:border-color={t.colour.frame}><i style:background={t.colour.panel}></i><i style:background={t.colour.accent}></i></span>
+    {/if}
+    <span>
+      {THEME_LABELS[id]}
+      <small>— {THEME_BLURBS[id]}{#if st.loading === id}; loading…{/if}</small>
+    </span>
+  </label>
+{/snippet}
+
 <section class="theme" data-testid="theme-settings" aria-label="Theme settings" data-theme={st.theme.id} aria-busy={st.loading !== null}>
   <header>
-    <h2>Theme</h2>
+    <h2>Look</h2>
     {#if onclose}<button type="button" class="x" data-testid="theme-close" onclick={onclose} aria-label="Close">×</button>{/if}
   </header>
   <fieldset data-testid="theme-picker">
-    <legend>Table theme for this browser</legend>
-    {#each THEME_IDS as id (id)}
-      <label class="option" data-testid="theme-option" data-theme={id} class:current={st.theme.id === id}>
-        <input type="radio" name="sp-theme" value={id} checked={checked === id} bind:this={inputs[id]} onchange={() => pick(id)} />
-        <span>
-          {THEME_LABELS[id]}
-          <small>— {THEME_BLURBS[id]}{#if st.loading === id}; loading…{/if}</small>
-        </span>
-      </label>
+    <legend>Look of the table and the controls, for this browser</legend>
+    <span class="group" data-testid="look-group">Looks</span>
+    {#each offered as id (id)}
+      {@render option(id)}
     {/each}
+    {#if earlier.length}
+      <span class="group" data-testid="earlier-group">Earlier tables</span>
+      {#each earlier as id (id)}
+        {@render option(id)}
+      {/each}
+    {/if}
   </fieldset>
   {#if sound}
     <label class="sound">
@@ -107,13 +136,13 @@
 
 <style>
   .theme {
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    border: 1px solid var(--sp-border, #8c8c8c);
-    border-radius: var(--sp-radius-lg, 8px);
-    box-shadow: var(--sp-hud-shadow, none);
+    background: var(--ds-panel-raised, var(--sp-surface, #fff));
+    color: var(--ds-ink, var(--sp-fg, #111));
+    border: 1px solid var(--ds-border, var(--sp-border, #8c8c8c));
+    border-radius: var(--ds-radius-md, 8px);
+    box-shadow: var(--ds-elevation-pop, none);
     padding: var(--sp-space-lg, 16px);
-    font: var(--sp-font-size-small, 12px) / 1.45 var(--sp-font, system-ui);
+    font: var(--ds-type-small, 12px) / 1.45 var(--ds-font-body, system-ui);
     width: min(340px, calc(100vw - 32px));
     box-sizing: border-box;
   }
@@ -124,7 +153,9 @@
   }
   h2 {
     margin: 0;
-    font-size: var(--sp-font-size-large, 18px);
+    font-family: var(--ds-font-heading, inherit);
+    font-variant: var(--ds-heading-variant, normal);
+    font-size: var(--ds-type-title, 18px);
   }
   .x {
     font: inherit;
@@ -143,6 +174,28 @@
   legend {
     padding: 0 4px;
   }
+  .group {
+    display: block;
+    margin: 8px 0 2px;
+    font-size: var(--ds-type-label, 11px);
+    text-transform: var(--ds-label-case, uppercase);
+    letter-spacing: var(--ds-label-spacing, 0.05em);
+    color: var(--ds-muted, var(--sp-muted, #5f5f5f));
+  }
+  .swatch {
+    display: inline-flex;
+    align-self: center;
+    gap: 3px;
+    padding: 4px;
+    border: 2px solid;
+    border-radius: 6px;
+    flex: none;
+  }
+  .swatch i {
+    width: 10px;
+    height: 14px;
+    border-radius: 2px;
+  }
   .option {
     display: flex;
     gap: 6px;
@@ -155,7 +208,7 @@
   }
   small {
     font-weight: var(--sp-font-weight, 400);
-    color: var(--sp-muted, #5f5f5f);
+    color: var(--ds-muted, var(--sp-muted, #5f5f5f));
   }
   .status {
     margin: 8px 0 0;
