@@ -178,7 +178,8 @@ describe('M6-P6 keyboard routes', () => {
 
 describe('M6 protocol', () => {
   it('speaks protocol 3: an M5 reducer refuses the new actions', () => {
-    expect(PROTOCOL_VERSION).toBe(3);
+    // M8-C bumped it to 4 (contracts.md Part D); 3 was M6's.
+    expect(PROTOCOL_VERSION).toBeGreaterThanOrEqual(3);
     for (const t of ['clipAdd', 'clipRemove', 'lineLabel', 'rngApply']) expect(ACTION_TYPES).toContain(t);
   });
 });

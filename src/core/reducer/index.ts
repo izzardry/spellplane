@@ -24,6 +24,8 @@ import { STACK_ZONE } from './place';
 import * as stack from './stack';
 import * as table from './table';
 import * as recovery from './recovery';
+import * as rejoin from './rejoin';
+import * as result from './result';
 import { applyRestore } from './restore';
 import * as secret from './secret';
 import * as temp from './temp';
@@ -32,6 +34,7 @@ import * as zones from './zones';
 
 export { STACK_ZONE, ZONE_KIND, HIDDEN_POSE } from './place';
 export { cardAxes, pileMemberPose, tuckPose, tuckSlot } from './util';
+export { isOut } from './result';
 
 /** A seat to create at table start (DESIGN "Players, seats and formats"). */
 export interface SeatInit {
@@ -136,6 +139,13 @@ const HANDLERS: { [T in ActionType]: Handler<T> } = {
   clipRemove: clips.clipRemove,
   lineLabel: pending('M6-P3'),
   rngApply: pending('M6-P3'),
+  // Added by M8-C (contracts.md Part D): the end of a game and the opening hand (result.ts, implemented); the rejoin
+  // actions (rejoin.ts) refuse with a reason until M8-P5 fills them.
+  concede: result.concede,
+  dealt: result.dealt,
+  seatInvite: rejoin.seatInvite,
+  seatClaim: rejoin.seatClaim,
+  playOn: rejoin.playOn,
 };
 
 /**

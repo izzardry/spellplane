@@ -17,6 +17,7 @@ import type { SecretStore, Stage } from '../core/types';
 import { importLibrary, LIBRARY_LIMITS } from './decks';
 import { MAX_NICKNAME_LENGTH, peerIdOf, SEAT_COLOUR_COUNT } from './identity';
 import type { LocalStores } from './stores';
+import type { SpellplaneDB } from './types';
 import { atomicWrite } from './tx';
 import {
   BACKUP_FILE_FORMAT,
@@ -115,6 +116,18 @@ export async function exportBackup(stores: LocalStores, opts: BackupOptions, now
     if (identity) file.identity = cloneJson(identity);
   }
   if (opts.settings) file.settings = cloneJson(await stores.settings.all());
+  // Added by M8-C: the M8 records of the exported games travel with them; ratings belong to the identity.
+  if (tables.length > 0 && stores.games) {
+    const codes = new Set(tables.map((t) => t.table.roomId));
+    const games = (await stores.db.getAll('games')).filter((g) => codes.has(g.code));
+    const matches = (await stores.db.getAll('matches')).filter((m) => codes.has(m.roomId));
+    const computer = (await stores.db.getAll('computer')).filter((c) => codes.has(c.roomId));
+    const ratings = await stores.db.getAll('ratings');
+    if (games.length) file.games = cloneJson(games);
+    if (matches.length) file.matches = cloneJson(matches);
+    if (computer.length) file.computer = cloneJson(computer);
+    if (ratings.length) file.ratings = cloneJson(ratings);
+  }
   return file;
 }
 
@@ -230,6 +243,8 @@ const SETTING_CHOICES: Partial<Record<keyof Settings, readonly string[]>> = {
   sound: ['theme', 'on', 'off'],
   cardBack: ['spellplane', 'official'],
   motion: MOTION_INTENSITIES,
+  // Added by M8-C.
+  deckCardSize: ['s', 'm', 'l'],
 };
 
 /** One setting checked against the shape of its default; unknown hint ids are dropped as the store would ignore them. */
@@ -247,6 +262,11 @@ function settingValue(name: keyof Settings, v: unknown): unknown {
   if (name === 'keymap') {
     if (!Array.isArray(v) || !v.every((o) => isObj(o) && typeof o.action === 'string' && typeof o.context === 'string' && isObj(o.chord) && typeof o.chord.key === 'string')) throw new Invalid('is not a list of key bindings');
     return cloneJson(v);
+  }
+  if (name === 'avoid') {
+    // Added by M8-C (matchmaking.md 2.10): at most 200 entries, oldest dropped.
+    if (!Array.isArray(v) || !v.every((o) => isObj(o) && typeof o.peerId === 'string' && typeof o.name === 'string' && typeof o.at === 'number')) throw new Invalid('is not a list of avoided players');
+    return cloneJson(v.slice(-200));
   }
   if (name === 'tilt') {
     if (v !== null && (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1)) throw new Invalid('is not a tilt between 0 and 1');
@@ -288,7 +308,7 @@ function settingsOf(v: unknown, errors: BackupImport['errors']): Partial<Setting
 
 /** Read a parsed file (a BackupFile, or a deck-only LibraryFile) without writing anything. Implementer: M5-P3. Added by M5-C. */
 export function readBackup(json: unknown): BackupImport {
-  const result: BackupImport = { decks: [], tables: [], identity: null, settings: {}, errors: [] };
+  const result: BackupImport = { decks: [], tables: [], identity: null, settings: {}, games: [], ratings: [], matches: [], computer: [], errors: [] };
   const fail = (message: string): BackupImport => ({ ...result, errors: [{ where: 'file', message }] });
 
   // A deck library file (or a single exported deck) from the builder's library reads as a backup of decks only.
@@ -339,7 +359,27 @@ export function readBackup(json: unknown): BackupImport {
   }
 
   result.settings = settingsOf(json.settings, result.errors);
+  // Added by M8-C: the M8 records (games, ratings, matches, computer) travel as plain records keyed by their store's key.
+  result.games = m8Records(json.games, 'games', 'code', result.errors) as unknown as BackupImport['games'];
+  result.ratings = m8Records(json.ratings, 'ratings', 'key', result.errors) as unknown as BackupImport['ratings'];
+  result.matches = m8Records(json.matches, 'matches', 'roomId', result.errors) as unknown as BackupImport['matches'];
+  result.computer = m8Records(json.computer, 'computer', 'roomId', result.errors) as unknown as BackupImport['computer'];
   return result;
+}
+
+/** The records of one M8 store in a backup: a list of objects whose `key` field is non-empty text (M8-C). Malformed entries are skipped with a message. */
+function m8Records(v: unknown, what: string, key: string, errors: BackupImport['errors']): Obj[] {
+  if (v === undefined) return [];
+  if (!Array.isArray(v)) {
+    errors.push({ where: what, message: `The ${what} records were skipped: they are not a list.` });
+    return [];
+  }
+  const out: Obj[] = [];
+  v.forEach((r: unknown, i: number) => {
+    if (isObj(r) && typeof r[key] === 'string' && r[key] !== '' && (r[key] as string).length <= 256) out.push(cloneJson(r));
+    else errors.push({ where: `${what} ${i + 1}`, message: `Record ${i + 1} of ${what} was skipped: it has no ${key}.` });
+  });
+  return out;
 }
 
 /** Parse a file's text and read it (readBackup); text that is not JSON is reported, never thrown. */
@@ -348,7 +388,7 @@ export function readBackupText(text: string): BackupImport {
     return readBackup(JSON.parse(text) as unknown);
   } catch (e) {
     if (!(e instanceof SyntaxError)) throw e;
-    return { decks: [], tables: [], identity: null, settings: {}, errors: [{ where: 'file', message: 'The file is not a Spellplane backup (it is not JSON).' }] };
+    return { decks: [], tables: [], identity: null, settings: {}, games: [], ratings: [], matches: [], computer: [], errors: [{ where: 'file', message: 'The file is not a Spellplane backup (it is not JSON).' }] };
   }
 }
 
@@ -450,6 +490,18 @@ export async function restoreBackup(stores: LocalStores, data: BackupImport, opt
     if (!Object.hasOwn(DEFAULT_SETTINGS, name) || value === undefined) continue;
     await stores.settings.set(name, cloneJson(value));
   }
+
+  // Added by M8-C: the M8 records; an existing record is kept unless the player chose to overwrite.
+  const m8 = async <N extends 'games' | 'ratings' | 'matches' | 'computer'>(store: N, list: readonly SpellplaneDB[N]['value'][], keyOf: (r: SpellplaneDB[N]['value']) => string): Promise<void> => {
+    for (const r of list ?? []) {
+      if (!opts.overwrite && (await stores.db.get(store, keyOf(r) as never))) continue;
+      await stores.db.put(store, cloneJson(r) as never);
+    }
+  };
+  await m8('games', data.games, (r) => r.code);
+  await m8('ratings', data.ratings, (r) => r.key);
+  await m8('matches', data.matches, (r) => r.roomId);
+  await m8('computer', data.computer, (r) => r.roomId);
 
   return { errors };
 }

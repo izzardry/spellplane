@@ -49,6 +49,7 @@ import { roomVersionNotice } from '../net/version';
 import type { Presence } from '../net/types';
 import { NULL_PRESENCE } from './presence';
 import type { DeckImport, LookedCard, NetStatusListener, SessionListener, SessionNetStatus, SoloSessionOptions, TableSession } from './types';
+import { track, untrack } from '../util/lifecycle';
 
 /** Room id of the solo table: the store's own constant, re-exported so the two cannot drift apart. */
 export const SOLO_ROOM = SOLO_ROOM_ID;
@@ -130,6 +131,7 @@ class Solo implements SoloSession {
   ) {
     this.state = init.state;
     this.sec = init.secrets;
+    track('sessions', this);
     this.entries = init.entries;
     this.saves = new TablePersistence({
       store: opts.store,
@@ -195,7 +197,14 @@ class Solo implements SoloSession {
 
   dispose(): void {
     this.disposed = true;
+    untrack('sessions', this);
     this.listeners.clear();
+  }
+
+  /** A solo session leaves at once: nothing is on the wire (contracts.md Part C, `TableSession.leave()`). Added by M8-C. */
+  leave(): Promise<void> {
+    this.dispose();
+    return Promise.resolve();
   }
 
   // --- Network members (TableSession, M1-C): a solo table has no peers --------------------------------

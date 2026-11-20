@@ -2,13 +2,12 @@
   The theme picker (PLAN M4-P6; DESIGN "Themes and rendering": themes are chosen per viewer, loaded on demand as
   separate chunks and switchable mid-game without reloading; two players at the same table can use different themes).
   With `view`, it also holds the quality level and the two follow toggles (DESIGN "Themes and rendering", Renderer;
-  "Camera and navigation", Follow options), which belong to this browser like the theme. A radio group over the listed themes (the three M7 looks; the M4 themes stay loadable but unlisted, PLAN Milestone 7,
-  Owner decisions); picking one loads its chunk if needed and switches this page only. While a chunk
+  "Camera and navigation", Follow options), which belong to this browser like the theme. A radio group over the four themes; picking one loads its chunk if needed and switches this page only. While a chunk
   loads the group says so; a chunk that cannot be loaded leaves the current theme and says why. Nothing here is modal.
 -->
 <script lang="ts">
   import { onMount, tick, untrack } from 'svelte';
-  import { LISTED_THEME_IDS, THEME_LABELS, type ThemeId } from '../../themes/index';
+  import { THEME_IDS, THEME_LABELS, type ThemeId } from '../../themes/index';
   import { SOUND_MODES, type SoundMode } from '../sound';
   import { THEME_BLURBS, type ThemeChoice, type ThemeChoiceState } from './theme';
   import { QUALITY_OPTIONS, qualityIdOf, type ViewPrefs } from './view';
@@ -48,7 +47,7 @@
       // inside one update, so Svelte never re-applies it and the browser keeps the clicked radio checked. Put the DOM
       // back to the theme shown.
       await tick();
-      for (const t of LISTED_THEME_IDS) {
+      for (const t of THEME_IDS) {
         const el = inputs[t];
         if (el) el.checked = t === checked;
       }
@@ -63,7 +62,7 @@
   </header>
   <fieldset data-testid="theme-picker">
     <legend>Table theme for this browser</legend>
-    {#each LISTED_THEME_IDS as id (id)}
+    {#each THEME_IDS as id (id)}
       <label class="option" data-testid="theme-option" data-theme={id} class:current={st.theme.id === id}>
         <input type="radio" name="sp-theme" value={id} checked={checked === id} bind:this={inputs[id]} onchange={() => pick(id)} />
         <span>

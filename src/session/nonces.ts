@@ -17,7 +17,7 @@
  * `recoverCommit` (session/resume.ts RecoveryOwed, JSON: an instance id, the agreed hand count, the shuffle id), so a
  * reload in between still shuffles the new library and draws the hand (decision M1-P7).
  */
-export type NonceKind = 'rng' | 'shuffle' | 'turnUp' | 'recovery';
+export type NonceKind = 'rng' | 'shuffle' | 'turnUp' | 'recovery' | 'claim'; // 'claim' added by M8-C: a seat-claim token kept until the claim is confirmed (persistence.md section 7)
 
 /** Where open-round nonces are kept. */
 export interface NonceStore {

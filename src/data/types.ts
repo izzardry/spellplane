@@ -63,6 +63,8 @@ export interface CardData {
   card_faces?: CardFaceData[];
   all_parts?: RelatedCard[];
   artist?: string;
+  /** Added by M8-C. Scryfall's EDHREC popularity rank (1 = most played); absent on many cards (decks.md section 7). */
+  edhrec_rank?: number;
 }
 
 /** Scryfall image tier (DESIGN "Card data and images", Image tiers). */
@@ -175,7 +177,7 @@ export interface CardDataSource {
    * Scryfall-backed card search for the builder's search-and-add (DESIGN "Pre-game", Constructed decks: "Search and
    * build"; PLAN M2-P6). Added by M2-C, optional so existing sources compile; implementer: M2-P6.
    */
-  searchCards?(query: string): Promise<CardData[]>;
+  searchCards?(query: string, options?: CardSearchOptions): Promise<CardData[]>;
   get(sid: ScryfallId): Promise<CardData | null>;
   getMany(sids: ScryfallId[]): Promise<Record<ScryfallId, CardData>>;
   /** Synchronous cache lookup for views; null when not loaded yet. */
@@ -279,6 +281,14 @@ export interface SetSummary {
   releaseDate: string;
   /** One of FEATURED_SETS. */
   featured: boolean;
+  /** Added by M8-C. MTGJSON's set type ('core', 'expansion', …); absent on entries built from a cached set (decks.md section 7). */
+  type?: string;
+}
+
+/** How a card search orders its results (decks.md section 7). Added by M8-C. */
+export interface CardSearchOptions {
+  /** Default 'name' (today's behaviour). */
+  order?: 'name' | 'edhrec' | 'cmc';
 }
 
 /** One generated pack card (DESIGN "Specification: card data, packs and draft formats", Pack generation). */

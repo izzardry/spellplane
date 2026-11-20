@@ -6,7 +6,7 @@
  */
 import type { DBSchema } from 'idb';
 import type { Action } from '../core/actions';
-import type { CardRef, DeckBuild, DraftFormat, SecretStore, SeatId, SetCode, Stage, TableState } from '../core/types';
+import type { BotConfig, BotLevel, BotPace, CardRef, DeckBuild, DraftFormat, Format, MatchRecord, QueueId, RatingKey, RatingRecord, SeatColourIndex, SecretStore, SeatId, SetCode, Stage, TableState, TeamId } from '../core/types';
 import { DEFAULT_DIE_SIDES } from '../core/objects';
 
 /** `identity` store, key 'me' (DESIGN "Local persistence"): key pair, nickname, preferred seat colour. */
@@ -137,7 +137,73 @@ export interface Settings {
    * setting)"). M7-A0 keeps it in localStorage for now (DECISIONS [M7-A0]); moving it here is a follow-up of M7-A0's.
    */
   showFrameRate: boolean;
+  /** Added by M8-C. What Home shows on the next visit: mode, selected deck, options per mode (journey.md section 7). Implementer: M8-P2. */
+  home: HomePrefs;
+  /** Added by M8-C. Card image size in the deck page's grid (decks.md section 7). Implementer: M8-P3. */
+  deckCardSize: 's' | 'm' | 'l';
+  /** Added by M8-C. What the Sparring selector remembers (computer.md 10.1). Implementer: M8-P6. */
+  computer: ComputerPrefs;
+  /** Added by M8-C. "Tell me when someone is looking" (matchmaking.md 2.10; later). */
+  lobbyNotify: boolean;
+  /** Added by M8-C. Also search the casual queue while ranked (matchmaking.md 2.10). */
+  alsoCasual: boolean;
+  /** Added by M8-C. The last queue searched (matchmaking.md 2.10). */
+  lastQueue: QueueId;
+  /** Added by M8-C. Players this browser avoids, at most 200, oldest dropped (matchmaking.md 2.10; later). */
+  avoid: { peerId: string; name: string; at: number }[];
 }
+
+/** Home's mode (journey.md section 7). Added by M8-C. */
+export type HomeMode = 'solo' | 'quick' | 'private' | 'draft';
+
+/** Settings.home: what Home shows on the next visit (journey.md section 7). Added by M8-C. */
+export interface HomePrefs {
+  mode: HomeMode;
+  /** The selected deck (decks.md D29); null when none. */
+  deckId: string | null;
+  solo: { opponent: 'sparring' | 'alone' };
+  quick: { format: Format; ranked: boolean };
+  private: { format: Format; decks: 'any' | 'booster' };
+  draft: { format: Format; boosters: BoosterSetup };
+}
+
+/** The booster setup sheet's value; maps onto core's LobbySettings (draft, sets, pickTimer) (journey.md section 7). Added by M8-C. */
+export interface BoosterSetup {
+  how: 'pass' | 'sealed' | 'rochester' | 'winston' | 'grid';
+  /** Per player. */
+  packs: number;
+  /** Per pass, draft only. */
+  picks: number;
+  /** Per pack; shorter lists repeat their last entry. */
+  sets: SetCode[];
+  pickTimer: boolean;
+}
+
+/** The default booster setup: a booster draft of 3 packs of the latest core set in the fixtures, M19 (journey.md J-C). Added by M8-C. */
+export const DEFAULT_BOOSTER_SETUP: BoosterSetup = { how: 'pass', packs: 3, picks: 1, sets: ['M19'], pickTimer: true };
+
+/** Home's defaults: solo, no deck, 1v1, unranked, any deck, booster draft of 3 packs (journey.md J-C). Added by M8-C. */
+export const DEFAULT_HOME_PREFS: HomePrefs = {
+  mode: 'solo',
+  deckId: null,
+  solo: { opponent: 'sparring' },
+  quick: { format: '1v1', ranked: false },
+  private: { format: '1v1', decks: 'any' },
+  draft: { format: 'ffa4', boosters: DEFAULT_BOOSTER_SETUP },
+};
+
+/** The deck Sparring plays: by colour, the human's mirror, or a library deck (computer.md 10.1). Added by M8-C. */
+export type OpponentDeckChoice = { kind: 'sparring'; colour: 'W' | 'U' | 'B' | 'R' | 'G'; set: SetCode } | { kind: 'mirror' } | { kind: 'deck'; deckId: string };
+
+/** Settings.computer: what the Sparring selector remembers (computer.md 10.1). Added by M8-C. */
+export interface ComputerPrefs {
+  level: BotLevel;
+  pace: BotPace;
+  deck: 'auto' | 'W' | 'U' | 'B' | 'R' | 'G' | 'mirror' | { deckId: string };
+}
+
+/** Settings.computer's default (computer.md C0). Added by M8-C. */
+export const DEFAULT_COMPUTER_PREFS: ComputerPrefs = { level: 'steady', pace: 'normal', deck: 'auto' };
 
 /**
  * How much the table moves (Settings.motion; PLAN Milestone 7, Owner decisions, Almost haptic card handling): 'system'
@@ -158,7 +224,14 @@ export type CardBackChoice = 'spellplane' | 'official';
  * explaining why" to add Spellplane to the Home Screen; M5-P3 storage-persistence prompt). Added by M5-C; packages may
  * add ids here through the contracts owner, and a stored id this build does not know is ignored.
  */
-export type HintId = 'welcome' | 'tableKeys' | 'touchGestures' | 'talkKey' | 'installHomeScreen' | 'persistStorage' | CoachMarkId;
+export type HintId = 'welcome' | 'tableKeys' | 'touchGestures' | 'talkKey' | 'installHomeScreen' | 'persistStorage' | CoachMarkId | M8HintId;
+
+/**
+ * Hints added by M8-C: the name chip and the storage toast after the first finished game (journey.md J-C), Sparring's
+ * coach mark on the primary button (computer.md; contracts.md Part G "Computer opponent" item 2), the lobby privacy
+ * and ranked honour notices (matchmaking.md 2.10).
+ */
+export type M8HintId = 'nameChip' | 'storageAfterGame' | 'coachSparring' | 'lobbyPrivacy' | 'rankedHonour';
 
 /**
  * Gesture coach marks (PLAN M7-P5 "gesture coach marks"; docs/design/m7-hud-proposal.md, First-run hints: "One coach
@@ -180,7 +253,7 @@ export type CoachMarkId =
 export const COACH_MARK_IDS: readonly CoachMarkId[] = ['coachPlayLand', 'coachDraw', 'coachTap', 'coachSelect', 'coachAttack', 'coachLife', 'coachNextStep', 'coachTilt', 'coachPileActions'];
 
 /** Every hint id this build knows (backup import keeps only these). Added by M7-C. */
-export const HINT_IDS: readonly HintId[] = ['welcome', 'tableKeys', 'touchGestures', 'talkKey', 'installHomeScreen', 'persistStorage', ...COACH_MARK_IDS];
+export const HINT_IDS: readonly HintId[] = ['welcome', 'tableKeys', 'touchGestures', 'talkKey', 'installHomeScreen', 'persistStorage', ...COACH_MARK_IDS, 'nameChip', 'storageAfterGame', 'coachSparring', 'lobbyPrivacy', 'rankedHonour'];
 
 /** Talk defaults (DESIGN "Decision log": push-to-talk; hold V). Added by M3-C. */
 export const DEFAULT_TALK: TalkSettings = { gate: 'ptt', voice: true, dictation: false, muted: false, mouseButton: null };
@@ -207,6 +280,14 @@ export const DEFAULT_SETTINGS: Settings = {
   tilt: null,
   motion: 'system',
   showFrameRate: false,
+  // Added by M8-C.
+  home: DEFAULT_HOME_PREFS,
+  deckCardSize: 'm',
+  computer: DEFAULT_COMPUTER_PREFS,
+  lobbyNotify: false,
+  alsoCasual: false,
+  lastQueue: '1v1.constructed.casual',
+  avoid: [],
 };
 
 /** `settings` store record, keyed by name (DESIGN "Local persistence"). */
@@ -230,6 +311,8 @@ export interface TableRecord {
    * read as 1. M5-P6 writes and checks it (net/version.ts).
    */
   protocol?: number;
+  /** Added by M8-C. The play count at `snapshotSeq` (contracts.md Part D: moves only, never hashed); absent on saves made before M8 (read as 0). */
+  snapshotPlay?: number;
 }
 
 /** `log` store record, key [roomId, seq] (DESIGN "Local persistence"). */
@@ -274,13 +357,106 @@ export interface DeckRecord {
   commander?: CardRef[];
   /** Added by M6-C. The `Companion` section (as `commander`): kept with the deck, outside the game until brought in. Implementer: M6-P5. */
   companion?: CardRef[];
+  /** Added by M8-C. Custom or sealed; absent on older records (decks.md section 7: migrateDeckRecord). */
+  kind?: DeckKind;
+  /** Added by M8-C. The deck's target size. */
+  size?: DeckSize;
+  /** Added by M8-C. What makes a sealed deck sealed. */
+  seal?: DeckSeal;
+  /** Added by M8-C. Custom decks only: the maybe-board. */
+  maybe?: CardRef[];
+  /** Added by M8-C. The player's chosen cover; absent means automatic. */
+  cover?: CardRef;
+  /** Added by M8-C. At most 2,000 characters. */
+  notes?: string;
+  /** Added by M8-C. Derived facts so tiles, Home and the queue need no card data. */
+  summary?: DeckSummary;
+  /** Added by M8-C. On a custom deck made by "Convert to custom deck". */
+  convertedFrom?: { id: string; name: string; at: number; via: DeckSeal['via']; sets: SetCode[] };
+  /** Added by M8-C. When the deck last went to a table. */
+  lastPlayedAt?: number;
+  /** Added by M8-C. Practice runs against the Dummy (computer.md section 11; later). */
+  practice?: PracticeStats;
+}
+
+/** Custom or sealed (decks.md section 7). Added by M8-C. */
+export type DeckKind = 'custom' | 'sealed';
+/** A deck's target size (decks.md section 7). Added by M8-C. */
+export type DeckSize = 40 | 60 | 100;
+/** The five strength bands, in order 1 to 5 (decks.md section 5). Added by M8-C. */
+export type StrengthBand = 'rough' | 'casual' | 'solid' | 'tuned' | 'fierce';
+
+/** What makes a sealed deck sealed; never edited after `revealed` reaches the pack total (decks.md section 7). Added by M8-C. */
+export interface DeckSeal {
+  /** Packs opened alone in Deck mode, or a pool drafted or opened at a table. */
+  via: 'packs' | 'draft';
+  /** The set of each pack, in opening order. */
+  sets: SetCode[];
+  /** Every card the boosters gave, in pack order. Dispensed basics are not part of it. */
+  pool: CardRef[];
+  /** `via: 'packs'`: 64 hex characters; pack i draws from ByteStream(`${seed}:${i}`). */
+  seed?: string;
+  /** `via: 'packs'`: PACK_GENERATOR_VERSION when the pool was made. */
+  generator?: number;
+  /** `via: 'draft'`: the draft format and, when known, the room. */
+  draft?: { format: DraftFormat; roomId?: string };
+  /** ms epoch. */
+  sealedAt: number;
+  /** Packs shown by the opening animation so far; the pack total when done. */
+  revealed: number;
+}
+
+/** A deck's strength, 1 to 100 in five bands (decks.md section 5). Added by M8-C. */
+export interface DeckStrength {
+  /** STRENGTH_VERSION. */
+  v: number;
+  /** 1..100. */
+  score: number;
+  band: StrengthBand;
+  /** Each 0..1. */
+  parts: { quality: number; curve: number; interaction: number; consistency: number; mana: number };
+  basis: 'rank' | 'rarity' | 'mixed';
+  /** The main deck has at least `size` cards. */
+  complete: boolean;
+}
+
+/** Derived facts kept on the record so tiles, the landing hero and the queue need no card data (decks.md section 7; PLAN M8-C "with fan"). Added by M8-C. */
+export interface DeckSummary {
+  /** DECK_SUMMARY_VERSION; an older one is recomputed on sight. */
+  v: number;
+  /** The record's `updatedAt` it was computed for. */
+  at: number;
+  cards: number;
+  lands: number;
+  /** Colours with at least 8 % of the coloured symbols, WUBRG order; empty for colourless. */
+  colours: ('W' | 'U' | 'B' | 'R' | 'G')[];
+  /** Non-land cards by mana value, 8 buckets. */
+  curve: number[];
+  avgMv: number;
+  /** Cards whose data was missing. */
+  unknown: number;
+  strength: DeckStrength | null;
+  simple: boolean;
+  /** Largest number of copies of one card that is not a basic land. */
+  maxCopies: number;
+  cover: CardRef | null;
+  /** The cards of the hero's and the tile's fan (kit CardFan), front first, at most five; the cover first when set. */
+  fan: CardRef[];
+}
+
+/** Practice runs of a deck against the Dummy (computer.md section 11). Added by M8-C. */
+export interface PracticeStats {
+  runs: number;
+  best: number;
+  /** The last 10 kill turns, newest last. */
+  recent: number[];
 }
 
 /** Format tag of an exported deck library file (DESIGN "Pre-game", Local deck library: exportable and importable as files). Added by M2-C. */
 export const LIBRARY_FILE_FORMAT = 'spellplane-decks';
 
-/** Current version of the library file (M2-P6 bumps it with a migration). Added by M2-C. */
-export const LIBRARY_FILE_VERSION = 1;
+/** Current version of the library file (M2-P6 bumps it with a migration). Added by M2-C. 2: M8 deck fields (decks.md section 7); the reader accepts 1 and 2. */
+export const LIBRARY_FILE_VERSION = 2;
 
 /** An exported deck library file, plain JSON (DESIGN "Pre-game", Local deck library). Added by M2-C; implementer: M2-P6. */
 export interface LibraryFile {
@@ -343,6 +519,14 @@ export interface BackupFile {
   identity?: ExportedIdentity;
   /** The settings, when the player chose to include them. */
   settings?: Partial<Settings>;
+  /** Added by M8-C: History summaries of the exported games (persistence.md section 3). */
+  games?: GameSummary[];
+  /** Added by M8-C: ratings (matchmaking.md 2.10). */
+  ratings?: RatingRecord[];
+  /** Added by M8-C: formed matches (matchmaking.md 2.10). */
+  matches?: MatchRecord[];
+  /** Added by M8-C: computer games; they travel with their tables (computer.md C0). */
+  computer?: ComputerGameRecord[];
 }
 
 /** Result of reading a backup file: what to restore and one message per entry that was skipped (M5-P3). Added by M5-C. */
@@ -351,6 +535,14 @@ export interface BackupImport {
   tables: SavedTableExport[];
   identity: ExportedIdentity | null;
   settings: Partial<Settings>;
+  /** Added by M8-C. */
+  games: GameSummary[];
+  /** Added by M8-C. */
+  ratings: RatingRecord[];
+  /** Added by M8-C. */
+  matches: MatchRecord[];
+  /** Added by M8-C. */
+  computer: ComputerGameRecord[];
   errors: { where: string; message: string }[];
 }
 
@@ -368,8 +560,137 @@ export interface SetRecord {
   fetchedAt: number;
 }
 
-/** The IndexedDB schema v1: the eight stores of the persistence table (DESIGN "Local persistence"). */
+// ---------------------------------------------------------------------------------------------------------------
+// M8 stores (added by M8-C): games (History), ratings, matches, computer.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** The public battlefield as outlines for a History thumbnail: at most 80 cards `[x, y, tapped, seatIndex]` in a w × h table frame (persistence.md section 3). Added by M8-C. */
+export interface GameThumb {
+  w: number;
+  h: number;
+  cards: [number, number, 0 | 1, number][];
+}
+
+/** One game in History: what History shows and what re-entry needs, without loading the table (persistence.md section 3; PLAN M8-C Store row). Added by M8-C. */
+export interface GameSummary {
+  /** Game code = room id = key of tables, log and secrets. */
+  code: string;
+  /** Room key; '' for a solo or practice game. */
+  key: string;
+  kind: 'private' | 'matched' | 'solo';
+  format: Format;
+  decks: 'constructed' | 'draftLive' | 'draftPrebuilt';
+  /** Only if the player renamed the game. */
+  title?: string;
+  /** Own seat. */
+  seat: SeatId | null;
+  /** Own deck record used at Ready, if any. */
+  deck?: { id: string; name: string };
+  players: { seat: SeatId; name: string; colour: SeatColourIndex; team?: TeamId; life: number; away: boolean; me: boolean }[];
+  stage: Stage;
+  /** TableState.games ?? 0. */
+  game: number;
+  /** TableState.turn.number. */
+  turn: number;
+  /** Whose turn. */
+  active: SeatId | TeamId | null;
+  /** Own head. */
+  seq: number;
+  /** State hash at seq. */
+  hash: string;
+  /** The newest head any verified peer reported (contracts.md Part G "Rejoin" item 3), with its play count. */
+  knownHead: { play: number; seq: number; name: string } | null;
+  /** Own hidden cards cannot be named. */
+  handLost: boolean;
+  recoveries: number;
+  takeovers: number;
+  createdAt: number;
+  lastPlayedAt: number;
+  savedAt: number;
+  leftAt?: number;
+  endedAt?: number;
+  /** Soft delete while the undo toast is up. */
+  deletedAt?: number;
+  compactedBelow?: number;
+  /** Rough size of this game's records. */
+  bytes: number;
+  /** Public battlefield outlines (persistence.md section 3, "GameSummary gains"). */
+  thumb?: GameThumb | null;
+  /** Solo games: who the opponent was. */
+  opponent?: 'sparring' | 'dummy';
+  /** Copied from TableState.result. */
+  result?: TableState['result'];
+  /** How the game ended for History: a result, or replaced by a newer solo game (contracts.md Part E). */
+  ended?: 'result' | 'replaced';
+  /** Own actions, for the purge rule (fewer than 10: a left solo game is purged) (contracts.md Part E). */
+  actions: number;
+}
+
+/** The `games` store (persistence.md section 3; contracts.md Part E). Implementer: M8-P2 (M8-C lands the basics). Added by M8-C. */
+export interface GameStore {
+  create(meta: Pick<GameSummary, 'code' | 'key' | 'kind' | 'format' | 'decks'> & Partial<GameSummary>): Promise<void>;
+  put(summary: GameSummary): Promise<void>;
+  get(code: string): Promise<GameSummary | null>;
+  /** Newest first by lastPlayedAt; without soft-deleted ones. */
+  list(): Promise<GameSummary[]>;
+  /** Soft delete; `purge` removes games, tables, log and secrets records in one transaction. */
+  remove(code: string, at: number): Promise<void>;
+  restore(code: string): Promise<void>;
+  purge(code: string): Promise<void>;
+  /** Mark older unfinished solo games ended ('replaced') and keep the newest `keep` resumable (contracts.md Part G "History" item 1). */
+  endOlderSolo(keep: number): Promise<void>;
+}
+
+/** The `ratings` store, one record per rating key (matchmaking.md 2.10). Implementer: M8-P7. Added by M8-C. */
+export interface RatingStore {
+  /** The record, or null before the first ranked game of that key. */
+  get(key: RatingKey): Promise<RatingRecord | null>;
+  put(record: RatingRecord): Promise<void>;
+  list(): Promise<RatingRecord[]>;
+}
+
+/** The `matches` store, key roomId (matchmaking.md 2.10). Implementer: M8-P7. Added by M8-C. */
+export interface MatchStore {
+  get(roomId: string): Promise<MatchRecord | null>;
+  put(record: MatchRecord): Promise<void>;
+  list(): Promise<MatchRecord[]>;
+  delete(roomId: string): Promise<void>;
+}
+
+/** A game against the computer, key roomId (computer.md 10.1). Added by M8-C. */
+export interface ComputerGameRecord {
+  roomId: string;
+  createdAt: number;
+  updatedAt: number;
+  bot: {
+    config: BotConfig;
+    /** JWK pair, peerId, nickname 'Sparring', seatColour; never a CryptoKey. */
+    identity: ExportedIdentity;
+    seat: SeatId;
+    deck: { name: string; choice: OpponentDeckChoice; main: CardRef[] };
+  };
+  human: { deckId: string | null; deckName: string };
+  result?: { winner: 'human' | 'bot'; turn: number; at: number };
+}
+
+/** The `computer` store (computer.md C0). Implementer: M8-P6. Added by M8-C. */
+export interface ComputerStore {
+  get(roomId: string): Promise<ComputerGameRecord | null>;
+  put(record: ComputerGameRecord): Promise<void>;
+  delete(roomId: string): Promise<void>;
+  list(): Promise<ComputerGameRecord[]>;
+}
+
+/** The IndexedDB schema (version 2 since M8: the eight stores of the persistence table plus games, ratings, matches and computer; DESIGN "Local persistence"). */
 export interface SpellplaneDB extends DBSchema {
+  /** Added by M8-C (DB_VERSION 2). */
+  games: { key: string; value: GameSummary; indexes: { lastPlayedAt: number } };
+  /** Added by M8-C (DB_VERSION 2). */
+  ratings: { key: string; value: RatingRecord };
+  /** Added by M8-C (DB_VERSION 2). */
+  matches: { key: string; value: MatchRecord };
+  /** Added by M8-C (DB_VERSION 2). */
+  computer: { key: string; value: ComputerGameRecord };
   identity: { key: 'me'; value: StoredIdentity };
   settings: { key: keyof Settings; value: SettingsRecord };
   tables: { key: string; value: TableRecord };
@@ -451,3 +772,6 @@ export interface CardCache {
   /** Ids fetched before `olderThan` (ms epoch). */
   stale(olderThan: number): Promise<string[]>;
 }
+
+/** The match and rating records live in core (store may not import net); re-exported here for the stores (matchmaking.md 2.13). Added by M8-C. */
+export type { MatchPlayer, MatchRecord, RatingRecord, RatingKey, QueueId, Band, BotConfig, BotLevel, BotPace } from '../core/types';
