@@ -5,7 +5,8 @@
  * settings panel on the table. Links are only checked, never followed (tests never use the network).
  */
 import { expect, test, type Locator } from '@playwright/test';
-import { openApp, menuItem } from '../helpers/app';
+import { openApp } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { openHud } from '../ui/harness';
 
 async function expectAbout(about: Locator): Promise<void> {

@@ -9,7 +9,8 @@ import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { SecretStore, TableState } from '../../../src/core/types';
-import { hook, openZone, openLog } from '../helpers/app';
+import { hook } from '../helpers/app';
+import { openZone, openLog } from '../helpers/hud';
 import { call, decklist, freshProfile, openSolo } from '../solo/helpers';
 import { hoverCard, openHud } from '../ui/harness';
 

@@ -11,7 +11,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { AuditBundle, AuditVerdict } from '../../../src/core/audit';
 import type { LogEntry, SecretStore, TableState } from '../../../src/core/types';
-import { hook, shot, propose } from '../helpers/app';
+import { hook, shot } from '../helpers/app';
+import { propose } from '../helpers/hud';
 import { setsScript } from '../flow/helpers';
 import { chair, decklist, freshProfile, freshRoom, openTable, setNickname, twoPages } from '../lobby/helpers';
 

@@ -9,7 +9,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { CardFocus } from '../../../src/ui/a11y/index';
 import type { ViewState } from '../../../src/scene/types';
-import { hook, menuItem, openZone, openLog } from '../helpers/app';
+import { hook } from '../helpers/app';
+import { menuItem, openZone, openLog } from '../helpers/hud';
 import { drafts, hoverCard, hoverNothing, openHud, ui } from '../ui/harness';
 
 const focus = (page: Page) => hook<CardFocus | null>(page, 'a11y.focus');

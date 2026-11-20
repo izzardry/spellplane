@@ -10,7 +10,7 @@
  * page (both events before any timer can run); Ctrl held alone and Ctrl pressed during a click use the real keyboard
  * and mouse. Engine facts come from the harness and the debug hook.
  */
-import { menuItem } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { expect, test, type Page } from '@playwright/test';
 import type { SentStream, VoiceHarness } from '../../../src/ui/voice/harness';
 

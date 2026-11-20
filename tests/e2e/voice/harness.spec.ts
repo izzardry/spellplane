@@ -13,7 +13,7 @@
  * Only Chromium gets media (fake device and fake permission UI from playwright.config.ts); WebKit would show the macOS
  * microphone prompt, so on WebKit only the chat test runs, without joining voice.
  */
-import { openLog } from '../helpers/app';
+import { openLog } from '../helpers/hud';
 import { expect, test, type Page } from '@playwright/test';
 import type { SentStream, VoiceHarness } from '../../../src/ui/voice/harness';
 

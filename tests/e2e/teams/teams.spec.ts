@@ -9,7 +9,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import crypto from 'node:crypto';
 import { scan } from '../../leak/scan';
-import { shot, openLog } from '../helpers/app';
+import { shot } from '../helpers/app';
+import { openLog } from '../helpers/hud';
 import { openTeamPage, th } from './bundle';
 
 type Card = { id: string; sid: string };

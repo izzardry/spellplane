@@ -6,10 +6,7 @@
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
-  import { cssText } from '../themes/index';
-  import './design/base.css';
-  import { lookCssVars } from './design/css';
-  import { LookChoice, registerLookDebug, setLookContext } from './design/look';
+  import { cssText, hudCssVars } from '../themes/index';
   import type { Theme } from '../themes/types';
   import { registerThemeDebug, setThemeContext, ThemeChoice, waitsForStoredTheme } from './settings/theme';
   import type { AppProps } from './types';
@@ -39,27 +36,18 @@
   const choice = new ThemeChoice({ settings: untrack(() => props.settings) });
   setThemeContext(choice);
   let theme = $state.raw<Theme>(choice.current());
-  // The viewer's look (M7-P2, ui/design/look.ts): the HUD's and the pages' design tokens; picking one also picks its table.
-  const looks = new LookChoice(choice, untrack(() => props.settings));
-  setLookContext(looks);
-  let look = $state(looks.current());
   let ready = $state(false);
   /** The welcome hint on the start page (M5-P5 first-run hints); the start page decides when it shows (StartRoute). */
   const startHints = new HintController(untrack(() => props.settings), { where: 'start', touch: false, voice: false });
   void startHints.load();
-  const cssVars = $derived(cssText(lookCssVars(theme, look)));
+  const cssVars = $derived(cssText(hudCssVars(theme.tokens)));
   onMount(() => {
     // Every animation cuts under prefers-reduced-motion, on every page of the app (M5-P4, ui/a11y/motion.ts).
     installReducedMotionCss();
     registerThemeDebug(choice);
-    registerLookDebug(looks);
     const off = choice.subscribe((s) => (theme = s.theme));
-    const offLook = looks.subscribe((l) => (look = l));
     void choice.ready.then(() => (ready = true));
-    return () => {
-      off();
-      offLook();
-    };
+    return off;
   });
   // Updates only between games (M5-P3, ui/storage/UpdateNotice.svelte): the pages without a table and the solo table
   // here; a networked table shows its own notice with its stage (ui/lobby/TableRoom.svelte).
@@ -74,9 +62,8 @@
   // The page itself (body background, scrollbars, form controls) follows the theme too.
   $effect(() => {
     const root = document.documentElement;
-    for (const [k, v] of Object.entries(lookCssVars(theme, look))) root.style.setProperty(k, v);
+    for (const [k, v] of Object.entries(hudCssVars(theme.tokens))) root.style.setProperty(k, v);
     root.dataset.theme = theme.id;
-    root.dataset.look = look;
   });
 </script>
 
@@ -110,7 +97,7 @@
     <RoomRoute app={props} room={route.room} roomKey={route.key} {cssVars} />
   {/key}
 {:else}
-  <main class="sp-page ds-root" class:sp-wide={route.name === 'lobby'} style={cssVars} data-testid="route-{route.name === 'diagJoin' ? 'diag' : route.name}">
+  <main class="sp-page" style={cssVars} data-testid="route-{route.name === 'diagJoin' ? 'diag' : route.name}">
     {#if route.name === 'lobby'}
       <StartRoute start={props.start} welcome={startHints} />
       <p class="links"><a href="#/settings" data-testid="link-settings">Settings</a> · <a href="#/about" data-testid="link-about">About Spellplane</a></p>
@@ -124,7 +111,7 @@
       <h1>Not found</h1>
       <p>There is nothing at {route.hash}.</p>
     {/if}
-    {#if route.name !== 'lobby'}<p><a href="#/">Back to the solo table</a></p>{/if}
+    <p><a href="#/">Back to the solo table</a></p>
   </main>
 {/if}
 
@@ -154,22 +141,6 @@
   }
   :global(.sp-page a) {
     color: var(--sp-fg);
-  }
-  /* The start page: the directions page's wide layout with three ways in side by side (M7-P2). */
-  :global(.sp-page.sp-wide) {
-    max-width: none;
-    height: 100%;
-    padding: 56px 24px 40px;
-    background: var(--ds-mat);
-    color: var(--ds-ink);
-  }
-  :global(.sp-page.sp-wide > *) {
-    max-width: 68em;
-    margin-left: auto;
-    margin-right: auto;
-  }
-  :global(.sp-page .links) {
-    font-size: var(--ds-type-small);
   }
   /* Shown only when reading the stored theme takes noticeably long, so a quick read does not flash it. */
   .theme-wait {

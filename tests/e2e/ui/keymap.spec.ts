@@ -3,7 +3,7 @@
  * hovered card (real pointer hover, real key events); no key fires while the chat or a note field has focus; the cheat
  * sheet lists every bound key. Runs on the `?harness=ui` page (fake session and fake scene).
  */
-import { menuItem, openLog } from '../helpers/app';
+import { menuItem, openLog } from '../helpers/hud';
 import { expect, test, type Page } from '@playwright/test';
 import { MTG_KEYMAP, chordToString } from '../../../src/games/mtg/keymap';
 import { RESERVED_KEYS } from '../../../src/ui/keymap';

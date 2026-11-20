@@ -10,7 +10,7 @@
  * and holding dictation while a note field has focus dictates into that field (Notes by voice). Engine behaviour is
  * asserted on the debug hook (anchors and screen rectangles), never on pixels. Two pages on the local transport.
  */
-import { menuItem, openLog } from '../helpers/app';
+import { menuItem, openLog } from '../helpers/hud';
 import { expect, test, type Page } from '@playwright/test';
 import type { DebugStackEntry } from '../../../src/scene/stack';
 import type { DebugCaption } from '../../../src/scene/types';

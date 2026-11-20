@@ -8,7 +8,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { LogEntry, SecretStore, TableState } from '../../../src/core/types';
 import type { NetMessageRecord } from '../../../src/net/types';
-import { hook, shot, openLog } from '../helpers/app';
+import { hook, shot } from '../helpers/app';
+import { openLog } from '../helpers/hud';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname, startPageLoaded } from '../lobby/helpers';
 
 /** Join a table as a spectator from the start page: nickname, then the pasted watch link. */

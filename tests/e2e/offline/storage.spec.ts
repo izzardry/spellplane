@@ -12,7 +12,8 @@ import { devices, expect, test } from '@playwright/test';
 import fs from 'node:fs';
 import type { SecretStore } from '../../../src/core/types';
 import { BACKUP_FILE_FORMAT, BACKUP_FILE_VERSION, type BackupFile } from '../../../src/store/types';
-import { hook, menuItem } from '../helpers/app';
+import { hook } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { appUrl, call, decklist, fixturesScript, freshProfile, noNetwork, waitForSession } from './helpers';
 
 test('the storage section shows the estimate and persistence; the persistence prompt is answered once', async ({ context, page }, info) => {

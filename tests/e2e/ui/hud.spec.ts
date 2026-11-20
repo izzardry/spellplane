@@ -4,7 +4,8 @@
  * prompt and the app shell's routes. Design references are in each test name's section.
  */
 import { expect, test } from '@playwright/test';
-import { openApp, menuItem, openZone, plateDetails, openLog } from '../helpers/app';
+import { openApp } from '../helpers/app';
+import { menuItem, openZone, plateDetails, openLog } from '../helpers/hud';
 import { drafts, hoverCard, hoverNothing, openHud, ui } from './harness';
 
 test.describe('hand fan (DESIGN "Specification: geometry, layout and motion", Screen layer)', () => {

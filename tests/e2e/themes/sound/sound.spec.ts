@@ -1,7 +1,7 @@
 // The theme's sound set under the viewer's Settings.sound (DESIGN "Themes and rendering", What a theme package
 // contains: "Sound: an optional set ..., off by default in Paper"; theme table, Dusk: "muted ambience"). The HUD root
 // says what plays: data-sound 'off', 'on' (waiting for a gesture) or 'playing' (the room tone runs).
-import { menuItem } from '../../helpers/app';
+import { menuItem } from '../../helpers/hud';
 import { expect, test, type Page } from '@playwright/test';
 import type { ThemeId } from '../../../../src/themes/index';
 import { freshProfile, openSolo } from '../../solo/helpers';

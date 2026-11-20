@@ -1,16 +1,16 @@
 <!--
   A player's plate (docs/design/m7-hud-proposal.md, My plate and Opponent plate; PLAN M7-P2 "life plates at seat
   edges"; DESIGN "Turn flow and confirmation", Life and player counters): a seat disc with the seat's colour and shape,
-  the name, life in large numerals (ui/design/LifePlate.svelte: click ± on hover, scrub by dragging, click to type,
+  the name, life in large numerals (ui/hud/LifePlate.svelte: click ± on hover, scrub by dragging, click to type,
   scroll), counters as chips only when not zero, and for another player the hand count. Rare things sit one step away
   under "⋯": every counter with ± and "+ counter", the player's piles with their counts, and "Look at this seat".
   States read without hue: a speaking ring, a dotted typing tag, "away", "asks", "responding".
 -->
 <script lang="ts">
   import type { Seat, ZoneId } from '../core/types';
-  import CounterChip from './design/CounterChip.svelte';
+  import CounterChip from './hud/CounterChip.svelte';
   import Icon from './design/Icon.svelte';
-  import LifePlate from './design/LifePlate.svelte';
+  import LifePlate from './hud/LifePlate.svelte';
 
   let {
     seat,

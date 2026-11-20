@@ -34,7 +34,8 @@ import { GEOMETRY } from '../../src/core/geometry';
 import { LISTED_THEME_IDS, SIGNALS, THEME_IDS, THEME_LABELS, contrastRatio, hudCssVars, loadTheme, lookOfTheme, type SignalId, type SignalSpec, type ThemeId } from '../../src/themes/index';
 import { lookCssVars } from '../../src/ui/design/css';
 import { changedFraction, crop, decodePng, encodePng, measurePair, unionRect, type PairMeasure, type Pixels, type Rect } from '../unit/themes/conformance/pixels';
-import { hook, menuItem } from './helpers/app';
+import { hook } from './helpers/app';
+import { menuItem } from './helpers/hud';
 import { chair, decklist, freshRoom, openTable, setNickname } from './lobby/helpers';
 import { freshProfile, openSolo } from './solo/helpers';
 

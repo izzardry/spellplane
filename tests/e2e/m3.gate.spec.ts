@@ -54,7 +54,8 @@ import type { SceneDebugCard } from '../../src/scene/table-scene';
 import type { TalkIndicatorState, TalkState, VoiceTrackState } from '../../src/voice/types';
 import { scan } from '../leak/scan';
 import { setsScript } from './flow/helpers';
-import { hook, shot, openZone, openLog } from './helpers/app';
+import { hook, shot } from './helpers/app';
+import { openZone, openLog } from './helpers/hud';
 import { chair, decklist, fixturesScript, freshRoom, setNickname, startPageLoaded } from './lobby/helpers';
 
 /** sid -> name and type line from the recorded fixtures. */

@@ -9,7 +9,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { SecretStore, TableState } from '../../../src/core/types';
 import type { CardFocus } from '../../../src/ui/a11y/index';
-import { hook, menuItem } from '../helpers/app';
+import { hook } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { sceneReady, soloTable } from './helpers';
 
 const focus = (page: Page) => hook<CardFocus | null>(page, 'a11y.focus');

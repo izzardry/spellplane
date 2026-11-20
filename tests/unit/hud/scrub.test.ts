@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { LIFE_SCRUB } from '../../../src/scene/types';
-import { LifeScrub, scrubSteps } from '../../../src/ui/design/scrub';
+import { LifeScrub, scrubSteps } from '../../../src/ui/hud/scrub';
 
 describe('life scrub', () => {
   it('counts one point per step of drag, up or right gaining, down or left losing', () => {

@@ -6,7 +6,7 @@
 -->
 <script lang="ts">
   import { tick } from 'svelte';
-  import Icon from './Icon.svelte';
+  import Icon from '../design/Icon.svelte';
   import { LifeScrub } from './scrub';
 
   let { life, name, readonly = false, size = 'large', onlife }: { life: number; name: string; readonly?: boolean; size?: 'large' | 'small'; onlife: (delta: number) => void } = $props();

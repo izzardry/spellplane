@@ -26,7 +26,8 @@ import type { NetMessageRecord } from '../../src/net/types';
 import type { DebugStackEntry } from '../../src/scene/stack';
 import type { SceneDebugCard } from '../../src/scene/table-scene';
 import { scan } from '../leak/scan';
-import { hook, shot, openZone } from './helpers/app';
+import { hook, shot } from './helpers/app';
+import { openZone } from './helpers/hud';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname } from './lobby/helpers';
 
 /** sid -> name and type line from the recorded fixtures. */

@@ -3,7 +3,7 @@
  * two-finger camera; PLAN Milestone 5, owner decisions, Tablet: iPad with Safari). A touch screen gets the gestures
  * instead of the hover keys, and the hint's button and the settings panel's controls are sized for thumbs.
  */
-import { menuItem } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { expect, test } from '@playwright/test';
 import { openHud } from '../ui/harness';
 

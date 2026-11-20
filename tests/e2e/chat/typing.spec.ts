@@ -7,7 +7,8 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import type { LogEntry } from '../../../src/core/types';
-import { hook, openLog } from '../helpers/app';
+import { hook } from '../helpers/app';
+import { openLog } from '../helpers/hud';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname, startPageLoaded } from '../lobby/helpers';
 
 async function watchFromStart(page: Page, profile: string, nickname: string, watchLink: string): Promise<void> {

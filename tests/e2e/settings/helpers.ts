@@ -2,7 +2,7 @@
  * Helpers for the M5-P5 browser tests: the settings harness page, a stubbed backs.scryfall.io (tests never use the
  * network; the official card back is served from a PNG made here), and opening the settings panel on the HUD harness.
  */
-import { menuItem } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { expect, type Page, type Route } from '@playwright/test';
 import zlib from 'node:zlib';
 

@@ -6,7 +6,8 @@
  * callout or magnifier, no double-tap zoom and no pull-to-refresh at the table, and safe-area insets are respected.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { hook, openZone } from '../helpers/app';
+import { hook } from '../helpers/app';
+import { openZone } from '../helpers/hud';
 import { IPAD, card, centre, fingers, holdDown, lastActions, path, radial, settled, state, tableWithCards, thumbBar, type Pt } from './helpers';
 
 test.skip(({ browserName }) => browserName !== 'webkit', 'the iPad is emulated in WebKit (PLAN M5, owner decisions)');

@@ -32,7 +32,8 @@ import type { SceneDebugCard } from '../../src/scene/table-scene';
 // The M4 gate covers the four M4 themes; the M7 looks have their own gate (M7-G).
 import { M4_THEME_IDS as THEME_IDS, THEME_LABELS, type M4ThemeId as ThemeId } from '../../src/themes/index';
 import { scan } from '../leak/scan';
-import { hook, shot, menuItem, openZone } from './helpers/app';
+import { hook, shot } from './helpers/app';
+import { menuItem, openZone } from './helpers/hud';
 import { chair, decklist, freshProfile, freshRoom, open, openTable, setNickname } from './lobby/helpers';
 import { openRender, rh, settle as settleRender } from './render/helpers';
 

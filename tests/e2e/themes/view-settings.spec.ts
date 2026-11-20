@@ -3,7 +3,8 @@
 // personal toggles, off by default; "Local persistence": quality and follow toggles are per-browser settings).
 // Behaviour is read from the debug hook's render and rig parts, never from pixels.
 import { expect, test, type Page } from '@playwright/test';
-import { hook, menuItem } from '../helpers/app';
+import { hook } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { freshProfile, openSolo } from '../solo/helpers';
 
 type Stats = { quality: string; theme: string; shadows: boolean; passes: string[] };

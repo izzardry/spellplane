@@ -5,7 +5,8 @@
  * table stays live under them.
  */
 import { expect, test } from '@playwright/test';
-import { openApp, menuItem } from '../helpers/app';
+import { openApp } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { drafts, hoverCard, openHud } from '../ui/harness';
 import { openHudSettings, openSettingsHarness } from './helpers';
 

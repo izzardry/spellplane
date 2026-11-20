@@ -71,12 +71,10 @@
     {/if}
   {:else}
     {#key st.games ?? 0}
-      <Hud session={props.session} createScene={props.createScene} faces={props.faces} cardData={props.cardData} game={props.game} {theme} settings={props.settings} parseDecklist={props.parseDecklist} evening={evening ?? undefined} />
+      <Hud session={props.session} createScene={props.createScene} faces={props.faces} cardData={props.cardData} game={props.game} {theme} settings={props.settings} parseDecklist={props.parseDecklist} />
     {/key}
   {/if}
-  <!-- In a match, "Next game" and "New draft" live in the HUD's Menu behind a confirmation (M7-P2; docs/design/
-       m7-hud-proposal.md, What goes away: the corner panel during play); the HUD's prompt answers their rounds. -->
-  {#if evening && stage === 'build'}
+  {#if evening && (stage === 'build' || stage === 'match')}
     <div class="evening" class:in-match={stage === 'match'}>
       <EveningBar session={props.session} {evening} state={st} answer={stage !== 'match'} />
     </div>

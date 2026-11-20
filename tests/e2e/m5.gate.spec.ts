@@ -43,7 +43,8 @@ import type { RadialMenuState, ThumbAction } from '../../src/ui/touch/actions';
 import { UPDATE_NOTICE } from '../../src/util/pwa';
 import type { VoiceTrackState } from '../../src/voice/types';
 import { packLeakScan } from '../leak/draft';
-import { hook, shot, menuItem, openZone, propose } from './helpers/app';
+import { hook, shot } from './helpers/app';
+import { menuItem, openZone, propose } from './helpers/hud';
 
 // --------------------------------------------------------------------------------------------------------------------
 // Fixtures and devices

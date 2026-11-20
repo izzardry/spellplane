@@ -42,7 +42,8 @@ import { columnOf, columnX } from '../../src/scene/builder';
 import type { SceneDebugCard } from '../../src/scene/table-scene';
 import type { BuilderSort } from '../../src/scene/types';
 import { packLeakScan } from '../leak/draft';
-import { hook, shot, propose } from './helpers/app';
+import { hook, shot } from './helpers/app';
+import { propose } from './helpers/hud';
 import { freshProfile, freshRoom, open, setNickname } from './lobby/helpers';
 
 const FIXTURE_CARDS = new Map<string, CardData>(

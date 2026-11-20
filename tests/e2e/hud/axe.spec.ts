@@ -5,7 +5,7 @@
  * the leave confirmation open as well as closed.
  */
 import { expect, test } from '@playwright/test';
-import { menuItem, openLog, plateDetails } from '../helpers/app';
+import { menuItem, openLog, plateDetails } from '../helpers/hud';
 import { seriousViolations } from '../a11y/helpers';
 import { open, startPageLoaded, freshProfile as lobbyProfile } from '../lobby/helpers';
 import { IPAD_PORTRAIT, LOOKS, soloWithDeck } from './helpers';

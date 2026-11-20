@@ -16,7 +16,8 @@ import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { CardInstance, SecretStore, TableState } from '../../src/core/types';
-import { hook, shot, menuItem, openZone } from './helpers/app';
+import { hook, shot } from './helpers/app';
+import { menuItem, openZone } from './helpers/hud';
 import { call, decklist, freshProfile, openSolo, waitForSession } from './solo/helpers';
 
 type ShownCard = {

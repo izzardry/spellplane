@@ -8,7 +8,7 @@
  * DESIGN "The effect stack" (Stack and confirmation, Resolving), "Turn flow and confirmation" (Confirmation rounds),
  * "Specification: network protocol and secrecy" (Timers).
  */
-import { openLog } from '../helpers/app';
+import { openLog } from '../helpers/hud';
 import { expect, test, type Page } from '@playwright/test';
 import type { Action, ActionDraft } from '../../../src/core/actions';
 import type { TableState } from '../../../src/core/types';

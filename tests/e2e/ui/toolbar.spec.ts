@@ -2,7 +2,7 @@
 // the topmost element at its centre, never under the turn strip centred above the table (the View button of M4-P1
 // made the row long enough to slide the theme button under the strip at 1440 px). M7-P2: the toolbar is Menu and
 // Undo; the look picker is one step away in the Menu.
-import { menuItem } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { expect, test } from '@playwright/test';
 import { freshProfile, openSolo } from '../solo/helpers';
 

@@ -7,7 +7,8 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { THEME_IDS, type ThemeId } from '../../../src/themes/index';
-import { hook, shot, menuItem } from '../helpers/app';
+import { hook, shot } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { freshProfile, openSolo } from '../solo/helpers';
 import { IPAD } from '../touch/helpers';
 import { SIDS, centre, clipCentre, clips, creature, dispatch, hover, idle, mouseDrag, pxPerMm, shown, state } from './helpers';

@@ -7,7 +7,8 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import type { InstanceId, TableState } from '../../../src/core/types';
-import { hook, menuItem } from '../helpers/app';
+import { hook } from '../helpers/app';
+import { menuItem } from '../helpers/hud';
 import { open } from '../lobby/helpers';
 import { decklist } from '../solo/helpers';
 import { IPAD_LANDSCAPE } from './helpers';

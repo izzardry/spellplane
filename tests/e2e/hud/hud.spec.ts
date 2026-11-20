@@ -5,7 +5,8 @@
  * or scrub; counters only when not zero; every function reachable without keys.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { hook, menuItem, openLog, openZone, plateDetails } from '../helpers/app';
+import { hook } from '../helpers/app';
+import { menuItem, openLog, openZone, plateDetails } from '../helpers/hud';
 import { call } from '../solo/helpers';
 import { drafts, openHud } from '../ui/harness';
 import { hudVar, LOOKS, soloWithDeck, state } from './helpers';

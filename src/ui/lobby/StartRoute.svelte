@@ -57,46 +57,24 @@
   const shown = $derived<StartPageHint | undefined>(startPageHint(storesFailed ? null : storageHint, welcome ? welcomeHint : { loaded: true, hint: null }));
 </script>
 
+<div class="hints" data-testid="start-hints" data-start-hint={shown ?? 'deciding'}>
+  {#if stores}<Hints settings={stores.settings} hints={['installHomeScreen', 'persistStorage']} onDecided={(h) => (storageHint = h)} />{/if}
+  {#if shown === 'welcome' && welcome}<Hint hints={welcome} placement="inline" />{/if}
+</div>
+
 {#if start}
-  <StartPage {...start} savedDecks={stores ? () => stores!.decks.list() : undefined} />
+  <StartPage {...start} />
 {:else}
-  <h1>Spellplane</h1>
+  <h1>Play with friends</h1>
   {#if error}<p role="alert">{error}</p>{/if}
 {/if}
-
-<!-- Housekeeping comes after play (critique, Start page 3): the one-time hints, then the connection check and storage. -->
-<footer class="housekeeping" aria-label="Housekeeping">
-  <div class="hints" data-testid="start-hints" data-start-hint={shown ?? 'deciding'}>
-    {#if stores}<Hints settings={stores.settings} hints={['installHomeScreen', 'persistStorage']} onDecided={(h) => (storageHint = h)} />{/if}
-    {#if shown === 'welcome' && welcome}<Hint hints={welcome} placement="inline" />{/if}
-  </div>
-  <p class="foot"><a href="#/diag">Check your connection</a></p>
-  {#if stores}
-    <details class="storage" data-testid="start-storage">
-      <summary>Storage and backup</summary>
-      <StoragePanel {stores} />
-    </details>
-  {/if}
-</footer>
+{#if stores}<div class="storage"><StoragePanel {stores} /></div>{/if}
 
 <style>
   .hints {
     display: contents;
   }
-  .housekeeping {
-    display: grid;
-    gap: var(--ds-space-md);
-    margin-top: var(--ds-space-xxl);
-    padding-top: var(--ds-space-lg);
-    border-top: 1px solid var(--ds-line);
-    font-size: var(--ds-type-small);
-    color: var(--ds-ink);
-  }
-  .foot {
-    margin: 0;
-  }
-  .storage summary {
-    cursor: pointer;
-    color: var(--ds-ink);
+  .storage {
+    margin-top: var(--sp-space-lg, 16px);
   }
 </style>

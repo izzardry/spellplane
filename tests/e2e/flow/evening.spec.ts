@@ -12,7 +12,8 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import type { DeckBuild, SecretStore, Stage, TableState } from '../../../src/core/types';
 import type { DraftPrivateView } from '../../../src/draft/types';
-import { hook, shot, propose } from '../helpers/app';
+import { hook, shot } from '../helpers/app';
+import { propose } from '../helpers/hud';
 import { freshProfile, freshRoom, open, twoPages } from '../lobby/helpers';
 import { setsScript } from './helpers';
 
