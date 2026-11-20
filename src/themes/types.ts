@@ -24,7 +24,7 @@ export { DEFAULT_MOTION } from '../core/geometry';
  * three themes of the redesign"); M7-P1 builds them. The four M4 themes stay registered but leave the picker
  * (themes/index.ts THEME_LISTED).
  */
-export type ThemeId = M4ThemeId | 'kitchen' | 'graphite' | 'codex';
+export type ThemeId = M4ThemeId | 'plain' | 'kitchen' | 'graphite' | 'codex'; // 'plain' added by M8-C (the fourth look's table world)
 
 /** The four M4 themes (DESIGN "Themes and rendering", theme table), registered but no longer in the picker from M7 on. Added by M7-C. */
 export type M4ThemeId = 'paper' | 'dusk' | 'wyrm' | 'stonetable';
@@ -34,13 +34,13 @@ export type M4ThemeId = 'paper' | 'dusk' | 'wyrm' | 'stonetable';
  * m7-directions.html: A Kitchen Table, B Graphite, C Codex). A look is the HUD's design tokens (ui/design/tokens.ts)
  * plus the 3D table world it maps to (LOOK_THEME). Stored per viewer in Settings.look. Added by M7-C.
  */
-export type LookId = 'kitchen' | 'graphite' | 'codex';
+export type LookId = 'plain' | 'kitchen' | 'graphite' | 'codex'; // 'plain' added by M8-C (m7-adjustments.md section 2; visual.md 2.2)
 
 /** The 3D theme each look renders the table with (PLAN Milestone 7, Owner decisions: "each look is built as a 3D table world"). Added by M7-C; M7-P1 builds the three themes. */
-export const LOOK_THEME: Readonly<Record<LookId, ThemeId>> = { kitchen: 'kitchen', graphite: 'graphite', codex: 'codex' };
+export const LOOK_THEME: Readonly<Record<LookId, ThemeId>> = { plain: 'plain', kitchen: 'kitchen', graphite: 'graphite', codex: 'codex' };
 
 /** The look a new viewer starts with (docs/design/m7-directions.html, comparison: Kitchen Table "replaces Paper as the friendly default"). Added by M7-C. */
-export const DEFAULT_LOOK: LookId = 'kitchen';
+export const DEFAULT_LOOK: LookId = 'plain'; // M8-C: Plain is the default look (PLAN Milestone 8, Decisions)
 
 /** Line dash pattern paired with a seat colour so nothing depends on hue alone (DESIGN "Input and interaction design", Accessibility). */
 export type SeatPattern = 'solid' | 'dash' | 'dot' | 'dash-dot' | 'long-dash' | 'dash-dot-dot' | 'double' | 'zigzag';

@@ -4,7 +4,9 @@
  * so at runtime every member may be missing until its owner registered it.
  */
 import type { Action } from '../core/actions';
-import type { DeckBuild, InstanceId, Line, Pose, SecretStore, TableState } from '../core/types';
+import type { DeckBuild, InstanceId, Line, Pose, QueueId, SecretStore, TableState } from '../core/types';
+import type { ComputerStatus, MatchmakerStatus } from '../session/types';
+import type { GameSummary } from '../store/types';
 import type { DraftPrivateView } from '../draft/types';
 import type { PeerId } from '../net/transport';
 import type { ConnectionStatus, NetMessageRecord, PeerInfo } from '../net/types';
@@ -43,6 +45,8 @@ export interface NetDebug {
   revive(): Promise<void>;
   /** Leave cleanly with `bye`, as closing the tab does. */
   close(): void;
+  /** Pin the networked session's clock at `now` ms (null: Date.now again), so specs drive product timers such as the 30 s away rule (PLAN M8 "Waiting in tests"). Added by M8-C. */
+  setClock?(now: number | null): void;
 }
 
 /**
@@ -226,6 +230,48 @@ export interface SpellplaneDebug {
   affordances(): AffordanceDebugState;
   /** Added by M7-C: the gesture coach marks (M7-P5). */
   coach: CoachDebug;
+  /** Added by M8-C: the matchmaker (debug/mm.ts; M8-P7). */
+  mm: MmDebug;
+  /** Added by M8-C: the computer opponent (debug/bot.ts; M8-P6). */
+  bot: BotDebug;
+  /** Added by M8-C: the deck library (debug/decks.ts; M8-P3). */
+  decks: DecksDebug;
+  /** Added by M8-C: History's games store (debug/games.ts; M8-P2). */
+  games: GamesDebug;
+  /** Added by M8-C: Home (debug/home.ts; M8-P2). */
+  home: HomeDebug;
+}
+
+/** The matchmaker part (matchmaking.md 2.13; PLAN M8-P7 e2e: `mm.seek(...)`, `mm.tick(ms)`). M8-P7 may add members. Added by M8-C. */
+export interface MmDebug {
+  status(): MatchmakerStatus;
+  seek(config: { queues: QueueId[]; deckId: string }): void;
+  cancel(): void;
+  answer(accept: boolean): void;
+  /** Advance the matchmaker's clock by `ms` (its timers: the ready ring, the alone text, the window rows). */
+  tick(ms: number): void;
+}
+
+/** The computer opponent part (computer.md 10). M8-P6 fills it. Added by M8-C. */
+export interface BotDebug {
+  /** The bot's status, null without a computer game. */
+  status(): ComputerStatus | null;
+}
+
+/** The deck library part (decks.md; PLAN M8-P3: `decks.edit(id, …)` answers `notInPool`). M8-P3 fills it. Added by M8-C. */
+export interface DecksDebug {
+  list(): Promise<{ id: string; name: string }[]>;
+}
+
+/** History's games store (persistence.md section 3). M8-P2 fills it. Added by M8-C. */
+export interface GamesDebug {
+  list(): Promise<GameSummary[]>;
+}
+
+/** Home (journey.md 4.1). M8-P2 fills it. Added by M8-C. */
+export interface HomeDebug {
+  /** The route shown (`home` on Home). */
+  route(): string;
 }
 
 // Types registerDebug (util/debug.ts) against SpellplaneDebug without util/ importing debug/.

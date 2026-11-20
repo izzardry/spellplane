@@ -222,7 +222,7 @@ test.describe('one settings panel', () => {
     await page.locator('[data-testid="key-row"][data-action="tap"]').getByTestId('key-change').click();
     await page.keyboard.press('KeyJ');
     await expect(page.locator('[data-testid="key-row"][data-action="tap"]').getByTestId('key-current')).toHaveText(['J']);
-    await page.goto(page.url().replace(/#.*$/, '#/'));
+    await page.goto(page.url().replace(/#.*$/, '#/solo'));
     await expect(page.getByTestId('hud')).toBeVisible();
     await page.getByTestId('open-cheat-sheet').click();
     await expect(page.locator('[data-testid="cheat-row"][data-action="tap"]').getByTestId('cheat-key')).toHaveText(['J']);

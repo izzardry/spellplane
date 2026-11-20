@@ -136,6 +136,8 @@ interface Voice {
 }
 
 const VOICES: Readonly<Record<LookId, Voice>> = {
+  // Plain, the default look: neutral and quiet, a card on a mat.
+  plain: { thump: { from: 200, to: 100, decay: 0.08, peak: 0.16 }, paper: { type: 'lowpass', freq: 2400, q: 0.7, peak: 0.1 }, click: { type: 'sine', freq: 1300, peak: 0.09 } },
   // Warm wood: low bodies, a soft card hiss.
   kitchen: { thump: { from: 190, to: 85, decay: 0.12, peak: 0.22 }, paper: { type: 'lowpass', freq: 1700, q: 0.7, peak: 0.12 }, click: { type: 'triangle', freq: 900, peak: 0.1 } },
   // Clean and precise: short high clicks, little body.
@@ -190,6 +192,7 @@ function feelSet(v: Voice, seed: number): Required<Pick<SoundSet, FeelCue | 'sli
 
 /** Every look's synthesised card-feel cues (M7-P4). */
 export const LOOK_FEEL_SOUNDS: Readonly<Record<LookId, SoundSet>> = {
+  plain: feelSet(VOICES.plain, 5),
   kitchen: feelSet(VOICES.kitchen, 11),
   graphite: feelSet(VOICES.graphite, 23),
   codex: feelSet(VOICES.codex, 37),

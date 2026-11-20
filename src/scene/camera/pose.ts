@@ -99,3 +99,13 @@ export function targetFor(pitchDeg: number, dist: number, fovDeg: number, angleD
   const q = unprojectToTable(poseAt({ x: 0, y: 0 }, dist, pitchDeg, fovDeg, angleDeg), angleDeg, vp, s.x, s.y);
   return q ? { x: a.x - q.x, y: a.y - q.y } : null;
 }
+
+/**
+ * The settled camera pose at `tilt` (0 first person, 1 bird's-eye) for `seat`'s view of `layout` (m7-adjustments.md
+ * section 2; PLAN M8-C HUD and scene seam: `poseAt(tilt, layout, seat)`). Named `poseAtTilt` because `poseAt` above is
+ * the pose builder the rigs share. Stub by M8-C: a fixed bird's-eye pose over the table centre; M7-P1 implements it.
+ */
+export function poseAtTilt(_tilt: number, layout: { table: { w: number; d: number } }, _seat: string | null): CameraPose {
+  const span = Math.max(layout.table.w, layout.table.d);
+  return poseAt({ x: 0, y: 0 }, span * 1.2, 90, 35, 0);
+}

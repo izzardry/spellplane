@@ -190,6 +190,8 @@ export interface TableSceneOptions {
   motion?: MotionSettings;
   /** Added by M8-C (m7-adjustments.md section 2): look, do not touch: the scene proposes no action; camera, hover, inspect and selection still work. M7-P5. */
   readOnly?: boolean;
+  /** Added by M8-C (m7-adjustments.md section 2): the camera starts at this tilt and springs to the stored one (later; M7-P1). */
+  enterFrom?: { tilt: number };
 }
 
 /** Camera rig name (DESIGN "Camera and navigation"). */
@@ -461,6 +463,27 @@ export interface RenderDebug {
    * demand)"): a test reads it twice across an idle wait and expects no change. Implemented by the table scene.
    */
   framesDrawn?(): number;
+  /** Added by M8-C (contracts.md Part C): live WebGL contexts, `live().contexts` of src/util/lifecycle.ts. */
+  liveContexts?(): number;
+  /** Added by M8-C (contracts.md Part C): what disposed renderers still held and every live count. */
+  memory?(): RenderMemory;
+}
+
+/** The lifecycle counters as the render part reports them (contracts.md Part C: `{ ...residue(), ...live() }`). Added by M8-C. */
+export interface RenderMemory {
+  geometries: number;
+  textures: number;
+  programs: number;
+  disposals: number;
+  contexts: number;
+  sessions: number;
+  engines: number;
+  transports: number;
+  audioContexts: number;
+  workers: number;
+  rafLoops: number;
+  botRunners: number;
+  timers: number;
 }
 
 /** The rig part of the debug hook (`window.__spellplane.rig`): camera rig, blend and follow toggles. Registered by the table scene; M4-P1's. Added by M4-C. */
