@@ -7,7 +7,7 @@
  * into the hand draws, hand cards dragged out of the fan play and cast, double-tap taps, a tapped card's strip (thumb
  * sized) taps, untaps, counts and buries, a creature pushed forward attacks. State through the debug hook only.
  */
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { IPAD, doubleTap, fingers, path, type Step } from '../touch/helpers';
 import { affordances, cardIn, centreOf, goldfish, handIds, handPoint, keydowns, pileCentre, pointerdowns, secrets, settledTable, shownCard, shuffles, state, tableToScreen, type Pt } from './helpers';
 
@@ -18,7 +18,7 @@ test.use(IPAD);
 const slide = (a: Pt, b: Pt, n = 10): Step[] => [{ type: 'down', id: 1, ...a }, ...path(1, a, b, n), { type: 'up', id: 1, ...b }];
 
 /** A hand card dragged out of the fan by one finger: straight up first (a sideways start scrolls the fan), then across. */
-async function fanOut(page: import('@playwright/test').Page, id: string, to: Pt): Promise<void> {
+async function fanOut(page: Page, id: string, to: Pt): Promise<void> {
   const from = await handPoint(page, id);
   const vp = page.viewportSize()!;
   const up = { x: from.x, y: Math.round(from.y - vp.height * 0.2) };

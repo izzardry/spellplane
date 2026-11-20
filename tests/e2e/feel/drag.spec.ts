@@ -41,6 +41,8 @@ test('a picked-up card lifts and leans into its motion; released it lands where 
   let maxSway = 0;
   for (let i = 1; i <= 10; i++) {
     await page.mouse.move(a.x + i * 30, a.y);
+    // Read after the scene drew the move (its follow spring and the lean are stepped per frame, in every browser).
+    await page.evaluate(() => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r()))));
     const m = await motion(page);
     expect(m.held?.card).toBe('a');
     maxSway = Math.max(maxSway, Math.abs(m.held!.swayDeg));
