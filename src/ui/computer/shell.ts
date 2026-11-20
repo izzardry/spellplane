@@ -5,6 +5,7 @@
  * pause while the page is hidden. ComputerRoute.svelte renders these into the frame's slots once the frame lands on
  * `m8` (M8-C's UI commit); until then this module is the tested part of the route.
  */
+import { damageCounted } from '../../bot/cues';
 import { CUE_LABELS } from '../../bot/types';
 import type { ComputerHandle, TableSession } from '../../session/types';
 
@@ -22,9 +23,31 @@ export const COMPUTER_BADGE = 'COMPUTER';
 
 let rounds = 0;
 
-/** The primary-button override for the current cue (computer.md 5.3): dispatches the cue as an ordinary logged `ask`. */
-export function cueButton(session: TableSession, handle: Pick<ComputerHandle, 'combat'>): CueButton | null {
+/** The label of the step after a counted combat (computer.md 5.3). */
+export const MAIN2_LABEL = 'Main 2';
+
+/**
+ * The primary-button override for the current cue (computer.md 5.3): dispatches the cue as an ordinary logged `ask`;
+ * once Sparring counted the human's combat, `Main 2` settles the human's displaced cards and goes to main 2.
+ */
+export function cueButton(session: TableSession, handle: Pick<ComputerHandle, 'combat' | 'seat'>): CueButton | null {
   const cue = handle.combat();
+  const me = session.seat;
+  if (!cue && me && damageCounted(session.getState(), session.log(), me, handle.seat)) {
+    return {
+      label: MAIN2_LABEL,
+      run() {
+        const st = session.getState();
+        const mine = Object.values(st.cards)
+          .filter((c) => c.controller === me && c.home !== undefined)
+          .map((c) => c.id)
+          .sort();
+        const group = `${me}.main2${st.seq}.${++rounds}`;
+        if (mine.length > 0) session.dispatch({ type: 'settle', cards: mine, group });
+        if (st.turn.active === me && st.turn.phase !== 'main2') session.dispatch({ type: 'phaseSet', phase: 'main2', group });
+      },
+    };
+  }
   if (!cue) return null;
   return {
     label: cue.label,
@@ -54,9 +77,9 @@ export function plateItems(session: TableSession, handle: ComputerHandle): Plate
   ];
 }
 
-/** Whether the coach mark shows: a cue is offered and the profile has not seen it (once per profile). */
+/** Whether the coach mark shows: the Attack cue is offered and the profile has not seen the mark (once per profile). */
 export function coachDue(cue: CueButton | null, seen: readonly string[]): boolean {
-  return cue !== null && !seen.includes('coachSparring');
+  return cue !== null && cue.label === CUE_LABELS.attack && !seen.includes('coachSparring');
 }
 
 /** Pause Sparring while the page is hidden; resume 500 ms after it is visible again (computer.md section 6). Returns the stop function. */

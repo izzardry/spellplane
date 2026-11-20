@@ -43,6 +43,14 @@ describe('computer route shell', () => {
     cueButton(human, game.handle)!.run();
     expect(Object.values(human.getState().cards).some((c) => c.controller === 's1' && c.zone === 'battlefield:s1')).toBe(false);
     await until(() => human.getState().seats.s1!.life === before - power, 20_000, 'the booking');
+    // The combat was counted: Main 2 brings the attacker home (settle) and goes to main 2.
+    const main2 = cueButton(human, game.handle);
+    expect(main2?.label).toBe('Main 2');
+    expect(coachDue(main2, [])).toBe(false);
+    main2!.run();
+    await until(() => human.engine.pending().length === 0, 10_000, 'the settle');
+    expect(human.getState().cards[creature!]!.combat).toBeUndefined();
+    expect(human.getState().turn.phase).toBe('main2');
     expect(cueButton(human, game.handle)).toBeNull();
     const items = plateItems(human, game.handle);
     expect(items.map((i) => i.label)).toEqual(['Pause Sparring', 'Sparring concedes']);

@@ -40,6 +40,8 @@ export interface ComputerHarnessApi {
   remount(): void;
   /** Hashes the route navigated to. */
   went(): string[];
+  /** The names of the cards in Sparring's hand (read from the bot session, for the hidden-information check only). */
+  botHandNames(): string[];
 }
 
 declare global {
@@ -139,6 +141,16 @@ export function mount(target: HTMLElement): void {
     live: () => ({ ...live() }),
     remount: () => show('table'),
     went: () => [...went],
+    botHandNames: () => {
+      const bot = (current?.handle as { __bot?: { secrets(): { hand: string[]; identities: Record<string, { card: { sid: string } }> } } } | undefined)?.__bot;
+      if (!bot || shown !== 'table') return [];
+      const sec = bot.secrets();
+      return sec.hand.flatMap((id) => {
+        const sid = sec.identities[id]?.card.sid;
+        const name = sid ? cardData.peek(sid)?.name : undefined;
+        return name ? [name] : [];
+      });
+    },
   };
   show('table');
 }

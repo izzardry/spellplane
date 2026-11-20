@@ -52,7 +52,9 @@ export function combatCue(state: TableState, log: readonly LogEntry[], human: Se
   if (state.result !== undefined || state.stage !== 'match') return null;
   const window = turnWindow(actionsOf(log));
   const declared = (seat: SeatId): number => lastIndex(window, (a) => a.type === 'moveTemp' && a.by === seat && a.combat === 'attack');
-  if (attackersOf(state, human).length > 0) {
+  // Sparring's attack on its own turn comes first: a card of the human's still marked from its last combat is no attack.
+  const botAttacks = attackersOf(state, bot).length > 0 && state.turn.active !== human;
+  if (attackersOf(state, human).length > 0 && !botAttacks) {
     const from = Math.max(0, declared(human));
     const attack = lastIndex(window, (a) => isCue(a, human, 'attack'), from);
     const damage = lastIndex(window, (a) => isCue(a, human, 'damage'), Math.max(from, attack));
@@ -70,4 +72,21 @@ export function combatCue(state: TableState, log: readonly LogEntry[], human: Se
     return { kind: 'blocksDone', label: blocking ? 'Done blocking' : 'No blocks' };
   }
   return null;
+}
+
+/**
+ * Whether the human's combat was counted: its cards are still marked attacking and Sparring answered a `Damage` cue
+ * asked after they were declared this turn. The primary button then offers `Main 2` (settle, then main 2; computer.md
+ * 5.3).
+ */
+export function damageCounted(state: TableState, log: readonly LogEntry[], human: SeatId, bot: SeatId): boolean {
+  if (state.result !== undefined || state.stage !== 'match' || attackersOf(state, human).length === 0) return false;
+  if (attackersOf(state, bot).length > 0 && state.turn.active !== human) return false;
+  const window = turnWindow(actionsOf(log));
+  const from = Math.max(0, lastIndex(window, (a) => a.type === 'moveTemp' && a.by === human && a.combat === 'attack'));
+  const damage = lastIndex(window, (a) => isCue(a, human, 'damage'), from);
+  if (damage < 0) return false;
+  const round = (window[damage] as ActionOf<'ask'>).round;
+  const open = state.confirm;
+  return !(open !== null && open.id === round && open.responses[bot] === undefined);
 }

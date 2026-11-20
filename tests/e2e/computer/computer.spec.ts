@@ -27,6 +27,8 @@ interface View {
   hand: number;
   result: { winners: string[] } | null;
   confirm: { id: string; askedBy: string; responses: Record<string, string> } | null;
+  /** Sparring's steps since the game was opened (or resumed). */
+  steps: number;
 }
 
 /** The table as the human session sees it. */
@@ -41,6 +43,7 @@ const view = (page: Page): Promise<View> =>
       hand: window.__spellplane!.secrets!().hand.length,
       result: s.result ? { winners: s.result.winners } : null,
       confirm: s.confirm ? { id: s.confirm.id, askedBy: s.confirm.askedBy, responses: { ...s.confirm.responses } } as View['confirm'] : null,
+      steps: window.__spellplane!.bot!.steps(),
     };
   });
 
@@ -108,24 +111,22 @@ test.describe('Sparring on the computer harness', () => {
         return s.zones['hand:s1']!.ids.filter((id) => sec.identities[id] !== undefined || s.cards[id]?.identity !== undefined);
       });
       expect(leak).toEqual([]);
-    });
-
-    await test.step('Sparring plays a land on its turn', async () => {
-      const v = await view(page);
-      if (v.active === 's0') await page.evaluate(() => window.__spellplane!.dispatch!({ type: 'turnPass', to: 's1' } as never));
-      await drive(page, (x) => x.cards.some((c) => c.zone === 'battlefield:s1' && c.owner === 's1'), 'a land on its battlefield');
-      await drive(page, (x) => x.active === 's0', 'passing the turn back');
-      expect(await steps(page)).toBeGreaterThan(3);
+      // No text on the page names a card of Sparring's hand (computer.md 12.1 scenario 5; Sparring is red, you are green).
+      const names = await page.evaluate(() => window.__computerHarness!.botHandNames());
+      expect(names).toHaveLength(7);
+      const text = await page.evaluate(() => document.body.innerText);
+      for (const n of names) expect(text, n).not.toContain(n);
     });
 
     let attacker = { id: '', power: 0 };
-    await test.step('marking an attacker in main 1 offers ATTACK, with the coach mark once', async () => {
+    await test.step('marking an attacker before any combat step offers ATTACK, with the coach mark once', async () => {
+      // Sparring has nothing on the battlefield yet, so it cannot block and the damage is the attacker's power.
       attacker = await creatureInHand(page);
       await page.evaluate((id) => window.__spellplane!.dispatch!({ type: 'move', card: id, to: 'battlefield:s0', pose: { x: -60, y: -300, rot: 0 } } as never), attacker.id);
       await expect.poll(async () => (await view(page)).cards.find((c) => c.id === attacker.id)?.zone).toBe('battlefield:s0');
       await expect(cueShown(page, /attack/i)).toHaveCount(0);
       await page.evaluate((id) => window.__spellplane!.dispatch!({ type: 'moveTemp', card: id, pose: { x: -60, y: -150, rot: 0 }, combat: 'attack', tap: true } as never), attacker.id);
-      expect((await view(page)).phase).not.toBe('combat');
+      expect((await view(page)).phase).not.toBe('combat'); // any phase (contracts.md Part G "Computer opponent" item 1)
       await expect(primary(page)).toHaveText(/attack/i);
       await expect(page.getByTestId('coach-sparring')).toContainText('Press ATTACK so Sparring can block and count the damage.');
       await primary(page).click();
@@ -138,8 +139,24 @@ test.describe('Sparring on the computer harness', () => {
       await expect(primary(page)).toHaveText(/damage/i);
       await primary(page).click();
       const after = await drive(page, (x) => x.life.s1 !== before, 'booking the damage');
+      expect(after.cards.filter((c) => c.controller === 's1' && c.combat === 'block')).toEqual([]);
       expect(after.life.s1).toBe(before - attacker.power);
       await expect(cueShown(page, /damage|attack/i)).toHaveCount(0);
+      // The combat was counted: Main 2 brings the attacker home and moves on.
+      await expect(primary(page)).toHaveText(/main 2/i);
+      await primary(page).click();
+      await expect.poll(async () => (await view(page)).cards.find((c) => c.id === attacker.id)?.combat ?? null).toBeNull();
+      const now = await view(page);
+      if (now.active === 's0') expect(now.phase).toBe('main2');
+      await expect(cueShown(page, /main 2/i)).toHaveCount(0);
+    });
+
+    await test.step('Sparring plays a land on its turn', async () => {
+      const v = await view(page);
+      if (v.active === 's0') await page.evaluate(() => window.__spellplane!.dispatch!({ type: 'turnPass', to: 's1' } as never));
+      await drive(page, (x) => x.cards.some((c) => c.zone === 'battlefield:s1' && c.owner === 's1'), 'a land on its battlefield');
+      await drive(page, (x) => x.active === 's0', 'passing the turn back');
+      expect(await steps(page)).toBeGreaterThan(3);
     });
 
     let saved: string | null = null;
@@ -161,8 +178,8 @@ test.describe('Sparring on the computer harness', () => {
       await expect.poll(() => page.evaluate(() => window.__spellplane!.bot!.active())).toBe(true);
       await expect.poll(() => hash(page)).toBe(saved);
       await page.evaluate(() => window.__spellplane!.dispatch!({ type: 'turnPass', to: 's1' } as never));
-      await drive(page, (x) => x.active === 's1' && x.phase !== 'untap', 'Sparring taking its turn');
-      expect(await steps(page)).toBeGreaterThan(0);
+      expect(await steps(page)).toBe(0);
+      await drive(page, (x) => x.active === 's1' && x.steps > 0, 'Sparring taking its turn');
       await drive(page, (x) => x.active === 's0' || x.cards.some((c) => c.controller === 's1' && c.combat === 'attack'), 'Sparring finishing its turn or attacking');
       if ((await view(page)).active === 's1') {
         // Sparring attacks: the cue is Blocks done; no block from the human.
