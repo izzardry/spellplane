@@ -1039,7 +1039,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M7-P1 Table worlds, tilt and the arena still (with M7-P3 and the lifecycle part of M7-P6)
 - [x] M7-P2 Table HUD and in-table panels
 - [x] M7-P5 Card feel and play without keys (with M7-P4)
-- [ ] M8-P1 Ztyle kit
+- [x] M8-P1 Ztyle kit
 - [x] M8-P2 Shell, Home and History
 - [x] M8-P3 Decks
 - [x] M8-P4 Private tables and the end of a game
