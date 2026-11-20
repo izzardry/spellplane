@@ -31,6 +31,7 @@
   import StatusLine from '../design/StatusLine.svelte';
   import DeckPickerSheet from '../decks/DeckPickerSheet.svelte';
   import BoosterSetupSheet from '../decks/BoosterSetupSheet.svelte';
+  import { EMPTY_STATES } from '../empty/states';
   import { ConnectivityCheck, type ConnectivityReport } from './connectivity';
   import { pastedDeckId, readyVerdict } from './ready';
   import SpectatorPanel from './SpectatorPanel.svelte';
@@ -643,11 +644,14 @@
       </div>
 
       {#if report.problems.length}
-        <section class="calm" role="status" data-testid="connectivity-problem">
-          {#each report.problems as p (p.kind + (p.peer ?? ''))}<p class="ds-t-reading">{p.text}</p>{/each}
+        <section class="calm" role="alert" data-testid="connectivity-problem">
+          {#each report.problems as p (p.kind + (p.peer ?? ''))}
+            <!-- The shared empty and error states (ui/empty/states.ts) title the relay and no-peer cases. -->
+            <p class="ds-t-reading">{#if p.kind === 'relays'}<strong>{EMPTY_STATES.relayUnreachable.title}.</strong> {:else if p.kind === 'alone'}<strong>{EMPTY_STATES.noPeers.title}.</strong> {/if}{p.text}</p>
+          {/each}
         </section>
       {:else if report.notice}
-        <p class="calm ds-t-reading" role="status" data-testid="connectivity-waiting">{report.notice}</p>
+        <p class="calm ds-t-reading" role="status" data-testid="connectivity-waiting"><strong>{EMPTY_STATES.noPeers.title}.</strong> {report.notice}</p>
       {/if}
 
       <section class="you" aria-label="Name and seat colour" data-testid="lobby-you">
@@ -670,9 +674,9 @@
             {#each Array.from({ length: SEAT_COLOURS }, (_, i) => i) as c (c)}
               {@const sc = seatColours[c]}
               {@const takenBy = colourTakenBy(st, c, mySeat)}
-              <label class="swatch" title={takenBy ? `Taken by ${st.seats[takenBy]?.name}` : `Colour ${c + 1}`}>
+              <label class="swatch" style:--seat={sc?.colour ?? 'currentColor'} title={takenBy ? `Taken by ${st.seats[takenBy]?.name}` : `Colour ${c + 1}`}>
                 <input type="radio" name="seat-colour" value={c} checked={me?.colour === c} disabled={takenBy !== null} data-testid="colour" data-colour={c} onchange={() => pickSeatColour(c)} />
-                <span class="dot" style:background={sc?.colour ?? 'currentColor'} aria-hidden="true"></span>
+                <span class="dot" aria-hidden="true"></span>
                 <span class="ds-sr-only">Colour {c + 1}{takenBy ? `, taken by ${st.seats[takenBy]?.name}` : ''}</span>
               </label>
             {/each}
@@ -1062,6 +1066,7 @@
     width: 20px;
     height: 20px;
     border-radius: 50%;
+    background: var(--seat);
   }
   .swatch input {
     position: absolute;
