@@ -5,7 +5,7 @@
  * the leave confirmation open as well as closed.
  */
 import { expect, test } from '@playwright/test';
-import { openLog, plateDetails } from '../helpers/hud';
+import { openLog, plateDetails, settled } from '../helpers/hud';
 import { seriousViolations } from '../a11y/helpers';
 import { IPAD_PORTRAIT, LOOKS, setLook, soloWithDeck } from './helpers';
 
@@ -13,15 +13,19 @@ for (const look of LOOKS) {
   test.describe(`axe in ${look}`, () => {
     test('the table HUD: resting, with the Menu, the log drawer and a plate open', async ({ page }, info) => {
       await soloWithDeck(page, info, { hand: 7, look });
+      await settled(page);
       expect(await seriousViolations(page)).toEqual([]);
       await page.getByTestId('open-menu').click();
       await expect(page.getByTestId('menu-popover')).toBeVisible();
+      await settled(page);
       expect(await seriousViolations(page)).toEqual([]);
       await page.keyboard.press('Escape');
       await openLog(page);
+      await settled(page);
       expect(await seriousViolations(page)).toEqual([]);
       await page.getByTestId('close-log').click();
       await plateDetails(page, 's0');
+      await settled(page);
       expect(await seriousViolations(page)).toEqual([]);
     });
   });
@@ -33,6 +37,7 @@ test.describe('axe on an iPad', () => {
     await soloWithDeck(page, info, { hand: 7 });
     for (const look of LOOKS) {
       await setLook(page, look);
+      await settled(page);
       expect(await seriousViolations(page)).toEqual([]);
     }
   });

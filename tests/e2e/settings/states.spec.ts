@@ -52,9 +52,10 @@ test.describe('empty and error states in the settings harness', () => {
 });
 
 test.describe('empty and error states on the table (HUD harness)', () => {
-  test('no deck: an inline notice offers the deck import, can be dismissed, and goes once cards are there', async ({ page }) => {
+  // M7-P2 (docs/design/m8/m7-adjustments.md D7): the HUD's no-deck line, "No deck on this table." with "Choose a deck".
+  test('no deck: an inline line offers the deck import and goes once cards are there', async ({ page }) => {
     await openHud(page);
-    await expect(page.locator('[data-testid="empty-state"][data-state="noDeck"]')).toHaveCount(0);
+    await expect(page.getByTestId('no-deck')).toHaveCount(0);
     await page.evaluate(() =>
       window.__uiHarness!.update((s, sec) => {
         sec.hand = [];
@@ -67,14 +68,19 @@ test.describe('empty and error states on the table (HUD harness)', () => {
         }
       }),
     );
-    const notice = page.locator('[data-testid="empty-state"][data-state="noDeck"]');
-    await expect(notice).toBeVisible();
+    const notice = page.getByTestId('no-deck');
+    await expect(notice).toContainText('No deck on this table.');
     await notice.getByTestId('empty-import-deck').click();
     await expect(page.getByTestId('deck-import')).toBeVisible();
     await expect(notice).toHaveCount(0);
     await page.getByTestId('deck-import').getByRole('button', { name: 'Close' }).click();
     await expect(notice).toBeVisible();
-    await notice.getByTestId('empty-state-dismiss').click();
+    await page.evaluate(() =>
+      window.__uiHarness!.update((s) => {
+        s.cards['back1'] = { ...Object.values(s.cards)[0]!, id: 'back1', owner: 's0', zone: 'graveyard:s0' };
+        s.zones['graveyard:s0']!.ids.push('back1');
+      }),
+    );
     await expect(notice).toHaveCount(0);
   });
 

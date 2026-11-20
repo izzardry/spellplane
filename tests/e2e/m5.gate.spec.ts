@@ -1343,7 +1343,8 @@ test.describe('M5 gate @gate', () => {
       });
       await R.step('empty state on the table: no deck offers the deck import', async () => {
         await page.goto(`./?faces=placeholder&profile=${fresh(info, 'empty')}`);
-        await expect(page.locator('[data-testid="empty-state"][data-state="noDeck"]')).toBeVisible({ timeout: 20_000 });
+        // M7-P2: the HUD's no-deck line (docs/design/m8/m7-adjustments.md D7).
+        await expect(page.getByTestId('no-deck')).toBeVisible({ timeout: 20_000 });
         await shot(page, 'M5', 'empty-state-no-deck-table', project);
       });
       await context.close();

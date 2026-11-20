@@ -55,6 +55,7 @@ const FOREIGN = '.talk-cluster, .thumbs, [data-testid="hand"], [data-testid="hin
  * skipping other packages' components mounted inside the HUD.
  */
 export async function offSizes(page: Page): Promise<string[]> {
+  await settled(page);
   return page.getByTestId('hud').evaluate((root, foreign) => {
     const css = getComputedStyle(root);
     const heights = ['xs', 'sm', 'md', 'lg'].map((k) => parseFloat(css.getPropertyValue(`--ds-control-${k}`)));
@@ -71,3 +72,8 @@ export async function offSizes(page: Page): Promise<string[]> {
   }, FOREIGN);
 }
 
+
+/** Wait until no finite animation or transition runs (a popover's entering scale, a button's eased colour). */
+export async function settled(page: Page): Promise<void> {
+  await page.waitForFunction(() => document.getAnimations().filter((a) => a.playState === 'running' && a.effect?.getComputedTiming().iterations !== Infinity).length === 0);
+}
