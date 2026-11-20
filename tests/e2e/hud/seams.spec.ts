@@ -114,14 +114,32 @@ test.describe('HudShellProps on ?harness=ui', () => {
   });
 
   test('status: renders under the tracker and takes no height when empty', async ({ page }) => {
+    // Ben's plate sits in the row under the tracker (the harness scene reports no seat edges): what follows the status.
+    const row = page.locator('.plates-row');
+    const rowTop = async () => (await row.boundingBox())!.y;
+    const without = await rowTop();
     await setShell(page, { status: 'line' });
     await expect(page.getByTestId('fixture-status')).toBeVisible();
     const tracker = (await page.getByTestId('turn-strip').boundingBox())!;
-    const status = (await page.getByTestId('hud-status').boundingBox())!;
+    const status = (await page.getByTestId('fixture-status').boundingBox())!;
     expect(status.y).toBeGreaterThanOrEqual(tracker.y + tracker.height - 1);
+    expect(await rowTop()).toBeGreaterThan(without);
+    // A status that renders nothing visible adds neither height nor a gap: the row returns to where it was.
     await setShell(page, { status: 'empty' });
-    const h = await page.getByTestId('hud-status').evaluate((el) => el.getBoundingClientRect().height);
-    expect(h).toBe(0);
+    await expect(page.getByTestId('fixture-status')).toHaveCount(0);
+    await expect.poll(rowTop).toBe(without);
+  });
+
+  test("notice: shows under chrome 'plates' too, and a HUD toast still shows beside it", async ({ page }) => {
+    await setShell(page, { chrome: 'plates', notice: { id: 7, text: 'Ben left the table. The game is saved.' } });
+    await expect(page.getByTestId('hud-notice')).toContainText('Ben left the table.');
+    await setShell(page, { chrome: 'full' });
+    await expect(page.getByTestId('hud-notice')).toContainText('Ben left the table.');
+    // A HUD toast while the notice shows ("Revealed your hand to Ben"): both are on screen.
+    await plate(page, 's1').getByTestId('plate-more').click();
+    await plate(page, 's1').getByTestId('plate-reveal-hand').click();
+    await expect(page.getByTestId('toast')).toContainText('Revealed your hand to Ben');
+    await expect(page.getByTestId('hud-notice')).toBeVisible();
   });
 
   test('notice: shows once per id, and its action runs', async ({ page }) => {
@@ -148,6 +166,13 @@ test.describe('HudShellProps on ?harness=ui', () => {
     await expect(page.getByTestId('fixture-status')).toBeVisible();
     await plate(page, 's1').getByTestId('plate-more').click();
     await expect(plate(page, 's1').getByTestId('fixture-plate-menu-top')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(plate(page, 's1').getByTestId('plate-details')).toHaveCount(0);
+    // No hand, Undo or primary is shown, so no key acts behind them: D, U and Ctrl+Enter do nothing.
+    await page.evaluate(() => window.__uiHarness!.clear());
+    await page.evaluate(() => window.__uiHarness!.hover('bf1'));
+    for (const k of ['KeyD', 'KeyU', 'KeyT', 'Control+Enter']) await page.keyboard.press(k);
+    expect(await page.evaluate(() => window.__uiHarness!.actions().length + window.__uiHarness!.calls().length)).toBe(0);
   });
 
   test('readOnly: no primary button and no Undo; the Menu still opens; life cannot be changed', async ({ page }) => {
@@ -166,6 +191,69 @@ test.describe('HudShellProps on ?harness=ui', () => {
     await page.keyboard.press('u');
     expect(await page.evaluate(() => window.__uiHarness!.actions().length + window.__uiHarness!.calls().length)).toBe(0);
     await expect(page.getByTestId('view-control')).toBeVisible();
+  });
+
+  test('readOnly: no route acts — card and table menus look only, piles, stack, untap key, drags', async ({ page }) => {
+    await setShell(page, { readOnly: true });
+    await page.evaluate(() => window.__uiHarness!.clear());
+    const nothing = async () => {
+      const n = await page.evaluate(() => ({
+        actions: window.__uiHarness!.actions(),
+        calls: window.__uiHarness!.calls(),
+        drags: window.__uiHarness!.scene().filter((c) => c.method === 'startDrag'),
+      }));
+      expect(n).toEqual({ actions: [], calls: [], drags: [] });
+    };
+    const menu = page.getByTestId('context-menu');
+    await test.step('right-click a table card: only Inspect and Zoom', async () => {
+      await page.locator('[data-testid="scene-card"][data-card="bf1"]').click({ button: 'right' });
+      await expect(menu).toBeVisible();
+      expect((await menu.locator('[role="menuitem"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-action')))).sort()).toEqual(['inspect', 'zoomTo']);
+      await page.keyboard.press('Escape');
+    });
+    await test.step('right-click a hand card, Shift+F10 on a hovered card: the same', async () => {
+      await page.locator('[data-testid="hand-card"][data-card="h2"]').click({ button: 'right' });
+      await expect(menu).toBeVisible();
+      await expect(menu.locator('[data-action="toGraveyard"]')).toHaveCount(0);
+      await expect(menu.locator('[data-action="cast"]')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await page.evaluate(() => window.__uiHarness!.hover('bf1'));
+      await page.keyboard.press('Shift+F10');
+      await expect(menu).toBeVisible();
+      await expect(menu.locator('[data-action="tap"]')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await page.evaluate(() => window.__uiHarness!.hover(null));
+    });
+    await test.step('the own library from the plate: no Draw, Shuffle, Look, Mill, Search or Mulligan', async () => {
+      await plate(page, 's0').getByTestId('plate-more').click();
+      await plate(page, 's0').locator('[data-testid="zone-button"][data-zone="library:s0"]').click();
+      const viewer = page.getByTestId('pile-viewer');
+      await expect(viewer).toBeVisible();
+      await expect(viewer.getByRole('button', { name: /^Draw/ })).toHaveCount(0);
+      await expect(viewer.getByTestId('search-library')).toHaveCount(0);
+      await expect(viewer.getByTestId('mill')).toHaveCount(0);
+      await page.keyboard.press('Escape');
+      await expect(viewer).toHaveCount(0);
+    });
+    await test.step('a stack item shows without Resolve or Counter', async () => {
+      await page.evaluate(() => window.__uiHarness!.update((s) => void (s.stack = [{ id: 'si9', kind: 'spell', controller: 's0', card: 'bf1' }])));
+      await expect(page.getByTestId('stack-chip')).toContainText('Stack 1');
+      await expect(page.getByTestId('stack-chip').getByRole('button')).toHaveCount(0);
+      await page.keyboard.press('KeyR');
+    });
+    await test.step('a new turn: the untap key does nothing', async () => {
+      await page.evaluate(() => window.__uiHarness!.update((s) => void (s.turn = { number: 5, active: 's0', phase: 'untap' })));
+      await page.keyboard.press('KeyU');
+    });
+    await test.step('a hand card dragged out is not handed to the table', async () => {
+      const card = page.locator('[data-testid="hand-card"][data-card="h2"]');
+      const b = (await card.boundingBox())!;
+      await page.mouse.move(b.x + b.width / 2, b.y + b.height - 20);
+      await page.mouse.down();
+      await page.mouse.move(b.x + b.width / 2, b.y - 120, { steps: 6 });
+      await page.mouse.up();
+    });
+    await nothing();
   });
 
   test('primaryOverride: shows its label, runs it, and the button returns to its own step when cleared', async ({ page }) => {

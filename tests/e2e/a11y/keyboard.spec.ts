@@ -357,7 +357,7 @@ test.describe('seat glyphs beside seat colours (PLAN M5-P4)', () => {
     await openLog(page);
     const line = page.getByTestId('log-line').last();
     await expect(line.getByTestId('seat-glyph')).toHaveAttribute('data-glyph', 'circle');
-    await expect(page.getByTestId('active-player').getByTestId('seat-glyph')).toHaveAttribute('data-glyph', 'circle');
+    await expect(page.getByTestId('whose-turn').getByTestId('seat-glyph')).toHaveAttribute('data-glyph', 'circle');
     // Decorative for screen readers: the name next to it says who it is.
     await expect(line.getByTestId('seat-glyph')).toHaveAttribute('aria-hidden', 'true');
   });

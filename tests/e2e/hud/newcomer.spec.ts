@@ -89,11 +89,11 @@ async function newcomerTurn(page: Page, how: Press, profile: string): Promise<vo
   await expect.poll(async () => (await state(page)).seats['s0']!.life).toBe(19);
   const turn = (await state(page)).turn.number;
   await primary[how]();
+  // The sandbox's empty chair is passed over: the next turn is the player's again, with no key and no hook.
   await expect.poll(async () => (await state(page)).turn.number).toBe(turn + 1);
-  // The sandbox's empty chair takes that turn; it comes back as another player would hand it over (no key).
-  await hook(page, 'dispatch', { type: 'turnPass', to: 's0' });
-  await hook(page, 'dispatch', { type: 'phaseSet', phase: 'untap' });
+  await expect.poll(async () => (await state(page)).turn.active).toBe('s0');
   // The next turn begins with untap and draw on one press.
+  await expect(primary).toHaveText('Untap & draw ▸');
   const hand = (await state(page)).zones['hand:s0']!.ids.length;
   await primary[how]();
   await expect.poll(async () => (await state(page)).zones['hand:s0']!.ids.length).toBe(hand + 1);

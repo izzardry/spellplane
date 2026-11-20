@@ -25,6 +25,18 @@ test('a click cycles first person, leaning in and bird\'s-eye', async ({ page })
   expect(await tilts(page)).toEqual([0, 0.5, 1]);
 });
 
+test('the View control stays on screen while the log drawer is open', async ({ page }) => {
+  await openHud(page);
+  await page.getByTestId('open-log').click();
+  await expect(page.locator('[data-testid="log"][data-open="true"]')).toBeVisible();
+  const view = page.getByTestId('view-control');
+  await expect(view).toBeVisible();
+  // Beside the drawer, not under it: a click reaches it and moves the tilt.
+  await page.evaluate(() => window.__uiHarness!.clear());
+  await view.click();
+  expect(await tilts(page)).toEqual([0]);
+});
+
 test('a vertical drag scrubs the tilt, 200 px for the whole range, and is not a click', async ({ page }) => {
   await openHud(page);
   const view = page.getByTestId('view-control');

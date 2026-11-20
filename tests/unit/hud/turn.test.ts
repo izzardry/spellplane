@@ -7,7 +7,9 @@
 import { describe, expect, it } from 'vitest';
 import type { PhaseSpec } from '../../../src/core/types';
 import { MTG_PHASES } from '../../../src/games/mtg/zones';
-import { primaryAction, stepOf, turnSteps } from '../../../src/ui/hud/turn';
+import type { TableState } from '../../../src/core/types';
+import { isEmptyChair, nextActive } from '../../../src/ui/commands';
+import { passTarget, primaryAction, stepOf, turnSteps } from '../../../src/ui/hud/turn';
 
 const base = { mine: true, phases: MTG_PHASES, activeName: 'Ben', offer: false };
 
@@ -60,7 +62,39 @@ describe('primary button', () => {
     expect(primaryAction({ ...base, mine: false, spectator: true, phase: 'main1' })).toMatchObject({ kind: 'wait', disabled: true, label: "Ben's turn" });
   });
 
+  it('passes a turn left with an empty chair on, and a spectator still only watches it', () => {
+    expect(primaryAction({ ...base, mine: false, emptyChair: true, phase: 'end' })).toEqual({ kind: 'endTurn', label: 'Next turn ▸', phase: null, disabled: false });
+    expect(primaryAction({ ...base, mine: false, emptyChair: true, spectator: true, phase: 'end' })).toMatchObject({ kind: 'wait', disabled: true });
+  });
+
+  it('a new turn whose offer is open begins with untap and draw wherever the marker was left', () => {
+    for (const phase of ['main2', 'end', 'combat']) expect(primaryAction({ ...base, phase, offer: true })).toMatchObject({ kind: 'untapDraw', label: 'Untap & draw ▸', phase: 'main1' });
+  });
+
   it('never names a key on the button (keys live in tooltips)', () => {
     for (const phase of MTG_PHASES.map((p) => p.id)) for (const offer of [false, true]) expect(primaryAction({ ...base, phase, offer }).label).not.toMatch(/ctrl|enter|tab|\bU\b/i);
+  });
+});
+
+describe('End turn passes over empty chairs', () => {
+  const table = (seats: { id: string; name: string; cards?: boolean }[], active: string): TableState => {
+    const st = {
+      seats: Object.fromEntries(seats.map((s, index) => [s.id, { id: s.id, name: s.name, index, colour: index, life: 20, counters: {} }])),
+      teams: {},
+      zones: Object.fromEntries(seats.map((s) => [`hand:${s.id}`, { id: `hand:${s.id}`, kind: 'hand', owner: s.id, visibility: 'owner', ids: s.cards ? ['c'] : [] }])),
+      turn: { number: 3, active, phase: 'end' },
+    };
+    return st as unknown as TableState;
+  };
+  it('at the sandbox (you and an empty chair) the turn comes back to you', () => {
+    expect(passTarget(table([{ id: 's0', name: 'Anna', cards: true }, { id: 's1', name: '' }], 's0'), nextActive, isEmptyChair)).toBe('s0');
+  });
+  it('from an empty chair it goes to the next player', () => {
+    expect(passTarget(table([{ id: 's0', name: 'Anna', cards: true }, { id: 's1', name: '' }], 's1'), nextActive, isEmptyChair)).toBe('s0');
+  });
+  it('a taken seat in between gets the turn as before', () => {
+    const st = table([{ id: 's0', name: 'Anna', cards: true }, { id: 's1', name: '' }, { id: 's2', name: 'Ben' }], 's0');
+    expect(passTarget(st, nextActive, isEmptyChair)).toBe('s2');
+    expect(passTarget(table([{ id: 's0', name: 'Anna' }, { id: 's1', name: 'Ben' }], 's0'), nextActive, isEmptyChair)).toBe('s1');
   });
 });

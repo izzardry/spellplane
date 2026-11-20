@@ -76,10 +76,8 @@ test.describe('the primary button follows the turn', () => {
     const turn = (await state(page)).turn.number;
     const hand = (await state(page)).zones['hand:s0']!.ids.length;
     await primary.click();
+    // The solo table's empty chair is passed over: End turn hands the next turn straight back.
     await expect.poll(async () => (await state(page)).turn.number).toBe(turn + 1);
-    // The solo table's empty chair takes the next turn; give it back as another player would.
-    await hook(page, 'dispatch', { type: 'turnPass', to: 's0' });
-    await hook(page, 'dispatch', { type: 'phaseSet', phase: 'untap' });
     await expect.poll(async () => (await state(page)).turn.active).toBe('s0');
     // The new turn: the offer is open and the button takes it on a deliberate press.
     await expect(page.getByTestId('untap-offer')).toBeVisible();
@@ -98,6 +96,27 @@ test.describe('the primary button follows the turn', () => {
     await expect(page.getByTestId('primary-action')).toHaveText('Waiting for Ben');
     await expect(page.getByTestId('primary-action')).toHaveAttribute('aria-disabled', 'true');
     await expect(page.getByTestId('whose-turn')).toHaveText("Ben's turn");
+  });
+
+  test('a turn left with an empty chair is passed on by the button, and the tracker says so', async ({ page }) => {
+    await openHud(page);
+    await page.evaluate(() =>
+      window.__uiHarness!.update((s) => {
+        // Ben's seat as the sandbox's empty chair: no name, no peer, no cards.
+        s.seats['s1']!.name = '';
+        delete s.seats['s1']!.peer;
+        for (const [id, c] of Object.entries(s.cards)) if (c.owner === 's1') delete s.cards[id];
+        for (const z of Object.values(s.zones)) if (z.owner === 's1') z.ids = [];
+        s.turn = { number: 4, active: 's1', phase: 'end' };
+      }),
+    );
+    const primary = page.getByTestId('primary-action');
+    await expect(page.getByTestId('whose-turn')).toHaveText("Empty seat's turn");
+    await expect(primary).toHaveText('Next turn ▸');
+    await expect(primary).not.toHaveAttribute('aria-disabled', 'true');
+    await page.evaluate(() => window.__uiHarness!.clear());
+    await primary.click();
+    expect(await drafts(page)).toEqual([{ type: 'turnPass', to: 's0' }]);
   });
 });
 
@@ -199,6 +218,23 @@ test.describe('plates: life you click or scrub, counters only when used', () => 
     // The piles are there with their counts and open their viewer.
     await openZone(page, 'graveyard:s0');
     await expect(page.getByTestId('pile-viewer')).toBeVisible();
+  });
+
+  test('the plate menu closes on Esc after a mouse click opened it; "Set life…" opens the life field', async ({ page }) => {
+    await openHud(page);
+    const ben = await plateDetails(page, 's1');
+    await page.keyboard.press('Escape');
+    await expect(ben.getByTestId('plate-details')).toHaveCount(0);
+    const me = await plateDetails(page, 's0');
+    await me.getByTestId('plate-set-life').click();
+    await expect(me.getByTestId('plate-details')).toHaveCount(0);
+    const input = me.getByTestId('life-input');
+    await expect(input).toBeFocused();
+    await input.fill('12');
+    await input.press('Enter');
+    expect((await drafts(page)).at(-1)).toEqual({ type: 'life', seat: 's0', delta: -8 });
+    // Another player's menu has no "Set life…".
+    await expect((await plateDetails(page, 's1')).getByTestId('plate-set-life')).toHaveCount(0);
   });
 
   test("another player's plate shows their hand count", async ({ page }) => {

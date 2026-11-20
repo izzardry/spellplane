@@ -18,7 +18,9 @@
   let scrubbing = $state(false);
   const scrub = new LifeScrub();
 
-  async function edit(): Promise<void> {
+  /** Open the life field (a click on the numerals, or the plate menu's "Set life…"). */
+  export async function edit(): Promise<void> {
+    if (readonly) return;
     editing = String(life);
     await tick();
     input?.select();

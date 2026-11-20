@@ -6,7 +6,7 @@
  * tracker only groups untap, upkeep and draw as Beginning. Nothing is enforced: the button only moves the marker,
  * passes the turn, or (on a deliberate press) untaps and draws as the offer does.
  */
-import type { PhaseSpec } from '../../core/types';
+import type { PhaseSpec, SeatId, TableState } from '../../core/types';
 
 export type TurnStepId = 'beginning' | 'main' | 'combat' | 'main2' | 'end';
 
@@ -66,11 +66,17 @@ export interface PrimaryContext {
   offer: boolean;
   /** A spectator acts on nothing. */
   spectator?: boolean;
+  /**
+   * The active seat is an empty chair (the sandbox's second seat, a seat nobody took): nobody will hand the turn back,
+   * so the button passes it on instead of waiting (ui/commands.ts isEmptyChair).
+   */
+  emptyChair?: boolean;
 }
 
 /** The one primary button's label and action for the moment (docs/design/m7-hud-proposal.md, Primary button). */
 export function primaryAction(ctx: PrimaryContext): PrimaryAction {
   if (ctx.spectator) return { kind: 'wait', label: `${ctx.activeName}'s turn`, phase: null, disabled: true };
+  if (!ctx.mine && ctx.emptyChair) return { kind: 'endTurn', label: 'Next turn ▸', phase: null, disabled: false };
   if (!ctx.mine) return { kind: 'wait', label: `Waiting for ${ctx.activeName}`, phase: null, disabled: true };
   const has = (id: string): boolean => ctx.phases.some((p) => p.id === id);
   const magic = turnSteps(ctx.phases).length === GROUPS.length && has('main1');
@@ -79,11 +85,13 @@ export function primaryAction(ctx: PrimaryContext): PrimaryAction {
     const next = ctx.phases[i + 1];
     return next ? { kind: 'nextPhase', label: `${next.label} ▸`, phase: next.id, disabled: false } : { kind: 'endTurn', label: 'End turn ▸', phase: null, disabled: false };
   }
+  // A new turn whose offer is open begins with untap and draw, wherever the marker was left by the last turn.
+  if (ctx.offer) return { kind: 'untapDraw', label: 'Untap & draw ▸', phase: 'main1', disabled: false };
   switch (ctx.phase) {
     case 'untap':
     case 'upkeep':
     case 'draw':
-      return ctx.offer ? { kind: 'untapDraw', label: 'Untap & draw ▸', phase: 'main1', disabled: false } : { kind: 'toMain', label: 'To main ▸', phase: 'main1', disabled: false };
+      return { kind: 'toMain', label: 'To main ▸', phase: 'main1', disabled: false };
     case 'main1':
       return { kind: 'toCombat', label: 'To combat ▸', phase: 'combat', disabled: false };
     case 'combat':
@@ -91,4 +99,20 @@ export function primaryAction(ctx: PrimaryContext): PrimaryAction {
     default:
       return { kind: 'endTurn', label: 'End turn ▸', phase: null, disabled: false };
   }
+}
+
+/**
+ * Who the primary button's End turn hands the turn to: the next seat (or team) in turn order, passing over empty chairs
+ * (nobody sits there to hand it back), so the sandbox's End turn comes straight back to the player. `next` is the
+ * table's turn order (ui/commands.ts nextActive); when every seat is an empty chair the turn goes where `next` says.
+ */
+export function passTarget(state: TableState, next: (state: TableState) => SeatId, emptyChair: (state: TableState, seat: SeatId) => boolean): SeatId {
+  const count = Math.max(1, Object.keys(state.seats).length + Object.keys(state.teams).length);
+  let at = state;
+  let to = next(at);
+  for (let i = 0; i < count && emptyChair(state, to); i++) {
+    at = { ...at, turn: { ...at.turn, active: to } };
+    to = next(at);
+  }
+  return to;
 }

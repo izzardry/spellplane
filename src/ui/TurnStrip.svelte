@@ -39,8 +39,9 @@
 
 <nav class="tracker" class:mine data-testid="turn-strip" data-mine={mine ? 'true' : 'false'} aria-label="Turn" style:--seat={activeColour === null ? 'currentColor' : `var(--sp-seat-${activeColour})`}>
   <span class="who">
-    <span class="active" data-testid="active-player"><SeatGlyph colour={activeColour} size={10} />{activeName}</span>
-    <span class="whose" data-testid="whose-turn">{mine ? 'Your turn' : `${activeName}'s turn`}</span>
+    <span class="active" data-testid="active-player">{activeName}</span>
+    <!-- The seat's glyph beside the headline in the seat colour, so whose turn reads without hue (M5-P4). -->
+    <span class="whose" data-testid="whose-turn"><SeatGlyph colour={activeColour} size={10} />{mine ? 'Your turn' : `${activeName}'s turn`}</span>
     <span class="turn" data-testid="turn-number">Turn {turn}</span>
   </span>
   <ol class="steps">

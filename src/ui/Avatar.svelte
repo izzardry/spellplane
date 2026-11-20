@@ -9,6 +9,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import type { Seat, SeatId, ZoneId } from '../core/types';
+  import type { PeerAudioSetting } from '../store/types';
   import CounterChip from './hud/CounterChip.svelte';
   import Icon from './design/Icon.svelte';
   import LifePlate from './hud/LifePlate.svelte';
@@ -35,6 +36,7 @@
     badge,
     menuTop,
     voiceControls = false,
+    peerAudio,
     onrevealhand,
   }: {
     seat: Seat;
@@ -69,6 +71,8 @@
     menuTop?: Snippet<[SeatId, () => void]> | undefined;
     /** Added by M7-P2: the table has live voice; another player's menu offers volume and mute in the voice panel. */
     voiceControls?: boolean;
+    /** Added by M7-P2: this player's personal volume and mute (VoiceControls.peerAudio / setPeerAudio): the menu's Volume and Mute. */
+    peerAudio?: { get: () => PeerAudioSetting; set: (setting: PeerAudioSetting) => void } | undefined;
     /** Added by M7-P2: "Reveal my hand to them" in another player's menu; absent when there is nothing to reveal. */
     onrevealhand?: (() => void) | undefined;
   } = $props();
@@ -78,6 +82,15 @@
   let counterInput = $state<HTMLInputElement | undefined>();
   let root = $state<HTMLElement | undefined>();
   let moreButton = $state<HTMLButtonElement | undefined>();
+  let lifePlate = $state<LifePlate | undefined>();
+  /** This player's volume and mute as last read or set (read when the menu opens). */
+  let audio = $state<PeerAudioSetting | null>(null);
+  function setAudio(patch: Partial<PeerAudioSetting>): void {
+    if (!peerAudio) return;
+    const next = { ...(audio ?? peerAudio.get()), ...patch };
+    audio = next;
+    peerAudio.set(next);
+  }
   const allCounters = $derived(Object.entries({ poison: 0, ...seat.counters }).sort(([a], [b]) => (a === 'poison' ? -1 : b === 'poison' ? 1 : a.localeCompare(b))));
   /** Only counters that are not zero show on the plate ("showing poison 0 all game is noise"). */
   const shown = $derived(allCounters.filter(([, n]) => n !== 0));
@@ -90,8 +103,22 @@
     const away = (e: PointerEvent): void => {
       if (!root?.contains(e.target as Node | null)) moreOpen = false;
     };
+    // Esc closes it wherever focus is: a mouse click leaves focus on the page, not in the popover (Hud.svelte onclick).
+    const esc = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || newCounter !== null) return;
+      e.preventDefault();
+      e.stopPropagation();
+      closeMore();
+    };
     window.addEventListener('pointerdown', away, true);
-    return () => window.removeEventListener('pointerdown', away, true);
+    window.addEventListener('keydown', esc, true);
+    return () => {
+      window.removeEventListener('pointerdown', away, true);
+      window.removeEventListener('keydown', esc, true);
+    };
+  });
+  $effect(() => {
+    if (moreOpen && peerAudio) audio = peerAudio.get();
   });
   function closeMore(): void {
     moreOpen = false;
@@ -138,7 +165,7 @@
       {#if seat.autoPass}<span class="tag" title="Passing until end of turn">auto-pass</span>{/if}
     </div>
   </div>
-  <LifePlate {life} name={seat.name} {readonly} size={compact ? 'small' : 'large'} {onlife} />
+  <LifePlate bind:this={lifePlate} {life} name={seat.name} {readonly} size={compact ? 'small' : 'large'} {onlife} />
   {#if shown.length}
     <div class="chips">
       {#each shown as [kind, n] (kind)}<CounterChip {kind} value={n} {readonly} onchange={(d) => oncounter(kind, d)} />{/each}
@@ -164,11 +191,40 @@
         <div class="top" data-testid="plate-menu-top">{@render menuTop(seat.id, closeMore)}</div>
         <div class="divider" role="separator"></div>
       {/if}
+      {#if me && !readonly}
+        <div class="rows">
+          <button
+            type="button"
+            class="ds-menu-item sp-h-sm"
+            data-testid="plate-set-life"
+            onclick={() => {
+              moreOpen = false;
+              void lifePlate?.edit();
+            }}>Set life…</button
+          >
+        </div>
+      {/if}
       {#if !me && (ongoto || onrevealhand || voiceControls)}
         <div class="rows">
           {#if ongoto}<button type="button" class="ds-menu-item sp-h-sm" data-testid="plate-look" onclick={() => (closeMore(), ongoto?.())}>Look at their side</button>{/if}
           {#if onrevealhand}<button type="button" class="ds-menu-item sp-h-sm" data-testid="plate-reveal-hand" onclick={() => (closeMore(), onrevealhand?.())}>Reveal my hand to them</button>{/if}
-          {#if voiceControls}<span class="ds-key hint" data-testid="plate-voice">Volume and mute: Menu, Voice</span>{/if}
+          {#if voiceControls && peerAudio}
+            <label class="volume" data-testid="plate-voice"
+              ><span>Volume</span><input
+                type="range"
+                min="0"
+                max="100"
+                step="1"
+                aria-label="Volume of {seat.name}"
+                data-testid="plate-volume"
+                value={Math.round((audio?.volume ?? 1) * 100)}
+                oninput={(e) => setAudio({ volume: Number(e.currentTarget.value) / 100 })}
+              /></label
+            >
+            <button type="button" class="ds-menu-item sp-h-sm" data-testid="plate-mute" aria-pressed={audio?.muted ? 'true' : 'false'} onclick={() => setAudio({ muted: !(audio?.muted ?? false) })}>{audio?.muted ? 'Unmute' : 'Mute'}</button>
+          {:else if voiceControls}
+            <span class="ds-key hint" data-testid="plate-voice">Volume and mute: Menu, Voice</span>
+          {/if}
         </div>
       {/if}
       <span class="ds-label">Counters</span>
@@ -364,6 +420,17 @@
   }
   .hint {
     padding: 0 var(--ds-space-md);
+  }
+  .volume {
+    display: flex;
+    align-items: center;
+    gap: var(--ds-space-sm);
+    min-height: var(--ds-control-sm);
+    padding: 0 var(--ds-space-md);
+  }
+  .volume input {
+    flex: 1;
+    min-width: 0;
   }
   .goto:hover {
     text-decoration: underline;

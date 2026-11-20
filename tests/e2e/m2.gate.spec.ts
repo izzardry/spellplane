@@ -606,12 +606,17 @@ test.describe('M2 gate @gate', () => {
       const sids = [...sec.libraryOrder, ...sec.hand].map((id) => sec.identities[id]!.card.sid).sort();
       const b = decks.s0!;
       expect(sids).toEqual(b.main.map((id) => b.cards.find((c) => c.id === id)!.ref.sid).sort());
-      // M7-P2: in a match the evening bar gives way to the HUD (Next game and New draft are in its Menu).
-      await soft('the table offers the next game in its Menu', async () => {
-        await A.page.getByTestId('open-menu').click();
-        await expect(A.page.getByTestId('propose-nextGame')).toBeVisible();
-        await A.page.keyboard.press('Escape');
-      });
+      // While the stage shows its evening bar in a match (m8's Stage.svelte), the bar names game two; once the shell
+      // hands `evening` to the HUD (M8-P8), the bar goes and the HUD's Menu offers the next game instead.
+      if (await A.page.locator('[data-testid="evening-bar"]').isVisible()) {
+        await soft('the evening bar names game two', () => expect(A.page.getByTestId('evening-status')).toHaveText('Game 2.'));
+      } else {
+        await soft('the table offers the next game in its Menu', async () => {
+          await A.page.getByTestId('open-menu').click();
+          await expect(A.page.getByTestId('menu-popover').getByTestId('propose-nextGame')).toBeVisible();
+          await A.page.keyboard.press('Escape');
+        });
+      }
       await converged(A.page, B.page);
     });
     if (!game2) return finish();

@@ -18,6 +18,10 @@ test('every HUD button on the harness has a kit height (menu, plate menu, stack,
   await openHud(page);
   await page.evaluate(() => window.__uiHarness!.setShell({ onleave: true, plateMenuTop: true, plateBadge: true, status: 'line' }));
   expect(await offSizes(page)).toEqual([]);
+  // The stack chip with Resolve, its destinations and Counter.
+  await page.evaluate(() => window.__uiHarness!.update((s) => void (s.stack = [{ id: 'si9', kind: 'spell', controller: 's0', card: 'bf1' }])));
+  await expect(page.getByTestId('stack-chip').getByRole('button')).toHaveCount(6);
+  expect(await offSizes(page)).toEqual([]);
   await page.getByTestId('open-menu').click();
   await expect(page.getByTestId('menu-popover')).toBeVisible();
   expect(await offSizes(page)).toEqual([]);
