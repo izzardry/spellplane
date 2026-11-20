@@ -45,7 +45,8 @@ test('quality and follow toggles set in the picker reach the scene, survive a th
   await expect.poll(() => follow(page)).toEqual({ stack: false, activePlayer: true });
 
   // A theme switch keeps the choice; Dusk resolves it to its own low level (no shadows, no post-processing).
-  await page.locator('[data-testid="theme-option"][data-theme="dusk"]').click();
+  // Dusk left the picker in M7 (PLAN Milestone 7, Owner decisions) but stays loadable: the stored choice, through the hook.
+  await page.evaluate(() => window.__spellplane!.theme!.set('dusk'));
   await expect.poll(async () => (await stats(page)).theme, { timeout: 15_000 }).toBe('dusk');
   await expect.poll(() => stats(page)).toMatchObject({ theme: 'dusk', quality: 'low', shadows: false, passes: [] });
   expect(await choice(page)).toBe('low');

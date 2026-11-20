@@ -6,7 +6,7 @@
  * through the debug hook; the hold ring is caught with Playwright's fake clock, so nothing depends on render speed.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { THEME_IDS, type ThemeId } from '../../../src/themes/index';
+import { THEME_IDS, THEME_LISTED, type ThemeId } from '../../../src/themes/index';
 import { hook, shot } from '../helpers/app';
 import { freshProfile, openSolo } from '../solo/helpers';
 import { IPAD } from '../touch/helpers';
@@ -68,7 +68,10 @@ async function pickHudTheme(page: Page, theme: ThemeId): Promise<void> {
   const picker = page.getByTestId('theme-settings');
   if (!(await picker.isVisible())) await page.getByTestId('open-theme-settings').click();
   await expect(picker).toBeVisible();
-  await picker.locator(`[data-testid="theme-option"][data-theme="${theme}"] input`).check();
+  // The M4 themes left the picker (PLAN Milestone 7, Owner decisions) but stay loadable: those go through the debug
+  // hook, which stores the choice as the picker does.
+  if (THEME_LISTED[theme]) await picker.locator(`[data-testid="theme-option"][data-theme="${theme}"] input`).check();
+  else await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
   await expect.poll(() => hook<ThemeId>(page, 'theme.current'), { timeout: 20_000 }).toBe(theme);
   await expect.poll(() => hook<{ theme: string }>(page, 'render.stats').then((r) => r.theme), { timeout: 20_000 }).toBe(theme);
   await expect(page.locator('html')).toHaveAttribute('data-theme', theme);

@@ -1194,9 +1194,8 @@ test.describe('M5 gate @gate', () => {
         await expect.poll(async () => (await secrets(page)).libraryOrder.length, { timeout: 15_000 }).toBe(60);
       });
       for (const theme of ['wyrm', 'stonetable'] as const) {
-        await R.step(`${label}, ${theme}: chosen in the theme picker, the default rig is ego and the own pile column, command area and battlefield row are on screen`, async () => {
-          await press(page.getByTestId('open-theme-settings'));
-          await press(page.locator(`[data-testid="theme-option"][data-theme="${theme}"]`));
+        await R.step(`${label}, ${theme}: chosen (stored like a pick; the M4 themes left the picker in M7), the default rig is ego and the own pile column, command area and battlefield row are on screen`, async () => {
+          await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
           await expect.poll(() => hook<{ theme: string }>(page, 'render.stats').then((s) => s.theme), { timeout: 20_000 }).toBe(theme);
           // A fresh table in this theme opens in its default rig: reload (the choice is kept).
           await page.reload();

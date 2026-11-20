@@ -59,12 +59,27 @@ No bundled files: every texture and sound is generated in the browser by the mod
 
 ## Kitchen Table
 
-No bundled assets yet: a stub of Paper's table until M7-P1 builds the look's table world (M7-C).
+No bundled files: every texture and sound is drawn or synthesised in the browser by the modules below.
+
+| Asset | Used by | Kind | Source | Licence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/themes/kitchen/textures.ts` | Kitchen Table playmat, board and card back | texture | procedural | MIT (this repository) | `LINEN`: 256 × 256 plain weave (a thread every 2 mm, slubs, mottling) as grey albedo and normal map, one tile per 64 mm (generator `src/themes/kit/surfaces.ts`); `WALNUT`: 512 × 512 walnut boards with grain and rings, one tile per 440 mm; `KITCHEN_BACK`: 488 × 680, brick stripes, cream frame and a paper medallion, geometric only, not the official back |
+| `src/themes/kit/sounds.ts` | Kitchen Table sound set | sound | procedural | MIT (this repository) | `soundSet` with the look's timbre: every table and card-feel cue synthesised with Web Audio from band-passed seeded noise and soft partials; no audio files |
 
 ## Graphite
 
-No bundled assets yet: a stub of Paper's table until M7-P1 builds the look's table world (M7-C).
+No bundled files: every texture and sound is drawn or synthesised in the browser by the modules below.
+
+| Asset | Used by | Kind | Source | Licence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/themes/graphite/textures.ts` | Graphite slab, plinth and card back | texture | procedural | MIT (this repository) | `SLATE`: 360 × 360 fine stone grain with a dot every 20 mm as grey albedo and normal map, one tile per 120 mm; `PLINTH`: the same grain without dots (generator `src/themes/kit/surfaces.ts`); `GRAPHITE_BACK`: 488 × 680 gradient field, hairline frame and mint ring, geometric only |
+| `src/themes/kit/sounds.ts` | Graphite sound set | sound | procedural | MIT (this repository) | `soundSet` with the look's timbre: every table and card-feel cue synthesised with Web Audio from band-passed seeded noise and soft partials; no audio files |
 
 ## Codex
 
-No bundled assets yet: a stub of Paper's table until M7-P1 builds the look's table world (M7-C).
+No bundled files: every texture and sound is drawn or synthesised in the browser by the modules below.
+
+| Asset | Used by | Kind | Source | Licence | Notes |
+| --- | --- | --- | --- | --- | --- |
+| `src/themes/codex/textures.ts` | Codex leather, desk and card back | texture | procedural | MIT (this repository) | `LEATHER`: 256 × 256 pebbled midnight leather with a ±45° lattice tooled in (faintly gilt grooves) as albedo and normal map, one tile per 64 mm; `EBONY`: 512 × 512 dark boards, one tile per 480 mm (generators `src/themes/kit/surfaces.ts`); `CODEX_BACK`: 488 × 680 navy chequer, gilt frame with diamond corners and a vermilion seal, geometric only |
+| `src/themes/kit/sounds.ts` | Codex sound set | sound | procedural | MIT (this repository) | `soundSet` with the look's timbre: every table and card-feel cue synthesised with Web Audio from band-passed seeded noise and soft partials; no audio files |

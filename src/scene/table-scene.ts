@@ -81,6 +81,7 @@ import type {
   TablePressKind,
   ViewState,
 } from './types';
+import { tableMarks } from './table-marks';
 import { TILT_PRESETS, clampTilt, rigForTilt, tiltForRig, type SetTiltOptions, type Tilt } from './types';
 
 /** A debug card with extra fields the scene's own tests read (zone, pile, which face is shown, ...). */
@@ -564,6 +565,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     markGeometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     markGeometry.computeBoundingSphere();
     markLabels = m.labels;
+    // The theme's own pile and zone marks under the hairlines (M7-P1; themes/types.ts ThemeInstance.setMarks).
+    const seats = state ? Object.values(state.seats).map((s) => ({ index: s.index, colour: s.colour, named: !!s.name.trim() })) : layout.seats.map((sl) => ({ index: sl.index, colour: sl.index, named: false }));
+    runtime.setMarks(tableMarks(layout, opts.game, angle, seats));
     dirty = true;
   }
   rebuildMarkings();
@@ -2865,7 +2869,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       } else if (prevState.seats !== next.seats) {
         // A chair taken or left changes which hand rows the fitted view must show, and the names at the avatar spots.
         rig.setFrame(fitFrame(state, layout, viewerSeat));
-        if (Object.values(next.seats).some((s) => prevState.seats[s.id]?.name !== s.name)) rebuildMarkings();
+        if (Object.values(next.seats).some((s) => prevState.seats[s.id]?.name !== s.name || prevState.seats[s.id]?.colour !== s.colour)) rebuildMarkings();
       }
       if (prevState !== next || openChanged) relayout(performance.now());
       if (prevState !== next && !formatLayout) requestFollow(followRequests(prevState, next, follow));

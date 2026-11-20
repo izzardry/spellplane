@@ -222,7 +222,9 @@ async function dumpStores(page: Page, profile: string): Promise<unknown> {
 async function pickLobbyTheme(page: Page, theme: ThemeId): Promise<void> {
   const details = page.getByTestId('lobby-theme');
   await details.locator('summary').click();
-  await details.locator(`[data-testid="theme-option"][data-theme="${theme}"] input`).check();
+  // The M4 themes left the picker in M7 (PLAN Milestone 7, Owner decisions) and stay loadable: the debug hook stores the
+  // choice as the picker did; the lobby's picker shows the theme chosen.
+  await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
   await expect.poll(() => currentTheme(page), { timeout: 20_000 }).toBe(theme);
   await expect(details).toContainText(`Theme: ${THEME_LABELS[theme]}`);
   await details.locator('summary').click();
@@ -233,7 +235,8 @@ async function pickHudTheme(page: Page, theme: ThemeId): Promise<void> {
   const picker = page.getByTestId('theme-settings');
   if (!(await picker.isVisible())) await page.getByTestId('open-theme-settings').click();
   await expect(picker).toBeVisible();
-  await picker.locator(`[data-testid="theme-option"][data-theme="${theme}"] input`).check();
+  // The M4 themes left the picker in M7 (PLAN Milestone 7, Owner decisions); the debug hook stores the choice as it did.
+  await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
   await expect.poll(() => currentTheme(page), { timeout: 20_000 }).toBe(theme);
   await expect.poll(() => renderTheme(page), { timeout: 20_000 }).toBe(theme);
   await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
