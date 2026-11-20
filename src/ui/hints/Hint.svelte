@@ -6,6 +6,7 @@
   import { onMount, untrack } from 'svelte';
   import type { ActionId } from '../../games/types';
   import { hintText, type FirstRunHint, type HintController } from './hints';
+  import Button from '../design/Button.svelte';
 
   let {
     hints,
@@ -32,7 +33,7 @@
   <aside class="hint {placement}" data-testid="hint" data-hint={hint} aria-label="Hint: {shown.title}">
     <strong>{shown.title}</strong>
     <span>{shown.text}</span>
-    <button type="button" data-testid="hint-dismiss" onclick={() => void hints.dismiss(hint!)}>Got it</button>
+    <Button variant="ghost" size="xs" data-testid="hint-dismiss" onclick={() => void hints.dismiss(hint!)}>Got it</Button>
   </aside>
 {/if}
 
@@ -64,17 +65,16 @@
     /* Never blocking: only the button takes pointer events. */
     pointer-events: none;
   }
-  button {
+  .hint :global(.ds-btn) {
     align-self: flex-end;
     pointer-events: auto;
-    font: inherit;
-    cursor: pointer;
-    min-height: 28px;
   }
+  /* A touch target is the kit's md height (44 px). */
   @media (pointer: coarse) {
-    button {
-      min-height: 44px;
-      min-width: 44px;
+    .hint :global(.ds-btn) {
+      height: var(--ds-control-md, 44px);
+      min-height: var(--ds-control-md, 44px);
+      min-width: var(--ds-control-md, 44px);
     }
   }
 </style>

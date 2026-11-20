@@ -55,6 +55,25 @@ export interface CardDraw {
    * (scene/foil.ts TABLE_FOIL); null or absent draws no badge. The sheen rim goes in `highlight`.
    */
   foil?: number | null;
+  /**
+   * The shadow of a lifted card (M7-P4, scene/motion.ts liftShadow: "its shadow grows and softens"), drawn just before
+   * the card in the same instanced draw, so it falls on the cards below it and never on the card itself. Offset (table
+   * mm), spread factor, blur (mm), opacity and the height it lies at. Absent or null: none.
+   */
+  shadow?: { dx: number; dy: number; grow: number; blur: number; opacity: number; z: number } | null;
+}
+
+/**
+ * The instance of a lifted card's shadow: a black rounded rectangle under the card, offset and spread, its quad scaled by
+ * `k` so the blur fits inside it. The shader reads (k, grow, blur, opacity) from the uv slot (scene/cards.ts FRAG).
+ */
+export function shadowInstance(d: CardDraw): { draw: CardDraw; k: number } | null {
+  const s = d.shadow;
+  if (!s || !(s.opacity > 0)) return null;
+  const k = Math.max((CARD_W * s.grow) / 2 + 2 * s.blur, 0) / (CARD_W / 2 + PAD_MM);
+  const kh = ((CARD_H * s.grow) / 2 + 2 * s.blur) / (CARD_H / 2 + PAD_MM);
+  const kk = Math.max(1, k, kh);
+  return { draw: { pose: { x: d.pose.x + s.dx, y: d.pose.y + s.dy, rot: d.pose.rot }, z: s.z, scaleX: 1, scale: kk, uv: null, dim: 0, highlight: null }, k: kk };
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -154,6 +173,14 @@ vec3 hsl2rgb(float h, float s, float l) {
   return l + s * (k - 0.5) * (1.0 - abs(2.0 * l - 1.0));
 }
 void main() {
+  // A lifted card's shadow (vMisc.x = -2; vUvRect = quad scale, spread, blur mm, opacity): black, soft, no texture.
+  if (vMisc.x < -1.5) {
+    float sd = sdRoundRect(vLocal * vUvRect.x, uCard * 0.5 * vUvRect.y, uRadius * vUvRect.y);
+    float sa = vUvRect.w * (1.0 - smoothstep(-vUvRect.z, vUvRect.z, sd));
+    if (sa < 0.004) discard;
+    gl_FragColor = vec4(0.0, 0.0, 0.0, sa);
+    return;
+  }
   float d = sdRoundRect(vLocal, uCard * 0.5, uRadius);
   float aa = max(fwidth(d), 1e-4);
   vec2 tuv = vUvRect.xy + vec2(vUv.x, 1.0 - vUv.y) * vUvRect.zw;
@@ -263,11 +290,13 @@ export class CardLayer {
   /** Faces sit on top of the card box: `thickness` mm above the card's height (0 in flat themes). */
   faceLift = 0;
 
-  /** Write all instances, in draw order (later instances paint over earlier ones). */
+  /** Write all instances, in draw order (later instances paint over earlier ones); a lifted card's shadow goes just before it. */
   write(draws: readonly CardDraw[]): void {
-    if (draws.length > this.capacity) {
+    let count = draws.length;
+    for (const d of draws) if (d.shadow && d.shadow.opacity > 0) count++;
+    if (count > this.capacity) {
       let cap = this.capacity;
-      while (cap < draws.length) cap *= 2;
+      while (cap < count) cap *= 2;
       const old = this.mesh;
       this.scene.remove(old);
       old.geometry.dispose();
@@ -279,7 +308,21 @@ export class CardLayer {
     const uv = this.aUv.array as Float32Array;
     const misc = this.aMisc.array as Float32Array;
     const hi = this.aHi.array as Float32Array;
-    draws.forEach((d, i) => {
+    let i = 0;
+    for (const d of draws) {
+      const sh = shadowInstance(d);
+      if (sh) {
+        cardMatrix(sh.draw, m, i * 16, 0);
+        const q = i * 4;
+        uv[q] = sh.k;
+        uv[q + 1] = d.shadow!.grow;
+        uv[q + 2] = Math.max(0.1, d.shadow!.blur);
+        uv[q + 3] = d.shadow!.opacity;
+        misc[q] = -2;
+        misc[q + 1] = misc[q + 2] = misc[q + 3] = 0;
+        hi[q] = hi[q + 1] = hi[q + 2] = hi[q + 3] = 0;
+        i++;
+      }
       cardMatrix(d, m, i * 16, this.faceLift);
       const q = i * 4;
       if (d.uv) {
@@ -305,8 +348,9 @@ export class CardLayer {
       } else {
         hi[q] = hi[q + 1] = hi[q + 2] = hi[q + 3] = 0;
       }
-    });
-    this.mesh.count = draws.length;
+      i++;
+    }
+    this.mesh.count = i;
     this.mesh.instanceMatrix.needsUpdate = true;
     this.aUv.needsUpdate = true;
     this.aMisc.needsUpdate = true;

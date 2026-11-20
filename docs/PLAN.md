@@ -1038,7 +1038,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M8-C Contracts (M8, plus the M7 amendments)
 - [ ] M7-P1 Table worlds, tilt and the arena still (with M7-P3 and the lifecycle part of M7-P6)
 - [ ] M7-P2 Table HUD and in-table panels
-- [ ] M7-P5 Card feel and play without keys (with M7-P4)
+- [x] M7-P5 Card feel and play without keys (with M7-P4)
 - [ ] M8-P1 Ztyle kit
 - [ ] M8-P2 Shell, Home and History
 - [ ] M8-P3 Decks

@@ -154,6 +154,8 @@ export interface SceneEvents {
    * whenever the camera settles, never per frame. Added by M7-C; M7-P3 reports, M7-P2 places the plates.
    */
   seatAnchors?(anchors: SeatAnchor[]): void;
+  /** "Look, do not touch" was switched on or off (TableScene.setReadOnly): the HUD hides its coach marks and on-card controls while on. */ // [M7-P5]
+  readOnly?(on: boolean): void;
 }
 
 /** What a held table press is doing (PLAN Milestone 6, owner decisions, Hold-to-talk). Added by M6-C. */

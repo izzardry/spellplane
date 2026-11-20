@@ -12,9 +12,11 @@ import { startPageHint } from '../../../src/ui/lobby/start-hint';
 const table = { where: 'table' as const, touch: false, voice: false };
 
 describe('which hint shows', () => {
-  it('welcome first, then the keys on a desktop or the gestures on a touch screen, then the talk key at a table with voice', () => {
+  it('welcome first, then the gestures on a touch screen, then the talk key at a table with voice', () => {
     expect(nextHint([], table)).toBe('welcome');
-    expect(nextHint(['welcome'], table)).toBe('tableKeys');
+    // M7-P5: no hint teaches the table's keys any more (the gesture coach marks teach the table, ui/hints/coach.ts).
+    expect(nextHint(['welcome'], table)).toBeNull();
+    expect(nextHint(['welcome'], { ...table, voice: true })).toBe('talkKey');
     expect(nextHint(['welcome'], { ...table, touch: true })).toBe('touchGestures');
     expect(nextHint(['welcome', 'tableKeys'], table)).toBeNull();
     expect(nextHint(['welcome', 'tableKeys'], { ...table, voice: true })).toBe('talkKey');
@@ -69,11 +71,9 @@ describe('HintController', () => {
     await h.load();
     expect(h.current()).toBe('welcome');
     await h.dismiss('welcome');
-    expect(h.current()).toBe('tableKeys');
-    expect(await store.get('hintsSeen')).toEqual(['welcome']);
-    await h.dismiss('tableKeys');
     expect(h.current()).toBeNull();
-    expect(seen).toEqual(['welcome', 'tableKeys', null]);
+    expect(await store.get('hintsSeen')).toEqual(['welcome']);
+    expect(seen).toEqual(['welcome', null]);
     const again = new HintController(store, table);
     await again.load();
     expect(again.current()).toBeNull();
@@ -97,17 +97,17 @@ describe('HintController', () => {
   });
 
   it('without a settings store a dismissal lasts for the page', async () => {
-    const h = new HintController(null, table);
+    const h = new HintController(null, { ...table, voice: true });
     await h.load();
     await h.dismiss('welcome');
-    expect(h.current()).toBe('tableKeys');
+    expect(h.current()).toBe('talkKey');
   });
 });
 
 describe('M5 gate: hints that fit the evening and the touch screen', () => {
   it('the welcome ("import a deck to try it alone") waits for the start page or the solo table, not a networked evening', () => {
     expect(nextHint([], { where: 'table', touch: true, voice: true, networked: true })).toBe('touchGestures');
-    expect(nextHint([], { where: 'table', touch: false, voice: true, networked: true })).toBe('tableKeys');
+    expect(nextHint([], { where: 'table', touch: false, voice: true, networked: true })).toBe('talkKey');
     expect(nextHint([], { where: 'table', touch: false, voice: false })).toBe('welcome');
     expect(nextHint([], { where: 'start', touch: true, voice: false, networked: true })).toBe('welcome');
   });

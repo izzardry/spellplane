@@ -84,7 +84,7 @@
     <button
       type="button"
       role="menuitem"
-      class="slot"
+      class="ds-btn ds-btn--secondary ds-btn--md slot"
       data-testid="radial-{s.slot.id}"
       data-slot={s.slot.id}
       disabled={!enabled}
@@ -94,7 +94,7 @@
       onclick={(e) => pick(e, s.slot)}>{s.slot.label}</button
     >
   {/each}
-  <button type="button" role="menuitem" class="slot more" data-testid="radial-more" aria-label="More actions" style:left="{layout.centre.x}px" style:top="{layout.centre.y}px" onclick={more}>⋯</button>
+  <button type="button" role="menuitem" class="ds-btn ds-btn--secondary ds-btn--md slot more" data-testid="radial-more" aria-label="More actions" style:left="{layout.centre.x}px" style:top="{layout.centre.y}px" onclick={more}>⋯</button>
 </div>
 
 <style>
