@@ -4,9 +4,11 @@
  * so at runtime every member may be missing until its owner registered it.
  */
 import type { Action } from '../core/actions';
-import type { DeckBuild, InstanceId, Line, MatchRecord, Pose, QueueId, RatingKey, RatingRecord, SecretStore, TableState } from '../core/types';
+import type { DeckBuild, InstanceId, Line, Pose, QueueId, SecretStore, TableState } from '../core/types';
 import type { ComputerStatus, MatchmakerStatus } from '../session/types';
-import type { DeckRecord, GameSummary } from '../store/types';
+import type { GameSummary } from '../store/types';
+import type { MatchRecord, RatingKey, RatingRecord } from '../core/types'; // [M8-P7]
+import type { DeckRecord } from '../store/types'; // [M8-P7]
 import type { BrokerState } from '../net/lobby/broker'; // [M8-P7]
 import type { Ticket } from '../net/lobby/messages'; // [M8-P7]
 import type { LobbyMessageRecord } from '../net/lobby/room'; // [M8-P7]
