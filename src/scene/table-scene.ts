@@ -2130,6 +2130,39 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return r ? { cards: leads, target: r.target } : null;
   }
 
+  /**
+   * Open the library's bottom slot while the dragged card is over a library, keep it while the pointer crosses the gap
+   * to the slot (and on the slot), close it elsewhere. Returns whether the point is over a library. Run on every pointer
+   * move of a card drag, not only once per frame: on a slow frame rate a quick move over the library onto the slot
+   * would otherwise never be seen over the library.
+   */
+  function trackLibSlot(p: TablePoint): boolean {
+    if (!state) return false;
+    const t = zoneTargetAt(p, targets());
+    const tz = t ? state.zones[t.zone] : undefined;
+    if (t && tz?.kind === 'library') {
+      const sl = seatLayoutOf(state, layout, tz.owner);
+      const a = sl ? pileAnchor(sl, 'library') : null;
+      libSlot = a ? { zone: t.zone, rect: libraryBottomSlot(a) } : null;
+      return true;
+    }
+    if (libSlot) {
+      // The slot stays while the pointer crosses the gap between the library and the slot (and on the slot itself).
+      const m = GEOMETRY.gap + 6;
+      const r = libSlot.rect;
+      if (!pointInRect(p, { ...r, w: r.w + 2 * m, d: r.d + 2 * m })) libSlot = null;
+    }
+    return false;
+  }
+
+  /** A card drag's pointer moved: follow the library slot at once (trackLibSlot); the rest waits for the frame. */
+  function dragPointerMoved(d: DragState): void {
+    if (!state || d.temp || d.fromLibrary) return;
+    const p = screenToTable(d.last.x, d.last.y);
+    if (handDropAt(d.last.x, d.last.y, p)) return;
+    trackLibSlot(p);
+  }
+
   /** What the drag in progress would do beyond the snap rules, and the library slot it opened. */
   function computeDragHint(d: DragState): DragHint | null {
     if (!state || d.temp) {
@@ -2143,21 +2176,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       libSlot = null;
       return { kind: 'hand', at: null, ghosts: [] };
     }
-    const t = zoneTargetAt(p, targets());
-    const tz = t ? state.zones[t.zone] : undefined;
-    if (t && tz?.kind === 'library') {
-      const sl = seatLayoutOf(state, layout, tz.owner);
-      const a = sl ? pileAnchor(sl, 'library') : null;
-      libSlot = a ? { zone: t.zone, rect: libraryBottomSlot(a) } : null;
-    } else if (libSlot) {
-      // The slot stays while the pointer crosses the gap between the library and the slot (and on the slot itself).
-      const m = GEOMETRY.gap + 6;
-      const r = libSlot.rect;
-      if (!pointInRect(p, { ...r, w: r.w + 2 * m, d: r.d + 2 * m })) libSlot = null;
-    }
+    const overLibrary = trackLibSlot(p);
     if (libSlot) {
       const r = libSlot.rect;
-      const onSlot = !(t && tz?.kind === 'library') && pointInRect(p, r);
+      const onSlot = !overLibrary && pointInRect(p, r);
       return { kind: onSlot ? 'bottom' : 'top', at: { x: r.x, y: r.y }, ghosts: [{ x: r.x, y: r.y, rot: r.rot }] };
     }
     const atk = attackFor(d, p);
@@ -2631,6 +2653,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (drag && e.pointerId === drag.pointerId && !drag.external) {
       drag.last = { x: e.clientX, y: e.clientY };
       drag.ctrl = e.ctrlKey;
+      dragPointerMoved(drag);
       return;
     }
     if (clipDrag && e.pointerId === clipDrag.pointerId && !clipDrag.external) {
@@ -2766,6 +2789,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     }
     if (drag && e.pointerId === drag.pointerId && !drag.external) {
       drag.last = { x: e.clientX, y: e.clientY };
+      dragPointerMoved(drag);
       finishDrag(e.ctrlKey);
       gesture = null;
       release(e);

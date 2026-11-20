@@ -85,6 +85,38 @@ test('onto the library: on the pile its top; on the Bottom slot that shows besid
   expect(await keydowns(page)).toBe(0);
 });
 
+test('a quick move over the library onto its Bottom slot, with no frame between, still puts the card at the bottom', async ({ page }, info) => {
+  const { creature } = await goldfish(page, info);
+  await onTable(page, [creature]);
+  const lib = await pileCentre(page, 'library');
+  const slot = await bottomSlotCentre(page);
+  const from = centreOf((await shownCard(page, creature)).screen);
+  await page.evaluate(() => {
+    const w = window as unknown as { __pid?: number };
+    addEventListener('pointerdown', (e) => (w.__pid = e.pointerId), { capture: true, once: true });
+  });
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + 20, from.y - 20, { steps: 4 });
+  // Over the library and onto the slot, then released, in one task: no frame is drawn in between (a slow device).
+  await page.evaluate(
+    ([l, s]) => {
+      const canvas = document.querySelector('[data-testid="scene-host"] canvas')!;
+      const pointerId = (window as unknown as { __pid?: number }).__pid ?? 1;
+      const ev = (type: string, p: { x: number; y: number }, buttons: number) =>
+        canvas.dispatchEvent(new PointerEvent(type, { pointerId, pointerType: 'mouse', isPrimary: true, clientX: p.x, clientY: p.y, button: 0, buttons, bubbles: true, cancelable: true }));
+      ev('pointermove', l!, 1);
+      ev('pointermove', s!, 1);
+      ev('pointerup', s!, 0);
+    },
+    [lib, slot],
+  );
+  await page.mouse.up();
+  await expect.poll(async () => (await cardIn(page, creature))?.zone).toBe('library:s0');
+  expect(await lastAction(page)).toMatchObject({ type: 'toZone', card: creature, to: 'library:s0', position: 'bottom' });
+  expect((await secrets(page)).libraryOrder.at(-1)).toBe(creature);
+});
+
 test("the library's top card dragged anywhere but the hand goes back: nothing is drawn or moved", async ({ page }, info) => {
   await goldfish(page, info);
   const hand = (await handIds(page)).length;
