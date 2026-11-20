@@ -22,10 +22,13 @@ export async function lobbyAudit(page: Page, root = 'body'): Promise<AuditFindin
     };
     const name = (el: Element): string => `${el.tagName.toLowerCase()}[${el.getAttribute('data-testid') ?? el.textContent?.trim().slice(0, 24) ?? ''}]`;
     const ok = [28, 36, 44, 56];
-    for (const el of Array.from(scope.querySelectorAll('button, a.ds-btn, select, input:not([type=radio]):not([type=checkbox])'))) {
+    for (const el of Array.from(scope.querySelectorAll('button, a.ds-btn, select, input:not([type=radio]):not([type=checkbox]), .ds-seg'))) {
       if (!visible(el)) continue;
+      // A segment sits inside its track (the kit's Segmented, M8-P1): the track is the control and is measured.
+      if (el.closest('.ds-seg') && !el.classList.contains('ds-seg')) continue;
       const box = el.closest('.ds-field') ?? el;
-      const h = box.getBoundingClientRect().height;
+      // The layout height, as the shared designAudit measures it: a pressed button's scale(0.98) is not its size.
+      const h = (box as HTMLElement).offsetHeight || box.getBoundingClientRect().height;
       if (!ok.some((k) => Math.abs(h - k) <= 0.5)) out.push({ rule: 'height', what: `${name(el)} ${h}` });
     }
     const layers = new Map<Element, number>();

@@ -19,6 +19,9 @@ test('renders a placeholder card on the solo table, found through the debug hook
 
   type Shown = { id: string; zone: string; screen: { width: number; height: number }; visible: boolean };
   await expect.poll(async () => (await hook<Shown[]>(page, 'cards')).filter((c) => c.zone === 'battlefield:s0').map((c) => c.id)).toEqual([card]);
+  // Looked at from above: the default look may lean the camera in (Plain, M7-P1), which foreshortens the card.
+  await hook(page, 'rig.setRig', 'birdseye', { animate: false });
+  await expect.poll(async () => (await hook<{ rig: string }>(page, 'camera')).rig).toBe('birdseye');
   const shown = (await hook<Shown[]>(page, 'cards')).find((c) => c.id === card)!;
   expect(shown.visible).toBe(true);
   // The card keeps the 63 x 88 aspect ratio.

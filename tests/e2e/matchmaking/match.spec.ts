@@ -118,6 +118,11 @@ test.describe('quick match over a local lobby', () => {
       expect(await phase(a!)).toBe('off');
       await seek(a!, deckA);
       await expect.poll(() => phase(a!)).toBe('seeking');
+      // Home shows the search on its primary (journey.md 4.1); every other page of the shell shows the queue bar
+      // with the chip (4.5): A browses Decks meanwhile.
+      await expect(a!.getByTestId('home-primary')).toContainText('SEARCHING');
+      await a!.evaluate(() => (location.hash = '#/decks'));
+      await expect(a!.getByTestId('queue-bar')).toBeVisible();
       await expect(a!.getByTestId('queue-chip')).toHaveAttribute('data-phase', 'seeking');
       expect((await status(a!)).alone).toBe(false);
       await tick(a!, 10_000);

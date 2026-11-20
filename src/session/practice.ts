@@ -17,9 +17,9 @@ export function isPracticeRoom(roomId: string): boolean {
 /** Lower-case letters and digits a practice id is made of. */
 const ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789';
 
-/** A fresh practice room id: `p-` and ten random characters (a valid room id, store/tables key). */
+/** A fresh practice room id: `p-` and twelve random characters, as a computer room id (a valid room id, store/tables key). */
 export function newPracticeRoomId(random: (n: number) => Uint8Array = cryptoBytes): string {
-  return PRACTICE_PREFIX + [...random(10)].map((b) => ALPHABET[b % ALPHABET.length]!).join('');
+  return PRACTICE_PREFIX + [...random(12)].map((b) => ALPHABET[b % ALPHABET.length]!).join('');
 }
 
 function cryptoBytes(n: number): Uint8Array {

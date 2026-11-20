@@ -189,6 +189,11 @@ async function controlledTable(page: Page, info: TestInfo, theme: ThemeId): Prom
   await expect(page.getByTestId('hud')).toBeVisible();
   await setTheme(page, theme);
   expect(await currentTheme(page)).toBe(theme);
+  // A first-run hint is an overlay, not the scene's signal: at the default look's framing the welcome stands over the
+  // far seat's front row (where o1 lies), so it is dismissed first.
+  const hint = page.getByTestId('hint-dismiss');
+  if (await hint.isVisible().catch(() => false)) await hint.click();
+  await expect(page.getByTestId('hint')).toHaveCount(0);
   // The bird's-eye rig for every theme, so regions come from a near-affine view (the gate's matrix covers both rigs).
   await page.evaluate(() => {
     const rig = window.__spellplane!.rig;

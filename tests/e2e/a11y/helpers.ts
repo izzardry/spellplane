@@ -6,6 +6,7 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, type Browser, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
 import { hook } from '../helpers/app';
+import { settleAnimations } from '../helpers/design-audit';
 import { freshProfile, freshRoom, open, setNickname } from '../lobby/helpers';
 import { setsScript } from '../flow/helpers';
 import { call, decklist, freshProfile as soloProfile, openSolo } from '../solo/helpers';
@@ -24,6 +25,9 @@ export interface AxeFinding {
  * default). The WebGL canvas is part of the page; axe has nothing to check inside it.
  */
 export async function seriousViolations(page: Page, include?: string): Promise<AxeFinding[]> {
+  // A sheet or popover fading in (the kit's entry animations, M8-P1) blends its text into the page behind: measure
+  // contrast once it has settled.
+  await settleAnimations(page);
   let builder = new AxeBuilder({ page });
   if (include) builder = builder.include(include);
   const result = await builder.analyze();

@@ -81,6 +81,16 @@ const OPENERS: Opener[] = [
     panel: (page) => page.locator('[data-testid="log"]:not(.closed)'),
   },
   { kind: 'dialog', name: 'settings', open: (page) => clickIfVisible(page.getByTestId('open-settings')), panel: (page) => page.getByTestId('settings').or(page.getByRole('dialog')).first() },
+  // The rebuilt HUD (M7-P2) opens its dialogs from the Menu.
+  {
+    kind: 'dialog',
+    name: 'settings from the menu',
+    open: async (page) => {
+      if (!(await clickIfVisible(page.getByTestId('open-menu')))) return false;
+      return clickIfVisible(page.getByTestId('menu-popover').getByTestId('menu-settings'));
+    },
+    panel: (page) => page.getByTestId('settings').or(page.getByRole('dialog')).first(),
+  },
   { kind: 'dialog', name: 'keys panel', open: (page) => clickIfVisible(page.getByTestId('open-cheat-sheet')), panel: (page) => page.getByTestId('cheat-sheet') },
   { kind: 'dialog', name: 'theme picker', open: (page) => clickIfVisible(page.getByTestId('open-theme-settings')), panel: (page) => page.getByTestId('theme-picker').or(page.locator('.theme-pop')).first() },
   {
