@@ -518,3 +518,37 @@ export class Player {
     return this.state.rng[rid]!.result!;
   }
 }
+
+// --- M8-P5: the rejoin steps of the leak scenarios (persistence.md section 9) -----------------------------------
+// Structural, so this file imports no session code: the resume simulations pass their networked sessions and openers.
+
+/** A browser of the rejoin scenarios: its open networked session, or null while it is away. */
+export interface RejoinBrowser {
+  session: { whenSaved(): Promise<void>; leave(): Promise<void> } | null;
+}
+
+/** Leave the table on purpose (`bye { reason: 'leave' }`) after the save is flushed; the browser keeps its storage. */
+export async function leave(b: RejoinBrowser): Promise<void> {
+  const s = b.session;
+  if (!s) return;
+  await s.whenSaved();
+  await s.leave();
+  b.session = null;
+}
+
+/** Open the table again from the browser's own save (History, the link or a reload): `open` reads its stores. */
+export function returnFromSave<T>(open: () => Promise<T>): Promise<T> {
+  return open();
+}
+
+/** The seat and token of a re-invite link `…#/t/<room>/<key>/rejoin/<seat>/<token>` (persistence.md section 7). */
+export function claimOfLink(link: string): { seat: string; token: string } {
+  const m = /\/rejoin\/(s[0-3])\/([\w-]+)$/.exec(link);
+  if (!m) throw new Error(`not a re-invite link: ${link}`);
+  return { seat: m[1]!, token: m[2]! };
+}
+
+/** A blank browser (new key pair, empty storage) opens a re-invite link: `open` starts it with the link's claim. */
+export function replaceBrowser<T>(link: string, open: (claim: { seat: string; token: string }) => Promise<T>): Promise<T> {
+  return open(claimOfLink(link));
+}

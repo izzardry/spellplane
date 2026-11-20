@@ -167,9 +167,13 @@ class SequencerImpl implements Sequencer {
       const why = spectatorActionProblem(state, action);
       if (why !== null) return why;
     } else if (sender.seat === null) {
-      // An unseated player can only take a chair (DESIGN "Players, seats and formats").
-      if (action.type !== 'seatTake') return `take a seat before sending ${action.type}`;
-      if (action.by !== action.seat) return 'seatTake must be sent by the seat it takes';
+      // An unseated player can only take a chair (DESIGN "Players, seats and formats"), or claim an invited one with a
+      // re-invite token (persistence.md section 7; M8-P5: the engine checks the peer, the clock and the old browser).
+      if (action.type !== 'seatTake' && action.type !== 'seatClaim') return `take a seat before sending ${action.type}`;
+      if (action.by !== action.seat) return `${action.type} must be sent by the seat it ${action.type === 'seatClaim' ? 'claims' : 'takes'}`;
+    } else if (action.type === 'seatClaim') {
+      // A browser that holds a seat never claims one (persistence.md section 7).
+      return `[claim:seated] this browser already holds seat ${sender.seat}`;
     } else if (action.by !== sender.seat && !(action.type === 'seatTake' && action.by === action.seat)) {
       // Taking a chair is stamped as the chair taken, seated or not (M1-P5 moves chairs that way); the engine checks
       // that it is taken with the sender's own peer id, and the reducer that it is free.

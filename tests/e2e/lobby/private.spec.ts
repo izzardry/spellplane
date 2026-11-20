@@ -46,7 +46,10 @@ async function dealtOnce(a: Page, b: Page): Promise<void> {
   await expect
     .poll(
       async () => {
-        const [sa, sb] = [await state(a), await state(b)];
+        // A page that was just reloaded registers its state hook only once its table is open (the muster may hold it
+        // for a moment): until then it counts as not dealt yet, and the poll asks again.
+        const [sa, sb] = [await state(a).catch(() => null), await state(b).catch(() => null)];
+        if (!sa || !sb) return null;
         const g = sa.games ?? 0;
         return [handOf(sa, 's0'), handOf(sa, 's1'), libraryOf(sa, 's0'), libraryOf(sa, 's1'), sa.seats.s0?.dealt === g, sa.seats.s1?.dealt === g, sa.turn.active === sb.turn.active, sa.seq === sb.seq];
       },
