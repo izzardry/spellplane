@@ -66,6 +66,11 @@ export interface PostPipelineImpl extends PostPipeline {
   textureBytes(): number;
   /** The composer while post runs, else null (tests). */
   readonly composer: EffectComposer | null;
+  /**
+   * The pixel ratio the MSAA samples are chosen for (the full ratio), so a lower adaptive render scale
+   * (scene/resolution.ts) resizes the targets without rebuilding the chain; null: the size's own ratio.
+   */
+  setSamplesBasis(pixelRatio: number | null): void;
 }
 
 /**
@@ -147,8 +152,9 @@ export function createPostPipeline(renderer: THREE.WebGLRenderer, scene: THREE.S
   let samples = 0;
   const size = { w: 1, h: 1, pr: 1 };
   const device = () => ({ w: Math.max(1, Math.round(size.w * size.pr)), h: Math.max(1, Math.round(size.h * size.pr)) });
+  let samplesBasis: number | null = null;
   const wantedSamples = () => {
-    const d = device();
+    const d = samplesBasis ? { w: Math.max(1, Math.round(size.w * samplesBasis)), h: Math.max(1, Math.round(size.h * samplesBasis)) } : device();
     return postSamples(level?.msaa ?? 0, d.w, d.h, renderer.capabilities.maxSamples);
   };
 
@@ -271,6 +277,9 @@ export function createPostPipeline(renderer: THREE.WebGLRenderer, scene: THREE.S
     },
     passes() {
       return composer ? [...ids] : [];
+    },
+    setSamplesBasis(pixelRatio) {
+      samplesBasis = pixelRatio !== null && pixelRatio > 0 ? pixelRatio : null;
     },
     textureBytes() {
       if (!composer) return 0;
