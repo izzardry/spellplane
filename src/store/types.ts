@@ -473,6 +473,7 @@ export interface LibraryFile {
 export interface LibraryImport {
   decks: DeckRecord[];
   errors: { index: number; message: string }[];
+  notes?: { index: number; message: string }[]; // [M8-P3] records imported with a change: a sealed deck holding foreign cards is custom now (decks.md section 7)
 }
 
 /**

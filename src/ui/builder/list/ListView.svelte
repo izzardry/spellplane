@@ -123,10 +123,10 @@
                 <span class="cost muted">{row.manaCost}</span>
               </button>
               {#if row.count > 1}
-                <button type="button" class="small" data-testid="list-move-all" title={fromDeck ? 'Move all to the pool' : 'Move all to the deck'} aria-label={`${fromDeck ? 'Move all to the pool' : 'Move all to the deck'}: ${row.name}`} onclick={() => move(row, fromDeck, true)}>all</button>
+                <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs small" data-testid="list-move-all" title={fromDeck ? 'Move all to the pool' : 'Move all to the deck'} aria-label={`${fromDeck ? 'Move all to the pool' : 'Move all to the deck'}: ${row.name}`} onclick={() => move(row, fromDeck, true)}>all</button>
               {/if}
               {#if fromDeck && row.basicLand}
-                <button type="button" class="small" data-testid="list-more-basic" title="One more from the basic-land dispenser" aria-label={`One more ${row.name}`} onclick={() => moreBasic(row)}>+</button>
+                <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs small" data-testid="list-more-basic" title="One more from the basic-land dispenser" aria-label={`One more ${row.name}`} onclick={() => moreBasic(row)}>+</button>
               {/if}
             </li>
           {/each}
@@ -141,7 +141,7 @@
     <input class="text" type="search" placeholder="Filter by name, type or text" aria-label="Filter by name, type or text" data-testid="list-filter-text" bind:value={listUi.filters.text} />
     <span class="colours">
       {#each COLOUR_FILTERS as c (c)}
-        <button type="button" class="pip" data-testid="list-filter-colour" data-colour={c} aria-pressed={listUi.filters.colours.includes(c)} title={COLOUR_LABELS[c]} aria-label={COLOUR_LABELS[c]} onclick={() => toggleColour(c)}>{c}</button>
+        <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs ds-icon-btn ds-icon-only pip" data-testid="list-filter-colour" data-colour={c} aria-pressed={listUi.filters.colours.includes(c)} title={COLOUR_LABELS[c]} aria-label={COLOUR_LABELS[c]} onclick={() => toggleColour(c)}>{c}</button>
       {/each}
     </span>
     <select aria-label="Card type" data-testid="list-filter-kind" bind:value={listUi.filters.kind}>
@@ -154,7 +154,7 @@
         {#each Object.keys(SORT_LABELS) as k (k)}<option value={k}>{SORT_LABELS[k as BuilderSort]}</option>{/each}
       </select>
     </label>
-    {#if filtered}<button type="button" class="link" data-testid="list-filter-clear" onclick={clearFilters}>Clear filters</button>{/if}
+    {#if filtered}<button type="button" class="ds-btn ds-btn--quiet ds-btn--xs link" data-testid="list-filter-clear" onclick={clearFilters}>Clear filters</button>{/if}
   </div>
 
   <div class="columns">
@@ -172,7 +172,7 @@
         }}
       >
         <input type="search" placeholder="Search Scryfall, e.g. t:goblin cmc<=2" aria-label="Search all cards" data-testid="list-search-query" bind:value={listUi.query} />
-        <button type="submit" data-testid="list-search-go" disabled={searching || !listUi.query.trim()}>{searching ? 'Searching…' : 'Search'}</button>
+        <button class="ds-btn ds-btn--secondary ds-btn--xs" type="submit" data-testid="list-search-go" disabled={searching || !listUi.query.trim()}>{searching ? 'Searching…' : 'Search'}</button>
       </form>
       <div aria-live="polite">
         {#if listUi.searchError}<p class="error" data-testid="list-search-error">{listUi.searchError}</p>{/if}
@@ -186,8 +186,8 @@
               <span class="muted">{c.mana_cost ?? ''} {c.type_line}</span>
               {#if inBuild[c.id]}<span class="muted owned" title="Copies in the pool and deck">×{inBuild[c.id]}</span>{/if}
               <span class="add">
-                <button type="button" class="small" data-testid="list-search-add-deck" aria-label={`Add ${c.name} to the deck`} onclick={() => addFound(c, true)}>+ Deck</button>
-                <button type="button" class="small" data-testid="list-search-add-pool" aria-label={`Add ${c.name} to the pool`} onclick={() => addFound(c, false)}>+ Pool</button>
+                <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs small" data-testid="list-search-add-deck" aria-label={`Add ${c.name} to the deck`} onclick={() => addFound(c, true)}>+ Deck</button>
+                <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs small" data-testid="list-search-add-pool" aria-label={`Add ${c.name} to the pool`} onclick={() => addFound(c, false)}>+ Pool</button>
               </span>
             </li>
           {/each}
@@ -229,19 +229,20 @@
     align-items: center;
     margin-bottom: 10px;
   }
+  /* Swept to the kit (contracts.md Part G "Visual" 4; M8-P3): kit buttons; inputs and selects 28 px high. */
   input,
   select,
-  button {
+  .main {
     font: inherit;
     color: inherit;
   }
   input,
   select {
-    padding: 4px 6px;
+    padding: 0 6px;
     border: 1px solid var(--sp-border, #d8d8d8);
     border-radius: var(--sp-radius-sm, 2px);
     background: var(--sp-surface, #fff);
-    min-height: 32px;
+    height: 28px;
     box-sizing: border-box;
   }
   .text {
@@ -252,32 +253,16 @@
     display: inline-flex;
     gap: 2px;
   }
-  .pip {
-    min-width: 32px;
-    min-height: 32px;
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-sm, 2px);
-    background: var(--sp-surface, #fff);
-    cursor: pointer;
-    font-weight: 600;
-  }
   .pip[aria-pressed='true'] {
-    background: var(--sp-fg, #111);
-    color: var(--sp-bg, #fff);
-    border-color: var(--sp-fg, #111);
+    background: var(--ds-ink);
+    color: var(--ds-on-ink);
   }
   .sort {
     display: inline-flex;
     gap: 4px;
     align-items: center;
   }
-  .link {
-    border: 0;
-    background: none;
-    text-decoration: underline;
-    cursor: pointer;
-    padding: 4px;
-  }
+
   .columns {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -344,9 +329,7 @@
     border-radius: var(--sp-radius-sm, 2px);
   }
   .main:hover,
-  .main:focus-visible,
-  .small:hover,
-  .small:focus-visible {
+  .main:focus-visible {
     background: var(--sp-fg, #111);
     color: var(--sp-bg, #fff);
   }
@@ -372,15 +355,7 @@
   .foil {
     margin-left: 0.35em;
   }
-  .small {
-    border: 1px solid var(--sp-border, #d8d8d8);
-    background: var(--sp-surface, #fff);
-    border-radius: var(--sp-radius-sm, 2px);
-    padding: 2px 8px;
-    min-height: 32px;
-    min-width: 32px;
-    cursor: pointer;
-  }
+
   .count {
     font-variant-numeric: tabular-nums;
   }
@@ -408,13 +383,7 @@
     flex: 1;
     min-width: 0;
   }
-  .search form button {
-    border: 1px solid var(--sp-fg, #111);
-    background: var(--sp-surface, #fff);
-    border-radius: var(--sp-radius-sm, 2px);
-    padding: 4px 12px;
-    cursor: pointer;
-  }
+
   .results li {
     display: flex;
     flex-wrap: wrap;

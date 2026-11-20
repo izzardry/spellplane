@@ -2,6 +2,7 @@
  * M0-P5 acceptance: settings round-trip through IndexedDB with defaults filled in; the deck library round-trips
  * (DESIGN "Specification: network protocol and secrecy", Local persistence; "Pre-game", Local deck library).
  */
+import { migrateDeckRecord } from '../../../src/store/decks';
 import { afterEach, describe, expect, it } from 'vitest';
 import { newDeckId } from '../../../src/store/decks';
 import { openStores, type LocalStores } from '../../../src/store/stores';
@@ -122,7 +123,7 @@ describe('decks', () => {
     const s = await stores(name);
     await s.decks.put(deck('d1', 2000));
     s.close();
-    expect(await (await stores(name)).decks.get('d1')).toEqual(deck('d1', 2000));
+    expect(await (await stores(name)).decks.get('d1')).toEqual(migrateDeckRecord(deck('d1', 2000))); // M8-P3: get() migrates
   });
 
   it('lists the most recently updated deck first', async () => {

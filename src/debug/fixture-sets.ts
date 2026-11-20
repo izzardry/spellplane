@@ -4,8 +4,8 @@
  * this source instead of MTGJSON, so browser tests never touch the network (CLAUDE.md). Nothing here ships in
  * production builds.
  */
-import { summaryOf } from '../data/mtgjson';
-import { FEATURED_SETS, type SetCode, type SetData, type SetDataSource } from '../data/types';
+import { listSetSource } from '../data/sets';
+import type { SetData, SetDataSource } from '../data/types';
 
 declare global {
   interface Window {
@@ -14,23 +14,9 @@ declare global {
   }
 }
 
-/** Set data from a fixed list, featured sets first, then by release date; lookups never fetch. */
+/** Set data from a fixed list (data/sets.ts listSetSource); every fixture set is a core set (M8-P3). */
 export function fixtureSetSource(sets: readonly SetData[]): SetDataSource {
-  const byCode = new Map(sets.map((s) => [s.code.toUpperCase(), s] as const));
-  const rank = (c: SetCode): number => {
-    const i = (FEATURED_SETS as readonly string[]).indexOf(c);
-    return i < 0 ? FEATURED_SETS.length : i;
-  };
-  return {
-    listSets: () =>
-      Promise.resolve(
-        [...byCode.values()]
-          .map((s) => ({ ...summaryOf(s), featured: rank(s.code) < FEATURED_SETS.length }))
-          .sort((a, b) => rank(a.code) - rank(b.code) || (a.releaseDate < b.releaseDate ? -1 : a.releaseDate > b.releaseDate ? 1 : 0)),
-      ),
-    get: (code) => Promise.resolve(byCode.get(code.toUpperCase()) ?? null),
-    peek: (code) => byCode.get(code.toUpperCase()) ?? null,
-  };
+  return listSetSource(sets);
 }
 
 /** The injected set source when a test injected set data into this page, else null. */

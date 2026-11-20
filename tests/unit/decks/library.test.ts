@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { canonicalJson } from '../../../src/core/hash';
 import type { DeckBuild } from '../../../src/core/types';
-import { buildFromDeckRecord, buildLists, deckRecordFromBuild, exportFileName, exportLibrary, importLibrary, LIBRARY_LIMITS, planImport } from '../../../src/store/decks';
+import { buildFromDeckRecord, buildLists, deckRecordFromBuild, exportFileName, exportLibrary, importLibrary, LIBRARY_LIMITS, migrateDeckRecord, planImport } from '../../../src/store/decks';
 import { openStores, type LocalStores } from '../../../src/store/stores';
 import { LIBRARY_FILE_FORMAT, LIBRARY_FILE_VERSION, type DeckRecord, type LibraryFile } from '../../../src/store/types';
 import { uniqueDbName } from '../store/helpers';
@@ -50,14 +50,14 @@ describe('export then import reproduces the deck (PLAN M2-P6 acceptance)', () =>
     const text = exportLibrary([record], T0 + 10);
     const back = importLibrary(text);
     expect(back.errors).toEqual([]);
-    expect(back.decks).toEqual([record]);
+    expect(back.decks).toEqual([migrateDeckRecord(record)]);
     expect(canonicalJson(buildFromDeckRecord(back.decks[0]!))).toBe(canonicalJson(build));
   });
 
   it('a pasted deck without a pool round-trips with its text, and opens with its deck and sideboard', () => {
     const record = pasted('d1');
     const back = importLibrary(exportLibrary([record], T0));
-    expect(back).toEqual({ decks: [record], errors: [] });
+    expect(back).toEqual({ decks: [migrateDeckRecord(record)], errors: [] });
     const build = buildFromDeckRecord(back.decks[0]!);
     expect(buildLists(build)).toEqual({ main: record.main, side: record.side });
     expect(new Set(build.cards.map((c) => c.id)).size).toBe(4);
@@ -74,8 +74,8 @@ describe('export then import reproduces the deck (PLAN M2-P6 acceptance)', () =>
     const plan = planImport(await b.decks.list(), result.decks, () => 'never');
     expect(plan).toMatchObject({ unchanged: 0, copied: 0 });
     for (const r of plan.put) await b.decks.put(r);
-    expect(await b.decks.get('x1')).toEqual(records[0]);
-    expect(await b.decks.get('x2')).toEqual(records[1]);
+    expect(await b.decks.get('x1')).toEqual(migrateDeckRecord(records[0]!));
+    expect(await b.decks.get('x2')).toEqual(migrateDeckRecord(records[1]!));
     expect(buildFromDeckRecord((await b.decks.get('x1'))!)).toEqual(tableBuild());
   });
 
@@ -85,7 +85,7 @@ describe('export then import reproduces the deck (PLAN M2-P6 acceptance)', () =>
   });
 
   it('a single exported record (not wrapped in a library file) imports too', () => {
-    expect(importLibrary(JSON.stringify(pasted('solo')))).toEqual({ decks: [pasted('solo')], errors: [] });
+    expect(importLibrary(JSON.stringify(pasted('solo')))).toEqual({ decks: [migrateDeckRecord(pasted('solo'))], errors: [] });
   });
 
   it('exporting does not alias the records', () => {
@@ -140,7 +140,7 @@ describe('records from and to the builder (DESIGN "Pre-game", Local deck library
     expect(r.main).toHaveLength(build.main.length);
     const back = importLibrary(exportLibrary([r], T0 + 1));
     expect(back.errors).toEqual([]);
-    expect(back.decks).toEqual([r]);
+    expect(back.decks).toEqual([migrateDeckRecord(r)]);
   });
 
   it('opening a record twice gives two independent builds', () => {
@@ -207,7 +207,7 @@ describe('import never throws and reports what it skipped', () => {
 
   it('a second record with the same id in one file is skipped', () => {
     const r = importLibrary(file([pasted('same'), { ...pasted('same'), name: 'Other' }]));
-    expect(r.decks).toEqual([pasted('same')]);
+    expect(r.decks).toEqual([migrateDeckRecord(pasted('same'))]);
     expect(r.errors).toEqual([{ index: 1, message: expect.stringMatching(/same id/) as unknown as string }]);
   });
 

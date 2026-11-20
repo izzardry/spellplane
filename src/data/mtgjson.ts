@@ -241,7 +241,7 @@ export function setListSummaries(raw: unknown): SetSummary[] {
     const releaseDate = str(s.releaseDate);
     const type = str(s.type);
     if (!code || !name || !releaseDate || !type || !BOOSTER_SET_TYPES.includes(type) || s.isOnlineOnly === true) continue;
-    out.push({ code: normaliseSetCode(code), name, releaseDate, featured: false });
+    out.push({ code: normaliseSetCode(code), name, releaseDate, featured: false, type });
   }
   return out;
 }

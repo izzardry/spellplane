@@ -54,10 +54,10 @@
   }
 </script>
 
-<section class="dialog" data-testid="deck-import" aria-label="Import a deck">
+<section class="dialog" data-testid="deck-import" data-ds-layer="dialog" aria-label="Import a deck">
   <header>
     <h2>Import a deck</h2>
-    <button type="button" class="close" onclick={onclose} aria-label="Close">×</button>
+    <button type="button" class="ds-btn ds-btn--quiet ds-btn--sm ds-icon-btn ds-icon-only" onclick={onclose} aria-label="Close">×</button>
   </header>
   <textarea
     bind:this={area}
@@ -73,8 +73,8 @@
     }}
   ></textarea>
   <div class="row">
-    <button type="button" data-testid="deck-check" disabled={busy || !text.trim()} onclick={check}>Check</button>
-    <button type="button" class="primary" data-testid="deck-import-go" disabled={busy || !checked || checked.resolved.main.length === 0 || checkedText !== text} onclick={doImport}>Import</button>
+    <button type="button" class="ds-btn ds-btn--secondary ds-btn--sm" data-testid="deck-check" disabled={busy || !text.trim()} onclick={check}>Check</button>
+    <button type="button" class="ds-btn ds-btn--primary ds-btn--sm" data-testid="deck-import-go" disabled={busy || !checked || checked.resolved.main.length === 0 || checkedText !== text} onclick={doImport}>Import</button>
     {#if busy}<span class="muted">Working…</span>{/if}
   </div>
   {#if failure}<p class="error">{failure}</p>{/if}
@@ -93,7 +93,7 @@
             {#if err.nearMatches.length}
               <span class="near">Did you mean
                 {#each err.nearMatches as m (m)}
-                  <button type="button" data-testid="near-match" onclick={() => useMatch(err.line, errorName(err), m)}>{m}</button>
+                  <button type="button" class="ds-btn ds-btn--ghost ds-btn--xs" data-testid="near-match" onclick={() => useMatch(err.line, errorName(err), m)}>{m}</button>
                 {/each}
               </span>
             {/if}
@@ -105,21 +105,28 @@
 </section>
 
 <style>
+  /* Swept to the kit (contracts.md Part G "Visual" 4; M8-P3): kit buttons and --ds-* variables, no restructuring. */
   .dialog {
     position: fixed;
     z-index: 65;
     top: 56px;
     left: 50%;
     transform: translateX(-50%);
+    box-sizing: border-box;
     width: min(560px, 92vw);
     max-height: calc(100vh - 80px);
     overflow-y: auto;
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    border: 1px solid var(--sp-fg, #111);
-    border-radius: var(--sp-radius-lg, 8px);
-    padding: 12px 16px;
-    font: var(--sp-font-size-small, 12px) / 1.45 var(--sp-font, system-ui);
+    display: flex;
+    flex-direction: column;
+    gap: var(--ds-space-sm);
+    background: var(--ds-panel);
+    color: var(--ds-ink);
+    border-radius: var(--ds-radius-sheet);
+    box-shadow: var(--ds-elevation-pop);
+    padding: var(--ds-space-lg) var(--ds-space-xl);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
+    line-height: 1.45;
   }
   header {
     display: flex;
@@ -127,44 +134,27 @@
     align-items: center;
   }
   h2 {
-    margin: 0 0 8px;
-    font-size: var(--sp-font-size-large, 18px);
+    margin: 0;
+    font-family: var(--ds-font-heading);
+    font-size: var(--ds-type-heading);
   }
   textarea {
     width: 100%;
     box-sizing: border-box;
-    font: var(--sp-font-size-small, 12px) / 1.4 var(--sp-font-mono, monospace);
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-sm, 2px);
-    padding: 6px;
+    font-family: var(--ds-font-mono);
+    font-size: var(--ds-type-small);
+    line-height: 1.4;
+    color: var(--ds-ink);
+    background: var(--ds-chip);
+    border: 0;
+    box-shadow: var(--ds-elevation-well);
+    border-radius: var(--ds-radius-card);
+    padding: var(--ds-space-sm) var(--ds-space-md);
   }
   .row {
     display: flex;
-    gap: 8px;
+    gap: var(--ds-space-sm);
     align-items: center;
-    margin-top: 6px;
-  }
-  button {
-    font: inherit;
-    background: none;
-    color: inherit;
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-sm, 2px);
-    padding: 2px 10px;
-    cursor: pointer;
-  }
-  button.primary {
-    background: var(--sp-fg, #111);
-    color: var(--sp-bg, #fff);
-    border-color: var(--sp-fg, #111);
-  }
-  button:disabled {
-    opacity: 0.4;
-    cursor: default;
-  }
-  .close {
-    border: 0;
-    font-size: 16px;
   }
   .errors {
     list-style: none;
@@ -172,28 +162,27 @@
     margin: 0;
   }
   .errors li {
-    padding: 4px 0;
-    border-top: 1px solid var(--sp-border, #d8d8d8);
+    padding: var(--ds-space-xs) 0;
+    border-top: 1px solid var(--ds-line);
   }
   .line {
-    font-weight: var(--sp-font-weight-bold, 600);
+    font-weight: var(--ds-weight-bold);
     margin-right: 6px;
   }
   code {
-    font-family: var(--sp-font-mono, monospace);
+    font-family: var(--ds-font-mono);
     margin-right: 6px;
   }
   .near {
-    display: block;
-  }
-  .near button {
-    margin-left: 4px;
-    padding: 0 6px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--ds-space-xs);
   }
   .muted {
-    color: var(--sp-muted, #5f5f5f);
+    color: var(--ds-muted);
   }
   .error {
-    color: var(--sp-danger, #b3261e);
+    color: var(--ds-danger);
   }
 </style>

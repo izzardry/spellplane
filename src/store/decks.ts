@@ -8,17 +8,18 @@
 import type { IDBPDatabase } from 'idb';
 import { canonicalJson } from '../core/hash';
 import type { CardRef, DeckBuild, DraftFormat, PoolCard, Pose } from '../core/types';
-import { LIBRARY_FILE_FORMAT, LIBRARY_FILE_VERSION, type DeckRecord, type DeckStore, type LibraryFile, type LibraryImport, type SpellplaneDB } from './types';
+import { LIBRARY_FILE_FORMAT, LIBRARY_FILE_VERSION, type DeckRecord, type DeckSeal, type DeckSize, type DeckStore, type LibraryFile, type LibraryImport, type SpellplaneDB } from './types';
 
 /** The DeckStore on an open database (store/types.ts DeckStore). `list()` returns the most recently updated first. */
 export function createDeckStore(db: IDBPDatabase<SpellplaneDB>): DeckStore {
   return {
     async list(): Promise<DeckRecord[]> {
       const ascending = await db.getAllFromIndex('decks', 'updatedAt');
-      return ascending.reverse();
+      return ascending.reverse().map(migrateDeckRecord);
     },
     async get(id: string): Promise<DeckRecord | null> {
-      return (await db.get('decks', id)) ?? null;
+      const d = await db.get('decks', id);
+      return d ? migrateDeckRecord(d) : null;
     },
     async put(deck: DeckRecord): Promise<void> {
       if (!deck.id) throw new TypeError('deck needs an id');
@@ -28,6 +29,65 @@ export function createDeckStore(db: IDBPDatabase<SpellplaneDB>): DeckStore {
       await db.delete('decks', id);
     },
   };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Migration (decks.md section 7, "Migration"; M8-P3)
+// ---------------------------------------------------------------------------------------------------------------------
+
+const refKeyOf = (r: CardRef): string => (r.foil ? `${r.sid}*` : r.sid);
+
+/** Pool cards not in `main`, in pool order (the sideboard of a sealed deck; data/deck/seal.ts poolRemaining). */
+function remainingOf(pool: readonly CardRef[], main: readonly CardRef[]): CardRef[] {
+  const inMain = new Map<string, number>();
+  for (const r of main) inMain.set(refKeyOf(r), (inMain.get(refKeyOf(r)) ?? 0) + 1);
+  const out: CardRef[] = [];
+  for (const r of pool) {
+    const n = inMain.get(refKeyOf(r)) ?? 0;
+    if (n > 0) inMain.set(refKeyOf(r), n - 1);
+    else out.push(refOf(r));
+  }
+  return out;
+}
+
+/**
+ * An older record in M8's shape (decks.md section 7, "Migration"; contracts.md Part G "Decks"): a record with a draft
+ * `origin` becomes sealed (`via: 'draft'`, the non-basic cards of its pool, every pack shown, `side` recomputed); every
+ * other record becomes custom, sized 100 with a commander, 40 up to 45 main cards, else 60. A record that already has a
+ * `kind` is returned as it is, so the migration is idempotent. `pool` and `origin` are kept for the M2 builder.
+ */
+export function migrateDeckRecord(record: DeckRecord): DeckRecord {
+  if (record.kind) return record;
+  if (record.origin) {
+    const pool: CardRef[] = record.pool ? record.pool.cards.filter((c) => c.basic !== true).map((c) => refOf(c.ref)) : [...record.main, ...record.side].map(refOf);
+    const seal: DeckSeal = { via: 'draft', sets: [...record.origin.sets], pool, draft: { format: record.origin.format }, sealedAt: record.createdAt, revealed: record.origin.sets.length };
+    return { ...record, kind: 'sealed', size: 40, seal, side: remainingOf(pool, record.main) };
+  }
+  const size: DeckSize = (record.commander?.length ?? 0) > 0 ? 100 : record.main.length <= 45 ? 40 : 60;
+  return { ...record, kind: 'custom', size };
+}
+
+/**
+ * A record as an edit saves it (decks.md section 7, "The record's invariants"): a custom deck drops the M2 builder's
+ * `pool` and `origin` ("removed at the first save after migration"); a sealed deck keeps them for the M2 builder only
+ * while the pool still holds the same cards as its deck and sideboard, else the stale `pool` is dropped (the seal holds
+ * the pool now, and the builder opens the record from its lists). A record without `kind` is returned as it is.
+ */
+export function settleEdited(record: DeckRecord): DeckRecord {
+  if (!record.kind || (record.pool === undefined && record.origin === undefined)) return record;
+  const out: DeckRecord = { ...record };
+  if (out.kind === 'custom') {
+    delete out.pool;
+    delete out.origin;
+  } else if (out.pool && !poolMatches(out.pool, out.main, out.side)) {
+    delete out.pool;
+  }
+  return out;
+}
+
+function poolMatches(pool: DeckBuild, main: readonly CardRef[], side: readonly CardRef[]): boolean {
+  const lists = buildLists(pool);
+  return sameRefs(lists.main, main) && sameRefs(lists.side, side);
 }
 
 /** A new random deck id. */
@@ -300,9 +360,10 @@ function deckRecord(v: unknown): DeckRecord {
   }
   if (v.pool !== undefined) {
     const pool = deckBuild(v.pool);
-    const lists = buildLists(pool);
-    if (!sameRefs(lists.main, record.main) || !sameRefs(lists.side, record.side)) throw new Invalid('the pool does not hold the same cards as the deck and sideboard');
-    record.pool = pool;
+    // An M8 record (with `kind`) keeps the M2 pool only as a convenience for the builder: a stale one is dropped, not
+    // fatal (decks.md section 7). A version 1 record still needs its pool to match, since migration reads it.
+    if (poolMatches(pool, record.main, record.side)) record.pool = pool;
+    else if (v.kind === undefined) throw new Invalid('the pool does not hold the same cards as the deck and sideboard');
   }
   if (v.origin !== undefined) {
     const o = v.origin;
@@ -310,7 +371,105 @@ function deckRecord(v: unknown): DeckRecord {
     if (!Array.isArray(o.sets) || o.sets.length > 64 || !o.sets.every((s) => typeof s === 'string' && /^[A-Za-z0-9]{1,16}$/.test(s))) throw new Invalid('the set codes are not set codes');
     record.origin = { format: o.format as DraftFormat, sets: [...(o.sets as string[])] };
   }
+  m8Fields(v, record);
   return record;
+}
+
+const SET_CODE = /^[A-Za-z0-9]{1,16}$/;
+
+function setCodes(v: unknown, what: string): string[] {
+  if (!Array.isArray(v) || v.length > 36 || !v.every((s) => typeof s === 'string' && SET_CODE.test(s))) throw new Invalid(`${what} are not set codes`);
+  return [...(v as string[])];
+}
+
+/**
+ * The fields M8 added (decks.md section 7, "Library files"): kind, size, seal, maybe, cover, notes, convertedFrom and
+ * lastPlayedAt, checked with the existing limits. `summary` is derived and recomputed, so it is not read from a file.
+ */
+function m8Fields(v: Obj, record: DeckRecord): void {
+  if (v.kind !== undefined) {
+    if (v.kind !== 'custom' && v.kind !== 'sealed') throw new Invalid('the deck kind is not custom or sealed');
+    record.kind = v.kind;
+  }
+  if (v.size !== undefined) {
+    if (v.size !== 40 && v.size !== 60 && v.size !== 100) throw new Invalid('the deck size is not 40, 60 or 100');
+    record.size = v.size;
+  }
+  if (v.maybe !== undefined) record.maybe = refList(v.maybe, 'the maybe-board');
+  if (v.commander !== undefined) record.commander = refList(v.commander, 'the commander');
+  if (v.companion !== undefined) record.companion = refList(v.companion, 'the companion');
+  if (v.cover !== undefined) record.cover = cardRef(v.cover, 'the cover');
+  if (v.notes !== undefined) {
+    if (typeof v.notes !== 'string' || v.notes.length > 2000) throw new Invalid('the notes are longer than 2000 characters');
+    record.notes = v.notes;
+  }
+  if (v.lastPlayedAt !== undefined) record.lastPlayedAt = time(v.lastPlayedAt, 'the last played date');
+  if (v.seal !== undefined) {
+    const s = v.seal;
+    if (!isObj(s) || (s.via !== 'packs' && s.via !== 'draft')) throw new Invalid('the seal is not a seal');
+    const sets = setCodes(s.sets, "the seal's sets");
+    const revealed = s.revealed;
+    if (typeof revealed !== 'number' || !Number.isInteger(revealed) || revealed < 0 || revealed > sets.length) throw new Invalid("the seal's opened packs are not a count");
+    const seal: DeckSeal = { via: s.via, sets, pool: refList(s.pool, 'the seal\'s pool'), sealedAt: time(s.sealedAt, 'the seal date'), revealed };
+    if (s.seed !== undefined) {
+      if (typeof s.seed !== 'string' || !/^[0-9a-f]{1,128}$/.test(s.seed)) throw new Invalid("the seal's seed is not hex");
+      seal.seed = s.seed;
+    }
+    if (s.generator !== undefined) {
+      if (typeof s.generator !== 'number' || !Number.isInteger(s.generator) || s.generator < 1) throw new Invalid("the seal's generator is not a version");
+      seal.generator = s.generator;
+    }
+    if (s.draft !== undefined) {
+      const d = s.draft;
+      if (!isObj(d) || typeof d.format !== 'string' || !(DRAFT_FORMATS as readonly string[]).includes(d.format)) throw new Invalid("the seal's draft format is unknown");
+      seal.draft = { format: d.format as DraftFormat };
+      if (typeof d.roomId === 'string' && d.roomId.length <= LIBRARY_LIMITS.name) seal.draft.roomId = d.roomId;
+    }
+    record.seal = seal;
+  }
+  if (v.convertedFrom !== undefined) {
+    const c = v.convertedFrom;
+    if (!isObj(c) || (c.via !== 'packs' && c.via !== 'draft')) throw new Invalid('the conversion note is not readable');
+    record.convertedFrom = { id: str(c.id, 'the converted deck id'), name: str(c.name, 'the converted deck name'), at: time(c.at, 'the conversion date'), via: c.via, sets: setCodes(c.sets, 'the converted sets') };
+  }
+  if (record.kind === 'sealed' && !record.seal) throw new Invalid('the booster deck has no seal');
+}
+
+/** Note on a sealed record from a file that held cards from outside its boosters (decks.md section 7). */
+export const UNSEALED_NOTE = 'This deck held cards from outside its boosters. It is a custom deck now.';
+
+/**
+ * A sealed record read from a file is checked (decks.md section 7, "The record's invariants"): its main deck without
+ * free basics must come from its pool. One that fails becomes a custom deck with `convertedFrom`. Without
+ * `isFreeBasic` (no card data) every main card outside the pool fails. The side is recomputed for one that passes.
+ */
+export function checkSealedImport(record: DeckRecord, isFreeBasic: (ref: CardRef) => boolean, now: number): { record: DeckRecord; unsealed: boolean } {
+  const seal = record.seal;
+  if (record.kind !== 'sealed' || !seal) return { record, unsealed: false };
+  const left = new Map<string, number>();
+  for (const r of seal.pool) left.set(refKeyOf(r), (left.get(refKeyOf(r)) ?? 0) + 1);
+  let ok = (record.maybe?.length ?? 0) === 0 && (record.commander?.length ?? 0) === 0 && (record.companion?.length ?? 0) === 0;
+  for (const r of record.main) {
+    const n = left.get(refKeyOf(r)) ?? 0;
+    if (n > 0) left.set(refKeyOf(r), n - 1);
+    else if (!isFreeBasic(r)) ok = false;
+  }
+  if (ok) return { record: { ...record, side: remainingOf(seal.pool, record.main) }, unsealed: false };
+  const out: DeckRecord = { ...record, kind: 'custom', convertedFrom: { id: record.id, name: record.name, at: now, via: seal.via, sets: [...seal.sets] } };
+  delete out.seal;
+  return { record: out, unsealed: true };
+}
+
+/** What importLibrary checks sealed records with (decks.md section 7, "The record's invariants"). */
+export interface ImportOptions {
+  /**
+   * Whether a main-deck card outside a sealed deck's pool is one of the five basic lands (from card data the caller
+   * loaded). Without it, or for a card it does not know, the card counts as foreign and the deck becomes custom: the
+   * check is never skipped.
+   */
+  isFreeBasic?: (ref: CardRef) => boolean;
+  /** The time stamped on `convertedFrom` of a deck that fails (default: the record's own change date). */
+  now?: number;
 }
 
 /**
@@ -318,9 +477,11 @@ function deckRecord(v: unknown): DeckRecord {
  * importable). Every record is checked; invalid ones are reported in `errors` with their 0-based index in the file and
  * never thrown on. Problems with the file as a whole (not JSON, another format, a newer version) are reported with
  * index -1 and no records. A record whose id appears earlier in the same file is skipped. Ids that already exist in
- * the library are kept for the caller to overwrite or rename (see planImport).
+ * the library are kept for the caller to overwrite or rename (see planImport). Every sealed record is checked
+ * (checkSealedImport with `opts.isFreeBasic`): one holding cards from outside its boosters is returned as a custom deck
+ * and listed in `notes` with UNSEALED_NOTE.
  */
-export function importLibrary(text: string): LibraryImport {
+export function importLibrary(text: string, opts: ImportOptions = {}): LibraryImport {
   const fail = (message: string): LibraryImport => ({ decks: [], errors: [{ index: -1, message }] });
   let data: unknown;
   try {
@@ -342,20 +503,28 @@ export function importLibrary(text: string): LibraryImport {
   if (entries.length > LIBRARY_LIMITS.decks) return fail(`The file holds more than ${LIBRARY_LIMITS.decks} decks.`);
   const decks: DeckRecord[] = [];
   const errors: LibraryImport['errors'] = [];
+  const notes: NonNullable<LibraryImport['notes']> = [];
   const seen = new Set<string>();
   entries.forEach((entry, index) => {
     try {
-      const record = deckRecord(entry);
-      if (seen.has(record.id)) throw new Invalid(`an earlier deck in the file has the same id`);
-      seen.add(record.id);
-      decks.push(record);
+      const read = deckRecord(entry);
+      // An M2 pool (kept only while it matches the lists, see deckRecord) flags the basics its builder dispensed: those
+      // count as free basics here, so a drafted deck keeps its seal without card data.
+      const dispensed = read.pool ? new Set(read.pool.cards.filter((c) => c.basic === true).map((c) => c.ref.sid)) : null;
+      const free = (r: CardRef): boolean => (dispensed?.has(r.sid) ?? false) || (opts.isFreeBasic?.(r) ?? false);
+      const migrated = migrateDeckRecord(read);
+      if (seen.has(migrated.id)) throw new Invalid(`an earlier deck in the file has the same id`);
+      seen.add(migrated.id);
+      const checked = checkSealedImport(migrated, free, opts.now ?? migrated.updatedAt);
+      if (checked.unsealed) notes.push({ index, message: `“${checked.record.name}”: ${UNSEALED_NOTE}` });
+      decks.push(checked.record);
     } catch (e) {
       if (!(e instanceof Invalid)) throw e;
       const name = isObj(entry) && typeof entry.name === 'string' && entry.name.trim() ? ` "${entry.name.trim().slice(0, 60)}"` : '';
       errors.push({ index, message: `Deck ${index + 1}${name} was skipped: ${e.message}.` });
     }
   });
-  return { decks, errors };
+  return notes.length > 0 ? { decks, errors, notes } : { decks, errors };
 }
 
 /** What importing records into a library does (see planImport). */
@@ -375,7 +544,7 @@ export interface ImportPlan {
  */
 function sameRecord(stored: DeckRecord, imported: DeckRecord): boolean {
   try {
-    return canonicalJson(deckRecord(cloneJson(stored))) === canonicalJson(imported);
+    return canonicalJson(migrateDeckRecord(deckRecord(cloneJson(stored)))) === canonicalJson(migrateDeckRecord(imported));
   } catch {
     return false;
   }

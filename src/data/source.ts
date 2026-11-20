@@ -13,7 +13,7 @@ import type { CardCache } from '../store/types';
 import { relatedTokenIds, trimCard } from './cards';
 import { allEntries, nearMatches, normaliseName } from './decklist';
 import { COLLECTION_BATCH, identifierKey, ScryfallClient, type CardIdentifier } from './scryfall';
-import type { CardData, CardDataSource, DeckEntry, DeckList, ParseError, ResolvedDeck } from './types';
+import type { CardData, CardDataSource, CardSearchOptions, DeckEntry, DeckList, ParseError, ResolvedDeck } from './types';
 
 /** Unresolved names that get a Scryfall fuzzy lookup for near matches; the rest use known names only. */
 export const MAX_FUZZY_LOOKUPS = 10;
@@ -111,11 +111,12 @@ export class ScryfallCardDataSource implements CardDataSource {
    * printing per card, by name; only the first result page (up to 175 cards), so a broad query costs one request of
    * the shared limiter. Results join the card cache like any other lookup. An empty query asks nothing.
    */
-  async searchCards(query: string): Promise<CardData[]> {
+  async searchCards(query: string, options: CardSearchOptions = {}): Promise<CardData[]> {
     const q = query.trim();
     if (!q) return [];
     // Parenthesised: Scryfall's AND binds tighter than OR, so `a or b game:paper` would filter only `b`.
-    const sp = new URLSearchParams({ q: `(${q}) game:paper`, unique: 'cards', order: 'name' });
+    // M8-P3: the order is POPULAR (edhrec), MANA VALUE (cmc) or NAME (decks.md section 3, sort stepper).
+    const sp = new URLSearchParams({ q: `(${q}) game:paper`, unique: 'cards', order: options.order ?? 'name' });
     const page = await this.client.request(`${this.client.baseUrl}/cards/search?${sp.toString()}`);
     const cards = (Array.isArray(page?.data) ? page.data : []).map(trimCard).filter((c): c is CardData => c !== null);
     await this.remember(cards);
