@@ -19,6 +19,9 @@ const M = A.milestone
 const BR = A.branch
 const REPO = A.repo
 const WT = A.wtRoot
+// Model and reasoning effort for every agent (args.model, args.effort; omitted = the session's).
+const MODEL_OPTS = { ...(A.model ? { model: A.model } : {}), ...(A.effort ? { effort: A.effort } : {}) }
+const ag = (prompt, opts) => agent(prompt, { ...MODEL_OPTS, ...opts })
 
 const COMMON = [
   `Project: Spellplane, repository ${REPO} (CLAUDE.md there has the commands, hard rules and harnesses — follow it).`,
@@ -154,7 +157,7 @@ const GATE_SCHEMA = {
 let contracts = null
 if (A.contracts) {
   phase('Contracts')
-  contracts = await agent(
+  contracts = await ag(
     [
       COMMON,
       ``,
@@ -183,7 +186,7 @@ let chain = Promise.resolve()
 
 function integrate(pkg, outcome) {
   const run = chain.then(() =>
-    agent(
+    ag(
       [
         COMMON,
         ``,
@@ -283,7 +286,7 @@ async function runPackage(pkg) {
     // resume: the implementation already exists on branch pkg.slug (e.g. after a crash); go straight to review.
     const impl = pkg.resume
       ? { status: 'green', check_green: true, decisions: [], summary: `resumed from existing branch ${pkg.slug}` }
-      : await agent(implPrompt(pkg), { label: `impl:${pkg.id}`, phase: 'Packages', schema: IMPL_SCHEMA })
+      : await ag(implPrompt(pkg), { label: `impl:${pkg.id}`, phase: 'Packages', schema: IMPL_SCHEMA })
     if (!impl || impl.status !== 'green' || !impl.check_green) {
       settled = true
       return { pkg: pkg.id, impl, rounds: 0, integration: await integrate(pkg, { park: true, reason: impl ? impl.blocked_reason || impl.summary : 'implementer died', decisions: impl ? impl.decisions : [] }) }
@@ -296,8 +299,8 @@ async function runPackage(pkg) {
     const maxRounds = pkg.maxRounds || 3
     while (round < maxRounds) {
       round++
-      const reviewers = [() => agent(reviewPrompt(pkg, round, 'main'), { label: `review${round}:${pkg.id}`, phase: 'Packages', schema: REVIEW_SCHEMA })]
-      if (pkg.deep) reviewers.push(() => agent(reviewPrompt(pkg, round, 'deep'), { label: `review${round}-deep:${pkg.id}`, phase: 'Packages', schema: REVIEW_SCHEMA }))
+      const reviewers = [() => ag(reviewPrompt(pkg, round, 'main'), { label: `review${round}:${pkg.id}`, phase: 'Packages', schema: REVIEW_SCHEMA })]
+      if (pkg.deep) reviewers.push(() => ag(reviewPrompt(pkg, round, 'deep'), { label: `review${round}-deep:${pkg.id}`, phase: 'Packages', schema: REVIEW_SCHEMA }))
       const reviews = (await parallel(reviewers)).filter(Boolean)
       open = reviews.flatMap((r) => r.findings || []).filter((f) => f.severity === 'blocking')
       const minor = reviews.flatMap((r) => r.findings || []).filter((f) => f.severity !== 'blocking')
@@ -306,7 +309,7 @@ async function runPackage(pkg) {
         break
       }
       log(`${pkg.id}: review ${round} found ${open.length} blocking finding(s)`)
-      lastFix = await agent(fixPrompt(pkg, [...open, ...minor.slice(0, 8)], round), { label: `fix${round}:${pkg.id}`, phase: 'Packages', schema: FIX_SCHEMA })
+      lastFix = await ag(fixPrompt(pkg, [...open, ...minor.slice(0, 8)], round), { label: `fix${round}:${pkg.id}`, phase: 'Packages', schema: FIX_SCHEMA })
       if (lastFix) decisions = decisions.concat(lastFix.decisions || [])
       if (!lastFix || !lastFix.check_green) {
         open = open.concat([{ severity: 'blocking', issue: `fixer round ${round} left pnpm check red or died` }])
@@ -355,12 +358,12 @@ const gatePrompt = (rerun) =>
     `gate_green is true only if the gate spec passes on both Chromium and WebKit, pnpm check and pnpm e2e are green, and no blocking finding remains. Never call a red gate green. Return the schema.`,
   ].join('\n')
 
-let gate1 = await agent(gatePrompt(false), { label: `gate:${M}`, phase: 'Gate', schema: GATE_SCHEMA })
+let gate1 = await ag(gatePrompt(false), { label: `gate:${M}`, phase: 'Gate', schema: GATE_SCHEMA })
 let gateFix = null
 let gate2 = null
 const gateFindings = gate1 ? [...(gate1.failures || []).map((f) => ({ severity: 'blocking', issue: f })), ...(gate1.findings || [])] : [{ severity: 'blocking', issue: 'gate agent died' }]
 if (!gate1 || !gate1.gate_green || gateFindings.some((f) => f.severity === 'blocking')) {
-  gateFix = await agent(
+  gateFix = await ag(
     [
       COMMON,
       ``,
@@ -371,7 +374,7 @@ if (!gate1 || !gate1.gate_green || gateFindings.some((f) => f.severity === 'bloc
     ].join('\n'),
     { label: `gate-fix:${M}`, phase: 'Gate', schema: FIX_SCHEMA },
   )
-  gate2 = await agent(gatePrompt(true), { label: `gate-rerun:${M}`, phase: 'Gate', schema: GATE_SCHEMA })
+  gate2 = await ag(gatePrompt(true), { label: `gate-rerun:${M}`, phase: 'Gate', schema: GATE_SCHEMA })
 }
 
 return {

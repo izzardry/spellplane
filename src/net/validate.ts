@@ -52,7 +52,8 @@ export function validPayload(m: WireMessage): boolean {
         (r.seat === null || isId(r.seat)) &&
         (r.role === 'player' || r.role === 'spectator') &&
         isSeq(r.lastSeq) &&
-        isId(r.nonce)
+        isId(r.nonce) &&
+        (r.lastPlay === undefined || isSeq(r.lastPlay))
       );
     case 'welcome':
       return isId(r.peerId) && isStr(r.sig, 1024) && (r.sequencer === null || isId(r.sequencer)) && isSeq(r.seq);
@@ -61,8 +62,17 @@ export function validPayload(m: WireMessage): boolean {
     case 'syncRes': {
       if (!Array.isArray(r.tail) || !r.tail.every(isSequenced)) return false;
       if (r.snapshot === null) return true;
-      return isRec(r.snapshot) && isSeq(r.snapshot.seq) && isTableState(r.snapshot.state) && (r.snapshot.state as Rec).seq === r.snapshot.seq;
+      return (
+        isRec(r.snapshot) &&
+        isSeq(r.snapshot.seq) &&
+        isTableState(r.snapshot.state) &&
+        (r.snapshot.state as Rec).seq === r.snapshot.seq &&
+        (r.snapshot.play === undefined || isSeq(r.snapshot.play))
+      );
     }
+    // Added by M8-C (persistence.md section 6): the head announcement, public facts only. M8-P5 may tighten it.
+    case 'head':
+      return isSeq(r.seq) && isSeq(r.play) && isId(r.h) && isSeq(r.turn) && typeof r.stage === 'string' && typeof r.live === 'boolean' && typeof r.saving === 'boolean';
     case 'hb':
       return isSeq(r.seq) && (r.sequencer === null || isId(r.sequencer));
     case 'claim':

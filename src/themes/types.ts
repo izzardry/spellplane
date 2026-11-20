@@ -396,6 +396,39 @@ export interface ThemeInstance {
    * "render on demand"; M7-A0's StillAware). Absent means "animates while the theme is lit" (the M4 behaviour).
    */
   animating?(): boolean;
+  /**
+   * Added by M7-P1: the zones of the current table, so the theme can draw its pile and zone marks under the scene's
+   * hairlines and labels (PLAN M7-P1 Table worlds: "pile and zone marks (library, graveyard, exile, command) in the
+   * look's style … seat colours with shapes"). Called by the scene's runtime after every build and whenever the
+   * markings change (seats join, the viewer's seat changes); the marks are in the frame the theme was built in. Absent
+   * means the theme draws no marks of its own.
+   */
+  setMarks?(marks: TableMarks): void;
+}
+
+/** A rectangle on the table, mm: centre, width along its own x, depth along its own y, turned `rot` degrees clockwise. Added by M7-P1. */
+export interface MarkRect {
+  x: number;
+  y: number;
+  w: number;
+  d: number;
+  rot: number;
+}
+
+/**
+ * The zones a theme may mark (ThemeInstance.setMarks; DESIGN "Specification: geometry, layout and motion", Tables and
+ * seats: piles in a column at the territory's right edge, the command area at its left, the avatar outside the near
+ * edge). Table mm in the frame the theme was built in. Added by M7-P1.
+ */
+export interface TableMarks {
+  /** The seats in use with their territory, seat colour index and, for a named chair, the avatar spot. */
+  seats: { index: number; colour: number; territory: MarkRect; avatar: { x: number; y: number } | null; angle: number }[];
+  /** Pile slots (library, graveyard, exile and any other squared zone), one card's size, centred on the slot. */
+  piles: { seat: number; zone: string; x: number; y: number; rot: number }[];
+  /** Areas (the command zone). */
+  areas: { seat: number; zone: string; rect: MarkRect }[];
+  /** Degrees the viewer's view is turned (text and glyphs upright for the viewer). */
+  viewerAngle: number;
 }
 
 /** A theme package (DESIGN "Specification: code interfaces", Theme). */

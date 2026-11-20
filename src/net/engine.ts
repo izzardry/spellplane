@@ -54,6 +54,7 @@ import {
 } from './types';
 import { validPayload } from './validate';
 import { versionNotice, type VersionMismatch } from './version';
+import { track, untrack } from '../util/lifecycle';
 
 /** How often the engine checks liveness and resends what is unanswered. */
 export const TICK_MS = 250;
@@ -341,6 +342,7 @@ class Engine implements NetEngine {
     const rnd = crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
     this.cidPrefix = `${opts.identity.peerId}.${rnd.toString(36)}.`;
     this.replica = new Replica(opts.game, opts.start.snapshot);
+    track('engines', this);
     this.restoredBase = opts.start.tail.length ? opts.start.snapshot.seq : null;
     this.replica.onApply = (a) => this.onApplied(a);
     if (opts.start.tail.length) this.replica.load(opts.start.snapshot, opts.start.tail);
@@ -390,6 +392,7 @@ class Engine implements NetEngine {
     if (this.closed) return;
     if (this.joined) this.send('ctl', makeBye('leave'));
     this.closed = true;
+    untrack('engines', this);
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.hbTimer) clearInterval(this.hbTimer);
     this.clearDeadlines();
@@ -514,6 +517,11 @@ class Engine implements NetEngine {
    * How much this engine holds, by structure (PLAN M5-P6 long-session soak: bounded memory). Every count stays under
    * a limit that does not grow with the length of the game; `messages` is the debug ring (dev and test builds only).
    */
+  /** The play count of the confirmed state (contracts.md Part D: moves only, core/log.ts isPlayAction). Added by M8-C. */
+  play(): number {
+    return this.replica.play();
+  }
+
   retained(): EngineRetained {
     let held = 0;
     for (const list of this.held.values()) held += list.length;
@@ -619,7 +627,7 @@ class Engine implements NetEngine {
 
   private sendHello(peer: PeerId, e: PeerEntry): void {
     e.helloAt = this.now();
-    this.send('ctl', makeHello(this.identity, this.seat(), this.role, this.replica.seq(), e.nonce), peer);
+    this.send('ctl', makeHello(this.identity, this.seat(), this.role, this.replica.seq(), e.nonce, this.replica.play()), peer);
   }
 
   private removePeer(peer: PeerId): void {
@@ -657,6 +665,10 @@ class Engine implements NetEngine {
     e.info.nickname = hello.nickname;
     e.info.role = hello.role;
     e.info.lastSeq = hello.lastSeq;
+    if (hello.lastPlay !== undefined) {
+      e.info.lastPlay = hello.lastPlay;
+      e.info.lastPlayAt = hello.lastSeq;
+    }
     if (e.hello && e.hello.peerId === hello.peerId && e.hello.pubKey === hello.pubKey) {
       e.hello = hello;
       if (e.keyOk) void this.answerHello(from, e, hello);
@@ -899,6 +911,12 @@ class Engine implements NetEngine {
         return;
       case 'hash':
         return this.onHash(e, msg.seq, msg.h);
+      case 'head':
+        // Added by M8-C: stored for the session's muster rule (persistence.md section 6); M8-P5 sends and uses it.
+        e.info.head = { seq: msg.seq, play: msg.play, h: msg.h, turn: msg.turn, stage: msg.stage, live: msg.live, saving: msg.saving };
+        e.info.lastPlay = msg.play;
+        e.info.lastPlayAt = msg.seq;
+        return;
       case 'propose':
         return this.onPropose(from, msg);
       case 'seq':
@@ -990,11 +1008,14 @@ class Engine implements NetEngine {
       return !!pair && pair[1].info.status === 'connected';
     };
     if (this.yieldTo !== null && usable(this.yieldTo)) return this.yieldTo;
-    const seq = this.replica.seq();
+    // M8-C (contracts.md Part D): ahead and lead are decided by (play, seq, peerId): more moves wins, then the higher
+    // seq, then the smaller peer id; a peer that sent no play count compares by seq alone (newerHead).
+    const mine = { play: this.replica.play(), seq: this.replica.seq() };
     let lead: PeerEntry | null = null;
     for (const [, e] of this.connectedPeers()) {
-      if (e.info.lastSeq <= seq) continue;
-      if (!lead || e.info.lastSeq > lead.info.lastSeq || (e.info.lastSeq === lead.info.lastSeq && e.info.peerId < lead.info.peerId)) lead = e;
+      const theirs = headKeyOf(e.info);
+      if (newerHead(theirs, { ...mine, peerId: theirs.peerId }) <= 0) continue;
+      if (!lead || newerHead(theirs, headKeyOf(lead.info)) > 0) lead = e;
     }
     if (!lead || lead.named === me) return null;
     return usable(lead.named) ? lead.named! : lead.info.peerId;
@@ -1936,4 +1957,31 @@ export const ENGINE_RETAIN_LIMITS: Readonly<Record<keyof EngineRetained, number>
 };
 
 /** The concrete engine type, for tests and the debug hook (net/types.ts NetEngine plus `isSequencing`, `retained`). */
-export type NetEngineImpl = NetEngine & { isSequencing(): boolean; retained(): EngineRetained };
+export type NetEngineImpl = NetEngine & { isSequencing(): boolean; retained(): EngineRetained; play(): number };
+
+/** What decides which copy of a table is newest (contracts.md Part D). `play` absent: the peer sent no play count. Added by M8-C. */
+export interface HeadKey {
+  play?: number | undefined;
+  seq: number;
+  peerId: string;
+}
+
+/** The comparison key of a peer as the engine knows it (hello, hb, claimAck). Added by M8-C. */
+export function headKeyOf(info: { lastPlay?: number | undefined; lastPlayAt?: number | undefined; lastSeq: number; peerId: string }): HeadKey {
+  // A play count reported at another seq than the peer's latest (hb and claimAck carry no play count) is stale: compare by seq.
+  return { play: info.lastPlayAt === info.lastSeq ? info.lastPlay : undefined, seq: info.lastSeq, peerId: info.peerId };
+}
+
+/**
+ * Positive when copy `a` is newer than copy `b`, negative when older, 0 when equal (contracts.md Part D, Part G
+ * "Rejoin" item 2): more moves wins; then the higher seq; then the smaller peer id (the engine's tie rule, kept; an
+ * empty peer id never wins a tie). When either side has no play count, the seq decides as before M8. Added by M8-C.
+ */
+export function newerHead(a: HeadKey, b: HeadKey): number {
+  if (a.play !== undefined && b.play !== undefined && a.play !== b.play) return a.play - b.play;
+  if (a.seq !== b.seq) return a.seq - b.seq;
+  if (a.peerId === b.peerId) return 0;
+  if (a.peerId === '') return -1;
+  if (b.peerId === '') return 1;
+  return a.peerId < b.peerId ? 1 : -1;
+}

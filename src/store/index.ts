@@ -11,3 +11,7 @@ export * from './images';
 export * from './sets';
 export * from './quota';
 export * from './backup';
+export * from './games';
+export * from './ratings';
+export * from './matches';
+export * from './computer';

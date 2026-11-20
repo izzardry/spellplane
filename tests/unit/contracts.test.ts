@@ -6,7 +6,7 @@ import { DEFAULT_TABLE_SETTINGS, type TableState } from '../../src/core/types';
 import { MTG_KEYMAP, chordToString } from '../../src/games/mtg/keymap';
 import { tokensToCssVars } from '../../src/themes/index';
 import { paper } from '../../src/themes/paper/index';
-import { openDb, STORE_NAMES } from '../../src/store/db';
+import { openDb, STORE_NAMES, M8_STORE_NAMES } from '../../src/store/db';
 import { tierForScreenHeight } from '../../src/data/types';
 
 function table(): TableState {
@@ -99,6 +99,7 @@ describe('actions', () => {
     recover: true, recoverCommit: true,
     auditPublish: true,
     clipAdd: true, clipRemove: true, lineLabel: true, rngApply: true,
+    concede: true, dealt: true, seatInvite: true, seatClaim: true, playOn: true,
   };
 
   it('ACTION_FAMILIES covers every action type exactly', () => {
@@ -202,7 +203,8 @@ describe('themes, data, store contracts', () => {
 
   it('creates every store of schema v1', async () => {
     const db = await openDb('contracts-test');
-    expect([...db.objectStoreNames].sort()).toEqual([...STORE_NAMES].sort());
+    // M8-C: schema v2 adds games, ratings, matches and computer.
+    expect([...db.objectStoreNames].sort()).toEqual([...STORE_NAMES, ...M8_STORE_NAMES].sort());
     await db.put('log', { roomId: 'r', seq: 1, action: { type: 'tap', by: 's0', cid: 'a', card: 'c1', tapped: true }, at: 0 });
     expect((await db.get('log', ['r', 1]))?.seq).toBe(1);
     db.close();

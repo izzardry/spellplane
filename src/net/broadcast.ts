@@ -1,4 +1,5 @@
 import type { Channel, Message, MessageHandler, PeerHandler, PeerId, Transport } from './transport';
+import { track, untrack } from '../util/lifecycle';
 
 /**
  * Transport over BroadcastChannel (test harness, selected with ?transport=local).
@@ -32,6 +33,7 @@ export class BroadcastTransport implements Transport {
   constructor(readonly selfId: PeerId) {}
 
   async join(roomId: string, _roomKey: string): Promise<void> {
+    track('transports', this);
     if (this.bc) return;
     this.bc = new BroadcastChannel(`spellplane-room-${roomId}`);
     this.bc.onmessage = (e: MessageEvent<Frame>) => this.receive(e.data);
@@ -45,6 +47,7 @@ export class BroadcastTransport implements Transport {
   }
 
   leave(): void {
+    untrack('transports', this);
     this.close(true);
   }
 

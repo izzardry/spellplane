@@ -50,6 +50,13 @@ export interface TablePersistenceOptions {
    * never held (the solo table).
    */
   holdSnapshot?: () => boolean;
+  /**
+   * Added by M8-C (contracts.md Part D): the play count of the state handed to the next save (the engine's confirmed
+   * state; net/engine.ts play()). Stored beside the snapshot as `TableRecord.snapshotPlay`. Absent (the solo table): 0.
+   */
+  play?: () => number;
+  /** Added by M8-C: the play count of the stored snapshot this save continues. */
+  snapshotPlay?: number | undefined;
 }
 
 /**
@@ -76,6 +83,8 @@ export class TablePersistence {
   private writes: Promise<void>;
   /** The base of the stored table record (updated as writes succeed). */
   private snapshot: TableState;
+  /** Added by M8-C: the play count stored with the snapshot (TableRecord.snapshotPlay). */
+  private snapshotPlay: number;
   private snapshotSeq: number;
   /** Last seq the queued writes cover (queued, not necessarily written yet). */
   private lastSeq: number;
@@ -93,6 +102,7 @@ export class TablePersistence {
     this.writes = o.after ?? Promise.resolve();
     this.snapshot = o.snapshot;
     this.snapshotSeq = o.snapshotSeq;
+    this.snapshotPlay = o.snapshotPlay ?? 0;
     this.lastSeq = o.lastSeq;
     this.baseSeq = o.snapshotSeq;
   }
@@ -128,14 +138,17 @@ export class TablePersistence {
       this.baseSeq = state.seq;
     }
     const lastSeq = this.lastSeq;
+    const play = this.o.play?.() ?? 0;
     this.writes = this.writes
       .then(async () => {
         const rebase = forced || (!covered && this.broken);
         const snapshot = rebase ? state : this.snapshot;
         const snapshotSeq = rebase ? state.seq : this.snapshotSeq;
-        await store.saveAction(this.o.roomId, entry, this.record(state, snapshot, snapshotSeq, lastSeq, at), secrets);
+        const snapshotPlay = rebase ? play : this.snapshotPlay;
+        await store.saveAction(this.o.roomId, entry, { ...this.record(state, snapshot, snapshotSeq, lastSeq, at), snapshotPlay }, secrets);
         this.snapshot = snapshot;
         this.snapshotSeq = snapshotSeq;
+        this.snapshotPlay = snapshotPlay;
         this.broken = false;
       })
       .catch((e: unknown) => this.failed(e));
@@ -152,11 +165,13 @@ export class TablePersistence {
     this.lastState = null;
     this.baseSeq = state.seq;
     this.due = false;
+    const play = this.o.play?.() ?? 0;
     this.writes = this.writes
       .then(async () => {
-        await store.saveSnapshot(this.record(state, state, state.seq, state.seq, this.o.now()), secrets);
+        await store.saveSnapshot({ ...this.record(state, state, state.seq, state.seq, this.o.now()), snapshotPlay: play }, secrets);
         this.snapshot = state;
         this.snapshotSeq = state.seq;
+        this.snapshotPlay = play;
         this.broken = false;
       })
       .catch((e: unknown) => this.failed(e));

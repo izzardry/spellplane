@@ -400,6 +400,19 @@ export type FormatSetAction = A<'formatSet', { format: Format; life: number }>;
  */
 export type AuditPublishAction = A<'auditPublish', { bundle: AuditBundle }>;
 
+// --- End of a game, opening hands and rejoin (M8; contracts.md Part D; persistence.md section 7). All family 'players', not undoable.
+
+/** The sender's seat concedes the current game; when one seat or team is left the table gets `result` (contracts.md Part D). Added by M8-C. */
+export type ConcedeAction = A<'concede', Record<never, never>>;
+/** The seat marks its opening hand as dealt for game `game`; refused when Seat.dealt === game (contracts.md Part D). Added by M8-C. */
+export type DealtAction = A<'dealt', { game: number }>;
+/** A present player opens (`h` set) or takes back (`h` null) the re-invite of an away seat (persistence.md section 7). Added by M8-C; reducer M8-P5. */
+export type SeatInviteAction = A<'seatInvite', { seat: SeatId; h: string | null; exp?: number }>;
+/** A browser without a seat takes an invited seat with the link's claim token (persistence.md section 7). Added by M8-C; reducer M8-P5. */
+export type SeatClaimAction = A<'seatClaim', { seat: SeatId; claim: string; peer: string; name: string }>;
+/** The gathered players go on without seats that are not here; `without` may be empty (persistence.md section 5; contracts.md Part G). Added by M8-C; reducer M8-P5. */
+export type PlayOnAction = A<'playOn', { without: SeatId[] }>;
+
 /** Every shared action (DESIGN "Data model and protocol"). */
 export type Action =
   | MoveAction
@@ -472,7 +485,12 @@ export type Action =
   | ClipAddAction
   | ClipRemoveAction
   | LineLabelAction
-  | RngApplyAction;
+  | RngApplyAction
+  | ConcedeAction
+  | DealtAction
+  | SeatInviteAction
+  | SeatClaimAction
+  | PlayOnAction;
 
 /** The `type` tag of an action (DESIGN "Data model and protocol"). */
 export type ActionType = Action['type'];
@@ -564,6 +582,12 @@ export const ACTION_FAMILIES: Readonly<Record<ActionType, ActionFamily>> = {
   clipRemove: 'card',
   lineLabel: 'lines',
   rngApply: 'randomness',
+  // Added by M8-C (contracts.md Part D): the end of a game, opening hands and rejoin are seat matters.
+  concede: 'players',
+  dealt: 'players',
+  seatInvite: 'players',
+  seatClaim: 'players',
+  playOn: 'players',
 };
 
 /** Every action type, in declaration order (DESIGN "Data model and protocol"). */

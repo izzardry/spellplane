@@ -20,11 +20,21 @@ declare global {
 
 export type PageTransportKind = 'trystero' | 'local' | 'silent' | 'unreachable';
 
-/** The transport this page uses: the test override (dev and test builds), else `?transport=local`, else Trystero. */
+/** The transport this page uses: the test override (dev and test builds), else `?transport=local`, else Trystero (in a test build only with `?transport=trystero`). */
 export function pageTransportKind(): PageTransportKind {
   const forced = __SPELLPLANE_DEBUG__ && typeof window !== 'undefined' ? window.__spellplaneTransport : undefined;
   if (forced === 'silent' || forced === 'unreachable' || forced === 'local') return forced;
-  return flags().transport === 'local' ? 'local' : 'trystero';
+  if (flags().transport === 'local') return 'local';
+  // M8-C (contracts.md Part E, "No relay by accident in tests"): a test build (dist-test) uses Trystero only when the
+  // URL says ?transport=trystero, which only the @network specs do; production and dev builds are unchanged.
+  if (import.meta.env.MODE === 'test' && !explicitTrystero()) return 'local';
+  return 'trystero';
+}
+
+/** Whether the page URL asks for Trystero by name (`?transport=trystero`). Added by M8-C. */
+function explicitTrystero(): boolean {
+  if (typeof location === 'undefined') return false;
+  return new URLSearchParams(location.search).get('transport') === 'trystero';
 }
 
 /** A fresh transport of `kind` (a new transport id for the local ones). */
