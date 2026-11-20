@@ -34,8 +34,20 @@ export function newNonce(): string {
 }
 
 /** This browser's hello to one connection. */
-export function makeHello(identity: NetIdentity, seat: SeatId | null, role: PeerRole, lastSeq: number, nonce: string): HelloMessage {
-  return { v: PROTOCOL_VERSION, t: 'hello', peerId: identity.peerId, pubKey: identity.pubKey, nickname: identity.nickname, seat, role, lastSeq, nonce };
+export function makeHello(identity: NetIdentity, seat: SeatId | null, role: PeerRole, lastSeq: number, nonce: string, lastPlay?: number): HelloMessage {
+  return {
+    v: PROTOCOL_VERSION,
+    t: 'hello',
+    peerId: identity.peerId,
+    pubKey: identity.pubKey,
+    nickname: identity.nickname,
+    seat,
+    role,
+    lastSeq,
+    nonce,
+    // M8-C: the play count (contracts.md Part D).
+    ...(lastPlay !== undefined ? { lastPlay } : {}),
+  };
 }
 
 /** Whether the hello's peer id is the hash of its public key (DESIGN "Specification: network protocol and secrecy"). */

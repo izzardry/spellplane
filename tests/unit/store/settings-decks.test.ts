@@ -42,6 +42,14 @@ const CHANGED: Settings = {
   tilt: 0.25,
   motion: 'subtle',
   showFrameRate: true,
+  // M8-C.
+  home: { mode: 'quick', deckId: 'deck-1', solo: { opponent: 'alone' }, quick: { format: 'ffa4', ranked: true }, private: { format: '2hg', decks: 'booster' }, draft: { format: '1v1', boosters: { how: 'sealed', packs: 6, picks: 1, sets: ['DOM'], pickTimer: false } } },
+  deckCardSize: 'l',
+  computer: { level: 'keen', pace: 'brisk', deck: { deckId: 'deck-2' } },
+  lobbyNotify: true,
+  alsoCasual: true,
+  lastQueue: '1v1.limited.ranked',
+  avoid: [{ peerId: '0123456789abcdef', name: 'Mira', at: 5 }],
 };
 
 describe('settings', () => {

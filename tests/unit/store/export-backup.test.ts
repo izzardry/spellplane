@@ -95,7 +95,7 @@ describe('export', () => {
     const s = await stores();
     const file = await exportBackup(s, { decks: true, tables: 'all', settings: false }, NOW);
     expect(file).toEqual({ format: BACKUP_FILE_FORMAT, version: 1, exportedAt: NOW, decks: [], tables: [] });
-    expect(readBackup(JSON.parse(backupText(file)))).toEqual({ decks: [], tables: [], identity: null, settings: {}, errors: [] });
+    expect(readBackup(JSON.parse(backupText(file)))).toEqual({ decks: [], tables: [], identity: null, settings: {}, games: [], ratings: [], matches: [], computer: [], errors: [] });
   });
 });
 
@@ -198,7 +198,7 @@ describe('reading a file', () => {
   it('reports a file that is not JSON, not a backup, or from a newer version, and reads nothing from it', () => {
     expect(readBackupText('{not json').errors).toEqual([{ where: 'file', message: expect.stringContaining('not JSON') }]);
     for (const json of [null, 42, 'text', [], {}, { format: 'something-else', version: 1 }]) {
-      expect(readBackup(json)).toEqual({ decks: [], tables: [], identity: null, settings: {}, errors: [{ where: 'file', message: 'The file is not a Spellplane backup.' }] });
+      expect(readBackup(json)).toEqual({ decks: [], tables: [], identity: null, settings: {}, games: [], ratings: [], matches: [], computer: [], errors: [{ where: 'file', message: 'The file is not a Spellplane backup.' }] });
     }
     expect(readBackup(base({ version: 2, decks: [deck('d1', 'x')] }))).toMatchObject({ decks: [], errors: [{ where: 'file', message: expect.stringContaining('newer Spellplane (version 2)') }] });
     expect(readBackup(base({ version: 0 })).errors[0]!.message).toMatch(/no valid version/);
@@ -207,7 +207,7 @@ describe('reading a file', () => {
 
   it('reads the deck library file of the builder (and a single exported deck) as a backup of decks', () => {
     const lib = JSON.parse(exportLibrary([deck('d1', 'A'), deck('d2', 'B')], NOW)) as unknown;
-    expect(readBackup(lib)).toEqual({ decks: [deck('d1', 'A'), deck('d2', 'B')], tables: [], identity: null, settings: {}, errors: [] });
+    expect(readBackup(lib)).toEqual({ decks: [deck('d1', 'A'), deck('d2', 'B')], tables: [], identity: null, settings: {}, games: [], ratings: [], matches: [], computer: [], errors: [] });
     expect(readBackup(deck('d3', 'C')).decks.map((d) => d.id)).toEqual(['d3']);
   });
 

@@ -266,3 +266,22 @@ export function cardsMentioned(a: Action, state: TableState): InstanceId[] {
   visit(rest);
   return out;
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// The play count (M8; contracts.md Part D "The play count")
+// ---------------------------------------------------------------------------------------------------------------
+
+/**
+ * Action types that are not a player's move (contracts.md Part D): chat and caption lines (the social family), the
+ * seat and presence records (seatTake, seatLeave, away, seatInvite, seatClaim, playOn) and the sequencer's own records
+ * (sequencerClaim, snapshotHash). Life and player counters, concessions and deck commits are moves. Added by M8-C.
+ */
+const NOT_PLAY: ReadonlySet<Action['type']> = new Set<Action['type']>(['chat', 'caption', 'seatTake', 'seatLeave', 'away', 'seatInvite', 'seatClaim', 'playOn', 'sequencerClaim', 'snapshotHash']);
+
+/**
+ * Whether an applied action counts as a move for the play count `play` (contracts.md Part D: "Newest is decided by
+ * (play, seq, peerId)"): a copy with more moves beats a longer copy of chat. The one definition. Added by M8-C.
+ */
+export function isPlayAction(action: Action): boolean {
+  return !NOT_PLAY.has(action.type);
+}

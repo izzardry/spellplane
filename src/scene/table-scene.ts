@@ -27,6 +27,7 @@ import type { CardInstance, ClipId, InstanceId, Pose, SeatId, StackItemId, Table
 import type { Rect, TableLayout, TextureSource } from '../games/types';
 import type { QualityId } from '../themes/types';
 import { registerDebug } from '../util/debug';
+import { frameMeter, type RenderInfo } from '../util/frame-meter';
 import { NO_INSETS, type Insets } from './camera';
 import { followRequests, type FollowRequest } from './camera/follow';
 import { basis } from './camera/pose';
@@ -35,6 +36,8 @@ import { CardBoxes, CardLayer, ContactShadows, boxShape, legibleOutlineMm, type 
 import { BACK_KEY, FaceTextures } from './faces';
 import { FOIL_SHEEN, TABLE_FOIL, foilHue, foilSheenColour } from './foil';
 import { ambientDue, uploadScale } from './pacing';
+import { AdaptiveResolution, REST_AFTER_MS } from './resolution';
+import { renderSwitches } from './switches';
 import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
 import { ThemeRuntime, type ThemePlacement } from './theme-runtime';
@@ -285,11 +288,15 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let view: ViewState = { selection: [], hovered: null, privateFaces: {}, reducedMotion: false, pings: [], openPile: null };
 
   // --- Three.js -------------------------------------------------------------------------------------------------
-  const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: false });
+  // Measuring switches (scene/switches.ts; M7-A0).
+  const switches = renderSwitches();
+  const renderer = new THREE.WebGLRenderer({ antialias: switches.antialias ?? true, preserveDrawingBuffer: false });
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, theme.quality[0]?.pixelRatio ?? 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // A frame is several render calls (world, post passes, overlay): the scene resets the counters once per frame.
   renderer.info.autoReset = false;
+  // Shadow maps are drawn when something changed, not on ambient-only frames (draw's `ambientOnly`; M7-A0).
+  renderer.shadowMap.autoUpdate = false;
   const canvas = renderer.domElement;
   canvas.style.display = 'block';
   canvas.style.width = '100%';
@@ -388,6 +395,10 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return { table: layout.table, viewerAngle: angle, reducedMotion: view.reducedMotion, ...(turn ? { tableRot: turn } : {}) };
   };
   const runtime = new ThemeRuntime(renderer, scene, camera, { post: true, overlay, glow: () => [lineView.lines.object, lineView.pingRings] }, theme, placement(), opts.quality ?? 'high');
+  // The adaptive resolution (scene/resolution.ts; M7-A0).
+  if (switches.pixelRatioCap !== null) runtime.setPixelRatioCap(switches.pixelRatioCap);
+  const resolution = new AdaptiveResolution(switches.adapt);
+  const syncPixel = new Uint8Array(4);
   let built = placement();
 
   /** The viewer's chosen back (M5-P5, `setCardBack`: the official back once loaded), over the theme's and the game's. */
@@ -853,7 +864,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   /** A ping is still fading: keep drawing. */
   let pingsLive = false;
 
-  function draw(dt = 0): void {
+  /**
+   * Draw a frame. `ambientOnly`: nothing but ambient motion changed since the last frame (a flicker, particles, a pulse),
+   * so no shadow caster moved and the shadow maps are reused (M7-A0: the shadow pass is skipped on those frames).
+   */
+  function draw(dt = 0, ambientOnly = false): void {
     const t0 = performance.now();
     frame++;
     renderer.info.reset();
@@ -970,7 +985,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     syncPreview(cam);
     pingsLive = lineView.syncPings(performance.now());
     runtime.update(dt);
+    if (!ambientOnly || !switches.shadowSkip) renderer.shadowMap.needsUpdate = true;
     runtime.render(dt);
+    // Measuring only (`?render=sync`): wait for the GPU, so the frame's draw time includes its GPU work.
+    if (switches.sync) {
+      const gl = renderer.getContext();
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, syncPixel);
+    }
     stats = { drawCalls: renderer.info.render.calls, textureBytes: faceTextureBytes() + runtime.textureBytes(), frameMs: performance.now() - t0 };
     dirty = false;
   }
@@ -982,8 +1003,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return Math.round(bytes);
   }
 
-  /** Lit themes animate (lights flicker, particles drift, shimmer): they draw every frame unless motion is reduced. */
-  const animated = () => theme.lighting.lit && !reduced();
+  /**
+   * Lit themes that animate (lights flicker, particles drift, shimmer) draw ambient frames unless motion is reduced; a
+   * still lit theme (Dusk) draws only on change, like Paper (M7-A0; scene/theme-runtime.ts animating).
+   */
+  const animated = () => !reduced() && (switches.still ? runtime.animating() : theme.lighting.lit);
   /** When the last frame was drawn (tick time), and whether the tick before this one drew it. */
   let drewAt = -Infinity;
   let drewLastTick = false;
@@ -991,6 +1015,21 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let frameCost = 0;
   /** The pointer position of the card drag the last tick followed. */
   let dragDrawn: { x: number; y: number } | null = null;
+  /** The last drawn frame was the first at a new render scale (its cost includes new buffers: not a sample). */
+  let rescaledLast = false;
+  /** The full pixel ratio the adaptive resolution was last told. */
+  let resolutionBase = 0;
+
+  /**
+   * The render scale for a frame (scene/resolution.ts): the motion scale within a run of frames or while the theme
+   * animates by itself; the full ratio for the frame that redraws a still table at rest; else the scale in effect
+   * (one frame after a pause, e.g. a hover, does not resize the buffers).
+   */
+  function scaleFor(rest: boolean, continuous: boolean): number {
+    if (rest) return 1;
+    if (continuous || animated()) return resolution.motionScale();
+    return runtime.renderScale;
+  }
 
   function tick(): void {
     if (disposed) return;
@@ -999,8 +1038,16 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const dt = Math.min(100, now - lastTick);
     lastTick = now;
     // The browser hands out the next animation frame once the last drawn one is done, GPU work included.
-    if (drewLastTick) frameCost = now - drewAt;
+    const continuous = drewLastTick;
+    if (drewLastTick) {
+      frameCost = now - drewAt;
+      if (!rescaledLast) resolution.observe(now, frameCost);
+    } else if (now - drewAt > 100) resolution.pause();
     drewLastTick = false;
+    if (runtime.fullPixelRatio !== resolutionBase) {
+      resolutionBase = runtime.fullPixelRatio;
+      resolution.setBase(resolutionBase);
+    }
     touchInput.tick(now);
     let changed = rig.step(now, dt);
     if (pendingFollow.length && !holding()) {
@@ -1065,15 +1112,19 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     // The foil sheen drifts at a low frame rate while foils are drawn (not with reduced motion).
     if (foilsDrawn.size > 0 && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs) ambient = true;
     if (ambient && !changed && !dirty && !ambientDue(frameCost, now - drewAt)) ambient = false;
-    if (changed || dirty || ambient) {
+    // A still table drawn below the full pixel ratio (a run of frames just ended) is drawn once more at the full ratio.
+    const rest = !changed && !dirty && !ambient && runtime.renderScale < 1 && !animated() && now - drewAt >= REST_AFTER_MS;
+    if (changed || dirty || ambient || rest) {
       if (foilsDrawn.size > 0) lastSheen = now;
+      rescaledLast = runtime.setRenderScale(scaleFor(rest, continuous));
       // Theme animation advances by the time since the last drawn frame (still at most 100 ms).
-      draw(Math.min(100, now - drewAt));
+      draw(Math.min(100, now - drewAt), !changed && !dirty && !rescaledLast);
       drewAt = now;
       drewLastTick = true;
     }
     if (captionLayer.active) captionLayer.place();
     syncAffordances();
+    frameMeter.tick(now, drewLastTick, drewLastTick ? stats.frameMs : 0);
   }
 
   // --- Coordinates --------------------------------------------------------------------------------------------------
@@ -3181,6 +3232,19 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   raf = requestAnimationFrame(tick);
+  const meterSource = (): RenderInfo => ({
+    width: canvas.width,
+    height: canvas.height,
+    pixelRatio: renderer.getPixelRatio(),
+    devicePixelRatio: typeof devicePixelRatio === 'number' ? devicePixelRatio : 1,
+    renderScale: runtime.renderScale,
+    theme: theme.id,
+    quality: runtime.level.id,
+    post: runtime.post.passes(),
+    shadows: runtime.effective.shadowMap || runtime.effective.contactShadows,
+    sync: switches.sync,
+  });
+  frameMeter.setRender(meterSource);
 
   /** The game's layout for a table format, or null when the game has none for it (the scene keeps its own). */
   function layoutFor(format: TableState['format']): TableLayout | null {
@@ -3348,6 +3412,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     debug,
     dispose() {
       disposed = true;
+      frameMeter.releaseRender(meterSource);
       pressHold.dispose();
       touchInput.reset();
       cancelAnimationFrame(raf);

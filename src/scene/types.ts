@@ -625,7 +625,7 @@ export function cardFeel(theme: { feel?: Partial<CardFeel> }, motion: MotionSett
 }
 
 /** The card animations the scene plays (PLAN Milestone 7, Owner decisions: "draw, shuffle, tap and untap, play, to graveyard, attach, clip"). Added by M7-C. */
-export type CardAnimationKind = 'draw' | 'shuffle' | 'tap' | 'untap' | 'play' | 'toGraveyard' | 'toExile' | 'toHand' | 'toLibrary' | 'attach' | 'detach' | 'clip' | 'unclip' | 'flip';
+export type CardAnimationKind = 'draw' | 'shuffle' | 'tap' | 'untap' | 'play' | 'toGraveyard' | 'toExile' | 'toHand' | 'toLibrary' | 'attach' | 'detach' | 'clip' | 'unclip' | 'flip' | 'counter';
 
 /**
  * A request to animate cards (TableScene.animate; PLAN M7-P4). Most animations start from the scene itself when state
@@ -668,8 +668,11 @@ export interface MotionDebugState {
   holds: string[];
   /** The held card's lift (mm) and sway (degrees) during a drag, else null. */
   held: { card: InstanceId; liftMm: number; swayDeg: number } | null;
-  /** The snap slot pulling the dragged card (its kind and pull 0..1), else null. */
-  magnet: { kind: DropPreview['kind'] | 'align'; target: InstanceId | null; pull: number } | null;
+  /**
+   * The snap slot pulling the dragged card (its kind and pull 0..1), else null. M7-P4 added 'zone' (a library, graveyard
+   * or exile pile under the pointer) and 'hand' (an avatar, or the hand fan, which makes room: pull 1).
+   */
+  magnet: { kind: DropPreview['kind'] | 'align' | 'zone' | 'hand'; target: InstanceId | null; pull: number } | null;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

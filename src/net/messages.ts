@@ -9,16 +9,17 @@
  */
 import type { Action } from '../core/actions';
 import type { RevealedCard } from '../core/commit';
-import type { Anchor, InstanceId, PackId, Pose, SeatId, ShuffleId, TableState, ZoneId } from '../core/types';
+import type { Anchor, InstanceId, PackId, Pose, SeatId, ShuffleId, Stage, TableState, ZoneId } from '../core/types';
 import type { Channel, Message } from './transport';
 
 /**
  * Protocol version in every envelope; peers with another `v` are refused with a visible notice (DESIGN "Specification:
  * network protocol and secrecy"; net/version.ts). 1: M0-M4. 2: M5 (the `auditPublish` action, which a version-1
  * reducer refuses; M5-P6 bumped it, decision M5-C). 3: M6 (`clipAdd`, `clipRemove`, `lineLabel`, `rngApply`, the
- * consent round and table objects, which a version-2 reducer refuses; decision M6-C).
+ * consent round and table objects, which a version-2 reducer refuses; decision M6-C). 4: M8 (`concede`, `dealt`,
+ * `seatInvite`, `seatClaim`, `playOn`, the `head` message and `hello.lastPlay`; contracts.md Part D).
  */
-export const PROTOCOL_VERSION = 3 as const;
+export const PROTOCOL_VERSION = 4 as const;
 
 /**
  * Trystero app id; the room key is the password that encrypts signalling (DESIGN "Specification: network protocol and
@@ -50,7 +51,17 @@ export type ChatChannel = 'table' | 'team' | 'spectator';
  */
 export type HelloMessage = Envelope<
   'hello',
-  { peerId: string; pubKey: string; nickname: string; seat: SeatId | null; role: PeerRole; lastSeq: number; nonce: string }
+  {
+    peerId: string;
+    pubKey: string;
+    nickname: string;
+    seat: SeatId | null;
+    role: PeerRole;
+    lastSeq: number;
+    nonce: string;
+    /** Added by M8-C: the sender's play count (contracts.md Part D); newest is decided by (play, seq, peerId). A hello without it compares by lastSeq. */
+    lastPlay?: number;
+  }
 >;
 
 /**
@@ -75,7 +86,7 @@ export type SyncReqMessage = Envelope<'syncReq', { haveSeq: number }>;
  * `haveSeq`, or, when the gap exceeds SYNC_TAIL_LIMIT or `haveSeq` is 0 (a fresh joiner, whose seq-0 state may
  * differ), a snapshot plus the tail after it. `snapshot.state.seq === snapshot.seq`.
  */
-export type SyncResMessage = Envelope<'syncRes', { snapshot: { seq: number; state: TableState } | null; tail: SequencedAction[] }>;
+export type SyncResMessage = Envelope<'syncRes', { snapshot: { seq: number; state: TableState; /** Added by M8-C: the play count at the snapshot. */ play?: number } | null; tail: SequencedAction[] }>;
 
 /** Heartbeat every HEARTBEAT_MS; a peer silent for AWAY_AFTER_MS is away (DESIGN "Specification: network protocol and secrecy", Liveness). Carries the sender's last applied seq. */
 export type HeartbeatMessage = Envelope<'hb', { seq: number; sequencer: string | null }>;
@@ -95,6 +106,14 @@ export type HashMessage = Envelope<'hash', { seq: number; h: string }>;
  * sender's PROTOCOL_VERSION, so an older or newer peer can still show the notice.
  */
 export type ByeMessage = Envelope<'bye', { reason: 'leave' | 'version' | 'badSignature' | 'seatTaken' | 'full'; version: number; detail?: string }>;
+
+/**
+ * The sender's head (persistence.md section 6; contracts.md Part D): sent after verification and again 500 ms after its
+ * confirmed seq last changed or when `live` or `saving` changes. Public facts only. `play` is the sender's play count
+ * (core/log.ts isPlayAction), `h` the base64url SHA-256 of the canonical JSON of the public state at `seq`. Added by
+ * M8-C; M8-P5 sends and reads it.
+ */
+export type HeadMessage = Envelope<'head', { seq: number; play: number; h: string; turn: number; stage: Stage; live: boolean; saving: boolean }>;
 
 // --- act: reliable, ordered -------------------------------------------------------------------------
 
@@ -191,7 +210,7 @@ export type CaptionInterimMessage = Envelope<'captionInterim', PresenceBase & { 
 // --- unions ---------------------------------------------------------------------------------------------
 
 /** Messages on `ctl` (DESIGN "Specification: network protocol and secrecy", channel table). */
-export type CtlMessage = HelloMessage | WelcomeMessage | SyncReqMessage | SyncResMessage | HeartbeatMessage | ClaimMessage | ClaimAckMessage | HashMessage | ByeMessage;
+export type CtlMessage = HelloMessage | WelcomeMessage | SyncReqMessage | SyncResMessage | HeartbeatMessage | ClaimMessage | ClaimAckMessage | HashMessage | ByeMessage | HeadMessage;
 /** Messages on `act` (DESIGN "Specification: network protocol and secrecy", channel table). */
 export type ActMessage = ProposeMessage | SeqMessage | NackMessage;
 /** Messages on `prv`, one pair only (DESIGN "Specification: network protocol and secrecy", channel table). */
@@ -216,6 +235,7 @@ export const MESSAGE_CHANNEL: Readonly<{ [T in WireType]: Channel }> = {
   claimAck: 'ctl',
   hash: 'ctl',
   bye: 'ctl',
+  head: 'ctl',
   propose: 'act',
   seq: 'act',
   nack: 'act',

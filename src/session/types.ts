@@ -4,7 +4,8 @@
  * consumers: the HUD (M0-P4) and the debug hook. Milestone 1 plugs the sequencer and sync in behind the same API.
  */
 import type { Action, ActionDraft } from '../core/actions';
-import type { CardRef, Format, InstanceId, LobbySettings, LogEntry, Pose, RngPurpose, SecretStore, SeatColourIndex, SeatId, TableState, ZoneId } from '../core/types';
+import type { BotConfig, CardRef, Format, InstanceId, LobbySettings, LogEntry, Pose, QueueId, RngPurpose, SecretStore, SeatColourIndex, SeatId, TableState, ZoneId } from '../core/types';
+import type { LobbyView, MatchPlan, MatchView } from '../net/lobby/types';
 import type { CardData, CardDataSource, GeneratePack, SetDataSource } from '../data/types';
 import type { DraftControls } from '../draft/types';
 import type { GameDefinition } from '../games/types';
@@ -116,6 +117,11 @@ export interface TableSession {
   log(): LogEntry[];
   /** Stop timers and listeners. */
   dispose(): void;
+  /**
+   * Added by M8-C (contracts.md Part C): leave the table. A solo session resolves at once; a networked one leaves the
+   * room (the engine says `bye { reason: 'leave' }`) and stops, as `dispose` does. The game stays saved.
+   */
+  leave(): Promise<void>;
   /**
    * The draft and the builder for this seat (DESIGN "Pre-game: draft, sealed and deck building"). Added by M2-C;
    * present once M2-P7 wires the draft drivers into the session (absent on sessions without set data).
@@ -246,9 +252,123 @@ export interface VoiceSessionOptions {
 export interface NetSession extends TableSession {
   /** The engine, for the debug hook's `net` part and tests. */
   readonly engine: NetEngine;
-  /** Leave the room cleanly (bye) and stop; `dispose` does the same. */
-  leave(): void;
+  /** Leave the room cleanly (bye) and stop; `dispose` does the same. M8-C: returns a promise (TableSession.leave). */
+  leave(): Promise<void>;
 }
 
 /** Join (or start) a networked table and resolve once it holds a chair (PLAN M1-P8). Added by M1-C. */
 export type CreateNetSession = (opts: NetSessionOptions) => Promise<NetSession>;
+
+// ---------------------------------------------------------------------------------------------------------------
+// M8 contracts (added by M8-C): matchmaking, rejoin, saving and the computer opponent. contracts.md Parts C to E.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** One page-wide lobby service, created in main.ts and alive across routes (matchmaking.md 2.13). Implementer: M8-P7. */
+export interface Matchmaker {
+  status(): MatchmakerStatus;
+  subscribe(listener: (s: MatchmakerStatus) => void): () => void;
+  /** Join or leave the lobby as a watcher. */
+  watch(on: boolean): void;
+  /** Start searching with the selected deck (its kind, band and score are read here; the deck is locked while seeking). */
+  seek(config: { queues: QueueId[]; deckId: string }): void;
+  /** "Play anyone now". */
+  widen(): void;
+  cancel(): void;
+  /** Answer the ready check. */
+  answer(accept: boolean): void;
+  avoid(peerId: string, name: string): Promise<void>;
+  /** Stop everything (page unload, tests). */
+  dispose(): void;
+}
+
+/** A game room to enter: the derived room id and key (matchmaking.md 2.6; ui/types.ts RoomLink has the same shape). */
+export interface MatchRoomLink {
+  roomId: string;
+  key: string;
+}
+
+/** What the matchmaker is doing (matchmaking.md 2.13). `off` until the player searches. */
+export type MatchmakerStatus =
+  | { phase: 'off' }
+  | { phase: 'connecting' }
+  | { phase: 'watching'; lobby: LobbyView }
+  | { phase: 'seeking'; lobby: LobbyView; since: number; window: { rating: number | null; band: number | null }; alone: boolean; deckId: string; queues: QueueId[] }
+  | { phase: 'check'; lobby: LobbyView; match: MatchView; deadline: number; accepted: string[]; mine: boolean }
+  | { phase: 'moving'; link: MatchRoomLink; match: MatchView; plan: MatchPlan }
+  | { phase: 'failed'; problem: 'relays' | 'blocked' | 'otherTab'; text: string };
+
+/** The newest head any verified peer reported, and who (contracts.md Part D; Part G "Rejoin" item 3). */
+export interface KnownHead {
+  play: number;
+  seq: number;
+  peer: string;
+  seat: SeatId | null;
+}
+
+/** Whether this browser saves (persistence.md section 2): saved and protected, saved but evictable, or failing. */
+export type SaveState = 'saved' | 'unprotected' | 'notSaving';
+
+/** One seat as the Gathering card shows it (persistence.md section 5). */
+export interface MusterSeat {
+  seat: SeatId;
+  name: string;
+  me: boolean;
+  state: 'here' | 'connecting' | 'away' | 'leftBefore';
+}
+
+/** The muster rule's verdict (persistence.md section 5; contracts.md Part G "Rejoin"). Pure function of state, peers and knownHead (session/muster.ts). */
+export interface MusterStatus {
+  /** May act. */
+  live: boolean;
+  /** Which rule made it live (1 stayed, 2 in sync with a live player, 3 everyone back, 4 the table decided), null on standby. */
+  rule: 1 | 2 | 3 | 4 | null;
+  /** The seats this browser waits for while on standby. */
+  waitingFor: SeatId[];
+  seats: MusterSeat[];
+  knownHead: KnownHead | null;
+  /** True when `PLAY ON WITH THIS TABLE` is offered (rule 3 fails only because of knownHead; contracts.md Part G item 4). */
+  playOnHere: boolean;
+}
+
+/** The rejoin controls of a networked session (persistence.md PS-C). Implementer: M8-P5; M8-C's stub is always live. */
+export interface SessionMuster {
+  muster(): MusterStatus;
+  subscribe(listener: (m: MusterStatus) => void): () => void;
+  /** `PLAY ON WITHOUT …` (an empty list: `PLAY ON WITH THIS TABLE`). */
+  playOn(seats: SeatId[]): Promise<void>;
+  /** Open a re-invite for an away seat; resolves to the link (persistence.md section 7). */
+  invite(seat: SeatId): Promise<string>;
+  takeInviteBack(seat: SeatId): Promise<void>;
+  saveState(): SaveState;
+}
+
+/** The cue the human's primary button shows against Sparring (computer.md 5.3; contracts.md Part G item 1). */
+export type CombatCue = { kind: 'attack' | 'damage' | 'blocksDone'; label: string } | null;
+
+/** What Sparring is doing (computer.md section 3). */
+export interface ComputerStatus {
+  phase: 'starting' | 'thinking' | 'waiting' | 'paused' | 'conceded' | 'failed';
+  text: string;
+}
+
+/** The handle of a computer game the route and the HUD receive; never the bot session (computer.md section 3). Implementer: M8-P6. */
+export interface ComputerHandle {
+  readonly seat: SeatId;
+  readonly config: BotConfig;
+  status(): ComputerStatus;
+  subscribe(listener: (s: ComputerStatus) => void): () => void;
+  pause(): void;
+  resume(): void;
+  setPace(pace: BotConfig['pace']): void;
+  takeBack(): void;
+  skipTurn(): void;
+  concede(): void;
+  combat(): CombatCue;
+  dispose(): void;
+}
+
+/** A computer game: the human's session plus the handle (computer.md section 3). */
+export interface ComputerGame {
+  session: TableSession;
+  handle: ComputerHandle;
+}

@@ -22,6 +22,8 @@ const ELEMENTS = [
   { type: 'debug', pattern: 'src/debug' },
   { type: 'util', pattern: 'src/util' },
   { type: 'session', pattern: 'src/session' },
+  // M8-C (computer.md C0): the computer opponent; pure like core, never imports session.
+  { type: 'bot', pattern: 'src/bot' },
 ];
 
 const allow = (from, to) => ({ from: { element: { type: from } }, allow: { to: { element: { types: to } } } });
@@ -37,9 +39,10 @@ const POLICIES = [
   allow('themes', ['themes', 'core', 'scene', 'util']),
   allow('scene', ['scene', 'core', 'games', 'themes', 'data', 'store', 'util']),
   allow('voice', ['voice', 'core', 'net', 'store', 'util']),
-  allow('session', ['session', 'core', 'net', 'store', 'data', 'draft', 'games', 'voice', 'util']),
-  allow('ui', ['ui', 'session', 'scene', 'core', 'net', 'store', 'data', 'draft', 'games', 'themes', 'voice', 'util']),
-  allow('debug', ['debug', 'session', 'core', 'net', 'store', 'data', 'draft', 'scene', 'themes', 'ui', 'voice', 'games', 'util']),
+  allow('session', ['session', 'core', 'net', 'store', 'data', 'draft', 'games', 'voice', 'bot', 'util']),
+  allow('ui', ['ui', 'session', 'scene', 'core', 'net', 'store', 'data', 'draft', 'games', 'themes', 'voice', 'bot', 'util']),
+  allow('debug', ['debug', 'session', 'core', 'net', 'store', 'data', 'draft', 'scene', 'themes', 'ui', 'voice', 'games', 'bot', 'util']),
+  allow('bot', ['bot', 'core', 'data', 'games', 'util']),
 ];
 
 const NO_BROWSER_GLOBALS = ['window', 'document', 'navigator', 'localStorage', 'sessionStorage', 'indexedDB', 'fetch', 'WebSocket', 'RTCPeerConnection', 'BroadcastChannel', 'Date', 'performance'].map((name) => ({
@@ -82,8 +85,17 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/core/**/*.ts', 'src/net/**/*.ts', 'src/draft/**/*.ts'],
+    files: ['src/core/**/*.ts', 'src/net/**/*.ts', 'src/draft/**/*.ts', 'src/bot/**/*.ts'],
     rules: { '@typescript-eslint/no-explicit-any': 'error' },
+  },
+  {
+    // M8-C (computer.md C0): bot/ has core's purity rules plus no Math.random (its choices are seeded).
+    files: ['src/bot/**/*.ts'],
+    rules: {
+      'no-restricted-globals': ['error', ...NO_BROWSER_GLOBALS],
+      'no-restricted-imports': ['error', PURE_IMPORTS],
+      'no-restricted-properties': ['error', { object: 'Math', property: 'random', message: 'bot/ is seeded: take randomness from the seed.' }],
+    },
   },
   {
     files: ['src/core/**/*.ts'],
