@@ -3479,7 +3479,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       const zone = req.from ?? req.to ?? (viewerSeat ? `library:${viewerSeat}` : null);
       const pile = [...rcards.values()].filter((rc) => rc.inst.zone === zone && rc.place.kind === 'pile').sort((a, b) => a.place.z - b.place.z);
       pile.forEach((rc, i) => (rc.riffle = { start: now, dur: f.durations.shuffle, i, n: pile.length }));
-      if (pile.length) startAnim('shuffle', [], now, f.durations.shuffle);
+      if (pile.length) startAnim('shuffle', pile.map((rc) => rc.id), now, f.durations.shuffle);
       return;
     }
     const ids = req.cards.filter((id) => rcards.has(id));

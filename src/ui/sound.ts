@@ -14,7 +14,7 @@
  * (ui/sound-feel.ts) at its token gain (ui/design/tokens.ts SoundTokens). A cue a set lacks falls back to the look's,
  * then to the plain cue it refines (a draw to a slide, an untap to a tap), so older sets keep sounding as before.
  */
-import type { LogEntry, SeatId } from '../core/types';
+import type { LogEntry, SeatId, TableState, ZoneId } from '../core/types';
 import { registerDebug } from '../util/debug';
 import { live, track, untrack } from '../util/lifecycle';
 import { lookOfTheme } from '../themes/index';
@@ -107,6 +107,10 @@ export function cuesFor(entries: readonly LogEntry[], me: SeatId | null): SoundC
       case 'shuffleDone':
         rung.add('shuffle');
         break;
+      // A solo shuffle is a reorder of the whole zone; a few cards put back in order slide.
+      case 'reorder':
+        rung.add(a.count > 7 ? 'shuffle' : 'slide');
+        break;
       case 'turnPass':
         rung.add('turnChime');
         break;
@@ -118,6 +122,24 @@ export function cuesFor(entries: readonly LogEntry[], me: SeatId | null): SoundC
     }
   }
   return CUE_ORDER.filter((c) => rung.has(c));
+}
+
+/**
+ * The piles new log lines shuffled (M7-P5: the library riffles when it is shuffled, and a table opens with a shuffle):
+ * a finished shuffle round (`shuffleDone`, its zone from the state's round) or a solo shuffle, which is a `reorder` of
+ * the whole zone. A partial reorder (the top cards put back in a chosen order) is no shuffle.
+ */
+export function shuffledZones(entries: readonly LogEntry[], state: TableState): ZoneId[] {
+  const out = new Set<ZoneId>();
+  for (const e of entries) {
+    if (e.kind !== 'action') continue;
+    const a = e.action;
+    if (a.type === 'shuffleDone') {
+      const r = state.shuffles[a.sid];
+      if (r && r.purpose === 'shuffle') out.add(r.zone);
+    } else if (a.type === 'reorder' && a.count > 1 && a.count === (state.zones[a.zone]?.ids.length ?? -1)) out.add(a.zone);
+  }
+  return [...out];
 }
 
 /** The audio context the player hands the theme's sources (a fake in unit tests). */

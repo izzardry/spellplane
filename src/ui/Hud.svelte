@@ -52,6 +52,7 @@
   import { themeContext } from './settings/theme';
   import { ViewSettings, type ViewPrefs } from './settings/view';
   import { cuesFor, soundModeOf, soundOn, ThemeSoundPlayer, type SoundMode } from './sound';
+  import { shuffledZones } from './sound'; // M7-P5
   import { fieldDictation, sceneCaptions } from './settings/captions';
   import type { Caption, HoldAloneState } from '../voice/types';
   import EmptyState from './empty/EmptyState.svelte';
@@ -1043,6 +1044,7 @@
     }
     // A log that shrank (a resume replaced it) rings nothing.
     if (log.length > seenLog) sound.play(cuesFor(log.slice(seenLog), me));
+    if (log.length > seenLog) for (const z of shuffledZones(log.slice(seenLog), st)) scene?.animate?.({ kind: 'shuffle', cards: [], from: z, cue: null }); // M7-P5: the pile riffles
     seenLog = log.length;
   }
 
