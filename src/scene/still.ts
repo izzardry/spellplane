@@ -15,8 +15,7 @@
 import * as THREE from 'three';
 import { mtgLayout } from '../games/mtg/layout';
 import type { Theme } from '../themes/types';
-import { poseAtTilt } from './camera/pose-at';
-import { basis } from './camera/pose';
+import { basis, poseAtTilt } from './camera/pose';
 import { trackContext, untrackContext } from './lifecycle';
 import { ThemeRuntime } from './theme-runtime';
 

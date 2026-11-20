@@ -87,7 +87,7 @@ import type {
   TablePressKind,
   ViewState,
 } from './types';
-import { tableMarks } from './table-marks';
+import { markedGame, optionalMarkings, optionalZones, shownZones, tableMarks } from './table-marks';
 import { TILT_PRESETS, clampTilt, tiltForRig, type SetTiltOptions, type Tilt } from './types';
 import { TILT_PER_DRAG_PX, TILT_PER_SWIPE_PX, TILT_PER_WHEEL_PX } from './camera/tilt';
 import { seatAnchorOf } from './camera/anchors';
@@ -575,19 +575,48 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   };
 
   // --- Layout and markings ----------------------------------------------------------------------------------------
-  function rebuildMarkings(): void {
+  /** The keys of the optional zones marked now (scene/table-marks.ts: exile, command and the stack lane while used). */
+  let shownMarks = new Set<string>();
+  let shownMarksKey = '';
+  /** Whether the last marks check saw a dragged card (its end re-checks once). */
+  let marksSawDrag = false;
+  function markShown(): Set<string> {
+    const angle = viewerAngle(state, layout, viewerSeat);
+    const zones = optionalZones(layout, opts.game, angle, state ? Object.keys(state.seats).length : layout.seats.length, state);
+    const dragged: TablePoint[] = [];
+    if (drag) for (const id of drag.ids) {
+      const rc = rcards.get(id);
+      if (rc) dragged.push({ x: rc.motion.pose.x, y: rc.motion.pose.y });
+    }
+    return shownZones(zones, state, dragged);
+  }
+  /** Marks only where used: rebuild the marks when the set of shown optional zones changed (a card arrived, a drag came near). */
+  function syncMarks(): boolean {
+    const next = markShown();
+    const key = [...next].sort().join('|');
+    if (key === shownMarksKey) return false;
+    rebuildMarkings(next);
+    return true;
+  }
+  function rebuildMarkings(shown: Set<string> = markShown()): void {
+    shownMarks = shown;
+    shownMarksKey = [...shown].sort().join('|');
     const angle = viewerAngle(state, layout, viewerSeat);
     const names: string[] = [];
     if (state) for (const seat of Object.values(state.seats)) names[seat.index] = seat.name;
-    const m = markings(layout, opts.game, angle, state ? Object.keys(state.seats).length : layout.seats.length, names);
+    const inUse = state ? Object.keys(state.seats).length : layout.seats.length;
+    // Library and graveyard (and the table's edge and territories) always; the optional zones only while used.
+    const m = markings(layout, markedGame(opts.game), angle, inUse, names);
+    const extra = optionalMarkings(optionalZones(layout, opts.game, angle, inUse, state), shownMarks, layout, opts.game, angle);
+    const segs = [...m.segments, ...extra.segments];
     const pos: number[] = [];
-    for (let i = 0; i < m.segments.length; i += 4) pos.push(m.segments[i]!, 0.05, -m.segments[i + 1]!, m.segments[i + 2]!, 0.05, -m.segments[i + 3]!);
+    for (let i = 0; i < segs.length; i += 4) pos.push(segs[i]!, 0.05, -segs[i + 1]!, segs[i + 2]!, 0.05, -segs[i + 3]!);
     markGeometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     markGeometry.computeBoundingSphere();
-    markLabels = m.labels;
+    markLabels = [...m.labels, ...extra.labels];
     // The theme's own pile and zone marks under the hairlines (M7-P1; themes/types.ts ThemeInstance.setMarks).
     const seats = state ? Object.values(state.seats).map((s) => ({ index: s.index, colour: s.colour, named: !!s.name.trim() })) : layout.seats.map((sl) => ({ index: sl.index, colour: sl.index, named: false }));
-    runtime.setMarks(tableMarks(layout, opts.game, angle, seats));
+    runtime.setMarks(tableMarks(layout, opts.game, angle, seats, { keys: shownMarks, state }));
     dirty = true;
   }
   rebuildMarkings();
@@ -1069,6 +1098,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         }
       }
     } else dragDrawn = null;
+    // Marks only where used: a dragged card near exile, command or the stack lane shows its mark (M7-P1).
+    if (drag || marksSawDrag) {
+      marksSawDrag = !!drag;
+      if (syncMarks()) changed = true;
+    }
     // A press held still on an overlap clips at CLIP.holdMs; its ring fills from CLIP.ringFromMs (M6-P1).
     if (clipHold) {
       if (now - clipHold.t0 >= CLIP.holdMs) commitHold();
@@ -2752,6 +2786,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     quality: () => runtime.qualityChoice,
     setQuality: (id) => sceneApi.setQuality(id),
     framesDrawn: () => frame,
+    zoneMarks: () => [...shownMarks].sort(),
     // The lifecycle counters (contracts.md Part C).
     ...lifecycleRender(),
   };
@@ -3014,6 +3049,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         if (Object.values(next.seats).some((s) => prevState.seats[s.id]?.name !== s.name || prevState.seats[s.id]?.colour !== s.colour)) rebuildMarkings();
       }
       if (prevState !== next || openChanged) relayout(performance.now());
+      // A zone that now holds a card (or no longer does) shows (or hides) its mark (M7-P1).
+      if (prevState !== next) syncMarks();
       if (prevState !== next && !formatLayout) requestFollow(followRequests(prevState, next, follow));
       if (viewChanged) dirty = true;
       if (nextView.captions || captionLayer.active) captionLayer.set(nextView.captions ?? []);

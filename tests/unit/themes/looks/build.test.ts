@@ -16,6 +16,7 @@ import { GRAPHITE_WORLD, PLINTH_DROP_MM, PLINTH_MM } from '../../../../src/theme
 import { LOOK_IDS, LOOK_THEME, loadTheme, qualityLevel, type SceneContext, type TableMarks, type Theme } from '../../../../src/themes/index';
 import type { WorldInstance } from '../../../../src/themes/kit/look';
 import { BOARD_MM, KITCHEN_WORLD } from '../../../../src/themes/kitchen/index';
+import { DESK_MM as PLAIN_DESK_MM, PLAIN_WORLD, SLAB_MM } from '../../../../src/themes/plain/index';
 import { fakeRenderer } from '../../render/fakes';
 import { installRecordingCanvas } from '../stonetable/helpers';
 
@@ -24,9 +25,11 @@ beforeAll(() => (restore = installRecordingCanvas()));
 afterAll(() => restore());
 
 const looks: Theme[] = await Promise.all(LOOK_IDS.map((id) => loadTheme(LOOK_THEME[id])));
-const WORLDS = { kitchen: KITCHEN_WORLD, graphite: GRAPHITE_WORLD, codex: CODEX_WORLD } as const;
+const WORLDS = { plain: PLAIN_WORLD, kitchen: KITCHEN_WORLD, graphite: GRAPHITE_WORLD, codex: CODEX_WORLD } as const;
 /** How far each look's frame reaches beyond the layout's table, mm. */
-const FRAME = { kitchen: BOARD_MM, graphite: PLINTH_MM, codex: DESK_MM } as const;
+const FRAME = { plain: PLAIN_DESK_MM, kitchen: BOARD_MM, graphite: PLINTH_MM, codex: DESK_MM } as const;
+/** How deep each look's world reaches below the table plane at least, mm (Plain: its 8 mm slab on the desk). */
+const DEPTH = { plain: SLAB_MM, kitchen: 25, graphite: 25, codex: 25 } as const;
 
 const TABLES = [
   { w: 1400, d: 1100 },
@@ -58,6 +61,7 @@ const harnessMarks = (named = true): TableMarks =>
 describe.each(looks.map((t) => [t.id, t] as const))('%s', (id, theme) => {
   const world = WORLDS[id as keyof typeof WORLDS];
   const frame = FRAME[id as keyof typeof FRAME];
+  const depth = DEPTH[id as keyof typeof DEPTH];
 
   it.each(TABLES)('covers the %o table with a surface whose top is height 0, framed beyond every edge with a visible depth', (table) => {
     const { ctx, scene } = context(theme, table);
@@ -77,7 +81,7 @@ describe.each(looks.map((t) => [t.id, t] as const))('%s', (id, theme) => {
     expect(all.min.x).toBeCloseTo(-table.w / 2 - frame, 3);
     expect(all.max.z).toBeCloseTo(table.d / 2 + frame, 3);
     expect(all.min.z).toBeCloseTo(-table.d / 2 - frame, 3);
-    expect(all.min.y).toBeLessThan(-25);
+    expect(all.min.y).toBeLessThan(-depth);
     // Nothing stands above the table plane, so no card is ever hidden by the world (overlays lie within 0.1 mm).
     expect(all.max.y).toBeLessThanOrEqual(0.1);
     t.dispose();
@@ -88,14 +92,17 @@ describe.each(looks.map((t) => [t.id, t] as const))('%s', (id, theme) => {
     expect(frame).toBeGreaterThanOrEqual(60 + 12);
   });
 
-  it('builds lit, physically based surfaces from procedural maps (no files)', () => {
+  it('builds its surfaces from procedural maps (no files): physically based in the lit looks, unlit in Plain', () => {
     const { ctx } = context(theme);
     const t = theme.build(ctx) as WorldInstance;
     for (const s of world.slabs) {
-      const m = t.slabs[s.name]!.material as THREE.MeshStandardMaterial;
-      expect(m.isMeshStandardMaterial, s.name).toBe(true);
+      const raw = t.slabs[s.name]!.material;
+      const m = (Array.isArray(raw) ? raw[0] : raw) as THREE.MeshStandardMaterial & THREE.MeshBasicMaterial;
+      if (theme.lighting.lit) {
+        expect(m.isMeshStandardMaterial, s.name).toBe(true);
+        expect(t.slabs[s.name]!.receiveShadow).toBe(true);
+      } else expect(m.isMeshBasicMaterial, s.name).toBe(true);
       expect(m.map, s.name).not.toBeNull();
-      expect(t.slabs[s.name]!.receiveShadow).toBe(true);
       for (const map of Object.values(s.spec.maps ?? {})) expect(map.kind).toBe('procedural');
     }
     t.dispose();

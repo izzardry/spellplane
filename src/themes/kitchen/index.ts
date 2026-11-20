@@ -118,7 +118,7 @@ export const kitchen: Theme = {
       surface: KITCHEN_SURFACE,
       // Zone hairlines: a walnut-brown stitch on the linen.
       border: '#8f7a5c',
-      accent: '#c0532f',
+      accent: '#b94f2c', // the look's accent token (M7-P2 tuned it for AA)
       danger: '#9e2a2b',
       warning: '#8a5a00',
       focus: '#2f6f9f',

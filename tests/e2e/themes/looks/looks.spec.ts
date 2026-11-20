@@ -157,7 +157,7 @@ for (const look of LOOKS) {
       expect(errors).toEqual([]);
     });
 
-    test('pile and zone marks in the look’s style: a bed under every pile slot, each named chair’s glyph in its seat colour', async ({ page }, info) => {
+    test('pile and zone marks in the look’s style: a bed under the library and graveyard slots, each named chair’s glyph in its seat colour', async ({ page }, info) => {
       const errors = await openRender(page, { theme: look, scenario: 'empty' });
       // From above: every pile slot on screen.
       await setTilt(page, 1);
@@ -165,7 +165,10 @@ for (const look of LOOKS) {
       const c: Capture = await capture(page);
       evidence(info, `${look}-marks`, c.png);
       const sl = layout.seats[0]!;
-      for (const zone of ['library', 'graveyard', 'exile'] as const) {
+      // Marks only where used (m7-adjustments.md, M7-P1): on the empty table exile, command and the stack lane are
+      // unmarked (tests/e2e/themes/looks/marks.spec.ts drags a card near them).
+      expect(await page.evaluate(() => window.__spellplane!.render!.zoneMarks!())).toEqual([]);
+      for (const zone of ['library', 'graveyard'] as const) {
         const p = sl.zones[zone];
         const bed = avg(c, patch((await toScreen(page, p.x, p.y))!, 6));
         // The table beside the slot (toward the territory's middle, clear of the beds' column).

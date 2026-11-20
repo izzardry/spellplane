@@ -96,7 +96,8 @@ describe.each(looks.map((t) => [t.id, t] as const))('%s', (id, theme) => {
     expect(theme.cardDressing.held.shadow).toBe(true);
   });
 
-  it('is a lit world without tone mapping, so the table keeps the colours its tokens promise', () => {
+  // Plain is unlit by design (visual.md 2.2: the cheapest look to draw); tests/unit/themes/looks/plain.test.ts covers it.
+  it.skipIf(id === 'plain')('is a lit world without tone mapping, so the table keeps the colours its tokens promise', () => {
     expect(theme.lighting.lit).toBe(true);
     expect(theme.lighting.toneMapping).toBe('none');
     expect(theme.lighting.exposure).toBe(1);
@@ -170,7 +171,8 @@ describe.each(looks.map((t) => [t.id, t] as const))('%s', (id, theme) => {
 });
 
 describe('three distinct moods', () => {
-  const [kitchen, graphite, codex] = looks as [Theme, Theme, Theme];
+  const byId = (id: string) => looks.find((t) => t.id === id)!;
+  const [kitchen, graphite, codex] = [byId('kitchen'), byId('graphite'), byId('codex')];
   const warm = (hex: string) => {
     const [r, , b] = hexToRgb(hex);
     return r - b;
