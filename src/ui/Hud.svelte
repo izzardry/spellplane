@@ -1822,7 +1822,7 @@
     onmore={(card, x, y) => openMenu(card, x, y)}
     onpile={pileAction}
   />
-  <CoachMark {coach} touch={touchUi} bottom={aboveHandBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer} />
+  <CoachMark {coach} touch={touchUi} bottom={aboveHandBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
   <!-- /M7-P5 -->
 
   {#if radial}

@@ -11,9 +11,12 @@ import { hook } from '../helpers/app';
 import { menuItem } from '../helpers/hud';
 import { decklist, openSolo } from '../solo/helpers';
 import { IPAD_LANDSCAPE } from './helpers';
-import { card, centre, drag, longPress } from '../touch/helpers';
+import { card, centre, fingers, longPress, path } from '../touch/helpers';
+import { handPoint, settledTable, tableToScreen } from '../nokeys/helpers';
 
 const state = (page: Page) => hook<TableState>(page, 'state');
+/** Two animation frames of the page (the table's render loop runs on them). */
+const frames = (page: Page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 type Press = 'click' | 'tap';
 
 async function newcomerTurn(page: Page, how: Press, profile: string): Promise<void> {
@@ -53,18 +56,29 @@ async function newcomerTurn(page: Page, how: Press, profile: string): Promise<vo
 
   // Play a card: drag it from the hand onto the table, with the mouse or a finger.
   const first = (await page.getByTestId('hand-card').first().getAttribute('data-card')) as InstanceId;
-  const el = page.locator(`[data-testid="hand-card"][data-card="${first}"]`);
-  const b = (await el.boundingBox())!;
-  const vp = page.viewportSize()!;
-  const grab = { x: Math.round(b.x + b.width / 2), y: Math.round(b.y + b.height - 12) };
+  // Once the dealt cards have come to rest in the hand; a point of that card no neighbour in the fan covers.
+  await settledTable(page);
+  const grab = await handPoint(page, first);
+  // On the own battlefield, clear of the own seat spot (a drop there goes back to the hand).
+  const to = await tableToScreen(page, { x: -300, y: -330 });
   if (how === 'click') {
     await page.mouse.move(grab.x, grab.y, { steps: 3 });
     await page.mouse.down();
-    await page.mouse.move(grab.x, vp.height * 0.7, { steps: 6 });
-    await page.mouse.move(vp.width * 0.4, vp.height * 0.6, { steps: 12 });
+    await page.mouse.move(grab.x, grab.y - 120, { steps: 6 });
+    await page.mouse.move(to.x, to.y, { steps: 12 });
+    // The table settles its drop target on its next frames (as for a player, whose release comes later than that).
+    await frames(page);
     await page.mouse.up();
   } else {
-    await drag(page, grab, { x: Math.round(vp.width * 0.4), y: Math.round(vp.height * 0.6) }, 16);
+    // Straight up out of the fan first, as a player lifts a card (a first move as much sideways as up scrolls the fan),
+    // then across under the own plate (which sits above the fan on an iPad) and up onto the table.
+    const fanTop = (await page.getByTestId('hand').boundingBox())!.y;
+    const plate = (await page.locator('[data-testid="avatar"][data-seat="s0"]').boundingBox())!;
+    const out = { x: grab.x, y: Math.round((fanTop + plate.y + plate.height) / 2) };
+    const across = { x: to.x, y: out.y };
+    await fingers(page, [{ type: 'down', id: 1, ...grab }, ...path(1, grab, out, 8), ...path(1, out, across, 8), ...path(1, across, to, 8)]);
+    await frames(page);
+    await fingers(page, [{ type: 'up', id: 1, ...to }]);
   }
   await expect.poll(async () => (await state(page)).cards[first]?.zone).toBe('battlefield:s0');
 
