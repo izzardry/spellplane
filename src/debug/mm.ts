@@ -49,6 +49,7 @@ export function registerMmDebug(mm: Matchmaker | null | undefined, deps: { decks
     watch: (on) => mm.watch(on),
     chimes: () => chimeCount(),
     notice: () => c.notice?.() ?? null,
+    matches: async () => (c.matches ? c.matches().list() : []),
   };
   registerDebug({ mm: api });
 }

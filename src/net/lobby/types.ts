@@ -69,7 +69,7 @@ export interface MatchView {
   matchId: string;
   queue: QueueId;
   /** In seat order; `me` marks this browser. */
-  players: { name: string; rating: number | null; band: Band; me: boolean; team?: 0 | 1 }[];
+  players: { name: string; rating: number | null; band: Band; me: boolean; team?: 0 | 1; accepted?: boolean /* [M8-P7] pressed Accept (names may repeat) */ }[];
 }
 
 /** One seeker as this browser sees it (matchmaking.md 2.13). */

@@ -4,7 +4,7 @@
  * so at runtime every member may be missing until its owner registered it.
  */
 import type { Action } from '../core/actions';
-import type { DeckBuild, InstanceId, Line, Pose, QueueId, SecretStore, TableState } from '../core/types';
+import type { DeckBuild, InstanceId, Line, MatchRecord, Pose, QueueId, SecretStore, TableState } from '../core/types';
 import type { ComputerStatus, MatchmakerStatus } from '../session/types';
 import type { DeckRecord, GameSummary } from '../store/types';
 import type { BrokerState } from '../net/lobby/broker'; // [M8-P7]
@@ -265,6 +265,8 @@ export interface MmDebug {
   chimes?(): number; // [M8-P7]
   /** The last short notice (a declined, missed or unreachable match); null when none. */
   notice?(): string | null; // [M8-P7]
+  /** The formed matches of this profile (the `matches` store). */
+  matches?(): Promise<MatchRecord[]>; // [M8-P7]
 }
 
 /** The computer opponent part (computer.md 10). M8-P6 fills it. Added by M8-C. */

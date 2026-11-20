@@ -17,8 +17,9 @@
 
   const seconds = $derived(Math.max(0, Math.min(CHECK_SECONDS, Math.ceil((status.deadline - now) / 1000))));
   const ranked = $derived(status.match.queue.endsWith('.ranked'));
-  const accepted = (p: { name: string; me: boolean }): boolean => (p.me ? status.mine : status.accepted.includes(p.name));
-  const waitingFor = $derived(status.match.players.filter((p) => !p.me && !status.accepted.includes(p.name)).map((p) => p.name));
+  type Player = Check['match']['players'][number];
+  const accepted = (p: Player): boolean => (p.me ? status.mine : (p.accepted ?? status.accepted.includes(p.name)));
+  const waitingFor = $derived(status.match.players.filter((p) => !p.me && !accepted(p)).map((p) => p.name));
 
   let card: HTMLElement | null = $state(null);
   const onKey = (e: KeyboardEvent): void => {

@@ -138,6 +138,8 @@ export interface MatchmakerControl extends Matchmaker {
   searchAgain(): void;
   /** The deck library the search reads (debug hook: a spec stores its deck first). */
   decks(): DeckStore;
+  /** The formed matches of this profile (debug hook). */
+  matches(): MatchStore;
   /** The page went to `hash` (the hashchange listener calls it): a networked room that is not the match's turns it off. */
   route(hash: string): void;
 }
@@ -212,7 +214,10 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     if (st.phase === 'check' && st.check) {
       const c = st.check;
       const names = (tid: string): string => (tid === st.tid ? (st.ticket?.name ?? '') : (st.peers[tid]?.ticket?.name ?? ''));
-      return { phase: 'check', lobby, match: matchView(st, c.offer.members.map((m) => m.tid), c.offer.queue), deadline: c.deadline, accepted: c.ready.map(names), mine: c.accepted };
+      const view = matchView(st, c.offer.members.map((m) => m.tid), c.offer.queue);
+      const order = c.offer.members.map((m) => m.tid);
+      const players = view.players.map((p, i) => ({ ...p, accepted: p.me ? c.accepted : c.ready.includes(order[i]!) }));
+      return { phase: 'check', lobby, match: { ...view, players }, deadline: c.deadline, accepted: c.ready.map(names), mine: c.accepted };
     }
     if (st.ticket && config && (st.phase === 'seeking' || st.phase === 'collecting' || st.phase === 'held')) {
       const s0 = st.since ?? t;
@@ -329,7 +334,8 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     }
     const id = await identity();
     // eslint-disable-next-line no-control-regex
-    const name = id.nickname.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24) || 'Player';
+    // Without a nickname the player is named by its peer id, so two of them are never both "Player".
+    const name = id.nickname.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24) || `Player ${id.peerId.slice(0, 4).toUpperCase()}`;
     return {
       name,
       proto: PROTOCOL_VERSION,
@@ -478,7 +484,9 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     },
     now,
     advance(ms) {
-      offset += Math.max(0, ms);
+      const d = Math.max(0, ms);
+      offset += d;
+      room?.skew(d);
       tick();
     },
     room: () => room,
@@ -510,6 +518,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     },
     notice: () => lastNotice,
     decks: () => deps.decks,
+    matches: () => deps.matches,
     route: onRoute,
     searchAgain() {
       if (!config || mode === 'moving') return;

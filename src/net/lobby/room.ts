@@ -126,6 +126,15 @@ export class LobbyRoom {
     }
   }
 
+  /**
+   * The own clock jumped by `ms` (the debug hook's `mm.tick`): the others' last beats move with it, so a jump drives
+   * the own timers (the ready ring, the window rows) without making every peer look silent.
+   */
+  skew(ms: number): void {
+    for (const [peer, at] of this.seen) this.seen.set(peer, at + ms);
+    this.lastBeat += ms;
+  }
+
   /** Every 250 ms or so: beats, peer timeouts and the broker's timers. */
   tick(): void {
     if (this.closed) return;
