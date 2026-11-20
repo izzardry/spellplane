@@ -24,13 +24,13 @@ function gatedLoader() {
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 describe('ThemeChoice', () => {
-  it('starts in Paper with only Paper loaded, and loads nothing without a stored choice', async () => {
+  it('starts in Paper and, without a stored choice, loads the default theme (Plain since M8-C) and nothing else', async () => {
     const load = vi.fn(async (id: ThemeId) => fake(id));
     const c = new ThemeChoice({ settings: new MemorySettings(), load });
     await c.ready;
-    expect(c.id()).toBe('paper');
-    expect(c.loaded()).toEqual(['paper']);
-    expect(load).not.toHaveBeenCalled();
+    expect(c.id()).toBe('plain');
+    expect(c.loaded()).toEqual(['paper', 'plain']);
+    expect(load.mock.calls.map((x) => x[0])).toEqual(['plain']);
   });
 
   it('shows the stored choice once its chunk is loaded, before `ready` settles', async () => {
@@ -173,7 +173,11 @@ describe('ThemeChoice', () => {
   });
 
   it('only the pages that build a table scene wait for the stored theme; the start page and the connection check do not', () => {
-    expect(waitsForStoredTheme(parseRoute(''))).toBe(true);
+    // M8-C: `#/` is Home (no scene); the sandbox `#/solo` and the practice and computer tables wait.
+    expect(waitsForStoredTheme(parseRoute(''))).toBe(false);
+    expect(waitsForStoredTheme(parseRoute('#/solo'))).toBe(true);
+    expect(waitsForStoredTheme(parseRoute('#/p/p-abc'))).toBe(true);
+    expect(waitsForStoredTheme(parseRoute('#/c/c-abc'))).toBe(true);
     expect(waitsForStoredTheme(parseRoute('#/t/room1/key1'))).toBe(true);
     expect(waitsForStoredTheme(parseRoute('#/lobby'))).toBe(false);
     expect(waitsForStoredTheme(parseRoute('#/diag'))).toBe(false);
@@ -185,7 +189,8 @@ describe('ThemeChoice', () => {
     const a = new ThemeChoice({ settings: new MemorySettings(), load });
     const b = new ThemeChoice({ settings: new MemorySettings(), load });
     await a.set('stonetable');
+    await b.ready;
     expect(a.id()).toBe('stonetable');
-    expect(b.id()).toBe('paper');
+    expect(b.id()).toBe('plain');
   });
 });

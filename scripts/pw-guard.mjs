@@ -321,7 +321,7 @@ async function waitForReclaim() {
   let lastNote = 0;
   for (;;) {
     const r = spawnSync(bin, ['status', '--json'], { encoding: 'utf8' });
-    let unowned = 0;
+    let unowned;
     try { unowned = Number(JSON.parse(r.stdout).unowned_gb) || 0; } catch { return; }
     if (unowned <= MAX_UNOWNED_GB) return;
     if (Date.now() - started > MAX_WAIT_MS) {

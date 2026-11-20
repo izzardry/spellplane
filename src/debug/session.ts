@@ -7,9 +7,10 @@
  */
 import { stateHash } from '../core/hash';
 import type { Action } from '../core/actions';
-import type { InstanceId, LogEntry, RngPurpose, ZoneId } from '../core/types';
+import type { InstanceId, LogEntry, RngPurpose, SeatId, ZoneId } from '../core/types';
 import type { CardDataSource, ParseResult } from '../data/types';
-import type { DeckImport, LookedCard, TableSession } from '../session/index';
+import type { DeckImport, LookedCard, MusterStatus, TableSession } from '../session/index';
+import { createSessionMuster } from '../session/muster';
 import { registerDebug } from '../util/debug';
 
 /** The session (solo or networked) as the debug hook exposes it. Results are plain JSON so Playwright can read them. */
@@ -36,6 +37,14 @@ export interface SessionDebug {
   roomId(): string;
   /** The own seat. Added by M1-P8. */
   seat(): string;
+  /** Leave the table as the Leave button does (TableSession.leave). Added by M8-C. */
+  leave?(): Promise<void>;
+  /** The muster verdict (session/muster.ts; persistence.md section 5). Added by M8-C. */
+  muster?(): MusterStatus;
+  /** Open a re-invite for an away seat; resolves to the link (SessionMuster.invite). Added by M8-C. */
+  invite?(seat: SeatId): Promise<string>;
+  /** `PLAY ON WITHOUT …` (SessionMuster.playOn). Added by M8-C. */
+  playOn?(seats: SeatId[]): Promise<void>;
 }
 
 declare module '../util/debug' {
@@ -51,6 +60,8 @@ export interface SessionDebugDeps {
 
 /** Register the session's parts of window.__spellplane. */
 export function registerSessionDebug(session: TableSession, deps: SessionDebugDeps): void {
+  // M8-C: the rejoin controls (a stub that is always live until M8-P5).
+  const muster = createSessionMuster(session);
   registerDebug({
     state: () => session.getState(),
     secrets: () => session.secrets(),
@@ -84,6 +95,10 @@ export function registerSessionDebug(session: TableSession, deps: SessionDebugDe
       roll: (purpose, n) => session.roll(purpose, n),
       roomId: () => session.roomId,
       seat: () => session.seat,
+      leave: () => session.leave(),
+      muster: () => muster.muster(),
+      invite: (seat) => muster.invite(seat),
+      playOn: (seats) => muster.playOn(seats),
     },
   });
 }

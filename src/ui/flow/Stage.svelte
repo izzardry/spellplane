@@ -8,6 +8,8 @@
   - build: the builder (ui/builder, M2-P5 and M2-P6), with the evening bar (who is not Ready yet, a new draft);
   - match: the table HUD, with the evening bar (next game, new draft).
   In every stage the audit panel (ui/audit, M5-P2) shows the verdicts of the games that ended.
+  M8-C: the lobby stage mounts the waiting room (ui/lobby/WaitingRoom.svelte, M8-P4) and the HUD gets the table frame's
+  shell props (`shell`, contracts.md Part C).
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
@@ -21,14 +23,23 @@
   import Hud from '../Hud.svelte';
   import { BuilderView } from '../builder/index';
   import { DraftView } from '../draft/index';
-  import Lobby from '../lobby/Lobby.svelte';
+  import WaitingRoom from '../lobby/WaitingRoom.svelte';
+  import type { HudShellProps } from '../props';
   import type { LobbyProps } from '../types';
   import EveningBar from './EveningBar.svelte';
   import AuditPanel from '../audit/AuditPanel.svelte';
   import { sessionAudit } from '../../session/audit';
   import LobbyDraft from './LobbyDraft.svelte';
 
-  let props: LobbyProps & { createScene: CreateTableScene; faces: FaceSource; cardData: CardDataSource; settings?: SettingsStore | undefined; sets?: SetDataSource | undefined } = $props();
+  let props: LobbyProps & {
+    createScene: CreateTableScene;
+    faces: FaceSource;
+    cardData: CardDataSource;
+    settings?: SettingsStore | undefined;
+    sets?: SetDataSource | undefined;
+    /** What the table frame tells the HUD (M8-C; contracts.md Part C). */
+    shell?: HudShellProps | undefined;
+  } = $props();
 
   let st = $state.raw<TableState>(untrack(() => props.session.getState()));
   onMount(() => props.session.subscribe((s) => (st = s)));
@@ -47,7 +58,7 @@
   {#if stage === 'lobby'}
     <div class="lobby-stage" class:with-draft={!!(evening && props.sets)}>
       <div class="lobby-main">
-        <Lobby session={props.session} game={props.game} link={props.link} identity={props.identity} decks={props.decks} cardData={props.cardData} parseDecklist={props.parseDecklist} />
+        <WaitingRoom session={props.session} game={props.game} link={props.link} identity={props.identity} decks={props.decks} cardData={props.cardData} parseDecklist={props.parseDecklist} settings={props.settings} />
       </div>
       {#if evening && props.sets}
         <div class="lobby-side">
@@ -71,7 +82,7 @@
     {/if}
   {:else}
     {#key st.games ?? 0}
-      <Hud session={props.session} createScene={props.createScene} faces={props.faces} cardData={props.cardData} game={props.game} {theme} settings={props.settings} parseDecklist={props.parseDecklist} />
+      <Hud session={props.session} createScene={props.createScene} faces={props.faces} cardData={props.cardData} game={props.game} {theme} settings={props.settings} parseDecklist={props.parseDecklist} {...props.shell ?? {}} />
     {/key}
   {/if}
   {#if evening && (stage === 'build' || stage === 'match')}

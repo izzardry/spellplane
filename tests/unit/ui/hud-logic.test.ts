@@ -432,14 +432,16 @@ describe('deck import (DESIGN "Pre-game", Constructed decks; "Specification: car
 
 describe('routes (PLAN M0-P4: #/ solo; #/t/<room>/<key>, #/diag, #/lobby reserved)', () => {
   it('parses and round-trips', () => {
-    expect(parseRoute('')).toEqual({ name: 'solo' });
-    expect(parseRoute('#/')).toEqual({ name: 'solo' });
+    // M8-C: `#/` (and the empty hash) is Home; the table sandbox moved to `#/solo` (contracts.md Part C).
+    expect(parseRoute('')).toEqual({ name: 'home' });
+    expect(parseRoute('#/')).toEqual({ name: 'home' });
+    expect(parseRoute('#/solo')).toEqual({ name: 'solo' });
     expect(parseRoute('#/t/abc/k%2F1')).toEqual({ name: 'room', room: 'abc', key: 'k/1' });
     expect(parseRoute('#/lobby')).toEqual({ name: 'lobby' });
     expect(parseRoute('#/diag/')).toEqual({ name: 'diag' });
     expect(parseRoute('#/t/abc')).toEqual({ name: 'notFound', hash: '#/t/abc' });
     expect(parseRoute('#/x')).toMatchObject({ name: 'notFound' });
-    for (const h of ['#/', '#/lobby', '#/diag', '#/t/r%20m/k%2F1']) expect(routeHash(parseRoute(h))).toBe(h);
+    for (const h of ['#/', '#/solo', '#/lobby', '#/diag', '#/t/r%20m/k%2F1']) expect(routeHash(parseRoute(h))).toBe(h);
   });
 });
 

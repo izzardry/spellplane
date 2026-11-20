@@ -19,6 +19,8 @@
  * (DESIGN "Card faces are never restyled"). scene/theme-runtime.ts owns the theme, materials, post chain and quality.
  * Paper stays one cheap pass: no lights, boxes, shadows or post, the same draw calls as before.
  */
+import { lifecycleRender, registerBaseRender, trackContext, untrackContext } from './lifecycle';
+import { track, untrack } from '../util/lifecycle';
 import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
 import { CAMERA, CLIP } from '../core/geometry';
@@ -273,6 +275,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   // Measuring switches (scene/switches.ts; M7-A0).
   const switches = renderSwitches();
   const renderer = new THREE.WebGLRenderer({ antialias: switches.antialias ?? true, preserveDrawingBuffer: false });
+  // M8-C: counted while it lives (contracts.md Part C lifecycle counters).
+  trackContext(renderer);
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, theme.quality[0]?.pixelRatio ?? 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   // A frame is several render calls (world, post passes, overlay): the scene resets the counters once per frame.
@@ -486,6 +490,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let stats: FrameStats = { drawCalls: 0, textureBytes: 0, frameMs: 0 };
   let lastTick = performance.now();
   let raf = 0;
+  /** The identity the frame loop is counted under (M8-C lifecycle counters). */
+  const frameLoop = {};
   let disposed = false;
   let hovered: InstanceId | null = null;
   /** The stack item under the pointer (DESIGN "The effect stack": hovering an item highlights its source and targets). */
@@ -2664,6 +2670,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     quality: () => runtime.qualityChoice,
     setQuality: (id) => sceneApi.setQuality(id),
     framesDrawn: () => frame,
+    // M8-C: the lifecycle counters (contracts.md Part C).
+    ...lifecycleRender(),
   };
   const rigDebug: RigDebug = {
     rig: () => controls.rig(),
@@ -2866,6 +2874,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   raf = requestAnimationFrame(tick);
+  // M8-C: the frame loop is counted until dispose (contracts.md Part C).
+  track('rafLoops', frameLoop);
   const meterSource = (): RenderInfo => ({
     width: canvas.width,
     height: canvas.height,
@@ -3042,6 +3052,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       return screenToTable(x, y);
     },
     debug,
+    // M8-C: the read-only seam (m7-adjustments.md section 2); M7-P5 makes the scene propose nothing while it is on.
+    setReadOnly() {},
     dispose() {
       disposed = true;
       frameMeter.releaseRender(meterSource);
@@ -3087,12 +3099,17 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       markGeometry.dispose();
       markMaterial.dispose();
       renderer.dispose();
+      // M8-C: what the renderer still held, and the context and frame loop released (contracts.md Part C).
+      untrackContext(renderer);
+      untrack('rafLoops', frameLoop);
       // Free the WebGL context now, not at GC: browsers cap live contexts (about 16).
       renderer.forceContextLoss();
       canvas.remove();
       // Debug parts must not point at a disposed scene (a newer scene's parts stay).
       const hook = typeof window === 'undefined' ? undefined : (window.__spellplane as Record<string, unknown> | undefined);
       if (hook) for (const [k, fn] of Object.entries(debugParts)) if (hook[k] === fn) delete hook[k];
+      // M8-C: the render part's lifecycle members stay readable on Home (contracts.md Part C).
+      registerBaseRender();
       marqueeEl.remove();
       stackBadge.dispose();
     },

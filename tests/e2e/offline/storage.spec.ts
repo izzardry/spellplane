@@ -82,7 +82,7 @@ test('export a backup, import it into a wiped profile: decks and the saved table
   await other.getByTestId('backup-restore').click();
   await expect(other.getByTestId('backup-result')).toContainText('Restored 0 decks and 1 saved table.');
   await other.getByTestId('backup-reload').click();
-  await other.evaluate(() => (location.hash = '#/'));
+  await other.evaluate(() => (location.hash = '#/solo'));
   await waitForSession(other);
   expect(await call<string>(other, 'hash')).toBe(hash);
   expect(await hook<SecretStore>(other, 'secrets')).toEqual(secrets);
