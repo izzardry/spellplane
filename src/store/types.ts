@@ -260,7 +260,7 @@ export const DEFAULT_TALK: TalkSettings = { gate: 'ptt', voice: true, dictation:
 
 /** Defaults for every setting (DESIGN "Decision log": Paper, push-to-talk, follow toggles off). */
 export const DEFAULT_SETTINGS: Settings = {
-  theme: 'paper',
+  theme: 'plain', // M8-C: Plain is the default look and table (PLAN Milestone 8, Decisions)
   keymap: [],
   talkMode: 'ptt',
   speechEngine: 'webspeech',
@@ -276,7 +276,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hintsSeen: [],
   talkWhileHolding: false,
   dieSides: DEFAULT_DIE_SIDES,
-  look: 'kitchen',
+  look: 'plain', // M8-C
   tilt: null,
   motion: 'system',
   showFrameRate: false,

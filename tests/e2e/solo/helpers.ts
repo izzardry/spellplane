@@ -28,7 +28,7 @@ export function freshProfile(info: TestInfo): string {
 /** Open the solo table with fixture card data, placeholder faces and the given profile; wait for the session. */
 export async function openSolo(page: Page, profile: string): Promise<void> {
   await page.addInitScript({ content: fixturesScript() });
-  await page.goto(`./?faces=placeholder&profile=${profile}`);
+  await page.goto(`./?faces=placeholder&profile=${profile}#/solo`);
   await waitForSession(page);
 }
 

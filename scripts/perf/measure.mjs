@@ -354,7 +354,11 @@ async function awaitRun(run) {
 async function runPlaywright(name, base) {
   const pw = await import('@playwright/test');
   const args = name === 'chromium' ? ['--use-gl=angle', has('swiftshader') ? '--use-angle=swiftshader' : '--use-angle=metal', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] : [];
-  const browser = await pw[name].launch({ headless: !has('headed'), args });
+  // WebKit on the remote browser server (scripts/pw-remote/, set up by pw-guard) when one is configured.
+  const remoteWs = name === 'webkit' ? process.env.SPELLPLANE_PW_WEBKIT_WS : undefined;
+  const browser = remoteWs
+    ? await pw.webkit.connect(remoteWs, { exposeNetwork: '<loopback>' })
+    : await pw[name].launch({ headless: !has('headed'), args });
   try {
     const context = await browser.newContext({ viewport: { width: W, height: H }, deviceScaleFactor: DPR });
     const page = await context.newPage();

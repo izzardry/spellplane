@@ -10,8 +10,8 @@ import type { createTableScene } from '../scene/index';
 import type { BuilderSort, CreateBuilderSurface, CreateDraftSurface } from '../scene/types';
 import type { Theme } from '../themes/types';
 import type { Transport } from '../net/transport';
-import type { EveningControls, TableSession, TeammateHandCard } from '../session/types';
-import type { DeckStore, IdentityStore, SettingsStore, TableRecord } from '../store/types';
+import type { ComputerGame, EveningControls, Matchmaker, TableSession, TeammateHandCard } from '../session/types';
+import type { DeckStore, GameStore, IdentityStore, MatchStore, RatingStore, SettingsStore, TableRecord } from '../store/types';
 import type { CaptionControls, VoiceControls } from '../voice/types';
 import type { AppUpdate } from './update';
 
@@ -40,6 +40,20 @@ export interface AppProps {
   sets?: SetDataSource;
   /** Service-worker updates, applied only between games (PLAN Milestone 5, owner decisions). Added by M5-C; wired by M5-P3 in main.ts; absent in dev and test builds. */
   update?: AppUpdate;
+  /** History summaries (persistence.md section 3); absent when storage cannot be opened. Added by M8-C. */
+  games?: GameStore;
+  /** Ratings (matchmaking.md 2.10). Added by M8-C. */
+  ratings?: RatingStore;
+  /** Formed matches (matchmaking.md 2.10): a MatchRecord for a code makes its table a matched one. Added by M8-C. */
+  matches?: MatchStore;
+  /** The page's one matchmaker (matchmaking.md 2.13; a stub with phase `off` until M8-P7). Added by M8-C. */
+  matchmaker?: Matchmaker;
+  /** Open (or resume) the practice table `#/p/<room>` (computer.md section 11): a solo session with its own room id. Added by M8-C. */
+  openPractice?: (roomId: string) => Promise<TableSession>;
+  /** Open (or resume) the computer game `#/c/<room>` (computer.md section 3). Added by M8-C; rejects until M8-P6. */
+  openComputer?: (roomId: string) => Promise<ComputerGame>;
+  /** The table sandbox `#/solo`, opened once per page (contracts.md Part C). Added by M8-C. */
+  openSandbox?: () => Promise<TableSession>;
 }
 
 /**
