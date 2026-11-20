@@ -148,6 +148,7 @@ test('searching: the pill is pressed with the timer, the deck is locked, and the
     await expect(page.getByTestId('home-change-deck')).toBeDisabled();
     await expect(page.getByTestId('mode-solo')).toBeDisabled();
     await expect(page.getByTestId('home-cancel')).toBeVisible();
+    await expect(page.getByTestId('home-queued')).toHaveText('QUICK MATCH · 1V1 · UNRANKED');
     // Home shows the search itself; the bar follows the player everywhere else (journey.md 4.5).
     await expect(page.getByTestId('queue-bar')).toHaveCount(0);
   });

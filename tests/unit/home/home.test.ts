@@ -5,7 +5,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MatchmakerStatus, Matchmaker } from '../../../src/session/types';
 import { DEFAULT_HOME_PREFS, type BoosterSetup, type DeckRecord, type GameStore, type HomePrefs, type SettingsStore, type DeckStore } from '../../../src/store/types';
-import { boosterToLobby, COPY, heroPacks, homeView, lobbyToBooster, queuesFor, stepDeck, type HomeMatchmaking } from '../../../src/ui/home/view';
+import { boosterToLobby, COPY, heroPacks, homeView, lobbyToBooster, queuedSetup, queuesFor, stepDeck, type HomeMatchmaking } from '../../../src/ui/home/view';
 import { NICK_FIRST, NICK_SECOND, randomNickname } from '../../../src/ui/lobby/names';
 import { FirstRunError, launchDraft, launchFirstRun, launchPrivate, launchQuick, launchSolo, SPARRING_FALLBACK, takePendingSetup, type LaunchDeps } from '../../../src/ui/play/launch';
 
@@ -100,6 +100,15 @@ describe('homeView: the primary button table', () => {
   it('without a computer SOLO plays ALONE', () => {
     expect(homeView(prefs(), [], true, true, off, { computer: false }).opponent).toBe('alone');
     expect(homeView(prefs(), [], true, true, off, { computer: true }).opponent).toBe('sparring');
+  });
+});
+
+describe('queuedSetup', () => {
+  it('names the queued setup as text', () => {
+    expect(queuedSetup(['1v1.constructed.casual'])).toBe('QUICK MATCH · 1V1 · UNRANKED');
+    expect(queuedSetup(['1v1.limited.ranked', '1v1.limited.casual'])).toBe('QUICK MATCH · 1V1 · RANKED');
+    expect(queuedSetup(['ffa4.constructed.casual'])).toBe('QUICK MATCH · 4 FFA · UNRANKED');
+    expect(queuedSetup([])).toBe('QUICK MATCH');
   });
 });
 

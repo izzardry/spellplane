@@ -208,6 +208,15 @@ function actionOf(mode: HomeMode): HomeView['primary']['action'] {
   return mode === 'solo' ? 'play' : mode === 'quick' ? 'find' : mode === 'private' ? 'create' : 'draft';
 }
 
+/** The queued setup as text while a search runs (journey.md 4.5: "show the queued setup as text"), e.g. `QUICK MATCH · 1V1 · UNRANKED`. */
+export function queuedSetup(queues: readonly QueueId[]): string {
+  const q = queues[0];
+  if (!q) return 'QUICK MATCH';
+  const [format, , mode] = q.split('.') as [Format, string, string];
+  const label = FORMATS.find((f) => f.value === format)?.label ?? format.toUpperCase();
+  return `QUICK MATCH · ${label} · ${queues.some((x) => x.endsWith('.ranked')) ? 'RANKED' : mode === 'casual' ? 'UNRANKED' : mode.toUpperCase()}`;
+}
+
 /** The queues a quick-match search joins (journey.md section 7: format, ranked and the deck's kind; ranked adds casual with `also casual`). */
 export function queuesFor(quick: HomePrefs['quick'], kind: 'custom' | 'sealed', alsoCasual: boolean): QueueId[] {
   const k = kind === 'sealed' ? 'limited' : 'constructed';

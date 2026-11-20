@@ -36,7 +36,7 @@
   import type { CardRef } from '../../core/types';
   import type { Matchmaker, MatchmakerStatus } from '../../session/types';
   import { DEFAULT_HOME_PREFS, type BoosterSetup, type DeckRecord, type GameSummary, type HomeMode, type HomePrefs } from '../../store/types';
-  import { DRAFT_PLAYERS, FORMATS, heroPacks, homeView, MODE_ICONS, MODES, stepDeck } from './view';
+  import { DRAFT_PLAYERS, FORMATS, heroPacks, homeView, MODE_ICONS, MODES, queuedSetup, stepDeck } from './view';
 
   let {
     matchmaker,
@@ -370,6 +370,7 @@
     <Segmented label="How to play" value={view.mode} options={MODES.map((m) => ({ value: m.value, label: m.name, disabled: view.optionsLocked }))} onchange={setMode} data-testid="home-modes-narrow" />
   </div>
 
+  {#if status.phase === 'seeking'}<p class="queued" data-testid="home-queued">{queuedSetup(status.queues)}</p>{/if}
   <div class="options" class:locked={view.optionsLocked} data-testid="home-options">
     {#if view.mode === 'solo' && computerAvailable}
       <Segmented label="Opponent" size="sm" value={prefs.solo.opponent} disabled={view.optionsLocked} options={[{ value: 'sparring', label: 'SPARRING' }, { value: 'alone', label: 'ALONE' }]} onchange={(v) => void save({ ...prefs, solo: { opponent: v as 'sparring' | 'alone' } })} data-testid="opt-opponent" />
@@ -456,6 +457,7 @@
   .modes-narrow { display: none; max-width: 100%; overflow-x: auto; }
   .options { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; min-height: 36px; }
   .options.locked { opacity: 0.45; }
+  .queued { margin: 0; font-size: 11px; letter-spacing: 0.12em; color: var(--ds-ink); }
   .go { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
   .timer { font-weight: 700; letter-spacing: 0.1em; }
   .links { display: flex; gap: 8px; }
