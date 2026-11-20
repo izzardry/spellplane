@@ -150,6 +150,17 @@ export async function buildStarterDeck(source: StarterPoolSource, opts: { colour
   return buildStarterFromPool(pool, { ...opts, set });
 }
 
+/** What the production pool query keeps of a set's cards: creatures and basic lands of rarity up to uncommon. */
+export function starterPoolOf(cards: readonly CardData[], set: SetCode): CardData[] {
+  const s = set.toLowerCase();
+  return cards.filter((c) => c.set === s && (/\bBasic\b/.test(c.type_line) || (/\bCreature\b/.test(c.type_line) && (c.rarity === 'common' || c.rarity === 'uncommon'))));
+}
+
+/** A pool source over cards already in the page (recorded fixtures in tests): never fetched. */
+export function cardsPool(cards: readonly CardData[]): StarterPoolSource {
+  return { pool: (set) => Promise.resolve(starterPoolOf(cards, set)) };
+}
+
 /** Sparring's deck name for a colour (computer.md 8.1). */
 export function sparringDeckName(colour: keyof typeof BASIC): string {
   return `Sparring ${COLOUR_NAME[colour]}`;

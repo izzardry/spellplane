@@ -21,7 +21,7 @@ import type { GameDefinition } from '../games/types';
 import { LocalNetwork } from '../net/local';
 import { BOT_TABLE_PREFIX, prefixedTableStore } from '../store/computer';
 import { generateIdentity, toIdentityRecord } from '../store/identity';
-import type { ComputerGameRecord, ComputerStore, ExportedIdentity, OpponentDeckChoice, TableStore } from '../store/types';
+import type { ComputerGameRecord, ComputerStore, DeckStore, ExportedIdentity, OpponentDeckChoice, TableStore } from '../store/types';
 import { dealOpening, importIfNeeded, rollFirstPlayer } from './entry';
 import { openNetSession, type NetSessionInternals, type NetTable } from './net';
 import type { ComputerGame, ComputerHandle, ComputerStatus, DeckImport, SessionIdentity } from './types';
@@ -61,6 +61,8 @@ export interface ComputerDeps {
   internals?: { human?: NetSessionInternals; bot?: NetSessionInternals };
   botKeys?: BotKeys;
   now?: () => number;
+  /** The deck library: a game for a deck id takes the human's deck from it. */
+  decks?: DeckStore | null;
   /** A one-line notice for a toast (the Mirror fallback). */
   notice?: (text: string) => void;
   onError?: (e: unknown) => void;
@@ -128,9 +130,35 @@ function when(session: NetTable, pred: (s: TableState) => boolean, ms = 30_000, 
   });
 }
 
-function needDeps(deps: ComputerDeps | undefined): ComputerDeps {
-  if (!deps) throw new Error('M8-P6: a computer game needs the page stores and card data');
-  return deps;
+let pageDeps: (() => Promise<ComputerDeps>) | null = null;
+
+/**
+ * The page's services for computer games (main.ts registers them once): a call without `deps` (the route, main.ts's
+ * `openComputer`) takes them from here. Null forgets them.
+ */
+export function provideComputerDeps(provider: (() => Promise<ComputerDeps>) | null): void {
+  pageDeps = provider;
+}
+
+async function needDeps(deps: ComputerDeps | undefined): Promise<ComputerDeps> {
+  if (deps) return deps;
+  if (pageDeps) return pageDeps();
+  throw new Error('M8-P6: a computer game needs the page stores and card data');
+}
+
+/** The colour of a newcomer's starter deck (journey.md section 6: `STARTER · GREEN`). */
+export const STARTER_COLOUR: Colour = 'G';
+
+/** The human's deck: the one given, the library deck of `deckId`, else a green starter deck (journey.md J26). */
+async function humanDeckOf(opts: ComputerGameOptions, deps: ComputerDeps, seed: string): Promise<{ deck: DeckImport; name: string }> {
+  if (opts.deck) return { deck: opts.deck, name: opts.deckName ?? 'Your deck' };
+  if (opts.deckId && deps.decks) {
+    const r = await deps.decks.get(opts.deckId);
+    if (r) return { deck: { main: r.main.map((c) => ({ ...c })), side: r.side.map((c) => ({ ...c })) }, name: opts.deckName ?? r.name };
+  }
+  if (!deps.starter) throw new Error('M8-P6: no deck for this game and no starter pool');
+  const d = await buildStarterDeck(deps.starter, { colour: STARTER_COLOUR, seed: `human|${seed}` });
+  return { deck: { main: d.main, side: [] }, name: d.name };
 }
 
 interface Opened {
@@ -251,10 +279,11 @@ function handleOf(o: Opened, config: BotConfig, runner: BotRunner, record: Compu
 
 /** Create a computer game (computer.md section 3). */
 export async function createComputerGame(opts: ComputerGameOptions): Promise<ComputerGame> {
-  const deps = needDeps(opts.deps);
-  if (!opts.deck) throw new Error('M8-P6: a computer game needs the human deck');
+  const deps = await needDeps(opts.deps);
   const seed = opts.seed ?? randomSeed();
-  const humanDeck = opts.deck;
+  const human = await humanDeckOf(opts, deps, seed);
+  const humanDeck = human.deck;
+  await deps.cardData.getMany([...new Set(humanDeck.main.map((r) => r.sid))]);
   const colour = opts.colour ?? autoColour(humanDeck, deps.cardData, seed);
   let botMain: DeckImport;
   let choice: OpponentDeckChoice;
@@ -281,7 +310,7 @@ export async function createComputerGame(opts: ComputerGameOptions): Promise<Com
     createdAt: now(),
     updatedAt: now(),
     bot: { config, identity: exported, seat: 's1', deck: { name: botName, choice, main: botMain.main } },
-    human: { deckId: opts.deckId, deckName: opts.deckName ?? 'Your deck' },
+    human: { deckId: opts.deckId, deckName: human.name },
   };
   await deps.computer?.put(record).catch(() => undefined);
   return start(opts.roomId, deps, record, humanDeck);
@@ -307,7 +336,7 @@ async function start(roomId: string, deps: ComputerDeps, record: ComputerGameRec
 
 /** Resume a saved computer game (computer.md 10.3): both sessions on a new LocalNetwork, then the runner at once. */
 export async function resumeComputerGame(roomId: string, deps?: ComputerDeps): Promise<ComputerGame> {
-  const d = needDeps(deps);
+  const d = await needDeps(deps);
   const record = await d.computer?.get(roomId);
   if (!record) throw new Error('M8-P6: Sparring is gone (no computer record for this game)');
   return start(roomId, d, record, null);
@@ -316,4 +345,15 @@ export async function resumeComputerGame(roomId: string, deps?: ComputerDeps): P
 /** The bot behind a handle (tests and the debug hook only). */
 export function runnerOf(handle: ComputerHandle): BotRunner | null {
   return (handle as ComputerHandle & { runner?: BotRunner }).runner ?? null;
+}
+
+/**
+ * What `#/c/<room>` opens (computer.md 10.3; journey.md 4.1 SOLO row): the saved game of that room, resumed at once,
+ * else a new game for the human's deck (`deckId`, else a starter deck).
+ */
+export async function openComputerGame(roomId: string, opts: { deckId?: string | null; deps?: ComputerDeps } = {}): Promise<ComputerGame> {
+  const deps = await needDeps(opts.deps);
+  const saved = await deps.computer?.get(roomId).catch(() => null);
+  if (saved) return resumeComputerGame(roomId, deps);
+  return createComputerGame({ roomId, deckId: opts.deckId ?? null, deps });
 }
