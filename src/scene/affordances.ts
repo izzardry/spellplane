@@ -122,10 +122,13 @@ export interface AttackDrop {
  * Whether dropping `cards` with the pointer at table point `p` is an attack (PLAN M7-P5: "attack by dragging a creature
  * toward an opponent (existing combat model)"): every card is an untapped, non-attacking card on its controller's
  * battlefield that `viewer` controls, and the pointer is on another seat's avatar spot (`avatarSeat`, or a HUD element
- * naming that seat), or past the controller's front line outside every territory (the centre of the table; the empty
- * half of a goldfish table). `lane` is the stack lane: with items on the stack a drop there stays a cast (rule 1), on
+ * naming that seat), or past the controller's front line and the table's centre, outside every territory (the far
+ * side of the middle of the table; the empty half of a goldfish table). `lane` is the stack lane: with items on the stack a drop there stays a cast (rule 1), on
  * an empty stack the attack wins. A drop inside another seat's territory stays a permanent move (a change of control).
  */
+/** Layouts are centred on the table origin (scene/snap.ts DropTable). */
+const TABLE_CENTRE: TablePoint = { x: 0, y: 0 };
+
 export function attackDrop(
   state: TableState,
   cards: readonly CardInstance[],
@@ -141,6 +144,9 @@ export function attackDrop(
   if (ctx.avatarSeat !== null) return ctx.avatarSeat !== viewer && state.seats[ctx.avatarSeat] ? { target: ctx.avatarSeat } : null;
   const sl = ctx.seatLayout(viewer);
   if (!sl || !pastFrontLine(p, sl)) return null;
+  // Toward an opponent: up to the table's centre a card pushed forward is only moved (the shared middle of the table
+  // is free space, and the scene cannot tell a creature from a land).
+  if (seatLocal(p, sl).v < seatLocal(TABLE_CENTRE, sl).v) return null;
   if (ctx.territories.some((t) => pointInRect(p, t))) return null;
   if (ctx.lane && state.stack.length > 0 && pointInRect(p, ctx.lane)) return null;
   return { target: null };

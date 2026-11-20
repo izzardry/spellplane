@@ -90,6 +90,8 @@ describe('a creature pushed toward an opponent attacks', () => {
     expect(pastFrontLine({ x: -150, y: -100 }, sl)).toBe(true);
     expect(pastFrontLine({ x: -150, y: -120 }, sl)).toBe(false);
     expect(attackDrop(s, cards(s, 'a00'), { x: -300, y: 0 }, ctx(s))).toEqual({ target: null });
+    // Past its front line but short of the table's centre: the middle of the table is free space, a plain move.
+    expect(attackDrop(s, cards(s, 'a00'), { x: -300, y: -60 }, ctx(s))).toBeNull();
     // Still in its own territory: a plain move.
     expect(attackDrop(s, cards(s, 'a00'), { x: -300, y: -150 }, ctx(s))).toBeNull();
     // Inside the opponent's territory: a permanent move (a change of control), not an attack.
