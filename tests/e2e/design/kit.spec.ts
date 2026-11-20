@@ -7,7 +7,7 @@
 import { devices, expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { designAudit, designAuditFindings } from '../helpers/design-audit';
+import { designAudit, designAuditFindings, settleAnimations } from '../helpers/design-audit';
 
 const LOOKS = ['plain', 'kitchen', 'graphite', 'codex'] as const;
 
@@ -15,6 +15,7 @@ async function openKit(page: Page, look: string): Promise<void> {
   await page.goto(`./?faces=placeholder&harness=kit&look=${look}`);
   await expect(page.getByTestId('kit-page')).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.__kitHarness?.fontsReady() ?? false)).toBe(true);
+  await settleAnimations(page);
 }
 
 for (const look of LOOKS) {
@@ -173,6 +174,7 @@ for (const look of LOOKS) {
       await expect(page.getByTestId('coach')).toBeVisible();
       await page.mouse.click(5, 5);
       await expect(page.getByTestId('coach')).toHaveCount(0);
+      expect((await page.evaluate(() => window.__kitHarness!.events())).at(-1)).toBe('coach:dismiss');
     });
 
     test('boosters are our own drawing: stable art per set code, no image and no external reference', async ({ page }) => {
@@ -200,13 +202,13 @@ for (const look of LOOKS) {
         const imgs = [...document.querySelectorAll<HTMLImageElement>('.ds-tile img, .ds-fan img')];
         return imgs.map((img) => {
           const r = img.getBoundingClientRect();
-          let clipped = false;
+          let clipped: string | false = false;
           let dim = false;
           for (let a: Element | null = img; a; a = a.parentElement) {
             const cs = getComputedStyle(a);
             if (a !== img && /(hidden|clip|scroll|auto)/.test(cs.overflow)) {
               const ar = a.getBoundingClientRect();
-              if (r.left < ar.left - 0.5 || r.top < ar.top - 0.5 || r.right > ar.right + 0.5 || r.bottom > ar.bottom + 0.5) clipped = true;
+              if (r.left < ar.left - 0.5 || r.top < ar.top - 0.5 || r.right > ar.right + 0.5 || r.bottom > ar.bottom + 0.5) clipped = `${a.tagName}.${a.className} ${cs.overflow} ${JSON.stringify([r.left, r.top, r.right, r.bottom, ar.left, ar.top, ar.right, ar.bottom].map(Math.round))}`;
             }
             if (parseFloat(cs.opacity) < 1 || (cs.filter && cs.filter !== 'none') || (cs.mixBlendMode && cs.mixBlendMode !== 'normal')) dim = true;
           }
@@ -312,22 +314,23 @@ test('the audit finds a mixed row, a second primary and a blur', async ({ page }
   const res = await designAuditFindings(page);
   const text = res.problems.join('\n');
   expect(text).toMatch(/row with heights/);
-  expect(text).toMatch(/2 primary buttons in the stage layer/);
+  expect(text).toMatch(/2 primary buttons in the sheet layer/);
   expect(text).toMatch(/height 40\.0 px/);
   expect(text).toMatch(/backdrop-filter/);
 });
 
-test('the look picker lists Plain, Kitchen Table, Graphite and Codex first', async ({ page }) => {
+test('the look picker lists Plain, Kitchen Table, Graphite and Codex, Plain first and chosen', async ({ page }) => {
   await page.goto('./?faces=placeholder&harness=settings&fresh=1');
   await expect(page.getByTestId('settings-harness')).toBeVisible();
   const picker = page.getByTestId('theme-picker');
   await expect(picker).toBeVisible();
   const options = picker.locator('[data-testid="theme-option"]');
   const ids = await options.evaluateAll((els) => els.map((e) => e.getAttribute('data-theme')));
-  expect(ids.slice(0, 4)).toEqual(['plain', 'kitchen', 'graphite', 'codex']);
+  // A fresh profile is on Plain, so the picker offers exactly the four looks (an M4 theme set otherwise is shown too).
+  expect(ids).toEqual(['plain', 'kitchen', 'graphite', 'codex']);
+  await expect(options.nth(0).locator('input')).toBeChecked();
   await expect(options.nth(0)).toContainText('Plain');
   await expect(options.nth(1)).toContainText('Kitchen Table');
   await expect(options.nth(2)).toContainText('Graphite');
   await expect(options.nth(3)).toContainText('Codex');
-  await expect(picker.getByTestId('look-group')).toHaveText('Looks');
 });

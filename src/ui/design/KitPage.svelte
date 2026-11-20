@@ -252,7 +252,7 @@
   <p class="ds-t-reading" style:margin="0">The game goes on; your seat is kept.</p>
   {#snippet footer()}<Button variant="quiet" onclick={() => (dialogOpen = false)}>Stay</Button><Button variant="primary" onclick={() => ((dialogOpen = false), log('dialog:leave'))}>Leave</Button>{/snippet}
 </Dialog>
-{#if coach}<CoachMark anchor={coachAnchor} title="Press ATTACK" text="Sparring blocks and counts the damage." ondismiss={() => (coach = false)} data-testid="coach" />{/if}
+{#if coach}<CoachMark anchor={coachAnchor} title="Press ATTACK" text="Sparring blocks and counts the damage." ondismiss={() => (log('coach:dismiss'), (coach = false))} data-testid="coach" />{/if}
 <ToastHost />
 
 <style>

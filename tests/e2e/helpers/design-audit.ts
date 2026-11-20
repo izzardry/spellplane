@@ -23,6 +23,8 @@ export interface DesignAuditResult {
 
 /** Run the audit in the page and return its findings (no assertion). */
 export async function designAuditFindings(page: Page, opts: DesignAuditOptions = {}): Promise<DesignAuditResult> {
+  // Let entry animations (a sheet rising, a popover fading in) end first: mid-animation a layer is still transparent.
+  await settleAnimations(page);
   return page.evaluate(
     ({ skip, fonts }) => {
       const HEIGHTS = [28, 36, 44, 56];
@@ -116,6 +118,14 @@ export async function designAuditFindings(page: Page, opts: DesignAuditOptions =
     },
     { skip: opts.skip ?? [], fonts: opts.fonts ?? true },
   );
+}
+
+/** Wait until every finite CSS animation and transition on the page has finished (infinite pulses are ignored). */
+export async function settleAnimations(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    const finite = document.getAnimations().filter((a) => a.effect?.getComputedTiming().endTime !== Infinity);
+    await Promise.all(finite.map((a) => a.finished.catch(() => undefined)));
+  });
 }
 
 /** Assert the audit: throws with every finding. */

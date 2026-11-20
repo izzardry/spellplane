@@ -31,13 +31,15 @@
   $effect(() => {
     if (!el) return;
     void tick().then(place);
-    const away = (): void => ondismiss();
+    // A press anywhere dismisses. A press that began before the mark was shown (the one that opened it) does not.
+    const born = performance.now();
+    const away = (e: PointerEvent): void => {
+      if (e.timeStamp >= born) ondismiss();
+    };
     const resize = (): void => place();
-    // A press anywhere dismisses; registered after this tick so the press that opened it does not.
-    const t = setTimeout(() => window.addEventListener('pointerdown', away, true), 0);
+    window.addEventListener('pointerdown', away, true);
     window.addEventListener('resize', resize);
     return () => {
-      clearTimeout(t);
       window.removeEventListener('pointerdown', away, true);
       window.removeEventListener('resize', resize);
     };

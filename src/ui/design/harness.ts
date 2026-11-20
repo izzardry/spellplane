@@ -36,6 +36,11 @@ export function mount(target: HTMLElement): void {
   const look = lookIdOf(q.get('look') ?? 'plain');
   applyLook(document.documentElement, look);
   document.body.classList.add('ds-page', 'ds-root');
+  // The app's frame pins html and body (App.svelte: overflow hidden, height 100 %); the kit page is a long document.
+  for (const el of [document.documentElement, document.body]) {
+    el.style.overflow = 'auto';
+    el.style.height = 'auto';
+  }
   const events: string[] = [];
   const log = (e: string): void => {
     events.push(e);

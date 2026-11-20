@@ -45,7 +45,12 @@
     if (!open) return;
     open = false;
     onclose?.();
-    if (refocus) anchor?.focus({ preventScroll: true });
+    if (refocus && anchor) {
+      // The anchor may be a wrapper around the button that opened the menu: focus that button.
+      const sel = 'button:not(:disabled), [href], [tabindex]:not([tabindex="-1"])';
+      const back = anchor.matches(sel) ? anchor : (anchor.querySelector<HTMLElement>(sel) ?? anchor);
+      back.focus({ preventScroll: true });
+    }
   }
   function key(e: KeyboardEvent): void {
     const list = items();
@@ -81,10 +86,15 @@
 
   $effect(() => {
     if (!open || !el) return;
-    void tick().then(() => {
-      place();
-      if (autofocus) (items()[0] ?? focusables()[0])?.focus({ preventScroll: true });
-    });
+    void tick()
+      .then(() => {
+        place();
+        // The popover is hidden until it is placed: focus after the placed state reached the DOM.
+        return tick();
+      })
+      .then(() => {
+        if (autofocus && open) (items()[0] ?? focusables()[0])?.focus({ preventScroll: true });
+      });
     const away = (e: PointerEvent): void => {
       const t = e.target as Node | null;
       if (el?.contains(t) || anchor?.contains(t)) return;

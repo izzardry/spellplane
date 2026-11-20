@@ -186,7 +186,7 @@
   transition: transform var(--ds-duration-fast) var(--ds-ease-standard);
 }
 @media (hover: hover) and (pointer: fine) {
-  .ds-btn:hover:not(:disabled):not([aria-disabled='true']):not(.is-waiting) {
+  .ds-btn:hover:not(:active, :disabled, [aria-disabled='true'], .is-waiting, .is-pressed, [aria-pressed='true']) {
     transform: translateY(-1px);
   }
 }
