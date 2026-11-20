@@ -324,7 +324,16 @@ async function runPackage(pkg) {
       round++
       const reviewers = [() => ag(reviewPrompt(pkg, round, 'main'), { label: `review${round}:${pkg.id}`, phase: 'Packages', schema: REVIEW_SCHEMA })]
       if (pkg.deep) reviewers.push(() => ag(reviewPrompt(pkg, round, 'deep'), { label: `review${round}-deep:${pkg.id}`, phase: 'Packages', schema: REVIEW_SCHEMA }))
-      const reviews = (await parallel(reviewers)).filter(Boolean)
+      let reviews = (await parallel(reviewers)).filter(Boolean)
+      // A review that died (rate limit, API error) is not an approval: retry once, then count it as blocking.
+      if (reviews.length < reviewers.length) {
+        log(`${pkg.id}: ${reviewers.length - reviews.length} review(s) died; retrying once`)
+        reviews = (await parallel(reviewers)).filter(Boolean)
+      }
+      if (reviews.length < reviewers.length) {
+        open = [{ severity: 'blocking', issue: `review round ${round}: ${reviewers.length - reviews.length} reviewer(s) died twice; the package is not reviewed` }]
+        break
+      }
       open = reviews.flatMap((r) => r.findings || []).filter((f) => f.severity === 'blocking')
       const minor = reviews.flatMap((r) => r.findings || []).filter((f) => f.severity !== 'blocking')
       if (!open.length) {
