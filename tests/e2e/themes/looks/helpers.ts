@@ -7,11 +7,13 @@
 import type { Page, TestInfo } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { LookId } from '../../../../src/themes/types';
+import type { ThemeId } from '../../../../src/themes/types';
 import { decodePng, type Pixels } from '../../../unit/themes/conformance/pixels';
 import { settle } from '../../render/helpers';
 
-export const LOOKS: readonly LookId[] = ['kitchen', 'graphite', 'codex'];
+/** The four looks' table worlds (Plain added by M7-P1, docs/design/m8/m7-adjustments.md). */
+export type LookTheme = Extract<ThemeId, 'plain' | 'kitchen' | 'graphite' | 'codex'>;
+export const LOOKS: readonly LookTheme[] = ['plain', 'kitchen', 'graphite', 'codex'];
 
 export type Rgb = [number, number, number];
 export type Rect = { x: number; y: number; width: number; height: number };

@@ -16,21 +16,24 @@ import { harnessLayout } from '../../../../src/scene/harness-fixture';
 import { rot2 } from '../../../../src/scene/math';
 import { CODEX_WORLD } from '../../../../src/themes/codex/index';
 import { GRAPHITE_WORLD } from '../../../../src/themes/graphite/index';
-import { LOOK_THEME, loadTheme, type LookId, type Theme } from '../../../../src/themes/index';
+import { loadTheme, type Theme } from '../../../../src/themes/index';
 import { KITCHEN_WORLD } from '../../../../src/themes/kitchen/index';
+import { PLAIN_WORLD } from '../../../../src/themes/plain/index';
 import { openRender, rh, settle } from '../../render/helpers';
-import { LOOKS, avg, capture, delta, evidence, fmt, hex255, lum, onScreen, patch, setTilt, toScreen, type Capture } from './helpers';
+import { LOOKS, type LookTheme, avg, capture, delta, evidence, fmt, hex255, lum, onScreen, patch, setTilt, toScreen, type Capture } from './helpers';
 
 /** File types that are assets rather than code (as tests/unit/themes/conformance/assets.test.ts lists them). */
 const ASSET_EXTENSIONS = /\.(png|jpe?g|webp|avif|gif|ktx2|basis|hdr|exr|dds|glb|gltf|bin|mp3|ogg|opus|wav|m4a|flac|ttf|otf|woff2?)$/i;
 
-const WORLDS = { kitchen: KITCHEN_WORLD, graphite: GRAPHITE_WORLD, codex: CODEX_WORLD } as const;
+const WORLDS = { plain: PLAIN_WORLD, kitchen: KITCHEN_WORLD, graphite: GRAPHITE_WORLD, codex: CODEX_WORLD } as const;
 const TILTS = [0, 0.5, 1] as const;
 const layout = harnessLayout();
 const TABLE = layout.table;
 
 /** The frame's middle: half-way between the table edge and the frame's outer edge, mm beyond the edge. */
-function frameMid(look: LookId): number {
+function frameMid(look: LookTheme): number {
+  // Plain's desk reaches to the horizon: its frame is the desk just beyond the slab's shadow.
+  if (look === 'plain') return 60;
   const slabs = WORLDS[look].slabs;
   return (slabs[0]!.growMm + slabs.at(-1)!.growMm) / 2;
 }
@@ -39,15 +42,18 @@ const cards = (page: Page) => rh<SceneDebugCard[]>(page, 'cards');
 const stats = (page: Page) => rh<RenderStats>(page, 'stats');
 
 /** A frame point on screen and clear of the HUD-free harness's cards: the far edge, else the near edge, else a side. */
-async function framePoint(page: Page, look: LookId): Promise<{ x: number; y: number } | null> {
+async function framePoint(page: Page, look: LookTheme): Promise<{ x: number; y: number } | null> {
   const m = frameMid(look);
+  // Plain's desk lies 8 mm below the table; the avatar plaques sit on the frame at x = 0, so Plain measures beside them.
+  const ox = look === 'plain' ? TABLE.w / 4 : 0;
+  const z = look === 'plain' ? -8 : -1;
   for (const [x, y] of [
-    [0, TABLE.d / 2 + m],
-    [0, -TABLE.d / 2 - m],
+    [ox, TABLE.d / 2 + m],
+    [ox, -TABLE.d / 2 - m],
     [-TABLE.w / 2 - m, 0],
     [TABLE.w / 2 + m, 0],
   ] as const) {
-    const s = await toScreen(page, x, y, -1);
+    const s = await toScreen(page, x, y, z);
     if (onScreen(page, s, 12)) return s;
   }
   return null;
@@ -58,7 +64,7 @@ for (const look of LOOKS) {
     test.describe.configure({ timeout: 120_000 });
     let theme: Theme;
     test.beforeAll(async () => {
-      theme = await loadTheme(LOOK_THEME[look]);
+      theme = await loadTheme(look);
     });
 
     test(`reads at every tilt: first person, mid-tilt and bird's-eye show the table, its frame and the cards (screenshots)`, async ({ page }, info) => {
@@ -85,8 +91,14 @@ for (const look of LOOKS) {
         expect(at, `a frame edge is on screen at tilt ${t}`).not.toBeNull();
         const frame = avg(c, patch(at!, 3));
         info.annotations.push({ type: `tilt ${t}`, description: `mat ${fmt(mat)} frame ${fmt(frame)} room ${fmt(background)} tilt() ${await page.evaluate(() => window.__renderHarness!.camera.tilt())}` });
-        expect(delta(frame, mat), `frame vs table at tilt ${t}`).toBeGreaterThan(10);
-        expect(delta(frame, background), `frame vs room at tilt ${t}`).toBeGreaterThan(4);
+        // Apart as far as the look's tokens are: Graphite's frame and mat tokens are near (#101317 on #16191e), where the
+        // plinth's depth shows in its edge and the room instead.
+        const tokenGap = delta(hex255(WORLDS[look].surround), hex255(WORLDS[look].surface));
+        if (tokenGap >= 10) expect(delta(frame, mat), `frame vs table at tilt ${t}`).toBeGreaterThan(Math.min(10, tokenGap / 2));
+        info.annotations.push({ type: `surround ${t}`, description: `frame ${fmt(frame)} token ${WORLDS[look].surround}` });
+        // Plain's room is its desk (one colour to the horizon, the frame token); the others frame the table against a darker room.
+        if (look === 'plain') expect(delta(frame, hex255(WORLDS[look].surround)), `desk is the frame token at tilt ${t}`).toBeLessThan(12);
+        else expect(delta(frame, background), `frame vs room at tilt ${t}`).toBeGreaterThan(4);
         expect(delta(mat, background), `table vs room at tilt ${t}`).toBeGreaterThan(10);
       }
       expect(errors).toEqual([]);
@@ -94,7 +106,8 @@ for (const look of LOOKS) {
 
     test('the table shows the colour its tokens promise, under a soft pool of light', async ({ page }, info) => {
       const errors = await openRender(page, { theme: look, scenario: 'empty' });
-      await settle(page);
+      // The token is the table seen from above (a lit surface's sheen changes with the view's angle).
+      await setTilt(page, 1);
       const c = await capture(page);
       evidence(info, `${look}-empty`, c.png);
       const at = async (x: number, y: number) => avg(c, patch((await toScreen(page, x, y))!, 10));
@@ -116,7 +129,7 @@ for (const look of LOOKS) {
     test('soft, short card shadows: the table darkens just around a card, not further out; low quality drops them', async ({ page }) => {
       const errors = await openRender(page, { theme: look, scenario: 'empty' });
       await page.evaluate(() => window.__renderHarness!.addCard('c1', 'fx-3', { x: 0, y: -200, rot: 0 }));
-      await settle(page);
+      await setTilt(page, 1);
       const measure = async () => {
         const r = (await cards(page)).find((x) => x.id === 'c1')!.screen;
         const c = await capture(page);
@@ -142,7 +155,8 @@ for (const look of LOOKS) {
 
     test('pile and zone marks in the look’s style: a bed under every pile slot, each named chair’s glyph in its seat colour', async ({ page }, info) => {
       const errors = await openRender(page, { theme: look, scenario: 'empty' });
-      await settle(page);
+      // From above: every pile slot and both chairs on screen.
+      await setTilt(page, 1);
       const c: Capture = await capture(page);
       evidence(info, `${look}-marks`, c.png);
       const sl = layout.seats[0]!;
@@ -172,6 +186,15 @@ for (const look of LOOKS) {
     test('a still table draws no frames (render on demand); nothing animates by itself', async ({ page }) => {
       const errors = await openRender(page, { theme: look, scenario: 'demo' });
       await settle(page);
+      // The scene redraws a still table once at the full ratio a second after its last change (scene/resolution.ts):
+      // wait until no frame comes in half a second, then nothing may come for longer than that redraw delay.
+      await expect
+        .poll(async () => {
+          const a = await page.evaluate(() => window.__renderHarness!.frames());
+          await page.waitForTimeout(500);
+          return (await page.evaluate(() => window.__renderHarness!.frames())) - a;
+        }, { timeout: 20_000 })
+        .toBe(0);
       const before = await page.evaluate(() => window.__renderHarness!.frames());
       await page.waitForTimeout(1200);
       expect(await page.evaluate(() => window.__renderHarness!.frames())).toBe(before);

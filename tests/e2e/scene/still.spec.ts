@@ -34,7 +34,9 @@ test.describe('the arena still', () => {
         info.annotations.push({ type: look, description: `sharp ${r!.sharpDiff.toFixed(2)} soft ${r!.softDiff.toFixed(2)}` });
         // The frame shows something (a table, its edge, the desk), and the still is properly soft.
         expect(r!.sharpDiff).toBeGreaterThan(0);
-        expect(r!.softDiff).toBeLessThanOrEqual(r!.sharpDiff / 4);
+        // A near-flat look (Plain's pale desk) leaves the frame little to soften: below 0.06 levels the difference is the
+        // 8-bit rounding of the browser's upscale (one level across 16 px), not detail.
+        expect(r!.softDiff).toBeLessThanOrEqual(Math.max(r!.sharpDiff / 4, 0.06));
         const m = await memory(page);
         expect(m.contexts).toBe(0);
         expect({ geometries: m.geometries, textures: m.textures, programs: m.programs }).toEqual({ geometries: before.geometries, textures: before.textures, programs: before.programs });

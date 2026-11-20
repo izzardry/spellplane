@@ -154,7 +154,8 @@ export const plain: Theme = {
     sleeveMaterial: { model: 'unlit', colour: '#151515', roughness: 1, metalness: 0 },
     edge: '#2a2a2a',
     faceShade: 0,
-    held: { lift: 12, tiltDeg: 4, shadow: true },
+    // Unlit: a held card lifts and casts its shadow but does not tilt (the geometry spec tilts only in lit themes).
+    held: { lift: 12, tiltDeg: 0, shadow: true },
     // The thing to do next: a warm orange apart from ink, hover grey and every seat colour.
     pending: { colour: '#e0731a', width: 1.6, lift: 0, glow: 0 },
   },
