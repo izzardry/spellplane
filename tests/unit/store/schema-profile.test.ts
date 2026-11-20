@@ -4,12 +4,13 @@
  * database `spellplane`, or `spellplane-<profile>` in tests).
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import { DB_VERSION, openDb, STORE_NAMES } from '../../../src/store/db';
+import { DB_VERSION, M8_STORE_NAMES, openDb, STORE_NAMES } from '../../../src/store/db';
 import { imageCacheName } from '../../../src/store/images';
 import { cacheName, dbName } from '../../../src/store/profile';
 import { openStores, type LocalStores } from '../../../src/store/stores';
 import { SOLO_ROOM_ID } from '../../../src/store/tables';
 import { logEntry, sampleSecrets, sampleState, tableRecord, uniqueDbName } from './helpers';
+import { DEFAULT_SETTINGS } from '../../../src/store/types';
 
 const open: LocalStores[] = [];
 afterEach(() => {
@@ -28,13 +29,18 @@ const DESIGN_TABLE: Record<string, string | string[]> = {
   sets: 'code',
 };
 
-describe('schema v1', () => {
-  it('has exactly the eight stores of the persistence table, out-of-line keys nowhere, no auto-increment', async () => {
+/** The four stores schema v2 adds (M8-C; persistence.md section 3, matchmaking.md 2.10, computer.md 10.1). */
+const M8_TABLE: Record<string, string> = { games: 'code', ratings: 'key', matches: 'roomId', computer: 'roomId' };
+
+describe('schema v1 (and the stores v2 adds)', () => {
+  it('has the eight stores of the persistence table and the four M8 stores, out-of-line keys nowhere, no auto-increment', async () => {
     const db = await openDb(uniqueDbName('schema'));
     try {
-      expect(db.version).toBe(1);
-      expect(DB_VERSION).toBe(1);
-      expect([...db.objectStoreNames].sort()).toEqual(Object.keys(DESIGN_TABLE).sort());
+      // M8-C: version 2 adds games, ratings, matches and computer (tests/unit/m8-contracts.test.ts upgrades a v1 database).
+      expect(db.version).toBe(2);
+      expect(DB_VERSION).toBe(2);
+      expect([...db.objectStoreNames].sort()).toEqual([...Object.keys(DESIGN_TABLE), ...Object.keys(M8_TABLE)].sort());
+      expect([...M8_STORE_NAMES].sort()).toEqual(Object.keys(M8_TABLE).sort());
       expect([...STORE_NAMES].sort()).toEqual(Object.keys(DESIGN_TABLE).sort());
       const tx = db.transaction(STORE_NAMES, 'readonly');
       for (const [name, keyPath] of Object.entries(DESIGN_TABLE)) {
@@ -104,7 +110,7 @@ describe('profile namespacing', () => {
     await a.tables.saveAction(SOLO_ROOM_ID, logEntry(SOLO_ROOM_ID, 1), tableRecord(SOLO_ROOM_ID, 1, sampleState(1), 1), sampleSecrets());
 
     for (const other of [b, plain]) {
-      expect(await other.settings.get('theme')).toBe('paper');
+      expect(await other.settings.get('theme')).toBe(DEFAULT_SETTINGS.theme); // M8-C: Plain is the default
       expect(await other.decks.list()).toEqual([]);
       expect(await other.tables.loadTable(SOLO_ROOM_ID)).toBeNull();
       expect(await other.db.count('log')).toBe(0);

@@ -13,7 +13,8 @@ import type { QualityId, QualityLevel } from '../themes/types';
 import type { ChatChannel } from '../net/messages';
 import type { Presence } from '../net/types';
 import { NULL_PRESENCE } from '../session/presence';
-import type { DeckImport, LookedCard, NetStatusListener, SessionListener, SessionNetStatus, TableSession } from '../session/types';
+import type { DeckImport, LookedCard, Matchmaker, MatchmakerStatus, NetStatusListener, SessionListener, SessionNetStatus, TableSession } from '../session/types';
+import type { QueueId } from '../core/types';
 import { DEFAULT_SETTINGS, type Settings, type SettingsStore } from '../store/types';
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -642,6 +643,11 @@ export class FakeSession implements TableSession {
   dispose(): void {
     this.listeners.clear();
   }
+  /** Added by M8-C (TableSession.leave). */
+  leave(): Promise<void> {
+    this.dispose();
+    return Promise.resolve();
+  }
 
   // Members added to TableSession by M1-C: recorded, with solo-table answers.
   readonly roomId = 'fake';
@@ -763,4 +769,50 @@ export class RecordingScene implements TableScene {
     return { x, y };
   }
   dispose(): void {}
+}
+
+/**
+ * A matchmaker for harness pages and pages without one (matchmaking.md 2.13; contracts.md Part C "?harness=home": a fake
+ * matchmaker with `setStatus`). Records every call; `setStatus` drives what the UI shows. Added by M8-C.
+ */
+export class FakeMatchmaker implements Matchmaker {
+  readonly calls: { method: string; args: unknown[] }[] = [];
+  private current: MatchmakerStatus = { phase: 'off' };
+  private readonly listeners = new Set<(s: MatchmakerStatus) => void>();
+  status(): MatchmakerStatus {
+    return this.current;
+  }
+  subscribe(listener: (s: MatchmakerStatus) => void): () => void {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+  /** Show `s` as the matchmaker's status. */
+  setStatus(s: MatchmakerStatus): void {
+    this.current = s;
+    for (const l of [...this.listeners]) l(s);
+  }
+  watch(on: boolean): void {
+    this.calls.push({ method: 'watch', args: [on] });
+  }
+  seek(config: { queues: QueueId[]; deckId: string }): void {
+    this.calls.push({ method: 'seek', args: [config] });
+  }
+  widen(): void {
+    this.calls.push({ method: 'widen', args: [] });
+  }
+  cancel(): void {
+    this.calls.push({ method: 'cancel', args: [] });
+  }
+  answer(accept: boolean): void {
+    this.calls.push({ method: 'answer', args: [accept] });
+  }
+  avoid(peerId: string, name: string): Promise<void> {
+    this.calls.push({ method: 'avoid', args: [peerId, name] });
+    return Promise.resolve();
+  }
+  dispose(): void {
+    this.listeners.clear();
+  }
 }

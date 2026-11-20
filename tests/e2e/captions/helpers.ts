@@ -64,7 +64,7 @@ async function storeSetting(page: Page, profile: string, name: string, value: un
   );
 }
 
-function url(profile: string, speech: boolean, hash = ''): string {
+function url(profile: string, speech: boolean, hash = '/solo'): string {
   const q = new URLSearchParams({ faces: 'placeholder', profile, transport: 'local' });
   if (speech) q.set('speech', 'fake');
   return `./?${q.toString()}${hash ? `#${hash}` : ''}`;

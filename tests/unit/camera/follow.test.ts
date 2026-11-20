@@ -1,6 +1,6 @@
 // DESIGN "Camera and navigation", Follow options: follow the stack (the camera eases to include a new stack item if it
 // is off screen) and follow the active player (ease to their territory on turn change); both off by default. Also the
-// bird's-eye behaviour kept under the one tilt rig (fit, pan, zoom at the cursor, seats) and the P key's anchor.
+// bird's-eye behaviour kept under the new rig controller (fit, pan, zoom at the cursor, seats) and the P key's anchor.
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { followRequests } from '../../../src/scene/camera/follow';
@@ -40,28 +40,27 @@ describe('follow requests', () => {
   });
 });
 
-describe('bird\'s-eye behaviour under the one tilt rig', () => {
+describe('bird\'s-eye behaviour under the rig controller', () => {
   it('fit, pan and zoom at the cursor work as before (straight down)', () => {
     const rig = makeRig();
     expect(rig.pose().fovDeg).toBe(6);
     expect(rig.pose().pitchDeg).toBe(90);
-    expect(rig.isFitted()).toBe(true);
+    expect(rig.bird.atFit()).toBe(true);
     const s = { x: 300, y: 200 };
     const a = rig.screenToTable(s.x, s.y);
     rig.zoomAt(s.x, s.y, 2);
     expect(px(rig.tableToScreen(a), s)).toBeLessThan(1e-6);
-    expect(rig.isFitted()).toBe(false);
     rig.panBy(50, -30);
     expect(px(rig.tableToScreen(a), { x: s.x + 50, y: s.y - 30 })).toBeLessThan(1e-6);
     rig.fit(0, 0);
-    expect(rig.isFitted()).toBe(true);
+    expect(rig.bird.atFit()).toBe(true);
   });
 
   it('a tilted bird\'s-eye keeps the table point under the cursor when zooming and follows the pan (property)', () => {
     fc.assert(
       fc.property(fc.double({ min: 100, max: VP.w - 100, noNaN: true }), fc.double({ min: 100, max: VP.h - 100, noNaN: true }), fc.double({ min: 1.01, max: 3, noNaN: true }), fc.constantFrom(0, 90, 180), (x, y, f, angle) => {
         const rig = makeRig({ tiltDeg: 10, angle });
-        rig.zoomAt(VP.w / 2, VP.h / 2, 2);
+        rig.bird.view = { cx: 0, cy: 0, dist: (rig.bird.minDist() + rig.bird.maxDist()) / 2, angle };
         const a = rig.screenToTable(x, y);
         rig.zoomAt(x, y, f);
         expect(px(rig.tableToScreen(a), { x, y })).toBeLessThan(0.5);
@@ -73,16 +72,14 @@ describe('bird\'s-eye behaviour under the one tilt rig', () => {
     );
   });
 
-  it('a new table starts over at the fitted view and ends a tilt move at its target (the tilt is kept)', () => {
+  it('a new table resets both rigs and cuts a blend', () => {
     const rig = makeRig();
     rig.setRig('ego', 0, 400, null);
     rig.setTable({ w: 1800, d: 1800 }, 90, { x: 0, y: 0, w: 1800, d: 1800 });
     expect(rig.blendState()).toBeNull();
     expect(rig.rig()).toBe('ego');
-    expect(rig.tilt()).toBe(0);
-    expect(rig.isFitted()).toBe(true);
-    // Seated at the new seat's edge (seat angle 90: the viewer's back is toward -x).
-    expect(rig.pose().position[0]).toBeLessThan(-900);
+    // 900 + CAMERA.ego.behindEdge (M5-P7's framing: 900).
+    expect(rig.pose().position[0]).toBeCloseTo(-1800, 6);
   });
 });
 

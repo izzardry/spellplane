@@ -81,7 +81,7 @@ describe('export then import reproduces the deck (PLAN M2-P6 acceptance)', () =>
 
   it('the file is the documented plain JSON format', () => {
     const parsed = JSON.parse(exportLibrary([pasted('d1')], T0 + 7)) as LibraryFile;
-    expect(parsed).toEqual({ format: 'spellplane-decks', version: 1, exportedAt: T0 + 7, decks: [pasted('d1')] });
+    expect(parsed).toEqual({ format: 'spellplane-decks', version: 2 /* M8-C: LIBRARY_FILE_VERSION 2 */, exportedAt: T0 + 7, decks: [pasted('d1')] });
   });
 
   it('a single exported record (not wrapped in a library file) imports too', () => {

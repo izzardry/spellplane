@@ -56,30 +56,6 @@ const TAN_HALF = Math.tan((CAMERA.birdseye.fovDeg / 2) * DEG);
 /** Pan velocities below this many CSS px per ms stop the inertia. */
 const INERTIA_STOP_PX_PER_MS = 0.005;
 
-/**
- * The part of a viewport not covered by the HUD's insets, CSS px; the insets shrink proportionally so it never drops
- * below MIN_SAFE_FRACTION of the viewport either way (the bird's-eye fit and the tilt rig's fit, scene/camera/rig.ts).
- */
-export function safeAreaOf(vp: Viewport, i: Insets): { x: number; y: number; w: number; h: number } {
-  let l = Math.max(0, i.left);
-  let r = Math.max(0, i.right);
-  let t = Math.max(0, i.top);
-  let b = Math.max(0, i.bottom);
-  const minW = vp.w * MIN_SAFE_FRACTION;
-  const minH = vp.h * MIN_SAFE_FRACTION;
-  if (vp.w - l - r < minW) {
-    const k = Math.max(0, vp.w - minW) / Math.max(1e-9, l + r);
-    l *= k;
-    r *= k;
-  }
-  if (vp.h - t - b < minH) {
-    const k = Math.max(0, vp.h - minH) / Math.max(1e-9, t + b);
-    t *= k;
-    b *= k;
-  }
-  return { x: l, y: t, w: vp.w - l - r, h: vp.h - t - b };
-}
-
 export const easeInOutCubic = (t: number): number => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 export class BirdseyeRig {
@@ -125,7 +101,25 @@ export class BirdseyeRig {
 
   /** The part of the viewport not covered by the insets, CSS px. */
   safeArea(): { x: number; y: number; w: number; h: number } {
-    return safeAreaOf(this.viewport, this.insets);
+    const vp = this.viewport;
+    const i = this.insets;
+    let l = Math.max(0, i.left);
+    let r = Math.max(0, i.right);
+    let t = Math.max(0, i.top);
+    let b = Math.max(0, i.bottom);
+    const minW = vp.w * MIN_SAFE_FRACTION;
+    const minH = vp.h * MIN_SAFE_FRACTION;
+    if (vp.w - l - r < minW) {
+      const k = Math.max(0, vp.w - minW) / Math.max(1e-9, l + r);
+      l *= k;
+      r *= k;
+    }
+    if (vp.h - t - b < minH) {
+      const k = Math.max(0, vp.h - minH) / Math.max(1e-9, t + b);
+      t *= k;
+      b *= k;
+    }
+    return { x: l, y: t, w: vp.w - l - r, h: vp.h - t - b };
   }
 
   /** Camera height that frames a w x d box rotated by `rot` with a 5% margin inside the safe area. */

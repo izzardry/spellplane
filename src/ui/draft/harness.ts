@@ -17,7 +17,10 @@ import type { DraftPrivateView } from '../../draft/types';
 import { createDraftSurfaceImpl, type DraftDebugCard, type DraftDebugQueue, type DraftSurfaceHandle } from '../../scene/draft';
 import type { PresenceShape } from '../../scene/presence';
 import type { CreateDraftSurface, ScreenPoint, TablePoint } from '../../scene/types';
+import kitCss from '../design/base.css?inline';
 import { tokensToCssVars } from '../../themes/index';
+import { DEFAULT_LOOK } from '../../themes/types';
+import { designCssVars, lookTokens } from '../design/tokens';
 import { paper } from '../../themes/paper/index';
 import type { TextureSource } from '../../util/texture';
 import { FakeCardData, FakeFaces } from '../fakes';
@@ -133,6 +136,14 @@ export function mount(target: HTMLElement, cards: readonly CardData[], opts: Dra
   target.textContent = '';
   document.documentElement.style.height = '100%';
   document.body.style.margin = '0';
+  // The kit's variables (M8-P4 sweep): the swept controls read the default look's --ds-* tokens, as in the app.
+  for (const [k, v] of Object.entries(designCssVars(lookTokens(DEFAULT_LOOK)))) document.documentElement.style.setProperty(k, v);
+  if (!document.getElementById('kit-css')) {
+    const style = document.createElement('style');
+    style.id = 'kit-css';
+    style.textContent = kitCss;
+    document.head.append(style);
+  }
   const data = new FakeCardData([...cards]);
   const faces = new FakeFaces(data);
   const table = new LocalTable(opts.seats);

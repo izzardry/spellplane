@@ -186,6 +186,10 @@ export interface TableSceneOptions {
   tilt?: Tilt;
   /** Added by M7-C: motion intensity and reduced motion (Settings.motion resolved by resolveMotion); absent means full motion unless ViewState.reducedMotion. M7-P4. */
   motion?: MotionSettings;
+  /** Added by M8-C (m7-adjustments.md section 2): look, do not touch: the scene proposes no action; camera, hover, inspect and selection still work. M7-P5. */
+  readOnly?: boolean;
+  /** Added by M8-C (m7-adjustments.md section 2): the camera starts at this tilt and springs to the stored one (later; M7-P1). */
+  enterFrom?: { tilt: number };
 }
 
 /** Camera rig name (DESIGN "Camera and navigation"). */
@@ -457,6 +461,27 @@ export interface RenderDebug {
    * demand)"): a test reads it twice across an idle wait and expects no change. Implemented by the table scene.
    */
   framesDrawn?(): number;
+  /** Added by M8-C (contracts.md Part C): live WebGL contexts, `live().contexts` of src/util/lifecycle.ts. */
+  liveContexts?(): number;
+  /** Added by M8-C (contracts.md Part C): what disposed renderers still held and every live count. */
+  memory?(): RenderMemory;
+}
+
+/** The lifecycle counters as the render part reports them (contracts.md Part C: `{ ...residue(), ...live() }`). Added by M8-C. */
+export interface RenderMemory {
+  geometries: number;
+  textures: number;
+  programs: number;
+  disposals: number;
+  contexts: number;
+  sessions: number;
+  engines: number;
+  transports: number;
+  audioContexts: number;
+  workers: number;
+  rafLoops: number;
+  botRunners: number;
+  timers: number;
 }
 
 /** The rig part of the debug hook (`window.__spellplane.rig`): camera rig, blend and follow toggles. Registered by the table scene; M4-P1's. Added by M4-C. */
@@ -625,7 +650,7 @@ export function cardFeel(theme: { feel?: Partial<CardFeel> }, motion: MotionSett
 }
 
 /** The card animations the scene plays (PLAN Milestone 7, Owner decisions: "draw, shuffle, tap and untap, play, to graveyard, attach, clip"). Added by M7-C. */
-export type CardAnimationKind = 'draw' | 'shuffle' | 'tap' | 'untap' | 'play' | 'toGraveyard' | 'toExile' | 'toHand' | 'toLibrary' | 'attach' | 'detach' | 'clip' | 'unclip' | 'flip';
+export type CardAnimationKind = 'draw' | 'shuffle' | 'tap' | 'untap' | 'play' | 'toGraveyard' | 'toExile' | 'toHand' | 'toLibrary' | 'attach' | 'detach' | 'clip' | 'unclip' | 'flip' | 'counter';
 
 /**
  * A request to animate cards (TableScene.animate; PLAN M7-P4). Most animations start from the scene itself when state
@@ -668,8 +693,11 @@ export interface MotionDebugState {
   holds: string[];
   /** The held card's lift (mm) and sway (degrees) during a drag, else null. */
   held: { card: InstanceId; liftMm: number; swayDeg: number } | null;
-  /** The snap slot pulling the dragged card (its kind and pull 0..1), else null. */
-  magnet: { kind: DropPreview['kind'] | 'align'; target: InstanceId | null; pull: number } | null;
+  /**
+   * The snap slot pulling the dragged card (its kind and pull 0..1), else null. M7-P4 added 'zone' (a library, graveyard
+   * or exile pile under the pointer) and 'hand' (an avatar, or the hand fan, which makes room: pull 1).
+   */
+  magnet: { kind: DropPreview['kind'] | 'align' | 'zone' | 'hand'; target: InstanceId | null; pull: number } | null;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -712,11 +740,12 @@ export interface PileHover {
 }
 
 /** The actions a pile offers on hover or tap (docs/design/m7-hud-proposal.md, Pile actions: "Library: Draw · Shuffle · Search…; Graveyard and Exile: Open"). Added by M7-C. */
-export type PileActionId = 'draw' | 'drawN' | 'shuffle' | 'search' | 'open' | 'mill';
+export type PileActionId = 'draw' | 'drawN' | 'shuffle' | 'search' | 'open' | 'mill' | 'revealTop';
 
 /** Pile actions by zone kind, the first is the double-click or tap action (docs/design/m7-hud-proposal.md: "Double-click a library draws"). Added by M7-C; M7-P5 may extend. */
 export const PILE_ACTIONS: Readonly<Record<'library' | 'graveyard' | 'exile' | 'command' | 'pile', readonly PileActionId[]>> = {
-  library: ['draw', 'shuffle', 'search'],
+  // M7-P5: Reveal top joins the library's actions (PLAN M7-P5: "Draw, Shuffle, Search, Reveal top").
+  library: ['draw', 'shuffle', 'search', 'revealTop'],
   graveyard: ['open'],
   exile: ['open'],
   command: ['open'],
@@ -797,6 +826,8 @@ export interface TableScene {
   animate?(req: CardAnimationRequest): void;
   /** Apply the viewer's motion setting without a rebuild (Settings.motion). Added by M7-C; implementer: M7-P4 (optional until it lands). */
   setMotion?(motion: MotionSettings): void;
+  /** Added by M8-C (m7-adjustments.md section 2): switch "look, do not touch" on or off. No-op until M7-P5. */
+  setReadOnly?(on: boolean): void;
   /** Ask for frames: anything that moves outside the scene's own state holds them (PLAN Milestone 7, A0: "render on demand"). Added by M7-C; implementer: M7-P4 (optional until it lands). */
   readonly frames?: FrameScheduler;
   worldToScreen(p: TablePoint3): ScreenPoint | null;

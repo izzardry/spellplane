@@ -7,6 +7,8 @@ import { enterStage, stageProblem } from '../stage';
 import type { Anchor } from '../types';
 import type { Draft, RecordDraft } from './draft';
 import { HIDDEN_POSE, isHidden } from './place';
+import { onPresence } from './rejoin';
+import { isOut } from './result';
 import { byId, checkAnchor, checkId, checkInt, checkString, isObj, reject } from './util';
 
 /** An anchor that exists: a card in a public zone, a stack item or a seat. */
@@ -56,12 +58,28 @@ export function phaseSet(d: Draft, a: ActionOf<'phaseSet'>): void {
  * the client dispatches `phaseSet` to the game's first phase in the same group (the reducer holds no phase list).
  */
 export function turnPass(d: Draft, a: ActionOf<'turnPass'>): void {
-  const to = checkId(a.to, 'seat or team');
-  if (!d.seats.has(to) && !d.teams.has(to)) reject(`unknown seat or team ${to}`);
+  const named = checkId(a.to, 'seat or team');
+  if (!d.seats.has(named) && !d.teams.has(named)) reject(`unknown seat or team ${named}`);
+  // M8-C (contracts.md Part D): a seat or team that conceded is skipped; the next one in seat order that is not out takes the turn.
+  const to = skipOut(d, named);
   const t = d.turnW();
   t.number += 1;
   t.active = to;
   for (const s of d.seats.values()) if (s.autoPass) d.seats.w(s.id).autoPass = false;
+}
+
+/** `to`, or the next seat (team) after it in seat order that is not out (result.ts isOut); `to` itself when all are out. Added by M8-C. */
+function skipOut(d: Draft, to: string): string {
+  const state = d.base;
+  if (!isOut(state, to)) return to;
+  const seats = [...d.seats.values()].sort((x, y) => x.index - y.index);
+  const order = d.teams.has(to) ? [...new Set(seats.map((s) => s.team).filter((t): t is string => t !== undefined && d.teams.has(t)))] : seats.map((s) => s.id);
+  const at = order.indexOf(to);
+  for (let i = 1; i < order.length; i++) {
+    const next = order[(at + i) % order.length]!;
+    if (!isOut(state, next)) return next;
+  }
+  return to;
 }
 
 export function life(d: Draft, a: ActionOf<'life'>): void {
@@ -115,6 +133,7 @@ export function seatLeave(d: Draft, a: ActionOf<'seatLeave'>): void {
   w.ready = false;
   delete w.peer;
   delete w.away;
+  onPresence(d, seat.id, false);
 }
 
 /**
@@ -130,6 +149,7 @@ export function away(d: Draft, a: ActionOf<'away'>): void {
   const w = d.seats.w(seat.id);
   if (a.away) w.away = true;
   else delete w.away;
+  onPresence(d, seat.id, !a.away);
 }
 
 /** Ready: publish the deck commitment and create the seat's hidden cards as opaque ids (DESIGN "Specification: network protocol and secrecy", Commitments). */
@@ -166,6 +186,11 @@ export function settings(d: Draft, a: ActionOf<'settings'>): void {
     } else if (k === 'teamHandsVisible') {
       if (typeof v !== 'boolean') reject('teamHandsVisible must be a boolean');
       d.settingsW().teamHandsVisible = v;
+    } else if (k === 'autoSetup' || k === 'matched') {
+      // Added by M8-C (contracts.md Part D): automatic setup and the matched flag; once matched, a table stays matched.
+      if (typeof v !== 'boolean') reject(`${k} must be a boolean`);
+      if (k === 'matched' && d.settings.matched === true && !v) reject('a matched table stays matched');
+      d.settingsW()[k] = v;
     } else {
       reject(`unknown setting ${k}`);
     }
@@ -199,5 +224,7 @@ export function stageSet(d: Draft, a: ActionOf<'stageSet'>): void {
   if (next.confirm !== d.base.confirm) d.setConfirm(next.confirm);
   if (next.draft !== d.base.draft) d.setDraftState(next.draft ?? null);
   if (next.games !== undefined && next.games !== d.base.games) d.setGames(next.games);
+  // M8-C: a new game clears the last one's result (core/stage.ts clearResult).
+  if (next.result !== d.base.result) d.setResult(next.result ?? null);
   d.setStage(next.stage);
 }

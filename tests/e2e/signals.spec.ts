@@ -31,7 +31,9 @@ import type { DrawnLine } from '../../src/scene/lines';
 import type { DebugStackEntry } from '../../src/scene/stack';
 import type { SceneDebugCard } from '../../src/scene/table-scene';
 import { GEOMETRY } from '../../src/core/geometry';
-import { SIGNALS, THEME_IDS, THEME_LABELS, contrastRatio, hudCssVars, loadTheme, type SignalId, type SignalSpec, type ThemeId } from '../../src/themes/index';
+import { LISTED_THEME_IDS, SIGNALS, THEME_IDS, THEME_LABELS, contrastRatio, hudCssVars, loadTheme, lookOfTheme, type SignalId, type SignalSpec, type ThemeId } from '../../src/themes/index';
+import { lookCssVars } from '../../src/ui/design/css';
+import { DEFAULT_SETTINGS } from '../../src/store/types';
 import { changedFraction, crop, decodePng, encodePng, measurePair, unionRect, type PairMeasure, type Pixels, type Rect } from '../unit/themes/conformance/pixels';
 import { hook } from './helpers/app';
 import { chair, decklist, freshRoom, openTable, setNickname } from './lobby/helpers';
@@ -54,6 +56,19 @@ const state = (page: Page) => hook<TableState>(page, 'state');
 const hash = (page: Page) => page.evaluate(() => window.__spellplane!.session!.hash());
 const currentTheme = (page: Page) => hook<ThemeId>(page, 'theme.current');
 const loadedThemes = (page: Page) => hook<ThemeId[]>(page, 'theme.loaded');
+
+/**
+ * The solo table in Paper with only Paper loaded (M8-C: Plain is the default theme since M8, so the switcher tests store
+ * Paper first and reload, which loads no other chunk).
+ */
+async function openSoloInPaper(page: Page, profile: string): Promise<void> {
+  await openSolo(page, profile);
+  await expect(page.getByTestId('hud')).toBeVisible();
+  await page.evaluate(() => window.__spellplane!.theme!.set('paper'));
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => typeof window.__spellplane?.session?.hash === 'function')).toBe(true);
+  await expect(page.getByTestId('hud')).toBeVisible();
+}
 
 /** Switch the theme through the debug hook; resolves once the new theme rendered a frame (debug/types.ts ThemeDebug). */
 async function setTheme(page: Page, id: ThemeId): Promise<void> {
@@ -522,7 +537,7 @@ for (const theme of THEME_IDS) {
 }
 
 test('every registered theme and every functional signal is covered', () => {
-  expect([...THEME_IDS]).toEqual(['paper', 'dusk', 'wyrm', 'stonetable', 'kitchen', 'graphite', 'codex']);
+  expect([...THEME_IDS]).toEqual(['paper', 'dusk', 'wyrm', 'stonetable', 'plain', 'kitchen', 'graphite', 'codex']);
   // The per-theme block above has one test per signal; these are their ids in PLAN order.
   expect(SIGNALS.map((s) => s.id)).toEqual(['tapped', 'selected', 'hovered', 'displaced', 'attacking', 'blocking', 'faceDown', 'foil', 'seatColour', 'speaking', 'pendingConfirmation', 'away']);
 });
@@ -641,9 +656,8 @@ test.describe('theme switcher', () => {
   test('the HUD picker switches this page’s theme; each theme’s chunk is fetched the first time it is picked, never before and never twice', async ({ page }, info) => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
+    await openSoloInPaper(page, freshProfile(info));
     const scripts = scriptLog(page);
-    await openSolo(page, freshProfile(info));
-    await expect(page.getByTestId('hud')).toBeVisible();
     expect(await currentTheme(page)).toBe('paper');
     expect(await loadedThemes(page)).toEqual(['paper']);
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'paper');
@@ -653,7 +667,9 @@ test.describe('theme switcher', () => {
     await expect(picker).toBeVisible();
     const option = (id: ThemeId) => picker.locator(`[data-testid="theme-option"][data-theme="${id}"] input`);
     await expect(option('paper')).toBeChecked();
-    for (const id of THEME_IDS) await expect(picker.locator(`[data-testid="theme-option"][data-theme="${id}"]`)).toContainText(THEME_LABELS[id]);
+    // M7-P2 (taken by M8-C): the picker offers the four looks (and the theme on the table, here Paper); the M4 themes left it.
+    for (const id of LISTED_THEME_IDS) await expect(picker.locator(`[data-testid="theme-option"][data-theme="${id}"]`)).toContainText(THEME_LABELS[id]);
+    for (const id of ['dusk', 'wyrm', 'stonetable'] as const) await expect(picker.locator(`[data-testid="theme-option"][data-theme="${id}"]`)).toHaveCount(0);
 
     const pick = async (id: ThemeId): Promise<string[]> => {
       const before = new Set(scripts);
@@ -667,22 +683,21 @@ test.describe('theme switcher', () => {
       return [...scripts].filter((u) => !before.has(u));
     };
 
-    expect(await pick('dusk')).not.toHaveLength(0);
-    expect(await loadedThemes(page)).toEqual(['paper', 'dusk']);
-    expect(await pick('wyrm')).not.toHaveLength(0);
-    expect(await loadedThemes(page)).toEqual(['paper', 'dusk', 'wyrm']);
-    expect(await pick('paper')).toEqual([]);
-    expect(await pick('dusk')).toEqual([]);
-    expect(await pick('stonetable')).not.toHaveLength(0);
-    expect(await loadedThemes(page)).toEqual(['paper', 'dusk', 'wyrm', 'stonetable']);
+    expect(await pick('graphite')).not.toHaveLength(0);
+    expect(await loadedThemes(page)).toEqual(['paper', 'graphite']);
+    expect(await pick('codex')).not.toHaveLength(0);
+    expect(await loadedThemes(page)).toEqual(['paper', 'graphite', 'codex']);
+    expect(await pick('graphite')).toEqual([]);
+    expect(await pick('kitchen')).not.toHaveLength(0);
+    expect(await loadedThemes(page)).toEqual(['paper', 'kitchen', 'graphite', 'codex']);
     // Closing the picker leaves the choice.
     await page.getByTestId('theme-close').click();
     await expect(picker).toHaveCount(0);
-    expect(await currentTheme(page)).toBe('stonetable');
+    expect(await currentTheme(page)).toBe('kitchen');
     // It is a dismissible popover: Esc closes it, and so does a press outside it (here on the table).
     await page.getByTestId('open-theme-settings').click();
     await expect(picker).toBeVisible();
-    await option('dusk').focus();
+    await option('graphite').focus();
     await page.keyboard.press('Escape');
     await expect(picker).toHaveCount(0);
     await page.getByTestId('open-theme-settings').click();
@@ -693,7 +708,7 @@ test.describe('theme switcher', () => {
     const vp = page.viewportSize()!;
     await page.mouse.click(vp.width / 2, vp.height / 2);
     await expect(picker).toHaveCount(0);
-    expect(await currentTheme(page)).toBe('stonetable');
+    expect(await currentTheme(page)).toBe('kitchen');
     expect(errors).toEqual([]);
   });
 
@@ -717,10 +732,15 @@ test.describe('theme switcher', () => {
       expect(await hash(page)).toBe(before);
       expect((await cards(page)).filter((c) => c.id === 'm1' || c.id === 'm2').map((c) => c.visible)).toEqual([true, true]);
       // HUD token mapping: the HUD root and the page carry the theme's custom properties.
-      const expected = hudCssVars((await loadTheme(id)).tokens);
+      // M7-P2 (taken by M8-C): a look's own theme dresses the HUD from the look's tokens (ui/design/css.ts); an M4 theme keeps its own.
+      const loaded = await loadTheme(id);
+      const look = lookOfTheme(id);
+      // The HUD of this branch still carries the theme's own tokens (M7-P2 moves it onto the look's).
+      const expected = hudCssVars(loaded.tokens);
+      const page$ = look ? lookCssVars(loaded, look) : expected;
       for (const k of ['--sp-bg', '--sp-fg', '--sp-surface', '--sp-hud-panel', '--sp-seat-0', '--sp-seat-1', '--sp-seat-7', '--sp-seat-2-ink', '--sp-font-size']) {
         expect(await cssVar('[data-testid="hud"]', k), `${id} ${k} on the HUD`).toBe(expected[k]);
-        expect(await cssVar('html', k), `${id} ${k} on the page`).toBe(expected[k]);
+        expect(await cssVar('html', k), `${id} ${k} on the page`).toBe(page$[k]);
       }
       // Per-theme seat colours reach the HUD: the own avatar's seat stripe is the theme's colour for its seat.
       const seatColour = (await state(page)).seats.s0!.colour;
@@ -742,30 +762,29 @@ test.describe('theme switcher', () => {
   });
 
   test('a theme chunk that cannot be loaded leaves the current theme and says so; picking again works once it can', async ({ page }, info) => {
-    await openSolo(page, freshProfile(info));
-    await expect(page.getByTestId('hud')).toBeVisible();
+    await openSoloInPaper(page, freshProfile(info));
     // From now on new scripts fail, as an offline page would for a chunk it never fetched.
     let block = true;
     await page.route('**/*.js', (route) => (block ? route.abort('internetdisconnected') : route.continue()));
     await page.getByTestId('open-theme-settings').click();
     const option = (id: ThemeId) => page.locator(`[data-testid="theme-option"][data-theme="${id}"] input`);
     // A click, not check(): the radio springs back to Paper as soon as the load fails, which may be before check() looks.
-    await option('wyrm').click();
-    await expect(page.getByTestId('theme-error')).toContainText('Wyrm could not be loaded');
+    await option('codex').click();
+    await expect(page.getByTestId('theme-error')).toContainText('Codex could not be loaded');
     // Picking again on this page would fail the same way (the browser keeps the failed import), so the text says to reload.
     await expect(page.getByTestId('theme-error')).toContainText('reload the page to try again');
     expect(await currentTheme(page)).toBe('paper');
     await expect(option('paper')).toBeChecked();
-    await expect(option('wyrm')).not.toBeChecked();
+    await expect(option('codex')).not.toBeChecked();
     // Picking it again on the same page fails at once (the failed import is cached): the radio still springs back.
-    await option('wyrm').click();
-    await expect(page.getByTestId('theme-error')).toContainText('Wyrm could not be loaded');
+    await option('codex').click();
+    await expect(page.getByTestId('theme-error')).toContainText('Codex could not be loaded');
     await expect(option('paper')).toBeChecked();
-    await expect(option('wyrm')).not.toBeChecked();
-    await option('dusk').click();
-    await expect(page.getByTestId('theme-error')).toContainText('Dusk could not be loaded');
+    await expect(option('codex')).not.toBeChecked();
+    await option('graphite').click();
+    await expect(page.getByTestId('theme-error')).toContainText('Graphite could not be loaded');
     await expect(option('paper')).toBeChecked();
-    await expect(option('dusk')).not.toBeChecked();
+    await expect(option('graphite')).not.toBeChecked();
     expect(await currentTheme(page)).toBe('paper');
     expect(await loadedThemes(page)).toEqual(['paper']);
     // The table is still live under it (nothing modal).
@@ -777,8 +796,8 @@ test.describe('theme switcher', () => {
     await expect(page.getByTestId('hud')).toBeVisible();
     expect(await currentTheme(page)).toBe('paper');
     await page.getByTestId('open-theme-settings').click();
-    await option('wyrm').check();
-    await expect.poll(() => currentTheme(page)).toBe('wyrm');
+    await option('codex').check();
+    await expect.poll(() => currentTheme(page)).toBe('codex');
     await expect(page.getByTestId('theme-error')).toHaveCount(0);
   });
 
@@ -788,26 +807,27 @@ test.describe('theme switcher', () => {
     await setNickname(page, 'Ann');
     await expect(chair(page, 's0')).toHaveAttribute('data-mine', 'true');
     const details = page.getByTestId('lobby-theme');
-    await expect(details).toContainText('Theme: Paper');
+    // M8-C: Plain is the default; the picker offers the four looks. M8-P4: the waiting room names it the look.
+    await expect(details).toContainText('Look: Plain');
     await details.locator('summary').click();
-    await details.locator('[data-testid="theme-option"][data-theme="stonetable"] input').check();
-    await expect.poll(() => currentTheme(page)).toBe('stonetable');
-    await expect(details).toContainText('Theme: Stonetable');
-    const seats = (await loadTheme('stonetable')).tokens.colours.seats;
+    await details.locator('[data-testid="theme-option"][data-theme="graphite"] input').check();
+    await expect.poll(() => currentTheme(page)).toBe('graphite');
+    await expect(details).toContainText('Look: Graphite');
+    const seats = (await loadTheme('graphite')).tokens.colours.seats;
     const swatches = page.locator('.swatch');
     await expect(swatches).toHaveCount(8);
     for (let i = 0; i < 8; i++) expect(await swatches.nth(i).evaluate((el) => getComputedStyle(el).getPropertyValue('--seat').trim())).toBe(seats[i]!.colour);
     const lobbyVar = await page.getByTestId('lobby').evaluate((el) => getComputedStyle(el).getPropertyValue('--sp-seat-3').trim());
     expect(lobbyVar).toBe(seats[3]!.colour);
     // Starting a game later keeps it: the table opens in the chosen theme (same page, same choice).
-    expect(await loadedThemes(page)).toEqual(['paper', 'stonetable']);
+    expect(await loadedThemes(page)).toEqual(['paper', 'plain', 'graphite']);
   });
 
   test('the debug hook refuses an unknown theme', async ({ page }, info) => {
     await openSolo(page, freshProfile(info));
     const err = await page.evaluate(() => window.__spellplane!.theme!.set('neon' as never).then(() => 'resolved', (e: Error) => e.message));
     expect(err).toContain('unknown theme neon');
-    expect(await currentTheme(page)).toBe('paper');
+    expect(await currentTheme(page)).toBe(DEFAULT_SETTINGS.theme);
   });
 
   test('two players at one table use different themes; a switch sends nothing and changes nothing for the other', async ({ browser }, info) => {
@@ -821,13 +841,13 @@ test.describe('theme switcher', () => {
       const outBefore = (await sent(a)).length;
       const actsBefore = await sentActs(a);
       const hashBefore = await hash(a);
-      await a.getByTestId('open-theme-settings').click();
-      await a.locator('[data-testid="theme-option"][data-theme="dusk"] input').check();
+      // M7-P2 (taken by M8-C): Dusk left the picker; the switch goes through the debug hook.
+      await setTheme(a, 'dusk');
       await expect.poll(() => currentTheme(a)).toBe('dusk');
       await frames(a, 4);
-      expect(await currentTheme(b)).toBe('paper');
-      await expect(b.locator('html')).toHaveAttribute('data-theme', 'paper');
-      expect(await loadedThemes(b)).toEqual(['paper']);
+      expect(await currentTheme(b)).toBe('plain');
+      await expect(b.locator('html')).toHaveAttribute('data-theme', 'plain');
+      expect(await loadedThemes(b)).toEqual(['paper', 'plain']);
       // Nothing but presence went out for the switch, and the table is the same in both browsers.
       expect(await sentActs(a)).toBe(actsBefore);
       // No message this page sent since names the theme.

@@ -24,7 +24,7 @@ export { DEFAULT_MOTION } from '../core/geometry';
  * three themes of the redesign"); M7-P1 builds them. The four M4 themes stay registered but leave the picker
  * (themes/index.ts THEME_LISTED).
  */
-export type ThemeId = M4ThemeId | 'kitchen' | 'graphite' | 'codex';
+export type ThemeId = M4ThemeId | 'plain' | 'kitchen' | 'graphite' | 'codex'; // 'plain' added by M8-C (the fourth look's table world)
 
 /** The four M4 themes (DESIGN "Themes and rendering", theme table), registered but no longer in the picker from M7 on. Added by M7-C. */
 export type M4ThemeId = 'paper' | 'dusk' | 'wyrm' | 'stonetable';
@@ -34,13 +34,13 @@ export type M4ThemeId = 'paper' | 'dusk' | 'wyrm' | 'stonetable';
  * m7-directions.html: A Kitchen Table, B Graphite, C Codex). A look is the HUD's design tokens (ui/design/tokens.ts)
  * plus the 3D table world it maps to (LOOK_THEME). Stored per viewer in Settings.look. Added by M7-C.
  */
-export type LookId = 'kitchen' | 'graphite' | 'codex';
+export type LookId = 'plain' | 'kitchen' | 'graphite' | 'codex'; // 'plain' added by M8-C (m7-adjustments.md section 2; visual.md 2.2)
 
 /** The 3D theme each look renders the table with (PLAN Milestone 7, Owner decisions: "each look is built as a 3D table world"). Added by M7-C; M7-P1 builds the three themes. */
-export const LOOK_THEME: Readonly<Record<LookId, ThemeId>> = { kitchen: 'kitchen', graphite: 'graphite', codex: 'codex' };
+export const LOOK_THEME: Readonly<Record<LookId, ThemeId>> = { plain: 'plain', kitchen: 'kitchen', graphite: 'graphite', codex: 'codex' };
 
 /** The look a new viewer starts with (docs/design/m7-directions.html, comparison: Kitchen Table "replaces Paper as the friendly default"). Added by M7-C. */
-export const DEFAULT_LOOK: LookId = 'kitchen';
+export const DEFAULT_LOOK: LookId = 'plain'; // M8-C: Plain is the default look (PLAN Milestone 8, Decisions)
 
 /** Line dash pattern paired with a seat colour so nothing depends on hue alone (DESIGN "Input and interaction design", Accessibility). */
 export type SeatPattern = 'solid' | 'dash' | 'dot' | 'dash-dot' | 'long-dash' | 'dash-dot-dot' | 'double' | 'zigzag';
@@ -231,7 +231,7 @@ export interface AmbientSoundSource {
  * (draw, shuffle, tap and untap, play, to graveyard, attach, clip)"), plus pickup, drop and snap for the hand feel;
  * M7-P4 plays them (ui/sound.ts) and M7-P1 gives each look its set. A set may leave any cue out.
  */
-export type SoundCue = 'slide' | 'tap' | 'shuffle' | 'turnChime' | 'promptTick' | FeelCue;
+export type SoundCue = 'slide' | 'tap' | 'shuffle' | 'turnChime' | 'promptTick' | FeelCue | 'matchFound'; // 'matchFound' added by M8-C (visual.md 2.3; falls back to 'turnChime' in a set without it)
 
 /** The card-feel sound cues (PLAN Milestone 7, Owner decisions, Almost haptic card handling). Added by M7-C; M7-P4. */
 export type FeelCue = 'draw' | 'untap' | 'play' | 'toGraveyard' | 'toExile' | 'toHand' | 'attach' | 'clip' | 'pickup' | 'drop' | 'snap';
@@ -258,6 +258,8 @@ export interface SoundSet {
   pickup?: SoundSource;
   drop?: SoundSource;
   snap?: SoundSource;
+  /** Added by M8-C: a match was found (visual.md 2.3); a set without it plays `turnChime` (ui/sound.ts, M7-P5). */
+  matchFound?: SoundSource;
   /** v2 (M4-C). */
   ambience?: AmbientSoundSource;
   /** v2 (M4-C): whether the set plays until the viewer turns it off (Settings.sound 'theme'); Paper has no set. */
@@ -396,6 +398,39 @@ export interface ThemeInstance {
    * "render on demand"; M7-A0's StillAware). Absent means "animates while the theme is lit" (the M4 behaviour).
    */
   animating?(): boolean;
+  /**
+   * Added by M7-P1: the zones of the current table, so the theme can draw its pile and zone marks under the scene's
+   * hairlines and labels (PLAN M7-P1 Table worlds: "pile and zone marks (library, graveyard, exile, command) in the
+   * look's style … seat colours with shapes"). Called by the scene's runtime after every build and whenever the
+   * markings change (seats join, the viewer's seat changes); the marks are in the frame the theme was built in. Absent
+   * means the theme draws no marks of its own.
+   */
+  setMarks?(marks: TableMarks): void;
+}
+
+/** A rectangle on the table, mm: centre, width along its own x, depth along its own y, turned `rot` degrees clockwise. Added by M7-P1. */
+export interface MarkRect {
+  x: number;
+  y: number;
+  w: number;
+  d: number;
+  rot: number;
+}
+
+/**
+ * The zones a theme may mark (ThemeInstance.setMarks; DESIGN "Specification: geometry, layout and motion", Tables and
+ * seats: piles in a column at the territory's right edge, the command area at its left, the avatar outside the near
+ * edge). Table mm in the frame the theme was built in. Added by M7-P1.
+ */
+export interface TableMarks {
+  /** The seats in use with their territory, seat colour index and, for a named chair, the avatar spot. */
+  seats: { index: number; colour: number; territory: MarkRect; avatar: { x: number; y: number } | null; angle: number }[];
+  /** Pile slots (library, graveyard, exile and any other squared zone), one card's size, centred on the slot. */
+  piles: { seat: number; zone: string; x: number; y: number; rot: number }[];
+  /** Areas (the command zone). */
+  areas: { seat: number; zone: string; rect: MarkRect }[];
+  /** Degrees the viewer's view is turned (text and glyphs upright for the viewer). */
+  viewerAngle: number;
 }
 
 /** A theme package (DESIGN "Specification: code interfaces", Theme). */

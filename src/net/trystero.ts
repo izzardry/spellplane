@@ -9,6 +9,7 @@ import type { JsonValue, Room } from 'trystero';
 import { APP_ID } from './messages';
 import type { SignallingStrategy } from './types';
 import { CHANNELS, type Channel, type Message, type MessageHandler, type PeerHandler, type PeerId, type Transport } from './transport';
+import { track, untrack } from '../util/lifecycle';
 
 type Sender = (data: JsonValue, options?: { target?: string | string[] | null }) => Promise<void>;
 
@@ -59,6 +60,7 @@ export class TrysteroTransport implements Transport {
   }
 
   join(roomId: string, roomKey: string): Promise<void> {
+    track('transports', this);
     if (this.room) return Promise.resolve();
     if (this.joining) return this.joining;
     // `leave` forgets a pending join, so a join after it starts afresh instead of reusing one that opens nothing.
@@ -106,6 +108,7 @@ export class TrysteroTransport implements Transport {
   }
 
   leave(): void {
+    untrack('transports', this);
     this.generation++;
     this.joining = null;
     const room = this.room;

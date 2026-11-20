@@ -5,6 +5,7 @@
   HUD's confirmation prompt answers the round; elsewhere (`answer`) the bar offers OK and Hold itself. Not modal.
 -->
 <script lang="ts">
+  import Button from '../design/Button.svelte';
   import type { FlowProps } from '../types';
   import { openProposal, PROPOSAL_LABELS, proposals, stageStatus } from './model';
 
@@ -42,32 +43,32 @@
   {#if answer && open && open.by !== me && !open.passed}
     <span class="ask" data-testid="evening-answer">
       {#if holding}
-        <button type="button" data-testid="evening-release" onclick={() => respond('release')}>Release</button>
+        <Button size="xs" data-testid="evening-release" onclick={() => respond('release')}>Release</Button>
       {:else if mine !== 'ok'}
-        <button type="button" class="primary" data-testid="evening-ok" onclick={() => respond('ok')}>OK</button>
-        <button type="button" data-testid="evening-hold" onclick={() => respond('hold')}>Hold</button>
+        <Button variant="primary" size="xs" data-testid="evening-ok" onclick={() => respond('ok')}>OK</Button>
+        <Button size="xs" data-testid="evening-hold" onclick={() => respond('hold')}>Hold</Button>
       {/if}
     </span>
   {/if}
   {#each offers as event (event)}
-    <button type="button" data-testid="propose-{event}" disabled={busy} onclick={() => propose(event)}>{PROPOSAL_LABELS[event]}</button>
+    <Button size="xs" data-testid="propose-{event}" disabled={busy} onclick={() => propose(event)}>{PROPOSAL_LABELS[event]}</Button>
   {/each}
 </div>
 
 <style>
+  /* Swept to the kit (contracts.md Part G "Visual" item 4): kit buttons at 28 px, the kit's surface and type. */
   .bar {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    padding: 6px 10px;
-    border: 1px solid var(--sp-border, #ccc);
-    border-radius: var(--sp-radius-lg, 8px);
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    font-family: var(--sp-font);
-    font-size: var(--sp-font-size, 14px);
-    box-shadow: 0 1px 4px rgb(0 0 0 / 0.15);
+    gap: var(--ds-space-sm, 8px);
+    padding: var(--ds-space-xs, 4px) var(--ds-space-sm, 8px) var(--ds-space-xs, 4px) var(--ds-space-md, 12px);
+    border-radius: var(--ds-radius-card, 12px);
+    background: var(--ds-panel, var(--sp-surface));
+    color: var(--ds-ink, var(--sp-fg));
+    font-family: var(--ds-font-body, var(--sp-font));
+    font-size: var(--ds-type-small, 12px);
+    box-shadow: var(--ds-elevation-raised, none);
     max-width: min(560px, calc(100vw - 32px));
   }
   .status {
@@ -75,28 +76,6 @@
   }
   .ask {
     display: inline-flex;
-    gap: 6px;
-  }
-  button {
-    font: inherit;
-    padding: 4px 10px;
-    border: 1px solid var(--sp-border, #ccc);
-    border-radius: var(--sp-radius-md, 4px);
-    background: var(--sp-bg, #fff);
-    color: inherit;
-    cursor: pointer;
-  }
-  button.primary {
-    background: var(--sp-accent, #2b6cb0);
-    border-color: var(--sp-accent, #2b6cb0);
-    color: var(--sp-accent-fg, #fff);
-  }
-  button:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-  button:focus-visible {
-    outline: 2px solid var(--sp-focus, #2b6cb0);
-    outline-offset: 2px;
+    gap: var(--ds-space-xs, 4px);
   }
 </style>

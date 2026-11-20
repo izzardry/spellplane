@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spellplane M8 — visual language mock (Plain look)</title>
+<!-- The only external asset: the typeface. The app bundles Fira Code itself (docs/design/m8/visual.md, 2.6). -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ==========================================================================================================
+   1. TOKENS — the Plain look (visual.md 2.3). Names are the app's --ds-* variables (ui/design/tokens.ts).
+   ========================================================================================================== */
+:root, .look-plain {
+  /* paper layers, lowest to highest */
+  --ds-frame: #e3e3e3;            /* the desk behind the table */
+  --ds-mat: #f2f2f2;              /* page and table surface */
+  --ds-chip: #ebebeb;             /* wells: fields, tracks, slots (inset) */
+  --ds-panel: #fcfcfc;            /* sheets and cards (resting) */
+  --ds-panel-raised: #ffffff;     /* pills, thumbs, popovers (floating) */
+  --ds-ghost: rgba(252,252,252,.92);
+  --ds-border: rgba(13,13,13,.12);
+  --ds-line: rgba(13,13,13,.08);
+  --ds-ink: #0d0d0d;
+  --ds-muted: #666666;
+  --ds-accent: #0d0d0d;  --ds-accent-ink: #fafafa;  --ds-accent-edge: #000000;
+  --ds-on: #0d0d0d;      --ds-on-ink: #fafafa;
+  --ds-selection: #0d0d0d;
+  --ds-badge: #0d0d0d;   --ds-badge-ink: #fafafa;
+  --ds-tip: #0d0d0d;     --ds-tip-ink: #fafafa;
+  --ds-coach: #ffffff;   --ds-coach-ink: #0d0d0d;
+  --ds-focus: #0d0d0d;
+  --ds-danger: #c81e1e;  --ds-warning: #8a5a00;  --ds-success: #0f7a36;
+  --ds-overlay: rgba(242,242,242,.82);
+  --ds-veil: rgba(242,242,242,.58);
+  --ds-seat-a: #2f6f9f;  --ds-seat-b: #8a4f7d;
+  --ds-ornament: #bdbdbd;
+
+  /* identity colours, the same in every look (never decoration) */
+  --ds-mana-w: #f1ecd2; --ds-mana-u: #2f6fb5; --ds-mana-b: #2b2b2b; --ds-mana-r: #c8432f; --ds-mana-g: #2f7d4f; --ds-mana-c: #bdbdbd;
+
+  /* type */
+  --ds-font-body: "Fira Code", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ds-font-heading: var(--ds-font-body);
+  --ds-font-numeral: var(--ds-font-body);
+  --ds-font-reading: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --ds-label-case: uppercase; --ds-label-spacing: .05em;
+  --ds-type-label: 11px; --ds-type-small: 12px; --ds-type-body: 14px; --ds-type-title: 18px;
+  --ds-type-heading: 24px; --ds-type-display: 36px; --ds-type-life: 48px;
+
+  /* one height scale for every control */
+  --ds-control-xs: 28px; --ds-control-sm: 36px; --ds-control-md: 44px; --ds-control-lg: 56px;
+
+  /* spacing, 4 px grid */
+  --ds-space-xs: 4px; --ds-space-sm: 8px; --ds-space-md: 12px; --ds-space-lg: 16px;
+  --ds-space-xl: 24px; --ds-space-xxl: 32px; --ds-space-3xl: 48px; --ds-space-4xl: 64px;
+
+  /* radius: actions are round, containers are rounded rectangles */
+  --ds-radius-sm: 8px; --ds-radius-panel: 16px;
+  --ds-radius-card: max(var(--ds-radius-sm), calc(var(--ds-radius-panel) - 4px)); --ds-radius-sheet: calc(var(--ds-radius-panel) + 4px);
+  --ds-radius-button: 999px; --ds-radius-pill: 999px; --ds-radius-plate: 999px;
+
+  /* elevation: contact shadow + ambient shadow + lit top edge. Plain box-shadow only, never a blur filter. */
+  --ds-elevation-sheet: inset 0 1px 0 #fff, 0 0 0 1px rgba(13,13,13,.06), 0 1px 0 rgba(13,13,13,.10), 0 2px 4px rgba(13,13,13,.04), 0 14px 28px -10px rgba(13,13,13,.14);
+  --ds-elevation-raised: inset 0 1px 0 #fff, 0 0 0 1px rgba(13,13,13,.08), 0 1px 1px rgba(13,13,13,.12), 0 3px 6px rgba(13,13,13,.07), 0 10px 20px -6px rgba(13,13,13,.14);
+  --ds-elevation-pop: 0 0 0 1px rgba(13,13,13,.08), 0 2px 4px rgba(13,13,13,.08), 0 12px 24px -4px rgba(13,13,13,.16), 0 32px 48px -12px rgba(13,13,13,.20);
+  --ds-elevation-dialog: 0 0 0 1px rgba(13,13,13,.08), 0 8px 16px rgba(13,13,13,.10), 0 40px 80px -16px rgba(13,13,13,.30);
+  --ds-elevation-primary: inset 0 1px 0 rgba(255,255,255,.22), 0 1px 1px rgba(0,0,0,.4), 0 4px 8px rgba(13,13,13,.20), 0 12px 24px -6px rgba(13,13,13,.32);
+  --ds-elevation-pressed: inset 0 2px 4px rgba(13,13,13,.16), inset 0 0 0 1px rgba(13,13,13,.10);
+  --ds-elevation-well: inset 0 1px 2px rgba(13,13,13,.12), inset 0 0 0 1px rgba(13,13,13,.05), 0 1px 0 #fff;
+  --ds-elevation-card: 0 0 0 1px rgba(13,13,13,.10), 0 1px 1px rgba(13,13,13,.16), 0 4px 8px -2px rgba(13,13,13,.16);
+  --ds-elevation-card-lifted: 0 0 0 1px rgba(13,13,13,.10), 0 4px 6px rgba(13,13,13,.10), 0 18px 32px -6px rgba(13,13,13,.28);
+  --ds-elevation-stack: 0 1px 0 #fcfcfc, 0 2px 0 #cfcfcf, 0 3px 0 #fcfcfc, 0 4px 0 #cfcfcf, 0 5px 0 #fcfcfc, 0 6px 0 #c4c4c4, 0 14px 22px -6px rgba(13,13,13,.22);
+
+  /* texture: halftone dots on the page, paper grain on sheets (static images, no filters at run time) */
+  --ds-texture-page: radial-gradient(circle, rgba(13,13,13,.055) 1px, transparent 1.3px);
+  --ds-texture-page-size: 8px 8px;
+  --ds-texture-dense: radial-gradient(circle, rgba(13,13,13,.16) 1px, transparent 1.3px);
+  --ds-texture-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+
+  /* motion (Ztyle): short, ease-out, spatial */
+  --ds-duration-fast: 150ms; --ds-duration-base: 200ms; --ds-duration-slow: 300ms; --ds-duration-deliberate: 500ms;
+  --ds-ease-standard: cubic-bezier(0,0,.2,1); --ds-ease-exit: cubic-bezier(.4,0,1,1);
+}
+
+/* The other three looks: only material tokens change, never sizes or structure (visual.md 2.2). */
+.look-kitchen {
+  --ds-frame:#5b3f2c; --ds-mat:#d9ccb2; --ds-chip:#efe4cf; --ds-panel:#f7f1e5; --ds-panel-raised:#fffaf0; --ds-border:rgba(80,60,40,.14); --ds-line:#d6c8ae;
+  --ds-ink:#2b2118; --ds-muted:#6f604e; --ds-accent:#c0532f; --ds-accent-ink:#fff8ef; --ds-on:#2b2118; --ds-on-ink:#f7f1e5; --ds-success:#3d6b35; --ds-danger:#9e2a2b;
+  --ds-font-body: ui-rounded, "SF Pro Rounded", "Avenir Next", "Segoe UI", system-ui, sans-serif; --ds-label-case:none; --ds-label-spacing:0;
+  --ds-radius-sm:8px; --ds-radius-panel:14px; --ds-radius-button:14px; --ds-radius-pill:22px; --ds-radius-plate:40px;
+  --ds-elevation-raised: inset 0 1px 0 rgba(255,255,255,.6), 0 2px 0 rgba(70,48,30,.12), 0 6px 14px rgba(70,48,30,.16);
+  --ds-elevation-primary: 0 3px 0 #8e3a1f, 0 8px 18px rgba(140,60,30,.32);
+  --ds-elevation-pop: 0 10px 24px rgba(60,40,24,.26);
+  --ds-elevation-well: inset 0 1px 2px rgba(70,48,30,.18), 0 1px 0 rgba(255,255,255,.7);
+  --ds-elevation-card: 0 1px 1px rgba(40,25,10,.3), 0 4px 10px rgba(40,25,10,.22);
+  --ds-texture-page: linear-gradient(0deg, rgba(80,60,40,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(80,60,40,.05) 1px, transparent 1px); --ds-texture-page-size: 3px 3px;
+}
+.look-graphite {
+  --ds-frame:#101317; --ds-mat:#16191e; --ds-chip:#2b3039; --ds-panel:#20242b; --ds-panel-raised:#272c34; --ds-border:#323843; --ds-line:#323843;
+  --ds-ink:#e9ecf0; --ds-muted:#9aa3ae; --ds-accent:#3fd2a3; --ds-accent-ink:#06261c; --ds-on:#e9ecf0; --ds-on-ink:#16191e; --ds-success:#3fd2a3; --ds-danger:#ff6b6b;
+  --ds-font-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; --ds-label-case:uppercase; --ds-label-spacing:.08em;
+  --ds-radius-sm:6px; --ds-radius-panel:10px; --ds-radius-button:10px; --ds-radius-pill:10px; --ds-radius-plate:12px;
+  --ds-elevation-raised: inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 1px #323843, 0 1px 2px rgba(0,0,0,.4), 0 6px 16px rgba(0,0,0,.28);
+  --ds-elevation-primary: 0 2px 0 #249a76, 0 8px 18px rgba(63,210,163,.18);
+  --ds-elevation-pop: inset 0 1px 0 rgba(255,255,255,.05), 0 0 0 1px #3a414d, 0 2px 6px rgba(0,0,0,.4), 0 12px 28px rgba(0,0,0,.45);
+  --ds-elevation-well: inset 0 1px 2px rgba(0,0,0,.5), 0 1px 0 rgba(255,255,255,.04);
+  --ds-elevation-card: 0 2px 6px rgba(0,0,0,.5);
+  --ds-texture-page: radial-gradient(circle, rgba(255,255,255,.05) 1px, transparent 1.3px); --ds-texture-page-size: 8px 8px;
+}
+.look-codex {
+  --ds-frame:#141a29; --ds-mat:#1b2235; --ds-chip:#313a55; --ds-panel:#242c42; --ds-panel-raised:#2b344d; --ds-border:rgba(200,167,94,.55); --ds-line:rgba(200,167,94,.35);
+  --ds-ink:#efe6d2; --ds-muted:#a99f8c; --ds-accent:#b8432f; --ds-accent-ink:#fbeee0; --ds-on:#c8a75e; --ds-on-ink:#1b2235; --ds-success:#8fbf8a; --ds-danger:#e57a68;
+  --ds-font-body: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; --ds-label-case:uppercase; --ds-label-spacing:.12em;
+  --ds-radius-sm:4px; --ds-radius-panel:6px; --ds-radius-button:6px; --ds-radius-pill:6px; --ds-radius-plate:6px;
+  --ds-elevation-raised: 0 0 0 1px rgba(200,167,94,.55), 0 4px 12px rgba(0,0,0,.35);
+  --ds-elevation-primary: 0 0 0 1px #e0b46a, 0 0 0 4px rgba(184,67,47,.25), 0 6px 16px rgba(0,0,0,.4);
+  --ds-elevation-pop: 0 0 0 1px rgba(200,167,94,.55), 0 12px 30px rgba(0,0,0,.5);
+  --ds-elevation-well: inset 0 1px 3px rgba(0,0,0,.55), 0 1px 0 rgba(200,167,94,.12);
+  --ds-elevation-card: 0 3px 10px rgba(0,0,0,.5);
+  --ds-texture-page: none;
+}
+
+/* ==========================================================================================================
+   2. BASE AND TYPE ROLES
+   ========================================================================================================== */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: #cfcfcf; color: var(--ds-ink); font-family: var(--ds-font-body); font-size: 14px; line-height: 1.35;
+  font-variant-ligatures: none; font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p { margin: 0; font-weight: inherit; font-size: inherit; }
+.t-word { font-weight: 300; letter-spacing: .3em; text-transform: uppercase; }
+.t-display { font-size: 36px; line-height: 40px; font-weight: 300; letter-spacing: .1em; }
+.t-heading { font-size: 24px; line-height: 32px; font-weight: 500; letter-spacing: .02em; }
+.t-title { font-size: 18px; line-height: 24px; text-transform: var(--ds-label-case); letter-spacing: var(--ds-label-spacing); font-weight: 500; }
+.t-list { font-size: 18px; line-height: 24px; letter-spacing: .03em; font-weight: 500; }
+.t-strong { font-weight: 600; }
+.t-eyebrow { white-space: nowrap; font-size: 11px; line-height: 16px; text-transform: var(--ds-label-case); letter-spacing: var(--ds-label-spacing); color: var(--ds-muted); font-weight: 500; }
+.rowx > .t-meta { white-space: nowrap; }
+.t-meta { font-size: 12px; line-height: 16px; color: var(--ds-muted); }
+.t-whisper { font-size: 12px; line-height: 16px; color: var(--ds-muted); text-transform: lowercase; }
+.t-micro { font-size: 10px; line-height: 12px; color: #8f8f8f; }
+.t-reading { font-family: var(--ds-font-reading); font-size: 13px; line-height: 1.45; color: var(--ds-muted); }
+.ok { color: var(--ds-success); } .bad { color: var(--ds-danger); } .ink { color: var(--ds-ink); }
+svg.i { flex: none; display: block; }
+
+/* ==========================================================================================================
+   3. COMPONENTS
+   ========================================================================================================== */
+/* --- buttons: four heights, pills and circles ------------------------------------------------------------ */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: var(--ds-control-md); padding: 0 20px;
+  border: 0; border-radius: var(--ds-radius-button); background: var(--ds-panel-raised); color: var(--ds-ink); box-shadow: var(--ds-elevation-raised);
+  font: inherit; font-size: 12px; font-weight: 500; text-transform: var(--ds-label-case); letter-spacing: var(--ds-label-spacing); white-space: nowrap; cursor: pointer;
+  transition: transform var(--ds-duration-fast) var(--ds-ease-standard), box-shadow var(--ds-duration-fast) var(--ds-ease-standard); }
+.btn:hover { transform: translateY(-1px); }
+.btn:active, .btn.is-pressed { transform: translateY(1px) scale(.98); box-shadow: var(--ds-elevation-pressed); background: var(--ds-chip); }
+.btn.xs { height: var(--ds-control-xs); padding: 0 12px; font-size: 11px; gap: 6px; }
+.btn.sm { height: var(--ds-control-sm); padding: 0 16px; }
+.btn.lg { height: var(--ds-control-lg); padding: 0 32px; font-size: 14px; min-width: 240px; }
+.btn.primary { background: var(--ds-accent); color: var(--ds-accent-ink); box-shadow: var(--ds-elevation-primary); }
+.btn.primary:active { background: var(--ds-accent); box-shadow: inset 0 3px 6px rgba(0,0,0,.6); }
+.btn.ghost { background: transparent; box-shadow: inset 0 0 0 1px rgba(13,13,13,.2); }
+.look-graphite .btn.ghost, .look-codex .btn.ghost { box-shadow: inset 0 0 0 1px var(--ds-border); }
+.btn.quiet { background: transparent; box-shadow: none; color: var(--ds-muted); }
+.btn.is-disabled { background: var(--ds-chip); color: var(--ds-muted); box-shadow: var(--ds-elevation-well); cursor: default; }
+.btn.danger { color: var(--ds-danger); }
+.ib { padding: 0; width: var(--ds-control-md); } .ib.sm { width: var(--ds-control-sm); } .ib.xs { width: var(--ds-control-xs); } .ib.lg { width: var(--ds-control-lg); min-width: 0; }
+.btn .n { font-weight: 600; letter-spacing: .1em; }
+
+/* --- segmented control: a well track with one raised thumb ----------------------------------------------- */
+.seg { display: inline-flex; align-items: center; height: var(--ds-control-md); padding: 4px; gap: 2px; border-radius: var(--ds-radius-pill); background: var(--ds-chip); box-shadow: var(--ds-elevation-well); }
+.seg > * { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 16px; border-radius: var(--ds-radius-pill);
+  font-size: 12px; font-weight: 500; text-transform: var(--ds-label-case); letter-spacing: var(--ds-label-spacing); color: var(--ds-muted); white-space: nowrap; }
+.seg > .on { background: var(--ds-panel-raised); color: var(--ds-ink); box-shadow: var(--ds-elevation-raised); }
+.seg.sm { height: var(--ds-control-sm); padding: 3px; } .seg.sm > * { height: 30px; padding: 0 12px; font-size: 11px; }
+
+/* --- fields are wells ------------------------------------------------------------------------------------ */
+.field { display: flex; align-items: center; gap: 8px; height: var(--ds-control-md); padding: 0 16px; border-radius: var(--ds-radius-pill); background: var(--ds-chip); box-shadow: var(--ds-elevation-well); color: var(--ds-muted); font-size: 14px; }
+.field.sq { border-radius: var(--ds-radius-card); }
+.field b { color: var(--ds-ink); font-weight: 400; }
+
+/* --- chips, pips, badges, dots --------------------------------------------------------------------------- */
+.chip { display: inline-flex; align-items: center; gap: 6px; height: var(--ds-control-xs); padding: 0 10px; border-radius: var(--ds-radius-pill); background: var(--ds-chip); font-size: 11px; font-weight: 500; text-transform: var(--ds-label-case); letter-spacing: var(--ds-label-spacing); color: var(--ds-ink); white-space: nowrap; }
+.chip.line { background: transparent; box-shadow: inset 0 0 0 1px var(--ds-border); color: var(--ds-muted); }
+.chip.on { background: var(--ds-on); color: var(--ds-on-ink); }
+.chip.sm { height: var(--ds-control-sm); padding: 0 14px; }
+.pip { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; font-size: 8px; font-weight: 700; line-height: 1; color: #fff; box-shadow: inset 0 0 0 1px rgba(13,13,13,.25); flex: none; letter-spacing: 0; }
+.pip.w { background: var(--ds-mana-w); color: #0d0d0d; } .pip.u { background: var(--ds-mana-u); } .pip.b { background: var(--ds-mana-b); }
+.pip.r { background: var(--ds-mana-r); } .pip.g { background: var(--ds-mana-g); } .pip.c { background: var(--ds-mana-c); color: #0d0d0d; }
+.pip.lg { width: 20px; height: 20px; font-size: 10px; }
+.pips { display: inline-flex; gap: 3px; align-items: center; }
+.badge { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--ds-badge); color: var(--ds-badge-ink); font-size: 11px; font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ds-success); flex: none; display: inline-block; }
+.dot.away { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ds-muted); animation: pulse 1.6s ease-in-out infinite; }
+.dot.off { background: transparent; box-shadow: inset 0 0 0 1.5px #b0b0b0; }
+@keyframes pulse { 50% { opacity: .35; } }
+.str { display: inline-flex; gap: 2px; align-items: center; } .str b { width: 4px; height: 12px; border-radius: 2px; background: var(--ds-ink); } .str b.o { background: transparent; box-shadow: inset 0 0 0 1px rgba(13,13,13,.3); }
+.seatg { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--ds-panel-raised); box-shadow: inset 0 0 0 2px currentColor; width: 28px; height: 28px; font-size: 12px; flex: none; }
+.seatg.a { color: var(--ds-seat-a); } .seatg.b { color: var(--ds-seat-b); } .seatg.c { color: #3d6b35; } .seatg.d { color: #9a6a1f; }
+.seatg.md { width: 44px; height: 44px; font-size: 18px; } .seatg.lg { width: 56px; height: 56px; font-size: 22px; }
+.divider { width: 1px; height: 24px; background: var(--ds-border); flex: none; }
+.hr { height: 1px; background: var(--ds-line); border: 0; margin: 0; }
+
+/* --- surfaces -------------------------------------------------------------------------------------------- */
+.sheet { background-color: var(--ds-panel); background-image: var(--ds-texture-grain); border-radius: var(--ds-radius-sheet); box-shadow: var(--ds-elevation-sheet); }
+.well { background: var(--ds-chip); box-shadow: var(--ds-elevation-well); border-radius: var(--ds-radius-card); }
+.well.dots { background-image: var(--ds-texture-dense); background-size: 4px 4px; }
+.pop { background: var(--ds-panel-raised); border-radius: var(--ds-radius-panel); box-shadow: var(--ds-elevation-pop); }
+.bar { display: inline-flex; align-items: center; gap: 8px; }
+.listcard { display: flex; align-items: center; gap: 16px; padding: 12px; border-radius: var(--ds-radius-card); background: var(--ds-panel-raised); box-shadow: var(--ds-elevation-sheet); }
+.listcard.sel { box-shadow: 0 0 0 2px var(--ds-ink), var(--ds-elevation-raised); }
+
+/* --- stepper (Ztyle): overline over value between two chevrons -------------------------------------------- */
+.stepper { display: inline-flex; align-items: center; gap: 12px; } .stepper .v { min-width: 260px; text-align: center; }
+.stepper .v .t-list { display: block; }
+
+/* --- toasts, coach marks, status line -------------------------------------------------------------------- */
+.toast { display: inline-flex; align-items: center; gap: 12px; min-height: 52px; padding: 12px 12px 12px 16px; border-radius: var(--ds-radius-card); background: var(--ds-panel-raised); box-shadow: var(--ds-elevation-pop); font-size: 13px; }
+.toast .sub { color: var(--ds-muted); }
+.coach { position: relative; display: inline-block; max-width: 240px; padding: 12px 16px; border-radius: var(--ds-radius-card); background: var(--ds-coach); color: var(--ds-coach-ink); box-shadow: var(--ds-elevation-pop); }
+.coach::after { content: ""; position: absolute; left: 28px; top: -6px; width: 12px; height: 12px; background: var(--ds-coach); transform: rotate(45deg); box-shadow: -1px -1px 0 rgba(13,13,13,.08); }
+.coach b { display: block; font-size: 12px; font-weight: 600; } .coach span { font-size: 11px; color: var(--ds-muted); }
+.status { white-space: nowrap; display: inline-flex; align-items: center; gap: 8px; height: 24px; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--ds-muted); }
+
+/* --- placeholder card faces: neutral rectangles with names. Real faces are shown whole, never cropped. ---- */
+.cardph { --w: 120px; width: var(--w); height: calc(var(--w) * 88 / 63); flex: none; border-radius: calc(var(--w) * .05); background: #171717; padding: calc(var(--w) * .045); box-shadow: var(--ds-elevation-card); position: relative; }
+.cardph .f { height: 100%; border-radius: calc(var(--w) * .022); background: #f5f5f3; display: flex; flex-direction: column; gap: calc(var(--w) * .03); padding: calc(var(--w) * .035); overflow: hidden; color: #1a1a1a; }
+.cardph .tt { display: flex; justify-content: space-between; align-items: center; gap: 2px; font-size: calc(var(--w) * .072); font-weight: 600; line-height: 1.25; white-space: nowrap; letter-spacing: 0; }
+.cardph .tt .pip { width: calc(var(--w) * .085); height: calc(var(--w) * .085); font-size: calc(var(--w) * .055); }
+.cardph .tt .pips { gap: 1px; flex: none; } .cardph .tt > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.cardph .ar { flex: 1.3; border-radius: 1px; background: repeating-linear-gradient(135deg, #e7e7e4 0 5px, #dcdcd9 5px 10px); }
+.cardph .ty { font-size: calc(var(--w) * .058); color: #555; white-space: nowrap; overflow: hidden; }
+.cardph .tx { flex: 1; display: flex; flex-direction: column; gap: calc(var(--w) * .032); padding-top: 1px; }
+.cardph .tx i { height: calc(var(--w) * .022); background: #d5d5d2; border-radius: 1px; } .cardph .tx i:last-child { width: 60%; }
+.cardph.back .f { background: #2a2a2a radial-gradient(circle, rgba(255,255,255,.14) 1px, transparent 1.3px) 0 0 / 5px 5px; align-items: center; justify-content: center; }
+.cardph.back .f::after { content: ""; width: 44%; aspect-ratio: 1; border-radius: 50%; box-shadow: 0 0 0 1.5px rgba(255,255,255,.5), 0 0 0 5px #2a2a2a, 0 0 0 6px rgba(255,255,255,.25); }
+.cardph.plain .f { background: #ededea; }
+.cardph .cnt { position: absolute; top: -8px; right: -8px; min-width: 28px; height: 28px; padding: 0 6px; border-radius: 999px; background: var(--ds-ink); color: #fafafa; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; box-shadow: 0 0 0 2px var(--ds-mat), 0 2px 4px rgba(0,0,0,.3); }
+.cardph.tap { transform: rotate(90deg); }
+.cardph.sel { box-shadow: 0 0 0 2px #f2f2f2, 0 0 0 4px var(--ds-ink), var(--ds-elevation-card-lifted); transform: translateY(-4px); }
+.pile { box-shadow: var(--ds-elevation-stack) !important; }
+
+/* --- deck visuals ---------------------------------------------------------------------------------------- */
+.tile { position: relative; display: flex; flex-direction: column; border-radius: var(--ds-radius-panel); background-color: var(--ds-panel-raised); background-image: var(--ds-texture-grain); box-shadow: var(--ds-elevation-sheet); padding: 8px 8px 12px; gap: 12px; }
+.tile.sel { box-shadow: 0 0 0 2px var(--ds-ink), var(--ds-elevation-raised); }
+.tile.hover { transform: translateY(-3px); box-shadow: var(--ds-elevation-pop); }
+.tile .stage { height: 176px; border-radius: 10px; display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; }
+.tile .stage .cardph { --w: 96px; transform: rotate(-3deg); }
+.tile .info { padding: 0 8px; display: flex; flex-direction: column; gap: 6px; }
+.tile .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tile .name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .acts { position: absolute; left: 8px; right: 8px; top: 140px; display: flex; gap: 8px; justify-content: center; }
+.seal { position: absolute; left: -8px; right: -8px; top: 70px; height: 32px; background: var(--ds-ink); color: #fafafa; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; transform: rotate(-3deg); box-shadow: 0 2px 6px rgba(0,0,0,.35); z-index: 2; }
+.seal::before, .seal::after { content: ""; flex: 1; height: 1px; margin: 0 10px; background: repeating-linear-gradient(90deg, rgba(255,255,255,.6) 0 3px, transparent 3px 6px); }
+.tile.new { background: transparent; box-shadow: inset 0 0 0 1.5px rgba(13,13,13,.2); align-items: center; justify-content: center; gap: 12px; color: var(--ds-muted); background-image: none; }
+.fan { position: relative; height: 300px; width: 520px; }
+.fan .cardph { position: absolute; left: 50%; top: 8px; margin-left: calc(var(--w) / -2); transform-origin: 50% 120%; }
+.fan .cardph:nth-child(1) { transform: rotate(-14deg) translateY(10px); } .fan .cardph:nth-child(2) { transform: rotate(14deg) translateY(10px); }
+.fan .cardph:nth-child(3) { transform: rotate(-7deg) translateY(3px); } .fan .cardph:nth-child(4) { transform: rotate(7deg) translateY(3px); }
+.fan .cardph:nth-child(5) { box-shadow: var(--ds-elevation-card-lifted); }
+.curve { display: grid; grid-template-columns: repeat(8, 1fr); gap: 10px; align-items: end; height: 148px; }
+.curve .col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; position: relative; }
+.curve .n { font-size: 11px; font-weight: 600; } .curve .x { font-size: 10px; color: var(--ds-muted); }
+.curve .bars { width: 100%; display: flex; flex-direction: column; gap: 2px; }
+.curve .cr { background: var(--ds-ink); border-radius: 3px 3px 0 0; } .curve .sp { background: var(--ds-chip) var(--ds-texture-dense) 0 0 / 4px 4px; box-shadow: inset 0 0 0 1px rgba(13,13,13,.35); border-radius: 3px 3px 0 0; }
+.curve .cr + .sp, .curve .sp + .cr { border-radius: 0; }
+.curve .tg { position: absolute; left: -3px; right: -3px; bottom: 18px; border: 1.5px dotted rgba(13,13,13,.45); border-bottom: 0; border-radius: 4px 4px 0 0; }
+.curve .n { position: absolute; left: 0; right: 0; text-align: center; }
+.lg1, .lg2, .lg3 { width: 12px; height: 12px; border-radius: 2px; display: inline-block; } .lg1 { background: var(--ds-ink); } .lg2 { background: var(--ds-chip) var(--ds-texture-dense) 0 0 / 4px 4px; box-shadow: inset 0 0 0 1px rgba(13,13,13,.35); } .lg3 { border: 1.5px dotted rgba(13,13,13,.5); }
+.cbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; box-shadow: inset 0 0 0 1px rgba(13,13,13,.2); }
+.spark { display: inline-flex; align-items: flex-end; gap: 2px; height: 20px; } .spark i { width: 5px; background: var(--ds-ink); border-radius: 1px 1px 0 0; }
+.drow { display: grid; grid-template-columns: 20px 1fr auto 16px; gap: 8px; align-items: center; height: 28px; padding: 0 8px; border-radius: 6px; font-size: 12px; }
+.drow:nth-child(even) { background: rgba(13,13,13,.03); } .drow .q { font-weight: 600; } .drow .mv { color: var(--ds-muted); text-align: right; }
+
+/* --- mode card, queue, looking-now board ------------------------------------------------------------------ */
+.mcard { position: relative; display: flex; align-items: center; gap: 12px; width: 204px; height: 72px; padding: 0 16px 0 12px; border-radius: var(--ds-radius-panel); background: var(--ds-panel-raised); box-shadow: var(--ds-elevation-sheet); }
+.mcard.sel { box-shadow: 0 0 0 2px var(--ds-ink), var(--ds-elevation-raised); }
+.mcard .ic { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--ds-chip); box-shadow: var(--ds-elevation-well); flex: none; }
+.mcard.sel .ic { background: var(--ds-ink); color: #fafafa; box-shadow: none; }
+.mcard b { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+/* Sketch only. In the app a deck tile that may not be picked dims its text and well and shows a reason badge; a card face is never dimmed (contracts.md, Part G). */
+.locked { opacity: .45; }
+.btn.is-searching { background: var(--ds-chip); color: var(--ds-ink); box-shadow: var(--ds-elevation-pressed); transform: translateY(1px); justify-content: space-between; padding: 0 28px; }
+.ring { width: 12px; height: 12px; border-radius: 50%; box-shadow: inset 0 0 0 2px currentColor; animation: pulse 1.6s ease-in-out infinite; flex: none; }
+.qbar { display: inline-flex; align-items: center; gap: 12px; height: var(--ds-control-md); padding: 0 6px 0 18px; border-radius: var(--ds-radius-pill); background: var(--ds-ink); color: #fafafa; box-shadow: var(--ds-elevation-primary); font-size: 12px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; white-space: nowrap; }
+.qbar .sep { opacity: .45; } .qbar .n { font-weight: 600; letter-spacing: .1em; }
+.qbar .btn { background: rgba(255,255,255,.14); color: #fafafa; box-shadow: none; }
+.lrow { display: grid; grid-template-columns: 8px 1fr 44px auto 28px; gap: 10px; align-items: center; height: 36px; padding: 0 12px; border-radius: 8px; font-size: 13px; }
+.lrow:nth-child(odd) { background: rgba(13,13,13,.03); }
+.count { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 500; box-shadow: inset 0 0 0 2px var(--ds-chip), inset 0 0 0 4px transparent; background: conic-gradient(var(--ds-ink) 0 85%, var(--ds-chip) 85% 100%); position: relative; }
+.count::before { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--ds-panel-raised); } .count span { position: relative; }
+
+/* --- player plate, tracker, menu ------------------------------------------------------------------------- */
+.plate { display: inline-flex; align-items: center; gap: 12px; height: 72px; padding: 8px 20px 8px 8px; border-radius: var(--ds-radius-plate); background: var(--ds-panel-raised); box-shadow: var(--ds-elevation-raised); }
+.plate .life { font-family: var(--ds-font-numeral); font-size: 40px; line-height: 1; font-weight: 500; letter-spacing: -.02em; }
+.plate .who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.plate .who .nm { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
+.plate.away .life, .plate.away .seatg { opacity: .45; }
+.menu { padding: 8px; width: 344px; }
+.menu .mi { display: flex; align-items: center; gap: 12px; height: 36px; padding: 0 12px; border-radius: 8px; font-size: 13px; } .menu .mi .k { margin-left: auto; color: var(--ds-muted); font-size: 11px; }
+.menu .mi.hov { background: var(--ds-chip); }
+.menu .sec { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.qr { background: #fff; padding: 10px; border-radius: 8px; box-shadow: 0 0 0 1px rgba(13,13,13,.12); line-height: 0; flex: none; }
+
+/* --- history --------------------------------------------------------------------------------------------- */
+.still { position: relative; flex: none; width: 128px; height: 72px; border-radius: 6px; background: var(--ds-mat) var(--ds-texture-page) 0 0 / 6px 6px; box-shadow: inset 0 0 0 1px rgba(13,13,13,.14); overflow: hidden; }
+.still i { position: absolute; width: 7%; height: 17%; background: #fafafa; border: 1px solid #1a1a1a; border-radius: 1px; }
+.still i.t { transform: rotate(90deg); } .still::after { content: ""; position: absolute; left: 6%; right: 6%; top: 50%; height: 1px; background: rgba(13,13,13,.18); }
+.hrow { display: grid; grid-template-columns: 128px 1fr auto; gap: 16px; align-items: center; padding: 12px 16px 12px 12px; border-radius: var(--ds-radius-card); background: var(--ds-panel-raised); box-shadow: var(--ds-elevation-sheet); }
+.hrow.sel { box-shadow: 0 0 0 2px var(--ds-ink), var(--ds-elevation-raised); }
+.hrow .l1 { display: flex; align-items: center; gap: 8px; } .hrow .l2 { display: flex; align-items: center; gap: 8px; margin-top: 2px; } .hrow .l3 { margin-top: 6px; font-size: 13px; }
+.hrow .rt { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+.glabel { display: flex; align-items: center; gap: 12px; margin: 4px 4px 0; } .glabel::after { content: ""; flex: 1; height: 1px; background: var(--ds-line); }
+
+/* ==========================================================================================================
+   4. THE BOARD OF FRAMES
+   ========================================================================================================== */
+.doc { padding: 32px 40px 16px; max-width: 1500px; }
+.doc h1 { font-size: 24px; font-weight: 500; letter-spacing: .02em; } .doc p { margin-top: 8px; max-width: 1000px; color: #333; font-family: var(--ds-font-reading); font-size: 14px; }
+.zoom { margin-top: 16px; display: flex; gap: 8px; align-items: center; }
+.boards { display: flex; flex-wrap: wrap; gap: 56px 48px; padding: 24px 40px 80px; zoom: .5; }
+.board { width: 1440px; }
+.board > .cap { display: flex; align-items: baseline; gap: 16px; margin-bottom: 14px; font-size: 26px; font-weight: 500; }
+.board > .cap small { font-size: 20px; font-weight: 400; color: #444; font-family: var(--ds-font-reading); }
+.frame { position: relative; width: 1440px; height: 900px; overflow: hidden; border-radius: 12px; background: var(--ds-mat); box-shadow: 0 0 0 1px rgba(0,0,0,.25), 0 30px 60px -20px rgba(0,0,0,.4); }
+.abs { position: absolute; }
+/* The stage: the arena, blurred. In the app this is ONE soft still from the scene, stretched, with no CSS filter (visual.md 2.11); here a static DOM sketch with a CSS blur. */
+.arena { position: absolute; inset: 0; background: var(--ds-frame); overflow: hidden; }
+.arena .tbl { position: absolute; inset: 28px 40px; border-radius: 28px; background: var(--ds-mat); box-shadow: 0 10px 40px rgba(0,0,0,.25); filter: blur(13px); }
+.arena .tbl i { position: absolute; width: 5.4%; height: 12.6%; background: #f7f7f5; border: 5px solid #1c1c1c; border-radius: 6px; box-shadow: 0 6px 12px rgba(0,0,0,.25); }
+.arena .tbl i.t { transform: rotate(90deg); } .arena .tbl i.k { background: #2a2a2a; }
+.arena .tbl u { position: absolute; left: 4%; right: 4%; top: 50%; height: 2px; background: rgba(13,13,13,.25); }
+.arena .veil { position: absolute; inset: 0; background: var(--ds-veil) var(--ds-texture-page) 0 0 / var(--ds-texture-page-size); }
+.paper { position: absolute; inset: 0; background: var(--ds-mat) var(--ds-texture-page) 0 0 / var(--ds-texture-page-size); }
+.topbar { position: absolute; top: 24px; left: 32px; right: 32px; height: 44px; display: flex; align-items: center; justify-content: space-between; z-index: 5; }
+.topbar .mid { position: absolute; left: 50%; transform: translateX(-50%); }
+.col { display: flex; flex-direction: column; } .rowx { display: flex; align-items: center; } .gap4 { gap: 4px; } .gap8 { gap: 8px; } .gap12 { gap: 12px; } .gap16 { gap: 16px; } .gap24 { gap: 24px; } .gap32 { gap: 32px; }
+.grow { flex: 1; min-width: 0; } .center { align-items: center; } .between { justify-content: space-between; }
+.stamp { position: absolute; right: 12px; bottom: 6px; }
+.sysgrid { position: absolute; inset: 32px; display: grid; grid-template-columns: 400px 1fr 448px; gap: 24px; }
+.sysgrid > * { min-width: 0; }
+.sysgrid .sheet { padding: 24px; display: flex; flex-direction: column; gap: 16px; }
+.sw { height: 56px; border-radius: 12px; display: flex; align-items: flex-end; padding: 8px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--ds-muted); }
+.mini { position: relative; height: 84px; border-radius: 12px; overflow: hidden; display: flex; align-items: center; gap: 12px; padding: 0 18px; background: var(--ds-mat) var(--ds-texture-page) 0 0 / var(--ds-texture-page-size); color: var(--ds-ink); font-family: var(--ds-font-body); box-shadow: inset 0 0 0 5px var(--ds-frame); }
+.mini .plate { height: 56px; padding: 6px 16px 6px 6px; } .mini .plate .life { font-size: 28px; } .mini .t-eyebrow { width: 64px; line-height: 13px; white-space: normal; }
+</style>
+</head>
+<body>
+<div class="doc" id="doc">
+  <h1>Spellplane M8 — visual language, Plain look</h1>
+  <p>Eight boards at 1440 × 900, drawn with the tokens of <code>docs/design/m8/visual.md</code>. Card faces are neutral placeholders; real faces are always shown whole. The arena behind the shell is a static sketch blurred once; the app shows one soft still there and never blurs anything over the live table. Labels follow <code>journey.md</code>. Nothing but the typeface loads from the network.</p>
+  <div class="zoom"><span class="t-eyebrow">Zoom</span>
+    <button class="btn sm" data-z=".5">50%</button><button class="btn sm" data-z=".75">75%</button><button class="btn sm" data-z="1">100%</button></div>
+</div>
+
+<div class="boards" id="boards">
+
+<!-- ====================================================================================================== 0 -->
+<section class="board"><div class="cap">0 · System <small>one height scale, four paper layers, five elevations, and the same chrome over the three table looks</small></div>
+<div class="frame"><div class="paper"></div>
+<div class="sysgrid">
+  <div class="sheet">
+    <span class="t-eyebrow">Control heights · 28 · 36 · 44 · 56</span>
+    <div class="rowx gap12" style="align-items:flex-end">
+      <span class="btn xs">XS 28</span><span class="btn sm">SM 36</span><span class="btn">MD 44</span><span class="btn lg primary" style="min-width:0">LG 56</span>
+    </div>
+    <div class="rowx gap12" style="align-items:flex-end">
+      <span class="btn ib xs"><i data-i="plus" data-s="16"></i></span><span class="btn ib sm"><i data-i="edit" data-s="16"></i></span><span class="btn ib"><i data-i="menu"></i></span><span class="btn ib lg"><i data-i="mic" data-s="24"></i></span>
+      <span class="t-meta" style="margin-left:8px">icon buttons are circles<br>of the same four heights</span>
+    </div>
+    <span class="t-eyebrow">One row, one height</span>
+    <div class="rowx gap8"><span class="btn primary">Primary</span><span class="btn">Secondary</span><span class="btn ghost">Ghost</span><span class="btn quiet">Quiet</span></div>
+    <div class="rowx gap8"><span class="btn is-pressed">Pressed</span><span class="btn is-disabled">Disabled</span><span class="btn danger ghost">Remove</span></div>
+    <div class="rowx gap8"><span class="seg"><span class="on">Play</span><span>Decks</span><span>History</span></span><span class="field grow"><i data-i="search" data-s="16"></i>Search</span></div>
+    <div class="rowx gap8"><span class="chip">Creature</span><span class="chip on">Instant</span><span class="chip line">Land</span><span class="pips"><span class="pip lg w">W</span><span class="pip lg u">U</span><span class="pip lg b">B</span><span class="pip lg r">R</span><span class="pip lg g">G</span><span class="pip lg c">C</span></span></div>
+    <hr class="hr">
+    <span class="t-eyebrow">Feedback · undo instead of “are you sure?”</span>
+    <span class="toast" style="align-self:flex-start"><span><b class="t-strong">Red Burn</b> <span class="sub">removed</span></span><span class="btn xs primary">Undo</span><i data-i="close" data-s="16"></i></span>
+    <span class="toast" style="align-self:flex-start"><span class="dot away"></span><span><span style="white-space:nowrap">Let <b class="t-strong">Cleo</b> in?</span></span><span class="btn xs ghost">Decline</span><span class="btn xs primary">Allow</span></span>
+    <div class="rowx gap16" style="align-items:flex-start">
+      <span class="coach" style="margin-top:8px;max-width:190px"><b>Your deck</b><span>Tap to open your decks. The arrows switch.</span></span>
+      <div class="col gap4">
+        <span class="status"><span class="dot"></span>14 players online</span>
+        <span class="status"><span class="dot away"></span>looking for players</span>
+        <span class="status"><i data-i="check" data-s="12"></i>saved 0:12 ago</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="col gap24">
+    <div class="sheet" style="flex:none">
+      <span class="t-eyebrow">Four paper layers · five elevations</span>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px">
+        <div class="sw" style="background:var(--ds-mat) var(--ds-texture-page) 0 0/8px 8px;box-shadow:inset 0 0 0 1px var(--ds-border)">page</div>
+        <div class="sw well">well</div>
+        <div class="sw" style="background:var(--ds-panel);box-shadow:var(--ds-elevation-sheet)">sheet</div>
+        <div class="sw" style="background:#fff;box-shadow:var(--ds-elevation-raised)">raised</div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;padding-bottom:12px">
+        <div class="sw" style="background:#fff;box-shadow:var(--ds-elevation-sheet)">sheet</div>
+        <div class="sw" style="background:#fff;box-shadow:var(--ds-elevation-raised)">raised</div>
+        <div class="sw" style="background:#fff;box-shadow:var(--ds-elevation-pop)">pop</div>
+        <div class="sw" style="background:#fff;box-shadow:var(--ds-elevation-dialog)">dialog</div>
+        <div class="sw" style="background:var(--ds-chip);box-shadow:var(--ds-elevation-pressed)">pressed</div>
+      </div>
+    </div>
+    <div class="sheet" style="flex:1">
+      <span class="t-eyebrow">Same chrome over the other three table looks</span>
+      <div class="col gap8">
+        <div class="mini look-kitchen" data-mini="Kitchen Table"></div>
+        <div class="mini look-graphite" data-mini="Graphite"></div>
+        <div class="mini look-codex" data-mini="Codex"></div>
+      </div>
+      <hr class="hr">
+      <span class="t-eyebrow">Type · Fira Code for the chrome</span>
+      <div class="col gap8">
+        <span class="t-word" style="font-size:24px">Spellplane</span>
+        <span class="t-title">Section title 18</span>
+        <span>Body and buttons 14 · <span class="t-meta">meta 12</span> · <span class="t-eyebrow">eyebrow 11</span></span>
+        <span class="t-reading">Card rules text and help longer than two lines use the reading face, so a paragraph stays easy to read.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="sheet">
+    <span class="t-eyebrow">Identity</span>
+    <div class="rowx gap12"><span class="seatg md a">●</span><span class="seatg md b">◆</span><span class="seatg md c">▲</span><span class="seatg md d">■</span><span class="t-meta">seat colour + shape,<br>never colour alone</span></div>
+    <div class="rowx gap16"><span class="rowx gap8"><span class="dot"></span><span class="t-meta">here</span></span><span class="rowx gap8"><span class="dot away"></span><span class="t-meta">away</span></span><span class="rowx gap8"><span class="dot off"></span><span class="t-meta">never joined</span></span><span class="rowx gap8"><span class="str"><b></b><b></b><b></b><b class="o"></b><b class="o"></b></span><span class="t-meta">strength 3</span></span></div>
+    <hr class="hr">
+    <span class="t-eyebrow">Deck tile · custom and sealed</span>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px" id="sysTiles"></div>
+    <span class="t-eyebrow">Boosters are drawn from the set code, no official art</span>
+    <div class="rowx gap16" id="sysPacks" style="height:150px;align-items:flex-start"></div>
+  </div>
+</div>
+</div></section>
+
+<!-- ====================================================================================================== 1 -->
+<section class="board"><div class="cap">1 · Home <small>the selected deck is the hero over the blurred arena; mode cards; one filled button; the last game one click away</small></div>
+<div class="frame"><div class="arena" data-arena></div>
+  <div class="topbar" data-top="play"></div>
+
+  <div class="abs col center" style="left:0;right:0;top:88px" data-home="idle"></div>
+  <span class="t-micro stamp">2026-11-20 02:41 (m8)</span>
+</div></section>
+
+<!-- ====================================================================================================== 2 -->
+<section class="board"><div class="cap">2 · Deck library <small>a paper sheet rises over the arena; deck boxes show a whole cover card; the queue bar follows you</small></div>
+<div class="frame"><div class="arena" data-arena></div>
+  <div class="topbar" data-top="decks"></div>
+  <div class="abs rowx" style="left:0;right:0;top:80px;justify-content:center"><span class="qbar"><span class="ring"></span>Searching<span class="sep">·</span>Quick match 1v1 unranked<span class="sep">·</span><span class="n">0:42</span><span class="sep">·</span>3 looking<span class="btn sm" style="margin-left:8px">Cancel</span></span></div>
+  <div class="sheet abs" style="left:96px;right:96px;top:140px;bottom:-20px;padding:24px 24px 44px">
+    <div class="rowx gap16" style="height:44px">
+      <h2 class="t-title">Decks</h2><span class="t-meta">7</span>
+      <span class="seg" style="margin-left:16px"><span class="on">All</span><span>Custom</span><span>Booster</span></span>
+      <span class="grow"></span>
+      <span class="field" style="width:280px"><i data-i="search" data-s="16"></i>Search decks</span>
+      <span class="btn"><i data-i="swap" data-s="16"></i>Last played</span>
+      <span class="btn primary"><i data-i="plus" data-s="16"></i>New deck</span>
+    </div>
+    <div id="deckGrid" style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:24px;margin-top:24px"></div>
+  </div>
+  <div class="abs rowx" style="left:0;right:0;bottom:28px;justify-content:center">
+    <span class="toast"><span><b class="t-strong">Blue Tempo</b> <span class="sub">removed</span></span><span class="btn xs primary">Undo</span><i data-i="close" data-s="16"></i></span>
+  </div>
+</div></section>
+
+<!-- ====================================================================================================== 3 -->
+<section class="board"><div class="cap">3 · Deck builder <small>cards left, the deck and its mana curve right; one row, one height; Done is the only filled control</small></div>
+<div class="frame"><div class="paper"></div>
+  <div class="abs rowx gap16" style="left:32px;right:32px;top:24px;height:44px">
+    <span class="btn ib"><i data-i="arrowLeft"></i></span>
+    <h2 class="t-heading" style="border-bottom:2px solid rgba(13,13,13,.3);padding:0 4px">Green-White Tokens</h2>
+    <span class="chip">Custom</span>
+    <span class="pips"><span class="pip lg g">G</span><span class="pip lg w">W</span></span>
+    <span class="grow"></span>
+    <span class="col" style="align-items:flex-end"><span class="t-eyebrow">Cards</span><span class="t-strong" style="letter-spacing:.1em">58 <span style="color:var(--ds-muted);font-weight:400">/ 60</span></span></span>
+    <span class="divider"></span>
+    <span class="btn"><i data-i="hand" data-s="16"></i>Sample hand</span>
+    <span class="btn ib"><i data-i="more"></i></span>
+    <span class="btn primary" style="min-width:120px">Done</span>
+  </div>
+
+  <div class="abs col gap12" style="left:32px;top:92px;width:968px">
+    <div class="rowx gap8" style="height:44px">
+      <span class="field grow"><i data-i="search" data-s="16"></i><b>warden</b></span>
+      <span class="seg"><span class="on">All cards</span><span>In deck</span></span>
+      <span class="btn"><i data-i="swap" data-s="16"></i>Mana value</span>
+    </div>
+    <div class="rowx gap8" style="height:36px">
+      <span class="btn ib sm is-pressed"><span class="pip lg g">G</span></span><span class="btn ib sm is-pressed"><span class="pip lg w">W</span></span><span class="btn ib sm"><span class="pip lg u">U</span></span><span class="btn ib sm"><span class="pip lg b">B</span></span><span class="btn ib sm"><span class="pip lg r">R</span></span><span class="btn ib sm"><span class="pip lg c">C</span></span>
+      <span class="divider"></span>
+      <span class="chip sm on">Creature</span><span class="chip sm line">Instant</span><span class="chip sm line">Sorcery</span><span class="chip sm line">Enchantment</span><span class="chip sm line">Land</span>
+      <span class="divider"></span>
+      <span class="chip sm line">Any cost</span>
+      <span class="grow"></span><span class="t-meta">212 cards</span>
+    </div>
+    <div id="buildGrid" style="display:grid;grid-template-columns:repeat(6,148px);gap:20px 16px;margin-top:8px"></div>
+  </div>
+
+  <div class="sheet abs col gap16" style="right:32px;top:92px;width:384px;bottom:24px;padding:20px">
+    <div class="rowx between"><span class="t-eyebrow">Mana curve</span><span class="t-meta">average 2.4</span></div>
+    <div class="curve" id="curve"></div>
+    <div class="rowx gap16 t-meta" style="margin-top:-8px"><span class="rowx gap8"><i class="lg1"></i>creatures</span><span class="rowx gap8"><i class="lg2"></i>other spells</span><span class="rowx gap8"><i class="lg3"></i>a good curve</span></div>
+    <div class="col gap8">
+      <div class="cbar"><span style="flex:34;background:var(--ds-mana-g)"></span><span style="flex:22;background:var(--ds-mana-w)"></span></div>
+      <div class="rowx between"><span class="rowx gap8"><span class="pip g">G</span><span class="t-meta">34 symbols · 13 sources</span></span><span class="rowx gap8"><span class="pip w">W</span><span class="t-meta">22 · 9 sources</span></span></div>
+    </div>
+    <div class="rowx gap8 well" style="padding:8px 8px 8px 12px"><span class="grow" style="font-size:12px"><b class="t-strong">22 lands</b> <span class="t-meta">· 24 suggested</span></span><span class="btn xs">+2 lands</span></div>
+    <hr class="hr">
+    <div class="col gap4" style="overflow:hidden;flex:1" id="deckList"></div>
+    <div class="rowx between"><span class="seg sm"><span class="on">Deck 58</span><span>Side 0</span><span>Maybe 3</span></span><span class="status"><i data-i="check" data-s="12"></i>saved</span></div>
+  </div>
+</div></section>
+
+<!-- ====================================================================================================== 4 -->
+<section class="board"><div class="cap">4 · Searching <small>a state of Home, not a screen: the pill stays pressed and counts; the setup is locked; who is looking is one tap away</small></div>
+<div class="frame"><div class="arena" data-arena></div>
+  <div class="topbar" data-top="play"></div>
+  <div class="abs col center" style="left:0;right:0;top:88px" data-home="searching"></div>
+
+  <div class="pop abs col gap8" style="right:32px;top:100px;width:320px;padding:16px">
+    <div class="rowx between" style="padding:0 4px"><span class="t-eyebrow">Looking now</span><span class="t-eyebrow">5</span></div>
+    <div class="rowx between" style="padding:4px 4px 0"><span class="t-meta">Unranked 1v1 · custom decks</span><span class="t-meta">2</span></div>
+    <div><div class="lrow"><span class="dot"></span><span class="t-strong">Mira</span><span class="str"><b></b><b></b><b></b><b class="o"></b><b class="o"></b></span><span class="t-meta">0:42</span><span class="t-meta">you</span></div>
+      <div class="lrow"><span class="dot"></span><span class="t-strong">Tobias</span><span class="str"><b></b><b></b><b></b><b></b><b></b></span><span class="t-meta">2:10</span><span class="t-meta">far</span></div></div>
+    <div class="rowx between" style="padding:4px 4px 0"><span class="t-meta">Unranked 4 FFA · custom decks</span><span class="t-meta">1 / 4</span></div>
+    <div><div class="lrow"><span class="dot"></span><span class="t-strong">Jo</span><span class="str"><b></b><b></b><b class="o"></b><b class="o"></b><b class="o"></b></span><span class="t-meta">5:31</span><span></span></div></div>
+    <span class="t-meta" style="padding:4px 4px 0">Tobias is outside your range.</span><span class="btn sm">Play anyone now</span>
+  </div>
+
+  <div class="abs col gap8" style="left:32px;top:100px;width:320px">
+    <span class="t-eyebrow" style="margin-left:4px">Next · match found (centred, on a scrim)</span>
+    <div class="pop col center gap16" style="padding:24px;box-shadow:var(--ds-elevation-dialog);border-radius:var(--ds-radius-sheet)">
+      <span class="t-word" style="font-size:18px">Match found</span><span class="t-eyebrow">1v1 · unranked</span>
+      <div class="rowx gap24"><span class="rowx gap8"><span class="seatg a">●</span><b class="t-strong">Ann</b><i data-i="check" data-s="16"></i></span><span class="t-meta">vs</span><span class="rowx gap8"><span class="seatg b">◆</span><b class="t-strong">Mira</b><span class="t-meta">…</span></span></div>
+      <div class="rowx gap16"><span class="count"><span>17</span></span><span class="btn lg primary" style="min-width:160px">Accept</span></div>
+      <span class="btn sm quiet">Decline</span>
+    </div>
+  </div>
+</div></section>
+
+<!-- ====================================================================================================== 5 -->
+<section class="board"><div class="cap">5 · Draft night <small>the deck hero gives way to closed boosters drawn from the set code; seats left, invitation right</small></div>
+<div class="frame"><div class="arena" data-arena></div>
+  <div class="topbar" data-top="play"></div>
+  <div class="sheet abs col gap12" style="left:96px;top:100px;width:336px;padding:24px">
+    <div class="rowx between"><span class="t-eyebrow">Draft night · players 2 of 4</span><span class="chip line">4 FFA</span></div>
+    <div class="listcard"><span class="seatg md a">●</span><div class="col grow"><span class="rowx gap8"><span class="t-strong">Ann</span><span class="t-meta">you · host</span></span><span class="rowx gap8"><span class="dot"></span><span class="t-meta ok">ready</span></span></div><i data-i="check" data-s="20"></i></div>
+    <div class="listcard"><span class="seatg md b">◆</span><div class="col grow"><span class="t-strong">Ben</span><span class="rowx gap8"><span class="dot"></span><span class="t-meta">here · not ready</span></span></div><span class="btn ib sm quiet"><i data-i="more"></i></span></div>
+    <div class="listcard"><span class="seatg md c" style="opacity:.5">▲</span><div class="col grow"><span class="t-strong" style="color:var(--ds-muted)">Cleo</span><span class="rowx gap8"><span class="dot away"></span><span class="t-meta">invited · connecting</span></span></div><span class="btn ib sm quiet"><i data-i="more"></i></span></div>
+    <div class="listcard" style="background:transparent;box-shadow:inset 0 0 0 1.5px rgba(13,13,13,.2);color:var(--ds-muted)"><span class="seatg md" style="box-shadow:inset 0 0 0 1.5px rgba(13,13,13,.25);color:var(--ds-muted);background:transparent"><i data-i="plus"></i></span><span class="grow">Open seat</span></div>
+    <span class="t-reading">The game starts when everyone here is ready. An open seat stays empty.</span>
+  </div>
+
+  <div class="abs col center" style="left:456px;right:456px;top:92px">
+    <span class="t-eyebrow">Live booster draft</span>
+    <div class="rowx" id="packs" style="height:346px;margin-top:8px;align-items:flex-start;justify-content:center"></div>
+    <h2 class="t-heading" style="margin-top:4px">3 boosters each</h2>
+    <span class="t-meta" style="margin-top:4px">15 cards a pack · pick one, pass the rest · 40-card decks</span>
+    <div class="rowx gap8" style="margin-top:16px"><span class="chip">Booster draft</span><span class="chip">Pick 1</span><span class="chip line">3 × COR</span></div>
+    <div class="rowx gap8" style="margin-top:12px">
+      <span class="btn sm"><span class="t-meta">1</span>COR<i data-i="chevronDown" data-s="16"></i></span><span class="btn sm"><span class="t-meta">2</span>COR<i data-i="chevronDown" data-s="16"></i></span><span class="btn sm"><span class="t-meta">3</span>COR<i data-i="chevronDown" data-s="16"></i></span>
+      <span class="btn sm ghost"><i data-i="clock" data-s="16"></i>60 s a pick</span>
+    </div>
+    <span class="btn lg is-disabled" style="margin-top:28px">Waiting for Ben</span>
+    <span class="status" style="margin-top:10px">starts by itself when everyone is ready</span>
+  </div>
+
+  <div class="sheet abs col gap16 center" style="right:96px;top:100px;width:336px;padding:24px">
+    <div class="rowx gap12" style="align-self:stretch;align-items:flex-start"><span class="well" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;flex:none"><i data-i="userPlus"></i></span>
+      <div class="col gap4"><span class="t-strong">Invite players</span><span class="t-reading">Send the link or let them scan the code. They sit down as soon as it opens.</span></div></div>
+    <span class="qr" data-qr="184"></span>
+    <span class="field sq" style="align-self:stretch;font-size:12px">spellplane.app/#/g/K7QW2M…</span>
+    <span class="btn primary" style="align-self:stretch"><i data-i="copy" data-s="16"></i>Copy link</span>
+    <span class="status"><span class="dot away"></span>waiting for players · 2 of 4 here</span>
+  </div>
+</div></section>
+
+<!-- ====================================================================================================== 6 -->
+<section class="board"><div class="cap">6 · History <small>games are named by their players; the row says what happens when you open it; rejoin shows who holds which state</small></div>
+<div class="frame"><div class="arena" data-arena></div>
+  <div class="topbar" data-top="history"></div>
+  <div class="sheet abs" style="left:96px;right:96px;top:92px;bottom:-20px;padding:24px 24px 44px;display:grid;grid-template-columns:1fr 392px;gap:24px">
+    <div class="col gap12">
+      <div class="rowx gap16" style="height:44px"><h2 class="t-title">History</h2><span class="t-meta">14 games</span><span class="seg" style="margin-left:16px"><span class="on">All</span><span>Unfinished</span><span>Finished</span></span></div>
+      <div class="glabel t-eyebrow">Today</div>
+      <div class="hrow sel"><span class="still" data-still="1"></span>
+        <div><div class="l1"><span class="t-list">Ben</span><span class="dot"></span></div><div class="l2"><span class="t-eyebrow">1v1 · quick match · unranked</span></div><div class="l3">Your turn <span class="t-meta">· turn 7 · 20 – 18</span></div></div>
+        <div class="rt"><span class="t-meta">2 h ago</span><span class="btn sm primary">Continue</span></div></div>
+      <div class="hrow"><span class="still" data-still="3"></span>
+        <div><div class="l1"><span class="t-list">Sparring</span></div><div class="l2"><span class="t-eyebrow">1v1 · solo · booster deck</span></div><div class="l3"><span class="ok t-strong">Won</span> <span class="t-meta">· 11 turns · 24 min</span></div></div>
+        <div class="rt"><span class="t-meta">5 h ago</span><span class="btn sm">Look</span></div></div>
+      <div class="glabel t-eyebrow">This week</div>
+      <div class="hrow"><span class="still" data-still="2"></span>
+        <div><div class="l1"><span class="t-list">Cleo, Dev, Ben</span><span class="dot away"></span></div><div class="l2"><span class="t-eyebrow">4 FFA · draft night · game 2</span></div><div class="l3">Cleo's turn <span class="t-meta">· turn 4 · 1 of 4 here</span></div></div>
+        <div class="rt"><span class="t-meta">Tue</span><span class="btn sm">Continue</span></div></div>
+      <div class="hrow"><span class="still" data-still="4"></span>
+        <div><div class="l1"><span class="t-list">Dev</span><span class="dot off"></span></div><div class="l2"><span class="t-eyebrow">1v1 · quick match · ranked</span></div><div class="l3"><span style="color:var(--ds-muted)">Lost</span> <span class="t-meta">· 9 turns · 17 min</span></div></div>
+        <div class="rt"><span class="t-meta">Mon</span><span class="btn sm">Look</span></div></div>
+      <div class="glabel t-eyebrow">Older</div>
+      <div class="hrow"><span class="still" data-still="5"></span>
+        <div><div class="l1"><span class="t-list">Ben &amp; Ann vs Cleo &amp; Dev</span></div><div class="l2"><span class="t-eyebrow">2v2 · private game</span></div><div class="l3">Left on turn 12 <span class="t-meta">· all four saved it</span></div></div>
+        <div class="rt"><span class="t-meta">Nov 2</span><span class="btn sm">Continue</span></div></div>
+    </div>
+    <div class="col gap16" style="padding:8px 8px 0 24px;border-left:1px solid var(--ds-line)">
+      <span class="still" data-still="1" style="width:100%;height:194px;border-radius:12px"></span>
+      <div class="col gap4"><span class="t-heading">Ben</span><span class="t-eyebrow">1v1 · quick match · game K7QW2M</span></div>
+      <div class="col gap8">
+        <div class="rowx gap12"><span class="seatg a">●</span><span class="grow"><b class="t-strong">Ann</b> <span class="t-meta">you</span></span><span class="t-meta">turn 7 · saved 2 h ago</span><span class="chip on">newest</span></div>
+        <div class="rowx gap12"><span class="seatg b">◆</span><span class="grow rowx gap8"><b class="t-strong">Ben</b><span class="dot"></span></span><span class="t-meta">turn 6 · gets yours</span></div>
+      </div>
+      <div class="well" style="padding:12px"><span class="t-reading">Everyone is here. Ben's table is brought up to your turn 7 before play goes on.</span></div>
+      <div class="rowx gap8"><span class="btn primary grow">Continue</span><span class="btn ib"><i data-i="qr"></i></span><span class="btn ib"><i data-i="more"></i></span></div>
+      <span class="status"><i data-i="check" data-s="12"></i>saved on this device · 38 kB</span>
+    </div>
+  </div>
+</div></section>
+
+<!-- ====================================================================================================== 7 -->
+<section class="board"><div class="cap">7 · In game <small>the Plain table with depth; chrome is opaque paper, no blur; a seat menu on each plate re-invites a missing player</small></div>
+<div class="frame" style="background:var(--ds-frame)">
+  <div class="abs" style="inset:10px;border-radius:24px;background:var(--ds-mat) var(--ds-texture-page) 0 0/8px 8px;box-shadow:inset 0 0 0 1px rgba(13,13,13,.10), inset 0 2px 0 #fff, 0 6px 20px rgba(0,0,0,.18)"></div>
+  <div class="abs" style="left:120px;right:120px;top:450px;height:1px;background:rgba(13,13,13,.16)"></div>
+  <div id="table"></div>
+
+  <div class="abs bar" style="left:24px;top:24px"><span class="btn ib"><i data-i="menu"></i></span><span class="btn"><i data-i="undo" data-s="16"></i>Undo</span></div>
+  <div class="abs rowx" style="left:0;right:0;top:24px;justify-content:center;pointer-events:none">
+    <span class="bar" style="height:44px;padding:0 4px 0 12px;gap:12px;border-radius:999px;background:var(--ds-panel-raised);box-shadow:var(--ds-elevation-raised)">
+      <span class="seatg a" style="width:24px;height:24px;font-size:10px">●</span><span class="t-strong" style="font-size:12px;text-transform:uppercase;letter-spacing:.05em">Your turn · 7</span>
+      <span class="seg sm"><span>Beginning</span><span class="on">Main</span><span>Combat</span><span>Main 2</span><span>End</span></span></span>
+  </div>
+  <div class="abs bar" style="right:24px;top:24px"><span class="status" style="margin-right:8px"><i data-i="check" data-s="12"></i>saved 0:12 ago</span><span class="btn ib" style="position:relative"><i data-i="chat"></i><span class="badge" style="position:absolute;top:-4px;right:-4px">2</span></span></div>
+
+  <!-- the opponent's plate, away, with its seat menu open -->
+  <div class="abs rowx" style="left:0;right:0;top:84px;justify-content:center">
+    <span class="plate away"><span class="seatg lg b">◆</span><span class="who"><span class="nm">Ben<span class="dot away"></span></span><span class="t-meta">away 2:10 · hand 5</span></span><span class="life">18</span><span class="btn xs" style="margin-left:4px">Invite again</span><span class="btn ib sm is-pressed"><i data-i="more"></i></span></span>
+  </div>
+  <div class="pop menu abs" style="left:948px;top:84px;z-index:6">
+    <div class="sec">
+      <div class="rowx between"><span class="t-eyebrow">Ben · seat 2</span><span class="status" style="height:16px"><span class="dot away"></span>away 2:10</span></div>
+      <div class="rowx gap16" style="align-items:flex-start"><span class="qr" data-qr="124"></span>
+        <div class="col gap8"><span class="t-strong">Bring Ben back</span><span class="t-reading" style="font-size:12px">He opens this link or scans the code and gets the table as you have it now.</span></div></div>
+      <span class="btn sm primary"><i data-i="copy" data-s="16"></i>Copy Ben's link</span>
+    </div>
+    <hr class="hr" style="margin:0 12px 8px">
+    <div class="mi"><i data-i="qr" data-s="16"></i>Show the code large</div>
+    <div class="mi hov"><i data-i="view" data-s="16"></i>Look at Ben's side</div>
+    <div class="mi"><i data-i="volume" data-s="16"></i>Ben's voice<span class="k">100%</span></div>
+    <div class="mi"><i data-i="userPlus" data-s="16"></i>Give this seat to someone else…</div>
+  </div>
+
+  <div class="abs" style="left:24px;bottom:24px"><span class="plate"><span class="seatg lg a">●</span><span class="who"><span class="nm">Ann<span class="dot"></span></span><span class="t-meta">you</span></span><span class="life">20</span><span class="chip" style="margin-left:4px"><span class="pip r" style="background:#6b3fa0">P</span>1 poison</span></span></div>
+  <div id="hand" class="abs" style="left:50%;bottom:-70px;width:760px;margin-left:-380px;height:240px"></div>
+  <div class="abs col gap12" style="right:24px;bottom:24px;align-items:flex-end">
+    <span class="toast"><span class="dot away"></span><span><b class="t-strong">Ben</b> <span class="sub">left · the game is saved</span></span></span>
+    <span class="bar gap12"><span class="btn ib lg"><i data-i="mic" data-s="24"></i></span><span class="btn lg primary" style="min-width:200px">To combat<i data-i="chevronRight"></i></span></span>
+  </div>
+</div></section>
+
+</div>
+
+<script>
+/* Everything below only fills the boards with repeated placeholders; the design is in the CSS above. */
+const I = {
+  menu:'M4 7h16M4 12h16M4 17h16', undo:'M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3', chat:'M5 5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-7l-5 4v-4H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z',
+  mic:'M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3zM5 11a7 7 0 0 0 14 0M12 18v3', plus:'M12 5v14M5 12h14', minus:'M5 12h14', close:'M6 6l12 12M18 6L6 18',
+  chevronLeft:'M15 6l-6 6 6 6', chevronRight:'M9 6l6 6-6 6', chevronDown:'M6 9l6 6 6-6', more:'M6 12h.01M12 12h.01M18 12h.01',
+  deck:'M7 4h10a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM9 2h8a3 3 0 0 1 3 3v12', play:'M7 4l13 8-13 8z',
+  settings:'M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1',
+  copy:'M9 9h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1zM5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1',
+  search:'M11 4a7 7 0 1 1 0 14 7 7 0 0 1 0-14zM20 20l-4-4', lock:'M6 11h12a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1zM8 11V8a4 4 0 0 1 8 0v3',
+  edit:'M4 20h4L19 9l-4-4L4 16v4zM13 7l4 4', clock:'M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM12 7v5l3 2', check:'M5 12l5 5 9-10',
+  qr:'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h2v2h-2zM18 14h2M14 18v2M18 18h2v2', sliders:'M4 7h10M18 7h2M4 17h2M10 17h10M16 5v4M8 15v4',
+  userPlus:'M3 20v-1a6 6 0 0 1 12 0v1M9 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM17 8v6M14 11h6', cpu:'M7 7h10v10H7zM10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4',
+  globe:'M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9z',
+  volume:'M4 10v4h3l5 4V6L7 10H4zM16 9a4 4 0 0 1 0 6', view:'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zM12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6z',
+  arrowLeft:'M19 12H5M11 6l-6 6 6 6', swap:'M7 4L3 8l4 4M3 8h14M17 12l4 4-4 4M21 16H7',
+  hand:'M6 4h7a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1zM16 6l3 .8a1 1 0 0 1 .7 1.2l-3.3 12',
+};
+const ico = (n, s = 20) => `<svg class="i" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${I[n]}"/></svg>`;
+const icons = (root = document) => root.querySelectorAll('i[data-i]').forEach((e) => { e.outerHTML = ico(e.dataset.i, +(e.dataset.s || 20)); });
+const hash = (s) => { let h = 2166136261; for (const c of s) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
+const rng = (seed) => () => ((seed = Math.imul(seed ^ (seed >>> 15), 2246822507) + 0x9e3779b9 | 0) >>> 0) / 4294967296;
+
+const pipsOf = (cost) => `<span class="pips">${[...cost].map((c) => /\d/.test(c) ? `<span class="pip c">${c}</span>` : `<span class="pip ${c.toLowerCase()}">${c}</span>`).join('')}</span>`;
+/** A placeholder card face: a neutral rectangle with a name. */
+function card(name, cost = '', type = '', w = 120, cls = '', extra = '') {
+  if (cls.includes('back')) return `<div class="cardph ${cls}" style="--w:${w}px"><div class="f"></div>${extra}</div>`;
+  const text = w >= 84 ? `<div class="tt"><span>${name}</span>${pipsOf(cost)}</div><div class="ar"></div><div class="ty">${type}</div><div class="tx"><i></i><i></i><i></i></div>` : `<div class="ar" style="flex:1"></div><div class="tx" style="flex:.8"><i></i><i></i></div>`;
+  return `<div class="cardph ${cls}" style="--w:${w}px"><div class="f">${text}</div>${extra}</div>`;
+}
+
+/* the arena sketch behind the shell */
+document.querySelectorAll('[data-arena]').forEach((el) => {
+  const r = rng(7); let s = '<u></u>';
+  const row = (y, n, x0, tapP, k) => { for (let i = 0; i < n; i++) s += `<i class="${r() < tapP ? 't' : ''} ${k || ''}" style="left:${x0 + i * 7.4}%;top:${y}%"></i>`; };
+  row(8, 6, 26, .4); row(27, 4, 34, .2); row(56, 5, 30, .15); row(76, 7, 22, .45);
+  s += '<i class="k" style="left:88%;top:10%"></i><i style="left:88%;top:28%"></i><i class="k" style="left:6%;top:74%"></i><i style="left:6%;top:56%"></i>';
+  el.innerHTML = `<div class="tbl">${s}</div><div class="veil"></div>`;
+});
+
+/* the shell's top bar */
+document.querySelectorAll('[data-top]').forEach((el) => {
+  const t = el.dataset.top, on = (k) => (k === t ? 'on' : '');
+  el.innerHTML = `<span class="t-word" style="font-size:18px">Spellplane</span>
+    <span class="seg mid"><span class="${on('play')}">${ico('play', 16)}Play</span><span class="${on('decks')}">${ico('deck', 16)}Decks</span><span class="${on('history')}">${ico('clock', 16)}History</span></span>
+    <span class="bar"><span class="btn" style="padding-left:8px"><span class="seatg a">●</span>Ann</span><span class="btn ib">${ico('settings')}</span></span>`;
+});
+
+/* stills: a small picture of a saved table (public zones only) */
+document.querySelectorAll('[data-still]').forEach((el) => {
+  const r = rng(+el.dataset.still * 97); let s = '';
+  for (const [y, n] of [[10, 3 + (r() * 3 | 0)], [28, 2 + (r() * 3 | 0)], [56, 2 + (r() * 4 | 0)], [74, 3 + (r() * 4 | 0)]]) { const x0 = 50 - n * 4.5; for (let i = 0; i < n; i++) s += `<i class="${r() < .3 ? 't' : ''}" style="left:${x0 + i * 9}%;top:${y}%"></i>`; }
+  el.innerHTML = s;
+});
+
+/* a stand-in for a QR code (not scannable): dark modules on a white plate in every look */
+document.querySelectorAll('[data-qr]').forEach((el) => {
+  const n = 25, px = +el.dataset.qr, c = px / n, r = rng(41); let s = '';
+  const finder = (x, y) => (x < 7 && y < 7) || (x >= n - 7 && y < 7) || (x < 7 && y >= n - 7);
+  const fOn = (x, y) => { const fx = x < 7 ? x : x - (n - 7), fy = y < 7 ? y : y - (n - 7); return fx === 0 || fx === 6 || fy === 0 || fy === 6 || (fx >= 2 && fx <= 4 && fy >= 2 && fy <= 4); };
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { const on = finder(x, y) ? fOn(x, y) : (x === 7 || y === 7 || x === n - 8 || y === n - 8) && (x < 8 || y < 8) ? false : r() < .48; if (on) s += `<rect x="${x * c}" y="${y * c}" width="${c + .3}" height="${c + .3}"/>`; }
+  el.innerHTML = `<svg width="${px}" height="${px}" viewBox="0 0 ${px} ${px}" fill="#0d0d0d">${s}</svg>`;
+});
+
+/* a booster drawn from its set code: foil wrap, crimped ends, a sigil computed from the code. No official art. */
+function pack(code, i, w = 172) {
+  const h = Math.round(w * 1.74), hh = hash(code + ':' + i), n = 5 + hh % 4, turn = (hh >>> 4) % 360, rings = 2 + (hh >>> 9) % 2, cx = w / 2, cy = h * .44, R = w * .30, id = `p${hh}${w}`;
+  const teeth = 18, tw = w / teeth; let d = `M0 9`;
+  for (let k = 0; k < teeth; k++) d += ` l${tw / 2} -7 l${tw / 2} 7`;
+  d += ` L${w} ${h - 9}`; for (let k = 0; k < teeth; k++) d += ` l${-tw / 2} 7 l${-tw / 2} -7`; d += ' Z';
+  let star = ''; for (let k = 0; k < n * 2; k++) { const a = (turn + k * 180 / n) * Math.PI / 180, rr = k % 2 ? R * .42 : R; star += `${k ? 'L' : 'M'}${(cx + Math.cos(a) * rr).toFixed(1)} ${(cy + Math.sin(a) * rr).toFixed(1)}`; } star += 'Z';
+  let rays = ''; for (let k = 0; k < n; k++) { const a = (turn + k * 360 / n) * Math.PI / 180; rays += `M${cx} ${cy}L${(cx + Math.cos(a) * R * 1.45).toFixed(1)} ${(cy + Math.sin(a) * R * 1.45).toFixed(1)}`; }
+  let rg = ''; for (let k = 0; k < rings; k++) rg += `<circle cx="${cx}" cy="${cy}" r="${R * (1.12 + k * .16)}"/>`;
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="filter:drop-shadow(0 2px 2px rgba(0,0,0,.3)) drop-shadow(0 16px 20px rgba(0,0,0,.28))">
+    <defs><linearGradient id="${id}g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a3a3a"/><stop offset=".32" stop-color="#151515"/><stop offset=".5" stop-color="#4a4a4a"/><stop offset=".62" stop-color="#1b1b1b"/><stop offset="1" stop-color="#2c2c2c"/></linearGradient>
+    <pattern id="${id}d" width="5" height="5" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".7" fill="rgba(255,255,255,.10)"/></pattern>
+    <pattern id="${id}c" width="4" height="4" patternUnits="userSpaceOnUse"><path d="M1 0v4" stroke="rgba(255,255,255,.22)" stroke-width="1"/></pattern><clipPath id="${id}k"><path d="${d}"/></clipPath></defs>
+    <g clip-path="url(#${id}k)"><rect width="${w}" height="${h}" fill="url(#${id}g)"/><rect width="${w}" height="${h}" fill="url(#${id}d)"/>
+    <rect y="0" width="${w}" height="24" fill="url(#${id}c)"/><rect y="${h - 24}" width="${w}" height="24" fill="url(#${id}c)"/>
+    <path d="M0 24.5h${w}M0 ${h - 24.5}h${w}" stroke="rgba(255,255,255,.3)"/><path d="M${cx} 24v${h - 48}" stroke="rgba(0,0,0,.35)" stroke-width="1"/></g>
+    <g fill="none" stroke="#e9e9e9" stroke-width="1.25" stroke-linejoin="round"><path d="${rays}" opacity=".35"/>${rg}<path d="${star}" fill="#101010"/><circle cx="${cx}" cy="${cy}" r="${R * .16}" fill="#e9e9e9" stroke="none"/></g>
+    <text x="${cx}" y="${h * .80}" text-anchor="middle" font-family="Fira Code, monospace" font-size="${w * .15}" font-weight="300" letter-spacing="${w * .03}" fill="#f2f2f2">${code}</text>
+    <text x="${cx}" y="${h * .86}" text-anchor="middle" font-family="Fira Code, monospace" font-size="${w * .05}" letter-spacing="${w * .012}" fill="#9a9a9a">15 CARDS · BOOSTER</text></svg>`;
+}
+document.getElementById('packs').innerHTML = [-9, 0, 9].map((a, i) => `<span style="transform:rotate(${a}deg) translateY(${Math.abs(a) * 1.6}px);margin:0 -14px;z-index:${i === 1 ? 2 : 1}">${pack('COR', i, 188)}</span>`).join('');
+document.getElementById('sysPacks').innerHTML = ['COR', 'ALP', 'ZEN', 'M8'].map((c, i) => pack(c, i, 80)).join('');
+
+/* deck tiles */
+const str = (n) => `<span class="str">${[1, 2, 3, 4, 5].map((k) => `<b class="${k > n ? 'o' : ''}"></b>`).join('')}</span>`;
+function tile(d) {
+  const cover = `${card('', '', '', 96, 'back pile', '')}`.replace('class="cardph', 'style="position:absolute;transform:rotate(4deg) translate(10px,2px)" class="cardph') + card(d.cover, d.cost, d.type, 96, 'pile');
+  return `<div class="tile ${d.cls || ''}"><div class="stage well dots">${cover}${d.seal ? `<span class="seal">${ico('lock', 12)}${d.seal}</span>` : ''}</div>
+    ${d.cls && d.cls.includes('hover') ? `<div class="acts"><span class="btn sm primary">Play</span><span class="btn sm">Edit</span><span class="btn ib sm">${ico('more', 16)}</span></div>` : ''}
+    <div class="info"><div class="row"><span class="name">${d.name}</span>${d.sel ? '<span class="chip on" style="height:20px;padding:0 8px;font-size:10px">Selected</span>' : ''}</div>
+    <div class="row"><span class="rowx gap8"><span class="pips">${[...d.col].map((c) => `<span class="pip ${c.toLowerCase()}">${c}</span>`).join('')}</span><span class="t-eyebrow">${d.n} · ${d.kind}</span></span>${str(d.s)}</div>
+    <div class="row"><span class="t-meta">${d.when}</span><span class="spark">${d.curve.map((v) => `<i style="height:${v * 2}px"></i>`).join('')}</span></div></div></div>`;
+}
+const DECKS = [
+  { name: 'Green-White Tokens', cover: 'Grove Warden', cost: '2G', type: 'Creature', col: 'GW', n: 60, kind: 'Custom', s: 3, when: 'played 2 h ago', curve: [2, 7, 10, 6, 3, 1], cls: 'sel', sel: 1 },
+  { name: 'Red Burn', cover: 'Cinder Bolt', cost: 'R', type: 'Instant', col: 'R', n: 60, kind: 'Custom', s: 4, when: 'played Tue', curve: [1, 10, 8, 4, 1, 0], cls: 'hover' },
+  { name: 'Thursday Draft', cover: 'Tidewatch Adept', cost: '1U', type: 'Creature', col: 'UB', n: 40, kind: 'Booster', s: 2, when: 'drafted Thu', curve: [1, 4, 6, 5, 3, 2], seal: 'COR × 3' },
+  { name: 'Elf Ball', cover: 'Mossback Elder', cost: '3G', type: 'Creature', col: 'G', n: 60, kind: 'Custom', s: 3, when: 'edited Mon', curve: [3, 9, 8, 3, 2, 1] },
+  { name: 'Six Boosters · Nov 2', cover: 'Ashen Duelist', cost: '2R', type: 'Creature', col: 'RW', n: 40, kind: 'Booster', s: 2, when: 'opened Nov 2', curve: [0, 5, 7, 5, 3, 1], seal: 'COR × 6' },
+  { name: 'Graveyard Shift', cover: 'Hollow Keeper', cost: '1B', type: 'Creature', col: 'BG', n: 58, kind: 'Custom', s: 3, when: '2 cards short', curve: [2, 6, 7, 6, 4, 2] },
+  { name: 'Three-Colour Control', cover: 'Prism Gate', cost: '3', type: 'Artifact', col: 'WUB', n: 60, kind: 'Custom', s: 5, when: 'edited Oct 28', curve: [2, 5, 8, 9, 7, 5] },
+];
+document.getElementById('deckGrid').innerHTML = `<div class="tile new" style="min-height:268px"><span class="btn ib lg">${ico('plus', 24)}</span><span class="t-strong" style="color:var(--ds-ink)">New deck</span><span class="t-meta" style="text-align:center">build it · open boosters<br>paste a list</span></div>` + DECKS.map(tile).join('');
+document.getElementById('sysTiles').innerHTML = tile(DECKS[0]) + tile(DECKS[2]);
+
+/* builder */
+const POOL = [['Grove Warden', '2G', 'Creature', 4], ['Thicket Sentry', '1G', 'Creature', 4], ['Dawn Herald', '2W', 'Creature', 3], ['Mossback Elder', '3G', 'Creature', 2], ['Warden of Oaths', '1W', 'Creature', 0], ['Hillside Warden', '4G', 'Creature', 1],
+  ['Meadow Warden', 'GW', 'Creature', 4], ['Stonepath Warden', '3', 'Creature', 0], ['Ward of Thorns', '1G', 'Creature', 0], ['Lantern Warden', '2W', 'Creature', 2], ['Old Growth Warden', '5G', 'Creature', 0], ['Gate Warden', '1', 'Creature', 0],
+  ['Wardens’ Call', '3W', 'Creature', 0], ['Brook Warden', '1G', 'Creature', 0], ['Vine Warden', 'G', 'Creature', 4], ['High Warden', '4W', 'Creature', 1], ['Ember Warden', '2G', 'Creature', 0], ['Last Warden', '6', 'Creature', 0]];
+document.getElementById('buildGrid').innerHTML = POOL.map(([n, c, t, q], i) => card(n, c, t, 148, i === 6 ? 'sel' : '', (q ? `<span class="cnt">×${q}</span>` : '') + (i === 6 ? `<span style="position:absolute;left:0;right:0;bottom:-14px;display:flex;justify-content:center;gap:6px"><span class="btn ib xs">${ico('minus', 14)}</span><span class="btn ib xs primary">${ico('plus', 14)}</span></span>` : ''))).join('');
+const CURVE = [[0, 1, 1], [6, 2, 7], [8, 4, 10], [5, 2, 8], [2, 2, 5], [1, 1, 3], [0, 1, 1], [0, 0, 1]];
+document.getElementById('curve').innerHTML = CURVE.map(([cr, sp, tg], i) => `<div class="col"><span class="n" style="bottom:${22 + Math.max(cr + sp, tg) * 9}px">${cr + sp || ''}</span><span class="tg" style="height:${tg * 9}px"></span><div class="bars">${sp ? `<div class="sp" style="height:${sp * 9 - 2}px"></div>` : ''}${cr ? `<div class="cr" style="height:${cr * 9}px"></div>` : ''}</div><span class="x">${i === 7 ? '7+' : i}</span></div>`).join('');
+const LIST = [['Creatures', 22, [[4, 'Vine Warden', 'G', 1], [4, 'Thicket Sentry', '1G', 2], [4, 'Meadow Warden', 'GW', 2], [4, 'Grove Warden', '2G', 3], [3, 'Dawn Herald', '2W', 3], [2, 'Mossback Elder', '3G', 4]]],
+  ['Spells', 14, [[4, 'Sunlit Vow', '1W', 2], [4, 'Rally the Grove', '2G', 3], [3, 'Open Field', '1G', 2]]], ['Lands', 22, [[12, 'Forest', '', 0], [8, 'Plains', '', 0]]]];
+document.getElementById('deckList').innerHTML = LIST.map(([g, n, rows]) => `<div class="rowx between" style="padding:6px 8px 2px"><span class="t-eyebrow">${g}</span><span class="t-eyebrow">${n}</span></div>` + rows.map(([q, nm, c, mv]) => `<div class="drow"><span class="q">${q}</span><span>${nm}</span>${c ? pipsOf(c) : '<span></span>'}<span class="mv">${mv || ''}</span></div>`).join('')).join('');
+
+/* Home, idle and searching */
+document.querySelectorAll('[data-home]').forEach((el) => {
+  const q = el.dataset.home === 'searching';
+  const modes = [['cpu', 'Solo', 'sparring ready'], ['globe', 'Quick match', '3 looking now'], ['userPlus', 'Private game', 'link or QR code'], ['deck', 'Draft night', 'boosters, live']];
+  el.innerHTML = `<span class="t-eyebrow">${q ? 'In the queue with' : 'Your deck · 3 of 7'}</span>
+    <div class="rowx" style="gap:40px;margin-top:8px">
+      <span class="btn ib ${q ? 'is-disabled' : ''}">${ico('chevronLeft')}</span>
+      <div class="fan" style="height:${q ? 250 : 300}px">${card('Thicket Sentry', '1G', 'Creature', q ? 164 : 200) + card('Sunlit Vow', '1W', 'Instant', q ? 164 : 200) + card('Mossback Elder', '3G', 'Creature', q ? 164 : 200) + card('Dawn Herald', '2W', 'Creature', q ? 164 : 200) + card('Grove Warden', '2G', 'Creature — Elf', q ? 164 : 200, 'pile')}</div>
+      <span class="btn ib ${q ? 'is-disabled' : ''}">${ico('chevronRight')}</span>
+    </div>
+    <h2 class="t-heading" style="margin-top:14px">Green-White Tokens</h2>
+    <div class="rowx gap12" style="margin-top:6px"><span class="pips"><span class="pip g">G</span><span class="pip w">W</span></span><span class="t-eyebrow">Custom deck · 60 cards</span><span class="t-eyebrow">·</span>
+      <span class="spark">${[4, 14, 20, 12, 7, 3].map((v) => `<i style="height:${v}px"></i>`).join('')}</span><span class="t-eyebrow">·</span><span class="t-eyebrow">Strength</span>${str(3)}<span class="t-eyebrow ink">54 solid</span></div>
+    <div class="rowx gap12 ${q ? 'locked' : ''}" style="margin-top:18px">${modes.map(([ic, t, sub], i) => `<span class="mcard ${i === 1 ? 'sel' : ''}"><span class="ic">${ico(ic)}</span><span><b>${t}</b><span class="t-meta">${sub}</span></span></span>`).join('')}</div>
+    <div class="rowx gap12 ${q ? 'locked' : ''}" style="margin-top:12px"><span class="seg sm"><span class="on">1v1</span><span>2v2</span><span>3 FFA</span><span>4 FFA</span></span><span class="seg sm"><span class="on">Unranked</span><span>Ranked</span></span></div>
+    ${q ? `<div class="rowx gap12" style="margin-top:20px"><span class="btn lg is-searching"><span class="rowx gap12"><span class="ring"></span>Searching</span><span class="n">0:42</span></span><span class="btn ib lg ghost">${ico('close')}</span></div>
+           <span class="status" style="margin-top:12px"><span class="dot"></span>3 looking now · 1 in your queue${ico('chevronRight', 12)}</span>
+           <span class="t-reading" style="margin-top:4px">Browse your decks while you wait. A chime tells you when a match is found.</span>`
+        : `<span class="btn lg primary" style="margin-top:20px">Find match</span>
+           <span class="status" style="margin-top:12px"><span class="dot"></span>3 looking now · 1 in your queue</span>
+           <span class="btn" style="margin-top:10px;gap:12px"><span class="t-eyebrow ink">Continue</span><span style="text-transform:none;letter-spacing:0;font-weight:400">vs Ben · 1v1 · your turn · turn 7</span><span class="t-meta">2 h ago</span>${ico('chevronRight', 16)}</span>
+           <span style="margin-top:6px;color:var(--ds-muted)">${ico('chevronDown')}</span>`}`;
+});
+
+/* the mini samples of the same chrome over the other looks */
+document.querySelectorAll('[data-mini]').forEach((el) => {
+  el.innerHTML = `<span class="t-eyebrow">${el.dataset.mini}</span><span class="plate"><span class="seatg md a">●</span><span class="who"><span class="nm">Ann</span></span><span class="life">20</span></span>
+    ${card('', '', '', 36)}<span class="grow"></span><span class="btn primary">To combat</span>`;
+});
+
+/* the table of board 7 */
+(() => {
+  const at = (x, y, html, rot = 0) => `<div class="abs" style="left:${x}px;top:${y}px;${rot ? `transform:rotate(${rot}deg)` : ''}">${html}</div>`;
+  const W = 92; let s = '';
+  [['Swamp', '', 'Land'], ['Island', '', 'Land', 1], ['Island', '', 'Land']].forEach(([n, c, t, tap], i) => (s += at(420 + i * 140, 176, card(n, c, t, W, tap ? 'tap' : ''))));
+  [['Tidewatch Adept', '1U', 'Creature'], ['Hollow Keeper', '1B', 'Creature']].forEach(([n, c, t], i) => (s += at(520 + i * 140, 306, card(n, c, t, W))));
+  s += at(200, 176, card('', '', '', W, 'back pile', '<span class="cnt">44</span>')) + at(200, 314, card('Night Toll', '2B', 'Sorcery', W, '', '<span class="cnt">2</span>'));
+  [['Grove Warden', '2G', 'Creature'], ['Thicket Sentry', '1G', 'Creature', 0, 1], ['Meadow Warden', 'GW', 'Creature']].forEach(([n, c, t, tap, sel], i) => (s += at(520 + i * 140, 470, card(n, c, t, W, sel ? 'sel' : ''))));
+  [['Forest', '', 'Land', 1], ['Forest', '', 'Land', 1], ['Plains', '', 'Land'], ['Forest', '', 'Land']].forEach(([n, c, t, tap], i) => (s += at(440 + i * 140, 606, card(n, c, t, W, tap ? 'tap' : ''))));
+  s += at(1170, 606, card('', '', '', W, 'back pile', '<span class="cnt">41</span>')) + at(1040, 606, card('Sunlit Vow', '1W', 'Instant', W, '', '<span class="cnt">3</span>'));
+  s += `<div class="abs pop rowx gap4" style="left:586px;top:412px;padding:4px;border-radius:999px;z-index:4"><span class="btn sm quiet ink" style="color:var(--ds-ink)">Tap</span><span class="btn sm quiet" style="color:var(--ds-ink)">To graveyard</span><span class="btn ib sm quiet" style="color:var(--ds-ink)">${ico('more', 16)}</span></div>`;
+  document.getElementById('table').innerHTML = s;
+  const H = [['Dawn Herald', '2W', 'Creature'], ['Forest', '', 'Land'], ['Rally the Grove', '2G', 'Sorcery'], ['Vine Warden', 'G', 'Creature'], ['Plains', '', 'Land'], ['Mossback Elder', '3G', 'Creature'], ['Open Field', '1G', 'Instant']];
+  document.getElementById('hand').innerHTML = H.map(([n, c, t], i) => { const k = i - 3; return `<div class="abs" style="left:${300 + k * 92}px;top:${Math.abs(k) * Math.abs(k) * 5}px;transform:rotate(${k * 4}deg);transform-origin:50% 100%;z-index:${i}">${card(n, c, t, 150)}</div>`; }).join('');
+})();
+
+icons();
+
+/* zoom buttons, and ?only=<n> to look at one board at full size */
+const boards = document.getElementById('boards');
+document.querySelectorAll('[data-z]').forEach((b) => b.addEventListener('click', () => (boards.style.zoom = b.dataset.z)));
+const only = new URLSearchParams(location.search).get('only');
+if (only !== null) { document.getElementById('doc').style.display = 'none'; boards.style.zoom = 1; boards.style.padding = '0'; [...boards.children].forEach((b, i) => { if (String(i) !== only) b.style.display = 'none'; else b.querySelector('.cap').style.display = 'none'; }); document.body.style.background = '#fff'; }
+</script>
+</body>
+</html>

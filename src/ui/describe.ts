@@ -478,6 +478,17 @@ export function describe(a: Action, d: Describers): Seg[] | null {
       return [t(a.settings.passTimerMs !== undefined ? `sets the pass timer to ${a.settings.passTimerMs === null ? 'off' : `${a.settings.passTimerMs / 1000} s`}` : 'changes the table settings')];
     case 'stageSet':
       return [t({ lobby: 'returns the table to the lobby', draft: 'starts the draft', build: 'starts deck building', match: 'starts the game' }[a.stage] ?? `moves the table to ${a.stage}`)];
+    // M8-C: the end of a game, opening hands and rejoin (contracts.md Part D; persistence.md section 7 log lines).
+    case 'concede':
+      return [t('concedes')];
+    case 'dealt':
+      return [t('is dealt an opening hand')];
+    case 'seatInvite':
+      return a.h === null ? [t(`took the link for ${seatName(a.seat)} back`)] : [t(`made a link to bring ${seatName(a.seat)} back`)];
+    case 'seatClaim':
+      return [t(`is back from a new browser as ${seatName(a.seat)}`)];
+    case 'playOn':
+      return Array.isArray(a.without) && a.without.length > 0 ? [t(`plays on without ${a.without.map((s) => seatName(s)).join(' and ')}`)] : [t('plays on with this table')];
     case 'auditPublish': {
       // M5-P2: the verdict follows as its own line (session/audit.ts); this one says what was published.
       const game = typeof a.bundle?.game?.game === 'number' ? ` of game ${a.bundle.game.game}` : '';
