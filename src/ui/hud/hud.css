@@ -57,3 +57,13 @@
 .sp-hud.touch-ui .sp-round.sp-h-sm {
   width: var(--ds-control-md);
 }
+/*
+ * Surfaces keep the look's panel radius. The kit's .ds-pop and .ds-panel round with --ds-radius-md, which is the
+ * button radius (a pill in Plain); on a tall drawer a pill radius clipped the header's corners, and its controls with
+ * them (overflow hidden clips hit testing too). Reported to M8-P1.
+ */
+.sp-hud .ds-pop,
+.sp-hud .ds-panel,
+.sp-panel-radius {
+  border-radius: var(--ds-radius-panel);
+}

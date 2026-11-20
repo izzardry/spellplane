@@ -5,7 +5,13 @@ import type { LookId } from '../../../src/themes/types';
 import { hook } from '../helpers/app';
 import { call, decklist, freshProfile, openSolo } from '../solo/helpers';
 
-export const LOOKS: readonly LookId[] = ['kitchen', 'graphite', 'codex'];
+/** The four looks (Plain is the default; m7-adjustments.md section 2, visual.md 2.2). */
+export const LOOKS: readonly LookId[] = ['plain', 'kitchen', 'graphite', 'codex'];
+/**
+ * The looks the axe spec scans (PLAN M7-P2: axe in Plain and Graphite; Kitchen as well). Codex is left out: its kit
+ * danger colour on panelRaised is 4.3:1 (a kit token, M8-P1's; the kit's own contrast test does not require it there).
+ */
+export const AXE_LOOKS: readonly LookId[] = ['plain', 'graphite', 'kitchen'];
 
 const { defaultBrowserType: _a, ...ipadPortrait } = devices['iPad Pro 11']!;
 const { defaultBrowserType: _b, ...ipadLandscape } = devices['iPad Pro 11 landscape']!;
