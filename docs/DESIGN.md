@@ -18,8 +18,8 @@ Spellplane is a single-page web app that gives two to four friends a shared, top
 **Non-goals**
 
 - No rules enforcement, no automatic triggers, no legality checks during play. The app never stops a player from doing something a physical table would allow.
-- No matchmaking, ranking or public lobbies. Play is by invitation among friends.
-- No AI opponents. Draft bots, if any, exist only to fill seats.
+- No matchmaking, ranking or public lobbies. Play is by invitation among friends. *(Superseded by Milestone 8, owner request of 20 Nov 2026: open matchmaking with a rating exists, brokered by the browsers themselves with no central service; see "Matchmaking". Play by invitation stays, as the private game.)*
+- No AI opponents. Draft bots, if any, exist only to fill seats. *(Superseded by Milestone 8 for one narrow kind: Sparring, a computer sparring partner that knows no rules; see "Computer opponent". There are still no draft bots.)*
 - No card trading, collection economy or monetisation.
 
 ## Prior art
@@ -196,6 +196,8 @@ The table tracks whose turn it is and which phase the active player has announce
 
 ## Pre-game: draft, sealed and deck building
 
+> **Changed by Milestone 8.** Deck building outside a game happens in Deck mode (section "Deck building mode"): a library of custom and booster decks. This section still describes a live evening at a table (lobby, draft or sealed, build, match), with three changes: the lobby is the waiting room of "Matchmaking" (Private games); a drafted or opened pool is saved to the library as a sealed booster deck; and the build stage no longer offers a card search or the deck library, because the pool is sealed. From Home, a live draft is the mode `DRAFT NIGHT`, always a private table.
+
 An evening moves through four stages on one link: lobby, card acquisition (draft or sealed), deck building, match. The pod is humans only, so the draft formats are adapted to two to four players instead of padding the table with bots.
 
 **Lobby settings.** Format (1v1, free-for-all, Two-Headed Giant), acquisition mode, set per pack (any set with MTGJSON booster data; core sets listed first; a different set per pack is allowed), packs per player, picks per pass, optional pick timer (off by default), pass timer length.
@@ -250,6 +252,8 @@ Spellplane ships no card data or images. Each browser fetches them at runtime fr
 **Legal position.** The [Wizards Fan Content Policy](https://company.wizards.com/en/legal/fancontentpolicy) permits free fan content and forbids paywalls and forced registration; it does not mention software. Past takedowns ([Cockatrice in 2013](https://old.starcitygames.com/news/75_Cockatrice+Shut+Down), [Card Conjurer in 2022](https://techraptor.net/tabletop/news/wizards-cds-card-conjurer-causing-closure)) involved rules automation, printable proxies or money. Spellplane stays free, account-less, rules-free and image-free in its own bundle, and shows the policy's disclaimer in its About panel. The generic game-definition layer means the app itself contains no Wizards material.
 
 ## Multiplayer architecture
+
+> **Extended by Milestone 8.** The start page described here is replaced by Home ("Landing and journey"). Open matchmaking runs over a lobby room on the same transport ("Matchmaking"). Resume is extended by History, the muster rule, `head` messages and one-time seat claims ("Save, leave, rejoin and history"); the protocol version is 4.
 
 Spellplane is a static site with no backend: browsers find each other through public signalling relays and then talk directly over a WebRTC mesh. Each player's hidden cards exist only in that player's browser, so no peer, including the table's creator, can read an opponent's hand or library.
 
@@ -367,6 +371,8 @@ Motion uses critically damped springs with release inertia on pan, and all camer
 
 ## Themes and rendering
 
+> **Changed by Milestones 7 and 8.** The theme picker lists four looks: **Plain** (new, the default, built on Ztyle), Kitchen Table, Graphite and Codex. Paper, Dusk, Wyrm and Stonetable stay in code, unlisted. HUD styling is no longer a theme's own: every screen and the HUD are built from one design kit whose tokens a look sets ("UI language"). The two camera rigs became one continuous tilt (PLAN Milestone 7).
+
 One Three.js scene renders every theme; a theme is a data package that swaps materials, lighting, camera defaults, line style, motion, sound and HUD styling. The minimal theme is that scene with unlit materials and an overhead camera, so no feature can exist in one theme and be missing in another.
 
 | Theme | Character | Table and light | Lines and effects | Default camera |
@@ -430,6 +436,8 @@ Desktop with mouse or trackpad and keyboard is the primary target, and tablets w
 **Accessibility.** Seat colours are paired with a shape or pattern (line dash, avatar glyph), so nothing depends on hue alone. Paper meets WCAG AA contrast throughout. Reduced-motion is honoured. The log is a live region, so screen readers announce actions, and every card action is reachable from the keyboard by cycling focus through cards in a zone. Captions make voice usable without sound.
 
 ## Technology stack and project structure
+
+> **Added by Milestone 8.** New folders: `src/bot/` (the computer opponent; pure like `core/`, may import `core`, `data`, `games`, `util`), `src/net/lobby/` (the matchmaking lobby), `src/data/deck/` (the pure deck model: edit, seal, analysis, strength), `src/ui/design/` (the kit), `src/ui/shell/`, `home/`, `decks/`, `history/`, `gather/`, `seat/`, `play/`, `table/`, `computer/`. New dependencies: `@fontsource/fira-code` (the Plain look's face) and `qrcode-generator` (invite and re-invite QR codes). Still a static site: no backend, no TURN server, no accounts.
 
 Spellplane is a TypeScript single-page app built with Vite, with Three.js for the table and Svelte 5 for everything around it, deployed as static files. The game engine is a pure library with no browser dependencies, which is what makes the peer-to-peer protocol testable.
 
@@ -550,7 +558,187 @@ interface SecretStore {
 
 **Consistency check.** Peers exchange a hash of their state every 50 actions. A mismatch triggers a resync from the sequencer's snapshot and is reported in the log, since it means a reducer bug.
 
+## Landing and journey
+
+*Added by Milestone 8 (owner request of 20 Nov 2026, `docs/design/m8/owner-request.md`). Detail: `docs/design/m8/journey.md`. It supersedes the start page of "Multiplayer architecture" and the solo table as the first screen.*
+
+The app opens on **Home**, never on a table. A table is a place a player goes to with a deck and a mode already chosen, and comes back from without losing anything.
+
+**Places.** Three top-level places and one table:
+
+| Place | Route | Purpose | The one filled button |
+| --- | --- | --- | --- |
+| Home (`PLAY`) | `#/` | Choose a deck and a way to play, start; pick up an old game | per mode: `PLAY`, `FIND MATCH`, `CREATE TABLE`, `OPEN DRAFT TABLE` |
+| Decks | `#/decks`, `#/decks/new`, `#/decks/<id>`, `#/decks/<id>/open` | The deck library and the deck page | `NEW DECK`; `DONE` on the deck page |
+| History | `#/history` | Every game this browser held a seat in | none (a card opens its game) |
+| Table | `#/t/<room>/<key>` (also `/watch`, `/rejoin/<seat>/<token>`), `#/c/<room>` (against the computer), `#/p/<room>` (practice alone) | Waiting room, draft, build, match, by stage | the HUD's context button |
+
+`#/solo` is the old solo table, kept as a sandbox for developers and tests and linked from nowhere. `#/settings`, `#/about`, `#/diag` render inside the shell. `#/lobby` redirects to `#/`. Everything stays in the URL fragment (static hosting). Screens are routes, so the browser's Back button works; sheets, overlays and the queue are states.
+
+**The shell.** Home, Decks, History, Settings and About share one stage: a soft still of the empty arena in the viewer's look (rendered once per look by a throw-away renderer, `src/scene/still.ts`, containing no cards; a gradient of the look's tokens until it is ready), under the look's veil. A floating top bar holds the wordmark, the nav `PLAY · DECKS · HISTORY` as one segmented control, the profile chip (seat glyph and a nickname that is made up on first visit, for example "Amber Fox") and a gear. Under it, only while a search runs, the queue bar. No WebGL context lives outside a table.
+
+**Home.** In reading order, which is decision order: what, how, with whom, go.
+
+1. **The deck hero.** The selected deck as a fan of five whole cards on a pile (the cover upright in front), with its name, kind (`CUSTOM DECK` or `BOOSTER DECK` with a lock and its packs), size, colour pips, curve sparkline and strength. Arrows, swipe and the Left and Right keys step through the library; a click opens Decks. Card faces are only scaled and rotated, never cropped or blurred.
+2. **The mode picker**, four mode cards (a segmented control under 1100 px, a stepper on phones) and the option row of the chosen mode:
+
+| Mode | Options | Primary | What it does |
+| --- | --- | --- | --- |
+| `SOLO` | `SPARRING │ ALONE` | `PLAY` | A table against the computer (`#/c/<room>`) or alone (`#/p/<room>`), deck shuffled, seven cards dealt |
+| `QUICK MATCH` | `1V1 │ 2V2 │ 3 FFA │ 4 FFA`; `UNRANKED │ RANKED` (ranked with 1v1 only) | `FIND MATCH` | Starts the search (see "Matchmaking") |
+| `PRIVATE GAME` | format; `ANY DECK │ BOOSTER DECKS ONLY`; `JOIN A GAME…` | `CREATE TABLE` | A room with the waiting room and the invite sheet open |
+| `DRAFT NIGHT` | players `2 │ 3 │ 4 │ 2V2`; the booster chip `BOOSTER DRAFT · 3 × <SET> ✎` | `OPEN DRAFT TABLE` | The same private table with live draft settings |
+
+3. **The primary button**, 56 px, at least 240 px wide. It always starts the selected mode and never turns into "Resume". Its states: ready; no deck in Solo (`No deck yet: you get a starter deck.`); no deck elsewhere (disabled, `Pick or build a deck first.`); empty deck; ranked with too few cards; offline; storage blocked; searching (pressed in, counting `SEARCHING 0:42`, a round cancel beside it).
+4. **The `CONTINUE` strip**: the most recent unfinished game in one line; absent when there is none.
+5. **Recent games** below the fold (five History cards).
+
+In `DRAFT NIGHT` the deck hero is replaced by three closed boosters drawn by the app from the set code (a foil wrap, a sigil computed from the code, the code as text; no logo, set symbol or card art). The default is the latest core set with booster data; `CHANGE BOOSTERS` opens the booster setup sheet that Decks uses too.
+
+**Entering a table.** Home's content slides out, the still cross-fades to the live scene once it has drawn its first frame, and the camera moves from the still's pose to the stored tilt (500 ms; a 150 ms cross-fade under reduced motion). The table arrives ready: deck in the library and shuffled, seven cards in hand, `KEEP` and `MULLIGAN` chips over the hand, a banner naming who goes first, **the log closed**, no dialog, no set-up control. This automatic setup is a per-table setting (`TableSettings.autoSetup`) that Home's launchers switch on; every step is an ordinary action a player can undo, so it is setup convenience, not rules enforcement.
+
+**Leaving** (the back arrow at the table's top left, `Menu → Leave to home`, the own plate's menu, the browser's Back, closing the tab) never ends a game and is never confirmed. The game is saved, the session leaves the room, the scene is disposed, and Home shows the toast `You left the table. The game goes on; your seat is kept.` with `REJOIN`. See "Save, leave, rejoin and history".
+
+**The end of a game.** Nothing ends by itself. `Concede` (Menu and own plate menu; one confirm) records `TableState.result`; a player at 0 life gets a quiet chip `You are at 0 life. CONCEDE · NOT YET`. In multiplayer a conceding player is out and the game ends when one player or team is left. The game-over overlay (the table dimmed by a flat scrim, never blurred) shows `VICTORY`, `DEFEAT` or `GAME OVER`, the reason, the rating change in a ranked game, and by mode `FIND ANOTHER MATCH`, `REMATCH` or `NEXT GAME`, plus `HOME` and `LOOK AT THE TABLE`. Declaring a winner or a draw by consent is later.
+
+**First run.** With nothing stored, Home shows the wordmark, the line `A card table for Magic. No rules engine, no account.`, an empty pile as the hero, mode `SOLO` and `PLAY`. One press makes a starter deck (17 basic lands and 23 simple creatures of one colour, generated at runtime from Scryfall data; nothing is bundled), saves it to Decks and opens a game against Sparring. Nobody is asked for a name, a format or a link. A visitor who arrives through an invite link lands in that table's waiting room with a chair taken and a deck slot that offers `USE A STARTER DECK`, `OPEN SIX BOOSTERS`, `PASTE A LIST`.
+
+**Data.** `Settings.home: HomePrefs` remembers mode, deck and the options per mode; `BoosterSetup` is the booster sheet's value and maps onto `LobbySettings`.
+
+**Failure behaviour.** Storage cannot be opened: Home offers a solo game that is not saved and says so. Offline: modes that need the network show `OFFLINE`. The still cannot be rendered: the gradient stays. A malformed table link: `This is not a complete table link. Ask for it again.` A full table: `This table is full.` with `WATCH` and `HOME`.
+
+**Targets.** Safari and Chrome at 1024 px and wider. Every screen has a single-column layout from 360 px with the nav as a bottom tab bar; phone and tablet polish is later.
+
+## Deck building mode
+
+*Added by Milestone 8. Detail: `docs/design/m8/decks.md`. It replaces PLAN's M7 aspect A7 and, as the main way to build, the builder table and list view of "Pre-game: draft, sealed and deck building" (which stay as the in-room build stage after a live draft).*
+
+Deck mode is a full-screen mode of its own, built from DOM only: no table, no session, no WebGL. It talks to Scryfall and MTGJSON through the existing limiter and caches and never to another player.
+
+**Two kinds of deck, one library.**
+
+- A **custom deck** takes any card that can be looked up.
+- A **booster deck** (`kind: 'sealed'` in code) is made from boosters: opened alone in Deck mode (six packs of the latest core set by default, 3 to 12, sets configurable per pack, from one stored random seed), or the pool of a live draft or sealed round at a table. **The booster configuration seals the deck**: it accepts only cards of its own pool plus the five basic lands. The seal is enforced in the pure deck model (`data/deck/edit.ts`), so search, paste, import and the debug hook all get the same refusal (`notInPool`, `sealed`). The build stage after a live draft offers no card search either.
+- **Convert to custom deck** makes a copy that takes any card (main deck kept, the rest of the pool as its sideboard). The sealed original stays unchanged and sealed.
+
+**Library** (`#/decks`). A grid of deck boxes: a tile with the whole cover card on a pile in a dotted well, name, colour pips, size, kind, strength, a curve sparkline; a booster deck wears a black band with a lock and its packs. A click selects the deck Home plays with; the tile's actions are `PLAY` (select and go Home), `EDIT` and a menu (duplicate, rename, convert, delete with an undo toast). `NEW DECK` offers `FROM BOOSTERS`, `CUSTOM DECK`, `IMPORT A LIST`.
+
+**Deck page** (`#/decks/<id>`). Left: for a custom deck the search (Scryfall syntax, with chips for colour, mana value and type) and a grid of whole card images; for a booster deck its pool with a basics dispenser and `SUGGEST A DECK`. Right: the deck list and, always in sight, the **mana curve** (ink bars for creatures, halftone for other spells, a dotted outline of a good curve), the **land count against a suggestion** (Karsten's regression scaled to the deck size, with `+N LANDS`), and the **strength**. Edits save themselves; the last 50 are undoable. A deck's format is its size (40 or 60 tonight; 100 later); warnings never block a private table.
+
+**Deck strength** is one number from 1 to 100 in five bands (Rough, Casual, Solid, Tuned, Fierce), computed in the browser from the main deck: card quality 40 % (rarity nudged by Scryfall's `edhrec_rank`), curve 20 %, interaction 20 %, consistency 20 %, scaled by a mana check. It is self-reported and cannot be verified by an opponent; the UI says so.
+
+**What may leave the browser about a deck** before a game: kind, size, card count, strength score, band and formula version (`QueueDeckInfo`). Never a card, a name, a colour or the cover. This is a designed reveal path; the shared leak test covers it.
+
+**Data.** `DeckRecord` grows by optional fields (`kind`, `size`, `seal`, `cover`, `summary`, `convertedFrom`, `lastPlayedAt`); old records are migrated on first read (a record with a draft origin becomes sealed, every other custom). `DeckSummary` (count, lands, colours, curve, strength, cover, fan) is kept on the record so tiles, Home's hero and the queue need no card data.
+
+**Failure behaviour.** Offline: the search is disabled with `CARD SEARCH NEEDS A CONNECTION`; lists and stats keep working from cached data. A set without usable booster data falls back to Core Set 2021 with a toast. A cover that cannot be loaded shows the app's neutral card back; a face is never replaced by a stretched or cropped stand-in.
+
+## Matchmaking
+
+*Added by Milestone 8. Detail: `docs/design/m8/matchmaking.md`. It lifts the non-goal "No matchmaking, ranking or public lobbies"; there is still no backend.*
+
+**The lobby is a room.** Players who look for a game join a well-known room on the transport the game already uses (Trystero over public signalling): `lobby-<protocol>-<realm>-all-<shard>` with a public constant as its key. `realm` is `live` for production and `dev` for previews and tests, so they never meet. Lobby messages travel browser to browser over the WebRTC mesh; the relays only introduce browsers. A consequence that matters without a TURN server: two players are only ever matched when their browsers are already connected. The lobby is joined only on intent (pressing `FIND MATCH`), never by opening the site. With `?transport=local` the lobby is a `BroadcastChannel`, so tests need no network.
+
+**Brokering, with no central service.**
+
+1. A seeker announces a signed **ticket**: queues, rating for the queued keys, the deck's `QueueDeckInfo`, waiting time.
+2. Any seeker that sees a compatible group makes an **offer** with a match id; each named seeker answers with a **hold**. A player holds at most one offer; when offers overlap, every browser prefers the smallest match id, so overlapping groups resolve to one match.
+3. With all holds in, the **ready check**: each player sees `MATCH FOUND` and must accept within 20 seconds. A player who does not is removed from the search; the others return to it with their waiting time kept.
+4. The match derives its own room id and key from nonces all members contributed, everybody leaves the lobby, and the game opens in that room with seats, decks, shuffles, opening hands and the first-player roll done automatically. A matched game never shows a setup lobby.
+
+**Queues.** Table (1v1, 2v2, 3 FFA, 4 FFA) × deck kind (constructed for custom decks, limited for booster decks) × ranked or casual. Ranked exists for 1v1 only. A live draft never enters a queue; a booster deck built in advance does. Solo players may queue for 2v2 and get a random teammate; a party is later.
+
+**Pairing** prefers comparable decks first (strength band), comparable ratings second, inside a window that widens with the player's own waiting time until anyone is admitted after 90 seconds.
+
+**Rating** is Elo per rating key (`1v1.constructed`, `1v1.limited`), start 1500, K 40 for the first ten games and 24 after, adjusted by 50 points per band step, computed locally by each browser from the sequenced result of a ranked matched game. There are no accounts: the local key pair is the identity, the rating is self-reported, and the UI calls ranked an honour system. Results co-signed by both players are later.
+
+**What the player sees.** The search is a bar, not a screen: Home's primary stays pressed in and counts, and a queue bar follows the player through Decks and History with `CANCEL`. Alone for 10 seconds: `You are the only one looking right now.` with `PRACTISE WHILE YOU WAIT` and `INVITE A FRIEND`. Match found: a card with the seats, a 20-second ring, `ACCEPT`, `DECLINE`, a chime and a changed tab title.
+
+**What leaves the browser in the lobby:** display name, pseudonymous player id and public key, rating for the queued keys, `QueueDeckInfo`, the queues. No free-text chat. As in every peer-to-peer game, connected peers see each other's IP address.
+
+**Private games** use the same table without the lobby: `CREATE TABLE` makes a room at once and opens the **waiting room** (seats around a table outline, my deck slot, `READY`, a setup summary the creator can edit) with the **invite sheet** (QR code, the link, `COPY LINK`, the code as the game's name). The game code is the room id, three words and a number (`AMBER FOX 93`); the link carries the code and the 128-bit room key. When every seat is taken, ready and connected to every other, the creator's pill reads `START · 3` and presses itself. Another player's deck name is never shown, only its state.
+
+**Failure behaviour.** Relays unreachable: `failed` with the connection-check link. A pair that cannot connect within 30 seconds after a match: `Ben could not be reached directly. Some networks do not allow it, and Spellplane uses no relay.` with `SEARCH AGAIN`. A reload ends a search silently. A second tab searching, strict-network detection, rate limits and shard overflow are later.
+
+## Save, leave, rejoin and history
+
+*Added by Milestone 8. Detail: `docs/design/m8/persistence.md`. It extends "Multiplayer architecture" (resume) and "Specification: network protocol and secrecy" (Local persistence, lost-save recovery); protocol version 4, database version 2.*
+
+**Saving.** Every sequenced action is written at once with the table record and the player's own `SecretStore`, as before. On top, a **checkpoint** runs every 20 seconds while something changed and at once on turn pass, stage change, tab hidden, page hide and Leave: it writes the game's `GameSummary` (what History shows, without loading the table) and the newest head heard of. A browser that cannot save shows `NOT SAVING` on its own plate, to its player and to the others.
+
+**History** lists every game in which this browser held a seat, newest first, from the `games` store (at most 50; unfinished games are never removed automatically). A card shows a thumbnail drawn from the summary (outlines of the public battlefield cards and one disc per seat with its life), the other players' names, format and deck, the state (`Turn 6 · your turn`, `Not started`, `Ended · you 14, Ben 0`), the time and the game code in small type. A tap opens an unfinished game; Remove has an undo toast.
+
+**Leaving never stops a game.** Leave sends `bye` with reason `leave`, so the others see the seat away within a second (`Ben left. The game goes on; Ben can come back.`) and may play on. The game keeps its room for life: **the game code is its address**, every browser that held a seat keeps code, key and seat, and History reopens it without any new invitation.
+
+**Coming back: the muster rule.** A returning browser draws the table from its own save at once, read-only under a flat scrim, joins the room on **standby**, and becomes **live** when one of these holds:
+
+1. it never left (a player who stays keeps playing when everyone else leaves);
+2. it is in sync with a connected player who is live;
+3. it is in sync with every connected seated peer, every seat its newest copy does not mark away is connected, and no peer ever reported a newer head;
+4. a gathered player pressed `PLAY ON WITHOUT …`, which sequences `playOn` and marks the named seats away.
+
+**Newest wins** means the copy with the higher `seq` wins; with equal `seq` and different hashes the smaller head hash wins. The losing side rewinds to the fork point, takes the winner's history and proposes its own abandoned actions again on top; the players are told in plain words. Peers announce their head (`seq`, hash, turn, stage, live, saving) in a `head` message that carries nothing else.
+
+**Gathering** is what a standby player sees: a card over the dimmed table with one row per seat (`● Here`, `◌ Connecting…`, `○ Not here` with `BRING BACK`, `○ Left before you`), the newest copy named in one line, `LOOK AT THE TABLE` (read-only; cards do not lift), `PLAY ON WITHOUT BEN` after 8 seconds, and `HOME`. A solo game and a game with a live player present never show it.
+
+**Bringing a player back.** Each player plate has a menu. For an absent player its top shows `○ Away for 3 min` and `BRING BEN BACK`; pressing it sequences `seatInvite` (the hash of a random token) and shows a QR code and a link, `#/t/<room>/<key>/rejoin/<seat>/<token>`, that works once, for 24 hours, for that seat. A browser that still has its save ignores the token and simply resumes by its key pair. A browser without the save sends `seatClaim` with the token and takes the seat with its new key pair; the token leaves the address bar once read. In team games only the teammate may invite a seat (any present player if the whole team is away), because the seat's holder receives the teammate's hand.
+
+**A lost hand is rebuilt, not restored.** The public table is synced from the newest other player. The hidden cards that died with the lost browser were never sent to anyone and are sent to no one now, not even to their owner's new browser. The existing public recovery opens by itself: the deck list minus the player's public cards is reshuffled with everyone's nonces and a fresh hand of the agreed size is drawn; it is written in the log.
+
+**Secrecy.** The shared leak test gains the rejoin scenarios (a return from the own save; head announcements; a seat take-over by a blank browser; recovery across a change of identity; an opponent's refused invite in a team game).
+
+**Failure behaviour.** A write fails: one retry, then `NOT SAVING`; play continues. The database cannot be opened: the game runs from memory and says `This window does not keep anything.` No relay when returning: Gathering shows the failure line and retries with backoff; `LOOK AT THE TABLE` works offline. A used or expired invite: `This link was already used. Ask for a new one.` / `This link has expired. Ask for a new one.` Everyone lost their storage: nothing can be recovered and the code is free. Losing storage during a live draft loses the pool.
+
+## Computer opponent
+
+*Added by Milestone 8. Detail: `docs/design/m8/computer.md`. It lifts the non-goal "No AI opponents" for one narrow kind.*
+
+**Sparring** is a sparring partner, not a rules engine. It sits in the second chair of a 1v1, plays a land a turn and the creatures it can pay for, attacks and blocks by power and toughness, and leaves every rules question to the human, who stays the referee. It is always labelled `COMPUTER`, has a hexagon glyph instead of an avatar, and never a human-looking name.
+
+- **Architecture.** The bot is a second, headless table session in the same page, with its own key pair, `SecretStore` and save, joined to the human's session over an in-page `LocalNetwork` (an in-memory `Transport`). It acts only through the `TableSession` API. The reducer, sequencer, commitments and shuffle protocol are unchanged, and the bot's hidden cards are as hidden from the HUD as a remote player's. Nothing joins a signalling relay.
+- **What it reads.** A `BotView` built from the public table, its own hand and cached card data; never the human's session, hand or library, and not its own library order. The folder `src/bot/` is pure (no DOM, clock, randomness or network; the runner takes its clock as an argument) and has its own module-boundary element.
+- **The table is the truth.** Before every step the bot rebuilds its view. If the human moved its creature to the graveyard or corrected a life total, that is now the game. It never moves, taps or removes a card it does not own.
+- **Combat by three cues.** The reducer has no combat steps, so the human signals with ordinary, logged `ask` actions from the primary button: `Attack` (my attackers are final), `Damage`, `Blocks done`. Sparring answers each and keeps the score of combat it took part in with ordinary `life` actions; its own dead creatures go to its graveyard; the human's are pinged, not moved.
+- **Decks.** Generated in the browser from a recipe (set, colour, curve: 17 basic lands and 23 creatures with no or keyword-only text) with Scryfall data, cached; nothing is bundled. Offline with nothing cached, Sparring plays a copy of the human's deck (Mirror). The same generator gives a newcomer the starter deck.
+- **Seeded.** A seed stored with the game fixes Sparring's deck and every choice for a given table history; decisions use a stateless keyed generator, so nothing extra is saved to resume.
+- **Save and leave.** Both sessions save continuously; leaving disposes the bot and both sessions; the game is in History as `⬡ SPARRING` and resumes with one press, with no Gathering. The bot is loaded on the first computer game, pauses while the page is hidden, and leaves no timer or listener after `dispose`.
+- **At the table.** No Talk, no chat input, no invite or spectator entries. Sparring's plate menu offers `Pause Sparring` and `Sparring concedes`.
+
+Tonight Sparring has one level (Steady) and one pace. **Practice alone** (`SOLO · ALONE`) is the solo session with the deck dealt. Levels, paces, a Dummy life total with a goldfish clock, and bots in multiplayer or networked tables are later.
+
+## UI language
+
+*Added by Milestone 8. Detail: `docs/design/m8/visual.md` and the mock `docs/design/m8/mock.html` (eight boards). It extends "Themes and rendering"; PLAN's M7 aspect A1 (design system) is built here.*
+
+The owner's complaint was a UI of "placed buttons and functions of different sizes", "technical and boxy" panels and a white design that "lacks depth and tactileness". The answer is one design system for every screen, taken from **Ztyle**, the owner's house style, and given depth.
+
+**Four looks, one structure.** **Plain** is the house look and the default: Ztyle on paper. Kitchen Table, Graphite and Codex stay selectable. A look sets colour, type, radius, elevation, texture, motion and sound; sizes, spacing, anatomy, layout and component structure are shared and never change with the look. The shell wears the viewer's look and its backdrop is that look's arena. In each look the table's surface and surround have the colours of the look's `mat` and `frame` tokens, so the still, the page and the live table are one material.
+
+**What Plain takes from Ztyle:** grey-scale chrome with hue only for identity or meaning (green for here, ready, won; red for destructive; the five mana colours as lettered pips; seat colours always with a shape); one monospace face, Fira Code, bundled, for every label, name and number (a system sans "reading face" for rules text and help over two lines); pills and circles for actions, rounded rectangles for containers, the bigger the container the bigger the radius; chrome that floats at the edges; the halftone dot grid on the page and the table; fade-and-slide motion without bounce; undo toasts instead of confirm dialogs; one status slot; coach marks one at a time. **Replaced:** Ztyle's glass. There is no `backdrop-filter` and no blur filter anywhere; glass becomes opaque paper with layered shadows, scrims are a flat page colour.
+
+**Depth and tactility.**
+
+- **Four layers of paper:** page (`mat`, dotted), well (`chip`: pressed in; fields, tracks, slots), sheet (`panel`: lies on the page; library, history, tiles), raised (`panelRaised`: what you press or what floats).
+- **Five elevations** (`sheet`, `raised`, `pop`, `dialog`, `pressed`), each a lit top edge, a hairline ring, a tight contact shadow and a wide ambient shadow; light from straight above.
+- **Controls feel pressed:** a control lifts 1 px on hover, sinks 1 px and loses its shadow on press; a toggle that is on stays sunk; a segmented control is a well with one raised thumb; a running search keeps its pill pressed in.
+- **Piles** carry stacked edges, so anything that stands for several cards has thickness.
+
+**Order.**
+
+- **One height scale for every control: 28, 36, 44, 56 px.** 56 is only for the one primary button of a stage screen and the round control beside it. A row of controls has one height. Icon buttons are circles of the same heights.
+- **One spacing scale** on a 4 px grid (4, 8, 12, 16, 24, 32, 48, 64), each step with one job; the shell's content sits in 12 columns, 1248 px at most.
+- **One filled control per layer** (stage, sheet, popover, dialog).
+- **Every panel has the same anatomy** (eyebrow, title, body, footer; the primary action last; a destructive action never beside it), and facts always come in the same order (a deck: colours, kind, size, curve, strength; a game: format, mode, state, turn).
+
+**Components.** One kit in `src/ui/design/` (tokens as `--ds-*` variables): controls (`Button`, `IconButton`, `Segmented`, `Field`, `Stepper`, `Chip`, `Pip`, `SeatGlyph`, `PresenceDot`, `StrengthPips`, `Badge`, `StatusLine`), surfaces and feedback (`Sheet`, `Panel`, `MenuPopover`, `Toast`, `CoachMark`, `Dialog`, `QrPlate`), deck parts (`PileStack`, `SealBand`, `Sparkline`, `CurveChart`, `ColourBar`, `CardFan`), play parts (`ModeCard`, `Countdown`, `BoosterPack`, `BoosterFan`) and `TableThumb`. Screens compose them and style nothing ad hoc. Card faces are always whole, sharp and uniformly scaled; mana symbols and booster packs are the app's own drawings.
+
+**Over a live table** (Safari): no `filter` on anything mounted over the scene; panels that carry text are opaque; transitions animate `transform` and `opacity` only; no per-frame DOM writes. The chrome is silent except one chime when a match is found; card sounds are the table's.
+
+**Enforced by tests:** a design audit reads computed styles on every screen (heights from the scale, one height per row, one primary per layer, no blur, the look's fonts), and a token test holds every look to its contrast floor (4.5:1 for text, 3:1 for the focus ring).
+
 ## Roadmap
+
+> **Milestones 6 to 8 came after this roadmap.** M6 closes design gaps, M7 redoes look and feel (owner-in-the-loop), and M8 adds the journey: landing page, deck mode, matchmaking, save and rejoin, a computer opponent and the Ztyle-based UI language (sections "Landing and journey" to "UI language" above; PLAN "Milestone 8").
 
 Six milestones, each ending in something the group can actually play; no dates are set. Milestone 2 is accented because it delivers the main use case, a core-set booster draft played to a finish.
 
@@ -675,6 +863,8 @@ A private reorder (scry to bottom, putting a card on top) is recorded the same w
 **Draft packs.** Pack contents are generated with the secret-shuffle seed protocol (purpose `pack`), so only the generating player knows them. The generator publishes commitments for the pack's cards. Handing a pack on sends `pack {packId, cards: [{instanceId, ref, salt}]}` on the pair's `prv` channel together with the public action `packPass {packId, to, count}`. A pick is the public action `pick {packId, count}`; identities of picked cards stay with the picker.
 
 **Local persistence** (IndexedDB database `spellplane`, or `spellplane-<profile>` in tests)
+
+> **Schema version 2 (Milestone 8)** adds four stores in one upgrade step: `games` (key `code`: one `GameSummary` per game, for History and re-entry), `ratings` (per rating key), `matches` (matched games and their results), `computer` (computer games: the bot's key pair as JWK, seed, settings). `DeckRecord` gains optional fields (`kind`, `size`, `seal`, `cover`, `summary`, …), migrated per record on first read. Version 1 backups stay readable.
 
 | Store | Key | Value |
 | --- | --- | --- |

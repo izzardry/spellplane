@@ -458,6 +458,8 @@ The owner reviewed the critique and the three directions (A Kitchen Table, B Gra
 
 ### Overnight run packages (M7, first build round)
 
+> **Superseded (20 Nov 2026).** This run was paused when the owner asked for Milestone 8. The packages finish inside the M8 run on branch `m8` with revised scopes: see "Milestone 8: Journey, decks and matchmaking", "How M7 changed" (M7-P4 is folded into M7-P3, M7-P6 into M7-P1; the design system and the start page leave M7-P2). The table below is kept as the record of the first build round.
+
 | Package | Scope | Main files |
 | --- | --- | --- |
 | M7-C Contracts | Look ids and token shape, tilt API, motion API, affordance events, new settings keys, debug shapes | `*/types.ts`, `ui/design/tokens.ts` |
@@ -470,7 +472,7 @@ The owner reviewed the critique and the three directions (A Kitchen Table, B Gra
 
 **Restart (20 Nov 2026).** The first launch of this run was lost when the Mac ran out of memory on 19 Nov: Playwright's WebKit GPU helper processes grew to 40–60 GB each while two full e2e runs ran at once (oomph incident 20261119-035310), and the Mac was restarted. Before the second launch, `scripts/pw-guard.mjs` learned to measure browser processes by physical footprint and abort a run when one passes 4 GB (or all together pass a third of RAM), to kill stray browser processes between runs, and to queue in oomph's machine-wide memory reservations; package agents wrap `pnpm check` in oomph and iterate on focused specs.
 
-**Gate M7-G:** a goldfish game played by mouse only and one by touch only (iPad emulation), with no key pressed (asserted), in each of the three looks: draw, play a land, cast, tap and untap, attach, counters, life, attack, next turn. Screenshots per look at first person, mid-tilt and bird's-eye, during a magnetic snap and a draw animation. Idle frames stop (render on demand). Gates M0–M5 stay green. **Owner review:** the preview link in the morning.
+**Gate M7-G** (now the table part of Gate M8-G, with four looks)**:** a goldfish game played by mouse only and one by touch only (iPad emulation), with no key pressed (asserted), in each of the three looks: draw, play a land, cast, tap and untap, attach, counters, life, attack, next turn. Screenshots per look at first person, mid-tilt and bird's-eye, during a magnetic snap and a draw animation. Idle frames stop (render on demand). Gates M0–M5 stay green. **Owner review:** the preview link in the morning.
 
 ### Interplay with M6
 
@@ -480,6 +482,293 @@ The owner reviewed the critique and the three directions (A Kitchen Table, B Gra
 - **M7's starting point.** M7 starts from `main` after M6.1 and M6.2. Where M7 redesigns a surface that M6.3 also touches (the HUD, the builder), the M7 design wins, and M6.3's function is kept.
 
 **Progress items** (in the list below): M7-A0 … M7-A10, plus one line per release train.
+
+## Milestone 8: Journey, decks and matchmaking
+
+**Owner brief (20 Nov 2026, about 02:30).** The full text, verbatim, is `docs/design/m8/owner-request.md`; every sentence in it is a requirement. The core of it:
+
+- **Soul and order.** "the whole game presentation and user journey is very soul less and not very well-designed". "The UI presents itself with placed buttons and functions of different sizes, the panels are technical and boxy and the internal ordering of components looks like absent of design. the white design lacks depth and tactileness. look into Ztyle and adopt portions of it for the plain design."
+- **The journey comes first.** "The most important part is the missing user journey: the visitor is directly thrown into an arena, with manual configurations to be made and a blocky log being open. that has to be changed." "a landingscreen is the right way to start, similar to Zhess. Instant access to a new game or access to old games. options to play against computer or other players."
+- **Decks are the core activity outside a game.** "the landing page needs to have access to deck building mode with a library of decks and an individual deck creation and modification page. then returning to the landing page, a deck can be selected and should be as present as a blurred-out arena in the background." "Deck building should prioritize simple decks with clear mana curves and a custom mode where any card can be looked up and picked, or a booster draft mode … the boosters pack configuration seals the deck building … unless it's converted into a custom deck."
+- **Matchmaking without a server.** "match making from a queue of players waiting for a matchup that matches the configured setup (1on1, 3 FFA, 2v2 or 4 FFA …), or a private game is started and shared", with "a match making ranking and a measure of the selected deck's strength". "match making basically happens by announcing and having all others who are currently connected, respond, and then they all broker a matchup in da distributed way. yes, that's the way I'd like it to be. forget the centralized service."
+- **Custom and draft.** "live booster draft games are always custom games, while playing ranked games with booster drafted decks that have been pre-built can be done with open match making." For a live draft "the deck that is picked is replaced by just an illustration of mysterious and closed boosters. by default from the latest core set".
+- **Leave, history, rejoin.** "leaving a game would not stop it, the state should be saved by everybody in a timed way. so when the game is left, it lands on the history, and can be re-entered. but only if all players reconnect and … the saved state has been synced up (where the newest overrides the older states …)." "game codes will provide the game's unique identity to reconnect directly … no new invitation needed". "re-inviting him via a link or QR code should work from ingame in a specal menu present in each the player state in the respective panel."
+- **How to work.** "lean on blizzard's excellent examples"; "implement M7 and M8 in one go using workflows and subagents (up to 50)"; "make sure to not mess up the system with memory leaks. connect to /oomph"; "Target is Safari and Chrome. later also a mobile or tablet version"; "size the tasks in a way that in about 10-12 hours there's a chance the core parts of this are well implemented and can be reviewed by me."
+
+**The designs.** One design per topic, written in the same night and reconciled by the lead planner (each file opens with "Rulings of the lead planner"; where a file and a ruling differ, the ruling holds):
+
+| File | Topic |
+| --- | --- |
+| `docs/design/m8/journey.md` | Places, routes, screens, states, copy, first run |
+| `docs/design/m8/visual.md`, `docs/design/m8/mock.html` | The Ztyle-based design language: tokens, sizes, component recipes, motion; eight mock boards at 1440 × 900 in the Plain look (`mock.html?only=<n>`) |
+| `docs/design/m8/decks.md` | Deck mode: library, deck page, boosters, the seal, analysis, strength |
+| `docs/design/m8/matchmaking.md` | The distributed lobby, broker, rating, the private game path |
+| `docs/design/m8/persistence.md` | Saving, History, leaving, the muster rule, re-invite links, recovery |
+| `docs/design/m8/computer.md` | Sparring, the computer opponent, and practice alone |
+| `docs/design/m8/m7-adjustments.md` | What M8 changes in the M7 packages; the HUD seam |
+
+DESIGN gained the sections "Landing and journey", "Deck building mode", "Matchmaking", "Save, leave, rejoin and history", "Computer opponent" and "UI language". Decisions are in DECISIONS under "M8 Journey, decks and matchmaking".
+
+### The journey
+
+```
+ first visit ───────────────────────────────────────────────────────────────────────────────┐
+                                                                                            ▼
+                       ┌──────────────── HOME  #/ ─────────────────┐
+  DECKS  #/decks ◄────►│ deck hero · mode · options · [primary]    │◄────► HISTORY  #/history
+   │  ▲                │ CONTINUE strip · recent games below fold  │              │
+   ▼  │                └──┬──────────┬───────────┬────────────┬────┘              │ open a game
+ deck page #/decks/<id>   │SOLO      │QUICK MATCH│PRIVATE GAME│DRAFT NIGHT        │
+                          │          ▼           ▼            ▼                   │
+                          │   queue bar (browse  WAITING ROOM + invite sheet      │
+                          │   anywhere)          (seats, deck slot, READY)        │
+                          │          ▼           │            ▼                   │
+                          │   MATCH FOUND        │       DRAFT → BUILD            │
+                          │   accept in 20 s     │            │                   │
+                          │          ▼           ▼            ▼                   ▼
+                          │   VERSUS / loading ──┴────────────┘              GATHERING
+                          ▼          ▼                                  (muster rule holds)
+                     ┌─────── TABLE  #/t/<room>/<key>  ·  #/c/<room>  ·  #/p/<room> ───────┐
+                     │ calm HUD · log closed · plate menus (Bring Ben back…) · Menu        │
+                     └──────┬──────────────────────────────┬───────────────────────────────┘
+                            │ Leave (arrow, menu, Back)    │ Concede
+                            ▼                              ▼
+                     HOME (game in CONTINUE             GAME OVER overlay
+                     and first in History)              REMATCH · FIND ANOTHER · HOME
+```
+
+1. **Home** (`#/`) is the first screen, never a table. One stage for Home, Decks and History: a soft still of the empty arena in the viewer's look, under a veil. The selected deck is the hero (a fan of whole cards on a pile, with name, kind, size, colours, curve and strength). Under it four modes, the options of the chosen mode, one filled button whose label is the next step (`PLAY`, `FIND MATCH`, `CREATE TABLE`, `OPEN DRAFT TABLE`), and a `CONTINUE` strip for the last unfinished game. Recent games sit below the fold.
+2. **Decks** (`#/decks`) is the library: deck boxes in a grid, `NEW DECK` with three ways (from boosters, custom, import a list). A **custom** deck takes any card found through Scryfall; a **booster** deck is sealed to the pool its boosters gave plus basic lands until it is converted into a custom copy. The deck page keeps the mana curve, the land suggestion and the strength in sight.
+3. **Solo.** `PLAY` opens a table against **Sparring** (the computer) or alone, with the deck shuffled and seven cards dealt. On a first visit with no deck, the same press makes a starter deck first.
+4. **Quick match.** `FIND MATCH` joins the lobby (a well-known room on the game's own transport) and announces a ticket. The search is a bar that follows the player through Decks and History. Browsers broker a match among themselves; all players accept within 20 seconds; the game opens with seats, decks and opening hands done.
+5. **Private game and Draft night.** `CREATE TABLE` opens a waiting room with the invite sheet (link, QR, the code as the game's name). `READY`, then the start presses itself. In Draft night the deck hero is three closed boosters, and the table drafts before it plays.
+6. **At the table** the log is closed, nothing is configured, and each player plate has a menu. For an absent player it offers `Bring Ben back…`: a QR code and link that seat him again from any browser.
+7. **Leaving** (arrow, menu, Back, closing the tab) never ends or confirms anything: the game is saved by every browser per action and on a 20-second checkpoint, and is first in **History**. Opening it again rejoins the same room by its code; the newest copy wins; a table that was left by everybody waits in **Gathering** until the players who were present are back or the gathered players play on without them.
+
+### Decisions
+
+Owner decisions are the brief above. The planning decisions that shape the build (all in DECISIONS as `[M8 plan]`, with reasons):
+
+- **One run on branch `m8`, eleven packages.** M7's unfinished packages finish inside it. To fit eleven, M7-P4 is folded into M7-P3 and M7-P6 into M7-P1.
+- **The seam is the table edge.** M7 owns the arena and the in-table HUD; M8 owns everything outside a table and reaches the HUD only through `HudShellProps` and the scene only through options. One owner per file.
+- **Plain is a fourth look and the default**: Ztyle on paper (grey-scale chrome, one monospace face, pills and circles, halftone, depth from layered paper and pressed controls). Kitchen Table, Graphite and Codex stay. One kit for every screen; controls have four heights (28, 36, 44, 56 px); one filled button per layer; no blur in CSS anywhere.
+- **Trystero stays; PeerJS is not added.** A Trystero room is the "common chat-like space" the owner describes; the lobby is a well-known room, the match moves to a room derived by its members. The game code is the existing room id.
+- **Rejoin follows the muster rule**, not a strict "everyone": a returning browser is on standby until it is in sync with a live player, or everybody who was present in the newest copy is back, or the gathered players choose `PLAY ON WITHOUT …`. Higher `seq` wins.
+- **A lost hand is rebuilt in public, never restored**: the re-invite link carries a one-time seat claim; hidden cards that died with a browser are sent to nobody.
+- **Deck strength** is one number from 1 to 100 in five bands, computed locally; only six facts about a deck leave the browser (kind, size, card count, score, band, formula version).
+- **The computer opponent is a sparring partner**, not a rules engine: a second headless session in the page that plays lands and creatures and attacks and blocks by power and toughness. DESIGN's non-goals "no matchmaking" and "no AI opponents" are lifted.
+- **Automatic setup is opt-in per table** (`TableSettings.autoSetup`, set by Home's launchers): shuffle, seven cards and the first-player roll run by themselves; a table opened the old way behaves as before, so gates M0–M5 keep their meaning.
+
+### M8 core tonight and later
+
+"Tonight" is what the overnight run builds; "later" is designed (in the topic files) and not built in this run.
+
+| Area | Core tonight | Later |
+| --- | --- | --- |
+| Design language | Plain look complete; the kit (controls, surfaces, deck, play and history parts) from `mock.html`; Fira Code bundled; the design audit (four heights, one primary per layer, no blur) | Full contrast matrix tuned for the three other looks; restyle of settings, storage, about, diag, recovery, audit, chat, draft and builder screens beyond tokens; a dark Plain |
+| Home and shell | `#/` Home, nav `PLAY · DECKS · HISTORY`, profile chip with a made-up nickname, backdrop still with gradient fallback, deck hero, four modes with their option rows, primary button states, `CONTINUE` strip, recent games, first run, the 500 ms move into a table | Phone and tablet polish (layouts must not break at 390 px), join by code (knock), the storage toast after the first finished game |
+| Decks | Library grid with tile actions, new-deck chooser, custom deck page (search, colour / mana value / type chips, card grid, list, undo), curve with target outline, land helper, strength chip, booster decks (setup sheet, seeded pool, simple reveal, pool page, basics, suggest a deck, convert to custom), seal enforced in the pure model, migration of old records, deck picker sheet, drafted pools saved sealed, no search in the build stage after a draft | Pack-opening animation, deck check lines and "Simple deck" mark, strength popover, sample hand, colour balance, import and export sheets and text export, printings, Commander and Companion slots, maybe-board, size 100, notes, library sort and search, the new deck page as the in-room build stage |
+| Solo | Sparring: one level (Steady), one pace, generated starter decks with Mirror fallback, combat by three cues, life bookkeeping, pause, concede; practice alone with the deck dealt | Gentle and Keen, Calm and Brisk, take back and skip, Sparring's own decks from the library, the Dummy and the goldfish clock, bots in multiplayer or networked tables |
+| Quick match | One lobby room per realm, signed tickets, offer / hold / ready broker, window by deck band then rating, 20-second ready check, derived room, automatic entry, 1v1 / 2v2 / 3 FFA / 4 FFA unranked, 1v1 ranked, Elo from the sequenced result, queue bar, match-found card | Shard overflow, NAT probe, strikes and rate limits, looking-now board, notifications, first-time notices, avoid list, co-signed results, absence claim, draws by consent, party for 2v2, one-tab lock |
+| Private game, Draft night | Waiting room on the kit (seats, deck slot, `READY`, self-pressing `START`), invite sheet with QR, join by pasted link, booster hero and booster setup for a live draft, versus screen, concede and the game-over overlay with rematch | Restyled draft and build screens, `Declare result…`, Commander pod |
+| Save, History, rejoin | `games` store and summaries with a table thumbnail, 20-second checkpoint and event flushes, `NOT SAVING`, History list and card, Leave with `bye`, `head` messages, the muster rule and standby, Gathering card with `PLAY ON WITHOUT …`, read-only waiting table, seat invite and claim (link and QR), recovery opening by itself after a take-over, leak scenarios | Quota ladder and log compaction, one tab per game, gathering in the background, rename, mark as finished, export of one game, the deck-fit filter in recovery |
+| Table (M7) | Four looks as table worlds, the rebuilt HUD with every shell slot, one continuous tilt with the entry move, card feel, play without keys, read-only scene, lifecycle counters and the mount / dispose soak, the no-blur guard, real-Safari numbers when the screen allows | Structural restyle of in-table overlays (context menu, inspect, pile viewer, token search, cheat sheet), deleting the M4 themes |
+
+### How the run works
+
+One unattended run on branch `m8` (milestone label M8), implementers on Opus 5.5:
+
+1. **M8-C contracts** (one agent, alone): everything under "M8-C contracts" below, `pnpm check` green, gates M0 and M5 green, committed to `m8`.
+2. **Eleven packages in parallel**, each in its own worktree: implementer → reviewer (two for the deep ones) → up to two fix rounds → serial integration into `m8`. No package waits for another (`deps` are empty): every seam is a stub at a fixed path that M8-C lands. A package that cannot go green without another's code says so in its return value instead of editing the other's files.
+3. **Gate verifier** with one fix round: `tests/e2e/m8.gate.spec.ts`, `tests/e2e/m7.gate.spec.ts`, gates M0–M5, CI, `docs/gates/M8.md`.
+
+Memory rules for every agent (the first M7 launch was lost to memory): `pnpm check` runs as `oomph run --reserve 2G --for 'spellplane pnpm check' --wait 9m -- pnpm check`; Playwright only through the pnpm scripts and `pw-guard`, one browser run per worktree, long timeouts or background runs, exit codes 3, 4 and 5 reported and never worked around; an e2e spec opens at most four pages; iterate on focused specs (`pnpm e2e -- <file>`), run the full `pnpm e2e` once before handing back. In a worktree: `pnpm install --frozen-lockfile` first; only M8-C changes `package.json` and the lockfile.
+
+Shared lines for every package: merge `m8` first and again before handing back; on a conflict in a contract file, an e2e URL builder, `package.json` or a file another package owns, take `m8`'s side. Build only from the kit (`src/ui/design/**`, M8-P1's): its components and `--ds-*` variables, no colour or font literal, no `<button>` without a kit class, no `backdrop-filter`, no `filter: blur`. `#/` is Home; the table sandbox is `#/solo`. Tables are mounted and disposed many times per page load: release everything on dispose. Tests never use the network: `?transport=local`, `?faces=placeholder`, `?profile=<x>`, fixtures, `LoopbackNetwork` with fake timers. Any code that touches hidden information adds its scenario to the shared leak test (`tests/leak/`). Decisions beyond the design go to `docs/DECISIONS.md` as `- [M8-P<k>] decision — reason` (or `[M7-P<k>]`).
+
+### M8-C contracts
+
+M8-C lands types, interfaces, working stubs at fixed paths and the small shared glue, so that eleven packages can build and test in place. After it, contract files (`*/types.ts`, `core/actions.ts`, `net/messages.ts`, `src/ui/props.ts`, `src/net/lobby/messages.ts`) are frozen; a package reports a needed change.
+
+| Group | What lands |
+| --- | --- |
+| Dependencies | `@fontsource/fira-code` (OFL) and `qrcode-generator` 2.0.4 (MIT) in `package.json` and the lockfile, recorded in `docs/ASSETS.md` and DECISIONS. |
+| Taken over from the M7 branches | As `m7-adjustments.md` section 2: `setMarks`, `MarkRect`, `TableMarks` (`m7-p1`); `CardAnimationKind` `'counter'`, magnet kinds `'zone'` and `'hand'` (`m7-p4`); `PileActionId` `'revealTop'` (`m7-p5` working tree); `HudProps.evening` (`m7-p2`); the kit seed from `m7-p2` (86248ce): `src/ui/design/*` without `LifePlate.svelte`, `CounterChip.svelte`, `scrub.ts`; `tests/unit/design/tokens.test.ts`; `src/ui/settings/Theme.svelte`; the look wiring of `App.svelte`. |
+| Looks and tokens | `LookId` gains `'plain'`; `DEFAULT_LOOK = 'plain'`; default settings `look` and `theme` `'plain'`; stub theme `src/themes/plain/index.ts` (Paper, naming M7-P1). Token shape of `visual.md` 2.3 (`veil`, `reading`, `RadiusTokens`, the five new elevations, `TextureTokens`, `MANA_COLOURS`, `LAYOUT.control` xs 28 / sm 36 / md 44 / lg 56 with the legacy keys mapped, `space.xxxl`, `space.huge`), the complete Plain entry, the table of new tokens for the other looks, `css.ts` emitting every variable. `SoundCue` gains `'matchFound'`. |
+| Kit stubs | Every component of `visual.md` 2.8 exists at `src/ui/design/<Name>.svelte` with its final props and plain working markup (M8-P1 gives them their look): `Button` (variants, sizes, `pressed`, `waiting`), `IconButton`, `Segmented`, `Field`, `Stepper`, `Chip`, `Pip`, `SeatGlyph`, `PresenceDot`, `StrengthPips`, `Badge`, `StatusLine`, `Sheet`, `Panel`, `MenuPopover`, `Toast`, `ToastHost` with `toasts.ts`, `CoachMark`, `Dialog`, `QrPlate`, `PileStack`, `SealBand`, `Sparkline`, `CurveChart`, `ColourBar`, `CardFan`, `ModeCard`, `Countdown`, `BoosterPack`, `BoosterFan` with `pack-art.ts`, `TableThumb`. Harness page `?harness=kit` (`src/ui/design/harness.ts`). |
+| HUD and scene seam | `HudShellProps` in `src/ui/props.ts` exactly as `m7-adjustments.md` section 2, plus `primaryOverride?: { label: string; run(): void; quiet?: boolean } \| null`. `TableSceneOptions.readOnly`, `enterFrom`; `TableScene.setReadOnly` (no-op stub). `src/scene/camera/pose.ts` `poseAt(tilt, layout, seat)` (stub: a fixed bird's-eye pose; M7-P3). `src/scene/still.ts` `renderArenaStill(theme, { width }): Promise<Blob \| null>` (stub resolves `null`; M7-P3). `src/scene/lifecycle.ts` `trackContext`, `untrackContext`, `liveContexts` (M7-P1). `RenderMemory`, `RenderDebug.liveContexts()`, `memory()`. |
+| Routes and URL builders | `src/ui/routes.ts`: `home` (`''`, `#/`), `decks`, `deckNew` (`path?`), `deck` (`id`), `deckOpen` (`id`), `history`, `practice` (`room`), `computer` (`room`), `solo` (`#/solo`), `room` with `rejoin?: { seat, token }`, `#/lobby` → `home`, `#/build[/<id>]` → decks. `tests/e2e/helpers/app.ts` and every builder listed in `m7-adjustments.md` section 2 open the table through `#/solo`; new helper `openHome(page, opts)`. |
+| Store | `DB_VERSION = 2` in one upgrade step: stores `games` (`keyPath: 'code'`, index `lastPlayedAt`), `ratings`, `matches`, `computer`. Types: `GameSummary` (persistence section 3, plus `thumb`, `opponent`, `result`), `GameStore`; `RatingRecord`, `MatchRecord`, `RatingStore`, `MatchStore`; `ComputerGameRecord`, `ComputerStore`; the `DeckRecord` additions and `DeckSummary` (with `fan`), `DeckSeal`, `DeckStrength`, `LIBRARY_FILE_VERSION = 2`; `Settings.home: HomePrefs`, `BoosterSetup`, `Settings.deckCardSize`, `Settings.computer`, the matchmaking keys; new `HintId`s; backup import accepts every new key. Working basics: `createGameStore` (create, put, get, list, remove), `RatingStore.get` returning `null`. |
+| Core and wire | Actions `concede`, `seatInvite`, `seatClaim`, `playOn` in `core/actions.ts`; `Seat.conceded`, `Seat.invite`, `Seat.takeovers`, `TableState.result`, `TableSettings.autoSetup`; reducer files `core/reducer/result.ts` (M8-P4) and `core/reducer/rejoin.ts` (M8-P5), registered in the reducer index, each refusing with a reason and leaving the state unchanged until its package lands; the log lines of the four actions in `ui/describe.ts`. `PROTOCOL_VERSION = 4`; `HeadMessage` on `ctl`; `bye.reason: 'leave'`; `NonceKind 'claim'`. |
+| Lobby contracts | `src/net/lobby/messages.ts` and `types.ts` (matchmaking 2.4, 2.13): `LOBBY_PROTOCOL`, `QueueId` and `QUEUES`, `RatingKey`, `Band`, `Ticket`, `LobbyMessage` with validators, `MatchPlan` (room id, key, seats, format, queue), `QueueDeckInfo`. `resultSig` is not added (later). |
+| Session contracts and factories | `session/types.ts`: `Matchmaker`, `MatchmakerStatus`, `LobbyView`, `SeekerView`; `MusterStatus`, `SessionMuster` (`muster()`, `playOn(seats)`, `invite(seat)`, `takeInviteBack(seat)`), `SaveState`; `ComputerHandle`. Stub factories: `session/matchmaker.ts` `createMatchmaker` (phase `off`), `session/match-room.ts`, `session/computer.ts` (`createComputerGame`, `resumeComputerGame` reject), `session/practice.ts`, `session/checkpoint.ts` (no-op), `session/summary.ts`, `session/muster.ts` (always live), `session/invite.ts`, `session/result.ts`. |
+| Shared glue, implemented | `src/session/entry.ts`: `dealIn(session, deck)` (`importDeck`, `shuffle`, `draw(7)`; nothing when the seat has a committed deck), `rollFirstPlayer(session)`, `enterMatch(session, plan)`; unit-tested over `LoopbackNetwork` with two and four sessions. `deckImportOfRecord(record)` in `src/session/deck-build.ts`. `queueDeckInfo(record)` in `src/data/deck/queue.ts`. `src/ui/qr.ts` (`qrMatrix(text)`, lazy import, `null` when the text is too long). `src/ui/table/notices.ts` (one notice slot as a store). |
+| Data | `CardData.edhrec_rank`, `SetSummary.type`, `CardSearchOptions`, the `searchCards` signature. `src/data/starter.ts`: `buildStarterDeck(source, { colour, seed })` (stub rejects; M8-P6) and `StarterPoolSource`. |
+| App frame | `src/main.ts` creates the new stores, one `Matchmaker`, and passes them in `AppProps` (`games`, `ratings`, `matchmaker`, `openPractice`, `openComputer`); the eager solo session only for `#/solo`; harness table entries `kit`, `decks`, `history`. `src/ui/App.svelte` switches the new routes to the pages at the fixed paths below. `src/ui/table/TableFrame.svelte` replaces the body of `TableRoom.svelte`: it chooses between the waiting room, the matched entry, the versus screen, draft, build, the HUD under `Gathering`, and the game-over overlay, and passes `HudShellProps` built from the parts below. `ui/flow/Stage.svelte` mounts `WaitingRoom.svelte` in the lobby stage and forwards the shell props to the HUD. |
+| Debug hook | Shapes `mm`, `bot`, `decks`, `games`, `home`, `session.muster()`; `render.liveContexts()`, `render.memory()`. |
+| Lint | A `bot` element in `eslint.config.js` (`bot` → `bot`, `core`, `data`, `games`, `util`; `session`, `ui`, `debug` may import `bot`; `core`'s purity rules plus no `Math.random`). |
+
+**Fixed paths of the seams** (stub by M8-C, then the owner's):
+
+| Path | Owner | Mounted or called by |
+| --- | --- | --- |
+| `src/ui/home/Home.svelte` | M8-P2 | `App.svelte` at `#/` |
+| `src/ui/decks/DecksRoute.svelte` (all `#/decks…` routes), `DeckPickerSheet.svelte` (`allow`, `onpick`), `BoosterSetupSheet.svelte` (`value`, `mode: 'deck' \| 'draft'`) | M8-P3 | `App.svelte`; Home, the waiting room |
+| `src/ui/history/HistoryList.svelte` (`games`, `limit?`, `onopen`) | M8-P5 | Home's fold and the `#/history` page of the shell |
+| `src/ui/play/SoloRoute.svelte` (`#/p/<room>`) | M8-P2 | `App.svelte` |
+| `src/ui/computer/ComputerRoute.svelte` (`#/c/<room>`) | M8-P6 | `App.svelte` |
+| `src/ui/play/MatchHost.svelte` (match-found card), `QueueChip.svelte`, `MatchedEntry.svelte` | M8-P7 | `App.svelte`, the shell's queue bar, `TableFrame` |
+| `src/ui/lobby/WaitingRoom.svelte`, `InviteSheet.svelte` (`title`, `text`, `link`, `status`, `footer`), `JoinSheet.svelte`, `src/ui/play/Versus.svelte`, `GameOver.svelte` | M8-P4 | `Stage`, `TableFrame`, Home, M8-P5's bring-back |
+| `src/ui/gather/Gathering.svelte`, `src/ui/seat/SeatMenu.svelte`, `SeatBadge.svelte`, `presence.ts` | M8-P5 | `TableFrame` (around the HUD; into `plateMenuTop`, `plateBadge`, `seatPresence`, `status`, `readOnly`) |
+| `src/ui/table/TableFrame.svelte`, `menu-top.ts`, `src/ui/play/leave.ts`, `launch.ts`, `src/ui/App.svelte`, `src/main.ts`, `src/ui/flow/Stage.svelte`, `src/ui/lobby/RoomRoute.svelte`, `TableRoom.svelte` | M8-P2 | — |
+| `src/ui/Hud.svelte` and the HUD files | M7-P2 | reached only through `HudShellProps` |
+| `src/scene/table-scene.ts` | M7-P1, P3, P5 by region (`m7-adjustments.md` section 1) | no M8 package edits it |
+
+### Packages
+
+| Package | Scope in one line | Deep | Main files |
+| --- | --- | --- | --- |
+| M8-C Contracts | The section above | — | contract files, stubs, the app frame |
+| M7-P1 Table worlds and render speed | Four looks as 3D table worlds (Plain new and default); lifecycle counters, the mount / dispose soak, the no-blur guard; real-Safari measurement and fix | no | `src/themes/**`, `src/scene/{materials,lights,textures,post,table-marks,resolution,quality,switches,pacing,presence,lifecycle}.ts`, `src/ui/perf/**`, `scripts/perf/**` |
+| M7-P2 Table HUD | The rebuilt HUD on the kit with every `HudShellProps` slot, the log closed on entry, `KEEP` / `MULLIGAN`, the View control | yes | `src/ui/Hud.svelte`, `TurnStrip.svelte`, `Avatar.svelte`, `LogPanel.svelte`, `src/ui/hud/**`, `src/ui/menu.ts`, `src/ui/harness.ts` |
+| M7-P3 Tilt and card feel | One continuous tilt with the owner's mouse rule, the entry move, `poseAt`, the arena still; lift, sway, magnets, animations, one sound source (M7-P4 folded in) | no | `src/scene/camera.ts`, `camera/**`, `still.ts`, `motion.ts`, `cards.ts`, `ghost.ts`, `snap.ts`, `src/ui/sound*.ts`, `HandFan.svelte` |
+| M7-P5 Play without keys | Direct manipulation with visible affordances, coach marks, and the read-only scene | no | `src/scene/affordances.ts`, `src/ui/touch/**`, `src/ui/hints/**`, `src/ui/commands.ts` |
+| M8-P1 Ztyle kit | Plain's look and the whole kit from `mock.html`; fonts; the design audit; the look picker | no | `src/ui/design/**`, `src/ui/settings/**` |
+| M8-P2 Shell and Home | The landing, the nav, the backdrop, launching every mode, the table frame, leaving, first run, practice alone | no | `src/ui/App.svelte`, `src/main.ts`, `src/ui/shell/**`, `src/ui/home/**`, `src/ui/play/{launch,leave}.ts`, `SoloRoute.svelte`, `src/ui/table/**` |
+| M8-P3 Decks | Deck mode: model, seal, strength, boosters, library, deck page | no | `src/ui/decks/**`, `src/data/deck/**`, `src/store/decks.ts`, `src/draft/solo-sealed.ts`, `src/ui/builder/**` |
+| M8-P4 Private tables and the end of a game | Waiting room, invite sheet, join, draft-night setup, versus, concede, game over | no | `src/ui/lobby/{WaitingRoom,InviteSheet,JoinSheet,Lobby}.svelte`, `src/ui/play/{Versus,GameOver}.svelte`, `src/core/reducer/result.ts`, `src/session/result.ts` |
+| M8-P5 Save, History and rejoin | Game store, checkpoints, History, leave, head and muster, Gathering, seat invite and claim, recovery, leak tests | yes | `src/store/games.ts`, `src/session/{summary,checkpoint,muster,invite,net,persist,resume}.ts`, `src/core/reducer/rejoin.ts`, `src/net/{engine,sequencer,validate}.ts`, `src/ui/{history,gather,seat,recovery}/**` |
+| M8-P6 Computer opponent | Sparring: bot, in-page network, computer session and route, starter decks | no | `src/bot/**`, `src/net/local.ts`, `src/store/computer.ts`, `src/data/starter.ts`, `src/session/computer.ts`, `src/ui/computer/**` |
+| M8-P7 Matchmaking | Lobby room, broker, pairing, rating, the matchmaker, queue chip, match found, matched entry | yes | `src/net/lobby/**`, `src/store/{ratings,matches}.ts`, `src/session/{matchmaker,match-room}.ts`, `src/ui/play/{MatchHost,QueueChip,MatchedEntry}.svelte` |
+
+Preferred integration order when several are ready: M8-P1, M7-P1, M7-P3, M7-P2, M7-P5, M8-P3, M8-P5, M8-P4, M8-P7, M8-P6, M8-P2 (the owner of `App.svelte` and `main.ts` last, so its merge sees every page).
+
+**If a package is parked** the run goes on: without M8-P1 the screens wear the seed's plain stubs; without M7-P1 Plain shows the Paper table; without M7-P2 the old HUD ignores the shell slots and `TableFrame` shows a minimal bar above the table (Leave, Bring back); without M7-P3 the still is the look's gradient; without M7-P5 a waiting table is covered by the Gathering card instead of shown read-only; without M8-P6 `SOLO` offers `ALONE` only; without M8-P7 `QUICK MATCH` is shown disabled with "Matchmaking is not in this build yet."; without M8-P5 the `CONTINUE` strip and History show what `createGameStore`'s basics hold and re-entry is today's rejoin. The gate report names each.
+
+### Acceptance tests per package
+
+Every package: `pnpm check` green; its focused specs green in Chromium and WebKit; the full `pnpm e2e` once; gates M0–M5 green on its branch after merging `m8`.
+
+**M7-P1 Table worlds and render speed** (brief: `m7-adjustments.md`, sections "M7-P1" and "M7-P6")
+- Unit, per look (four): builds, textures deterministic, sounds bounded with a slot for every `FeelCue`, light model, surface = `mat` and surround = `frame` token, builds without a table state, `dispose` leaves no geometry, material or texture; Plain: halftone texture with a mip chain, zero post passes, a double selection ring.
+- E2E: conformance (a face pixel equals its source in all four looks); empty exile unmarked, marked while a card is dragged within 60 mm or held; screenshots per look at tilt 0, 0.5, 1.
+- Lifecycle: `tests/e2e/perf/soak.spec.ts` mounts and disposes the table scene 20 times: `memory()` after cycle 20 equals cycle 2, `liveContexts()` is 1 mounted and 0 disposed. `tests/e2e/perf/no-backdrop-filter.spec.ts`: with menu, drawer, a dialog and a toast open, no element over the scene host computes a `backdrop-filter` or a blur.
+- Policy: unit tests that hidden or covered frame gaps do not lower the resolution and that the table at rest renders at full resolution.
+- Real Safari: `pnpm perf -- --safari` (fallback `--safari-open`) with the window placed at 2560 × 1440 on the main display, one run at a time, no Playwright run active, load average recorded; before and after tables in `docs/gates/M7-P6.md`, or the plain statement "not measurable: the screen was locked" with what was fixed on other evidence.
+
+**M7-P2 Table HUD** (brief: `m7-adjustments.md`, section "M7-P2", chunks P2-1 to P2-4)
+- `tests/e2e/hud/seams.spec.ts` in the ui harness: every `HudShellProps` member as the chunk P2-3 lists, plus `primaryOverride` (the primary button shows the given label, runs it, and returns to its own step when cleared).
+- `sizes.spec.ts` (every HUD button has one of the kit's heights), `no-literals.test.ts`, `log-closed.spec.ts` (three window sizes; never opens by itself), `view.spec.ts`, `opening.spec.ts` (`KEEP` / `MULLIGAN`), axe in Plain and Graphite, `tests/e2e/touch/hud.spec.ts` (no wrapped row at 768 px), screenshots in four looks.
+
+**M7-P3 Tilt and card feel** (brief: `m7-adjustments.md`, sections "M7-P3" and "M7-P4")
+- Camera: unit tests of the interpolation, `poseAt` against the settled rig at five tilts for seats 0 to 3, the entry move (monotonic, a cut under reduced motion, a gesture takes over); e2e that a right-drag tilts and a horizontal right-drag leaves yaw, the wheel zooms and leaves tilt, the two-finger swipe tilts; `tests/e2e/touch/gestures.spec.ts` green ten times in a row in WebKit.
+- Still: `renderArenaStill` returns a Blob for each of the four looks in the scene harness, contains no card, and `liveContexts()` is 0 afterwards; with WebGL unavailable it resolves `null`.
+- Feel: unit tests of spring, magnet and stagger (seven cards within 600 ms); e2e that a drag ends where the state says, every animation ends and `framesDrawn` is then constant for 500 ms, disposing mid-draw leaves no frame hold; one `AudioContext` across two mounts, suspended after dispose; a theme's sound slot wins over the fallback.
+
+**M7-P5 Play without keys** (brief: `m7-adjustments.md`, section "M7-P5")
+- A goldfish turn by mouse only and one by touch only (iPad emulation) with zero keydowns (`debug.input`); pile, strip, zone and coach specs in both browsers; a coach mark never overlaps the opponent's territory.
+- Read-only: after `setReadOnly(true)` a drag, a double-click, a pile press and a right-drag from a card change neither the state hash nor the count of proposed actions; the wheel zooms; inspect opens; no coach mark shows.
+
+**M8-P1 Ztyle kit** (design: `visual.md`, `mock.html`)
+- `tests/unit/design/tokens.test.ts`: every look defines every token; control heights are 28, 36, 44, 56; Plain's ink, muted, danger and success reach 4.5:1 on `mat`, `chip`, `panel`, `panelRaised`; every look: ink and muted on `panel` and `panelRaised`, `accentInk` on `accent` 4.5:1, focus ring 3:1; no token contains `blur(` or `backdrop`.
+- `tests/e2e/design/kit.spec.ts` on `?harness=kit` in four looks: `document.fonts.check('14px "Fira Code"')` with the network blocked; a pressed button's transform and shadow differ from rest; arrow keys move a `Segmented`; a visible focus ring on every control; 44 px hit areas for `xs` and `sm` under a coarse pointer; an undo toast lives 5 s and a second one shows `UNDO ALL` (fake timers in the unit test); `packArt('COR', 0)` is stable and differs from `packArt('ALP', 0)`; a booster SVG has no `<image>` and no external reference; a card face in a `CardFan` or tile keeps 63:88 within 1 % and is not clipped.
+- `tests/e2e/helpers/design-audit.ts` `designAudit(page)`: every button, input and segment is 28, 36, 44 or 56 px high (±0.5); one row, one height; at most one primary per layer; no `backdrop-filter`, no `filter` over the scene host; fonts are the look's. It passes on the kit page in four looks. `tests/unit/design/no-adhoc.test.ts` scans `src/ui/**` for `backdrop-filter`, `filter: blur` and raw `<button` against an allow-list of legacy files.
+- The look picker lists Plain, Kitchen Table, Graphite, Codex; screenshots `artifacts/shots/M8/kit-<look>.png`.
+
+**M8-P2 Shell and Home** (design: `journey.md` sections 3, 4.1, 4.9, 4.10 "Leaving", 6, 8; `visual.md` boards 1 and 4)
+- Unit: `homeView(prefs, decks, online, storageOk, matchmaking)` for every row of the primary-button table of journey 4.1; `randomNickname()`; `BoosterSetup` ↔ `LobbySettings` round-trip; `parseRoute` / `routeHash` round-trips.
+- `tests/e2e/home/home.spec.ts`: a fresh profile opens `./` and sees Home (not a table), the nav, the empty hero and `PLAY` enabled; with a fixture deck saved the hero shows name, count and curve; switching mode changes the primary label and survives a reload; Draft night shows three boosters and no deck arrows; with an unfinished fixture game the `CONTINUE` strip names it and the primary still reads `PLAY`; `QUICK MATCH` while the fake matchmaker status is `seeking` shows the pressed pill with the timer and the queue bar on Decks and History; at 390 px nothing scrolls sideways; `render.liveContexts()` is 0 on Home; `designAudit` passes.
+- `tests/e2e/journey/solo.spec.ts`: with a fixture deck, `PLAY` in `SOLO · ALONE` leads to a table with 7 cards in hand, the log closed, no dialog, no key pressed; the back arrow leads Home without a dialog, the toast offers `REJOIN`, the strip names the game, and continuing restores the same state hash; the browser's Back does the same; after leaving, `liveContexts()` is 0.
+- `tests/e2e/journey/first-run.spec.ts`: a fresh profile presses `PLAY` once and arrives at a table with 7 cards (starter deck from the fixture pool; against Sparring when M8-P6 is merged, alone otherwise), and Decks lists the new deck; with the starter source failing, the sheet offers `TRY AGAIN`, `PASTE A DECK LIST`, `OPEN AN EMPTY TABLE`.
+- Launch: `CREATE TABLE` creates a room with `autoSetup`, a `GameSummary` of kind `private` and the waiting room open; `OPEN DRAFT TABLE` writes the lobby settings of the booster setup.
+
+**M8-P3 Decks** (design: `decks.md`; look: `visual.md` 2.8 "Deck parts", boards 2 and 3)
+- Unit (`tests/unit/decks/**`): seal: adding a non-pool card to a sealed deck answers `notInPool`, Forest succeeds, Snow-Covered Forest answers `notInPool`; `convertToCustom` leaves the original deep-equal; `migrateDeckRecord` is idempotent and a version 1 library file with a pasted deck and a drafted pool imports as one custom and one sealed deck; analysis and strength: the two fixture decklists give the hand-computed curve, land suggestion and pinned scores, a deck with no lands scores under 15, `strength` is `null` under half size; `autobuild` on a fixed M19 pool returns the same 40 cards in at most two colours twice; `openBoosters`: same seed, same pool; 6 M19 packs give 90 refs with one rare or mythic each; `queueEligibility` answers `incomplete`, `copies`, `ok`; chips compile to the query terms of decks section 3.
+- Leak (`tests/leak/`): `queueDeckInfo` of any fixture deck contains exactly kind, size, cards, score, band, version, and no card id, name or colour.
+- `tests/e2e/decks/library.spec.ts`: empty state with three paths; a seeded profile shows one `CUSTOM` and one `BOOSTER` tile; a click selects (`Settings.home.deckId`), `PLAY` goes Home, `EDIT` and double-click open the deck page; delete then `UNDO` restores, delete and wait removes; the picker sheet with `allow` rejecting custom decks dims them with the reason.
+- `tests/e2e/decks/custom.spec.ts`: create a custom deck, search "elves" in the fixtures, click a card four times: the row reads 4 and the store holds the deck after 1 s without `DONE`; undo and redo walk the edits; five copies show the warning and still save; the curve's text alternative lists the hand-computed curve; removing lands shows the land note and `+N LANDS` adds basics as one undo step; with the fixture source offline the search is disabled and the list still edits; the flow works by keyboard alone.
+- `tests/e2e/decks/sealed.spec.ts`: with a pinned seed, `OPEN` saves a sealed deck of 90 pool cards before any card is shown; the suggestion gives 40 cards in `main`, one undo empties it, `SUGGEST A DECK` gives the same 40 again; the page has no search field; `decks.edit(id, add <outside card>)` through the debug hook answers `notInPool`; `CONVERT TO CUSTOM DECK` creates a second record of kind custom with a search field and the original is byte-equal (`canonicalJson`); after a fixture sealed evening reaches the build stage the library holds one sealed deck with `via: 'draft'` and the build stage offers no card search.
+- A card image's rendered ratio is 63:88 within 1 % in every tile, grid and hero; `designAudit` passes on the library and the deck page; opening and closing the deck page 20 times leaves the DOM node and `img` counts where they were.
+
+**M8-P4 Private tables and the end of a game** (design: `journey.md` 4.7, 4.8, 4.9, 4.13; `matchmaking.md` 2.12; `visual.md` board 5)
+- The M1 lobby e2e scenarios pass against the waiting room (take a seat, change colour, choose a deck, Ready, start) with their `data-testid`s kept; gates M1–M3 stay green.
+- `tests/e2e/journey/private.spec.ts` (two profiles, `?transport=local`): `CREATE TABLE` on A opens the waiting room with the invite sheet; `COPY LINK` puts the room link on the clipboard and reads `COPIED ✓`; the QR has a white plate; B opens the link and is seated; neither sees the other's deck name; the creator's pill reads `WAITING · 1 OPEN SEAT`, `WAITING · 1 OF 2 READY`, then `START · 3` and presses itself; both pass the versus screen and sit at a table with 7 cards each and the same first player; un-readying stops the countdown; a pasted bare code in `JOIN A GAME…` shows the "whole link" message; `BOOSTER DECKS ONLY` dims custom decks in the picker.
+- `tests/e2e/journey/draft-night.spec.ts`: a table created with draft settings shows boosters in the deck slot and the booster setup in the setup sheet (creator only); the start leads to the draft stage.
+- Reducer unit tests: `concede` in 1v1 sets `result` with the other seat as winner; in `ffa3` only after the second concession; in `2hg` when both of a team conceded; total and deterministic. `tests/e2e/journey/end.spec.ts`: A concedes, both see the overlay (`VICTORY`, `DEFEAT`); the 0-life chip is offered only to that seat; `REMATCH` accepted by both leads to a new game with 7 cards each; `LOOK AT THE TABLE` hides the overlay and `RESULT` brings it back; `HOME` returns Home.
+- `designAudit` and axe pass on the waiting room, the invite sheet and the overlay.
+
+**M8-P5 Save, History and rejoin** (design: `persistence.md`; screens: `journey.md` 4.11, 4.12, 4.14)
+- Unit (fake-indexeddb, fake timers): upgrade from a version 1 database keeps every record; purge leaves no row of the code in `log`, `tables`, `secrets`, `games`; no checkpoint write while nothing changed, one 20 s after an action, at once on turn pass and on hide; `summarise` of fixture states (1v1, four players, 2HG, draft stage) with a `thumb` that holds public battlefield cards only; a failed write leads to one retry and then `notSaving`.
+- Reducer and sequencer: `seatClaim` with a wrong token, a used token, a taken-back invite, by a seated peer, for a present seat, after 24 h (injected clock) are refused with distinct reasons; a valid claim changes `peer`, `name`, `away`, `invite`, `takeovers` and nothing else; the team rule of 2HG; determinism extended to the new actions.
+- Sim (`tests/sim/resume/muster.test.ts`): every row of the case table of persistence section 5; standby refuses a `move` and accepts chat; equal-length different copies converge for both connection orders; a player returning across a 600-action gap holds every id of hand and library and is offered no recovery.
+- Leak (`tests/sim/resume/leak-rejoin.test.ts`, shared scanner): PL-1, PL-2, PL-3, PL-4, PL-6, each shown to fail when its leak is injected.
+- E2E (`tests/e2e/history/history.spec.ts`, `tests/e2e/resume/gather.spec.ts`, `reinvite.spec.ts`; two and three local pages): a left game is first in History with `VS BEN` and `Turn 3 · Ben's turn`; Remove then Undo keeps hand and seat; A leaves, B sees the toast and A's plate away within 1 s, plays three actions, A resumes from History and is live with B's state hash; both closed, B back alone sees `Waiting for Ann` and proposes nothing, `PLAY ON WITHOUT ANN` makes B live; B opens A's plate menu, `BRING ANN BACK`, copies the link; a fresh profile opens it, sits down as Ann, the address bar no longer contains `/rejoin/`, the recovery panel opens by itself; the same link in A's own profile resumes without a claim; a second use shows `This link was already used`.
+
+**M8-P6 Computer opponent** (design: `computer.md`)
+- Unit (`tests/unit/bot/**`): card reading (kind, cost, land colours, keywords, power and toughness) over fixture cards; mana payment; `decide` is pure and seeded (same view and seed, same step); attack and block choices on hand-made boards; `combatResult`; the starter generator returns 17 lands and 23 creatures of one colour from the fixture pool, the same for the same seed.
+- Sim (`tests/sim/bot/**`, fake timers): a whole game of the bot against a scripted human over `LocalNetwork` reaches a concession with equal state hashes on both sessions; the bot never moves, taps or removes a card it does not own (property over 50 seeded games); 50 games created and disposed leave no timer or listener; resume from the saved record continues with the same next step.
+- Leak (`tests/leak/computer.test.ts`): nothing of the human's hand or library in the bot session's observed data and the reverse; `BotView` never holds the human's hidden cards or the bot's library order.
+- E2E (`tests/e2e/computer/computer.spec.ts`): Home `PLAY` in `SOLO · SPARRING` leads to `#/c/<room>` with 7 cards in hand and Sparring's plate labelled `COMPUTER`; Sparring plays a land on its turn; the cue button (`ATTACK`, `DAMAGE`) appears on the HUD's primary and life totals change after combat; leave and continue restore the state hash and Sparring goes on; Talk, chat input and invite entries are absent; `Sparring concedes` ends the game with the overlay.
+
+**M8-P7 Matchmaking** (design: `matchmaking.md` 2.2, 2.4 to 2.7, 2.13)
+- Unit (`tests/unit/net/lobby/**`): the worked rating example; changes sum to zero with equal K; the floor at 100; `windowOf` at each row boundary; `compatible` is symmetric (property); `bestGroup` never returns an unlinked or incompatible pair (property); `deriveRoom` gives a valid room id and key and is the same for any input order; validators reject each message with a field removed or oversized.
+- Sim (`tests/sim/lobby/**`, `LoopbackNetwork`, fake timers): two compatible seekers reach `check` within 1 s and `moving` after both ready, with equal room, key and seat order; property over 2 to 12 seekers with seeded delay and reordering: nobody is in two matches, all members agree on the member list; 2k compatible 1v1 seekers form k matches within 10 s; overlapping offers yield exactly one match; a forged hold is ignored; a decline returns the others to `seeking` with their waiting time kept; four seekers form one `ffa4` match with four distinct seats.
+- Service: `off → connecting → watching → seeking → check → moving` with every `MatchmakerStatus` asserted; `cancel`, `widen`; entering a networked room turns the matchmaker off; a ranked 1v1 that ends by concession changes both ratings by opposite amounts equal to `ratingChanges`, once.
+- Leak: with a deck selected and a search running through to a formed match, no lobby message contains a Scryfall id, a deck id, a deck name, a card name or a salt; the only deck-derived fields are those of `QueueDeckInfo`.
+- E2E (`tests/e2e/matchmaking/match.spec.ts`; two and four pages, `?transport=local`, asserted through `__spellplane.mm`): A searches alone and after 10 s sees the alone text; B searches, both see the match-found card within 3 s; the ring lapses on B: A is back in `seeking` with its timer kept; both accept: both are at the same `#/t/<room>/<key>`, no waiting room is rendered, and within 10 s the stage is `match` with decks committed, 7 cards each and equal state hashes; four pages form a `ffa4` match; the game is in `games` and `matches`.
+
+### Gate M8-G
+
+`tests/e2e/m8.gate.spec.ts`, Chromium and WebKit, `?transport=local&faces=placeholder`, fixtures only, at most four pages per test, screenshots to `artifacts/shots/M8/` through `pnpm shots -- M8`:
+
+1. **Landing to a first game.** A fresh profile opens the site: Home, not a table. Decks → `NEW DECK` → `CUSTOM DECK` → a simple deck from the fixture search with lands added by the helper (curve and strength shown) → `PLAY` on its tile → Home with the deck as hero.
+2. **Against the computer.** `SOLO · SPARRING` → `PLAY` → a table with seven cards, the log closed, no key pressed; Sparring plays; leave by the arrow → Home with the `CONTINUE` strip → History lists the game first → open it: the same state hash, Sparring goes on. After each table visit `render.liveContexts()` is 0 on Home.
+3. **Private game.** Two profiles: `CREATE TABLE`, the invite link, both `READY`, the self-pressing start, versus, a table with seven cards each; one concedes; the overlay; `HOME`.
+4. **Matchmaking.** Two profiles search 1v1 (one browses Decks with the queue bar meanwhile), match found, both accept, the table without a waiting room; then four profiles form a 4 FFA match.
+5. **Sealed means sealed.** Open six fixture boosters with a pinned seed: a booster deck with a lock; adding a card from outside the pool is refused in the UI and through the debug hook; `CONVERT TO CUSTOM DECK` makes a copy that takes it; the original is unchanged.
+6. **Draft night.** Home in `DRAFT NIGHT` shows three closed boosters with the fixture set code and no deck; `OPEN DRAFT TABLE` opens a waiting room whose lobby settings equal the booster setup.
+7. **Leave and rejoin, newest wins.** Three profiles in a 4 FFA with three players: play to turn 3; Cy leaves; Ann and Ben play on; Ann leaves; Ben plays on and leaves. Ann returns (Gathering: waits for Ben), then Ben (both live on Ben's copy). Cy's profile is replaced by a blank one; Ann brings Cy back by link; Cy sits down and recovers. Three equal state hashes; History lists the game first on each page; the leak scanner over all three pages is clean.
+8. **Design audit.** `designAudit` on Home, Decks, the deck page, History, the waiting room, Gathering and the table HUD; axe on the same.
+
+Plus **M7's own checks** (`tests/e2e/m7.gate.spec.ts`, opening `#/solo`): a goldfish game without keys by mouse and by touch (iPad emulation) in Plain and Graphite, a five-step smoke in Kitchen Table and Codex; screenshots per look at first person, mid-tilt and bird's-eye, a card mid-lift and mid-snap, a draw animation, the HUD with menu and a plate menu open; the log closed on entry; idle frames stop (render on demand); the soak and the no-blur guard green.
+
+Gates M0–M5 stay green; CI green on `m8`. **Real Safari:** with the machine quiet, one `pnpm perf -- --safari` over the four looks; the numbers, together with M7-P1's from `docs/gates/M7-P6.md`, go into the report, or the plain statement that they could not be measured. `docs/gates/M8.md` holds the preview URL, the commit, test counts, the screenshot review against `mock.html` and the owner's words, parked packages, decisions made beyond the design, and **what the owner should look at on the preview link**, in the order of the journey: Home; a first `PLAY`; Decks (a custom deck, six boosters, convert); a private game in two tabs with `?transport=local&profile=a` / `b`; Quick match in two tabs; leave and History; `Bring … back` from a plate menu; the four looks in Settings; Safari against Chrome.
+
+**Owner review:** the preview link (`/spellplane/preview/`, following `m8`) in the morning; M7's owner-in-the-loop way of working resumes from there.
+
+### How M7 changed
+
+M7's overnight packages were paused half built (work in progress in `spellplane-wt/m7-p1` … `m7-p5`). They finish inside the M8 run on branch `m8`; the detailed reconciliation is `docs/design/m8/m7-adjustments.md`. The table "Overnight run packages (M7, first build round)" above is superseded by this one:
+
+| Package | Status | What changed |
+| --- | --- | --- |
+| M7-C Contracts | merged (8bd9e44) | M8-C amends them: four looks, the token shape, `HudShellProps`, `readOnly`, `enterFrom`, lifecycle counters. |
+| M7-A0 Safari performance | merged | Its open end (real Safari) is in M7-P1 now. |
+| M7-P1 Table worlds **and render speed** | revised | Keeps Kitchen Table, Graphite and Codex; adds **Plain**, the default, built on Ztyle. Marks only where used; every world builds without a table state. Takes over M7-P6: lifecycle counters, the mount / dispose soak, the no-blur guard, the real-Safari measurement by `--safari` first. |
+| M7-P2 Table HUD | revised | Was "Design system and HUD". The design system goes to M8-P1, the start page to M8-P2 (Home replaces it; its branch work on the start page is not merged). Gains every `HudShellProps` slot (back arrow, `menuTop`, plate menu and badge slots, presence, status, notice, `chrome`, `readOnly`, `primaryOverride`), the log closed on entry at every size, no set-up control on the table, `KEEP` / `MULLIGAN`, the View control. |
+| M7-P3 Tilt **and card feel** | kept, merged with M7-P4 | The owner's mouse rule is unchanged. New: the entry move (`enterFrom`), `poseAt`, the arena still for Home. Card feel as briefed, with one sound source (the theme's set), one `AudioContext`, staggered group moves, cancel on dispose. |
+| M7-P4 Card feel | folded into M7-P3 | Branch `m7-p4` is merged into `m7-p3` as that package's first step. |
+| M7-P5 Play without keys | kept | Builds its strip, pile actions and coach marks from the kit; one marked mount block in the HUD; new: the read-only scene. |
+| M7-P6 Safari speed in real Safari | folded into M7-P1 | No worktree existed; the baseline note is `spellplane-wt/_args/M7-P6-baseline.md`. |
+| Gate M7-G | part of Gate M8-G | `tests/e2e/m7.gate.spec.ts` keeps its name; four looks; the full no-keys game in Plain and Graphite. |
+
+The M7 aspects that were "later rounds" move to M8: A2 start page → Home; A3 lobby → the waiting room; A6 draft screens → later (tokens only tonight); A7 deck builder mode → Decks (`decks.md` keeps or drops every A7 item with a reason); A8 settings, menus, dialogs → the kit, with the sweep later; A10 accessibility → the M8 gate.
+
+### Open questions for the owner (M8)
+
+Each has the default the run builds.
+
+1. **Plain as a fourth look and the default**, with Kitchen Table, Graphite and Codex kept. The other reading of "the plain design" is Ztyle chrome over the three looks and no fourth.
+2. **Game codes** stay three words and a number (`AMBER FOX 93`), small. Ztyle's six characters (`K7QW2M`) are a one-function change for new games.
+3. **Rejoin without everyone.** The muster rule lets the gathered players play on without a missing one; your sentence says "only if all players reconnect". Say if a strict rule is wanted.
+4. **A lost hand is rebuilt, not restored.** A browser that lost its storage sits down again and rebuilds library and hand in public from its deck list.
+5. **PeerJS or Trystero.** Trystero stays (rooms, mesh, already tested); nothing depends on the name.
+6. **The lobby is joined only when you search**; previews use their own lobby (`dev` realm) and never meet the live site.
+7. **Ranked is 1v1 only and an honour system**; deck strength and the sealed status are self-reported.
+8. **Sparring keeps the score** of combat it took part in and never moves your cards.
+9. **The first press** makes a starter deck and opens a game against Sparring; the alternative is opening six boosters first.
+10. **Typing a code to join** is not built; the link and QR carry the key.
+11. **Real-Safari numbers need an unlocked screen.** If the Mac was locked overnight, run `pnpm perf -- --safari` once at the desk.
 
 ## Quality gates
 
@@ -711,3 +1000,16 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M7-A8 Settings, menus, dialogs, notifications
 - [ ] M7-A9 Sound and motion
 - [ ] M7-A10 Accessibility pass
+- [ ] M8-C Contracts (M8, plus the M7 amendments)
+- [ ] M7-P1 Table worlds and render speed (with M7-P6)
+- [ ] M7-P2 Table HUD
+- [ ] M7-P3 Tilt and card feel (with M7-P4)
+- [ ] M7-P5 Play without keys
+- [ ] M8-P1 Ztyle kit
+- [ ] M8-P2 Shell and Home
+- [ ] M8-P3 Decks
+- [ ] M8-P4 Private tables and the end of a game
+- [ ] M8-P5 Save, History and rejoin
+- [ ] M8-P6 Computer opponent
+- [ ] M8-P7 Matchmaking
+- [ ] M8-G Gate (with M7's table checks) and owner review

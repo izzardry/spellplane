@@ -1,0 +1,386 @@
+# M7 reconciliation: what M8 changes in the M7 packages
+
+*M8 design round, topic "m7". Written 20 Nov 2026 for the unattended run. Input: `docs/design/m8/owner-request.md`, `docs/PLAN.md` Milestone 7, the package args in `spellplane-wt/_args/m7-args-r2.json`, the work in progress in `spellplane-wt/m7-p1` … `m7-p5` (read-only inspection), and the sibling M8 documents as far as they existed when this was written: `journey.md`, `matchmaking.md`, `persistence.md`, `decks.md`, `computer.md` and `mock.html` (the visual topic's mock; its `visual.md` was still being written).*
+
+M7 was paused with six packages half built. M8 adds a landing page, a deck library and builder, matchmaking, custom and draft modes, save and rejoin, a history, and a Ztyle-based design language. This document decides, package by package, what of M7 stays, what changes and what M8 takes over, and gives each remaining package a revised brief and an exact file list. It also settles every file that an M7 package and an M8 chunk both claim.
+
+M8 packages are named by role where no sibling document names them: `M8-C` contracts, `M8-DS` design system (the visual topic). Sibling chunks are cited by their own ids (`J1`, `MM-10`, `PS-7` …); for the journey document an id means the build-plan chunk of its section 9 unless "decision" is written.
+
+## Rulings of the lead planner (20 Nov 2026)
+
+Where this file and a sibling differed, the lead planner decided. These rulings override the text below; the decisions are recorded in `docs/DECISIONS.md` (`[M8 plan]`).
+
+- **Who builds what** is decided by `docs/PLAN.md`, "Milestone 8: Journey, decks and matchmaking" (eleven packages M7-P1, P2, P3, P5 and M8-P1 … M8-P7 after one contracts agent M8-C). The chunk ids in this file (J…, MM-…, PS-…, DK-…, C…, DS-…) name pieces of work, not packages; its build plan is a checklist for the package that PLAN names, and whatever PLAN lists under "later" is not built in the overnight run.
+- **Game code:** the existing room id, three words and a number (`amber-fox-93`, shown as `AMBER FOX 93`). No six-character code in M8; no stored id changes.
+- **No blur in CSS anywhere:** no `backdrop-filter` and no `filter: blur()` in the shell or over a table. The arena behind Home is a still that `src/scene/still.ts` delivers already soft; a saved table behind the Gathering card is dimmed by the flat `overlay` scrim, never blurred (card faces are on it).
+- **Control heights** are the kit's four: 28, 36, 44, 56 px (`visual.md` V4).
+- **Deck strength** is the one formula of `decks.md` section 5, in `src/data/deck/strength.ts`; the lobby's `Band` 1 to 5 is its five bands in order.
+- **Leaving** has no confirmation and no first-time dialog; the table shows a back arrow top left.
+- **The primary button** always starts the selected mode; it never reads `RESUME` or `CONTINUE`. The `CONTINUE` strip under it reopens the last unfinished game.
+- **Four M7 packages, not six.** To fit eleven packages in the run: **M7-P4 Card feel is folded into M7-P3** (one package, worktree `m7-p3`; its first step merges branch `m7-p4`), and **M7-P6 Safari speed is folded into M7-P1** (worktree `m7-p1`; lifecycle counters, soak, the no-blur guard, then the real-Safari measurement). M7-P2 and M7-P5 stay. The sections "M7-P4" and "M7-P6" below are the briefs of those halves.
+- **The arena still** (`src/scene/still.ts`, D10) is built by **M7-P3**, which owns the camera and `poseAt`; M7-P1 guarantees that every world builds without a table state. No M8 package edits a file under `src/scene/`.
+- **D11 is stricter:** no `backdrop-filter` and no blur filter anywhere, in or out of a table (`visual.md` V11).
+- **The design system package** is M8-P1 (called M8-DS below); the contracts package is M8-C.
+- **`HudShellProps` gains `primaryOverride`** (`{ label: string; run(): void; quiet?: boolean } | null`): when set, the HUD's primary button shows it instead of its own turn step. The computer game uses it for the combat cues.
+- **The gate** plays the full no-keys game in Plain and Graphite and a smoke in Kitchen Table and Codex, as section 7 says, inside `tests/e2e/m8.gate.spec.ts`'s table part; `tests/e2e/m7.gate.spec.ts` keeps its name.
+
+## What was found
+
+| Package | Branch state (20 Nov, 02:13) | Size against `m7` | What is missing |
+| --- | --- | --- | --- |
+| M7-C contracts | merged in `m7` (8bd9e44), so in `m8` | 29 files | nothing |
+| M7-A0 Safari performance | merged in `m7` | | real-Safari proof (became M7-P6) |
+| M7-P1 Table worlds | `m7-p1`, committed, "work in progress", level with `m7` | 32 files, +3222 | green e2e in both browsers, screenshots; it also edited `src/ui/settings/Theme.svelte` and the contract file `src/themes/types.ts` |
+| M7-P2 Design system and HUD | `m7-p2`, committed, "first attempt", level with `m7` | 80 files, +3802 −833 | finishing; it holds the component kit (`src/ui/design/*`), the rebuilt HUD (the log is already a closed drawer with a ticker), a restyled start page, and about 45 e2e specs moved to the new HUD routes |
+| M7-P3 One continuous tilt | `m7-p3`, two commits, level with `m7` | 15 files, +2216 −2403 | e2e for mouse, touch and keys; the two-finger double-tap fix; screenshots |
+| M7-P4 Card feel | `m7-p4`, one commit, level with `m7` | 14 files, +2141 | most e2e (only `feel/drag.spec.ts` exists); it has its own per-look sound synthesiser (`ui/sound-feel.ts`) that duplicates P1's (`themes/kit/sounds.ts`); it edited the contract file `src/scene/types.ts` |
+| M7-P5 Play without keys | `m7-p5`, **nothing committed**, 11 commits behind `m7` | 7 files changed, 17 new (about 2,900 lines in all) | commit, merge, finish; it edits `src/ui/Hud.svelte` (47 lines) and `src/scene/types.ts` |
+| M7-P6 Safari in real Safari | **no worktree**; only the baseline note `_args/M7-P6-baseline.md` | | everything; the baseline could not reproduce the slowness because the Safari window was covered |
+
+`m8` is `m7` plus two commits, and `_args/push-preview.sh` already follows `m8`. So all M7 package branches can merge `m8` without conflict today.
+
+## Decisions
+
+Each decision names its reason and the owner sentence it serves. "Owner 19 Nov" is the M7 decision list in `docs/PLAN.md`; unmarked quotes are from the M8 request.
+
+| # | Decision | Reason | Owner sentence |
+| --- | --- | --- | --- |
+| D1 | **One run, one integration branch.** The M7 packages finish inside the M8 run and merge into `m8`. `m7` stays frozen at 91c16ab. Slugs and worktrees `m7-p1` … `m7-p5` are reused; `m7-p6` is created from `m8`. | `m8` already contains `m7`; the preview already follows `m8`; two integration branches would double every merge. | "implement M7 and M8 in one go" |
+| D2 | **The seam is the table edge.** M7 owns the arena and everything shown on it: `src/scene/**`, `src/themes/**` and the in-table HUD files. M8 owns everything outside a table and the way between tables (shell, routes, landing, lobby, decks, queue, history, settings, the design system, and whatever it lays over a table as a sheet or overlay). An M8 chunk never edits an M7-owned file; it reaches the HUD through props and slots (`HudShellProps`, section 2) and the scene through options. | Three sibling documents each plan edits to `ui/Hud.svelte`, the life plate and `ui/menu.ts`, and one to `scene/table-scene.ts`, while five M7 packages are rebuilding exactly those files. One owner per file is the only way this merges in one night. | "the visitor is directly thrown into an arena … that has to be changed" |
+| D3 | **The design system leaves M7-P2 and becomes M8-DS's**, seeded from the `m7-p2` branch. The names in the seed are the API: the `--ds-*` variables, the `.ds-*` classes, the component props. M8-DS changes values and recipes and adds tokens and components; a renamed or removed name is done in M8-C's contracts commit, before packages start. M7-P2, M7-P5 and every M8 screen then build against the same kit in parallel. | The owner asks for a Ztyle-based language for the whole product, not a HUD skin. P2's kit is sound in structure (tokens, twelve components, no blur) and the rebuilt HUD already consumes it; the visual mock already uses its variable names. | "look into Ztyle and adopt portions of it for the plain design"; "placed buttons and functions of different sizes, the panels are technical and boxy" |
+| D4 | **A fourth look, "Plain", built on Ztyle, is the default; Kitchen Table, Graphite and Codex stay.** The visual topic defines Plain's tokens (`mock.html`: `.look-plain` as the root, the other three overriding material tokens only). M7-P1 builds Plain's 3D table world; M8-DS writes its tokens. | The owner approved A, B and C one day earlier, so they are not dropped. What the owner saw on the preview was the old white Paper table and the old HUD (P1 and P2 were never merged) and asked for that plain design to gain depth from Ztyle. In Plain the card faces are the only colour on screen. Looks still change materials and mood only, never layout. | "the white design lacks depth and tactileness"; Owner 19 Nov: "all looks, A, B and C are nice" |
+| D5 | **M7-P2 loses the start page.** Its restyled `StartPage.svelte`, `StartRoute.svelte`, the `sp-wide` layout in `App.svelte` and `tests/e2e/start/*` are not merged. Home (journey `J1`) replaces it and may read the branch for the nickname handling. | The landing replaces it entirely. | "a landingscreen is the right way to start, similar to Zhess" |
+| D6 | **The log is closed on entering any table, at every window size.** Closed, it is one round Activity button with an unread count and a ticker of at most three lines that fade after 6 s. Only the player opens the drawer (click, or Enter to chat). P2's work in progress already does this; it becomes a tested requirement, and P2 does it, not `J2`. | The owner names the open log as part of the bad first impression. | "a blocky log being open. that has to be changed" |
+| D7 | **Nothing is configured inside the arena.** A table reached from Home arrives with deck, seats and mode set. The HUD shows no set-up control. `Import deck…` is in the Menu only in the sandbox (`#/solo`); a table without a deck shows one line above the hand: "No deck on this table." with a button "Choose a deck". | Set-up belongs to Home and the lobby. | "with manual configurations to be made" |
+| D8 | **Leaving is the shell's action, shown where the shell asks.** The HUD offers three places and the shell fills them: an optional back arrow, top left (Ztyle's exit-to-start, as in Zhess), shown when `onleave` is passed; the Menu's first group, which the shell supplies (`Leave to home`, `Concede` …); and the own plate's menu. The HUD never asks "are you sure", and the shell shows no dialog either (ruling: leaving is never confirmed or explained in a dialog; a toast on Home says what happened). | Leaving no longer ends anything. The journey and persistence documents both put Leave in the menu; neither draws the arrow. Making it a prop lets the plan choose without touching the HUD again. | "leaving a game would not stop it … when the game is left, it lands on the history, and can be re-entered" |
+| D9 | **The player plate's "⋯" menu is the owner's "special menu", and its M8 content comes in through slots.** P2 builds the plate, the menu and the built-in items. The shell renders the connection section at the top of the menu (`plateMenuTop`: `Away for 3 min`, `Bring Ben back…`, `Saved · 4 s ago`, `Leave table`) and badges on the plate (`plateBadge`: `RE-INVITE`, `NOT SAVING`). The plate dims for a seat the shell reports as away. | Journey `J8`, persistence `PS-8` and matchmaking `MM-10` each specify plate-menu content and each planned to edit the plate. Slots let all three land without a shared file. | "re-inviting him via a link or QR code should work from ingame in a specal menu present in each the player state in the respective panel" |
+| D10 | **The landing's blurred arena is a still, and it is M8's file.** `src/scene/still.ts` (`renderArenaStill`, journey `J1`) is a new file owned by `J1`; it imports the scene's theme runtime and layout read-only and edits no other scene file. M7 adds two things around it: P1's four worlds must build without a table state (so the still works for every look), and P3 gives the table an entry move (`enterFrom`) so the un-blur ends in the stored view. | The journey document already specifies the still; a second API from M7 would be a duplicate. Ownership stays single because the file is new. | "a deck can be selected and should be as present as a blurred-out arena in the background" |
+| D11 | **No `backdrop-filter` and no blur filter over a live table, ever.** In a table, Ztyle's "floating glass" is a 92 % opaque panel with border and shadow (the mock's `--ds-ghost` already is). Outside tables, over static content, a static blur is allowed. M7-P6 adds a test that fails if any element over the scene host computes a `backdrop-filter` or a blur. | Measured in M7-A0 as a Safari cost; Ztyle's own recipes blur all chrome, so the rule must be tested before anyone copies them. | "Target is Safari and Chrome"; Owner 20 Nov: "it still renders quite slow on safari" |
+| D12 | **M7-P3 keeps the owner's final mouse rule unchanged**: the wheel zooms toward the cursor; a left-drag stays as it is; a right-drag on the empty table tilts between front view and top view and horizontal movement does not turn the view; no free look-around; Shift+drag marquee and a right-drag from a card (line) stay. | Owner decision, not touched by M8. | Owner 19 Nov: "make the right click drag orbit between front and top view" |
+| D13 | **M7-P4 stays as briefed; the look timbres have one source**, the theme's sound set (P1). P4's `ui/sound-feel.ts` shrinks to one neutral fallback set for themes without their own cues. One `AudioContext` for the page, suspended when a table is disposed. | Two synthesisers for the same cues were built in parallel; P4's own comment already says the theme set wins. | Owner 19 Nov: "almost haptic card movements and snaps and animations" |
+| D14 | **M7-P5 stays; its coach marks stay inside the table; it also owns "look, do not touch".** The read-only table that persistence needs (`PS-7`: a waiting game, a second tab) is a scene option implemented by P5, the owner of the pointer and touch action routes. P5's 47-line mount in `Hud.svelte` is one marked block; whichever of P2 and P5 merges second keeps both. | P5's work is independent of M8 except for where it is mounted. `PS-7` planned to edit `scene/table-scene.ts` for the flag, which five M7 packages are editing. | Owner 19 Nov: "the game play seemed to require hotkeys to be memorized instead of just intuitive play" |
+| D15 | **M7-P6 measures with `pnpm perf -- --safari` (safaridriver) first**, `--safari-open` as the fallback, one Safari run at a time. It no longer waits for P1: the complaint was about the build without the new looks. It gets a new duty: counters for live WebGL and audio contexts and a mount-and-dispose soak test. | The owner reports automation works; a WebDriver window can be sized and placed, which fixes the baseline's "covered window" problem. With M8, players enter and leave tables many times per page load and Safari caps live WebGL contexts, so a leak that never showed with one table per page load would break the journey. | "Using safari in dev mode and puppeteering mode seemed to work just fine. Target is Safari and Chrome." |
+| D16 | **The M7 aspects not in a package move to M8**: A2 start page → journey; A3 lobby → journey and matchmaking; A6 draft screens → journey `J11`; A7 deck builder mode → `decks.md` (the A7 specification in PLAN stays its checklist); A8 settings, menus, dialogs → M8-DS; A10 accessibility → the M8 gate. A1 splits (D3, D4); A4, A5, A9 stay in M7-P2, P4, P5. | They were "later rounds" of M7 and are the core of M8. | "the deck building and deck picking is the core activity that happens outside of an active game" |
+| D17 | **Gate M7-G becomes the table section of the M8 gate**, with four looks and a smaller matrix (section 7). M7's owner-in-the-loop way of working is suspended for this run and resumes with the owner's review of the preview. | One gate run per night is what the machine's memory allows. | "work through this self-relaintly"; "I'll intervene tomorrow" |
+| D18 | **The sandbox table is `#/solo`** (journey `J1`, `J-C`); `#/` is Home. The e2e URL builders that reach the table through an empty hash open `#/solo`. This is `J-C`'s change; it is listed here because every M0–M7 table spec depends on it and the journey document counts only `openApp` and three specs. | The solo table is reached through an empty hash or `#/` in about 20 URL builders in 15 e2e files (section 2), not only in `openApp`. Changing the builders, not the specs' bodies, keeps every table spec valid and keeps the owner's "straight into a table" view for fast critique. | "instead, a landingscreen is the right way to start" |
+| D19 | **The run's memory rules stay binding for every M7 package**: `pnpm check` wrapped in `oomph run --reserve 2G …`, Playwright only through the pnpm scripts and pw-guard, one browser run per worktree, exit 4 reported, never worked around. | The first M7 launch was lost to memory. | "make sure to not mess up the system with memory leaks. connect to /oomph to keep memory usage checked" |
+| D20 | **M7 adds no phone layout of its own.** The HUD is edge-anchored with no fixed width over 320 px and takes its control sizes from the kit, so journey `J13`'s phone pass can arrange it; M7's own touch tests stay on iPad emulation. | The owner defers it; the journey document plans the phone pass. | "later also a mobile or tablet version, but that can go into M8" |
+| D21 | **The M4 themes stay in code, unlisted.** Paper remains the fallback theme of harness pages. | Unchanged M7 decision; Plain replaces Paper only as the default. | Owner 19 Nov (the M4 themes "leave the theme picker; their code stays until the owner confirms they can go") |
+
+## Detailed design
+
+### 1. Who owns which file
+
+One owner per path across M7 and M8. No M7 package touches an M8 path and the reverse.
+
+| Path | Owner |
+| --- | --- |
+| `src/themes/**` (incl. new `src/themes/plain/**`, `kit/**`) | M7-P1 |
+| `src/scene/materials.ts`, `lights.ts`, `textures.ts`, `post.ts`, `table-marks.ts`; the `setMarks` call in `table-scene.ts` and `theme-runtime.ts` | M7-P1 |
+| `src/scene/camera.ts`, `src/scene/camera/**`; camera gesture paths in `table-scene.ts` and `gestures.ts` | M7-P3 |
+| `src/scene/motion.ts`, `cards.ts`, `ghost.ts`, `snap.ts`; drag-and-drop motion in `table-scene.ts`; `src/ui/sound.ts`, `src/ui/sound-feel.ts`, `src/util/feel.ts`, `src/ui/HandFan.svelte`, `src/ui/hand-room.ts` | M7-P4 |
+| `src/scene/affordances.ts` (new), `stack-badge.ts`; pointer and touch action routes in `table-scene.ts` (incl. the read-only option); `src/ui/touch/**`, `src/ui/hints/**`, `src/ui/commands.ts` | M7-P5 |
+| `src/scene/resolution.ts`, `quality.ts`, `switches.ts`, `pacing.ts`, `presence.ts`, `lifecycle.ts` (new); resolution and pixel-ratio parts of `theme-runtime.ts` and `table-scene.ts`; `src/ui/perf/**`; `scripts/perf/**`; `docs/gates/M7-P6.md` | M7-P6 |
+| `src/ui/Hud.svelte`, `TurnStrip.svelte`, `Avatar.svelte`, `LogPanel.svelte`, `src/ui/hud/**` (incl. the life plate and the plate menu), `src/ui/menu.ts`, and the HUD's test page `src/ui/harness.ts` with `src/ui/fakes.ts` | M7-P2 |
+| `src/scene/table-scene.ts` as a whole | shared by P1, P3, P4, P5, P6 by region as above (the M7 arrangement); **no M8 chunk edits it** |
+| `src/scene/still.ts` (new) | journey `J1` |
+| `src/scene/draft.ts`, `src/scene/builder.ts` | M8 (no M7 package touches them) |
+| `src/ui/design/**` | M8-DS |
+| `src/ui/App.svelte`, `routes.ts`, `src/ui/shell/**`, `home/**`, `play/**`, `table/**`, `seat/**`, `gather/**`, `history/**`, `src/ui/lobby/**`, `flow/**`, `builder/**`, `draft/**`, `DeckImport.svelte`, `settings/**`, `empty/**`, `storage/**`, `recovery/**`, `about/**`, `src/net/**`, `src/session/**`, `src/store/**`, `src/draft/**`, `src/data/**`, `src/core/**` | M8 |
+| `src/ui/ContextMenu.svelte`, `Inspect.svelte`, `PileViewer.svelte`, `TokenSearch.svelte`, `CheatSheet.svelte`, `src/ui/chat/**`, `confirm/**`, `voice/**`, `audit/**` | **nobody this round.** They take the look's colours, type and radius through the `--sp-*` mapping in `design/css.ts` (`spVarsFromLook`). A structural restyle is parked as "A8, in-table overlays" unless M8-DS claims the files. |
+| Contract files (`*/types.ts`, `core/actions.ts`, `net/messages.ts`), `src/ui/props.ts`, `tests/e2e/helpers/app.ts` and the other URL builders | M8-C (`J-C`, `PS-C`) |
+
+Tests follow their code: `tests/unit/themes/**`, `tests/e2e/themes/**` (P1); `tests/unit/hud/**`, `tests/e2e/hud/**`, `tests/e2e/helpers/hud.ts` (P2); `tests/unit/camera/**`, `tests/e2e/camera/**`, `tests/e2e/touch/gestures.spec.ts` (P3); `tests/unit/motion/**`, `tests/e2e/feel/**` (P4); `tests/unit/affordances/**`, `tests/e2e/nokeys/**`, `tests/unit/settings/hints.test.ts` (P5); `tests/unit/perf/**`, `tests/e2e/perf/**` (P6); `tests/unit/design/tokens.test.ts` (M8-DS). An M7 package that changes how an existing spec reaches a function updates that spec, as before.
+
+### 2. Contract amendments and the seed (for M8-C, before any package starts)
+
+The M7 branches already contain edits to contract files and to files that now belong to M8. M8-C takes them into `m8` in its contracts commit, so every package starts from the same base. Package agents then merge `m8` and, on a conflict in a contract file or under `src/ui/design/`, take `m8`'s side.
+
+**Taken over from the M7 branches**
+
+| From | What | Into |
+| --- | --- | --- |
+| `m7-p1` | `ThemeInstance.setMarks?`, `MarkRect`, `TableMarks` | `src/themes/types.ts` |
+| `m7-p4` | `CardAnimationKind` gains `'counter'`; `magnet.kind` gains `'zone'` and `'hand'` | `src/scene/types.ts` |
+| `m7-p5` (working tree) | `PileActionId` gains `'revealTop'`; `PILE_ACTIONS.library` gains it | `src/scene/types.ts` |
+| `m7-p2` | `HudProps.evening?: EveningControls` | `src/ui/props.ts` |
+| `m7-p2` (86248ce) | **The kit seed**: `src/ui/design/*` without `LifePlate.svelte`, `CounterChip.svelte`, `scrub.ts` (HUD parts; P2 moves them to `src/ui/hud/`); `tests/unit/design/tokens.test.ts`; `src/ui/settings/Theme.svelte` with its spec edits; from the `App.svelte` diff only the `base.css` import, `LookChoice`, `lookCssVars`, `data-look` and the `ds-root` class (not `sp-wide`) | `m8` |
+
+**New for the seam**
+
+```ts
+// src/themes/types.ts
+export type LookId = 'plain' | 'kitchen' | 'graphite' | 'codex';
+export const DEFAULT_LOOK: LookId = 'plain';      // LOOK_THEME.plain = 'plain'; a stub theme until M7-P1
+// store/types.ts: DEFAULT_SETTINGS.look = 'plain', DEFAULT_SETTINGS.theme = 'plain'
+
+// src/ui/design/tokens.ts: whatever shape visual.md gives the tokens (the mock adds control sizes xs/sm/md/lg,
+// radius `control` and `sheet`, elevation `well` and `sheet`, textures). The M7-C shape cannot say "round buttons,
+// 20 px sheets" (one `radius.md` for both), so the shape changes here, once, with a `plain` entry.
+
+// src/ui/props.ts: what the shell tells the HUD. All optional: harness pages and old specs pass none.
+export interface HudShellProps {
+  /** Leave to Home. The table keeps running and stays in History. Passed: a back arrow shows, top left. */
+  onleave?: () => void;
+  /** Menu groups shown first, above the HUD's own (journey 4.10 "This game": Leave to home, Invite…, Concede, Declare result…). */
+  menuTop?: () => MenuGroup[];                       // MenuGroup from ui/design/menu.ts
+  /** True at `#/solo`: "Import deck…" is in the Menu and the no-deck line opens the paste dialog. */
+  sandbox?: boolean;
+  /** Opens the shell's deck picker for a table without a deck (not in the sandbox). */
+  onchoosedeck?: () => void;
+  /** Seats whose player is away; their plates dim. Seats not listed are here. */
+  seatPresence?: Readonly<Record<SeatId, 'here' | 'away'>>;
+  /** The top section of a plate's "⋯" menu (connection state, Bring back…, Leave table). The second argument closes the menu. */
+  plateMenuTop?: Snippet<[SeatId, () => void]>;
+  /** Badges on a plate, beside the name (RE-INVITE, NOT SAVING, SEAT MOVED). At most 28 px high. */
+  plateBadge?: Snippet<[SeatId]>;
+  /** One line under the turn tracker (the queue pill, "Waiting for Ben · Bring back · Play on"). Empty takes no space. */
+  status?: Snippet;
+  /** A message through the HUD's one toast place ("Ben left the table. The game is saved."), with an optional action. */
+  notice?: { id: number; text: string; action?: { label: string; run: () => void } } | null;
+  /** 'plates': only the plates, their menus and the status line (a waiting room or a gathering over the arena). Default 'full'. */
+  chrome?: 'full' | 'plates';
+  /** Look, do not touch: no primary button, no strip, no pile actions; the scene proposes no action. */
+  readOnly?: boolean;
+}
+export interface HudProps extends HudShellProps { /* … as today … */ }
+
+// src/scene/types.ts
+// TableSceneOptions gains:
+//   readOnly?: boolean                  the scene proposes no action; camera, hover, inspect and selection still work (M7-P5)
+//   enterFrom?: { tilt: number }        the camera starts there and springs to the stored tilt (M7-P3)
+// TableScene gains: setReadOnly(on: boolean): void
+
+// src/debug/types.ts
+export interface RenderMemory { geometries: number; textures: number; programs: number; audioContexts: number }
+// RenderDebug gains: liveContexts(): number   (journey J1's counter)   and   memory(): RenderMemory
+```
+
+Stubs so the contracts compile: `src/themes/plain/index.ts` (the Paper stub naming M7-P1, as the three looks had); a `plain` entry in `ui/design/tokens.ts`; `src/scene/lifecycle.ts` with `trackContext(renderer)`, `untrackContext(renderer)`, `liveContexts()` (M7-P6 owns the file afterwards; `J1`'s still and the table scene both call it); `memory()` returning zeros; `setReadOnly` as a no-op.
+
+**Routes and the test helpers (D18).** As journey `J-C`: `''` and `#/` parse to `home`, the sandbox is `#/solo`, `openApp(page)` opens it, `openHome(page)` opens Home. In addition to `openApp` and the three specs `J-C` names, these builders reach the table through an empty hash or `#/` and get the same default: `tests/e2e/offline/helpers.ts` (`appUrl`), `solo/helpers.ts`, `scene/helpers.ts`, `render/helpers.ts`, `settings/helpers.ts`, `captions/helpers.ts` (`url`), `layout/ego-framing.spec.ts`, `confirm/confirm.spec.ts`, `a11y/axe.spec.ts`, `settings/frame-meter.spec.ts`, `ui/hud.spec.ts` (its route test expects the table at `#/solo` and Home at `#/`), and the M3 and M5 gate specs. Harness pages (`?harness=…`, `*-harness.html`) are untouched. M7 package agents change no URL builder themselves.
+
+### 3. Collisions with the sibling documents, and how each is settled
+
+| Sibling chunk | File it planned to edit | Settled as |
+| --- | --- | --- |
+| journey `J1` | `src/scene/still.ts` (new) | `J1` owns it (D10). It registers its temporary renderer with `scene/lifecycle.ts` and edits no other scene file. If a look cannot be built without a table state, that is a finding for M7-P1. |
+| journey `J2` | `src/ui/Hud.svelte`: log closed, `KEEP` / `MULLIGAN` chips, menu group "This game", `Import deck…` only at `#/solo` | M7-P2 builds all four (D6, D7, D8). `J2` passes `menuTop`, `sandbox`, `onleave` from the table frame and the solo route and keeps `leave.ts`. There is no `LeaveDialog.svelte`. |
+| journey `J8` | `src/ui/design/LifePlate.svelte`, `src/ui/table/PlateMenu.svelte`, `src/ui/Hud.svelte` (toasts, away plates) | The plate and its menu are P2's (`src/ui/hud/`). `J8` renders its content into `plateMenuTop` and `plateBadge`, passes `seatPresence` and `notice`, and keeps `ReinviteSheet.svelte`, `ReconnectGate.svelte`. No `PlateMenu.svelte` under `ui/table/`. |
+| journey `J9` | game-over overlay; `EveningBar` goes | The overlay is `J9`'s, mounted by the route above the HUD. P2 builds no game-over banner. "Next game" and "New draft" stay in the HUD's Menu only while the route passes `evening`; `J9` stops passing it. |
+| matchmaking `MM-10` | `src/ui/Hud.svelte`: hide log and tools in stage `lobby`; plate menu `INVITE AGAIN` | `chrome: 'plates'` and `plateMenuTop`. `MM-10` edits no HUD file. |
+| persistence `PS-7` | `src/ui/Hud.svelte`, `src/ui/menu.ts`, `src/scene/table-scene.ts` (read-only flag) | `menuTop` for **Leave table**; `notice` for the toasts; `seatPresence` for away; `status` for the waiting banner; `readOnly` on the HUD (P2) and on the scene (P5). `PS-7` edits none of the three files. |
+| persistence `PS-4` | `src/ui/harness.ts` (to show the history component) | `src/ui/harness.ts` is the HUD's test page and P2's. `PS-4` adds its own `src/ui/history/harness.ts` and one line in `main.ts`'s `HARNESSES` (M8's file). |
+| persistence `PS-8` | "the life plate's menu from M7-P2 (`ui/design/LifePlate.svelte`, `MenuPopover.svelte`)" plus `ui/seat/SeatMenu.svelte` | `SeatMenu.svelte` is `PS-8`'s and is what it renders into `plateMenuTop`. `MenuPopover.svelte` is M8-DS's; the plate is P2's. |
+| journey `J8` and persistence `PS-7`/`PS-8` | both specify leave, away plates and re-invite | Not an M7 matter, but the HUD seam serves either: whichever the plan keeps fills the same slots. |
+| journey 1.2 (decision J6), `mock.html` | control heights (44, 36, 28; the mock adds 56) against M7-C's `LAYOUT.control` (40, 44, 52, 34, 30) | The kit's control sizes win. The HUD uses only them; P2's size test reads the allowed set from the tokens. |
+| journey 4.10 | table drawing without a back arrow | The arrow shows only when the shell passes `onleave` (D8). The plan chooses by passing it or not. |
+
+### 4. The design language and the looks
+
+- **One system, four looks.** Sizes, spacing and component structure are shared. A look sets colour, type, radius, elevation, motion and sound. Plain is the reference: M8 screens are designed and reviewed in Plain. `visual.md` governs the token shape and every value; this document adds only what M7 needs from it.
+- **What M7-P2 and M7-P5 may rely on.** Class, variable and prop names as in `m8` after the contracts commit. Values change under them while they work; their tests never assert a token value.
+- **What M7 imposes on M8-DS.** No `backdrop-filter` and no `filter: blur()` on anything mounted over the scene host (D11). Transitions animate transform and opacity only. No per-frame DOM writes. Textures (halftone, grain) are static images, as the mock already says.
+- **Table and tokens agree.** In each look the 3D table's surface and surrounding colour equal the look's `mat` and `frame` tokens, so the still behind Home, the page colour and the live table are one material. A unit test compares them (themes cannot import `ui/`, the test can import both).
+- **Seat colours stay colours.** They are identity (Ztyle "theme-stable") and always carry their shape.
+
+### 5. Aspect map (PLAN "Aspects" A0–A10)
+
+| Aspect | Was | Now |
+| --- | --- | --- |
+| A0 Safari performance | done, then M7-P6 | M7-P6 (revised) |
+| A1 Visual direction and design system | M7-C, M7-P1, M7-P2 | table worlds M7-P1 (plus Plain); tokens and components M8-DS |
+| A2 First run and start page | M7-P2 | journey (Home, first run) |
+| A3 Lobby and table setup | later round | journey 4.8, matchmaking `MM-10` |
+| A4 Table HUD | M7-P2 | M7-P2 (revised) |
+| A5 Card handling feel | M7-P4, M7-P5 | unchanged |
+| A6 Draft screens | later round | journey `J11` |
+| A7 Deck builder mode | later round | `decks.md` |
+| A8 Settings, menus, dialogs, notifications | M7-P2 (partly) | M8-DS; in-table overlays parked |
+| A9 Sound and motion | M7-P4, tokens | M7-P4 (table), M8-DS (tokens) |
+| A10 Accessibility pass | later round | the M8 gate (axe on every screen) |
+
+### 6. The packages
+
+Shared lines for every M7 package's prompt (they replace the M7 note's branch and design-system sentences; the memory rules of `m7-args-r2.json` stay word for word):
+
+> Integration branch is `m8`. First merge `m8` into your branch; on a conflict in a contract file (`*/types.ts`, `src/ui/props.ts`), in an e2e URL builder or under `src/ui/design/`, take `m8`'s side. Read `docs/design/m8/owner-request.md` and your section of `docs/design/m8/m7-adjustments.md`; that section replaces your M7 brief where they differ. The design system (`src/ui/design/**`) belongs to M8: use its components and `--ds-*` variables, never edit it, never write a colour or font literal in your own styles; report a missing token or component in your return value. There are four looks; Plain is the default. Nothing mounted over the table may use `backdrop-filter` or a blur filter. The table sandbox is at `#/solo` (the e2e URL builders already open it); `#/` is Home and not yours. Tables are now mounted and disposed many times per page load: everything you create must be released on dispose. Merge `m8` again before you hand back.
+
+#### M7-P1 Table worlds — status: **revise** (keep the three worlds, add Plain)
+
+- **Stays.** Kitchen Table, Graphite and Codex as built on the look kit (`themes/kit/*`: world, surfaces, marks, procedural textures, sounds); pile and zone marks through `setMarks`; the conformance and budget specs; the M4 themes unlisted.
+- **Changes.** (1) A fourth world, Plain. (2) Each look's sound set is the only source of look timbres (D13): every `FeelCue` has a slot in every look's set. (3) Marks follow the HUD proposal: library and graveyard slots always; exile, command and the stack lane only while they hold a card or a dragged card is within 60 mm. (4) A selection ring per look that reads on black-bordered cards. (5) Every world builds without a table state and without marks, so `J1`'s still works. (6) Surface and surround colours equal the look's `mat` and `frame` tokens.
+- **Obsolete.** P1's edit of `src/ui/settings/Theme.svelte` (the seed carries P2's version, which lists the looks); its copy of the `themes/types.ts` additions (now in contracts).
+- **Owned files.** `src/themes/**`; `src/scene/materials.ts`, `lights.ts`, `textures.ts`, `post.ts`, `table-marks.ts`; the marks call in `src/scene/table-scene.ts` and `setMarks` in `src/scene/theme-runtime.ts`; `docs/ASSETS.md` (its lines); `tests/unit/themes/**`, `tests/e2e/themes/**`.
+- **Depends on.** Nothing. **Deep:** no. **DESIGN sections:** Themes and rendering; Specification: geometry, layout and motion; Camera and navigation.
+
+**The Plain table world** (the "plain design" with depth; Ztyle's page as a table). Colours are the Plain tokens; the values in brackets are the mock's.
+
+| Part | Specification |
+| --- | --- |
+| Surface | A slab 8 mm thick with 16 mm corner radius, top in `mat` (`#f2f2f2`): not pure white, so white-bordered cards keep an edge. A procedural halftone on it: dots 0.5 mm across on a 4 mm grid, ink at 5 %; mip-mapped and anisotropically filtered so it fades to an even tone at a distance instead of shimmering. |
+| Edge and desk | The slab's side face one step darker than `frame`. Around it a desk plane in `frame` (`#e3e3e3`) with the same halftone at 3 %. The slab casts one wide, soft shadow on the desk (about 30 mm spread, 12 % ink). In first person the near edge of the slab is visible below the hand. |
+| Light | One neutral white key from above and slightly behind the viewer, high ambient. No colour cast, no vignette, no post-processing at any quality level. Card faces stay unlit as in every theme. |
+| Card shadows | Two layers, as Ztyle stacks its shadows: a contact shadow (1 mm, 30 %) and a soft one offset 3 mm toward the viewer (6 mm blur, 14 %). Lifted cards (P4) use 14 mm offset, 16 mm blur, 20 %. |
+| Marks | Hairlines in the border colour, 0.4 mm; pile slots with a 3 mm corner radius; labels in the monospace face, uppercase, tracked 0.1 em, in the muted colour, 3 mm cap height, upright for the viewer. Territory borders are a row of 1 mm dots, not a line. |
+| Selection | A double ring, so it reads on a black card border and on the pale table: a 0.6 mm gap in the surface colour, then a 0.9 mm ring in the ink colour. |
+| Seats | The theme's eight seat colours with their shapes, unchanged; they and the card faces are the only colour. |
+| Sound | Dry and light: paper on a desk. Same cues as the other looks, peak 0.3 of the gain. |
+
+**Revised brief (paste as the package's `brief`).** Finish the three looks from your work in progress and add a fourth, Plain, the new default. Kitchen Table, Graphite (with depth: layered surfaces, soft shadows, grain) and Codex stay as briefed in M7: 3D table worlds that read at every tilt from first person to bird's-eye, procedural textures only, cheap in Safari, card faces never tinted, cropped or distorted. Plain follows the table "The Plain table world" in `docs/design/m8/m7-adjustments.md`: a pale halftone slab on a desk, neutral light, two-layer card shadows, hairline marks with monospace labels, a double selection ring, no post-processing. Build it on the look kit like the others (`src/themes/plain/index.ts`, `textures.ts`). In every look: the surface and the surround have the colours of the look's `mat` and `frame` tokens (`src/ui/design/tokens.ts`, read-only for you; a unit test compares them); library and graveyard slots are always marked; exile, command and the stack lane are marked only while they hold a card or a dragged card is within 60 mm (the scene passes only the marks to show); every look's sound set has a slot for every `FeelCue`; the world builds and draws without a table state and without marks (the landing renders it as a still), and its `dispose` releases every geometry, material and texture it made. The theme picker (not your file) lists Plain, Kitchen Table, Graphite, Codex in that order through `LISTED_THEME_IDS`; the M4 themes stay loadable and unlisted. Drop your edit of `src/ui/settings/Theme.svelte`. Acceptance: unit tests per look (build, textures deterministic, sounds bounded, light model, colours equal the tokens, build without state); conformance specs extended to Plain (a face pixel equals its source in all four looks); screenshots per look at tilt 0, 0.5 and 1 in both browsers; a spec that an empty exile is unmarked and is marked while a card is dragged near it; Plain draws with zero post passes (read through the debug hook).
+
+#### M7-P2 Table HUD — status: **revise** (renamed from "Design system and HUD"; the design system goes to M8-DS, the start page to the journey)
+
+- **Stays.** The rebuilt HUD of `docs/design/m7-hud-proposal.md`: five-step turn tracker with a clear "Your turn", one context primary button, Menu with grouped rare tools, Undo, the Activity button with ticker and drawer, Talk, life plates at the seat edges (click ±, scrub, type), counters as chips only when not zero, pile counts on the piles, no shortcut text on buttons, `ui/menu.ts`, `ui/hud/turn.ts`, `ui/hud/ticker.ts`, and the spec updates that follow the new routes.
+- **Changes.** (1) Built only from M8-DS's kit; `LifePlate.svelte`, `CounterChip.svelte` and `scrub.ts` move from `ui/design/` to `ui/hud/`. (2) Control sizes only from the kit, tested. (3) The log is closed on entry at every size (D6). (4) No set-up controls (D7). (5) The whole of `HudShellProps` (section 2): arrow, `menuTop`, `sandbox`, the no-deck line, presence, the two plate slots, `status`, `notice`, `chrome`, `readOnly`. (6) `KEEP` and `MULLIGAN` chips over the opening hand (journey 4.10). (7) A View control for the tilt, so the tilt has a visible handle. (8) P5's mount block.
+- **Obsolete.** The start page work (`lobby/StartPage.svelte`, `lobby/StartRoute.svelte`, the `sp-wide` styles, `tests/e2e/start/*`): not merged, restored to `m8`'s versions. The three per-look HUD skins as P2's job: values are M8-DS's. "Settings and menus restyled": `src/ui/settings/**` is M8's. A game-over banner: the overlay is `J9`'s. P2's edits of `App.svelte` and `flow/Stage.svelte`: taken by the seed or dropped. The 48 lines added to `tests/e2e/helpers/app.ts` move to `tests/e2e/helpers/hud.ts`.
+- **Owned files.** `src/ui/Hud.svelte`, `TurnStrip.svelte`, `Avatar.svelte`, `LogPanel.svelte`, `src/ui/hud/**`, `src/ui/menu.ts`, `src/ui/harness.ts`, `src/ui/fakes.ts`; `tests/unit/hud/**` (the `menu`, `turn`, `scrub` tests move there from `tests/unit/design/`), `tests/e2e/hud/**`, `tests/e2e/helpers/hud.ts`, and the existing specs it re-routes.
+- **Depends on.** Nothing (the kit seed is in `m8`). **Deep:** yes. **DESIGN sections:** Input and interaction design; Turn flow and confirmation; Chat and voice; Table model.
+
+**HUD layout (desktop, 1440 × 900).** Sizes are the kit's control sizes (the mock: `xs` 28, `sm` 36, `md` 44, `lg` 56); the look changes tokens only.
+
+| Place | Control | Size | Behaviour and copy |
+| --- | --- | --- | --- |
+| Top left, one pill bar (Ztyle chrome bar: round buttons, short dividers) | **Leave** (arrow-left, only with `onleave`), divider, **Menu**, **Undo** | buttons `md` | Leave: tooltip "Leave: the game is kept in your history"; no confirmation. Menu and Undo show their word beside the icon from 1024 px width, icon only below. Undo's tooltip names the action ("Undo: tap Forest"). |
+| Top centre | **Turn tracker** pill | `md` | Label row "YOUR TURN · TURN 4" or "BEN'S TURN · TURN 4" with Ben's seat glyph; five steps Beginning · Main · Combat · Main 2 · End, the current one filled. |
+| Under the tracker | **Status** slot | `sm` | Whatever the shell passes. Empty takes no space. |
+| Top right, stacked | **Activity** (speech bubble, unread badge), **View** | `md`, round | Activity opens the drawer (360 px, right edge, over the table, never resizing it). Closed on entry. Ticker: at most three lines under the button, each fades after 6 s. View: a click cycles first person → middle → bird's-eye (`tiltPresets`); press and drag vertically scrubs the tilt (`setTilt`), 200 px for the full range. |
+| Seat edges | **Plates** | as the kit's plate | Name, life in large numerals, hand count for others, counters as chips when not zero, the shell's badges (`plateBadge`). An away seat's plate is at 60 % opacity with the word "AWAY". "⋯" opens the plate menu. |
+| Bottom right | **Primary** pill, **Talk** | `lg` | The only filled button on screen. "Draw", "To combat", "Main 2", "End turn"; not my turn: a quiet "Waiting for Ben". Talk hidden when the table has no voice. |
+| Above the hand | `KEEP` / `MULLIGAN` chips, prompts, the toast and `notice`, the no-deck line, P5's coach marks | `sm` | One thing at a time, never over the opponent's side. The chips show from the first hand until `KEEP` is pressed or the player moves a card out of the hand; `MULLIGAN` runs the existing mulligan command. No-deck line: "No deck on this table." and "Choose a deck" (`onchoosedeck`; in the sandbox the paste dialog). |
+
+- **Plate menu.** Top: the shell's section (`plateMenuTop`), then a divider when both parts exist. Built-in items: own plate "Set life…", "Counters…"; another player "Counters…", "Look at their side", "Reveal my hand to them", "Volume" and "Mute" when the table has voice; every plate "Piles" (library, graveyard, exile with counts).
+- **Menu.** First the shell's groups (`menuTop`), then the groups of the HUD proposal. "Import deck…" only with `sandbox`. "Theme" becomes "Look" with the four looks. "Next game" and "New draft" only while `evening` is passed.
+- **`chrome: 'plates'`.** Only the plates, their menus and the status line are rendered; tracker, primary, Undo, Activity, Talk, View, hand and chips are not in the DOM.
+- **`readOnly`.** Primary button, selection strip, pile actions, life steppers, `KEEP` / `MULLIGAN` and Undo are not rendered; Menu, Activity, View, plates and inspect work.
+- **iPad portrait.** Same controls. Top bar: Leave, Menu, Undo, compact tracker ("Your turn · Main"), Activity. View sits above Talk at the right edge. All targets at least 44 px. No row wraps at 768 px width.
+
+**Revised brief (paste as the package's `brief`).** You now own the table HUD only; the design system is M8's and the start page is gone from your task. Step 1, split your branch: restore `src/ui/lobby/StartPage.svelte`, `src/ui/lobby/StartRoute.svelte`, `src/ui/App.svelte`, `src/ui/flow/Stage.svelte` and `src/ui/settings/**` to `m8`'s versions, delete `tests/e2e/start/`, move `LifePlate.svelte`, `CounterChip.svelte` and `scrub.ts` from `src/ui/design/` to `src/ui/hud/` and the `menu`, `turn` and `scrub` unit tests to `tests/unit/hud/`, move your additions in `tests/e2e/helpers/app.ts` to `tests/e2e/helpers/hud.ts`, then merge `m8` taking its side under `src/ui/design/`. Step 2, finish the HUD to `docs/design/m7-hud-proposal.md` and the table "HUD layout" in `docs/design/m8/m7-adjustments.md`, built only from the kit's components and `--ds-*` variables: no `<button>` without a kit class, no colour or font literal in `Hud.svelte`, `TurnStrip.svelte`, `Avatar.svelte`, `LogPanel.svelte` or `src/ui/hud/*`; every HUD control has one of the kit's control heights. The log drawer is closed when a table opens, at every window size, and only the player opens it. No set-up control is visible on the table. Step 3, implement every member of `HudShellProps` (`src/ui/props.ts`) exactly as the layout table and the four notes under it say; other packages fill these slots and must not need to edit your files; give the ui harness (`src/ui/harness.ts`, yours) a `setShell(partial)` with fixture snippets so the slots are testable without a shell. Build no game-over banner. Add the `KEEP` / `MULLIGAN` chips and the View control for the tilt. Keep M7-P5's mount: the template block marked `<!-- M7-P5 affordances -->` … `<!-- /M7-P5 -->` in `Hud.svelte` and the script lines marked `// M7-P5` (imports of `touch/Affordances.svelte` and `hints/CoachMark.svelte`, the `selectionAnchor` and `pileHover` scene events, `pileAction`); if it is in `m8` when you merge, keep it working inside your layout (after the plates, before the dialogs); if not, leave the place marked. Keep every function reachable and every surviving `data-testid`. Acceptance: `tests/e2e/hud/*` green in both browsers including the specs named in the build plan; axe clean on the table in Plain and Graphite; screenshots of the HUD in the four looks on desktop and in Plain on iPad portrait and landscape.
+
+#### M7-P3 One continuous tilt — status: **keep**, plus the entry move
+
+- **Stays.** Everything in the M7 brief including the owner's final mouse rule (D12) and the robust two-finger double-tap.
+- **Changes.** (1) `enterFrom`: on mounting a table the camera may start at a given tilt (the still's) and spring to the stored tilt within 500 ms, a cut under reduced motion, so the landing's un-blur (journey 1.2, decision J3 "one stage") and the table are one move. (2) The HUD's tilt handle is P2's View control; P3 supplies only `setTilt`, `tiltBy`, `tiltPresets`. (3) A pure `poseAt(tilt, layout, seat)` export so `J1`'s still can place its camera the way the rig would.
+- **Obsolete.** "a dedicated tilt handle/slider in the HUD (coordinate the HUD slot with P2 through the contract)": decided above.
+- **Owned files.** `src/scene/camera.ts`, `src/scene/camera/**`; the camera gesture paths in `src/scene/table-scene.ts` and `src/scene/gestures.ts`; `tests/unit/camera/**`, `tests/e2e/camera/**`, `tests/e2e/touch/gestures.spec.ts`.
+- **Depends on.** Nothing. **Deep:** no. **DESIGN sections:** Camera and navigation; Input and interaction design; Specification: geometry, layout and motion.
+
+**Revised brief (paste as the package's `brief`).** Finish the one camera rig as briefed in M7 (your two commits are the base): a continuous tilt t from 0 (first person) to 1 (bird's-eye), eased, no jump, no clipping, hand in reach at every tilt, zoom and pan at every tilt, seat switching keeps the tilt. The owner's mouse rule is final: the wheel zooms toward the cursor; a left-drag stays exactly as it is; a right-drag on the empty table tilts vertically between front view and top view and horizontal movement does not turn the view; a middle-drag may tilt too; no free look-around in first person; Alt+wheel may tilt as an accelerator; a right-drag that starts on a card still draws its line; Shift+drag is the marquee; pinch zooms and a two-finger vertical swipe tilts on touch; keys stay accelerators. Make the two-finger double-tap ("fits the whole table") robust; the spec stays as strict as it is. New with M8: `TableSceneOptions.enterFrom` (the camera starts at that tilt and springs to the stored one within 500 ms; a cut under reduced motion; a gesture during the move takes over at once), and an exported pure function `poseAt(tilt, layout, seat)` in `src/scene/camera/` returning position, look-at and field of view, which the landing's still uses. The HUD's tilt control is not yours. Release every listener and spring on dispose. Acceptance: unit tests of the interpolation (monotonic, continuous, bounded), of `poseAt` against the live rig at five tilts, and of the entry move; e2e that drives the tilt by right-drag, by two-finger swipe (iPad emulation) and by key and reads it through the debug hook, that a horizontal right-drag leaves yaw unchanged, and that the wheel changes zoom and not tilt; screenshots at t = 0, 0.25, 0.5, 0.75, 1.
+
+#### M7-P4 Card feel — status: **keep**
+
+- **Stays.** Lift, sway, spring follow, magnetic snaps with preview, settle bounce, the move animations, reduced motion, render on demand, the hand fan making room.
+- **Changes.** (1) Look timbres come from the theme's sound set (D13); `ui/sound-feel.ts` keeps one neutral set used only when a theme has no slot for a cue. (2) One shared `AudioContext`, created on the first gesture, suspended when the table is disposed, counted in `RenderMemory.audioContexts`. (3) A group of moves staggers: the opening seven (journey 4.10: seven cards in hand on entry) draw 40 ms apart, the whole group done within 600 ms; the shuffle before them plays once (the computer document's entry sequence reuses it). (4) Disposing a table mid-animation cancels every animation and releases its frame hold.
+- **Obsolete.** The three per-look timbre tables in `ui/sound-feel.ts`; P4's copy of the `scene/types.ts` edits (now in contracts).
+- **Owned files.** `src/scene/motion.ts`, `cards.ts`, `ghost.ts`, `snap.ts`; the drag-and-drop motion in `src/scene/table-scene.ts`; `src/ui/sound.ts`, `src/ui/sound-feel.ts`, `src/util/feel.ts`, `src/ui/HandFan.svelte`, `src/ui/hand-room.ts`; `tests/unit/motion/**`, `tests/e2e/feel/**`.
+- **Depends on.** Nothing. **Deep:** no. **DESIGN sections:** Card manipulation; Specification: geometry, layout and motion; Themes and rendering.
+
+**Revised brief (paste as the package's `brief`).** Finish card feel as briefed in M7 (your commit is the base): pickup lifts the card (it rises, its shadow grows and softens, a slight scale-up); a dragged card follows with a short spring and sways with velocity; near a snap target it is pulled in with the landing preview and settles with a small bounce; the hand makes room; short interruptible animations (120–350 ms) for draw (face up for its owner only; others see a back), shuffle, tap and untap, untap all, play, to graveyard and exile, attach, clip, counters. Reduced motion: no sway, no bounce, short fades. State hashes and the reducer are untouched. Changed by M8: the look's timbre comes from the theme's sound set (M7-P1 gives every look a slot for every `FeelCue`); reduce `src/ui/sound-feel.ts` to one neutral fallback set. Use one `AudioContext` for the page and suspend it when the table is disposed. Stagger grouped moves (40 ms apart, 600 ms at most for the group): a table now opens with a shuffled library and seven cards drawn at once. On dispose, cancel every animation and release every frame hold: players leave and re-enter tables many times in one page load. Acceptance: unit tests of spring, magnet and stagger maths; e2e that a drag ends where the state says, that every animation ends and idle frames stop (`framesDrawn` constant for 500 ms) in both browsers, and that disposing the scene mid-draw leaves no frame hold (debug hook); a unit test with fake timers that a group of seven is done within 600 ms; screenshots mid-lift, mid-snap and mid-draw.
+
+#### M7-P5 Play without keys — status: **keep**, plus "look, do not touch"
+
+- **Stays.** Double-click or double-tap to tap; pile actions on the pile; the selection strip (also the iPad thumb bar); counter chips; drag to every zone; attack by dragging; coach marks at the moment they matter; keys as accelerators only.
+- **Changes.** (1) First step: commit the working tree, then merge `m8`. (2) The strip, pile buttons and coach marks use the kit, with the kit's control sizes (strip actions `sm`, touch targets `md`). (3) The mount in `Hud.svelte` is one marked block (D14). (4) Coach marks are for the table only and sit above the hand; the first mark may assume seven cards in hand (journey section 8). `Settings.hintsSeen` is unchanged, so a rejoining player is not taught twice. (5) `readOnly` (D14): with `TableSceneOptions.readOnly` or `setReadOnly(true)` the scene proposes no action: no drag starts, no double-click tap, no pile action, no line, no life scrub; camera gestures, hover, inspect and selection for reading still work; no coach mark shows.
+- **Obsolete.** P5's copy of the `scene/types.ts` edits (now in contracts).
+- **Owned files.** `src/scene/affordances.ts`, `src/scene/stack-badge.ts`; the pointer and touch action routes in `src/scene/table-scene.ts`; `src/ui/touch/**`, `src/ui/hints/**`, `src/ui/commands.ts`; `tests/unit/affordances/**`, `tests/e2e/nokeys/**`, `tests/unit/settings/hints.test.ts`; in `src/ui/Hud.svelte` only the block between `<!-- M7-P5 affordances -->` and `<!-- /M7-P5 -->` and the script lines marked `// M7-P5`.
+- **Depends on.** Nothing to start. Its mount meets P2's rebuilt HUD by design: whichever merges second keeps both (section 8). **Deep:** yes. **DESIGN sections:** Input and interaction design; Card manipulation; Combat and annotation; Turn flow and confirmation; Table model.
+
+**Revised brief (paste as the package's `brief`).** Your working tree holds an earlier attempt, uncommitted: commit it first, then merge `m8` (take `m8`'s side in `src/scene/types.ts`; your `revealTop` addition is already there). Finish as briefed in M7: every everyday action by direct manipulation with visible affordances, the same for mouse and touch: double-click or double-tap taps and untaps; dragging from the library to the hand draws and a click on the library offers Draw; hovering or pressing a pile shows its few actions on the pile; a selected card shows a compact strip beside it (Tap, Flip, Counter + and −, To graveyard, More) that is also the iPad thumb bar; counters as chips with ±; drag to every zone; attack by dragging toward an opponent; coach marks that appear once, when an action first becomes relevant, above the hand and never over the play area; no hint teaches a key. Hidden information and the reducer are unchanged. Changed by M8: build the strip, pile buttons and coach marks from the design kit (`src/ui/design`, not yours to edit) with its control sizes; keep your edits of `src/ui/Hud.svelte` inside one template block marked `<!-- M7-P5 affordances -->` … `<!-- /M7-P5 -->` and script lines marked `// M7-P5`; if M7-P2's rebuilt HUD is in `m8` when you merge, move the block into it (after the plates, before the dialogs) and run your specs against it. New: implement `TableSceneOptions.readOnly` and `TableScene.setReadOnly` in your action routes: a read-only scene starts no drag, taps nothing, offers no pile action, draws no line and scrubs no life, reports no selection anchor for the strip, and shows no coach mark, while camera gestures, hover and inspect work; M8 uses it for a game that waits for its players and for a second tab. Acceptance: a goldfish turn by mouse only and one by touch only (iPad emulation) asserting through `debug.input` that no keydown was sent: draw, play a land, cast, tap and untap, counters, to graveyard, shuffle, attack; pile, strip, zone and coach specs in both browsers; a read-only spec: after `setReadOnly(true)` a drag, a double-click and a pile press change neither the state hash nor the count of proposed actions, and the wheel still zooms.
+
+#### M7-P6 Safari speed in real Safari — status: **revise** (method and scope)
+
+- **Stays.** The goal: real Safari on this Mac draws at least 50 fps while dragging a card and panning, with faces as sharp as now at rest; variants to find the cause; the adaptive policy must ignore frame gaps while the page is hidden or covered; `docs/gates/M7-P6.md` with before and after tables; never recolour, crop or distort a face.
+- **Changes.** (1) Method: `pnpm perf -- --safari` through safaridriver first (D15). The script places and sizes the WebDriver window on the main display (`Set Window Rect`: x 0, y 30, 2560 × 1440), which was impossible with `--safari-open`; that stays as the fallback. (2) No dependency on P1: measure `m8` as it is first, because that is the build the owner called slow; the gate re-measures the four looks. (3) Clean numbers during a busy run: a Safari measurement waits until no Playwright run is active (it takes pw-guard's machine lock the way `runGuarded` does) and records the load average; a run with a 1-minute load above 6 is repeated once and both are reported. (4) New: the lifecycle counters and the soak (`src/scene/lifecycle.ts`, `liveContexts()`, `memory()`). (5) New: the guard spec for D11. (6) Four looks.
+- **Obsolete.** The dependency on M7-P1; the "only when nobody has used keyboard or mouse for 90 s" rule, kept only for `--safari-open`; the baseline's stand-in `open` script.
+- **Owned files.** `src/scene/resolution.ts`, `quality.ts`, `switches.ts`, `pacing.ts`, `presence.ts`, `lifecycle.ts`; the resolution and pixel-ratio parts of `src/scene/theme-runtime.ts` and `src/scene/table-scene.ts`; `src/ui/perf/**`; `scripts/perf/**`; `docs/gates/M7-P6.md`; `tests/unit/perf/**`, `tests/e2e/perf/**`.
+- **Depends on.** Nothing. **Deep:** no. **Worktree:** create `m7-p6` from `m8`. **DESIGN sections:** Themes and rendering; Specification: geometry, layout and motion.
+
+**Revised brief (paste as the package's `brief`).** Owner, 20 Nov: "it still renders quite slow on Safari", and: Safari automation now works. Read `docs/gates/M7-A0.md` and `/Users/holzschneider/Workspace/spellplane-wt/_args/M7-P6-baseline.md` first: the baseline read 58–60 fps everywhere, but its Safari window was covered by another app, so it never measured presenting a visible 5K canvas, the suspected cost. 1) Measure real Safari with `pnpm perf -- --safari` (safaridriver; never sudo; if no session starts, fall back to `--safari-open` and say so). Make the script place the WebDriver window on the main display at 2560 × 1440 CSS px and bring Safari to the front; keep the display awake with `caffeinate -d` for the run; if the screen is locked or Safari delivers under 10 animation frames a second while the scenario animates, the numbers are void: report that plainly instead of numbers. One Safari run at a time; `oomph check` must be ok before each; wait until no Playwright run is active; record the load average with every run; close the session afterwards so no tab keeps rendering. 2) Find the cause by variants in real Safari: `--query render=pr=1`, `render=pr=1.5`, `render=noadapt`, `render=noaa`, `render=sync` (GPU time), quality medium and low, a 1280 × 720 window. Placeholder faces only: tests and measurements never use the network. Record every table. 3) Fix what the numbers show, so that Safari draws at least 50 fps in drag and pan in each listed look with faces sharp at rest: for example a cap on the drawing buffer's pixel count in Safari, motion frames at a lower ratio with the canvas element kept at full size, no post-processing by default in Safari, fewer composited DOM layers over the canvas. Make the adaptive resolution ignore frame gaps while `document.visibilityState` is hidden or while gaps are long and draw times short (a covered window). 4) New with M8, players enter and leave tables many times per page load: own `src/scene/lifecycle.ts` (the contracts stub counts live WebGL contexts; the table scene and the landing's still register with it), implement `RenderDebug.liveContexts()` and `memory()` (geometries, textures and programs from `renderer.info`, audio contexts), and add a soak spec that mounts and disposes the table scene 20 times in the scene harness and asserts that `memory()` after cycle 20 equals `memory()` after cycle 2, that `liveContexts()` is 1 while mounted and 0 after each dispose. Fix what leaks in your files; report leaks in other packages' files with the object kind and count. 5) Add `tests/e2e/perf/no-backdrop-filter.spec.ts`: with a table mounted and the menu, the drawer, a dialog and a toast open in turn, no element intersecting the scene host has a computed `backdrop-filter` other than `none` or a `filter` containing `blur`. 6) Write `docs/gates/M7-P6.md`: machine, how it was run, before and after tables from real Safari plus headless WebKit and Chromium, what changed, what remains. Acceptance: unit tests for any new resolution policy; an e2e in Chromium and WebKit, without timing assertions, that the policy's state is readable through the debug hook and that the table at rest renders at full resolution; the soak and guard specs; real-Safari numbers in the gate note, or a plain statement why not.
+
+### 7. The gate
+
+The M7 gate is the table section of the M8 gate (`tests/e2e/m7.gate.spec.ts` keeps its name so `pnpm e2e:gate -- M7` and `pnpm shots -- M7` work). It opens the sandbox at `#/solo`.
+
+- **Goldfish without keys** (draw, play a land, cast a creature, tap and untap, attach an Aura by drop, a counter, life change, attack, next turn; `debug.input` shows zero keydowns): by mouse on desktop and by touch on emulated iPad, in **Plain** and in **Graphite** (one light, one dark look).
+- **Kitchen Table and Codex**: a five-step smoke by mouse (draw, play a land, tap, life, next turn) and the screenshots. Reason: looks cannot change layout or controls, which a unit test over the tokens asserts; two full runs fewer save about a third of the gate's browser time.
+- **Screenshots**, reviewed against this document, `mock.html` and the owner's words: per look first person, mid-tilt, bird's-eye; in Plain also a card mid-lift and mid-snap, a draw animation, the HUD with the menu open, a plate menu open, the ticker, `chrome: 'plates'`; iPad portrait. The start page is no longer in this gate.
+- **Entering a table**: the log drawer is closed, no dialog or hint covers the opponent's side, no set-up control is visible.
+- **Idle frames stop**; the soak and the no-backdrop-filter specs are green; no console errors; gates M0–M5 green (their URL builders open `#/solo`).
+- **Real Safari**: `pnpm perf -- --safari` over the four looks, one run, numbers into `docs/gates/M7-P6.md` and the gate report; under 50 fps or not measurable is stated plainly.
+
+### 8. Order and merging
+
+- **Before packages:** M8-C lands the amendments and the seed of section 2 on `m8`, with `pnpm check` green and the settings and theme-picker specs run.
+- **In parallel from the start:** M7-P1, P2, P3, P4, P5, P6 and the M8 chunks. No M7 package waits for an M8 chunk. M8 chunks that fill HUD slots (`J2`, `J8`, `MM-10`, `PS-7`, `PS-8`) build against `HudShellProps` and test with the ui harness; on a HUD that does not render a slot yet, the slot is simply empty.
+- **Merge order into `m8` when several are ready:** P1, P3, P4, P2, P5, P6. P1 first because others' screenshots and the still want the real looks; P2 before P5 so the mount moves once. A package that merges later resolves `table-scene.ts` and `Hud.svelte` conflicts in its own worktree by merging `m8` before it hands back, as in M7.
+- **Failure behaviour:** a package parked after three review rounds leaves its last green commit unmerged and a note under `docs/gates/`. Without P1 the looks stay stubs and Plain shows the Paper table; the gate says so. Without P2 the old HUD stays, ignores `HudShellProps`, and M8's leave, re-invite and status have no place on the table: the M8 routes then show their own minimal bar above the table (Leave, Invite again), which the integrator notes as a parked defect. Without P3 the old two rigs stay and `enterFrom` is ignored. Without P5 `setReadOnly` is the contracts no-op: a waiting game must then be covered by M8's gathering card instead of shown read-only. Without P6 the real-Safari numbers are missing and the owner checks `?fps` on the preview.
+
+## Build plan
+
+Chunks of two to four hours, in order within a package. Every chunk ends with `oomph run --reserve 2G --for 'spellplane pnpm check' --wait 9m -- pnpm check` green and its focused specs green in both browsers; each package runs the full `pnpm e2e` once, at its end.
+
+### M8-C additions caused by M7 (one chunk, about 2 h, inside the M8 contracts package)
+
+| Change | Files | Acceptance |
+| --- | --- | --- |
+| Contract edits taken from the M7 branches; `LookId` with `plain`, `DEFAULT_LOOK`, default settings; the token shape of `visual.md`; `HudShellProps`; `readOnly`, `setReadOnly`, `enterFrom`; `RenderMemory`, `liveContexts` | `src/themes/types.ts`, `src/themes/index.ts`, `src/themes/plain/index.ts` (stub), `src/scene/types.ts`, `src/scene/lifecycle.ts` (stub), `src/store/types.ts`, `src/store/backup.ts`, `src/ui/props.ts`, `src/debug/types.ts`, `src/ui/design/tokens.ts` | `tests/unit/m7-contracts.test.ts` extended: four looks, each with a registered theme; backup import accepts `look: 'plain'` and still accepts the three older ids; a type-level test that `HudProps` accepts every `HudShellProps` member and none is required |
+| Kit seed from `m7-p2` | `src/ui/design/*`, `src/ui/settings/Theme.svelte`, `src/ui/App.svelte` (look wiring only), `tests/unit/design/tokens.test.ts` | `tests/unit/design/tokens.test.ts` green for four looks (contrast of every ink on its panel at least 4.5:1, focus ring at least 3:1, no `blur` in any token); `tests/e2e/themes/view-settings.spec.ts` green |
+| Sandbox route and URL builders | `src/ui/routes.ts`, `tests/e2e/helpers/app.ts` and the builders listed in section 2 | the `parseRoute` cases in `tests/unit/ui/hud-logic.test.ts`; `pnpm e2e:gate -- M0` and `-- M5` green |
+
+### M7-P1 Table worlds
+
+| Chunk | Work | Files | Acceptance |
+| --- | --- | --- | --- |
+| P1-1 (2–3 h) | Merge `m8`; drop the `Theme.svelte` edit; finish Kitchen Table, Graphite, Codex; marks only where used; a `FeelCue` slot for every cue; build without state; full dispose | `src/themes/{kitchen,graphite,codex,kit}/**`, `src/scene/table-marks.ts`, marks call in `table-scene.ts` | `tests/unit/themes/looks/*.test.ts` incl. "builds without a state" and "dispose leaves no geometry, material or texture of the look" (counted on a stub renderer); `tests/e2e/themes/looks/conformance.spec.ts` and `looks.spec.ts` in both browsers; new `tests/e2e/themes/looks/marks.spec.ts` (empty exile unmarked; marked while a card is dragged within 60 mm; marked while it holds a card) |
+| P1-2 (3 h) | The Plain world and its sound set; listed first; default; table colours equal the tokens in all four looks | `src/themes/plain/**`, `src/themes/index.ts` (listing), `docs/ASSETS.md` | the look tests parameterised over four looks; `tests/unit/themes/looks/plain.test.ts` (halftone texture deterministic, mip chain present, zero post passes, selection ring is two rings); `tests/unit/themes/looks/tokens.test.ts` (surface = `mat`, surround = `frame` per look); screenshots at tilt 0, 0.5, 1 in both browsers; conformance in Plain |
+
+### M7-P2 Table HUD
+
+| Chunk | Work | Files | Acceptance |
+| --- | --- | --- | --- |
+| P2-1 (2 h) | Split the branch as in the brief's step 1; merge `m8` | restores under `src/ui/lobby`, `App.svelte`, `flow`, `settings`; moves to `src/ui/hud/`, `tests/unit/hud/`, `tests/e2e/helpers/hud.ts` | `pnpm check`; `git diff m8 --stat -- src/ui/design src/ui/lobby src/ui/settings src/ui/App.svelte src/ui/flow` is empty |
+| P2-2 (3 h) | Finish the HUD on the kit: control sizes, pill bar, tracker, primary, Activity closed with ticker, View control, chips, no set-up controls | `Hud.svelte`, `TurnStrip.svelte`, `LogPanel.svelte`, `src/ui/hud/ViewControl.svelte`, `src/ui/hud/OpeningHand.svelte`, `src/ui/menu.ts` | `tests/e2e/hud/sizes.spec.ts` (every visible button under the HUD root has one of the kit's control heights, read from the `--ds-control-*` variables, ±0.5 px); `tests/unit/hud/no-literals.test.ts` (no `#rgb`, `rgb(`, `hsl(` or `font-family:` literal in the owned files' style blocks); `tests/e2e/hud/log-closed.spec.ts` (drawer hidden on entry at 1440 × 900, 1024 × 768 and iPad portrait; opens on click and on Enter; never opens by itself when a line arrives); `tests/e2e/hud/view.spec.ts` (a click cycles the three presets, a drag scrubs, read through the debug hook); `tests/e2e/hud/opening.spec.ts` (chips show with a fresh hand, `MULLIGAN` redraws, `KEEP` or a play removes them) |
+| P2-3 (3 h) | `HudShellProps`: arrow, `menuTop`, `sandbox`, no-deck line, presence, plate slots, `status`, `notice`, `chrome`, `readOnly` | `Hud.svelte`, `Avatar.svelte`, `src/ui/hud/PlateMenu.svelte`, `src/ui/hud/LifePlate.svelte`; `src/ui/harness.ts` gains `setShell(partial)` with fixture snippets (a text node with a test id per slot) | `tests/e2e/hud/seams.spec.ts` in the ui harness: `onleave` is called once by the arrow and no confirmation shows; no arrow without `onleave`; `menuTop` groups come first and run; "Import deck…" is in the Menu only with `sandbox`; `plateMenuTop` renders at the top of the menu for the right seat and its close callback closes it; `plateBadge` renders beside the name; an away seat's plate has `data-away="true"` and the word "AWAY"; `status` renders and takes no height when empty; `notice` shows once per `id` and its action runs; with `chrome: 'plates'` the tracker, primary button, log button and hand are not in the DOM; with `readOnly` the primary button and Undo are not in the DOM and the Menu still opens |
+| P2-4 (2 h) | iPad layouts, axe, re-routed specs, screenshots | the specs P2 already moved | `tests/e2e/hud/axe.spec.ts` in Plain and Graphite; `tests/e2e/hud/newcomer.spec.ts` (sandbox, choose a deck, play a turn, no key); `tests/e2e/touch/hud.spec.ts` (no wrapped row at 768 px; targets at least 44 px); `tests/e2e/hud/shots.spec.ts` |
+
+### M7-P3 One continuous tilt
+
+| Chunk | Work | Files | Acceptance |
+| --- | --- | --- | --- |
+| P3-1 (2–3 h) | Merge `m8`; e2e for the final mouse rule, touch and keys; the double-tap fix | `src/scene/camera/**`, camera paths in `table-scene.ts`, `gestures.ts` | `tests/unit/camera/*.test.ts`; `tests/e2e/camera/tilt.spec.ts` (right-drag tilts; a horizontal right-drag leaves yaw; the wheel zooms and leaves tilt; left-drag behaves as on `m7`; key presets); `tests/e2e/touch/gestures.spec.ts` unchanged and green ten times in a row in WebKit (`pnpm e2e -- tests/e2e/touch/gestures.spec.ts --repeat-each 10 --workers 1`) |
+| P3-2 (2 h) | `enterFrom`, `poseAt`; dispose; screenshots | `src/scene/camera/rig.ts`, `src/scene/camera/pose.ts`, camera set-up in `table-scene.ts` | `tests/unit/camera/enter.test.ts` (starts at the given tilt, ends at the stored one, monotonic; a cut under reduced motion; a gesture takes over); `tests/unit/camera/pose-at.test.ts` (equals the rig's settled pose at t = 0, 0.25, 0.5, 0.75, 1 for seats 0 to 3); shots at the five tilts |
+
+### M7-P4 Card feel
+
+| Chunk | Work | Files | Acceptance |
+| --- | --- | --- | --- |
+| P4-1 (3 h) | Merge `m8`; finish the animations' e2e; stagger; cancel on dispose | `src/scene/motion.ts`, `cards.ts`, `ghost.ts`, drag paths in `table-scene.ts`, `HandFan.svelte` | `tests/unit/motion/*.test.ts` plus `stagger.test.ts`; `tests/e2e/feel/drag.spec.ts`, new `animations.spec.ts` (each kind ends, `framesDrawn` then constant), `dispose.spec.ts` (no frame hold after disposing mid-draw); shots mid-lift, mid-snap, mid-draw |
+| P4-2 (2 h) | One sound source, one audio context | `src/ui/sound.ts`, `src/ui/sound-feel.ts` | `tests/unit/motion/sound.test.ts` (a theme's slot wins; the fallback plays only without one; one context across two table mounts; suspended after dispose) |
+
+### M7-P5 Play without keys
+
+| Chunk | Work | Files | Acceptance |
+| --- | --- | --- | --- |
+| P5-1 (1 h) | Commit the working tree; merge `m8` | all | `pnpm check` |
+| P5-2 (3 h) | Finish strip, pile actions, counter chips, zone drags, coach marks on the kit | `src/scene/affordances.ts`, `src/ui/touch/**`, `src/ui/hints/**`, `src/ui/commands.ts`, action routes in `table-scene.ts` | `tests/unit/affordances/*.test.ts`; `tests/e2e/nokeys/piles.spec.ts`, `strip.spec.ts`, `zones.spec.ts`, `coach.spec.ts` in both browsers |
+| P5-3 (2 h) | `readOnly` in the action routes | action routes in `table-scene.ts`, `src/scene/affordances.ts` | `tests/unit/affordances/read-only.test.ts`; `tests/e2e/nokeys/read-only.spec.ts` (drag, double-click, pile press, right-drag from a card: state hash and proposed-action count unchanged; wheel zooms; inspect opens) |
+| P5-4 (2 h) | The marked mount in the HUD that is in `m8` at that time; the two goldfish turns | the P5 block in `Hud.svelte` | `tests/e2e/nokeys/mouse-turn.spec.ts` and `touch-turn.spec.ts` with zero keydowns; a coach mark never overlaps the opponent's territory rectangle (bounding boxes compared through the debug hook) |
+
+### M7-P6 Safari speed
+
+| Chunk | Work | Files | Acceptance |
+| --- | --- | --- | --- |
+| P6-1 (2 h) | Worktree from `m8`; window placement, front, lock detection and the Playwright wait in the script; baseline and variants in real Safari | `scripts/perf/measure.mjs` | a JSON per run under the scratchpad; the first tables in `docs/gates/M7-P6.md`; the script's usage text and header comment name the new options |
+| P6-2 (2–4 h) | The fix the numbers point to; visibility-aware adaptation | `src/scene/resolution.ts`, `quality.ts`, `pacing.ts`, resolution parts of `theme-runtime.ts` and `table-scene.ts` | `tests/unit/perf/*.test.ts` for the policy (hidden gaps ignored; cap honoured; full ratio at rest); `tests/e2e/perf/policy.spec.ts` in both browsers; after-tables from real Safari |
+| P6-3 (2 h) | Lifecycle counters and soak; the blur guard | `src/scene/lifecycle.ts`, `src/ui/perf/**`, `tests/e2e/perf/soak.spec.ts`, `tests/e2e/perf/no-backdrop-filter.spec.ts` | both specs green in both browsers; the soak runs with one worker and stays under pw-guard's 4 GB limit |
+
+## Open questions for the owner
+
+Each has a default that the run uses.
+
+1. **Is "Plain" the right reading of "the plain design"?** Default: a fourth look built on Ztyle, the default for new and existing profiles, with Kitchen Table, Graphite and Codex kept as alternatives (the visual mock draws it this way). The other reading is "Ztyle chrome over all three looks, no fourth look"; switching later means deleting `src/themes/plain` and giving the three looks Plain's HUD tokens.
+2. **A back arrow on the table, as in Zhess, or leaving only through the Menu?** Default: the HUD can do both; the arrow shows when the shell passes `onleave`. The journey document draws the table without the arrow.
+3. **May the M4 themes (Paper, Dusk, Wyrm, Stonetable) be deleted now?** Default: they stay in code, unlisted.
+4. **Ztyle's glass uses a blur; the table's chrome will not.** Default: no blur over a live table in any browser, 92 % opaque panels instead. If the P6 numbers show Safari can afford a small blur on pills, it could come back.
+5. **The gate plays the full no-keys game in Plain and Graphite only**, with a short smoke in Kitchen Table and Codex. Say so if every look should get the full run.
+6. **Real-Safari numbers need an unlocked screen.** If the Mac's screen locks overnight, P6 reports "not measurable" and fixes on the baseline's evidence; the owner then runs `pnpm perf -- --safari` once at the desk (about one minute per look).
