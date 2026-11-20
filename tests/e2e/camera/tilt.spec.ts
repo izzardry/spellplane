@@ -7,6 +7,8 @@
  * pixels or timing.
  */
 import { expect, test, type Page } from '@playwright/test';
+import fs from 'node:fs';
+import path from 'node:path';
 import type { CameraPose } from '../../../src/scene/types';
 import { openScene, screenOf, settle } from '../scene/helpers';
 
@@ -104,5 +106,22 @@ test.describe('tilt by mouse', () => {
     await page.keyboard.press('p');
     await settle(page);
     expect(await tilt(page)).toBeGreaterThan(0.5);
+  });
+});
+
+test.describe('tilt evidence', () => {
+  test('five tilts from first person to bird’s-eye: the pose rises and pitches down monotonically (screenshots)', async ({ page }, info) => {
+    await openScene(page, { scenario: 'demo' });
+    const dir = path.join('artifacts', 'shots', 'M7', 'tilt');
+    fs.mkdirSync(dir, { recursive: true });
+    let last: CameraPose | null = null;
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      await setTilt(page, t);
+      expect(await tilt(page)).toBeCloseTo(t, 3);
+      const p = await pose(page);
+      if (last) expect(p.pitchDeg, `pitch at ${t}`).toBeGreaterThanOrEqual(last.pitchDeg - 1e-6);
+      last = p;
+      fs.writeFileSync(path.join(dir, `tilt-${t}-${info.project.name}.png`), await page.screenshot());
+    }
   });
 });

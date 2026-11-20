@@ -218,7 +218,9 @@ test.describe('M4-P1 acceptance', () => {
       c.panBy(-1e6, -1e6);
     });
     const p = await check('controls at the other limits');
-    expect(p.pitchDeg).toBe(25);
+    // Pitched up as far as it goes is tilt 0: first person at the ego lens' own pitch (the one continuous tilt has no
+    // second pitch axis below it; DECISIONS [M7-P1]), never below the ego range's minimum checked above.
+    expect(p.pitchDeg).toBeCloseTo(CAMERA.ego.pitchDeg, 6);
   });
 });
 
