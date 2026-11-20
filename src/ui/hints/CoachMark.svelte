@@ -9,6 +9,7 @@
   import { onMount, untrack } from 'svelte';
   import type { CoachMarkId } from '../../store/types';
   import { coachText, type CoachController } from './coach';
+  import Button from '../design/Button.svelte';
 
   let {
     coach,
@@ -34,14 +35,15 @@
 </script>
 
 {#if id && shown && !hidden}
-  <aside class="coach" style:bottom={bottom} data-testid="coach-mark" data-coach={id} data-anchor={shown.anchor} aria-live="polite">
+  <aside class="coach ds-coach" style:bottom={bottom} data-testid="coach-mark" data-coach={id} data-anchor={shown.anchor} aria-live="polite">
     <span class="dot" aria-hidden="true"></span>
-    <span class="text">{shown.text}</span>
-    <button type="button" class="ds-btn ds-btn--ghost {touch ? 'ds-btn--md' : 'ds-btn--xs'}" data-testid="coach-dismiss" onclick={() => id && coach.dismiss(id)}>Got it</button>
+    <span class="text ds-coach__text">{shown.text}</span>
+    <Button variant="ghost" size={touch ? 'md' : 'xs'} data-testid="coach-dismiss" onclick={() => id && coach.dismiss(id)}>Got it</Button>
   </aside>
 {/if}
 
 <style>
+  /* The kit's coach recipe (.ds-coach) gives the look; this places it in the slot above the hand. */
   .coach {
     position: fixed;
     left: 50%;
@@ -52,18 +54,12 @@
     margin-bottom: 8px;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--ds-space-md, 10px);
     max-width: min(520px, 92vw);
     padding: 6px 6px 6px 12px;
     pointer-events: none;
-    background: var(--ds-coach, var(--sp-surface));
-    color: var(--ds-coach-ink, var(--sp-fg));
-    border: 1px solid var(--ds-border, var(--sp-border));
-    border-radius: 999px;
-    box-shadow: var(--ds-elevation-pop, var(--sp-hud-shadow));
     font-family: var(--ds-font-body, var(--sp-font));
-    font-weight: 500;
-    font-size: 13px;
+    font-size: var(--ds-type-body, 13px);
     line-height: 1.3;
     animation: appear 160ms ease-out;
   }
@@ -74,24 +70,9 @@
     border-radius: 50%;
     background: var(--ds-accent, var(--sp-focus));
   }
-  button {
+  .coach :global(.ds-btn) {
     pointer-events: auto;
     flex: none;
-    height: 28px;
-    box-sizing: border-box;
-    padding: 0 12px;
-    border-radius: 999px;
-    border: 1px solid var(--ds-border, var(--sp-border));
-    background: transparent;
-    color: inherit;
-    font-family: var(--ds-font-body, var(--sp-font));
-    font-weight: 600;
-    font-size: 12px;
-    line-height: 1;
-    cursor: pointer;
-  }
-  .coach button.ds-btn--md {
-    height: 44px;
   }
   @keyframes appear {
     from {

@@ -10,6 +10,7 @@
   import type { SelectionAnchor } from '../../scene/types';
   import { controlHeight, stripPlace, type CounterChip, type StripItem } from './affordances';
   import { DEFAULT_COUNTER } from '../commands';
+  import Button from '../design/Button.svelte';
 
   let {
     anchor,
@@ -36,8 +37,8 @@
   let w = $state(0);
   let h = $state(0);
   const height = $derived(controlHeight(touch));
-  /** The kit's size class: strip actions are `sm` (36 px), touch targets `md` (44 px). */
-  const size = $derived(touch ? 'ds-btn--md' : 'ds-btn--sm');
+  /** The kit's size: strip actions are `sm` (36 px), touch targets `md` (44 px). */
+  const size = $derived<'sm' | 'md'>(touch ? 'md' : 'sm');
   const place = $derived(anchor ? stripPlace(anchor, { width: w || items.length * 80, height: h || height + 8 }, { width: vw, height: vh }) : null);
   /** The counter kinds the strip offers ± for: those on the card, else the default kind. */
   const kinds = $derived(chips.length ? chips : [{ kind: DEFAULT_COUNTER, count: 0 }]);
@@ -62,24 +63,24 @@
       {#if item.id === 'counters'}
         <span class="counters" role="group" aria-label="Counters">
           {#each kinds as chip (chip.kind)}
-            <button type="button" class="ds-btn ds-btn--quiet {size} pm" data-testid="strip-counter-remove" data-kind={chip.kind} aria-label="Remove a {chip.kind} counter" disabled={chip.count === 0} onclick={() => oncounter(chip.kind, -1)}>−</button>
+            <Button variant="quiet" {size} class="pm" data-testid="strip-counter-remove" data-kind={chip.kind} aria-label="Remove a {chip.kind} counter" disabled={chip.count === 0} onclick={() => oncounter(chip.kind, -1)}>−</Button>
             <span class="chip" data-testid="strip-counter-chip" data-kind={chip.kind} data-count={chip.count}>{chip.kind}{#if chip.count > 0}<b>{chip.count}</b>{/if}</span>
-            <button type="button" class="ds-btn ds-btn--quiet {size} pm" data-testid="strip-counter-add" data-kind={chip.kind} aria-label="Add a {chip.kind} counter" onclick={() => oncounter(chip.kind, 1)}>+</button>
+            <Button variant="quiet" {size} class="pm" data-testid="strip-counter-add" data-kind={chip.kind} aria-label="Add a {chip.kind} counter" onclick={() => oncounter(chip.kind, 1)}>+</Button>
           {/each}
         </span>
       {:else if item.id === 'more'}
-        <button
-          type="button"
-          class="ds-btn ds-btn--quiet {size}"
+        <Button
+          variant="quiet"
+          {size}
           data-testid="strip-more"
           aria-haspopup="menu"
           onclick={(e) => {
             const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
             onmore(Math.round(r.left), Math.round(r.bottom));
-          }}>{item.label}</button
+          }}>{item.label}</Button
         >
       {:else}
-        <button type="button" class="ds-btn ds-btn--quiet {size}" data-testid="strip-{item.id}" onclick={() => onrun(item)}>{item.label}</button>
+        <Button variant="quiet" {size} data-testid="strip-{item.id}" onclick={() => onrun(item)}>{item.label}</Button>
       {/if}
     {/each}
   </div>
@@ -93,17 +94,16 @@
     z-index: 22;
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px;
+    gap: var(--ds-space-xs, 4px);
+    padding: var(--ds-space-xs, 4px);
     pointer-events: auto;
     background: var(--ds-panel, var(--sp-surface));
     color: var(--ds-ink, var(--sp-fg));
     border: 1px solid var(--ds-border, var(--sp-border));
-    border-radius: 999px;
+    border-radius: var(--ds-radius-md, 10px);
     box-shadow: var(--ds-elevation-pop, var(--sp-hud-shadow));
     font-family: var(--ds-font-body, var(--sp-font));
-    font-weight: 600;
-    font-size: 13px;
+    font-size: var(--ds-type-control, 13px);
     line-height: 1;
     white-space: nowrap;
     -webkit-user-select: none;
@@ -112,38 +112,16 @@
     touch-action: manipulation;
     animation: rise 120ms ease-out;
   }
-  button {
-    height: var(--h);
-    min-height: var(--h);
+  /* The kit's sm (36 px) or md (44 px) button; on touch never narrower than it is high. */
+  .strip :global(.ds-btn) {
     box-sizing: border-box;
-    padding: 0 12px;
-    border-radius: 999px;
-    border: 1px solid transparent;
-    background: transparent;
-    color: inherit;
-    font-family: inherit;
-    font-size: inherit;
-    font-weight: inherit;
-    cursor: pointer;
   }
-  .touch button {
+  .touch :global(.ds-btn) {
     min-width: var(--h);
   }
-  button:hover {
-    background: color-mix(in srgb, currentColor 10%, transparent);
-  }
-  button:focus-visible {
-    outline: 2px solid var(--ds-focus, var(--sp-focus));
-    outline-offset: 1px;
-  }
-  button.pm {
+  .strip :global(.ds-btn.pm) {
     padding: 0;
     width: var(--h);
-    font-size: 16px;
-  }
-  button:disabled {
-    opacity: 0.4;
-    cursor: default;
   }
   .counters {
     display: inline-flex;
@@ -158,9 +136,9 @@
     align-items: center;
     gap: 4px;
     padding: 3px 8px;
-    border-radius: 999px;
-    background: var(--ds-chip, color-mix(in srgb, currentColor 10%, transparent));
-    font-weight: 600;
+    border-radius: var(--ds-radius-pill, 999px);
+    background: var(--ds-chip, var(--sp-bg));
+    font-weight: var(--ds-weight-bold, 600);
   }
   .chip b {
     font-variant-numeric: tabular-nums;

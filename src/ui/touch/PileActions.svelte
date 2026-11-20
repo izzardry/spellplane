@@ -9,6 +9,7 @@
   import { onDestroy } from 'svelte';
   import type { PileHover } from '../../scene/types';
   import { controlHeight, pilePlace, type PileButton } from './affordances';
+  import Button from '../design/Button.svelte';
 
   let {
     hover,
@@ -84,7 +85,7 @@
     }}
   >
     {#each list as b, i (b.id)}
-      <button type="button" class="ds-btn {i === 0 ? 'ds-btn--secondary' : 'ds-btn--quiet'} {touch ? 'ds-btn--md' : 'ds-btn--sm'}" data-testid="pile-action-{b.id}" onclick={() => shown && onaction(b, shown)}>{b.label}</button>
+      <Button variant={i === 0 ? 'secondary' : 'quiet'} size={touch ? 'md' : 'sm'} data-testid="pile-action-{b.id}" onclick={() => shown && onaction(b, shown)}>{b.label}</Button>
     {/each}
   </div>
 {/if}
@@ -98,8 +99,8 @@
     display: flex;
     flex-direction: column;
     align-items: stretch;
-    gap: 4px;
-    padding: 4px;
+    gap: var(--ds-space-xs, 4px);
+    padding: var(--ds-space-xs, 4px);
     pointer-events: auto;
     background: var(--ds-panel, var(--sp-surface));
     color: var(--ds-ink, var(--sp-fg));
@@ -107,36 +108,15 @@
     border-radius: var(--ds-radius-md, 10px);
     box-shadow: var(--ds-elevation-pop, var(--sp-hud-shadow));
     font-family: var(--ds-font-body, var(--sp-font));
-    font-weight: 600;
-    font-size: 13px;
-    line-height: 1;
     white-space: nowrap;
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
     touch-action: manipulation;
   }
-  button {
-    height: var(--h);
-    min-height: var(--h);
+  /* The kit's sm (36 px) or md (44 px) button, left-aligned in a column. */
+  .pile-actions :global(.ds-btn) {
     box-sizing: border-box;
-    padding: 0 12px;
-    text-align: left;
-    border-radius: var(--ds-radius-sm, 6px);
-    border: 1px solid transparent;
-    background: transparent;
-    color: inherit;
-    font-family: inherit;
-    font-size: inherit;
-    font-weight: inherit;
-    cursor: pointer;
-  }
-  button:first-child {
-    background: var(--ds-panel-raised, var(--sp-bg));
-    border-color: var(--ds-border, var(--sp-border));
-  }
-  button:focus-visible {
-    outline: 2px solid var(--ds-focus, var(--sp-focus));
-    outline-offset: 1px;
+    justify-content: flex-start;
   }
 </style>
