@@ -15,6 +15,8 @@
   import { recordGesture } from '../scene/input/pointers';
   import CardFace from './CardFace.svelte';
   import { fanLayout } from './hand';
+  import { roomIndex, roomShift } from './hand-room';
+  import { handRoom } from '../util/feel';
   import { fanIndexAt, touchFanLayout } from './touch/fan';
   import { NO_EDGE_INSETS, type EdgeInsets } from './touch/radial';
 
@@ -156,6 +158,17 @@
     lifted = null;
   }
 
+  // A card dragged over the fan (util/feel.ts handRoom, M7-P4): the cards part to make room where it would go. The
+  // channel reports the pointer's x only while it is over the fan; the fan updates only when the gap moves.
+  let room = $state<number | null>(null);
+  const roomWidth = $derived(boxes.reduce((w, b) => Math.max(w, b.width), 0));
+  $effect(() =>
+    handRoom.subscribe((x) => {
+      const next = x === null ? null : roomIndex(flatBoxes(), x);
+      if (next !== room) room = next;
+    }),
+  );
+
   onDestroy(() => {
     if (longPressTimer) clearTimeout(longPressTimer);
     recognizer.reset();
@@ -206,7 +219,7 @@
 
 <svelte:window onpointermove={move} onpointerup={up} onpointercancel={up} onpointerdowncapture={pressElsewhere} />
 
-<div class="hand" class:touch data-testid="hand" role="group" aria-label="Your hand" data-scroll={touchFan ? Math.round(touchFan.scroll) : 0} data-max-scroll={touchFan ? Math.round(touchFan.maxScroll) : 0}>
+<div class="hand" class:touch data-testid="hand" role="group" aria-label="Your hand" data-scroll={touchFan ? Math.round(touchFan.scroll) : 0} data-max-scroll={touchFan ? Math.round(touchFan.maxScroll) : 0} data-room={room ?? undefined}>
   {#each ids as id, i (id)}
     {@const box = boxes[i]}
     {#if box}
@@ -223,6 +236,7 @@
         tabindex="-1"
         aria-label={nameOf(id)}
         style:left="{box.left}px"
+        style:translate={room === null ? undefined : `${roomShift(i, room, roomWidth)}px 0`}
         style:width="{box.width}px"
         style:height="{box.height}px"
         style:z-index={box.z}
@@ -262,7 +276,8 @@
     transition:
       width 120ms ease-out,
       height 120ms ease-out,
-      left 120ms ease-out;
+      left 120ms ease-out,
+      translate 160ms ease-out;
     box-shadow: 0 0 0 1px var(--sp-border, #d8d8d8);
     border-radius: 4.76% / 3.41%;
     cursor: grab;
