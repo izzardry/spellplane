@@ -1,22 +1,184 @@
 <!--
-  The invite sheet (journey.md 4.8; visual.md 2.8 "Invite sheet"): a title, a line, the QR plate, the link and COPY LINK.
-  A simple working version by M8-C (no QR yet); M8-P4 owns the file.
+  The invite sheet (journey.md 4.8 "Invite sheet"; matchmaking.md 2.12; visual.md 2.8 "Invite sheet"; mock.html board 5):
+  a title and a line, the QR code on a white plate (no code when the link is too long for one), the link in a read-only
+  field, COPY LINK (COPIED ✓ for 2 s), SHARE where navigator.share exists, the game code small as the game's name, the
+  presence line and, rarely, SPECTATOR LINK. M8-P5 reuses it for "Bring Ben back" with its own title, text, link and
+  status. The clipboard is only written, never read. M8-P4.
 -->
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { onDestroy, type Snippet } from 'svelte';
+  import Button from '../design/Button.svelte';
+  import PresenceDot from '../design/PresenceDot.svelte';
+  import QrPlate from '../design/QrPlate.svelte';
+  import Sheet from '../design/Sheet.svelte';
+  import StatusLine from '../design/StatusLine.svelte';
+  import { qrMatrix } from '../qr';
 
-  let { title, text, link, status = undefined, footer = undefined }: { title: string; text: string; link: string; status?: string | undefined; footer?: Snippet | undefined } = $props();
-  let copied = $state(false);
-  function copy(): void {
-    void navigator.clipboard?.writeText(link).then(() => (copied = true)).catch(() => undefined);
+  let {
+    title,
+    text,
+    link,
+    status = undefined,
+    footer = undefined,
+    code = null,
+    spectatorLink = null,
+    onclose = undefined,
+  }: {
+    title: string;
+    text: string;
+    link: string;
+    /** The presence line (`Waiting for players · 1 of 2 here`). */
+    status?: string | undefined;
+    footer?: Snippet | undefined;
+    /** The game code shown as the game's name (`AMBER FOX 93`), or null. */
+    code?: string | null;
+    /** The watch link; SPECTATOR LINK copies it. */
+    spectatorLink?: string | null;
+    onclose?: (() => void) | undefined;
+  } = $props();
+
+  let matrix = $state.raw<boolean[][] | null>(null);
+  let copied = $state<'' | 'link' | 'watch'>('');
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let field = $state<HTMLInputElement | undefined>();
+  const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+
+  // The code is drawn in the browser (qrcode-generator, loaded with the first sheet); nothing is sent anywhere.
+  $effect(() => {
+    const l = link;
+    let live = true;
+    void qrMatrix(l)
+      .then((m) => {
+        if (live) matrix = m;
+      })
+      .catch(() => {
+        if (live) matrix = null;
+      });
+    return () => {
+      live = false;
+    };
+  });
+
+  async function copy(what: 'link' | 'watch'): Promise<void> {
+    const value = what === 'link' ? link : spectatorLink;
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      copied = what;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        copied = '';
+        timer = null;
+      }, 2000);
+    } catch {
+      // No clipboard (an insecure page, a refused permission): select the link so it can be copied by hand.
+      field?.focus();
+      field?.select();
+    }
   }
+
+  async function share(): Promise<void> {
+    try {
+      await navigator.share({ title: 'Spellplane', text: title, url: link });
+    } catch {
+      // Cancelling the system share sheet copies nothing (journey.md 4.8).
+    }
+  }
+
+  onDestroy(() => {
+    if (timer) clearTimeout(timer);
+  });
 </script>
 
-<section class="ds-sheet ds-sheet--narrow" aria-label={title} data-testid="invite-sheet">
-  <h2 class="ds-t-title">{title}</h2>
-  <p class="ds-t-reading">{text}</p>
-  <input class="ds-field__input" readonly value={link} aria-label="Table link" />
-  <button type="button" class="ds-btn ds-btn--primary ds-btn--md" onclick={copy}>{copied ? 'Copied ✓' : 'Copy link'}</button>
-  {#if status}<p class="ds-status" role="status">{status}</p>{/if}
-  {#if footer}{@render footer()}{/if}
-</section>
+<Sheet label={title} width="narrow" {onclose} data-testid="invite-sheet">
+  {#snippet header()}
+    <div class="head">
+      <span class="well" aria-hidden="true">＋</span>
+      <div class="words">
+        <h2 class="ds-t-title">{title}</h2>
+        <p class="ds-t-reading">{text}</p>
+      </div>
+    </div>
+  {/snippet}
+  {#if matrix}
+    <div class="qr" data-testid="invite-qr">
+      <QrPlate {matrix} label="QR code of the link" data-testid="qr-plate" />
+    </div>
+  {/if}
+  <label class="ds-field ds-field--square">
+    <span class="ds-sr-only">Link</span>
+    <input class="ds-field__input link" data-testid="share-link" readonly value={link} bind:this={field} onfocus={(e) => (e.currentTarget as HTMLInputElement).select()} />
+  </label>
+  <div class="actions">
+    <Button variant="primary" data-testid="copy-link" onclick={() => copy('link')}>{copied === 'link' ? 'COPIED ✓' : 'COPY LINK'}</Button>
+    {#if canShare}<Button data-testid="share" onclick={share}>SHARE</Button>{/if}
+  </div>
+  {#if code}<p class="ds-t-meta code" data-testid="invite-code">Game code: <span class="mono">{code}</span></p>{/if}
+  {#if status}
+    <StatusLine data-testid="invite-status">
+      {#snippet icon()}<PresenceDot state="connecting" label="waiting" />{/snippet}
+      {status}
+    </StatusLine>
+  {/if}
+  {#if spectatorLink || footer}
+    <div class="foot">
+      {#if spectatorLink}<Button variant="ghost" size="sm" data-testid="spectator-link" onclick={() => copy('watch')}>{copied === 'watch' ? 'COPIED ✓' : 'SPECTATOR LINK'}</Button>{/if}
+      {@render footer?.()}
+    </div>
+  {/if}
+</Sheet>
+
+<style>
+  .head {
+    display: flex;
+    gap: var(--ds-space-md);
+    align-items: flex-start;
+  }
+  .words {
+    display: grid;
+    gap: var(--ds-space-xs);
+  }
+  .words p {
+    margin: 0;
+  }
+  .well {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: var(--ds-control-md);
+    height: var(--ds-control-md);
+    border-radius: 50%;
+    background: var(--ds-chip);
+    box-shadow: var(--ds-elevation-well, none);
+    color: var(--ds-ink);
+  }
+  .qr {
+    display: flex;
+    justify-content: center;
+  }
+  .link {
+    font-family: var(--ds-font-mono);
+    font-size: var(--ds-type-small);
+  }
+  .actions {
+    display: flex;
+    gap: var(--ds-space-sm);
+  }
+  .actions :global(.ds-btn--primary) {
+    flex: 1;
+  }
+  .code {
+    margin: 0;
+  }
+  .mono {
+    font-family: var(--ds-font-mono);
+    color: var(--ds-ink);
+    letter-spacing: 0.08em;
+  }
+  .foot {
+    display: flex;
+    gap: var(--ds-space-sm);
+    padding-top: var(--ds-space-md);
+    border-top: 1px solid var(--ds-line);
+  }
+</style>
