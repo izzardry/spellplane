@@ -113,6 +113,9 @@ test('a returning browser whose copy shows the other player present waits on sta
     await test.step('standby: waiting for Ann, nothing proposed', async () => {
       await expect.poll(async () => (await muster(ben)).waitingFor, { timeout: 10_000 }).toEqual(['s0']);
       expect((await muster(ben)).live).toBe(false);
+      // The Gathering card over the saved table, which is inert meanwhile.
+      await expect(ben.getByTestId('gathering-card')).toBeVisible();
+      await expect(ben.locator('[data-testid="gathering-row"][data-seat="s0"]')).toHaveAttribute('data-state', 'away');
       const before = await hashOf(ben);
       await ben.evaluate(() => window.__spellplane!.dispatch!({ type: 'life', seat: 's1', delta: -1, by: 's1', cid: 'x' } as never));
       expect((await state(ben)).seats.s1!.life).toBe(20);
@@ -121,6 +124,7 @@ test('a returning browser whose copy shows the other player present waits on sta
     await test.step('PLAY ON WITHOUT ANN makes Ben live', async () => {
       await ben.evaluate(() => window.__spellplane!.session!.playOn!(['s0']));
       await expect.poll(async () => (await muster(ben)).live, { timeout: 10_000 }).toBe(true);
+      await expect(ben.getByTestId('gathering-card')).toHaveCount(0);
       expect((await state(ben)).seats.s0!.away).toBe(true);
       await ben.evaluate(() => window.__spellplane!.dispatch!({ type: 'life', seat: 's1', delta: -1, by: 's1', cid: 'x' } as never));
       await expect.poll(async () => (await state(ben)).seats.s1!.life, { timeout: 10_000 }).toBe(19);
