@@ -27,13 +27,20 @@ test('the scene harness: read-only proposes nothing from a drag, a double-click,
   expect(await hook<boolean>(page, 'readOnly.on')).toBe(true);
   const before = { state: await snapshot(page), actions: (await actions(page)).length, proposed: await proposed(page) };
 
-  await test.step('a drag of a card moves nothing', async () => {
+  const fit = async () => {
+    await page.evaluate(() => window.__sceneHarness!.camera.fit(false));
+    await settle(page);
+  };
+
+  await test.step('a drag of a card moves no card (it pans the view instead)', async () => {
     await page.mouse.move(a.x, a.y);
     await page.mouse.down();
     await page.mouse.move(a.x + 120, a.y + 40, { steps: 12 });
     expect((await card(page, 'a'))!.dragging).toBe(false);
     await page.mouse.up();
     await settle(page);
+    expect((await card(page, 'a'))!.pose).toMatchObject({ x: 0, y: -300 });
+    await fit();
   });
 
   await test.step('a double-click on a card taps nothing; on the library it draws nothing', async () => {
@@ -65,13 +72,6 @@ test('the scene harness: read-only proposes nothing from a drag, a double-click,
     expect(await snapshot(page)).toBe(before.state);
   });
 
-  await test.step('the wheel still zooms', async () => {
-    const p0 = await camPos(page);
-    await page.mouse.move(a.x, a.y);
-    await page.mouse.wheel(0, -400);
-    await expect.poll(async () => (await camPos(page)).join()).not.toBe(p0.join());
-  });
-
   await test.step('a right-click on a card inspects it', async () => {
     await settle(page);
     const at = await screenOf(page, 0, -300);
@@ -81,9 +81,17 @@ test('the scene harness: read-only proposes nothing from a drag, a double-click,
     expect((await actions(page)).length).toBe(before.actions);
   });
 
+  await test.step('the wheel still zooms', async () => {
+    const p0 = await camPos(page);
+    const at = await screenOf(page, 0, -300);
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.wheel(0, -400);
+    await expect.poll(async () => (await camPos(page)).join()).not.toBe(p0.join());
+  });
+
   await test.step('switched off, a double-click taps again', async () => {
     await setReadOnly(page, false);
-    await settle(page);
+    await fit();
     const at = await screenOf(page, 0, -300);
     await page.mouse.dblclick(at.x, at.y);
     await expect.poll(async () => (await card(page, 'a'))!.tapped).toBe(true);
