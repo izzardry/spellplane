@@ -699,11 +699,41 @@ export class TableRig {
     this.lookMove = { from: { ...this.look }, to: 'fit', start: now, dur };
   }
 
-  /** Frame an oriented rect (a seat's territory: keys 1–4, Home, avatar taps) at the tilt the camera is going to. */
+  /**
+   * Frame an oriented rect (a seat's territory: keys 1–4, Home, avatar taps) at the tilt the camera is going to: its
+   * centre at the centre of the HUD's free area, zoomed so the whole rect shows with a 5% margin (straight down, the
+   * bird's-eye rig's seat view).
+   */
   goToRect(r: Rect, now: number, dur: number): void {
-    const corners = tableCorners({ w: r.w, d: r.d, rot: r.rot }).map((p) => ({ x: p.x + r.x, y: p.y + r.y }));
-    const framed = this.frameLook(this.tTarget, corners);
-    this.toLook(this.clampLook(framed, this.tTarget), now, dur);
+    this.toLook(this.clampLook(this.rectLook(this.tTarget, r), this.tTarget), now, dur);
+  }
+
+  /** The look that centres a rect in the free area at tilt t, as close as the whole rect still fits with a 5% margin. */
+  rectLook(t: number, r: Rect): TiltLook {
+    const u = unitTilt(t);
+    const safe = safeAreaOf(this.viewport, this.insets);
+    const sc = { x: safe.x + safe.w / 2, y: safe.y + safe.h / 2 };
+    const pts = tableCorners({ w: r.w, d: r.d, rot: r.rot }).map((p) => ({ x: p.x + r.x, y: p.y + r.y }));
+    const m = CAMERA.fitMargin / 2;
+    const at = (half: number): TiltLook => {
+      const c = this.solve(u, half, { x: r.x, y: r.y }, sc);
+      return { x: c?.x ?? r.x, y: c?.y ?? r.y, half };
+    };
+    const fits = (half: number): boolean => {
+      const b = this.screenBox(this.poseFor(u, at(half)), pts);
+      if (!b) return false;
+      return b.x0 >= safe.x + safe.w * m && b.x1 <= safe.x + safe.w * (1 - m) && b.y0 >= safe.y + safe.h * m && b.y1 <= safe.y + safe.h * (1 - m);
+    };
+    let lo = this.minHalf(u);
+    let hi = Math.max(lo, this.maxHalf(u));
+    if (fits(lo)) return at(lo);
+    if (!fits(hi)) return at(hi);
+    for (let i = 0; i < 40; i++) {
+      const mid = Math.sqrt(lo * hi);
+      if (fits(mid)) hi = mid;
+      else lo = mid;
+    }
+    return at(hi);
   }
 
   /** Centre a table point: 'close' zooms to one card at 80% of the viewport height (key Z), 'keep' keeps the zoom. */
