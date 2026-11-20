@@ -134,11 +134,11 @@ test.describe('quick match over a local lobby', () => {
       expect(await a!.evaluate(() => window.__spellplane!.mm!.chimes!())).toBe(1);
     });
 
-    await test.step('the ring lapses on B: A is back in seeking with its timer kept; B stopped', async () => {
+    await test.step('the ring lapses on B: A is back in seeking with its timer kept; B stopped and left the lobby', async () => {
       await a!.getByTestId('match-accept').click();
       await expect(a!.getByTestId('match-accept')).toHaveText(/^WAITING FOR .+…$/);
       await tick(b!, 20_000);
-      await expect.poll(() => phase(b!)).toBe('watching');
+      await expect.poll(() => phase(b!)).toBe('off');
       await expect(b!.getByTestId('match-found')).toHaveCount(0);
       await expect(b!.getByTestId('toast')).toContainText('You missed the match. Search stopped.');
       await expect.poll(() => phase(a!), { timeout: 5_000 }).toBe('seeking');

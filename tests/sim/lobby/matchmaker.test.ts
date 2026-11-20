@@ -104,9 +104,10 @@ describe('the matchmaker service', () => {
     expect(live().timers).toBe(0);
   });
 
-  it('cancel sends unseek and keeps watching; widen re-sends the ticket open with a higher rev', async () => {
+  it('cancel sends unseek and keeps watching when asked to watch; widen re-sends the ticket open with a higher rev', async () => {
     const { a, b } = await twoPages();
     b.mm.watch(true);
+    a.mm.watch(true);
     a.mm.seek({ queues: [Q], deckId: 'd' });
     await until(() => a.mm.status().phase === 'seeking', 2_000, 'seeking');
     await until(() => b.mm.status().phase === 'watching' && (b.mm.status() as { lobby: { seekers: unknown[] } }).lobby.seekers.length === 1, 2_000, 'Ben sees Ann');
@@ -120,6 +121,33 @@ describe('the matchmaker service', () => {
     await until(() => (b.mm.status() as { lobby: { seekers: unknown[] } }).lobby.seekers.length === 0, 2_000, 'Ann gone from the seekers');
     a.mm.watch(false);
     expect(a.mm.status()).toEqual({ phase: 'off' });
+  });
+
+  it('a search without a watch: cancel, a decline or a missed ring leaves the lobby and releases its transport and beat', async () => {
+    const { a, b } = await twoPages();
+    a.mm.seek({ queues: [Q], deckId: 'd' });
+    await until(() => a.mm.status().phase === 'seeking', 2_000, 'seeking');
+    expect(live()).toMatchObject({ transports: 1, timers: 1 });
+    a.mm.cancel();
+    expect(a.mm.status()).toEqual({ phase: 'off' });
+    expect(live()).toMatchObject({ transports: 0, timers: 0 });
+
+    // A declines; B lets the ring lapse: both end off, with no lobby left running.
+    a.mm.seek({ queues: [Q], deckId: 'd' });
+    b.mm.seek({ queues: [Q], deckId: 'd' });
+    await until(() => a.mm.status().phase === 'check' && b.mm.status().phase === 'check', 3_000, 'check');
+    a.mm.answer(false);
+    expect(a.mm.status()).toEqual({ phase: 'off' });
+    await until(() => b.mm.status().phase === 'seeking', 3_000, 'Ben back to seeking');
+    expect(b.mm.notice()).toBe('Another player did not accept. Back in the queue.');
+    a.mm.seek({ queues: [Q], deckId: 'd' });
+    await until(() => b.mm.status().phase === 'check', 3_000, 'check again');
+    a.mm.answer(true);
+    b.mm.advance(20_000);
+    await until(() => b.mm.status().phase === 'off', 1_000, 'Ben off after the lapse');
+    expect(b.mm.notice()).toBe(MM_TEXT.missed);
+    await until(() => a.mm.status().phase === 'seeking', 5_000, 'Ann back to seeking');
+    expect(live()).toMatchObject({ transports: 1, timers: 1 });
   });
 
   it('entering a networked room turns the matchmaker off and releases the lobby transport and the beat', async () => {

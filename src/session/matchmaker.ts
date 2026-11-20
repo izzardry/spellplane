@@ -182,6 +182,8 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
   let identityP: Promise<NetIdentity> | null = null;
   let disposed = false;
   let generation = 0;
+  /** `watch(true)` was asked for: stay in the lobby as a watcher without a search. */
+  let watching = false;
 
   // What main.ts does not hand over (the identity and the games store) comes from the profile's own stores, opened once.
   let storesP: Promise<{ identity: IdentityStore; games: GameStore }> | null = null;
@@ -374,6 +376,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       config = null;
       since = null;
       lastNotice = e.reason === 'lapsed' ? MM_TEXT.missed : null;
+      queueMicrotask(settle);
     } else if (e.kind === 'formed') {
       await formed(e.match);
     }
@@ -434,6 +437,15 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     notify();
   };
 
+  /**
+   * Without a search and without an explicit `watch(true)` the lobby is left (MM-4: joined only on intent), so a
+   * cancelled, declined or missed search releases the lobby transport and the beat.
+   */
+  const settle = (): void => {
+    if (watching || config || mode === 'moving' || mode === 'off') return;
+    off();
+  };
+
   const follow = deps.followRoutes ?? typeof window !== 'undefined';
   const onHash = (): void => onRoute(location.hash);
   if (follow) window.addEventListener('hashchange', onHash);
@@ -446,8 +458,9 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       return () => void listeners.delete(listener);
     },
     watch(on) {
+      watching = on;
       if (on) void open();
-      else if (!config && mode !== 'moving') off();
+      else settle();
     },
     seek(c) {
       if (c.queues.length === 0 || mode === 'moving') return;
@@ -470,6 +483,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       since = null;
       room?.cancel();
       notify();
+      settle();
     },
     answer(accept) {
       room?.answer(accept);
@@ -478,6 +492,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
         since = null;
       }
       notify();
+      if (!accept) settle();
     },
     avoid: () => Promise.resolve(),
     dispose() {
