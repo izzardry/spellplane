@@ -15,6 +15,11 @@ import type { InstanceId, TableState } from '../core/types';
 import type { FaceSource, ImageTier } from '../data/types';
 import type { TableLayout } from '../games/types';
 import { paper } from '../themes/paper';
+import { loadTheme, type ThemeId } from '../themes/index';
+import { createBuilderSurfaceImpl } from './builder';
+import { createDraftSurfaceImpl } from './draft';
+import { createStage } from './stage';
+import { renderArenaStill } from './still';
 import { registerDebug } from '../util/debug';
 import type { Format } from '../core/types';
 import { TABLE_FORMAT_SEATS } from '../core/teams';
@@ -52,8 +57,31 @@ export interface SceneHarnessApi {
   themeWithRig(rig: CameraRig): void;
   /** The stack item the scene reports as hovered (scene/stack.ts hoveredStackItem: the lane or the badge's list). */
   stackHover(): string | null;
-  /** Dispose the scene (leak checks). */
+  /** Dispose the scene (leak checks): also releases the harness's own listeners. */
   dispose(): void;
+  /** Dispose the scene if it is mounted and mount a new one on the same page (mount / dispose soak; M7-P1). */
+  remount(): void;
+  /** Mount another of the scene module's WebGL surfaces (draft table, builder table, the flow's stage) on its own host (M7-P1). */
+  mountSurface(kind: 'draft' | 'builder' | 'stage'): void;
+  /** Dispose the surface mountSurface mounted. */
+  disposeSurface(): void;
+  /**
+   * The arena still of a look (scene/still.ts; M7-P1): the Blob's size and the still's pixel size, the mean difference
+   * between neighbouring pixels of the unsoftened frame and of the still scaled up to the frame's size by the browser,
+   * and whether the still contains card-face colours. `noWebgl` makes WebGL unavailable for this call.
+   */
+  arenaStill(theme: string, width: number, noWebgl?: boolean): Promise<ArenaStillReport | null>;
+}
+
+/** What `arenaStill` reports (tests/e2e/scene/still.spec.ts). */
+export interface ArenaStillReport {
+  bytes: number;
+  type: string;
+  width: number;
+  height: number;
+  frame: { width: number; height: number };
+  sharpDiff: number;
+  softDiff: number;
 }
 
 declare global {
@@ -62,7 +90,28 @@ declare global {
   }
 }
 
+/** Mean absolute difference between horizontally and vertically neighbouring pixels (RGB), 0..255. */
+function neighbourDiff(c: HTMLCanvasElement): number {
+  const d = c.getContext('2d', { willReadFrequently: true })!.getImageData(0, 0, c.width, c.height).data;
+  let s = 0;
+  let n = 0;
+  for (let y = 0; y < c.height - 1; y++)
+    for (let x = 0; x < c.width - 1; x++) {
+      const i = (y * c.width + x) * 4;
+      const r = i + 4;
+      const b = i + c.width * 4;
+      for (let k = 0; k < 3; k++) s += Math.abs(d[i + k]! - d[r + k]!) + Math.abs(d[i + k]! - d[b + k]!);
+      n += 6;
+    }
+  return n ? s / n : 0;
+}
+
+let surface: { dispose(): void; host: HTMLElement } | null = null;
+
 export function mount(target: HTMLElement): void {
+  /** What this mount added to the window, released by `dispose`. */
+  const cleanups: (() => void)[] = [];
+  let mounted = true;
   const params = new URLSearchParams(location.search);
   const scenario = (['demo', 'bench', 'empty'] as const).find((s) => s === params.get('scenario')) ?? ('demo' satisfies HarnessScenario);
   const viewerParam = params.get('viewer');
@@ -139,12 +188,16 @@ export function mount(target: HTMLElement): void {
     },
   });
   scene.update(state, view);
-  motionQuery.addEventListener('change', () => setView({ reducedMotion: motionQuery.matches }));
+  const onMotion = () => setView({ reducedMotion: motionQuery.matches });
+  motionQuery.addEventListener('change', onMotion);
+  cleanups.push(() => motionQuery.removeEventListener('change', onMotion));
 
   // The P key keeps the table point under the mouse fixed through the blend (M4-P1), as the HUD's does.
   let mouse: ScreenPoint | null = null;
-  addEventListener('pointermove', (e) => (mouse = { x: e.clientX, y: e.clientY }));
-  addEventListener('keydown', (e) => {
+  const onMove = (e: PointerEvent) => (mouse = { x: e.clientX, y: e.clientY });
+  addEventListener('pointermove', onMove);
+  cleanups.push(() => removeEventListener('pointermove', onMove));
+  const onKey = (e: KeyboardEvent) => {
     if (e.key === 'p' || e.key === 'P') scene.camera.setRig(scene.camera.rig() === 'birdseye' ? 'ego' : 'birdseye', mouse ? { anchor: mouse } : undefined);
     else if (e.key === '0') scene.camera.fit();
     else if (e.key === 'Home' || e.key === '1') scene.camera.goToSeat(viewerSeat ?? 's0');
@@ -156,7 +209,9 @@ export function mount(target: HTMLElement): void {
       if (steps < n) scene.camera.goToSeat(`s${(from + steps) % n}`);
     }
     else if (e.key === 'Escape' && view.openPile) setView({ openPile: null });
-  });
+  };
+  addEventListener('keydown', onKey);
+  cleanups.push(() => removeEventListener('keydown', onKey));
 
   registerDebug({
     state: () => state,
@@ -189,6 +244,62 @@ export function mount(target: HTMLElement): void {
     },
     themeWithRig: (rig) => scene.setTheme({ ...paper, camera: { ...paper.camera, defaultRig: rig } }),
     stackHover: () => hoveredStackItem(scene),
-    dispose: () => scene.dispose(),
+    dispose() {
+      if (!mounted) return;
+      mounted = false;
+      scene.dispose();
+      for (const c of cleanups.splice(0)) c();
+    },
+    remount() {
+      window.__sceneHarness?.dispose();
+      mount(target);
+    },
+    mountSurface(kind) {
+      surface?.dispose();
+      const h = document.createElement('div');
+      Object.assign(h.style, { position: 'fixed', left: '0', top: '0', width: '480px', height: '320px' });
+      document.body.append(h);
+      const made =
+        kind === 'stage'
+          ? createStage(h)
+          : kind === 'draft'
+            ? createDraftSurfaceImpl(h, { game: harnessGame, layout: harnessLayout(), viewerSeat: 's0', theme: paper, faces: harnessFaces, events: {} })
+            : createBuilderSurfaceImpl(h, { theme: paper, faces: harnessFaces, card: () => null, events: {} });
+      surface = { host: h, dispose: () => made.dispose() };
+    },
+    disposeSurface() {
+      surface?.dispose();
+      surface?.host.remove();
+      surface = null;
+    },
+    async arenaStill(id, width, noWebgl = false) {
+      const theme = await loadTheme(id as ThemeId);
+      const proto = HTMLCanvasElement.prototype;
+      const getContext = proto.getContext;
+      if (noWebgl)
+        proto.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+          return /webgl/.test(kind) ? null : (getContext as (...a: unknown[]) => unknown).call(this, kind, ...rest);
+        } as typeof proto.getContext;
+      let frame: HTMLCanvasElement | null = null;
+      try {
+        const blob = await renderArenaStill(theme, { width, onFrame: (f) => (frame = f) });
+        if (!blob || !frame) return null;
+        const f: HTMLCanvasElement = frame;
+        const bitmap = await createImageBitmap(blob);
+        // The browser scales the still up to the frame's size, as Home shows it.
+        const up = document.createElement('canvas');
+        up.width = f.width;
+        up.height = f.height;
+        const ctx = up.getContext('2d', { willReadFrequently: true })!;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(bitmap, 0, 0, f.width, f.height);
+        const report: ArenaStillReport = { bytes: blob.size, type: blob.type, width: bitmap.width, height: bitmap.height, frame: { width: f.width, height: f.height }, sharpDiff: neighbourDiff(f), softDiff: neighbourDiff(up) };
+        bitmap.close();
+        return report;
+      } finally {
+        proto.getContext = getContext;
+      }
+    },
   };
 }

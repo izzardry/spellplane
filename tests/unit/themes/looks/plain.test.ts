@@ -22,7 +22,7 @@ afterAll(() => restore());
 
 function paint(src: TextureSource): Uint8ClampedArray {
   const { ctx } = recordingContext();
-  let data = new Uint8ClampedArray(0);
+  let data: Uint8ClampedArray = new Uint8ClampedArray(0);
   (ctx as unknown as Record<string, unknown>).putImageData = (img: { data: Uint8ClampedArray }) => {
     data = img.data;
   };
