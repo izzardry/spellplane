@@ -63,6 +63,23 @@ test.describe('lobby harness (M8-P4)', () => {
     expect(await seriousViolations(page)).toEqual([]);
   });
 
+  test('a pair that cannot connect is named calmly on both seats after 15 s, not before', async ({ page }) => {
+    await page.clock.install();
+    await harness(page, 'view=room&ben=1&apart=1&me=s1');
+    // The guest's first line, for 6 s.
+    await expect(page.getByTestId('invite-welcome')).toHaveText('◆ Ann invites you to a 1v1.');
+    await page.clock.runFor(10_000);
+    await expect(page.getByTestId('invite-welcome')).toHaveCount(0);
+    await expect(chair(page, 's0')).not.toContainText('CANNOT CONNECT');
+    await expect(page.getByTestId('connectivity-problem')).toHaveCount(0);
+    await page.clock.runFor(7_000);
+    await expect(chair(page, 's0')).toContainText('CANNOT CONNECT');
+    await expect(chair(page, 's1')).toContainText('CANNOT CONNECT');
+    await expect(page.getByTestId('connectivity-problem')).toContainText('You and Ann cannot connect directly. Try another network, a phone hotspot or a VPN on one side. Spellplane has no relay server');
+    // The start waits for every pair: the line says so.
+    expect(await lobbyAudit(page)).toEqual([]);
+  });
+
   test('BOOSTER DECKS ONLY: the picker gets an allow that rejects custom decks with the reason', async ({ page }) => {
     await harness(page, 'view=room&rule=booster');
     await closeInvite(page);

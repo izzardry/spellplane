@@ -30,6 +30,11 @@ export const RELAYS_TEXT = `Spellplane cannot reach the public signalling relays
  */
 export const VERSION_TEXT = 'Another player runs a different version of Spellplane, so you cannot play together yet. The notice at the top names both versions and what to do.';
 
+/** The calm line for a pair that cannot connect (journey.md 4.8), the same on both seats. M8-P4. */
+export function pairText(name: string): string {
+  return `You and ${name} cannot connect directly. ${REMEDIES}`;
+}
+
 /** One problem the lobby shows. */
 export interface ConnectivityProblem {
   kind: 'relays' | 'alone' | 'pair' | 'version';
@@ -114,7 +119,7 @@ export class ConnectivityCheck {
       if (p.status !== 'handshake') continue;
       const name = p.nickname || 'another player';
       const failed = held(`hs:${p.transportId}`);
-      if (failed) problems.push({ kind: 'pair', ...(p.peerId ? { peer: p.peerId } : {}), ...(p.seat ? { seat: p.seat } : {}), text: `Your browser cannot finish connecting to ${name}. ${REMEDIES}` });
+      if (failed) problems.push({ kind: 'pair', ...(p.peerId ? { peer: p.peerId } : {}), ...(p.seat ? { seat: p.seat } : {}), text: pairText(name) });
       else pending = true;
       if (p.peerId) pairs.push({ peer: p.peerId, name, seat: p.seat, state: failed ? 'failed' : 'connecting' });
     }
@@ -136,7 +141,7 @@ export class ConnectivityCheck {
       // Without any connection this browser cannot know the seats are current; the "alone" check speaks for it.
       if (connected.length === 0) continue;
       const failed = held(`seat:${s.peer}`);
-      if (failed) problems.push({ kind: 'pair', peer: s.peer, seat: s.id, text: `${name} is at this table, but your browser cannot connect to theirs directly. ${REMEDIES}` });
+      if (failed) problems.push({ kind: 'pair', peer: s.peer, seat: s.id, text: pairText(name) });
       else pending = true;
       pairs.push({ peer: s.peer, name, seat: s.id, state: failed ? 'failed' : 'connecting' });
     }

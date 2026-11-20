@@ -229,6 +229,24 @@
     if (open > 0) inviteOpen = true;
   });
 
+  // A guest's first line (journey.md 4.9): "Ben invites you to a 1v1." for 6 s.
+  const FORMAT_WORDS: Record<Format, string> = { '1v1': '1v1', ffa3: 'three-player free-for-all', ffa4: 'four-player free-for-all', '2hg': '2v2' };
+  let welcome = $state('');
+  let welcomed = false;
+  let welcomeTimer: ReturnType<typeof setTimeout> | null = null;
+  $effect(() => {
+    // The inviter: the first seated player before me (the creator sits in the first chair).
+    const inviter = list.find((c) => c.occupied && !c.mine);
+    const mine = list.find((c) => c.mine);
+    if (welcomed || !mine || !inviter || inviter.index > mine.index || st.stage !== 'lobby') return;
+    welcomed = true;
+    welcome = `${inviter.name} invites you to a ${FORMAT_WORDS[st.format]}.`;
+    welcomeTimer = setTimeout(() => (welcome = ''), 6000);
+  });
+  onMount(() => () => {
+    if (welcomeTimer) clearTimeout(welcomeTimer);
+  });
+
   // A held READY is let go when the seat is no longer ready (a new game, a seat change).
   $effect(() => {
     if (held && !me?.ready) held = false;
@@ -488,6 +506,7 @@
 
   <div class="body">
     <div class="main">
+      {#if welcome}<p class="welcome" role="status" data-testid="invite-welcome">◆ {welcome}</p>{/if}
       {#if !isHost && host}<p class="ds-t-meta who-sets" data-testid="setup-owner">{hostName} chooses the setup.</p>{/if}
 
       <section class="seats" aria-label="Seats">
@@ -620,7 +639,7 @@
           {/if}
           {#if isHost && drafting}
             {#if open === 0}
-              <Button variant="primary" size="lg" data-testid="start-draft" onclick={() => startShort()}>START THE DRAFT</Button>
+              <Button variant="primary" size="lg" data-testid="room-start-draft" onclick={() => startShort()}>START THE DRAFT</Button>
             {:else if shortStart}
               <Button variant="ghost" size="lg" data-testid="start-short" onclick={startShort}>START WITH {seatedCount} PLAYERS</Button>
             {:else}
@@ -828,9 +847,13 @@
     width: 100%;
     justify-self: center;
   }
-  .who-sets {
+  .who-sets,
+  .welcome {
     margin: 0;
     text-align: center;
+  }
+  .welcome {
+    font-size: var(--ds-type-title);
   }
   .seats {
     display: grid;
