@@ -231,7 +231,7 @@ export interface AmbientSoundSource {
  * (draw, shuffle, tap and untap, play, to graveyard, attach, clip)"), plus pickup, drop and snap for the hand feel;
  * M7-P4 plays them (ui/sound.ts) and M7-P1 gives each look its set. A set may leave any cue out.
  */
-export type SoundCue = 'slide' | 'tap' | 'shuffle' | 'turnChime' | 'promptTick' | FeelCue;
+export type SoundCue = 'slide' | 'tap' | 'shuffle' | 'turnChime' | 'promptTick' | FeelCue | 'matchFound'; // 'matchFound' added by M8-C (visual.md 2.3; falls back to 'turnChime' in a set without it)
 
 /** The card-feel sound cues (PLAN Milestone 7, Owner decisions, Almost haptic card handling). Added by M7-C; M7-P4. */
 export type FeelCue = 'draw' | 'untap' | 'play' | 'toGraveyard' | 'toExile' | 'toHand' | 'attach' | 'clip' | 'pickup' | 'drop' | 'snap';
@@ -258,6 +258,8 @@ export interface SoundSet {
   pickup?: SoundSource;
   drop?: SoundSource;
   snap?: SoundSource;
+  /** Added by M8-C: a match was found (visual.md 2.3); a set without it plays `turnChime` (ui/sound.ts, M7-P5). */
+  matchFound?: SoundSource;
   /** v2 (M4-C). */
   ambience?: AmbientSoundSource;
   /** v2 (M4-C): whether the set plays until the viewer turns it off (Settings.sound 'theme'); Paper has no set. */

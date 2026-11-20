@@ -83,8 +83,8 @@
       if (!hover) linger();
     }}
   >
-    {#each list as b (b.id)}
-      <button type="button" data-testid="pile-action-{b.id}" onclick={() => shown && onaction(b, shown)}>{b.label}</button>
+    {#each list as b, i (b.id)}
+      <button type="button" class="ds-btn {i === 0 ? 'ds-btn--secondary' : 'ds-btn--quiet'} {touch ? 'ds-btn--md' : 'ds-btn--sm'}" data-testid="pile-action-{b.id}" onclick={() => shown && onaction(b, shown)}>{b.label}</button>
     {/each}
   </div>
 {/if}
@@ -101,12 +101,15 @@
     gap: 4px;
     padding: 4px;
     pointer-events: auto;
-    background: var(--ds-panel, var(--sp-surface, #fff));
-    color: var(--ds-ink, var(--sp-fg, #111));
-    border: 1px solid var(--ds-border, var(--sp-border, #d8d8d8));
+    background: var(--ds-panel, var(--sp-surface));
+    color: var(--ds-ink, var(--sp-fg));
+    border: 1px solid var(--ds-border, var(--sp-border));
     border-radius: var(--ds-radius-md, 10px);
-    box-shadow: var(--ds-elevation-pop, 0 2px 8px rgb(0 0 0 / 18%));
-    font: 600 13px/1 var(--ds-font-body, var(--sp-font, system-ui));
+    box-shadow: var(--ds-elevation-pop, var(--sp-hud-shadow));
+    font-family: var(--ds-font-body, var(--sp-font));
+    font-weight: 600;
+    font-size: 13px;
+    line-height: 1;
     white-space: nowrap;
     -webkit-user-select: none;
     user-select: none;
@@ -114,22 +117,26 @@
     touch-action: manipulation;
   }
   button {
+    height: var(--h);
     min-height: var(--h);
+    box-sizing: border-box;
     padding: 0 12px;
     text-align: left;
     border-radius: var(--ds-radius-sm, 6px);
     border: 1px solid transparent;
     background: transparent;
     color: inherit;
-    font: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: inherit;
     cursor: pointer;
   }
   button:first-child {
-    background: var(--ds-accent, var(--sp-fg, #111));
-    color: var(--ds-accent-ink, var(--sp-bg, #fff));
+    background: var(--ds-panel-raised, var(--sp-bg));
+    border-color: var(--ds-border, var(--sp-border));
   }
   button:focus-visible {
-    outline: 2px solid var(--ds-focus, var(--sp-focus, #2563eb));
+    outline: 2px solid var(--ds-focus, var(--sp-focus));
     outline-offset: 1px;
   }
 </style>

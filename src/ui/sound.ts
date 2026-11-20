@@ -15,6 +15,8 @@
  * then to the plain cue it refines (a draw to a slide, an untap to a tap), so older sets keep sounding as before.
  */
 import type { LogEntry, SeatId } from '../core/types';
+import { registerDebug } from '../util/debug';
+import { live, track, untrack } from '../util/lifecycle';
 import { lookOfTheme } from '../themes/index';
 import type { LookId, SoundCue, SoundSet, SoundSource, ThemeId } from '../themes/types';
 import { feelCues, tableTheme } from '../util/feel';
@@ -130,9 +132,114 @@ function browserContext(): SoundContext | null {
   }
 }
 
+/**
+ * The page's one audio context (m7-adjustments.md, M7-P4 change 2: "One shared AudioContext, created on the first
+ * gesture, suspended when the table is disposed"). Players enter and leave tables many times per page load; browsers cap
+ * live audio contexts, so the context is made once and kept, suspended while no table plays. A table's player counts
+ * it under `audioContexts` (util/lifecycle.ts) while it holds it, so on Home the count is 0. Added by M7-P5.
+ */
+let pageContext: SoundContext | null = null;
+let pageFactory: () => SoundContext | null = browserContext;
+
+/** How many page contexts were made since load (the debug hook: one for the whole page). */
+let pageContextsMade = 0;
+
+/** The page's audio context, made on first use (after a user gesture); null where Web Audio is missing. */
+export function pageAudioContext(): SoundContext | null {
+  if (!pageContext || pageContext.state === 'closed') {
+    pageContext = pageFactory();
+    if (pageContext) pageContextsMade++;
+  }
+  return pageContext;
+}
+
+/** The audio part of the debug hook (M7-P5): the page context's state, how many were made, and how many tables hold one. */
+export interface AudioDebug {
+  state(): AudioContextState | null;
+  made(): number;
+  live(): number;
+  /** Make the page context as a user gesture would (tests: Playwright's clicks do, this is for a page without one). */
+  unlock(): void;
+}
+
+declare module '../util/debug' {
+  interface DebugParts {
+    audio: AudioDebug;
+  }
+}
+
+registerDebug({
+  audio: {
+    state: () => pageContext?.state ?? null,
+    made: () => pageContextsMade,
+    live: () => live().audioContexts,
+    unlock: () => void pageAudioContext(),
+  },
+});
+
+/** Replace the page context's factory and forget the context (unit tests with a fake context). */
+export function setPageAudioFactoryForTests(make: () => SoundContext | null): void {
+  pageFactory = make;
+  pageContext = null;
+}
+
+/** Whether `ctx` is the page's shared context (it is suspended, never closed, when a table lets it go). */
+const isPageContext = (ctx: SoundContext | null): boolean => ctx !== null && ctx === pageContext;
+
+/**
+ * A match was found (SoundCue 'matchFound'; visual.md 2.3): one short, bright two-note chime, synthesised (no file),
+ * under 0.6 s, peaking at a third of the gain it is given. Used by any set without its own `matchFound`.
+ */
+export const MATCH_FOUND_CHIME: SoundSource = {
+  play(ctx, gain) {
+    const t0 = ctx.currentTime;
+    const peak = Math.max(0.0001, Math.min(1, gain) / 3);
+    const notes: readonly [number, number][] = [
+      [784, 0],
+      [1175, 0.11],
+    ];
+    for (const [freq, delay] of notes) {
+      const at = t0 + delay;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, at);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.linearRampToValueAtTime(peak, at + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + 0.42);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(at);
+      osc.stop(at + 0.45);
+      osc.onended = () => {
+        osc.disconnect();
+        g.disconnect();
+      };
+    }
+  },
+};
+
+/**
+ * Play the match-found chime outside a table (Home, the queue; M8-P7 calls it): on the page's context, after a user
+ * gesture made it possible; a failure stays silent. Returns whether a sound was scheduled. `mode` is the viewer's
+ * `Settings.sound`: 'off' plays nothing.
+ */
+export function playMatchFound(mode: SoundMode = 'theme', set?: SoundSet): boolean {
+  if (mode === 'off') return false;
+  const ctx = pageAudioContext();
+  if (!ctx) return false;
+  try {
+    if (ctx.state === 'suspended') ctx.resume().catch(() => undefined);
+    (set?.matchFound ?? MATCH_FOUND_CHIME).play(ctx, SOUND_GAIN);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Whether a string is a sound cue the player knows (cues from the scene arrive as plain strings, util/feel.ts). */
 function isCue(c: string): c is SoundCue {
-  return (CUE_ORDER as readonly string[]).includes(c) || c === 'pickup' || c === 'snap' || c === 'drop' || c === 'toLibrary';
+  return (CUE_ORDER as readonly string[]).includes(c) || c === 'pickup' || c === 'snap' || c === 'drop' || c === 'toLibrary' || c === 'matchFound';
 }
 
 /** Plays the current theme's set under the viewer's setting. */
@@ -149,7 +256,7 @@ export class ThemeSoundPlayer {
   readonly played: SoundCue[] = [];
 
   constructor(
-    private readonly makeContext: () => SoundContext | null = browserContext,
+    private readonly makeContext: () => SoundContext | null = pageAudioContext,
     private readonly gain = SOUND_GAIN,
   ) {
     // The table scene says which look it draws and rings the viewer's own pickup and snap (util/feel.ts).
@@ -179,6 +286,7 @@ export class ThemeSoundPlayer {
   /** The source of a cue: the theme's set, the look's synthesised cue, then the plain cue it refines. */
   private source(c: SoundCue): SoundSource | undefined {
     const look = this.look ? LOOK_FEEL_SOUNDS[this.look] : undefined;
+    if (c === 'matchFound') return this.set?.matchFound ?? MATCH_FOUND_CHIME;
     const fb = CUE_FALLBACK[c];
     return this.set?.[c] ?? look?.[c] ?? (fb ? (this.set?.[fb] ?? look?.[fb]) : undefined);
   }
@@ -212,6 +320,8 @@ export class ThemeSoundPlayer {
     if (!this.enabled()) return;
     if (!this.ctx) this.ctx = this.makeContext();
     if (!this.ctx) return;
+    // Counted while this table holds it (contracts.md Part C; idempotent per context).
+    track('audioContexts', this.ctx);
     if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => undefined);
     this.sync();
   }
@@ -223,7 +333,7 @@ export class ThemeSoundPlayer {
     // A look plays at its own gain under the player's ceiling, and only the cues its tokens list.
     const gain = tokens ? this.gain * Math.max(0, Math.min(1, tokens.gain)) : this.gain;
     for (const c of cues) {
-      if (tokens && !tokens.cues.includes(c)) continue;
+      if (tokens && c !== 'matchFound' && !tokens.cues.includes(c)) continue;
       const src = this.source(c);
       if (!src) continue;
       try {
@@ -242,7 +352,12 @@ export class ThemeSoundPlayer {
     this.disposed = true;
     const ctx = this.ctx;
     this.ctx = null;
-    ctx?.close().catch(() => undefined);
+    if (!ctx) return;
+    untrack('audioContexts', ctx);
+    // The page's context is kept for the next table, suspended; a context of its own (a test's) is closed.
+    if (isPageContext(ctx)) {
+      if (ctx.state === 'running') ctx.suspend().catch(() => undefined);
+    } else ctx.close().catch(() => undefined);
   }
 
   private sync(): void {

@@ -188,8 +188,9 @@ describe('placement', () => {
     expect(q.x).toBe(20 + 60 + AFFORDANCE_GAP_PX);
   });
 
-  it('controls are thumb-sized on a touch screen', () => {
+  it('controls use the kit heights: 36 (sm) under a mouse, 44 (md, thumb-sized) on a touch screen', () => {
     expect(controlHeight(true)).toBe(TOUCH_TARGET_PX);
-    expect(controlHeight(false)).toBeLessThan(TOUCH_TARGET_PX);
+    expect(TOUCH_TARGET_PX).toBe(44);
+    expect(controlHeight(false)).toBe(36);
   });
 });

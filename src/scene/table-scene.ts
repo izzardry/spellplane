@@ -24,6 +24,7 @@ import type { ActionDraft } from '../core/actions';
 import { CAMERA, CLIP, SCREEN_LAYER } from '../core/geometry';
 import { carryGroup, clipGroup, type DragGroup } from '../core/clips';
 import type { CardInstance, ClipId, InstanceId, Pose, SeatId, StackItemId, TableState, ZoneId } from '../core/types';
+import { parseZoneId } from '../core/ids';
 import type { Rect, TableLayout, TextureSource } from '../games/types';
 import type { QualityId } from '../themes/types';
 import { registerDebug } from '../util/debug';
@@ -661,8 +662,17 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const seatAngleOf = (seat: SeatId): number => (state ? (seatLayoutOf(state, layout, seat)?.angle ?? 0) : 0);
   const combatCtx: CombatContext = { angleOf: seatAngleOf, newId };
 
+  // Look, do not touch (M7-P5; m7-adjustments.md D14): a read-only scene proposes no action. Every route below checks
+  // `readOnly` before it starts a drag, a tap, a line, a hold or a pile action; this guard is the last net.
+  let readOnly = opts.readOnly === true;
+  /** The actions this scene proposed (the read-only spec counts them through the debug hook). */
+  let proposed = 0;
   const dispatch = (actions: ActionDraft[]) => {
-    for (const a of actions) opts.dispatch(a);
+    if (readOnly) return;
+    for (const a of actions) {
+      proposed++;
+      opts.dispatch(a);
+    }
   };
 
   // --- Layout and markings ----------------------------------------------------------------------------------------
@@ -1628,6 +1638,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** A left press on an overlap starts the hold (PLAN Milestone 6, owner decisions, Creating a clip, Mouse). */
   function startHold(pointerId: number, x: number, y: number): void {
+    if (readOnly) return;
     const under = cardsUnder(x, y);
     // Only where the hold would clip something (M6.1): over cards already clipped together it stays a plain press,
     // so the click or drag goes on as usual and no duplicate clip is made.
@@ -1670,6 +1681,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** Pick up an existing clip (or, from the tray, a new one) at a screen point. */
   function startClipDrag(pointerId: number, clip: ClipId | null, x: number, y: number, external: boolean): void {
+    if (readOnly) return;
     cancelHold();
     clipDrag = { pointerId, clip, last: { x, y }, external };
     setHover(null);
@@ -1795,6 +1807,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const isBattlefield = (zone: ZoneId) => state && presentationOf(opts.game, state, zone) === 'free';
 
   function startCardDrag(rc: RCard, pointerId: number, x: number, y: number, temp: boolean, pileGrab: boolean, external = false): boolean {
+    // Read-only (M7-P5): no card moves; a press-and-drag on a card moves the view instead.
+    if (readOnly) return false;
     if (!state) return false;
     const inst = rc.inst;
     const zoneObj = state.zones[inst.zone];
@@ -2176,6 +2190,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   }
 
   function setPileWant(next: typeof pileWant): void {
+    // Read-only (M7-P5): no pile offers its actions.
+    if (readOnly && next) next = null;
     if (next === pileWant || (next && pileWant && next.zone === pileWant.zone && next.via === pileWant.via)) return;
     pileWant = next;
     affordDirty = true;
@@ -2191,6 +2207,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** The selection's screen anchor now (scene/affordances.ts), from the cards as drawn. */
   function selectionAnchorNow(): SelectionAnchor | null {
+    // Read-only (M7-P5): the selection is for reading; no strip stands beside it.
+    if (readOnly) return null;
     // Cards drawn on the table and handled one by one: not another seat's hand row, not a card gone into a pile (a
     // selected card put into the graveyard leaves the strip behind).
     const ids = view.selection.filter((id) => {
@@ -2442,6 +2460,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   /** Pick up a stack marker (markers are not cards: they never go through startCardDrag). */
   function startItemDrag(item: StackItemId, pointerId: number, x: number, y: number): boolean {
+    if (readOnly) return false;
     const e = entries.find((x) => x.item.id === item);
     if (!state || !e || !e.marker) return false;
     const p = screenToTable(x, y);
@@ -2639,6 +2658,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         rig.pitchBy((e.clientY - g.y0) * PITCH_DEG_PER_PX);
         setHover(null);
         dirty = true;
+        return;
+      }
+      if (g.button === 2 && readOnly) {
+        // Read-only (M7-P5): a right-drag from a card draws no line; nothing happens until the release.
+        menuPending = null;
+        gesture = null;
+        release(e);
         return;
       }
       if (g.button === 2) {
@@ -2889,7 +2915,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       touchLine(g);
       return;
     }
-    const entry = stackFolded ? entries.find((x) => x.item.id === b.item) : undefined;
+    const entry = stackFolded && !readOnly ? entries.find((x) => x.item.id === b.item) : undefined;
     if (!entry) return;
     const sourceCard = entry.item.card ?? b.item;
     lineView.draft = { pointerId: -1, source: { kind: 'stackItem', id: b.item }, sourceCard, target: lineTargetAt(g.at.x, g.at.y, sourceCard), cur: screenToTable(g.at.x, g.at.y), shift: false };
@@ -2919,6 +2945,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         controls.fit(true);
         return;
       case 'longPress': {
+        if (readOnly) {
+          // Read-only (M7-P5): a long-press on a card inspects it; no action menu opens.
+          const ro = pick(g.at.x, g.at.y);
+          if (ro) opts.events.inspect?.(ro.id);
+          return;
+        }
         const clip = clipUnder(g.at.x, g.at.y, true);
         if (clip) {
           touchClipMenu = true;
@@ -3042,7 +3074,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         return;
       }
       const rc = pick(g.start.x, g.start.y);
-      const source = rc ? lineSource(rc) : null;
+      const source = rc && !readOnly ? lineSource(rc) : null;
       if (!rc || !source) return;
       lineView.draft = { pointerId: -1, source, sourceCard: rc.id, target: lineTargetAt(g.at.x, g.at.y, rc.id), cur: screenToTable(g.at.x, g.at.y), shift: false };
       touchHold = { kind: 'line' };
@@ -3118,6 +3150,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
    */
   function doubleAt(x: number, y: number, touch = false): void {
     if (!state) return;
+    if (readOnly) {
+      // Read-only (M7-P5): no tap, no draw, no clip taken off; double-click beside a card still zooms to it and a public
+      // pile (graveyard, exile) still opens for reading.
+      const ro = pick(x, y);
+      if (ro?.place.kind === 'pile' && parseZoneId(ro.inst.zone).kind !== 'library') opts.events.pileOpen?.(ro.inst.zone);
+      if (ro) return;
+    }
     // Double-click (double-tap) on a clip takes it off (M6-P1).
     const clip = clipUnder(x, y, touch);
     if (clip) {
@@ -3169,6 +3208,13 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
 
   function onContextMenu(e: MouseEvent): void {
     e.preventDefault();
+    if (readOnly) {
+      // Read-only (M7-P5): a right-click on a card inspects it; no action menu opens.
+      if (touchInput.recent()) return;
+      const ro = pick(e.clientX, e.clientY);
+      if (ro) opts.events.inspect?.(ro.id);
+      return;
+    }
     // Some browsers fire a context menu on a long touch: touch has its own long-press (the radial menu).
     if (touchInput.recent()) return;
     // A clip's own menu (M6-P1: "its context menu (right-click, long-press) Remove clip").
@@ -3550,6 +3596,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     affordances: () => affordanceDebug(),
     // Card motion, running animations and frame holds (M7-P4).
     motion: () => motionDebug(),
+    // Look, do not touch (M7-P5): the switch and the count of actions this scene proposed.
+    readOnly: { on: () => readOnly, set: (on: boolean) => setReadOnlyNow(on), proposed: () => proposed },
   };
   registerDebug(debugParts);
 
@@ -3766,6 +3814,28 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     dirty = true;
   }
 
+  /**
+   * Switch "look, do not touch" (M7-P5; TableScene.setReadOnly): what is in hand is let go where it came from, a line
+   * being drawn and a hold to clip are dropped, the pile actions and the selection strip go away, and the HUD hears of it
+   * (SceneEvents.readOnly) so it hides its coach marks.
+   */
+  function setReadOnlyNow(on: boolean): void {
+    if (on === readOnly) return;
+    if (on) {
+      if (drag) finishDrag(false, true);
+      if (clipDrag) finishClipDrag(true);
+      cancelHold();
+      if (itemDrag) finishItemDrag(true);
+      if (lineView.draft) lineView.draft = null;
+      if (gesture && gesture.kind !== 'pan' && gesture.kind !== 'pitch') gesture = null;
+      pileWant = null;
+    }
+    readOnly = on;
+    opts.events.readOnly?.(on);
+    affordDirty = true;
+    dirty = true;
+  }
+
   const sceneApi: SceneHandle = {
     frames,
     setMotion(next: MotionSettings) {
@@ -3777,6 +3847,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     },
     animate(req: CardAnimationRequest) {
       playAnimation(req);
+    },
+    setReadOnly(on: boolean) {
+      setReadOnlyNow(on);
     },
     update(next, nextView) {
       const prevState = state;

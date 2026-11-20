@@ -36,6 +36,8 @@
   let w = $state(0);
   let h = $state(0);
   const height = $derived(controlHeight(touch));
+  /** The kit's size class: strip actions are `sm` (36 px), touch targets `md` (44 px). */
+  const size = $derived(touch ? 'ds-btn--md' : 'ds-btn--sm');
   const place = $derived(anchor ? stripPlace(anchor, { width: w || items.length * 80, height: h || height + 8 }, { width: vw, height: vh }) : null);
   /** The counter kinds the strip offers ± for: those on the card, else the default kind. */
   const kinds = $derived(chips.length ? chips : [{ kind: DEFAULT_COUNTER, count: 0 }]);
@@ -60,14 +62,15 @@
       {#if item.id === 'counters'}
         <span class="counters" role="group" aria-label="Counters">
           {#each kinds as chip (chip.kind)}
-            <button type="button" class="pm" data-testid="strip-counter-remove" data-kind={chip.kind} aria-label="Remove a {chip.kind} counter" disabled={chip.count === 0} onclick={() => oncounter(chip.kind, -1)}>−</button>
+            <button type="button" class="ds-btn ds-btn--quiet {size} pm" data-testid="strip-counter-remove" data-kind={chip.kind} aria-label="Remove a {chip.kind} counter" disabled={chip.count === 0} onclick={() => oncounter(chip.kind, -1)}>−</button>
             <span class="chip" data-testid="strip-counter-chip" data-kind={chip.kind} data-count={chip.count}>{chip.kind}{#if chip.count > 0}<b>{chip.count}</b>{/if}</span>
-            <button type="button" class="pm" data-testid="strip-counter-add" data-kind={chip.kind} aria-label="Add a {chip.kind} counter" onclick={() => oncounter(chip.kind, 1)}>+</button>
+            <button type="button" class="ds-btn ds-btn--quiet {size} pm" data-testid="strip-counter-add" data-kind={chip.kind} aria-label="Add a {chip.kind} counter" onclick={() => oncounter(chip.kind, 1)}>+</button>
           {/each}
         </span>
       {:else if item.id === 'more'}
         <button
           type="button"
+          class="ds-btn ds-btn--quiet {size}"
           data-testid="strip-more"
           aria-haspopup="menu"
           onclick={(e) => {
@@ -76,7 +79,7 @@
           }}>{item.label}</button
         >
       {:else}
-        <button type="button" class:primary={item.id === 'attack'} data-testid="strip-{item.id}" onclick={() => onrun(item)}>{item.label}</button>
+        <button type="button" class="ds-btn ds-btn--quiet {size}" data-testid="strip-{item.id}" onclick={() => onrun(item)}>{item.label}</button>
       {/if}
     {/each}
   </div>
@@ -93,12 +96,15 @@
     gap: 4px;
     padding: 4px;
     pointer-events: auto;
-    background: var(--ds-panel, var(--sp-surface, #fff));
-    color: var(--ds-ink, var(--sp-fg, #111));
-    border: 1px solid var(--ds-border, var(--sp-border, #d8d8d8));
+    background: var(--ds-panel, var(--sp-surface));
+    color: var(--ds-ink, var(--sp-fg));
+    border: 1px solid var(--ds-border, var(--sp-border));
     border-radius: 999px;
-    box-shadow: var(--ds-elevation-pop, 0 2px 8px rgb(0 0 0 / 18%));
-    font: 600 13px/1 var(--ds-font-body, var(--sp-font, system-ui));
+    box-shadow: var(--ds-elevation-pop, var(--sp-hud-shadow));
+    font-family: var(--ds-font-body, var(--sp-font));
+    font-weight: 600;
+    font-size: 13px;
+    line-height: 1;
     white-space: nowrap;
     -webkit-user-select: none;
     user-select: none;
@@ -107,13 +113,17 @@
     animation: rise 120ms ease-out;
   }
   button {
+    height: var(--h);
     min-height: var(--h);
+    box-sizing: border-box;
     padding: 0 12px;
     border-radius: 999px;
     border: 1px solid transparent;
     background: transparent;
     color: inherit;
-    font: inherit;
+    font-family: inherit;
+    font-size: inherit;
+    font-weight: inherit;
     cursor: pointer;
   }
   .touch button {
@@ -123,12 +133,8 @@
     background: color-mix(in srgb, currentColor 10%, transparent);
   }
   button:focus-visible {
-    outline: 2px solid var(--ds-focus, var(--sp-focus, #2563eb));
+    outline: 2px solid var(--ds-focus, var(--sp-focus));
     outline-offset: 1px;
-  }
-  button.primary {
-    background: var(--ds-accent, var(--sp-fg, #111));
-    color: var(--ds-accent-ink, var(--sp-bg, #fff));
   }
   button.pm {
     padding: 0;
@@ -144,8 +150,8 @@
     align-items: center;
     gap: 2px;
     padding: 0 2px;
-    border-left: 1px solid var(--ds-border, var(--sp-border, #d8d8d8));
-    border-right: 1px solid var(--ds-border, var(--sp-border, #d8d8d8));
+    border-left: 1px solid var(--ds-border, var(--sp-border));
+    border-right: 1px solid var(--ds-border, var(--sp-border));
   }
   .chip {
     display: inline-flex;

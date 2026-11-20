@@ -154,6 +154,8 @@ export interface SceneEvents {
    * whenever the camera settles, never per frame. Added by M7-C; M7-P3 reports, M7-P2 places the plates.
    */
   seatAnchors?(anchors: SeatAnchor[]): void;
+  /** "Look, do not touch" was switched on or off (TableScene.setReadOnly): the HUD hides its coach marks and on-card controls while on. */ // [M7-P5]
+  readOnly?(on: boolean): void;
 }
 
 /** What a held table press is doing (PLAN Milestone 6, owner decisions, Hold-to-talk). Added by M6-C. */
@@ -186,6 +188,8 @@ export interface TableSceneOptions {
   tilt?: Tilt;
   /** Added by M7-C: motion intensity and reduced motion (Settings.motion resolved by resolveMotion); absent means full motion unless ViewState.reducedMotion. M7-P4. */
   motion?: MotionSettings;
+  /** Added by M8-C (m7-adjustments.md section 2): look, do not touch: the scene proposes no action; camera, hover, inspect and selection still work. M7-P5. */
+  readOnly?: boolean;
 }
 
 /** Camera rig name (DESIGN "Camera and navigation"). */
@@ -801,6 +805,8 @@ export interface TableScene {
   animate?(req: CardAnimationRequest): void;
   /** Apply the viewer's motion setting without a rebuild (Settings.motion). Added by M7-C; implementer: M7-P4 (optional until it lands). */
   setMotion?(motion: MotionSettings): void;
+  /** Added by M8-C (m7-adjustments.md section 2): switch "look, do not touch" on or off. No-op until M7-P5. */
+  setReadOnly?(on: boolean): void;
   /** Ask for frames: anything that moves outside the scene's own state holds them (PLAN Milestone 7, A0: "render on demand"). Added by M7-C; implementer: M7-P4 (optional until it lands). */
   readonly frames?: FrameScheduler;
   worldToScreen(p: TablePoint3): ScreenPoint | null;

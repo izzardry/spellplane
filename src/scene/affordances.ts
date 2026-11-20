@@ -167,3 +167,17 @@ export function libraryBottomSlot(library: Pose): Rect {
   const [dx, dy] = rot2(-off, 0, library.rot);
   return { x: library.x + dx, y: library.y + dy, w: GEOMETRY.card.w, d: GEOMETRY.card.h, rot: library.rot };
 }
+
+/** The read-only part of the debug hook (M7-P5): the switch and the count of actions the table scene proposed. */
+export interface ReadOnlyDebug {
+  on(): boolean;
+  set(on: boolean): void;
+  proposed(): number;
+}
+
+declare module '../util/debug' {
+  interface DebugParts {
+    /** Look, do not touch (M7-P5; TableScene.setReadOnly). */
+    readOnly: ReadOnlyDebug;
+  }
+}

@@ -29,6 +29,7 @@
     pile,
     touch = false,
     spectator = false,
+    readOnly = false,
     vw,
     vh,
     coach,
@@ -44,6 +45,8 @@
     pile: PileHover | null;
     touch?: boolean;
     spectator?: boolean;
+    /** Look, do not touch (TableScene.setReadOnly): no strip, no pile actions, no coach mark. */
+    readOnly?: boolean;
     vw: number;
     vh: number;
     coach: CoachController;
@@ -56,7 +59,7 @@
   } = $props();
 
   /** The selected cards the strip acts on: those the anchor names that are still on the table. */
-  const cards = $derived(anchor && !spectator ? anchor.cards.map((id) => st.cards[id]).filter((c): c is CardInstance => !!c) : []);
+  const cards = $derived(anchor && !spectator && !readOnly ? anchor.cards.map((id) => st.cards[id]).filter((c): c is CardInstance => !!c) : []);
   const items = $derived(
     stripItems({
       cards,
@@ -83,7 +86,7 @@
       identity,
       selected: selection,
       pileActions: pile !== null,
-      spectator,
+      spectator: spectator || readOnly,
       myTurn: me !== null && isOwnTurn(st, me),
     });
     untrack(() => coach.update(facts));
@@ -111,6 +114,6 @@
     )}
   onmore={(x, y) => cards[0] && onmore(cards[0].id, x, y)}
 />
-{#if !spectator}
+{#if !spectator && !readOnly}
   <PileActions hover={pile} buttons={(h) => pileButtons(h, st, me)} {touch} {vw} {vh} onaction={onpile} />
 {/if}

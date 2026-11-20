@@ -115,8 +115,11 @@ export function pileButtons(hover: PileHover, state: TableState, me: SeatId | nu
 export const AFFORDANCE_GAP_PX = 8;
 
 /** A control row's height: compact for a mouse, a thumb-sized target on a touch screen (DESIGN "sized for thumbs"). */
+/** The kit's `sm` control height (strip and pile actions under a mouse), px. */
+export const STRIP_ACTION_PX = 36;
+
 export function controlHeight(touch: boolean): number {
-  return touch ? TOUCH_TARGET_PX : 30;
+  return touch ? TOUCH_TARGET_PX : STRIP_ACTION_PX;
 }
 
 /**
