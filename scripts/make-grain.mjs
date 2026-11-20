@@ -12,8 +12,8 @@ import zlib from 'node:zlib';
 
 const SIZE = 160;
 const INK = [13, 13, 13];
-/** Mean alpha about 5 % (visual.md), never above 12 %. */
-const MAX_ALPHA = 0.12;
+/** At most 5 % ink (visual.md "5 % ink"), about 2.5 % on average, like the mock's turbulence grain. */
+const MAX_ALPHA = 0.05;
 
 /** mulberry32: a small seeded generator. */
 function rng(seed) {
@@ -72,7 +72,7 @@ export function grainPixels(seed = 0x5b11) {
   for (let y = 0; y < SIZE; y++) {
     for (let x = 0; x < SIZE; x++) {
       const v = 0.45 * fine(x, y) + 0.25 * mid(x, y) + 0.3 * white();
-      const alpha = Math.max(0, Math.min(MAX_ALPHA, (v - 0.25) * 0.16));
+      const alpha = Math.max(0, Math.min(MAX_ALPHA, (v - 0.2) * 0.08));
       const i = (y * SIZE + x) * 4;
       px[i] = INK[0];
       px[i + 1] = INK[1];

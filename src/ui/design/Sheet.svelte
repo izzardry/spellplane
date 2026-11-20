@@ -15,12 +15,23 @@
     header = undefined,
     footer = undefined,
     children,
+    class: extra = '',
     ...rest
-  }: { label: string; width?: 'full' | 'narrow'; onclose?: (() => void) | undefined; header?: Snippet | undefined; footer?: Snippet | undefined; children?: Snippet; [attr: string]: unknown } = $props();
+  }: {
+    label: string;
+    width?: 'full' | 'narrow';
+    onclose?: (() => void) | undefined;
+    header?: Snippet | undefined;
+    footer?: Snippet | undefined;
+    children?: Snippet;
+    /** Extra classes on the root (placement in a parent's grid). */ // [M8-P1]
+    class?: string;
+    [attr: string]: unknown;
+  } = $props();
 </script>
 
 <section
-  class="ds-sheet ds-root"
+  class="ds-sheet ds-root {extra}"
   class:ds-sheet--narrow={width === 'narrow'}
   aria-label={label}
   data-ds-layer="sheet"

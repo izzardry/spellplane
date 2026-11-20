@@ -681,7 +681,6 @@
   border-radius: var(--ds-radius-sheet);
   box-shadow: var(--ds-elevation-sheet);
   color: var(--ds-ink);
-  contain: layout paint;
   animation: ds-sheet-in var(--ds-duration-slow) var(--ds-ease-enter);
 }
 .ds-sheet--narrow {
@@ -839,6 +838,7 @@
   font-weight: var(--ds-weight-bold);
 }
 .ds-toast__detail {
+  margin-left: 0.6ch;
   color: var(--ds-muted);
 }
 .ds-toast-host {
@@ -1524,6 +1524,9 @@
 .ds-plate {
   box-sizing: border-box;
   display: inline-flex;
+  align-self: flex-start;
+  max-width: 100%;
+  white-space: nowrap;
   align-items: center;
   gap: var(--ds-space-md);
   height: 72px;
@@ -1559,6 +1562,8 @@
 .ds-tracker {
   box-sizing: border-box;
   display: inline-flex;
+  align-self: flex-start;
+  white-space: nowrap;
   align-items: center;
   gap: var(--ds-space-md);
   height: var(--ds-control-md);

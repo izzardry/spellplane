@@ -95,22 +95,23 @@ export async function designAuditFindings(page: Page, opts: DesignAuditOptions =
         }
       }
 
-      // 5. Fonts are the look's.
+      // 5. Fonts are the look's: the faces of the nearest look (its --ds-font-* variables; a sample of another look
+      //    inside the page carries its own).
       if (fonts) {
-        const root = getComputedStyle(document.documentElement);
         const first = (v: string): string => v.split(',')[0]!.trim().replace(/^["']|["']$/g, '').toLowerCase();
-        const allowed = new Set(['--ds-font-body', '--ds-font-heading', '--ds-font-numeral', '--ds-font-mono', '--ds-font-reading'].map((k) => root.getPropertyValue(k)).filter((v) => v.trim()).map(first));
-        if (allowed.size) {
-          const seen = new Set<string>();
-          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-          for (let n = walker.nextNode(); n; n = walker.nextNode()) {
-            const el = n.parentElement;
-            if (!el || !n.textContent?.trim() || skipped(el) || !visible(el) || el.closest('script, style, title, .ds-sr-only')) continue;
-            const f = first(getComputedStyle(el).fontFamily);
-            if (!allowed.has(f) && !seen.has(f)) {
-              seen.add(f);
-              problems.push(`font "${f}" is not the look's: ${name(el)}`);
-            }
+        const KEYS = ['--ds-font-body', '--ds-font-heading', '--ds-font-numeral', '--ds-font-mono', '--ds-font-reading'];
+        const seen = new Set<string>();
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+          const el = n.parentElement;
+          if (!el || !n.textContent?.trim() || skipped(el) || !visible(el) || el.closest('script, style, title, .ds-sr-only')) continue;
+          const cs = getComputedStyle(el);
+          const allowed = new Set(KEYS.map((k) => cs.getPropertyValue(k)).filter((v) => v.trim()).map(first));
+          if (!allowed.size) continue;
+          const f = first(cs.fontFamily);
+          if (!allowed.has(f) && !seen.has(f)) {
+            seen.add(f);
+            problems.push(`font "${f}" is not the look's: ${name(el)}`);
           }
         }
       }
