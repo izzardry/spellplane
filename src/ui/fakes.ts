@@ -642,6 +642,11 @@ export class FakeSession implements TableSession {
   dispose(): void {
     this.listeners.clear();
   }
+  /** Added by M8-C (TableSession.leave). */
+  leave(): Promise<void> {
+    this.dispose();
+    return Promise.resolve();
+  }
 
   // Members added to TableSession by M1-C: recorded, with solo-table answers.
   readonly roomId = 'fake';

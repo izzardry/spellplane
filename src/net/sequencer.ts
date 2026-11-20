@@ -6,6 +6,7 @@
  * engine share one implementation of ordering, de-duplication, optimistic re-application and catch-up.
  */
 import { ACTION_FAMILIES, type Action, type ActionType } from '../core/actions';
+import { isPlayAction } from '../core/log';
 import { explain, reduce } from '../core/reducer';
 import type { CoreGameSpec, SeatId, TableState } from '../core/types';
 import type { PeerRole, SequencedAction } from './messages';
@@ -210,21 +211,29 @@ export class Replica implements SyncEngine {
   private readonly buffer = new Map<number, SequencedAction>();
   private log: SequencedAction[] = [];
   private readonly cids = new Map<string, number>();
-  private snap: { seq: number; state: TableState };
-  /** Recent confirmed states (every REWIND_EVERY and every loaded snapshot), oldest first, for `rewind`. */
-  private marks: { seq: number; state: TableState }[] = [];
+  private snap: { seq: number; state: TableState; play: number };
+  /** Recent confirmed states (every REWIND_EVERY and every loaded snapshot), oldest first, for `rewind`; each with its play count. */
+  private marks: { seq: number; state: TableState; play: number }[] = [];
+  /** Added by M8-C: the play count of the confirmed state (contracts.md Part D: sequenced actions that are moves, core/log.ts isPlayAction). Never hashed. */
+  private playCount = 0;
 
   /** Called for every sequenced action applied in order (not for actions inside a loaded snapshot). */
   onApply: ((action: SequencedAction) => void) | null = null;
 
   constructor(
     readonly game: CoreGameSpec | null,
-    snapshot: { seq: number; state: TableState },
+    snapshot: { seq: number; state: TableState; play?: number },
   ) {
     this.conf = snapshot.state.seq === snapshot.seq ? snapshot.state : { ...snapshot.state, seq: snapshot.seq };
     this.viewState = this.conf;
-    this.snap = { seq: snapshot.seq, state: this.conf };
+    this.playCount = snapshot.play ?? 0;
+    this.snap = { seq: snapshot.seq, state: this.conf, play: this.playCount };
     this.marks = [this.snap];
+  }
+
+  /** The play count of the confirmed state (contracts.md Part D). Added by M8-C. */
+  play(): number {
+    return this.playCount;
   }
 
   confirmed(): TableState {
@@ -286,8 +295,8 @@ export class Replica implements SyncEngine {
     return this.log.slice(afterSeq + 1 - first);
   }
 
-  snapshot(): { seq: number; state: TableState } {
-    return { seq: this.conf.seq, state: this.conf };
+  snapshot(): { seq: number; state: TableState; play: number } {
+    return { seq: this.conf.seq, state: this.conf, play: this.playCount };
   }
 
   /**
@@ -295,14 +304,16 @@ export class Replica implements SyncEngine {
    * "Specification: network protocol and secrecy", Sync: a snapshot plus tail); the current state when the tail
    * since that snapshot is no longer held.
    */
-  syncSnapshot(): { snapshot: { seq: number; state: TableState }; tail: SequencedAction[] } {
+  syncSnapshot(): { snapshot: { seq: number; state: TableState; play: number }; tail: SequencedAction[] } {
     const tail = this.tail(this.snap.seq);
     return tail === null ? { snapshot: this.snapshot(), tail: [] } : { snapshot: this.snap, tail };
   }
 
-  load(snapshot: { seq: number; state: TableState }, tail: readonly SequencedAction[]): void {
+  load(snapshot: { seq: number; state: TableState; play?: number }, tail: readonly SequencedAction[]): void {
     this.conf = snapshot.state.seq === snapshot.seq ? snapshot.state : { ...snapshot.state, seq: snapshot.seq };
-    this.snap = { seq: snapshot.seq, state: this.conf };
+    // A snapshot without a play count (an older peer or save) counts from zero: the count is a tie-break, never hashed.
+    this.playCount = snapshot.play ?? 0;
+    this.snap = { seq: snapshot.seq, state: this.conf, play: this.playCount };
     this.marks = [this.snap];
     this.log = [];
     for (const k of [...this.buffer.keys()]) if (k <= this.conf.seq) this.buffer.delete(k);
@@ -353,18 +364,25 @@ export class Replica implements SyncEngine {
    */
   rewind(toSeq: number): SequencedAction[] | null {
     if (toSeq >= this.conf.seq) return [];
-    let mark: { seq: number; state: TableState } | undefined;
+    let mark: { seq: number; state: TableState; play: number } | undefined;
     for (const m of this.marks) if (m.seq <= toSeq) mark = m;
     const first = this.log[0]?.seq;
     if (!mark || (mark.seq < toSeq && (first === undefined || first > mark.seq + 1))) return null;
     let state = mark.state;
-    for (const a of this.log) if (a.seq > mark.seq && a.seq <= toSeq) state = applySequenced(state, a);
+    let play = mark.play;
+    for (const a of this.log) {
+      if (a.seq > mark.seq && a.seq <= toSeq) {
+        state = applySequenced(state, a);
+        if (isPlayAction(a)) play += 1;
+      }
+    }
     const gone = this.log.filter((a) => a.seq > toSeq);
     this.log = this.log.filter((a) => a.seq <= toSeq);
     for (const a of gone) if (this.cids.get(a.cid) === a.seq) this.cids.delete(a.cid);
     this.marks = this.marks.filter((m) => m.seq <= toSeq);
     if (this.snap.seq > toSeq) this.snap = mark;
     this.conf = state;
+    this.playCount = play;
     this.buffer.clear();
     this.rebuild();
     return gone;
@@ -388,6 +406,7 @@ export class Replica implements SyncEngine {
 
   private apply(action: SequencedAction): void {
     this.conf = applySequenced(this.conf, action);
+    if (isPlayAction(action)) this.playCount += 1;
     this.log.push(action);
     if (this.log.length > RETAIN_ACTIONS) this.log.splice(0, this.log.length - RETAIN_ACTIONS);
     this.cids.set(action.cid, action.seq);
@@ -395,9 +414,9 @@ export class Replica implements SyncEngine {
       const oldest = this.cids.keys().next().value;
       if (oldest !== undefined) this.cids.delete(oldest);
     }
-    if (action.seq % NET_SNAPSHOT_EVERY === 0) this.snap = { seq: action.seq, state: this.conf };
+    if (action.seq % NET_SNAPSHOT_EVERY === 0) this.snap = { seq: action.seq, state: this.conf, play: this.playCount };
     if (action.seq % REWIND_EVERY === 0) {
-      this.marks.push({ seq: action.seq, state: this.conf });
+      this.marks.push({ seq: action.seq, state: this.conf, play: this.playCount });
       if (this.marks.length > REWIND_KEEP) this.marks.shift();
     }
     this.dropPending(action.cid);

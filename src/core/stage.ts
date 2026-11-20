@@ -347,5 +347,22 @@ export function enterStage(state: TableState, to: Stage, seq: number): TableStat
   } else if (to === 'match') {
     next.games = (state.games ?? 0) + 1;
   }
+  return clearResult(next);
+}
+
+/**
+ * Added by M8-C (contracts.md Part D): a stage change starts or leaves a game, so the last game's result and the
+ * seats' concessions are cleared. Tables without either are returned unchanged (no hash change for older tables).
+ */
+function clearResult(state: TableState): TableState {
+  const conceded = Object.values(state.seats).filter((s) => s.conceded !== undefined);
+  if (state.result === undefined && conceded.length === 0) return state;
+  const next: TableState = { ...state, seats: { ...state.seats } };
+  delete next.result;
+  for (const s of conceded) {
+    const copy = { ...s };
+    delete copy.conceded;
+    next.seats[s.id] = copy;
+  }
   return next;
 }

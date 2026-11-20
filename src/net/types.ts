@@ -7,7 +7,7 @@
  */
 import type { Action } from '../core/actions';
 import type { RevealedCard } from '../core/commit';
-import type { Anchor, CoreGameSpec, Deadline, InstanceId, PackId, Pose, SeatId, TableState, ZoneId } from '../core/types';
+import type { Anchor, CoreGameSpec, Deadline, InstanceId, PackId, Pose, SeatId, Stage, TableState, ZoneId } from '../core/types';
 import type { ChatChannel, LookReqMessage, PeerRole, PrivateMessage, SequencedAction, WireMessage } from './messages';
 import type { Channel, PeerId, Transport } from './transport';
 import type { VersionMismatch } from './version';
@@ -82,6 +82,23 @@ export interface PeerInfo {
   status: 'handshake' | 'connected' | 'away';
   /** Last seq the peer reported (hello, hb, claimAck). */
   lastSeq: number;
+  /** Added by M8-C. The play count the peer reported in its hello (contracts.md Part D); absent from a peer that sent none: it compares by lastSeq. */
+  lastPlay?: number;
+  /** Added by M8-C. The seq at which `lastPlay` was reported; a play count is compared only while it equals `lastSeq`. */
+  lastPlayAt?: number;
+  /** Added by M8-C. The peer's last `head` announcement (persistence.md section 6); M8-P5 sends, validates and stores it. */
+  head?: PeerHead;
+}
+
+/** A peer's announced head (persistence.md section 6; contracts.md Part D): public facts only. Added by M8-C. */
+export interface PeerHead {
+  seq: number;
+  play: number;
+  h: string;
+  turn: number;
+  stage: Stage;
+  live: boolean;
+  saving: boolean;
 }
 
 /** A wire message as the engine saw it, for the debug hook and the leak test (DESIGN "Specification: code interfaces", SpellplaneDebug.net.messages). */
@@ -143,9 +160,9 @@ export interface SyncEngine {
   /** Retained sequenced actions after `afterSeq`, or null when they are no longer held (answer with a snapshot). */
   tail(afterSeq: number): SequencedAction[] | null;
   /** The confirmed state as a snapshot. */
-  snapshot(): { seq: number; state: TableState };
+  snapshot(): { seq: number; state: TableState; play?: number };
   /** Replace the confirmed state with a snapshot plus tail (catch-up, resync after a hash mismatch); pending actions are re-applied. */
-  load(snapshot: { seq: number; state: TableState }, tail: readonly SequencedAction[]): void;
+  load(snapshot: { seq: number; state: TableState; play?: number }, tail: readonly SequencedAction[]): void;
 }
 
 /**
@@ -153,7 +170,8 @@ export interface SyncEngine {
  * deterministic seq-0 table when nothing is saved. Built by the session from TableStore (M1-P7).
  */
 export interface ResumePoint {
-  snapshot: { seq: number; state: TableState };
+  /** `play` (added by M8-C): the play count at the snapshot (contracts.md Part D), absent on saves made before M8. */
+  snapshot: { seq: number; state: TableState; play?: number };
   /** Sequenced actions after the snapshot, ascending. */
   tail: SequencedAction[];
 }
@@ -219,6 +237,8 @@ export interface NetEngineOptions {
 export interface NetEngine {
   readonly selfId: PeerId;
   readonly identity: NetIdentity;
+  /** Added by M8-C: the play count of the confirmed state (contracts.md Part D); optional so test doubles need not count. */
+  play?(): number;
   /** Join the room and start the handshake; resolves when joined (not when a peer connected). */
   join(): Promise<void>;
   /** Send `bye`, leave the room and stop timers. */

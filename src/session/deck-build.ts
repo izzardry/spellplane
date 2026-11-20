@@ -4,6 +4,7 @@
  * the builder's own checks read the deck the same way. Implementer: M2-P5.
  */
 import type { CardRef, DeckBuild } from '../core/types';
+import type { DeckRecord } from '../store/types';
 import type { DeckImport } from './types';
 
 /**
@@ -24,4 +25,13 @@ export function deckImportOf(build: DeckBuild): DeckImport {
   }
   const side = build.cards.filter((c) => !seen.has(c.id) && !c.basic).map((c) => ref(c.ref));
   return { main, side };
+}
+
+/**
+ * The deck a library record commits at a table (PLAN M8-C Shared glue; decks.md section 7): its main deck as the
+ * library and its sideboard as the sideboard (for a sealed deck the side is the rest of the pool). Added by M8-C.
+ */
+export function deckImportOfRecord(record: Pick<DeckRecord, 'main' | 'side'>): DeckImport {
+  const ref = (r: CardRef): CardRef => (r.foil ? { sid: r.sid, foil: true } : { sid: r.sid });
+  return { main: record.main.map(ref), side: record.side.map(ref) };
 }

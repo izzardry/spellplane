@@ -71,6 +71,8 @@ import { PROTOCOL_VERSION } from '../net/messages';
 import { applySequenced, seatOfPeer } from '../net/sequencer';
 import { roomVersionNotice, versionNotice } from '../net/version';
 import type { NetEngine, PrivateChannel, ResumePoint, Unsubscribe } from '../net/types';
+import { isPlayAction } from '../core/log';
+import { track, untrack } from '../util/lifecycle';
 import type { LogRecord, TableStore } from '../store/types';
 import { DRY_CID, FACE_DOWN_KINDS, faceDownAllowed, placementOf, putBack, reRevealDraft, referencedCard, sameOrder, SESSION_ONLY, turnsPublic, turnsUpOnMove, withProof } from './effects';
 import { localNonces, type NonceStore } from './nonces';
@@ -145,6 +147,12 @@ export interface NetSessionInternals {
   nonces?: NonceStore;
   /** Ids and salts; default session/secrecy.ts. */
   entropy?: Entropy;
+  /**
+   * Added by M8-C (contracts.md Part D): this browser never starts a table of its own, however long no peer answers.
+   * main.ts sets it for every member of a matched room except seat 0 (the creator) and for a route with `rejoin`.
+   * Ignored when `createdHere` is set. Default false.
+   */
+  neverAlone?: boolean;
 }
 
 /** The seq-0 table of a room nobody saved (DESIGN "Players, seats and formats", Seats: every chair free). */
@@ -334,6 +342,7 @@ class NetTable implements NetSession, SessionRecovery {
     this.roomId = opts.roomId;
     this.peerId = opts.identity.peerId;
     this.createdHere = internals.createdHere === true;
+    track('sessions', this);
     this.nonces = internals.nonces ?? localNonces(opts.roomId, opts.identity.peerId);
     this.entropy = internals.entropy ?? DEFAULT_ENTROPY;
     this.entries = init.entries;
@@ -425,6 +434,9 @@ class NetTable implements NetSession, SessionRecovery {
       lastSeq,
       protocol: this.savedProtocol,
       holdSnapshot: () => aloneInRoom(this.engine),
+      // M8-C: the play count travels beside the saved snapshot (contracts.md Part D).
+      play: () => this.engine.play?.() ?? 0,
+      snapshotPlay: snapshotPlayAt(this.engine, snapshotSeq, this.entries),
     });
   }
 
@@ -540,9 +552,16 @@ class NetTable implements NetSession, SessionRecovery {
 
   // --- Lifecycle ---------------------------------------------------------------------------------------
 
-  leave(): void {
+  /** Leave the room and stop (contracts.md Part C: `TableSession.leave()`; M8-P5 sends `bye { reason: 'leave' }` first). */
+  leave(): Promise<void> {
+    this.close();
+    return Promise.resolve();
+  }
+
+  private close(): void {
     if (this.disposed) return;
     this.disposed = true;
+    untrack('sessions', this);
     this.eveningImpl?.dispose();
     this.auditImpl.dispose();
     this.unregisterAuditDebug();
@@ -561,7 +580,7 @@ class NetTable implements NetSession, SessionRecovery {
   }
 
   dispose(): void {
-    this.leave();
+    this.close();
   }
 
   // --- Public actions ----------------------------------------------------------------------------------
@@ -1803,6 +1822,14 @@ class NetTable implements NetSession, SessionRecovery {
     // and a chair taken alone would collide with its creator's (decision M1-P8). After a rejoin the room's table is
     // known to exist: wait for it as long as for a chair.
     const lone = this.rejoining ? timeoutMs : Math.max(0, (this.internals.loneWaitMs ?? 0) - settleMs);
+    // M8-C: a browser that must never sit alone (a matched room's other members, a claim link) waits for a peer
+    // without a time limit; disposing the session ends the wait.
+    if (!this.createdHere && this.internals.neverAlone === true) {
+      while (!this.tableInRoom()) {
+        await this.until(() => this.tableInRoom() || this.disposed, () => null, null, 'the table');
+        if (this.disposed) throw new Error('The session is closed');
+      }
+    }
     if (!this.createdHere && lone > 0 && !this.peerConnected()) {
       await this.until(() => this.peerConnected(), () => null, lone, 'a peer').catch(() => undefined);
       if (this.disposed) throw new Error('The session is closed');
@@ -1839,6 +1866,17 @@ class NetTable implements NetSession, SessionRecovery {
         throw new Error(`Could not take a chair at this table. (${errorText(e)})`);
       });
     }
+  }
+
+  /**
+   * Whether a table exists in the room for a neverAlone browser to join (M8-C): a connected peer reports actions
+   * (someone sat down), or this browser holds a saved table and a peer is connected. Two neverAlone browsers that only
+   * meet each other start nothing.
+   */
+  private tableInRoom(): boolean {
+    const others = this.engine.peers().filter((p) => p.status === 'connected' && p.peerId !== '' && p.peerId !== this.peerId);
+    if (others.some((p) => p.lastSeq > 0)) return true;
+    return others.length > 0 && this.engine.confirmedState().seq > 0;
   }
 
   private peerConnected(): boolean {
@@ -2123,6 +2161,14 @@ class NetTable implements NetSession, SessionRecovery {
 }
 
 /** The stored copy of the room, if any (DESIGN "Multiplayer architecture", Resume: the own save is the starting point). */
+/** The play count at the stored snapshot (M8-C): the engine's count less the moves logged after the snapshot. */
+function snapshotPlayAt(engine: NetEngine, snapshotSeq: number, entries: readonly LogEntry[]): number {
+  const head = engine.confirmedState().seq;
+  let after = 0;
+  for (const e of entries) if (e.kind === 'action' && e.seq > snapshotSeq && e.seq <= head && isPlayAction(e.action)) after += 1;
+  return Math.max(0, (engine.play?.() ?? 0) - after);
+}
+
 async function loadSaved(store: TableStore | undefined, roomId: string): Promise<{ start: ResumePoint; secrets: SecretStore | null; entries: LogEntry[]; snapshotSeq: number; protocol: number | undefined } | null> {
   if (!store) return null;
   const loaded = await store.loadTable(roomId);
@@ -2145,7 +2191,7 @@ async function loadSaved(store: TableStore | undefined, roomId: string): Promise
     log = loaded.log;
   }
   const entries: LogEntry[] = log.filter((r) => r.seq <= seq).map((r) => ({ kind: 'action', seq: r.seq, at: r.at, action: r.action }));
-  return { start: { snapshot: { seq: table.snapshotSeq, state: snapshot }, tail }, secrets: loaded.secrets, entries, snapshotSeq: table.snapshotSeq, protocol: table.protocol };
+  return { start: { snapshot: { seq: table.snapshotSeq, state: snapshot, ...(table.snapshotPlay !== undefined ? { play: table.snapshotPlay } : {}) }, tail }, secrets: loaded.secrets, entries, snapshotSeq: table.snapshotSeq, protocol: table.protocol };
 }
 
 /**

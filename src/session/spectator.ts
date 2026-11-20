@@ -43,6 +43,7 @@ import { createSessionVoice } from './voice';
 import { freshNetTable } from './net';
 import { randomId } from './secrecy';
 import type { DeckImport, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus } from './types';
+import { track, untrack } from '../util/lifecycle';
 
 /** The nickname a spectator's chat carries when the identity has none yet (net/roles.ts). */
 export const DEFAULT_SPECTATOR_NAME = SPECTATOR_DEFAULT_NAME;
@@ -91,6 +92,7 @@ export class SpectatorTable implements NetSession {
     private readonly opts: NetSessionOptions,
   ) {
     this.roomId = opts.roomId;
+    track('sessions', this);
     this.seat = spectatorIdOf(opts.identity.peerId);
     this.name = spectatorChatName(opts.identity.nickname);
     this.sec = emptySecretStore(this.seat);
@@ -178,9 +180,15 @@ export class SpectatorTable implements NetSession {
     return this.held;
   }
 
-  leave(): void {
+  leave(): Promise<void> {
+    this.close();
+    return Promise.resolve();
+  }
+
+  private close(): void {
     if (this.disposed) return;
     this.disposed = true;
+    untrack('sessions', this);
     this.captions?.dispose();
     this.voice?.dispose();
     for (const u of this.unsubs.splice(0)) u();
@@ -191,7 +199,7 @@ export class SpectatorTable implements NetSession {
   }
 
   dispose(): void {
-    this.leave();
+    this.close();
   }
 
   // --- Acting: chat and ping go to the sequencer, which refuses every other action of a spectator --------------

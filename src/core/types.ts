@@ -135,6 +135,14 @@ export interface Seat {
   peer?: string;
   /** Added by M1-C (amendment). Set from `recover` until `recoverCommit` (DESIGN "Multiplayer architecture", Resume: lost-save recovery). */
   recovering?: SeatRecovery;
+  /** Added by M8-C. The seat conceded the current game (contracts.md Part D; DESIGN "Save, leave, rejoin and history"); set by `concede`, cleared when a new game starts. */
+  conceded?: boolean;
+  /** Added by M8-C. The one open re-invite of this away seat (persistence.md section 7): claim hash, maker, the seq it was made at, expiry in ms epoch (the sequencer's clock enforces it). */
+  invite?: { h: string; by: SeatId; atSeq: number; exp: number };
+  /** Added by M8-C. How often a new key pair took this seat through `seatClaim` (persistence.md section 7). */
+  takeovers?: number;
+  /** Added by M8-C. The game number (TableState.games ?? 0) for which this seat's opening hand was dealt; set by `dealt` (contracts.md Part D). */
+  dealt?: number;
 }
 
 /**
@@ -392,6 +400,14 @@ export interface TableSettings {
   passTimerMs: number | null;
   /** Two-Headed Giant: teammates see each other's hands live. */
   teamHandsVisible: boolean;
+  /**
+   * Added by M8-C. Automatic setup (PLAN Milestone 8, Decisions: "Automatic setup is opt-in per table"): shuffle, seven
+   * cards and the first-player roll run by themselves once per seat and game (session/entry.ts). Absent: off, so a table
+   * opened the old way behaves as before.
+   */
+  autoSetup?: boolean;
+  /** Added by M8-C. Set by enterMatch for a game formed in the public lobby: no seat invites, rating rules apply (contracts.md Part D). */
+  matched?: boolean;
 }
 
 /** Default table settings (DESIGN "Turn flow and confirmation": 5-second pass timer). */
@@ -440,6 +456,18 @@ export interface TableState {
    * Evening stages: build → match → build → match …). Absent before the first game; core/stage.ts (M2-P7) counts it.
    */
   games?: number;
+  /**
+   * Added by M8-C. The end of the current game (contracts.md Part D; DESIGN "Save, leave, rejoin and history"): set by
+   * `concede` when one seat or one team is left. Absent while the game runs, so older tables hash as before.
+   */
+  result?: GameResult;
+}
+
+/** How a game ended (contracts.md Part D): the winning seats, why, and the seq of the action that ended it. Added by M8-C. */
+export interface GameResult {
+  winners: SeatId[];
+  reason: 'concede';
+  atSeq: number;
 }
 
 /**
@@ -804,3 +832,91 @@ export interface SystemLogEntry {
 
 /** A line of the action log (DESIGN "Turn flow and confirmation", Action log). */
 export type LogEntry = ActionLogEntry | SystemLogEntry;
+
+// ---------------------------------------------------------------------------
+// Records shared by store, net/lobby and bot (M8). Declared here because store may not import net or bot
+// (matchmaking.md 2.13: "the record types that both need are declared in core/types.ts by the contracts package").
+// ---------------------------------------------------------------------------
+
+/** The deck kind a queue asks for (matchmaking.md 2.4). Added by M8-C. */
+export type QueueDeckKind = 'constructed' | 'limited';
+/** Ranked or casual (matchmaking.md 2.4). Added by M8-C. */
+export type QueueMode = 'ranked' | 'casual';
+/** '<Format>.<QueueDeckKind>.<QueueMode>', e.g. '1v1.constructed.ranked' (matchmaking.md 2.4). Added by M8-C. */
+export type QueueId = `${Format}.${QueueDeckKind}.${QueueMode}`;
+/** The four rated combinations (matchmaking.md 2.4; only the 1v1 keys are used in M8). Added by M8-C. */
+export type RatingKey = '1v1.constructed' | '1v1.limited' | '2hg.constructed' | '2hg.limited';
+/** A deck strength band, 1 (rough) to 5 (fierce) (matchmaking.md 2.4; decks.md section 5 bandNumber). Added by M8-C. */
+export type Band = 1 | 2 | 3 | 4 | 5;
+
+/** One player of a formed match, copied from the signed ticket (matchmaking.md 2.4). Added by M8-C. */
+export interface MatchPlayer {
+  peerId: string;
+  pubKey: string;
+  name: string;
+  rating: number;
+  games: number;
+  band: Band;
+  score: number;
+  team?: 0 | 1;
+}
+
+/** A match formed in the lobby; key roomId, written before entering the room (matchmaking.md 2.4; contracts.md Part E). Added by M8-C. */
+export interface MatchRecord {
+  matchId: string;
+  /** The game code. */
+  roomId: string;
+  roomKey: string;
+  queue: QueueId;
+  /** Seat order: players[i] takes the seat with index i. */
+  players: MatchPlayer[];
+  formedAt: number;
+  state: 'formed' | 'playing' | 'finished' | 'void';
+  /** The deck the ticket was made for (contracts.md Part E). */
+  deckId: string;
+  /** The rating change once applied (ranked only); presence makes the application idempotent (contracts.md Part E). */
+  rated?: { key: RatingKey; before: number; after: number };
+  /** Own rating change once applied (matchmaking.md 2.4). */
+  delta?: number;
+}
+
+/** One rating per rating key, Elo from 1500 (matchmaking.md 2.4, MM-10). Added by M8-C. */
+export interface RatingRecord {
+  key: RatingKey;
+  rating: number;
+  games: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  peak: number;
+  updatedAt: number;
+}
+
+/** Sparring's level (computer.md 5.5; tonight only 'steady'). Added by M8-C. */
+export type BotLevel = 'gentle' | 'steady' | 'keen';
+/** Sparring's pace (computer.md section 6; tonight only 'normal'). Added by M8-C. */
+export type BotPace = 'calm' | 'normal' | 'brisk';
+/** A computer opponent's configuration (computer.md 10.1). Added by M8-C. */
+export interface BotConfig {
+  level: BotLevel;
+  pace: BotPace;
+  /** 64 hex characters: the bot's decisions are a pure function of view and seed (computer.md section 9). */
+  seed: string;
+  name: string;
+}
+
+/**
+ * The only facts about a deck that leave the browser (decks.md section 7; declared in core so data and net/lobby share it; Added by M8-C; "What may leave the browser"; contracts.md
+ * Part A): kind, size, card count, score, band and the strength formula's version. No card id, name or colour.
+ */
+export interface QueueDeckInfo {
+  kind: 'custom' | 'sealed';
+  size: 40 | 60 | 100;
+  cards: number;
+  /** 1..100. */
+  strength: number;
+  band: 'rough' | 'casual' | 'solid' | 'tuned' | 'fierce';
+  /** STRENGTH_VERSION. */
+  v: number;
+}
+

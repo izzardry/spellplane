@@ -3,7 +3,7 @@
  * `w`/`set`/`delete` methods, which copy a record before its first change; the input state is never touched, and
  * untouched records keep their identity in the result (cheap change detection for the scene and HUD).
  */
-import type { CardInstance, Clip, Commitment, ConfirmRound, DraftState, Format, Line, LobbySettings, RngRound, Seat, ShuffleRound, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
+import type { CardInstance, Clip, Commitment, ConfirmRound, DraftState, Format, GameResult, Line, LobbySettings, RngRound, Seat, ShuffleRound, Stage, StackItem, TableSettings, TableState, Team, TurnState, Zone } from '../types';
 import { byId, own, reject } from './util';
 
 /** One keyed record of the state (cards, zones, lines, seats, teams, commitments). */
@@ -110,6 +110,8 @@ export class Draft {
   private gamesValue: number | undefined = undefined;
   /** Added by M3-C: the table format once a handler set it (`undefined`: unchanged); `formatSet` (M3-P1). */
   private formatValue: Format | undefined = undefined;
+  /** Added by M8-C: the game result once a handler set it (`undefined`: unchanged; `null`: removed). */
+  private resultValue: GameResult | null | undefined = undefined;
 
   constructor(readonly base: TableState) {
     this.cards = new RecordDraft(base.cards, 'card');
@@ -219,6 +221,16 @@ export class Draft {
     this.formatValue = format;
   }
 
+  /** The result of the current game, absent while it runs (contracts.md Part D). Added by M8-C. */
+  get gameResult(): Readonly<GameResult> | undefined {
+    return this.resultValue === undefined ? this.base.result : (this.resultValue ?? undefined);
+  }
+
+  /** Set or (null) clear the game result. Added by M8-C. */
+  setResult(result: GameResult | null): void {
+    this.resultValue = result;
+  }
+
   get changed(): boolean {
     return (
       this.cards.changed ||
@@ -238,7 +250,8 @@ export class Draft {
       this.draftValue !== undefined ||
       this.lobbyValue !== undefined ||
       this.gamesValue !== undefined ||
-      this.formatValue !== undefined
+      this.formatValue !== undefined ||
+      this.resultValue !== undefined
     );
   }
 
@@ -273,6 +286,8 @@ export class Draft {
     else if (this.draftValue !== undefined) next.draft = this.draftValue;
     if (this.lobbyValue !== undefined) next.lobby = this.lobbyValue;
     if (this.gamesValue !== undefined) next.games = this.gamesValue;
+    if (this.resultValue === null) delete next.result;
+    else if (this.resultValue !== undefined) next.result = this.resultValue;
     // Paperclips (M6-P1): the key is dropped with the last clip, so tables without clips hash as before M6.
     if (this.clips.changed) {
       const clips = this.clips.result();
