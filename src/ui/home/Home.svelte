@@ -24,7 +24,7 @@
   import StrengthPips from '../design/StrengthPips.svelte';
   import HistoryList from '../history/HistoryList.svelte';
   import { relTime, rowState, rowTitle } from '../history/rows';
-  import { launchDraft, launchEmpty, launchFirstRun, launchPrivate, launchQuick, launchSolo, summaryHash, type LaunchDeps } from '../play/launch';
+  import { launchDraft, launchEmpty, launchFirstRun, launchPrivate, launchQuick, launchSolo, makeStarterDeck, summaryHash, type LaunchDeps } from '../play/launch';
   import { tableDeps } from '../table/context';
   import type { RoomLink } from '../types';
   import { COMPUTER_AVAILABLE } from '../../session/computer';
@@ -131,13 +131,18 @@
     } catch {
       /* the defaults stay */
     }
+    await loadLatest();
+    ready = true;
+  }
+
+  /** The newest game for the CONTINUE strip (again after the recent list removed or restored one). */
+  async function loadLatest(): Promise<void> {
     try {
       const games = (await deps.games?.list()) ?? [];
       if (alive) latest = games[0] ?? null;
     } catch {
       latest = null;
     }
-    ready = true;
   }
 
   async function save(next: HomePrefs): Promise<void> {
@@ -178,6 +183,7 @@
   let rankedNote: string | null = $state(null);
   let rankedTimer: ReturnType<typeof setTimeout> | null = null;
   function setQuickFormat(v: string): void {
+    if (view.optionsLocked) return;
     const format = v as HomePrefs['quick']['format'];
     const snapped = prefs.quick.ranked && format !== '1v1';
     void save({ ...prefs, quick: { format, ranked: snapped ? false : prefs.quick.ranked } });
@@ -215,7 +221,8 @@
   async function primary(): Promise<void> {
     if (busy || view.primary.disabled) return;
     const p = $state.snapshot(prefs) as HomePrefs;
-    const deck = view.deck?.record ?? null;
+    // Plain data: the launchers write the deck back (lastPlayedAt), and IndexedDB cannot clone a state proxy.
+    const deck = view.deck ? ($state.snapshot(view.deck.record) as DeckRecord) : null;
     busy = true;
     try {
       switch (view.primary.action) {
@@ -241,6 +248,22 @@
     } catch {
       if (view.primary.action === 'firstRun') firstRunFailed = true;
       else deps.toast('That did not work. Try again.');
+    } finally {
+      if (alive) busy = false;
+    }
+  }
+
+  /** STARTER DECK (journey.md 4.1 "Pick or build a deck first."): build and save a starter deck and select it; Home stays. */
+  async function starterDeck(): Promise<void> {
+    if (busy) return;
+    busy = true;
+    try {
+      const deck = await makeStarterDeck(deps, $state.snapshot(prefs) as HomePrefs);
+      if (!alive) return;
+      decks = [deck, ...decks.filter((d) => d.id !== deck.id)];
+      prefs = { ...prefs, deckId: deck.id };
+    } catch {
+      if (alive) firstRunFailed = true;
     } finally {
       if (alive) busy = false;
     }
@@ -372,10 +395,10 @@
   {#if status.phase === 'seeking'}<p class="queued" data-testid="home-queued">{queuedSetup(status.queues)}</p>{/if}
   <div class="options" class:locked={view.optionsLocked} data-testid="home-options">
     {#if view.mode === 'solo' && computerAvailable}
-      <Segmented label="Opponent" size="sm" value={prefs.solo.opponent} disabled={view.optionsLocked} options={[{ value: 'sparring', label: 'SPARRING' }, { value: 'alone', label: 'ALONE' }]} onchange={(v) => void save({ ...prefs, solo: { opponent: v as 'sparring' | 'alone' } })} data-testid="opt-opponent" />
+      <Segmented label="Opponent" size="sm" value={prefs.solo.opponent} options={[{ value: 'sparring', label: 'SPARRING', disabled: view.optionsLocked }, { value: 'alone', label: 'ALONE', disabled: view.optionsLocked }]} onchange={(v) => view.optionsLocked || void save({ ...prefs, solo: { opponent: v as 'sparring' | 'alone' } })} data-testid="opt-opponent" />
     {:else if view.mode === 'quick'}
-      <Segmented label="Format" size="sm" value={prefs.quick.format} disabled={view.optionsLocked} options={[...FORMATS]} onchange={setQuickFormat} data-testid="opt-quick-format" />
-      <Segmented label="Ranked" size="sm" value={prefs.quick.ranked ? 'ranked' : 'unranked'} disabled={view.optionsLocked} options={[{ value: 'unranked', label: 'UNRANKED' }, { value: 'ranked', label: 'RANKED', disabled: prefs.quick.format !== '1v1', hint: 'Ranked is 1v1 for now.' }]} onchange={(v) => void save({ ...prefs, quick: { ...prefs.quick, ranked: v === 'ranked' } })} data-testid="opt-ranked" />
+      <Segmented label="Format" size="sm" value={prefs.quick.format} options={FORMATS.map((f) => ({ ...f, disabled: view.optionsLocked }))} onchange={setQuickFormat} data-testid="opt-quick-format" />
+      <Segmented label="Ranked" size="sm" value={prefs.quick.ranked ? 'ranked' : 'unranked'} options={[{ value: 'unranked', label: 'UNRANKED', disabled: view.optionsLocked }, { value: 'ranked', label: 'RANKED', disabled: view.optionsLocked || prefs.quick.format !== '1v1', hint: 'Ranked is 1v1 for now.' }]} onchange={(v) => view.optionsLocked || void save({ ...prefs, quick: { ...prefs.quick, ranked: v === 'ranked' } })} data-testid="opt-ranked" />
     {:else if view.mode === 'private'}
       <Segmented label="Format" size="sm" value={prefs.private.format} options={[...FORMATS]} onchange={(v) => void save({ ...prefs, private: { ...prefs.private, format: v as HomePrefs['private']['format'] } })} data-testid="opt-private-format" />
       <Segmented label="Decks" size="sm" value={prefs.private.decks} options={[{ value: 'any', label: 'ANY DECK' }, { value: 'booster', label: 'BOOSTER DECKS ONLY' }]} onchange={(v) => void save({ ...prefs, private: { ...prefs.private, decks: v as 'any' | 'booster' } })} data-testid="opt-private-decks" />
@@ -396,7 +419,7 @@
   <StatusLine tone={view.tone} data-testid="home-status">{ready ? (rankedNote ?? view.line ?? '') : slow ? 'Loading your decks…' : ''}</StatusLine>
   {#if view.links.length}
     <div class="links">
-      <Button size="xs" variant="quiet" onclick={() => void launchFirstRun(deps, prefs).catch(() => (firstRunFailed = true))}>STARTER DECK</Button>
+      <Button size="xs" variant="quiet" disabled={busy} onclick={() => void starterDeck()} data-testid="home-starter-deck">STARTER DECK</Button>
       <Button size="xs" variant="quiet" onclick={() => deps.go('#/decks/new/boosters')}>OPEN BOOSTERS</Button>
     </div>
   {/if}
@@ -413,7 +436,7 @@
   <!-- 5. Recent games, below the fold -->
   <section class="recent" class:empty={recent === 0} aria-label="Your games" data-testid="home-recent">
     {#if recent > 0}<h3 class="eyebrow">YOUR GAMES</h3>{/if}
-    <HistoryList games={deps.games} limit={5} {now} onopen={(g) => deps.go(summaryHash(g))} onchange={(n) => (recent = n)} />
+    <HistoryList games={deps.games} limit={5} {now} onopen={(g) => deps.go(summaryHash(g))} onchange={(n) => ((recent = n), void loadLatest())} />
     {#if recent > 5}<Button size="sm" variant="quiet" onclick={() => deps.go('#/history')}>{recent - 5} MORE GAMES</Button>{/if}
   </section>
 </div>
@@ -434,7 +457,7 @@
       {#snippet header()}<h2 class="sheet__title">A first deck needs a connection once.</h2>{/snippet}
       <p class="sheet__text">The starter deck's cards could not be fetched. Try again, paste a deck list, or open a table without a deck.</p>
       {#snippet footer()}
-        <Button size="md" variant="ghost" onclick={() => ((firstRunFailed = false), void launchEmpty(deps, prefs))} data-testid="first-run-empty">OPEN AN EMPTY TABLE</Button>
+        <Button size="md" variant="ghost" onclick={() => ((firstRunFailed = false), void launchEmpty(deps, $state.snapshot(prefs) as HomePrefs))} data-testid="first-run-empty">OPEN AN EMPTY TABLE</Button>
         <Button size="md" variant="ghost" onclick={() => ((firstRunFailed = false), deps.go('#/decks/new/import'))} data-testid="first-run-paste">PASTE A DECK LIST</Button>
         <Button size="md" variant="primary" onclick={() => ((firstRunFailed = false), void primary())} data-testid="first-run-retry">TRY AGAIN</Button>
       {/snippet}

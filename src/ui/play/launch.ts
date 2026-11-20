@@ -243,8 +243,8 @@ export class FirstRunError extends Error {
   }
 }
 
-/** First run: build a starter deck, save it, select it, then start SOLO (journey.md section 6). Rejects with FirstRunError. */
-export async function launchFirstRun(deps: LaunchDeps, prefs: HomePrefs): Promise<{ deck: DeckRecord; hash: string }> {
+/** STARTER DECK: build a starter deck, save it and select it (Home stays). Rejects with FirstRunError. */
+export async function makeStarterDeck(deps: LaunchDeps, prefs: HomePrefs): Promise<DeckRecord> {
   const build = deps.buildStarterDeck ?? stubStarter;
   let starter: StarterDeck;
   try {
@@ -256,9 +256,14 @@ export async function launchFirstRun(deps: LaunchDeps, prefs: HomePrefs): Promis
   const now = deps.now();
   const deck = starterRecord(starter, `starter-${now.toString(36)}`, now);
   await deps.decks?.put(deck);
-  const next = { ...prefs, deckId: deck.id };
-  await deps.settings?.set('home', next).catch(() => undefined);
-  const hash = await launchSolo(deps, next, deck);
+  await deps.settings?.set('home', { ...prefs, deckId: deck.id }).catch(() => undefined);
+  return deck;
+}
+
+/** First run: build a starter deck, save it, select it, then start SOLO (journey.md section 6). Rejects with FirstRunError. */
+export async function launchFirstRun(deps: LaunchDeps, prefs: HomePrefs): Promise<{ deck: DeckRecord; hash: string }> {
+  const deck = await makeStarterDeck(deps, prefs);
+  const hash = await launchSolo(deps, { ...prefs, deckId: deck.id }, deck);
   return { deck, hash };
 }
 

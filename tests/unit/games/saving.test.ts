@@ -6,14 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Action } from '../../../src/core/actions';
 import { canonicalJson } from '../../../src/core/hash';
 import type { LogEntry, SecretStore, TableState } from '../../../src/core/types';
-import { CHECKPOINT_MS, createCheckpointer } from '../../../src/session/checkpoint';
-import { ownActions, summarise, THUMB_MAX } from '../../../src/session/summary';
+import { CHECKPOINT_MS, createCheckpointer, STAY_MS } from '../../../src/session/checkpoint';
+import { countOwnActions, ownActions, summarise, THUMB_MAX } from '../../../src/session/summary';
 import type { SessionListener, TableSession } from '../../../src/session/types';
-import { blankSummary, createGameStore } from '../../../src/store/games';
+import { mtg } from '../../../src/games/index';
+import { createSoloSession, SNAPSHOT_EVERY } from '../../../src/session/index';
+import { blankSummary, createGameStore, isEnded } from '../../../src/store/games';
 import { openStores, type LocalStores } from '../../../src/store/stores';
 import type { GameStore, GameSummary } from '../../../src/store/types';
 import { LEFT_NETWORKED, LEFT_SOLO, leaveTable } from '../../../src/ui/play/leave';
 import { live, resetLifecycleForTests } from '../../../src/util/lifecycle';
+import { cardSource } from '../session/helpers';
 import { sampleSecrets, sampleState, uniqueDbName } from '../store/helpers';
 
 const seat = (id: string, index: number, name: string, extra: object = {}) => ({ id, index, name, colour: index, life: 20, counters: {}, ready: true, autoPass: false, ...extra });
@@ -53,6 +56,16 @@ describe('summarise (pure, public state only)', () => {
     expect(g.result).toBeUndefined();
     const ended = summarise({ ...st, result: { winners: ['s1'], reason: 'concede', atSeq: 3 } }, null, g, null, { now: 900 });
     expect(ended).toMatchObject({ ended: 'result', endedAt: 900, result: { winners: ['s1'] } });
+    // A rematch at the same table clears TableState.result: the summary runs again (CONTINUE, not FINISHED).
+    const rematch = summarise({ ...st, seq: 9, games: 1 }, null, ended, null, { now: 1200 });
+    expect(rematch.game).toBe(1);
+    expect(rematch.result).toBeUndefined();
+    expect(rematch.ended).toBeUndefined();
+    expect(rematch.endedAt).toBeUndefined();
+    expect(isEnded(rematch)).toBe(false);
+    // A solo game replaced by a newer one stays ended.
+    const replaced = summarise(st, null, { ...g, ended: 'replaced', endedAt: 700 }, null, { now: 1300 });
+    expect(replaced).toMatchObject({ ended: 'replaced', endedAt: 700 });
   });
 
   it('four players: away, takeovers, whose turn; a head names its seat', () => {
@@ -130,6 +143,7 @@ function fakeSession(roomId = 'p-test'): TableSession & { set(st: TableState): v
       s.left++;
       return Promise.resolve();
     },
+    whenSaved: () => Promise.resolve(),
     dispose() {
       s.disposed++;
     },
@@ -158,6 +172,27 @@ function memoryGames(): GameStore {
     endOlderSolo: () => Promise.resolve(),
   };
 }
+
+describe('countOwnActions (a whole game, not a log tail)', () => {
+  const a = (seq: number, type: string, by = 's0'): LogEntry => ({ kind: 'action', seq, at: 0, action: { type, by, cid: `c${seq}`, seq } as unknown as Action });
+  const range = (from: number, to: number, by = 's0'): LogEntry[] => Array.from({ length: to - from + 1 }, (_, i) => a(from + i, 'tap', by));
+
+  it('a log from seq 1 is counted exactly; the stored summary is a floor', () => {
+    expect(countOwnActions(range(1, 5), 's0', 5, null)).toEqual({ n: 5, exact: true });
+    expect(countOwnActions(range(1, 5), 's0', 5, { seq: 5, actions: 7 })).toEqual({ n: 7, exact: true });
+    expect(countOwnActions([], 's0', 0, null)).toEqual({ n: 0, exact: true });
+  });
+
+  it('a tail after a snapshot is a lower bound: the summary plus what came after it', () => {
+    // The summary saw seq 1..200 with 180 own actions; the log holds 201..205 only.
+    expect(countOwnActions(range(201, 205), 's0', 205, { seq: 200, actions: 180 })).toEqual({ n: 185, exact: false });
+    // No summary reaches the snapshot: still never below the summary.
+    expect(countOwnActions(range(201, 203), 's0', 203, { seq: 0, actions: 0 })).toEqual({ n: 3, exact: false });
+    expect(countOwnActions(range(201, 203), 's0', 203, { seq: 50, actions: 40 })).toEqual({ n: 43, exact: false });
+    // An empty log behind a snapshot.
+    expect(countOwnActions([], 's0', 300, { seq: 300, actions: 250 })).toEqual({ n: 250, exact: false });
+  });
+});
 
 describe('checkpointer', () => {
   beforeEach(() => {
@@ -259,6 +294,85 @@ describe('checkpointer', () => {
     cp.stop();
   });
 
+  it('an action applied while a write is in flight is saved by the next timer', async () => {
+    const mem = memoryGames();
+    let gate: (() => void) | null = null;
+    const games: GameStore = { ...mem, put: (g) => new Promise<void>((res) => (gate = () => void mem.put(g).then(res))) };
+    const session = fakeSession();
+    const cp = createCheckpointer(session, games, { doc: null, win: null, hash: (st) => Promise.resolve(`h${st.seq}`) });
+    session.set({ ...session.getState(), seq: 4 });
+    await vi.advanceTimersByTimeAsync(CHECKPOINT_MS);
+    expect(gate).not.toBeNull();
+    session.set({ ...session.getState(), seq: 5 });
+    gate!();
+    gate = null;
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await games.get('p-test'))?.seq).toBe(4);
+    await vi.advanceTimersByTimeAsync(CHECKPOINT_MS);
+    expect(gate).not.toBeNull();
+    gate!();
+    await vi.advanceTimersByTimeAsync(0);
+    expect((await games.get('p-test'))?.seq).toBe(5);
+    cp.stop();
+  });
+
+  it('lastPlayedAt moves on an own action or after 15 s at the table, not on another seat\'s move or a 10 s peek', async () => {
+    const games = memoryGames();
+    await games.create({ code: 'p-test', key: '', kind: 'solo', format: '1v1', decks: 'constructed' });
+    const created = (await games.get('p-test'))!.lastPlayedAt;
+    const session = fakeSession();
+    const cp = createCheckpointer(session, games, { doc: null, win: null, hash: (st) => Promise.resolve(`h${st.seq}`) });
+    // Another seat's move, and a peek of 10 s: History does not reorder.
+    session.push({ kind: 'action', seq: 4, at: 0, action: { type: 'tap', by: 's1', cid: 'c4', seq: 4 } as unknown as Action });
+    session.set({ ...session.getState(), seq: 4 });
+    await vi.advanceTimersByTimeAsync(10_000);
+    await cp.now('leave');
+    expect((await games.get('p-test'))!.lastPlayedAt).toBe(created);
+    // An own move does.
+    session.push({ kind: 'action', seq: 5, at: 0, action: { type: 'tap', by: 's0', cid: 'c5', seq: 5 } as unknown as Action });
+    session.set({ ...session.getState(), seq: 5 });
+    await cp.now('timer');
+    const own = (await games.get('p-test'))!.lastPlayedAt;
+    expect(own).toBe(Date.now());
+    cp.stop();
+
+    // A fresh visit that stays 15 s moves it at the next write without any action.
+    const again = createCheckpointer(fakeSession(), games, { doc: null, win: null, hash: (st) => Promise.resolve(`h${st.seq}`) });
+    await vi.advanceTimersByTimeAsync(STAY_MS);
+    await again.now('leave');
+    expect((await games.get('p-test'))!.lastPlayedAt).toBe(Date.now());
+    expect(Date.now()).toBeGreaterThan(own);
+    again.stop();
+  });
+
+  it('the action count never goes down when the session holds only a log tail', async () => {
+    const games = memoryGames();
+    await games.create({ code: 'p-test', key: '', kind: 'solo', format: '1v1', decks: 'constructed' });
+    await games.put({ ...(await games.get('p-test'))!, seq: 200, actions: 150 });
+    const session = fakeSession();
+    for (let seq = 201; seq <= 203; seq++) session.push({ kind: 'action', seq, at: 0, action: { type: 'tap', by: 's0', cid: `c${seq}`, seq } as unknown as Action });
+    session.set({ ...session.getState(), seq: 203 });
+    const cp = createCheckpointer(session, games, { doc: null, win: null, hash: (st) => Promise.resolve(`h${st.seq}`) });
+    await cp.now('timer');
+    expect((await games.get('p-test'))!.actions).toBe(153);
+    cp.stop();
+  });
+
+  it('a write queued before stop() does not land after it', async () => {
+    const games = counting(memoryGames());
+    const session = fakeSession();
+    const cp = createCheckpointer(session, games, { doc: null, win: null, hash: (st) => new Promise((r) => setTimeout(() => r(`h${st.seq}`), 50)) });
+    session.set({ ...session.getState(), seq: 4, turn: { number: 5, active: 's0', phase: 'untap' } });
+    void cp.now('timer');
+    void cp.now('turn');
+    // The first write is hashing when the table is left.
+    await vi.advanceTimersByTimeAsync(10);
+    cp.stop();
+    await vi.advanceTimersByTimeAsync(500);
+    await cp.settled();
+    expect(games.puts).toBe(0);
+  });
+
   it('without a store it says notSaving and writes nothing', async () => {
     const cp = createCheckpointer(fakeSession(), null, { doc: null, win: null });
     await cp.now('leave');
@@ -305,6 +419,49 @@ describe('leaveTable', () => {
     expect(toast.mock.calls[0]![0]).toBe(LEFT_SOLO);
     toast.mock.calls[0]![1].run();
     expect(go).toHaveBeenLastCalledWith('#/p/p-long');
+  });
+
+  it('a long practice game, reopened from its snapshot and left after three more moves, is kept', async () => {
+    const s = await openStores(uniqueDbName('leave-long'));
+    open.push(s);
+    const games = createGameStore(s.db);
+    const code = 'p-longgame01';
+    const openIt = () => createSoloSession({ game: mtg, cardData: cardSource, roomId: code, store: s.tables });
+    await games.create({ code, key: '', kind: 'solo', format: '1v1', decks: 'constructed' });
+    const first = await openIt();
+    // Past the snapshot point: the reopened session replays only the log after the stored snapshot.
+    for (let i = 0; i < SNAPSHOT_EVERY + 5; i++) first.dispatch({ type: 'life', seat: first.seat, delta: i % 2 ? 1 : -1 } as never);
+    await first.whenSaved();
+    first.dispose();
+    const again = await openIt();
+    for (let i = 0; i < 3; i++) again.dispatch({ type: 'life', seat: again.seat, delta: 1 } as never);
+    await again.whenSaved();
+    // The tail alone is short: the old rule would have purged the game.
+    expect(ownActions(again.log(), again.seat)).toBeLessThan(10);
+    const toast = vi.fn();
+    const cp = createCheckpointer(again, games, { doc: null, win: null });
+    expect(await leaveTable({ session: again, kind: 'practice', code, games, go: vi.fn(), toast, checkpointer: cp })).toBe('left');
+    expect(await games.get(code)).not.toBeNull();
+    expect(await s.db.get('tables', code)).toBeDefined();
+    expect(toast.mock.calls[0]![0]).toBe(LEFT_SOLO);
+  });
+
+  it('a short solo game left while a turn checkpoint is in flight stays purged', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    try {
+      const games = memoryGames();
+      await games.create({ code: 'p-test', key: '', kind: 'solo', format: '1v1', decks: 'constructed' });
+      const session = fakeSession();
+      for (let i = 1; i <= 4; i++) session.push(tap(i));
+      const cp = createCheckpointer(session, games, { doc: null, win: null, hash: (st) => new Promise((r) => setTimeout(() => r(`h${st.seq}`), 50)) });
+      session.set({ ...session.getState(), seq: 4, turn: { number: 5, active: 's0', phase: 'untap' } });
+      const done = leaveTable({ session, kind: 'practice', code: 'p-test', games, go: () => undefined, toast: () => undefined, checkpointer: cp });
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(await done).toBe('purged');
+      expect(await games.get('p-test')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a networked table: the game goes on, REJOIN opens the room again', async () => {

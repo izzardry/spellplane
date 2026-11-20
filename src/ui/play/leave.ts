@@ -3,7 +3,7 @@
  * saving" item 2): checkpoint, `session.leave()`, dispose, go Home, one toast. No confirmation. A solo game with fewer
  * than 10 own actions is purged instead and shows no toast. M8-P2.
  */
-import { ownActions } from '../../session/summary';
+import { countOwnActions } from '../../session/summary';
 import type { TableSession } from '../../session/types';
 import type { GameStore } from '../../store/types';
 import { toasts } from '../design/toasts';
@@ -28,7 +28,7 @@ export interface LeaveOptions {
   /** Navigate to a hash. */
   go(hash: string): void;
   /** The frame's checkpointer (its `now('leave')` runs first). */
-  checkpointer?: { now(reason: 'leave'): Promise<void>; stop?(): void } | null;
+  checkpointer?: { now(reason: 'leave'): Promise<void>; stop?(): void; settled?(): Promise<void> } | null;
   /** Show the one toast (default: the page's toast store). */
   toast?(text: string, action?: ToastAction): void;
   /** The room key of a networked table (else read from the game's summary). */
@@ -65,18 +65,27 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
   }
   const toast = o.toast ?? ((text: string, action?: ToastAction): void => void toasts.info(text, action));
   const solo = o.kind === 'computer' || o.kind === 'practice';
-  let actions = Infinity;
+  const ms = o.checkpointMs ?? 1500;
+  let purge = false;
   if (solo) {
+    // Counted over the whole game, never from a log tail alone: a reopened solo session holds only the log after its
+    // stored snapshot, so the stored summary's count is the floor and an unknown count keeps the game.
     try {
-      actions = ownActions(o.session.log(), o.session.seat);
+      const prior = (await o.games?.get(o.code).catch(() => null)) ?? null;
+      const count = countOwnActions(o.session.log(), o.session.seat, o.session.getState().seq, prior);
+      purge = count.exact && count.n < SOLO_KEEP_MIN_ACTIONS;
     } catch {
-      actions = Infinity;
+      purge = false;
     }
   }
-  const purge = solo && actions < SOLO_KEEP_MIN_ACTIONS;
-  if (!purge && o.checkpointer) await within(o.checkpointer.now('leave'), o.checkpointMs ?? 1500);
+  if (!purge && o.checkpointer) await within(o.checkpointer.now('leave'), ms);
   o.checkpointer?.stop?.();
-  await within(o.session.leave(), o.checkpointMs ?? 1500);
+  // Before a purge, let every write already queued land first, or it would bring a row back after the purge.
+  if (purge) {
+    if (o.checkpointer?.settled) await within(o.checkpointer.settled(), ms);
+    await within(o.session.whenSaved(), ms);
+  }
+  await within(o.session.leave(), ms);
   try {
     o.session.dispose();
   } catch {

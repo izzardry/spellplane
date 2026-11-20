@@ -74,8 +74,10 @@
   let alive = true;
 
   const nav = $derived(navOf(route));
-  // The queue bar follows the player through every shell page but Home, which shows the search itself (journey.md 4.5).
-  const queueBar = $derived(status.phase !== 'off' && route.name !== 'home');
+  // The queue bar follows the player through every shell page but Home, which shows the search itself (journey.md 4.5):
+  // while connecting, seeking and through the check; `watching`, `failed` (a toast) and `off` close it.
+  const QUEUE_BAR_PHASES: ReadonlySet<MatchmakerStatus['phase']> = new Set(['connecting', 'seeking', 'check', 'moving']);
+  const queueBar = $derived(QUEUE_BAR_PHASES.has(status.phase) && route.name !== 'home');
   const swatches = $derived(profileColours(theme?.current() ?? null));
   const chipColour = $derived(swatches[colour] ?? 'var(--ds-accent)');
 

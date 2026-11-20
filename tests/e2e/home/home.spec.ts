@@ -111,6 +111,44 @@ test('with an unfinished game the CONTINUE strip names it and the primary still 
   await expect(page.getByTestId('harness-table')).toHaveAttribute('data-hash', '#/t/amber-fox-river-93/a2V5LWtleS1rZXkta2V5AA');
 });
 
+test('removing the game from the recent list takes the CONTINUE strip with it', async ({ page }) => {
+  const profile = uniq('cont-rm');
+  await openHomeHarness(page, { profile });
+  await seedGames(page, [fixtureGame('amber-fox-river-93', Date.now() - 60_000)]);
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => window.__homeHarness?.ready === true)).toBe(true);
+  await expect(page.getByTestId('home-continue')).toBeVisible();
+  await page.getByTestId('home-recent').locator('[data-code="amber-fox-river-93"]').getByTestId('history-remove').click();
+  await expect(page.getByTestId('home-recent').getByTestId('history-row')).toHaveCount(0);
+  await expect(page.getByTestId('home-continue')).toHaveCount(0);
+});
+
+test('PLAY with a deck of the library records when the deck was last played', async ({ page }) => {
+  const profile = uniq('touch');
+  await openHomeHarness(page, { profile });
+  await seedDecks(page, [fixtureDeck('gruul', 'Gruul Stompy', 60)]);
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => window.__homeHarness?.ready === true)).toBe(true);
+  await page.getByTestId('home-primary').click();
+  await expect(page.getByTestId('harness-table')).toHaveAttribute('data-hash', /^#\/p\/p-/);
+  await expect.poll(async () => (await page.evaluate(() => window.__homeHarness!.decks())).find((d) => d.id === 'gruul')?.lastPlayedAt ?? 0).toBeGreaterThan(0);
+});
+
+test('STARTER DECK in Quick match builds and selects a starter deck and stays on Home', async ({ page }) => {
+  const profile = uniq('starter');
+  await openHomeHarness(page, { profile });
+  await page.getByTestId('mode-quick').click();
+  await expect(page.getByTestId('home-primary')).toBeDisabled();
+  await page.getByTestId('home-starter-deck').click();
+  await expect(page.getByTestId('hero-name')).toHaveText('Starter · Green');
+  await expect(page.getByTestId('home-primary')).toHaveText('FIND MATCH');
+  await expect(page.getByTestId('harness-table')).toHaveCount(0);
+  const decks = await page.evaluate(() => window.__homeHarness!.decks());
+  expect(decks.map((d) => d.name)).toEqual(['Starter · Green']);
+  expect(await page.evaluate(() => window.__homeHarness!.games())).toEqual([]);
+  await expect.poll(() => page.evaluate(async () => ((await window.__homeHarness!.homePrefs()) as { deckId: string | null }).deckId)).toBe(decks[0]!.id);
+});
+
 test('searching: the pill is pressed with the timer, the deck is locked, and the queue bar follows to Decks and History', async ({ page }) => {
   await page.clock.install({ time: new Date('2026-11-20T10:00:00Z') });
   const profile = uniq('seek');
@@ -147,6 +185,13 @@ test('searching: the pill is pressed with the timer, the deck is locked, and the
     await expect(page.getByTestId('home-next')).toBeDisabled();
     await expect(page.getByTestId('home-change-deck')).toBeDisabled();
     await expect(page.getByTestId('mode-solo')).toBeDisabled();
+    // The option row is locked too (journey.md 4.5): every Format and Ranked option.
+    for (const row of ['opt-quick-format', 'opt-ranked']) {
+      const radios = page.getByTestId(row).getByRole('radio');
+      await expect(radios).not.toHaveCount(0);
+      for (const r of await radios.all()) await expect(r).toBeDisabled();
+    }
+    await expect.poll(() => page.evaluate(async () => (await window.__homeHarness!.homePrefs()) as { quick: { format: string } })).toMatchObject({ quick: { format: '1v1' } });
     await expect(page.getByTestId('home-cancel')).toBeVisible();
     await expect(page.getByTestId('home-queued')).toHaveText('QUICK MATCH · 1V1 · UNRANKED');
     // Home shows the search itself; the bar follows the player everywhere else (journey.md 4.5).

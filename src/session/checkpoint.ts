@@ -14,7 +14,7 @@ import type { TableState } from '../core/types';
 import { blankSummary } from '../store/games';
 import type { GameStore, GameSummary } from '../store/types';
 import { track, untrack } from '../util/lifecycle';
-import { ownActions, summarise } from './summary';
+import { countOwnActions, playedSince, summarise } from './summary';
 import type { KnownHead, SaveState, TableSession } from './types';
 
 /** Why a checkpoint is taken (persistence.md section 2). */
@@ -42,6 +42,8 @@ function savesAtOnce(session: TableSession, seq: number): boolean {
 
 /** The checkpoint period while something changed (persistence.md D2). */
 export const CHECKPOINT_MS = 20_000;
+/** After this long on the table, the next write moves lastPlayedAt although no own action was applied (persistence.md section 3). */
+export const STAY_MS = 15_000;
 
 /** A running checkpointer (contracts.md Part E). */
 export interface Checkpointer {
@@ -55,6 +57,8 @@ export interface CheckpointerExtras {
   subscribe(listener: (s: SaveState) => void): () => void;
   /** Writes made so far (tests and the debug hook). */
   writes(): number;
+  /** Resolves once every write already queued has finished (leaving purges only after this). */
+  settled(): Promise<void>;
 }
 
 /** What the checkpointer may be given instead of the page's globals (tests). */
@@ -99,7 +103,7 @@ function metaFor(session: TableSession, st: TableState, opts: CheckpointOptions)
 
 /** A checkpointer that writes nothing: no store, or the sandbox. */
 function idle(state: SaveState): Checkpointer & CheckpointerExtras {
-  return { now: () => Promise.resolve(), stop: () => undefined, saveState: () => state, subscribe: () => () => undefined, writes: () => 0 };
+  return { now: () => Promise.resolve(), stop: () => undefined, saveState: () => state, subscribe: () => () => undefined, writes: () => 0, settled: () => Promise.resolve() };
 }
 
 /** Start checkpointing `session` into `games` (contracts.md Part E). With no store nothing is written and the state is `notSaving`. */
@@ -117,6 +121,8 @@ export function createCheckpointer(session: TableSession, games: GameStore | nul
   let stopped = false;
   let writes = 0;
   let lastHeadKey = '';
+  const opened = clock();
+  let stayed = false;
   let last: TableState = session.getState();
   let chain: Promise<void> = Promise.resolve();
 
@@ -127,6 +133,14 @@ export function createCheckpointer(session: TableSession, games: GameStore | nul
   };
 
   async function write(reason: CheckpointReason): Promise<void> {
+    // After stop() only the leave checkpoint still lands: a queued turn or timer write must not re-create a summary
+    // that leaving purged.
+    if (stopped && reason !== 'leave') return;
+    // Taken before the state is read: an action applied while this write is in flight marks the game dirty again.
+    const wasPlayed = played;
+    const stay = !stayed && clock() - opened >= STAY_MS;
+    dirty = false;
+    played = false;
     const st = session.getState();
     let log: ReturnType<TableSession['log']> = [];
     try {
@@ -140,8 +154,10 @@ export function createCheckpointer(session: TableSession, games: GameStore | nul
       const prior =
         (await store.get(session.roomId)) ??
         blankSummary(metaFor(session, st, opts), at);
-      const next = summarise(st, safeSecrets(session), prior, opts.knownHead?.() ?? null, { hash, actions: ownActions(log, session.seat), now: at, played });
+      const actions = countOwnActions(log, session.seat, st.seq, prior).n;
+      const next = summarise(st, safeSecrets(session), prior, opts.knownHead?.() ?? null, { hash, actions, now: at, played: wasPlayed || stay });
       if (reason === 'leave') next.leftAt = at;
+      if (stopped && reason !== 'leave') return;
       await store.put(next);
     };
     try {
@@ -150,13 +166,15 @@ export function createCheckpointer(session: TableSession, games: GameStore | nul
       try {
         await attempt();
       } catch {
+        // Not written: the next timer tries again.
+        dirty = true;
+        played ||= wasPlayed;
         setState('notSaving');
         return;
       }
     }
     writes++;
-    dirty = false;
-    played = false;
+    if (stay) stayed = true;
     setState('saved');
   }
 
@@ -172,7 +190,14 @@ export function createCheckpointer(session: TableSession, games: GameStore | nul
     last = next;
     if (next.seq !== prev.seq) {
       dirty = true;
-      played = true;
+      // Only an own action reorders History; another player's move or a catch-up after rejoining does not.
+      if (next.seq > prev.seq) {
+        try {
+          if (playedSince(session.log(), session.seat, prev.seq)) played = true;
+        } catch {
+          /* no log: not an own action */
+        }
+      }
     }
     if (next.stage !== prev.stage) void now('stage');
     else if (next.result && !prev.result) void now('result');
@@ -219,6 +244,7 @@ export function createCheckpointer(session: TableSession, games: GameStore | nul
       return () => listeners.delete(l);
     },
     writes: () => writes,
+    settled: () => chain,
   };
 }
 

@@ -40,6 +40,49 @@ export function ownActions(log: readonly LogEntry[], seat: SeatId): number {
   return n;
 }
 
+/** Whether `e` is an own play action that the purge rule counts (the automatic deal is the launcher's). */
+function ownPlay(e: LogEntry, seat: SeatId): boolean {
+  return e.kind === 'action' && e.action.by === seat && e.action.type !== 'dealt' && isPlayAction(e.action);
+}
+
+/** Own play actions in a game, and whether that number is known exactly (`countOwnActions`). */
+export interface ActionCount {
+  n: number;
+  /** False when the log does not reach back to the game's first action: `n` is then a lower bound (a purge needs an exact count). */
+  exact: boolean;
+}
+
+/**
+ * The own play actions of a whole game from a session's log, which may hold only the tail after a stored snapshot (a
+ * restored solo session replays from its snapshot, which moves every 200 actions), and the stored summary (`prior`:
+ * its `actions` counted everything up to its `seq`). Never less than `prior.actions`, so a summary's count only grows.
+ */
+export function countOwnActions(log: readonly LogEntry[], seat: SeatId, stateSeq: number, prior: Pick<GameSummary, 'seq' | 'actions'> | null): ActionCount {
+  const floor = prior?.actions ?? 0;
+  const firstAction = log.find((e) => e.kind === 'action');
+  // The first seq the log holds; an empty log holds nothing up to the state's seq.
+  const start = firstAction ? firstAction.seq : stateSeq + 1;
+  if (start <= 1) return { n: Math.max(ownActions(log, seat), floor), exact: true };
+  if (prior && prior.seq >= start - 1) {
+    const tail = log.filter((e) => e.seq > prior.seq);
+    const more = prior.actions > 0 ? tail.filter((e) => ownPlay(e, seat)).length : ownActions(tail, seat);
+    // The summary may itself have been counted from a tail, so the sum is a lower bound too.
+    return { n: Math.max(prior.actions + more, floor), exact: false };
+  }
+  const after = prior?.seq ?? 0;
+  return { n: floor + log.filter((e) => e.seq > after && ownPlay(e, seat)).length, exact: false };
+}
+
+/** Whether the log entries after `seq` hold an own play action (History reorders only on these; persistence.md section 3). */
+export function playedSince(log: readonly LogEntry[], seat: SeatId, seq: number): boolean {
+  for (let i = log.length - 1; i >= 0; i--) {
+    const e = log[i]!;
+    if (e.seq <= seq) break;
+    if (ownPlay(e, seat)) return true;
+  }
+  return false;
+}
+
 /** Public battlefield outlines (persistence.md ruling "GameSummary gains"). */
 export function thumbOf(state: TableState): GameThumb | null {
   const cards: [number, number, 0 | 1, number][] = [];
@@ -106,6 +149,14 @@ export function summarise(state: TableState, secrets: SecretStore | null, prior:
     next.result = state.result;
     next.ended = 'result';
     next.endedAt = prior.endedAt ?? now;
+  } else {
+    // A new game at the table (a rematch, a stage change) cleared the result: the summary is running again. A solo
+    // game replaced by a newer one stays ended.
+    delete next.result;
+    if (prior.ended === 'result') {
+      delete next.ended;
+      delete next.endedAt;
+    }
   }
   return next;
 }

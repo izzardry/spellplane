@@ -7,7 +7,7 @@ import type { MatchmakerStatus, Matchmaker } from '../../../src/session/types';
 import { DEFAULT_HOME_PREFS, type BoosterSetup, type DeckRecord, type GameStore, type HomePrefs, type SettingsStore, type DeckStore } from '../../../src/store/types';
 import { boosterToLobby, COPY, heroPacks, homeView, lobbyToBooster, queuedSetup, queuesFor, stepDeck, type HomeMatchmaking } from '../../../src/ui/home/view';
 import { NICK_FIRST, NICK_SECOND, randomNickname } from '../../../src/ui/lobby/names';
-import { FirstRunError, launchDraft, launchFirstRun, launchPrivate, launchQuick, launchSolo, SPARRING_FALLBACK, takePendingSetup, type LaunchDeps } from '../../../src/ui/play/launch';
+import { FirstRunError, launchDraft, launchFirstRun, launchPrivate, launchQuick, launchSolo, makeStarterDeck, SPARRING_FALLBACK, takePendingSetup, type LaunchDeps } from '../../../src/ui/play/launch';
 
 const deck = (id: string, cards: number, extra: Partial<DeckRecord> = {}): DeckRecord => ({
   id,
@@ -230,5 +230,16 @@ describe('launchers', () => {
     const bad = fakeDeps({ starterSource: { pool: async () => [] } });
     await expect(launchFirstRun(bad, prefs())).rejects.toBeInstanceOf(FirstRunError);
     expect(bad.calls.some((c) => c.startsWith('go:'))).toBe(false);
+  });
+
+  it('STARTER DECK builds, saves and selects a starter deck without starting a table', async () => {
+    const deps = fakeDeps({
+      starterSource: { pool: async () => [] },
+      buildStarterDeck: async () => ({ name: 'Starter · Green', main: [{ sid: 'x' }], colour: 'G', set: 'M19' }),
+    });
+    const d = await makeStarterDeck(deps, prefs({ mode: 'quick' }));
+    expect(deps.calls).toEqual([`deck:${d.id}`, 'set:home']);
+    expect(vi.mocked(deps.settings!.set).mock.calls[0]![1]).toMatchObject({ mode: 'quick', deckId: d.id });
+    expect(deps.games!.create).not.toHaveBeenCalled();
   });
 });
