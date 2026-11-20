@@ -2087,8 +2087,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const own: ZoneId = `${hand?.id ?? 'hand'}:${viewerSeat}`;
     if (!state.zones[own]) return null;
     if (zoneTargetAt(p, targets())?.zone === own) return own;
+    // The band at the bottom of the screen is the hand's only while the HUD shows the viewer's fan (not in the scene
+    // harness, which has no HUD: there the bottom of the screen is table).
+    const fanShown = typeof document !== 'undefined' && document.querySelector('[data-testid="hand"]') !== null;
     const vh = typeof window === 'undefined' ? canvasRect().bottom : window.innerHeight;
-    if (inHandBand(y, vh, vh)) return own;
+    if (fanShown && inHandBand(y, vh, vh)) return own;
     const el = typeof document !== 'undefined' && typeof document.elementFromPoint === 'function' ? document.elementFromPoint(x, y) : null;
     return el instanceof Element && el.closest('[data-testid="hand"]') ? own : null;
   }
