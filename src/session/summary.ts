@@ -27,10 +27,16 @@ export interface SummaryExtra {
   played?: boolean;
 }
 
-/** The own play actions in a log (contracts.md Part E `actions`: the purge rule counts these). */
+/**
+ * The own play actions in a log (contracts.md Part E `actions`: the purge rule counts these). The automatic setup is
+ * not the player's doing: where the seat's opening hand was dealt (`dealt`), only what came after the first deal counts
+ * (the import, the shuffle and the seven draws before it are the launcher's).
+ */
 export function ownActions(log: readonly LogEntry[], seat: SeatId): number {
+  const own = (e: LogEntry): boolean => e.kind === 'action' && e.action.by === seat;
+  const firstDeal = log.findIndex((e) => own(e) && e.kind === 'action' && e.action.type === 'dealt');
   let n = 0;
-  for (const e of log) if (e.kind === 'action' && e.action.by === seat && isPlayAction(e.action)) n++;
+  for (const e of firstDeal < 0 ? log : log.slice(firstDeal + 1)) if (e.kind === 'action' && own(e) && e.action.type !== 'dealt' && isPlayAction(e.action)) n++;
   return n;
 }
 

@@ -92,6 +92,13 @@ describe('summarise (pure, public state only)', () => {
     const a = (type: string, by: string): LogEntry => ({ kind: 'action', seq: 1, at: 0, action: { type, by, cid: 'c', seq: 1 } as unknown as Action });
     expect(ownActions([a('tap', 's0'), a('chat', 's0'), a('tap', 's1'), a('draw', 's0')], 's0')).toBe(2);
   });
+
+  it("ownActions leaves out the automatic setup: only what follows the seat's first deal counts", () => {
+    const a = (type: string, by: string): LogEntry => ({ kind: 'action', seq: 1, at: 0, action: { type, by, cid: 'c', seq: 1 } as unknown as Action });
+    const setup = [a('deckCommit', 's0'), a('reorder', 's0'), a('draw', 's0'), a('draw', 's0'), a('dealt', 's0')];
+    expect(ownActions(setup, 's0')).toBe(0);
+    expect(ownActions([...setup, a('tap', 's0'), a('move', 's0'), a('dealt', 's1'), a('draw', 's0'), a('dealt', 's0'), a('tap', 's0')], 's0')).toBe(4);
+  });
 });
 
 /** A session double: state, log, subscribe, leave. */
