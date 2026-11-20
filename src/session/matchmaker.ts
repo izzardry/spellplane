@@ -307,8 +307,10 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     room = r;
     startTimer();
     let joined = false;
-    const timeout = new Promise<void>((resolve) => setTimeout(resolve, JOIN_TIMEOUT_MS));
+    let joinTimer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<void>((resolve) => (joinTimer = setTimeout(resolve, JOIN_TIMEOUT_MS)));
     await Promise.race([r.join().then(() => (joined = true)), timeout]);
+    if (joinTimer !== null) clearTimeout(joinTimer);
     if (disposed || room !== r) return null;
     if (!joined) {
       closeRoom();

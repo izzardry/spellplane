@@ -14,6 +14,8 @@ import { live, resetLifecycleForTests } from '../../../src/util/lifecycle';
 import { browser, closeAll, fixtureDeck, hashOf, net as gameNet, open, until, waitConverged, type Browser } from '../session/harness';
 import { FAKE_TIMERS, lobbyNet } from './harness';
 import { mmPage, type MmPage } from './mm-harness';
+import { createMatchmaker, MM_TEXT } from '../../../src/session/matchmaker';
+import { fakeNetIdentity } from '../net/fake-identity';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
@@ -142,6 +144,28 @@ describe('the matchmaker service', () => {
     const mine = a.mm.room()!.state.ticket!;
     expect(mine).toMatchObject({ band: 3, score: 50 });
     expect(Object.keys(mine).sort()).toEqual(['band', 'name', 'nat', 'open', 'peerId', 'proto', 'pubKey', 'queues', 'ratings', 'rev', 'score', 'sig', 'tid', 'v']);
+  });
+
+  it('relays that never answer: failed after 15 s with the relay text; nothing is left running', async () => {
+    const A = await browser('ann', 'peer-a', 'Ann', 0);
+    browsers.push(A);
+    const mm = createMatchmaker({
+      settings: A.stores.settings,
+      decks: A.stores.decks,
+      ratings: A.stores.ratings,
+      matches: A.stores.matches,
+      games: A.stores.games,
+      identity: () => Promise.resolve(fakeNetIdentity('peer-a', 'Ann')),
+      transport: () => Object.assign(lobbyNet().create('silent'), { join: () => new Promise<void>(() => undefined) }),
+      followRoutes: false,
+    });
+    pages.push({ mm, hashes: [], phases: [], statuses: [] });
+    mm.seek({ queues: [Q], deckId: 'd' });
+    await vi.advanceTimersByTimeAsync(14_000);
+    expect(mm.status().phase).toBe('connecting');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(mm.status()).toEqual({ phase: 'failed', problem: 'relays', text: MM_TEXT.relays });
+    expect(live()).toMatchObject({ transports: 0, timers: 0 });
   });
 
   it('a member that cannot reach everyone within 30 s is back in seeking with its wait kept; nobody ends in two rooms', async () => {
