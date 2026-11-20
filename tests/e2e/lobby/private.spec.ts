@@ -92,6 +92,9 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
     await expect(a.getByTestId('start-pill')).toHaveText('WAITING · 1 OF 2 READY');
     await expect(b.getByTestId('missing-line')).toHaveText('Choose a deck and press READY.');
     await expect(chair(b, 's0')).toContainText('DECK READY · 60');
+    // The creator takes READY back before Ben is ready, so the count cannot start (and race the spec) while it looks.
+    await a.getByTestId('ready-on').click();
+    await expect(a.getByTestId('start-pill')).toHaveText('WAITING · 0 OF 2 READY');
     await ready(b, 'ur-m19-60.mtga.txt');
     await expect(chair(a, 's1')).toContainText('DECK READY · 60');
     // Deck names stay with their owner: each pasted list was saved as "Deck with …" in its own library only, and
@@ -106,16 +109,14 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
     expect(JSON.stringify(await state(a))).not.toContain('Deck with');
   });
 
-  await test.step('START · 3 counts; un-readying stops it; ready again and it presses itself when the clock runs 3 s', async () => {
-    await expect(a.getByTestId('start-game')).toHaveText(/START · [123]/, { timeout: 15_000 });
-    await expect(b.getByTestId('missing-line')).toHaveText('Waiting for Ann to start the game.');
-    await a.getByTestId('ready-on').click();
-    await expect(a.getByTestId('start-game')).toHaveCount(0);
+  await test.step('un-ready holds START; READY again counts START · 3 and it presses itself when the clock runs 3 s', async () => {
     await expect(a.getByTestId('start-pill')).toHaveText('WAITING · 1 OF 2 READY');
+    await expect(a.getByTestId('start-game')).toHaveCount(0);
     await a.clock.runFor(5000);
     expect((await state(a)).stage).toBe('lobby');
+    await expect(b.getByTestId('missing-line')).toHaveText('Waiting for Ann to start the game.');
     await a.getByTestId('ready-on').click();
-    await expect(a.getByTestId('start-game')).toHaveText('START · 3');
+    await expect(a.getByTestId('start-game')).toHaveText(/^START · [123]$/);
     await a.clock.runFor(3100);
     for (const p of [a, b]) await expect(p.getByTestId('stage')).toHaveAttribute('data-stage', 'match', { timeout: 15_000 });
   });

@@ -23,6 +23,11 @@ async function harness(page: Page, query: string): Promise<string[]> {
 const state = (page: Page) => page.evaluate(() => window.__lobbyHarness!.state() as TableState);
 const dispatchAs = (page: Page, by: string, draft: ActionDraft) => page.evaluate(([b, d]) => window.__lobbyHarness!.dispatchAs(b as string, d as never), [by, draft] as const);
 const chair = (page: Page, seat: string) => page.locator(`[data-testid="chair"][data-seat="${seat}"]`);
+/** Stop the page clock where it is, so only `runFor` moves product timers (a slow remote browser adds no time). */
+async function freeze(page: Page): Promise<void> {
+  const now = await page.evaluate(() => Date.now());
+  await page.clock.pauseAt(now + 50);
+}
 const closeInvite = (page: Page) => page.getByTestId('invite-sheet').getByRole('button', { name: 'Close' }).click();
 
 test.describe('lobby harness (M8-P4)', () => {
@@ -66,6 +71,7 @@ test.describe('lobby harness (M8-P4)', () => {
   test('a pair that cannot connect is named calmly on both seats after 15 s, not before', async ({ page }) => {
     await page.clock.install();
     await harness(page, 'view=room&ben=1&apart=1&me=s1');
+    await freeze(page);
     // The guest's first line, for 6 s.
     await expect(page.getByTestId('invite-welcome')).toHaveText('◆ Ann invites you to a 1v1.');
     await page.clock.runFor(10_000);
@@ -93,13 +99,23 @@ test.describe('lobby harness (M8-P4)', () => {
     await harness(page, 'view=room&ben=1&annReady=1&benReady=1&me=s1');
     await page.getByTestId('ready-on').click();
     await expect(page.getByTestId('lobby-note')).toHaveText('Your deck stays locked to your seat. Ask Ann to wait if you need a moment.');
+    await page.clock.install();
     await harness(page, 'view=room&ben=1&annReady=1&benReady=1&auto=1');
-    await expect(page.getByTestId('start-game')).toHaveText(/^START · [123]$/);
+    await freeze(page);
+    await expect(page.getByTestId('start-game')).toHaveText('START · 3');
+    await page.clock.runFor(1000);
+    await expect(page.getByTestId('start-game')).toHaveText('START · 2');
+    // Un-readying stops the running count; the clock runs on and nothing starts.
     await page.getByTestId('ready-on').click();
     await expect(page.getByTestId('start-game')).toHaveCount(0);
     await expect(page.getByTestId('start-pill')).toHaveText('WAITING · 1 OF 2 READY');
+    await page.clock.runFor(5000);
+    expect((await state(page)).stage).toBe('lobby');
+    // READY again: the count starts over at 3 and presses itself.
     await page.getByTestId('ready-on').click();
-    await expect(page.getByTestId('start-game')).toHaveText(/^START · [123]$/);
+    await expect(page.getByTestId('start-game')).toHaveText('START · 3');
+    await page.clock.runFor(3100);
+    await expect.poll(async () => (await state(page)).stage).toBe('match');
   });
 
   test('at phone width the room is one column with no sideways scroll', async ({ page }) => {
@@ -168,6 +184,7 @@ test.describe('lobby harness (M8-P4)', () => {
     });
     await page.clock.install();
     await harness(page, 'view=invite');
+    await freeze(page);
     const plate = page.getByTestId('qr-plate');
     await expect(plate).toBeVisible();
     expect(await plate.locator('rect').first().evaluate((r) => getComputedStyle(r).fill)).toBe('rgb(255, 255, 255)');
@@ -182,6 +199,8 @@ test.describe('lobby harness (M8-P4)', () => {
     await page.clock.runFor(200);
     await expect(page.getByTestId('copy-link')).toHaveText('COPY LINK');
     expect(await lobbyAudit(page)).toEqual([]);
+    // axe schedules its own timers: let the clock run again.
+    await page.clock.resume();
     expect(await seriousViolations(page)).toEqual([]);
   });
 
@@ -261,6 +280,7 @@ test.describe('lobby harness (M8-P4)', () => {
   test('versus: one column per player, never a deck name; the failure copy after 30 s', async ({ page }) => {
     await page.clock.install();
     await harness(page, 'view=versus&auto=1&apart=1');
+    await freeze(page);
     await expect(page.getByTestId('versus-col')).toHaveCount(2);
     await expect(page.locator('[data-testid="versus-col"][data-seat="s0"]')).toContainText('DECK · 60');
     await expect(page.locator('[data-testid="versus-col"][data-seat="s1"]')).toContainText('DECK · 40');
