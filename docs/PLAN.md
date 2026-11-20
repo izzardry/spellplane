@@ -1041,7 +1041,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M7-P5 Card feel and play without keys (with M7-P4)
 - [ ] M8-P1 Ztyle kit
 - [ ] M8-P2 Shell, Home and History
-- [ ] M8-P3 Decks
+- [x] M8-P3 Decks
 - [x] M8-P4 Private tables and the end of a game
 - [x] M8-P5 Rejoin
 - [ ] M8-P6 Computer opponent
