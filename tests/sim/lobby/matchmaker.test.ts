@@ -120,6 +120,30 @@ describe('the matchmaker service', () => {
     expect(a.mm.status()).toEqual({ phase: 'off' });
   });
 
+  it('entering a networked room turns the matchmaker off and releases the lobby transport and the beat', async () => {
+    const { a } = await twoPages();
+    a.mm.seek({ queues: [Q], deckId: 'd' });
+    await until(() => a.mm.status().phase === 'seeking', 2_000, 'seeking');
+    expect(live()).toMatchObject({ transports: 1, timers: 1 });
+    // Another page route (Decks) keeps the search; a networked room (a private table) ends it.
+    a.mm.route('#/decks');
+    expect(a.mm.status().phase).toBe('seeking');
+    a.mm.route('#/t/amber-fox-93/AAAAAAAAAAAAAAAAAAAAAA');
+    expect(a.mm.status()).toEqual({ phase: 'off' });
+    expect(a.mm.messages().some((r) => r.dir === 'out' && r.msg.t === 'unseek')).toBe(true);
+    expect(live()).toMatchObject({ transports: 0, timers: 0 });
+  });
+
+  it('a deck that cannot be read matches as average; the ticket carries nothing else about it', async () => {
+    const { a, b } = await twoPages();
+    a.mm.seek({ queues: [Q], deckId: 'missing-deck' });
+    b.mm.seek({ queues: [Q], deckId: 'missing-deck' });
+    await until(() => a.mm.status().phase === 'check', 3_000, 'check');
+    const mine = a.mm.room()!.state.ticket!;
+    expect(mine).toMatchObject({ band: 3, score: 50 });
+    expect(Object.keys(mine).sort()).toEqual(['band', 'name', 'nat', 'open', 'peerId', 'proto', 'pubKey', 'queues', 'ratings', 'rev', 'score', 'sig', 'tid', 'v']);
+  });
+
   it('a member that cannot reach everyone within 30 s is back in seeking with its wait kept; nobody ends in two rooms', async () => {
     const { a, b } = await twoPages();
     a.mm.seek({ queues: [Q], deckId: 'd' });

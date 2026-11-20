@@ -99,6 +99,11 @@ export interface MatchedEntryOptions {
   ratings?: RatingStore | null;
   matches?: MatchStore | null;
   arriveMs?: number;
+  /**
+   * Run the automatic setup (deal and roll once the table plays) here too. Default true; the table frame runs its own
+   * (`startAutoSetup` on mount), so MatchedEntry.svelte passes false and two deals never race.
+   */
+  autoSetup?: boolean;
 }
 
 /** The unreachable text (matchmaker.ts MM_TEXT.unreachable). */
@@ -147,6 +152,7 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
     const missing = others.find((s) => !peers.has(s.peerId));
     setStage('stranded');
     stop();
+    ratingWatchers.get(`${record.roomId}|${me}`)?.();
     mm?.stranded(record.roomId, missing?.name ?? null);
     o.onStranded?.(unreachableText(missing?.name ?? 'Another player'));
   }, o.arriveMs ?? ARRIVE_MS);
@@ -165,7 +171,7 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
       if (!entered && st.seats[session.seat]) {
         // A member that arrives after the start (a reload) still deals its hand.
         entered = true;
-        stopAuto ??= startAutoSetup(session, { creator });
+        if (o.autoSetup !== false) stopAuto ??= startAutoSetup(session, { creator });
       }
       return;
     }
@@ -187,7 +193,7 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
         const seat = free ? want : session.seat;
         await enterMatch(session, { seat, colour: mine as SeatColourIndex, deck: o.deck, matched: true, creator });
         entered = true;
-        stopAuto ??= startAutoSetup(session, { creator });
+        if (o.autoSetup !== false) stopAuto ??= startAutoSetup(session, { creator });
       } catch (e) {
         console.warn('Spellplane: the matched entry failed a step', e);
       } finally {
@@ -207,18 +213,12 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
     }
   };
 
-  const ratingsDone = { v: false };
+  // The rating watcher outlives the entry (MatchedEntry unmounts when the stage leaves the lobby): it runs until the
+  // result is applied or another entry for the same room replaces it.
+  if (o.ratings && o.matches) watchRatedResult({ session, roomId: record.roomId, me, ratings: o.ratings, matches: o.matches });
   const onState = (): void => {
     checkArrival();
     void step();
-    const st = session.getState();
-    if (st.result && !ratingsDone.v && o.ratings && o.matches) {
-      ratingsDone.v = true;
-      void applyRatedResult({ state: st, roomId: record.roomId, me, ratings: o.ratings, matches: o.matches, recovered: recoveredSeats(session) }).catch((e: unknown) => {
-        ratingsDone.v = false;
-        console.warn('Spellplane: the rating change could not be saved', e);
-      });
-    }
   };
   const offState = session.subscribe(onState);
   const offNet = session.subscribeNet(() => checkArrival());
@@ -232,6 +232,46 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
     offNet();
     stopAuto?.();
   }
+  return stop;
+}
+
+const ratingWatchers = new Map<string, () => void>();
+
+/**
+ * Watch a matched table for its sequenced result and apply the rating change once (applyRatedResult). One watcher per
+ * room and identity; a new one replaces the old. Returns the stop function.
+ */
+export function watchRatedResult(o: { session: TableSession; roomId: string; me: string; ratings: RatingStore; matches: MatchStore }): () => void {
+  const id = `${o.roomId}|${o.me}`;
+  ratingWatchers.get(id)?.();
+  let done = false;
+  let stopped = false;
+  let off: (() => void) | null = null;
+  const stop = (): void => {
+    done = true;
+    stopped = true;
+    off?.();
+    off = null;
+    if (ratingWatchers.get(id) === stop) ratingWatchers.delete(id);
+  };
+  const check = (): void => {
+    if (done) return;
+    const st = o.session.getState();
+    if (!st.result) return;
+    done = true;
+    void applyRatedResult({ state: st, roomId: o.roomId, me: o.me, ratings: o.ratings, matches: o.matches, recovered: recoveredSeats(o.session) }).then(
+      () => stop(),
+      (e: unknown) => {
+        done = false;
+        console.warn('Spellplane: the rating change could not be saved', e);
+      },
+    );
+  };
+  ratingWatchers.set(id, stop);
+  const unsubscribe = o.session.subscribe(check);
+  if (stopped) unsubscribe();
+  else off = unsubscribe;
+  check();
   return stop;
 }
 

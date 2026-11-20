@@ -1,6 +1,6 @@
 /**
- * The `ratings` store (matchmaking.md 2.10). Stub by M8-C: `get` answers null (no rated game yet), writes are kept;
- * M8-P7 owns the file.
+ * The `ratings` store, key RatingKey (matchmaking.md 2.10): `get` answers null before the first ranked game of a key.
+ * M8-P7.
  */
 import type { IDBPDatabase } from 'idb';
 import type { RatingStore, SpellplaneDB } from './types';

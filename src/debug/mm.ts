@@ -5,35 +5,14 @@
  * through) and `seek(...)` (instead of Home; it may first store a deck record). M8-P7.
  */
 import type { QueueId } from '../core/types';
-import type { BrokerState } from '../net/lobby/broker';
-import type { Ticket } from '../net/lobby/messages';
-import type { LobbyMessageRecord } from '../net/lobby/room';
 import type { MatchmakerControl } from '../session/matchmaker';
-import type { Matchmaker, MatchmakerStatus } from '../session/types';
+import type { Matchmaker } from '../session/types';
 import type { DeckRecord, DeckStore } from '../store/types';
-import { registerDebug, type DebugParts } from '../util/debug';
-
-export interface MmDebug {
-  status(): MatchmakerStatus;
-  /** This page's ticket (if seeking) and the verified tickets of the other seekers. */
-  tickets(): Ticket[];
-  messages(): LobbyMessageRecord[];
-  broker(): BrokerState | null;
-  /** Move the matchmaker's clock forward by `ms` and run one tick. */
-  tick(ms: number): void;
-  /** Start a search; with `deck`, that record is stored first and its id used. */
-  seek(o: { queues?: QueueId[]; deckId?: string; deck?: DeckRecord }): Promise<void>;
-  answer(accept: boolean): void;
-  cancel(): void;
-  widen(): void;
-  watch(on: boolean): void;
-  /** How often the matchFound chime was asked for. */
-  chimes(): number;
-  notice(): string | null;
-}
+import { registerDebug } from '../util/debug';
+import type { MmDebug } from './types';
 
 let chimeCount = 0;
-/** Counted by the app's MatchHost chime (src/ui/play/MatchHost.svelte through main.ts or App.svelte). */
+/** Counted by the app's MatchHost chime (src/ui/play/MatchHost.svelte). */
 export function countChime(): void {
   chimeCount++;
 }
@@ -46,6 +25,16 @@ function control(mm: Matchmaker): Partial<MatchmakerControl> {
 export function registerMmDebug(mm: Matchmaker | null | undefined, deps: { decks?: DeckStore | null } = {}): void {
   if (!__SPELLPLANE_DEBUG__ || !mm) return;
   const c = control(mm);
+  const decks = (): DeckStore | null => deps.decks ?? c.decks?.() ?? null;
+  const seekWith = async (o: { queues?: QueueId[]; deckId?: string; deck?: DeckRecord }): Promise<void> => {
+    let deckId = o.deckId ?? o.deck?.id ?? 'no-deck';
+    const store = decks();
+    if (o.deck && store) {
+      await store.put(o.deck);
+      deckId = o.deck.id;
+    }
+    mm.seek({ queues: o.queues ?? ['1v1.constructed.casual'], deckId });
+  };
   const api: MmDebug = {
     status: () => mm.status(),
     tickets() {
@@ -56,14 +45,9 @@ export function registerMmDebug(mm: Matchmaker | null | undefined, deps: { decks
     messages: () => c.messages?.() ?? [],
     broker: () => c.room?.()?.state ?? null,
     tick: (ms) => c.advance?.(ms),
-    async seek(o) {
-      let deckId = o.deckId ?? o.deck?.id ?? 'no-deck';
-      if (o.deck && deps.decks) {
-        await deps.decks.put(o.deck);
-        deckId = o.deck.id;
-      }
-      mm.seek({ queues: o.queues ?? ['1v1.constructed.casual'], deckId });
-    },
+    // Accepts the contract's `{ queues, deckId }` and, for specs, `{ deck }` (stored first) or a missing queue list.
+    seek: (o) => void seekWith(o),
+    seekDeck: (o) => seekWith(o),
     answer: (a) => mm.answer(a),
     cancel: () => mm.cancel(),
     widen: () => mm.widen(),
@@ -71,5 +55,5 @@ export function registerMmDebug(mm: Matchmaker | null | undefined, deps: { decks
     chimes: () => chimeCount,
     notice: () => c.notice?.() ?? null,
   };
-  registerDebug({ mm: api } as unknown as Partial<DebugParts>);
+  registerDebug({ mm: api });
 }

@@ -134,6 +134,10 @@ export interface MatchmakerControl extends Matchmaker {
   stranded(roomId: string, missing: string | null): void;
   /** The last short notice (a declined match, a missed one); null when none. */
   notice(): string | null;
+  /** The deck library the search reads (debug hook: a spec stores its deck first). */
+  decks(): DeckStore;
+  /** The page went to `hash` (the hashchange listener calls it): a networked room that is not the match's turns it off. */
+  route(hash: string): void;
 }
 
 interface SearchConfig {
@@ -173,10 +177,21 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
   let disposed = false;
   let generation = 0;
 
+  // What main.ts does not hand over (the identity and the games store) comes from the profile's own stores, opened once.
+  let storesP: Promise<{ identity: IdentityStore; games: GameStore }> | null = null;
+  const ownStores = (): Promise<{ identity: IdentityStore; games: GameStore }> => {
+    storesP ??= import('../store/stores').then((m) => m.openStores());
+    storesP.catch(() => (storesP = null));
+    return storesP;
+  };
+  const gamesStore = async (): Promise<GameStore | null> => {
+    if (deps.games !== undefined) return deps.games;
+    return (await ownStores().catch(() => null))?.games ?? null;
+  };
   const identity = (): Promise<NetIdentity> => {
     identityP ??= (async () => {
       if (deps.identity) return deps.identity();
-      const store = deps.identityStore ?? (await (await import('../store/stores')).openStores()).identity;
+      const store = deps.identityStore ?? (await ownStores()).identity;
       const r = await store.get();
       return createNetIdentity(r.keyPair, r.peerId, r.nickname);
     })();
@@ -370,7 +385,8 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     notify();
     try {
       await deps.matches.put(plan.record);
-      await deps.games?.create({
+      const games = await gamesStore();
+      await games?.create({
         code: f.roomId,
         key: f.roomKey,
         kind: 'matched',
@@ -386,8 +402,8 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     else if (typeof location !== 'undefined') location.hash = hash;
   };
 
-  const onRoute = (): void => {
-    const m = /^#\/t\/([^/]+)\/([^/]+)/.exec(location.hash);
+  const onRoute = (hash: string): void => {
+    const m = /^#\/t\/([^/]+)\/([^/]+)/.exec(hash);
     if (!m) return;
     if (mode === 'moving' && moving && moving.link.roomId === decodeURIComponent(m[1]!)) return;
     if (mode === 'off') return;
@@ -407,7 +423,8 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
   };
 
   const follow = deps.followRoutes ?? typeof window !== 'undefined';
-  if (follow) window.addEventListener('hashchange', onRoute);
+  const onHash = (): void => onRoute(location.hash);
+  if (follow) window.addEventListener('hashchange', onHash);
 
   const mm: MatchmakerControl = {
     status,
@@ -453,7 +470,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     avoid: () => Promise.resolve(),
     dispose() {
       disposed = true;
-      if (follow) window.removeEventListener('hashchange', onRoute);
+      if (follow) window.removeEventListener('hashchange', onHash);
       off();
       listeners.clear();
     },
@@ -486,6 +503,8 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       void announce();
     },
     notice: () => lastNotice,
+    decks: () => deps.decks,
+    route: onRoute,
   };
   setPageMatchmaker(mm);
   return mm;

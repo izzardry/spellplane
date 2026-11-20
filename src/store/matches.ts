@@ -1,4 +1,4 @@
-/** The `matches` store, key roomId (matchmaking.md 2.10). Basics by M8-C; M8-P7 owns the file. */
+/** The `matches` store, key roomId (matchmaking.md 2.10). M8-P7. */
 import type { IDBPDatabase } from 'idb';
 import type { MatchStore, SpellplaneDB } from './types';
 

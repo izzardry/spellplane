@@ -47,6 +47,8 @@
       deck: rec ? deckImportOfRecord(rec) : null,
       ratings,
       matches,
+      // The table frame runs the automatic setup itself (startAutoSetup on mount).
+      autoSetup: false,
       onStage: (s) => {
         stage = s;
         onstage?.(s);

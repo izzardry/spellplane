@@ -6,7 +6,10 @@
 import type { Action } from '../core/actions';
 import type { DeckBuild, InstanceId, Line, Pose, QueueId, SecretStore, TableState } from '../core/types';
 import type { ComputerStatus, MatchmakerStatus } from '../session/types';
-import type { GameSummary } from '../store/types';
+import type { DeckRecord, GameSummary } from '../store/types';
+import type { BrokerState } from '../net/lobby/broker'; // [M8-P7]
+import type { Ticket } from '../net/lobby/messages'; // [M8-P7]
+import type { LobbyMessageRecord } from '../net/lobby/room'; // [M8-P7]
 import type { DraftPrivateView } from '../draft/types';
 import type { PeerId } from '../net/transport';
 import type { ConnectionStatus, NetMessageRecord, PeerInfo } from '../net/types';
@@ -248,6 +251,20 @@ export interface MmDebug {
   answer(accept: boolean): void;
   /** Advance the matchmaker's clock by `ms` (its timers: the ready ring, the alone text, the window rows). */
   tick(ms: number): void;
+  /** This page's ticket (when seeking) and the verified tickets of the other seekers. */
+  tickets?(): Ticket[]; // [M8-P7]
+  /** Every lobby message this page sent or received since load. */
+  messages?(): LobbyMessageRecord[]; // [M8-P7]
+  /** The broker's state, null while the lobby is not joined. */
+  broker?(): BrokerState | null; // [M8-P7]
+  /** Start a search with a deck record stored first (its id is used); default queue `1v1.constructed.casual`. */
+  seekDeck?(o: { queues?: QueueId[]; deck: DeckRecord }): Promise<void>; // [M8-P7]
+  widen?(): void; // [M8-P7]
+  watch?(on: boolean): void; // [M8-P7]
+  /** How often the matchFound chime was asked for. */
+  chimes?(): number; // [M8-P7]
+  /** The last short notice (a declined, missed or unreachable match); null when none. */
+  notice?(): string | null; // [M8-P7]
 }
 
 /** The computer opponent part (computer.md 10). M8-P6 fills it. Added by M8-C. */
