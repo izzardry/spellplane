@@ -11,7 +11,7 @@
   const turn = (i: number, n: number): number => (n === 1 ? 0 : n === 2 ? (i === 0 ? -5 : 5) : (i - 1) * 9);
 </script>
 
-<div class="ds-boosters" role="img" aria-label={count !== undefined ? `${label}: ${count} boosters` : label} data-count={count} {...rest}>
+<div class="ds-boosters" role="img" aria-label={label} data-count={count ?? sets.length} {...rest}>
   {#each shown as s, i (`${s}:${i}`)}
     <span style:display="block" style:transform="rotate({turn(i, shown.length)}deg) translateY({shown.length === 3 && i !== 1 ? 8 : 0}px)" style:transform-origin="50% 100%" style:z-index={i === 1 ? 2 : 1} style:margin-left={i ? '-28px' : undefined}>
       <BoosterPack set={s} index={i} {width} aria-hidden="true" />

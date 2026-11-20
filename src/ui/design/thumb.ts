@@ -19,15 +19,25 @@ export interface ThumbDisc {
   seat: number;
 }
 
+/** The thumbnail's box: 16:9, centred on the thumb's frame and holding all of it, and at least `THUMB_MIN_W` wide so a
+ *  frame of one or two cards still reads as a table. The still is drawn in this box at a fixed 16:9 size
+ *  (visual.md 2.8: 128 × 72, 96 × 54), whatever the frame's own aspect. */
+export const THUMB_MIN_W = 1050;
+export function thumbBox(t: Pick<GameThumb, 'w' | 'h'>): { x: number; y: number; w: number; h: number } {
+  const w = Math.max(THUMB_MIN_W, t.w, (t.h * 16) / 9);
+  const h = (w * 9) / 16;
+  return { x: (t.w - w) / 2, y: (t.h - h) / 2, w, h };
+}
+
 /** Card outline size in the thumb's own units: 63 × 88 for a table frame in millimetres, scaled for a small frame. */
 export function thumbCardSize(t: Pick<GameThumb, 'w' | 'h'>): { w: number; h: number } {
   const w = Math.min(63, t.w * 0.06);
   return { w, h: (w * 88) / 63 };
 }
 
-/** One rectangle per card (at most 80), centred on its position. */
+/** One rectangle per card (at most 80), centred on its position, sized for the thumbnail's box. */
 export function thumbRects(t: GameThumb): ThumbRect[] {
-  const s = thumbCardSize(t);
+  const s = thumbCardSize(thumbBox(t));
   return t.cards.slice(0, 80).map(([x, y, tapped, seat]) => ({ x: x - s.w / 2, y: y - s.h / 2, w: s.w, h: s.h, tapped: tapped === 1, seat }));
 }
 

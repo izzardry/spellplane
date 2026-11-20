@@ -6,7 +6,7 @@
   import './kit';
   import type { Snippet } from 'svelte';
 
-  let { count = 40, children, ...rest }: { count?: number; children?: Snippet; [attr: string]: unknown } = $props();
+  let { count = 0, children, ...rest }: { count?: number; children?: Snippet; [attr: string]: unknown } = $props();
   const n = $derived(Math.max(0, Math.min(60, Math.round(count))));
 </script>
 

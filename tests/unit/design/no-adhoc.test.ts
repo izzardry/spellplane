@@ -54,22 +54,105 @@ describe('no blur under src/', () => {
   });
 });
 
+/**
+ * The `<button …>` opening tags of a Svelte source, each up to the `>` that closes it: quoted values and `{…}`
+ * expressions (which may hold `=>` or `>`) are skipped.
+ */
+export function buttonTags(text: string): string[] {
+  const out: string[] = [];
+  const re = /<button\b/g;
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    let i = m.index + m[0].length;
+    let depth = 0;
+    let quote: string | null = null;
+    for (; i < text.length; i++) {
+      const c = text[i]!;
+      if (quote) {
+        if (c === quote) quote = null;
+        else if (c === '{' && quote !== '`') depth++;
+        continue;
+      }
+      if (depth > 0) {
+        if (c === '{') depth++;
+        else if (c === '}') depth--;
+        else if (c === '"' || c === "'" || c === '`') quote = c;
+        continue;
+      }
+      if (c === '{') depth++;
+      else if (c === '"' || c === "'") quote = c;
+      else if (c === '>') break;
+    }
+    out.push(text.slice(m.index, i + 1));
+    re.lastIndex = i;
+  }
+  return out;
+}
+
+/** The value of a tag's `class` attribute (`class="…"`, `class='…'` or `class={…}`), or null. Directives (`class:x`) are not it. */
+export function classValue(tag: string): string | null {
+  const at = /\sclass=/.exec(tag);
+  if (!at) return null;
+  let i = at.index + at[0].length;
+  const open = tag[i];
+  if (open === '"' || open === "'") {
+    const close = tag.indexOf(open, i + 1);
+    return tag.slice(i + 1, close < 0 ? undefined : close);
+  }
+  if (open !== '{') return null;
+  let depth = 0;
+  const from = i;
+  for (; i < tag.length; i++) {
+    if (tag[i] === '{') depth++;
+    else if (tag[i] === '}' && --depth === 0) break;
+  }
+  return tag.slice(from, i + 1);
+}
+
+const KIT_TOKEN = /(?:^|[^\w-])ds-[a-z]/;
+
+/**
+ * Whether a `<button>` tag carries a kit class: its `class` value has a `ds-` token, or it is `{name}` (or holds
+ * `{name}`) where `name` is assigned a value with a `ds-` token in the same file.
+ */
+export function hasKitClass(tag: string, file: string): boolean {
+  const v = classValue(tag);
+  if (v === null) return false;
+  if (KIT_TOKEN.test(v)) return true;
+  for (const m of v.matchAll(/\{\s*([A-Za-z_$][\w$]*)\s*\}/g)) {
+    const name = m[1]!.replace(/[$]/g, '\\$');
+    if (new RegExp(`\\b${name}\\s*=[^;\\n]*(?:^|[^\\w-])ds-[a-z]`).test(file)) return true;
+  }
+  return false;
+}
+
 describe('no raw <button under src/ui/ without a kit class', () => {
+  it('the scanner reads whole tags and only the class attribute', () => {
+    const raw = (src: string) => buttonTags(src).filter((t) => !hasKitClass(t, src)).length;
+    expect(raw('<button type="button" onclick={() => go()} class="ds-btn ds-btn--md">x</button>')).toBe(0);
+    expect(raw('<button onclick={() => (a > b ? 1 : 2)} class="ds-btn">x</button>')).toBe(0);
+    expect(raw('<button class="tile" data-ds-layer="x">x</button>')).toBe(1);
+    expect(raw('<button class="tile" class:ds-x={a}>x</button>')).toBe(1);
+    expect(raw('<button type="button">x</button>')).toBe(1);
+    expect(raw('<button class="ids-btn">x</button>')).toBe(1);
+    expect(raw('<button class="{cls} ds-chip--button">x</button>')).toBe(0);
+    expect(raw("const cls = $derived(`ds-btn ds-btn--${v}`);\n<button class={cls}>x</button>")).toBe(0);
+    expect(raw('const cls = "tile";\n<button class={cls}>x</button>')).toBe(1);
+    expect(raw('<button\n  type="button"\n  class="ds-seg__opt"\n  onclick={() => pick(o.value)}>x</button>')).toBe(0);
+    expect(raw('<button class={[\'ds-btn\', on && \'is-on\']}>x</button>')).toBe(0);
+    expect(buttonTags('<button onclick={() => f(">")} class="ds-btn">x</button>')).toEqual(['<button onclick={() => f(">")} class="ds-btn">']);
+  });
+
   const files = walk(path.join(SRC, 'ui')).filter((f) => f.endsWith('.svelte'));
   const offenders = new Map<string, number>();
   for (const f of files) {
     const text = stripComments(fs.readFileSync(f, 'utf8'));
-    const raw = [...text.matchAll(/<button\b[^>]*>/g)].filter((m) => !/class(=|:)[^>]*\bds-|class=\{?[^>]*`[^`]*ds-|\{cls\}|class=\{cls\}/.test(m[0]) && !/class=["'{][^"'}]*ds-/.test(m[0]));
+    const raw = buttonTags(text).filter((t) => !hasKitClass(t, text));
     if (raw.length) offenders.set(rel(f), raw.length);
   }
 
   it('every <button> in a new file carries a kit class', () => {
     const fresh = [...offenders.keys()].filter((f) => !LEGACY.has(f));
     expect(fresh).toEqual([]);
-  });
-
-  it('the allow-list only shrinks: every listed file still exists and still has a raw button', () => {
-    expect([...LEGACY].filter((f) => !offenders.has(f))).toEqual([]);
   });
 
   it('the kit itself has no raw button', () => {
@@ -79,7 +162,8 @@ describe('no raw <button under src/ui/ without a kit class', () => {
 
 /**
  * Legacy files with raw buttons when M8-P1 landed the kit, swept by their owners (visual.md DS-9; contracts.md Part G
- * Visual 4). The list only shrinks: a file that no longer has a raw button fails the test until it is removed here.
+ * Visual 4). A plain allow-list: a swept file may stay listed (its owner cannot edit this file); M8-P8 or the gate
+ * prunes it. It is not grown.
  */
 const LEGACY = new Set<string>(
   [

@@ -103,7 +103,10 @@
     const resize = (): void => place();
     window.addEventListener('pointerdown', away, true);
     window.addEventListener('resize', resize);
+    // An ancestor that was animating in (a sheet rises 16 px) moved the anchor: place again once it has settled.
+    window.addEventListener('animationend', resize, true);
     return () => {
+      window.removeEventListener('animationend', resize, true);
       window.removeEventListener('pointerdown', away, true);
       window.removeEventListener('resize', resize);
     };

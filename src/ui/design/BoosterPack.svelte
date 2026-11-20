@@ -3,13 +3,14 @@
   `packArt(set, index)`: a five-stop foil gradient on a diagonal, a 5 px halftone over it, crimped ends (18 teeth,
   7 px deep) with bands of fine vertical lines, a centre seam, the sigil, the set code and `15 CARDS · BOOSTER`. The
   foil follows the look (--ds-foil-*). No <image>, no external reference, no filter; the shadow is a drawn ellipse.
-  188 × 327 at full size. Added by M8-P1.
+  Drawn at 188 × 327 (the Draft Night hero); `width` defaults to 80 as in the seed (80 × 139 elsewhere, visual.md
+  ruling). Added by M8-P1.
 -->
 <script lang="ts">
   import './kit';
   import { packArt, packOutline, starPoints } from './pack-art';
 
-  let { set, index = 0, width = 188, ...rest }: { set: string; index?: number; width?: number; [attr: string]: unknown } = $props();
+  let { set, index = 0, width = 80, ...rest }: { set: string; index?: number; width?: number; [attr: string]: unknown } = $props();
   const W = 188;
   const H = 327;
   const art = $derived(packArt(set, index));
@@ -19,7 +20,7 @@
   const rays = $derived(Array.from({ length: art.points }, (_, i) => art.turnDeg + (i * 360) / art.points));
 </script>
 
-<svg class="ds-booster" role="img" aria-label="Booster of {art.code}" width={width} height={(width * (H + 14)) / W} viewBox="0 0 {W} {H + 14}" data-set={art.code} data-hash={art.hash} {...rest}>
+<svg class="ds-booster" role="img" aria-label="{art.code} booster" width={width} height={(width * (H + 14)) / W} viewBox="0 0 {W} {H + 14}" data-set={art.code} data-hash={art.hash} {...rest}>
   <defs>
     <linearGradient id="{uid}-foil" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" style:stop-color="var(--ds-foil-0)" />

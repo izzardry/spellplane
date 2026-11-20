@@ -288,7 +288,7 @@
   height: 12px;
   border-radius: 50%;
   box-shadow: inset 0 0 0 2px currentColor;
-  animation: ds-pulse 1.6s ease-in-out infinite;
+  animation: ds-pulse calc(var(--ds-duration-deliberate, 500ms) * 3.2) ease-in-out infinite;
 }
 /* Icon buttons are circles of the row's height (visual.md A4). */
 .ds-btn--icon,
@@ -332,14 +332,20 @@
     position: absolute;
     inset: -4px;
   }
-  .ds-btn--xs:not(.ds-btn--icon)::after,
-  .ds-btn--small:not(.ds-btn--icon)::after {
+  .ds-btn--xs:not(.ds-btn--icon):not(.ds-icon-btn)::after,
+  .ds-btn--small:not(.ds-btn--icon):not(.ds-icon-btn)::after {
     left: 0;
     right: 0;
   }
-  .ds-btn--sm:not(.ds-btn--icon)::after {
+  .ds-btn--sm:not(.ds-btn--icon):not(.ds-icon-btn)::after {
     left: 0;
     right: 0;
+  }
+  /* A 36 px segment inside its 44 px track reaches the track's edges; a menu row is 44 high on touch. */
+  .ds-seg:not(.ds-seg--sm) .ds-seg__opt::after {
+    content: '';
+    position: absolute;
+    inset: -4px 0;
   }
 }
 
@@ -598,7 +604,7 @@
   box-shadow: inset 0 0 0 1.5px var(--ds-muted);
 }
 .ds-dot--connecting {
-  animation: ds-pulse 1.6s ease-in-out infinite;
+  animation: ds-pulse calc(var(--ds-duration-deliberate, 500ms) * 3.2) ease-in-out infinite;
 }
 .ds-presence {
   display: inline-flex;
@@ -828,7 +834,7 @@
   box-shadow: var(--ds-elevation-pop);
   font-size: 13px;
   pointer-events: auto;
-  animation: ds-toast-in 250ms var(--ds-ease-enter);
+  animation: ds-toast-in calc(var(--ds-duration-base, 200ms) * 1.25) var(--ds-ease-enter);
 }
 .ds-toast__text {
   flex: 1;
@@ -991,7 +997,6 @@
   width: 100%;
   height: 100%;
   object-fit: contain;
-  border-radius: inherit;
 }
 .ds-card--back {
   background: #2a2a2a radial-gradient(circle, rgba(255, 255, 255, 0.14) 1px, transparent 1.3px) 0 0 / 5px 5px;
@@ -1077,10 +1082,10 @@
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: var(--ds-space-md);
+  gap: 8px;
   width: 220px;
   height: 268px;
-  padding: 8px 8px 12px;
+  padding: 8px;
   border-radius: var(--ds-radius-panel);
   background-color: var(--ds-panel-raised);
   background-image: var(--ds-texture-grain);
@@ -1141,7 +1146,7 @@
 .ds-tile__info {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   padding: 0 8px;
   min-width: 0;
 }
@@ -1151,6 +1156,14 @@
   justify-content: space-between;
   gap: var(--ds-space-sm);
   min-width: 0;
+}
+/* Three rows fit under the well (8 + 176 + 8 + 20 + 4 + 16 + 4 + 20 + 8 = 264 of 268): a chip in a row stays 20 high. */
+.ds-tile__row {
+  min-height: 16px;
+}
+.ds-tile__row > .ds-chip {
+  height: 20px;
+  padding: 0 8px;
 }
 .ds-tile__name {
   font-size: var(--ds-type-body);
@@ -1172,6 +1185,17 @@
 .ds-tile:not(:hover):not(:focus-within) .ds-tile__acts {
   visibility: hidden;
   opacity: 0;
+}
+/* Touch (visual.md 2.12): no hover, so a deck tile shows its actions all the time; a menu row is 44 high. Placed after
+   the base rules it overrides. */
+@media (pointer: coarse) {
+  .ds-tile:not(:hover):not(:focus-within) .ds-tile__acts {
+    visibility: visible;
+    opacity: 1;
+  }
+  .ds-menu-item {
+    height: 44px;
+  }
 }
 .ds-tile__reason {
   position: absolute;
@@ -1507,6 +1531,7 @@
 .ds-thumb {
   display: block;
   flex: none;
+  background: var(--ds-mat);
   border-radius: 6px;
   box-shadow: inset 0 0 0 1px var(--ds-border);
 }

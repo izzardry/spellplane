@@ -23,6 +23,8 @@ export interface KitHarness {
   status(text: string | null): void;
   clearToasts(): void;
   packArt(set: string, index: number): PackArt;
+  /** While on, the page refuses picks of its format control (`seg-format`): the pick is logged, the value kept. */
+  refuse(on: boolean): void;
 }
 
 declare global {
@@ -45,7 +47,8 @@ export function mount(target: HTMLElement): void {
   const log = (e: string): void => {
     events.push(e);
   };
-  mountSvelte(KitPage, { target, props: { look, log } });
+  let refusing = false;
+  mountSvelte(KitPage, { target, props: { look, log, accept: () => !refusing } });
   window.__kitHarness = {
     look: () => look,
     looks: () => LOOK_IDS,
@@ -56,5 +59,8 @@ export function mount(target: HTMLElement): void {
     status: (text) => toasts.status(text),
     clearToasts: () => toasts.clear(),
     packArt,
+    refuse: (on) => {
+      refusing = on;
+    },
   };
 }

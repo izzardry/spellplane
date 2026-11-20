@@ -14,6 +14,6 @@
 
 <div class="ds-toast-host ds-toast-host--{place} ds-root" aria-live="polite" data-testid="toast-host" {...rest}>
   {#each list as t (t.id)}
-    <Toast kind={t.kind} text={t.text} detail={t.detail} actions={t.actions} onclose={t.kind === 'request' ? undefined : () => store.dismiss(t.id)} data-toast={t.id} />
+    <Toast kind={t.kind} text={t.text} detail={t.detail} actions={t.actions} onclose={t.kind === 'request' ? undefined : () => store.dismiss(t.id)} data-toast={t.id} data-testid="toast" />
   {/each}
 </div>

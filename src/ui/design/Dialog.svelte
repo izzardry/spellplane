@@ -46,7 +46,7 @@
   $effect(() => {
     if (!open || !el) return;
     const before = document.activeElement as HTMLElement | null;
-    const first = el.querySelector<HTMLElement>('[data-autofocus], button, [href], input, select, textarea');
+    const first = el.querySelector<HTMLElement>('[data-autofocus]') ?? el.querySelector<HTMLElement>('button, [href], input, select, textarea');
     (first ?? el).focus({ preventScroll: true });
     return () => before?.focus?.({ preventScroll: true });
   });

@@ -1,7 +1,9 @@
 <!--
   A segmented control (docs/design/m8/contracts.md Part B; visual.md V3, 2.8): a well with one raised thumb that slides
   200 ms (transform only). A radio group: arrow keys, Home and End move and select, skipping disabled options; one tab
-  stop. Used for the nav, filters, formats and option rows. Added by M8-P1.
+  stop. Used for the nav, filters, formats and option rows. With `onchange` the control is controlled: it reports the
+  pick and shows whatever `value` the parent then passes (a parent that refuses a pick keeps its option on the thumb);
+  without `onchange` it writes `value` itself (`bind:value`). Added by M8-P1.
 -->
 <script lang="ts">
   import './kit';
@@ -35,9 +37,9 @@
   }
 
   $effect(() => {
-    // Re-measure when the value or the options change (never per frame).
+    // Re-measure when the value or the options (their labels too) change (never per frame).
     void value;
-    void options.length;
+    for (const o of options) void o.label;
     void tick().then(place);
   });
 
@@ -50,8 +52,8 @@
 
   function pick(v: string): void {
     if (v === value) return;
-    value = v;
-    onchange?.(v);
+    if (onchange) onchange(v);
+    else value = v;
   }
 
   function key(e: KeyboardEvent, i: number): void {

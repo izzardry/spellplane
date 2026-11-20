@@ -41,7 +41,7 @@
   import { LOOK_IDS, LOOK_LABELS } from '../../themes/index';
   import { designCssVars, lookTokens } from './tokens';
 
-  let { look, log }: { look: LookId; log: (e: string) => void } = $props();
+  let { look, log, accept = () => true }: { look: LookId; log: (e: string) => void; accept?: () => boolean } = $props();
 
   /** A neutral placeholder face, 63:88 (no card data, no art). */
   function face(name: string, tone: string): string {
@@ -108,7 +108,7 @@
       <div class="ds-row" data-testid="row-md"><Button data-testid="btn-secondary">Secondary</Button><Button variant="ghost">Ghost</Button><Button variant="quiet">Quiet</Button><Button variant="danger">Remove</Button><IconButton label="Settings" icon="settings" /></div>
       <div class="ds-row" data-testid="row-md-2"><Button pressed data-testid="btn-pressed">Pressed</Button><Button disabled>Disabled</Button><Button href="#kit">A link</Button></div>
       <div class="ds-row" data-testid="row-seg">
-        <Segmented label="Format" options={[{ value: 'v1', label: '1v1' }, { value: 'ffa3', label: '3 FFA' }, { value: 'v2', label: '2v2', disabled: true, hint: 'Not in this build yet' }, { value: 'ffa4', label: '4 FFA' }]} bind:value={seg} onchange={(v) => log(`segment:${v}`)} data-testid="seg-format" />
+        <Segmented label="Format" options={[{ value: 'v1', label: '1v1' }, { value: 'ffa3', label: '3 FFA' }, { value: 'v2', label: '2v2', disabled: true, hint: 'Not in this build yet' }, { value: 'ffa4', label: '4 FFA' }]} value={seg} onchange={(v) => { log(`segment:${v}`); if (accept()) seg = v; }} data-testid="seg-format" />
         <Field label="Search cards" placeholder="Search" bind:value={field} data-testid="field-search">{#snippet icon()}<Icon name="search" size={16} />{/snippet}</Field>
       </div>
       <div class="ds-row">
@@ -188,7 +188,7 @@
           <div class="ds-tile__acts"><Button size="sm">Edit</Button><IconButton size="sm" label="More" icon="more" /></div>
           <div class="ds-tile__info">
             <div class="ds-tile__row"><span class="ds-tile__name">Green Stompy</span><Chip variant="on">Selected</Chip></div>
-            <div class="ds-tile__row"><span class="ds-row" style:gap="4px"><Pip colour="G" size={14} /><span class="ds-t-eyebrow">40 · Custom</span></span><StrengthPips band={3} label="" /></div>
+            <div class="ds-tile__row"><span class="ds-row" style:gap="4px"><Pip colour="G" size={14} /><span class="ds-t-eyebrow">40 · Custom</span></span><StrengthPips band={3} text={false} /></div>
             <div class="ds-tile__row"><span class="ds-t-meta">played 2 h ago</span><Sparkline values={[1, 6, 7, 5, 3, 2, 1]} label="Curve" /></div>
           </div>
         </article>
@@ -196,7 +196,7 @@
           <div class="ds-tile__stage"><div class="ds-tile__cover"><CardImage src={null} alt="" width={96} aria-hidden="true" /><CardImage src={FACES[1]!.src} alt={FACES[1]!.alt} width={96} pile data-testid="sealed-face" /></div><SealBand packs="M19 × 6" data-testid="seal" /></div>
           <div class="ds-tile__info">
             <span class="ds-tile__name">Sealed pool</span>
-            <div class="ds-tile__row"><span class="ds-row" style:gap="4px"><Pip colour="R" size={14} /><Pip colour="G" size={14} /><span class="ds-t-eyebrow">40 · Booster</span></span><StrengthPips band={2} label="" /></div>
+            <div class="ds-tile__row"><span class="ds-row" style:gap="4px"><Pip colour="R" size={14} /><Pip colour="G" size={14} /><span class="ds-t-eyebrow">40 · Booster</span></span><StrengthPips band={2} text={false} /></div>
             <div class="ds-tile__row"><span class="ds-t-meta">opened today</span><Sparkline values={[0, 4, 6, 5, 4, 2, 1]} label="Curve" /></div>
           </div>
         </article>

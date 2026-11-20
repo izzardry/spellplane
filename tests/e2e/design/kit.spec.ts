@@ -169,7 +169,7 @@ for (const look of LOOKS) {
       await expect(dialog).toBeVisible();
       const scrim = await page.locator('.ds-scrim').evaluate((el) => ({ f: getComputedStyle(el).filter, b: getComputedStyle(el).getPropertyValue('backdrop-filter') || 'none' }));
       expect(scrim).toEqual({ f: 'none', b: 'none' });
-      await designAudit(page);
+      await designAudit(page, { layers: ['sample'] });
       await page.keyboard.press('Escape');
       await expect(dialog).toHaveCount(0);
       await page.getByTestId('open-coach').click();
@@ -257,8 +257,21 @@ for (const look of LOOKS) {
 
     test('the design audit passes; screenshot', async ({ page }, info) => {
       await openKit(page, look);
-      const res = await designAudit(page);
+      const res = await designAudit(page, { layers: ['sample'] });
       expect(res.controls).toBeGreaterThan(30);
+      // A deck tile (visual.md 2.8: 220 × 268) holds the well and its three rows inside its box.
+      const tiles = await page.evaluate(() =>
+        [...document.querySelectorAll<HTMLElement>('.ds-tile:not(.ds-tile--new)')].map((t) => {
+          const box = t.getBoundingClientRect();
+          const bottom = Math.max(...[...t.querySelectorAll('.ds-tile__info *')].map((e) => e.getBoundingClientRect().bottom));
+          return { id: t.dataset['testid'], w: box.width, h: box.height, spare: box.bottom - bottom };
+        }),
+      );
+      expect(tiles.length).toBeGreaterThanOrEqual(3);
+      for (const t of tiles) {
+        expect([t.w, t.h], t.id).toEqual([220, 268]);
+        expect(t.spare, t.id).toBeGreaterThanOrEqual(4);
+      }
       const dir = path.join('artifacts', 'shots', 'M8');
       fs.mkdirSync(dir, { recursive: true });
       await page.screenshot({ path: path.join(dir, info.project.name === 'chromium' ? `kit-${look}.png` : `kit-${look}-${info.project.name}.png`), fullPage: true });
@@ -294,6 +307,61 @@ test.describe('coarse pointer', () => {
       expect(p.above && p.below, p.what).toBe(true);
     }
   });
+
+  test('md segments reach their track, menu rows are 44 high and tile actions show without hover', async ({ page }) => {
+    await openKit(page, 'plain');
+    const seg = await page.evaluate(() => {
+      const opt = document.querySelector<HTMLElement>('[data-testid="seg-format"] [data-value="v1"]')!;
+      opt.scrollIntoView({ block: 'center' });
+      const r = opt.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const hit = (y: number) => {
+        const t = document.elementFromPoint(x, y);
+        return t === opt || opt.contains(t);
+      };
+      return { h: r.height, above: hit(r.top - 3), below: hit(r.bottom + 3) };
+    });
+    expect(Math.round(seg.h)).toBe(36);
+    expect(seg.above && seg.below).toBe(true);
+    await expect(page.getByTestId('tile-custom').locator('.ds-tile__acts')).toBeVisible();
+    await page.getByTestId('open-menu').click();
+    const rows = await page.getByTestId('kit-menu').getByRole('menuitem').evaluateAll((els) => els.map((e) => (e as HTMLElement).offsetHeight));
+    expect(rows.length).toBeGreaterThan(1);
+    for (const h of rows) expect(h).toBe(44);
+  });
+});
+
+test('a segmented control whose parent refuses a pick keeps the option its parent passes on the thumb', async ({ page }) => {
+  await openKit(page, 'plain');
+  const seg = page.getByTestId('seg-format');
+  const checked = () => seg.locator('[aria-checked="true"]').getAttribute('data-value');
+  await page.evaluate(() => window.__kitHarness!.refuse(true));
+  await seg.locator('[data-value="v1"]').click();
+  expect(await page.evaluate(() => window.__kitHarness!.events())).toEqual(['segment:v1']);
+  expect(await checked()).toBe('ffa4');
+  const under = async (v: string) => {
+    const [t, o] = await Promise.all([seg.locator('.ds-seg__thumb').boundingBox(), seg.locator(`[data-value="${v}"]`).boundingBox()]);
+    return Math.abs((t?.x ?? -99) - (o?.x ?? 0));
+  };
+  await expect.poll(() => under('ffa4')).toBeLessThan(1);
+  // Accepted again: the pick moves the thumb.
+  await page.evaluate(() => window.__kitHarness!.refuse(false));
+  await seg.locator('[data-value="v1"]').click();
+  expect(await checked()).toBe('v1');
+  await expect.poll(() => under('v1')).toBeLessThan(1);
+});
+
+test('a coach mark dismisses on a press after a fake clock was run far forward', async ({ page }) => {
+  await page.clock.install();
+  await openKit(page, 'plain');
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 1_000);
+  // performance.now() is now far ahead of the real event timestamps.
+  await page.clock.runFor(600_000);
+  await page.getByTestId('open-coach').click();
+  await expect(page.getByTestId('coach')).toBeVisible();
+  await page.mouse.click(5, 5);
+  await expect(page.getByTestId('coach')).toHaveCount(0);
+  expect((await page.evaluate(() => window.__kitHarness!.events())).at(-1)).toBe('coach:dismiss');
 });
 
 test('the audit finds a mixed row, a second primary and a blur', async ({ page }) => {
@@ -312,6 +380,28 @@ test('the audit finds a mixed row, a second primary and a blur', async ({ page }
     document.querySelector('[data-testid="kit-page"]')!.appendChild(odd);
     (document.querySelector('.ds-sheet') as HTMLElement).style.setProperty('backdrop-filter', 'blur(4px)');
     (document.querySelector('.ds-sheet') as HTMLElement).style.setProperty('-webkit-backdrop-filter', 'blur(4px)');
+    const page = document.querySelector('[data-testid="kit-page"]')!;
+    // A link button and a tab track are measured too.
+    const link = document.createElement('a');
+    link.className = 'ds-btn';
+    link.href = '#';
+    link.style.cssText = 'display:inline-flex;height:30px';
+    link.textContent = 'Link';
+    page.appendChild(link);
+    const tabs = document.createElement('div');
+    tabs.className = 'ds-tabs';
+    tabs.style.height = '38px';
+    tabs.textContent = 'Tabs';
+    page.appendChild(tabs);
+    // A made-up layer name is no escape from the one-primary rule.
+    const own = document.createElement('div');
+    own.dataset['dsLayer'] = 'mine';
+    page.appendChild(own);
+    // Text outside any look.
+    const bare = document.createElement('p');
+    for (const k of ['--ds-font-body', '--ds-font-heading', '--ds-font-numeral', '--ds-font-mono', '--ds-font-reading']) bare.style.setProperty(k, 'initial');
+    bare.textContent = 'No look here';
+    page.appendChild(bare);
   });
   const res = await designAuditFindings(page);
   const text = res.problems.join('\n');
@@ -319,6 +409,13 @@ test('the audit finds a mixed row, a second primary and a blur', async ({ page }
   expect(text).toMatch(/2 primary buttons in the sheet layer/);
   expect(text).toMatch(/height 40\.0 px/);
   expect(text).toMatch(/backdrop-filter/);
+  expect(text).toMatch(/height 30\.0 px: <a/);
+  expect(text).toMatch(/height 38\.0 px: <div[^\n]*ds-tabs/);
+  expect(text).toMatch(/unknown layer "mine"/);
+  expect(text).toMatch(/unknown layer "sample"/);
+  expect(text).toMatch(/no look applied[^\n]*No look here/);
+  // The kit page names its look samples as layers explicitly.
+  expect((await designAuditFindings(page, { layers: ['sample'] })).problems.join('\n')).not.toMatch(/unknown layer "sample"/);
 });
 
 test('the look picker lists Plain, Kitchen Table, Graphite and Codex, Plain first and chosen', async ({ page }) => {
