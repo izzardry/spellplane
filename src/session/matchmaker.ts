@@ -7,8 +7,11 @@
  * - The lobby is joined only on intent (`watch(true)` or `seek`) and left when the matchmaker is off.
  * - The deck is locked while seeking (`status().deckId`); a reload ends a search (nothing is persisted but the
  *   MatchRecord); entering a networked room that is not the match's own turns the matchmaker off.
- * - A member that never reaches every other member of its match (the 30-second arrival rule, src/session/match-room.ts)
- *   goes back to seeking with its waiting time kept: `stranded(roomId)`.
+ * - The 30-second arrival rule is the matchmaker's own: from `formed`, a member that is not reported `arrived` (connected
+ *   to every other member, src/session/match-room.ts) within ARRIVE_MS on the matchmaker clock is stranded: the record
+ *   becomes void, the History entry is purged, the page leaves the room route (so a pending join ends) and the search
+ *   resumes with its waiting time kept. Leaving the match's room route, or CANCEL, while moving abandons the match.
+ * - Notices (a declined, missed or unreachable match) are taken once (`takeNotice`); a new search or CANCEL clears one.
  * - Lifecycle counters: the lobby transport is tracked as 'transports' and the tick as 'timers' while they exist.
  */
 import type { Band, MatchPlayer, MatchRecord, QueueId, RatingKey, SeatId } from '../core/types';
@@ -23,7 +26,7 @@ import type { Transport } from '../net/transport';
 import type { NetIdentity } from '../net/types';
 import type { DeckStore, GameStore, IdentityStore, MatchStore, RatingStore, SettingsStore, StrengthBand } from '../store/types';
 import { track, untrack } from '../util/lifecycle';
-import { setPageMatchmaker } from './match-room';
+import { ARRIVE_MS, setPageMatchmaker } from './match-room';
 import type { Matchmaker, MatchmakerStatus } from './types';
 
 /** What the matchmaker needs from the page (main.ts). M8-P7 may add optional members. */
@@ -132,8 +135,12 @@ export interface MatchmakerControl extends Matchmaker {
   arrived(roomId: string): void;
   /** The match room was not reached in time: back to seeking, waiting time kept. */
   stranded(roomId: string, missing: string | null): void;
-  /** The last short notice (a declined match, a missed one); null when none. */
+  /** The pending short notice (a declined, missed or unreachable match); null when none. Does not take it. */
   notice(): string | null;
+  /** Take the pending notice once (MatchHost shows it): `again` offers SEARCH AGAIN (a match that could not be reached). */
+  takeNotice(): MatchNotice | null;
+  /** The match room reports which member it still misses (the arrival rule's notice names it). */
+  reaching(roomId: string, missing: string | null): void;
   /** `SEARCH AGAIN`: with a search config kept (after a match that could not be reached) and no search running, search again. */
   searchAgain(): void;
   /** The deck library the search reads (debug hook: a spec stores its deck first). */
@@ -144,6 +151,13 @@ export interface MatchmakerControl extends Matchmaker {
   ratings(): RatingStore;
   /** The page went to `hash` (the hashchange listener calls it): a networked room that is not the match's turns it off. */
   route(hash: string): void;
+}
+
+/** A short notice after a match that fell through (journey.md 4.6, 4.7). */
+export interface MatchNotice {
+  text: string;
+  /** Offer SEARCH AGAIN (the match could not be reached). */
+  again: boolean;
 }
 
 interface SearchConfig {
@@ -178,7 +192,10 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
   let lingerTimer: ReturnType<typeof setTimeout> | null = null;
   const timerToken = {};
   let last = '';
-  let lastNotice: string | null = null;
+  let pendingNotice: MatchNotice | null = null;
+  /** The arrival deadline of the match being moved to (matchmaker clock), and whom the room still misses. */
+  let arriveBy: number | null = null;
+  let arriveMissing: string | null = null;
   let identityP: Promise<NetIdentity> | null = null;
   let disposed = false;
   let generation = 0;
@@ -255,6 +272,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
 
   const tick = (): void => {
     room?.tick();
+    if (mode === 'moving' && moving && arriveBy !== null && now() >= arriveBy) strand(moving.link.roomId, arriveMissing);
     notify();
   };
 
@@ -363,19 +381,18 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     if (!r || config !== c) return;
     const draft = await ticketDraft(c);
     if (config !== c || room !== r) return;
-    const waited = since === null ? 0 : Math.max(0, now() - since);
-    await r.seek(draft, waited);
+    await r.seek(draft, 0, since ?? undefined);
     since ??= r.state.since;
     notify();
   };
 
   const onEffect = async (e: BrokerEffect): Promise<void> => {
     if (e.kind === 'returned') {
-      lastNotice = e.reason === 'declined' ? 'Another player did not accept. Back in the queue.' : 'Another player did not answer. Back in the queue.';
+      pendingNotice = { text: e.reason === 'declined' ? 'Another player did not accept. Back in the queue.' : 'Another player did not answer. Back in the queue.', again: false };
     } else if (e.kind === 'stopped') {
       config = null;
       since = null;
-      lastNotice = e.reason === 'lapsed' ? MM_TEXT.missed : null;
+      pendingNotice = e.reason === 'lapsed' ? { text: MM_TEXT.missed, again: false } : null;
       queueMicrotask(settle);
     } else if (e.kind === 'formed') {
       await formed(e.match);
@@ -387,14 +404,27 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     const r = room;
     if (!r || !config) return;
     const st = r.state;
-    const plan = planOf(f, st.tid, config.deckId, now());
+    let plan: MatchPlan;
+    try {
+      plan = planOf(f, st.tid, config.deckId, now());
+    } catch (err) {
+      // A match this browser cannot plan (a member without a ticket) is not entered: back in the queue.
+      console.warn('Spellplane: the formed match could not be planned', err);
+      requeue();
+      return;
+    }
     moving = { phase: 'moving', link: { roomId: f.roomId, key: f.roomKey }, match: matchView(st, f.order, f.queue), plan };
     mode = 'moving';
+    arriveBy = now() + ARRIVE_MS;
+    // Until the match room reports otherwise, the first other member in seat order is the one missing.
+    arriveMissing = plan.seats.find((x) => x.peerId !== st.peerId)?.name ?? null;
     // The room is entered; the lobby is left once every member arrived, or after 10 s (matchmaking.md 2.6), so the
-    // last `ready` still reaches the others. The ticket and the waiting time stay in memory for the arrival rule.
+    // last `ready` still reaches the others. The ticket and the waiting time stay in memory for the arrival rule, and
+    // the tick keeps running for its deadline.
     lingerTimer = setTimeout(() => {
       lingerTimer = null;
       if (room === r) closeRoom();
+      if (mode === 'moving') startTimer();
       notify();
     }, LOBBY_LINGER_MS);
     notify();
@@ -412,19 +442,81 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     } catch (err) {
       console.warn('Spellplane: the match could not be saved', err);
     }
-    const hash = `#/t/${f.roomId}/${f.roomKey}`;
+    // Abandoned or stranded while the records were written: stay where the page is.
+    if (mode !== 'moving' || moving?.link.roomId !== f.roomId) return;
+    go(`#/t/${f.roomId}/${f.roomKey}`);
+  };
+
+  const go = (hash: string): void => {
     if (deps.navigate) deps.navigate(hash);
     else if (typeof location !== 'undefined') location.hash = hash;
   };
 
-  const onRoute = (hash: string): void => {
+  const roomOfRoute = (hash: string): string | null => {
     const m = /^#\/t\/([^/]+)\/([^/]+)/.exec(hash);
-    if (!m) return;
-    if (mode === 'moving' && moving && moving.link.roomId === decodeURIComponent(m[1]!)) return;
-    if (mode === 'off') return;
+    return m ? decodeURIComponent(m[1]!) : null;
+  };
+
+  const onRoute = (hash: string): void => {
+    const roomId = roomOfRoute(hash);
+    if (mode === 'moving' && moving) {
+      if (roomId === moving.link.roomId) return;
+      // Leaving the match's room before every member arrived abandons the match: void, not in History, search over.
+      abandon();
+      return;
+    }
+    if (roomId === null || mode === 'off') return;
     // Entering a networked room turns the matchmaker off (matchmaking.md 2.6).
     mm.cancel();
     off();
+  };
+
+  /** The match that is being moved to will not be played: its record is void and its History entry purged. */
+  const voidMatch = (roomId: string): void => {
+    void deps.matches
+      .get(roomId)
+      .then((r) => (r && r.state === 'formed' ? deps.matches.put({ ...r, state: 'void' }) : undefined))
+      .catch(() => undefined);
+    // A matched game that never started is not kept in History (journey.md 4.7).
+    void gamesStore()
+      .then((g) => g?.purge(roomId))
+      .catch(() => undefined);
+  };
+
+  const abandon = (): void => {
+    if (mode !== 'moving' || !moving) return;
+    voidMatch(moving.link.roomId);
+    pendingNotice = null;
+    off();
+  };
+
+  /** The arrival rule: back to seeking with the waiting time kept, off the room route (matchmaking.md 2.6). */
+  const strand = (roomId: string, missing: string | null): void => {
+    if (mode !== 'moving' || moving?.link.roomId !== roomId) return;
+    voidMatch(roomId);
+    pendingNotice = { text: MM_TEXT.unreachable(missing ?? 'Another player'), again: true };
+    moving = null;
+    arriveBy = null;
+    arriveMissing = null;
+    // Leave the room route (a pending join there ends); `onRoute` ignores it once the matchmaker is not moving.
+    const leaveRoute = !follow || typeof location === 'undefined' || roomOfRoute(location.hash) === roomId;
+    requeue();
+    if (leaveRoute) go('#/');
+  };
+
+  /** Back in the queue with the waiting time kept: a fresh lobby connection and the ticket again with a higher rev. */
+  const requeue = (): void => {
+    moving = null;
+    arriveBy = null;
+    closeRoom();
+    if (!config) {
+      off();
+      return;
+    }
+    mode = 'connecting';
+    config = { ...config, rev: config.rev + 1 };
+    notify();
+    void announce();
   };
 
   const off = (): void => {
@@ -432,6 +524,8 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     config = null;
     since = null;
     moving = null;
+    arriveBy = null;
+    arriveMissing = null;
     closeRoom();
     mode = 'off';
     notify();
@@ -468,7 +562,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       if (st && (st.phase === 'check' || st.phase === 'held' || st.phase === 'collecting' || st.phase === 'seeking') && config) return;
       config = { queues: c.queues.slice(0, 4), deckId: c.deckId, open: false, rev: 1 };
       since = null;
-      lastNotice = null;
+      pendingNotice = null;
       void deps.settings.set('lastQueue', c.queues[0]!).catch(() => undefined);
       void announce();
     },
@@ -478,7 +572,11 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       void announce();
     },
     cancel() {
-      if (mode === 'moving') return;
+      pendingNotice = null;
+      if (mode === 'moving') {
+        abandon();
+        return;
+      }
       config = null;
       since = null;
       room?.cancel();
@@ -512,6 +610,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     messages: () => [...log],
     arrived(roomId) {
       if (mode !== 'moving' || moving?.link.roomId !== roomId) return;
+      arriveBy = null;
       void deps.matches
         .get(roomId)
         .then((r) => (r && r.state === 'formed' ? deps.matches.put({ ...r, state: 'playing' }) : undefined))
@@ -519,23 +618,17 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       off();
     },
     stranded(roomId, missing) {
-      if (mode !== 'moving' || moving?.link.roomId !== roomId || !config) return;
-      void deps.matches
-        .get(roomId)
-        .then((r) => (r ? deps.matches.put({ ...r, state: 'void' }) : undefined))
-        .catch(() => undefined);
-      // A matched game that never started is not kept in History (journey.md 4.7).
-      void gamesStore()
-        .then((g) => g?.purge(roomId))
-        .catch(() => undefined);
-      lastNotice = MM_TEXT.unreachable(missing ?? 'Another player');
-      moving = null;
-      closeRoom();
-      mode = 'connecting';
-      config = { ...config, rev: config.rev + 1 };
-      void announce();
+      strand(roomId, missing ?? arriveMissing);
     },
-    notice: () => lastNotice,
+    reaching(roomId, missing) {
+      if (mode === 'moving' && moving?.link.roomId === roomId) arriveMissing = missing;
+    },
+    notice: () => pendingNotice?.text ?? null,
+    takeNotice() {
+      const n = pendingNotice;
+      pendingNotice = null;
+      return n;
+    },
     decks: () => deps.decks,
     matches: () => deps.matches,
     ratings: () => deps.ratings,

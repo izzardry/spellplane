@@ -182,6 +182,50 @@ describe('broker over a loopback lobby', () => {
     await until(() => a.checks.length === 1, 2_000, 'check with a valid hold');
   });
 
+  it('a transport that learns its id only on join (Trystero) still matches: the broker takes the id after the join', async () => {
+    const net = lobbyNet({ seed: 3 });
+    const a = seeker(net, 'ann', { tid: 'a9', lateId: true });
+    const b = seeker(net, 'ben', { tid: 'b9', lateId: true });
+    expect(a.room.state.tid).toBe('');
+    await expect(a.room.seek(draft([Q1]))).rejects.toThrow();
+    await joinAndSeek(a, draft([Q1]));
+    await joinAndSeek(b, draft([Q1]));
+    expect(a.room.state.tid).toBe('a9');
+    expect(a.room.state.ticket?.tid).toBe('a9');
+    await until(() => a.formed.length === 1 && b.formed.length === 1, 5_000, 'the match');
+    expect(a.formed[0]!.roomId).toBe(b.formed[0]!.roomId);
+  });
+
+  it('an early hold from a peer outside the offer never joins the room derivation', async () => {
+    const net = lobbyNet({ seed: 5, delay: { min: 5, max: 20 } });
+    const a = seeker(net, 'ann', { tid: 'a8' });
+    const b = seeker(net, 'ben', { tid: 'b8' });
+    await a.room.join();
+    await b.room.join();
+    // A third lobby member with a valid ticket (in another queue) predicts the match id and sends its own, validly
+    // signed hold for it to b8 before a8 and b8 even seek.
+    const raw = net.create('x8');
+    await raw.join('x', 'y');
+    await advance(100);
+    const unsigned = { v: 1 as const, tid: 'x8', peerId: 'p-x8', pubKey: 'pk-p-x8', ...draft(['ffa4.constructed.casual']) };
+    raw.send('ctl', { v: 1, t: 'seek', ticket: { ...unsigned, sig: `sig(pk-p-x8|${ticketText(unsigned)})` }, waitedMs: 0 } as unknown as Message);
+    await advance(100);
+    const mid = midOf(Q1, ['a8', 'b8'], 'a8', 1);
+    raw.send('ctl', { v: 1, t: 'hold', mid, nonce: 'X'.repeat(22), sig: `sig(pk-p-x8|spellplane-v1|hold|${mid}|x8|p-x8)` } as unknown as Message, 'b8');
+    await advance(100);
+    await a.room.seek(draft([Q1]));
+    await b.room.seek(draft([Q1]));
+    await until(() => a.formed.length === 1 && b.formed.length === 1, 5_000, 'the match');
+    const [fa, fb] = [a.formed[0]!, b.formed[0]!];
+    expect(fa.mid).toBe(mid);
+    expect(fb.mid).toBe(mid);
+    expect(fb.roomId).toBe(fa.roomId);
+    expect(fb.roomKey).toBe(fa.roomKey);
+    expect(fb.order).toEqual(fa.order);
+    expect([...fa.order].sort()).toEqual(['a8', 'b8']);
+    expect(Object.keys(fb.tickets).sort()).toEqual(['a8', 'b8']);
+  });
+
   it('two seekers 300 ms apart are matched within 7 s of each row boundary (no livelock after a window pass)', async () => {
     const cases: { boundary: number; band: 1 | 2 | 3 | 4 | 5; r: number }[] = [
       { boundary: 10_000, band: 4, r: 1500 },

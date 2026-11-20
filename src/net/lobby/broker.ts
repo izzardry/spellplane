@@ -297,7 +297,11 @@ class Stepper {
     const early = this.s.early[chosen.mid];
     delete this.s.early[chosen.mid];
     this.s.phase = 'held';
-    this.s.hold = { offer: chosen, nonces: { ...(early?.holds ?? {}) }, until: this.now + HOLD_TTL_MS };
+    // Only the offer's members' early holds count: a stray hold for a predictable match id never joins the room secret.
+    const isMember = (t: string): boolean => chosen.members.some((m) => m.tid === t);
+    const nonces: Record<string, string> = {};
+    for (const [t, n] of Object.entries(early?.holds ?? {})) if (isMember(t)) nonces[t] = n;
+    this.s.hold = { offer: chosen, nonces, until: this.now + HOLD_TTL_MS };
     if (early && early.ready.length > 0) this.s.early[chosen.mid] = { holds: {}, ready: early.ready };
     this.effects.push({ kind: 'hold', mid: chosen.mid, to: chosen.members.map((m) => m.tid).filter((t) => t !== this.s.tid) });
   }
@@ -329,12 +333,20 @@ class Stepper {
   maybeFormed(): void {
     const c = this.s.check;
     if (!c || !c.accepted || !c.offer.members.every((m) => c.ready.includes(m.tid))) return;
-    const room = deriveRoom(c.offer.mid, c.nonces);
+    // The room comes from the members' nonces only (2.5 Room derivation), whatever else a nonce map might hold.
+    const nonces: Record<string, string> = {};
+    for (const m of c.offer.members) nonces[m.tid] = c.nonces[m.tid]!;
     const tickets: Record<string, Ticket> = {};
     for (const m of c.offer.members) {
       const t = m.tid === this.s.tid ? this.s.ticket : this.s.peers[m.tid]?.ticket;
       if (t) tickets[m.tid] = t;
     }
+    if (Object.keys(tickets).length !== c.offer.members.length) {
+      // A member's ticket is gone (it stopped seeking): no match, back in the queue.
+      this.memberOut(c.offer.mid, 'stale');
+      return;
+    }
+    const room = deriveRoom(c.offer.mid, nonces);
     // A 2hg plan seats team 0 first (2.5 Room derivation), each team in derived order.
     let order = room.order;
     if (queueParts(c.offer.queue).format === '2hg') {

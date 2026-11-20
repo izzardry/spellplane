@@ -97,8 +97,10 @@ describe('the matchmaker service', () => {
     expect(await browsers[0]!.stores.games.get(m.link.roomId)).toMatchObject({ code: m.link.roomId, kind: 'matched' });
     a.mm.arrived(m.link.roomId);
     expect(a.mm.status()).toEqual({ phase: 'off' });
+    b.mm.arrived(m.link.roomId);
+    expect(b.mm.status()).toEqual({ phase: 'off' });
     // The lobby is left once arrived (or 10 s after the match formed).
-    expect(live().transports).toBe(1);
+    expect(live().transports).toBe(0);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(live().transports).toBe(0);
     expect(live().timers).toBe(0);
@@ -217,11 +219,80 @@ describe('the matchmaker service', () => {
     expect(a.mm.status().phase).toBe('moving');
     await vi.advanceTimersByTimeAsync(1_500);
     expect(strandedText).toBe('Ben could not be reached directly. Some networks do not allow it, and Spellplane uses no relay.');
-    await until(() => a.mm.status().phase === 'seeking', 3_000, 'seeking again');
-    expect((a.mm.status() as { since: number }).since).toBe(since);
+    // Back in the queue with the wait kept (both members were stranded, so they may already be matched again).
+    await until(() => a.statuses.slice(a.statuses.findIndex((x) => x.phase === 'moving')).some((x) => x.phase === 'seeking'), 3_000, 'seeking again');
+    const back = a.statuses.slice(a.statuses.findIndex((x) => x.phase === 'moving')).find((x) => x.phase === 'seeking');
+    expect((back as { since: number }).since).toBe(since);
     expect((await browsers[0]!.stores.matches.get(m.link.roomId))?.state).toBe('void');
-    // The lobby was left on moving and joined again only now: one lobby transport.
-    expect(live().transports).toBe(1);
+    // The lobby was left on moving and joined again only now: one lobby transport per page.
+    expect(live().transports).toBe(2);
+  });
+});
+
+async function toMoving(a: MmPage, b: MmPage): Promise<Extract<ReturnType<MmPage['mm']['status']>, { phase: 'moving' }>> {
+  a.mm.seek({ queues: [Q], deckId: 'd' });
+  b.mm.seek({ queues: [Q], deckId: 'd' });
+  await until(() => a.mm.status().phase === 'check' && b.mm.status().phase === 'check', 3_000, 'check');
+  a.mm.answer(true);
+  b.mm.answer(true);
+  await until(() => a.mm.status().phase === 'moving' && b.mm.status().phase === 'moving', 3_000, 'moving');
+  const m = a.mm.status();
+  if (m.phase !== 'moving') throw new Error('not moving');
+  return m;
+}
+
+describe('leaving moving (the matchmaker owns the arrival deadline)', () => {
+  it('without any table session (the creator never arrives) both members are back in seeking after 30 s, off the room route', async () => {
+    const { A, a, b } = await twoPages();
+    const m = await toMoving(a, b);
+    await until(() => a.hashes.length === 1 && b.hashes.length === 1, 2_000, 'both navigate to the room');
+    await vi.advanceTimersByTimeAsync(29_000);
+    expect(a.mm.status().phase).toBe('moving');
+    await vi.advanceTimersByTimeAsync(1_500);
+    for (const p of [a, b]) {
+      expect(p.mm.status().phase).not.toBe('moving');
+      expect(p.hashes).toEqual([`#/t/${m.link.roomId}/${m.link.key}`, '#/']);
+      expect(p.mm.takeNotice()).toMatchObject({ again: true });
+      // Taken once.
+      expect(p.mm.takeNotice()).toBeNull();
+    }
+    await until(() => [a, b].every((p) => p.phases.slice(p.phases.indexOf('moving')).includes('seeking')), 3_000, 'both seeking again');
+    expect((await A.stores.matches.get(m.link.roomId))?.state).toBe('void');
+  });
+
+  it('a route away from the match room while moving abandons it: void, off, no notice; seek works again', async () => {
+    const { A, a, b } = await twoPages();
+    const m = await toMoving(a, b);
+    a.mm.route(`#/t/${m.link.roomId}/${m.link.key}`);
+    expect(a.mm.status().phase).toBe('moving');
+    a.mm.route('#/');
+    expect(a.mm.status()).toEqual({ phase: 'off' });
+    await eventually(async () => (await A.stores.matches.get(m.link.roomId))?.state === 'void', 'void record');
+    expect(a.mm.takeNotice()).toBeNull();
+    a.mm.seek({ queues: [Q], deckId: 'd' });
+    console.log("PH", a.phases, b.phases, a.hashes);
+    await until(() => a.mm.status().phase === 'seeking', 3_000, 'seeking again');
+  });
+
+  it('CANCEL while moving abandons the match; it never stays in moving', async () => {
+    const { a, b } = await twoPages();
+    await toMoving(a, b);
+    b.mm.cancel();
+    expect(b.mm.status()).toEqual({ phase: 'off' });
+    expect(live().timers).toBe(1);
+  });
+
+  it('CANCEL clears a pending notice, so a later status shows no stale toast', async () => {
+    const { a, b } = await twoPages();
+    a.mm.seek({ queues: [Q], deckId: 'd' });
+    b.mm.seek({ queues: [Q], deckId: 'd' });
+    await until(() => a.mm.status().phase === 'check' && b.mm.status().phase === 'check', 3_000, 'check');
+    a.mm.answer(false);
+    await until(() => b.mm.status().phase === 'seeking', 3_000, 'Ben back to seeking');
+    expect(b.mm.notice()).toBe('Another player did not accept. Back in the queue.');
+    b.mm.cancel();
+    expect(b.mm.notice()).toBeNull();
+    expect(b.mm.takeNotice()).toBeNull();
   });
 });
 

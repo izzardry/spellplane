@@ -3,14 +3,15 @@
   every shell screen (and by the frame over a solo table). In phase `check` it shows the match-found card, asks for the
   matchFound chime once per match (`chime`; the debug hook counts it) and sets the tab title to `Match found ·
   Spellplane` until the check ends. After a declined, missed or unreachable match it shows the matchmaker's notice as a
-  kit toast. The countdown steps once a second, never per frame. M8-P7.
+  kit toast, taken once: on the next status outside the check and the move, also when the host mounts after it was set
+  (a stranded match is decided while a table route shows, where the shell's host is not mounted). The countdown steps once a second, never per frame. M8-P7.
 -->
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
   import type { Matchmaker, MatchmakerStatus } from '../../session/types';
   import { toasts } from '../design/toasts';
   import MatchFound from './MatchFound.svelte';
-  import { MATCH_FOUND_TITLE, mmNow, noticeOf, ringChime, searchAgain } from './mm-view';
+  import { MATCH_FOUND_TITLE, mmNow, ringChime, searchAgain, takeNoticeOf } from './mm-view';
 
   let { matchmaker, chime = undefined }: { matchmaker: Matchmaker; chime?: (() => void) | undefined } = $props();
 
@@ -21,7 +22,6 @@
   let ticker: ReturnType<typeof setInterval> | null = null;
 
   const off = untrack(() => matchmaker).subscribe((s) => {
-    const was = status.phase;
     status = s;
     now = mmNow(matchmaker);
     if (s.phase === 'check') {
@@ -40,13 +40,11 @@
     savedTitle = null;
     if (ticker !== null) clearInterval(ticker);
     ticker = null;
-    const back = s.phase === 'connecting' || s.phase === 'seeking' || s.phase === 'watching' || s.phase === 'off';
-    if ((was === 'check' && back) || (was === 'moving' && (s.phase === 'connecting' || s.phase === 'seeking'))) {
-      const text = noticeOf(matchmaker);
-      if (!text) return;
-      if (was === 'moving') toasts.info(text, { label: 'SEARCH AGAIN', run: () => searchAgain(matchmaker) });
-      else toasts.info(text);
-    }
+    if (s.phase === 'moving') return;
+    const n = takeNoticeOf(matchmaker);
+    if (!n) return;
+    if (n.again) toasts.info(n.text, { label: 'SEARCH AGAIN', run: () => searchAgain(matchmaker) });
+    else toasts.info(n.text);
   });
 
   onDestroy(() => {

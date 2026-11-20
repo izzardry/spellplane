@@ -7,7 +7,8 @@ import { vi } from 'vitest';
 import type { Band, QueueId } from '../../../src/core/types';
 import type { BrokerEffect, FormedMatch } from '../../../src/net/lobby/broker';
 import { LobbyRoom, type TicketDraft } from '../../../src/net/lobby/room';
-import { LoopbackNetwork, type LoopbackOptions } from '../../../src/net/loopback';
+import { LoopbackNetwork, type LoopbackOptions, type LoopbackTransport } from '../../../src/net/loopback';
+import type { Transport } from '../../../src/net/transport';
 import { mulberry32 } from '../../../src/util/prng';
 import { fakeNetIdentity } from '../net/fake-identity';
 
@@ -29,7 +30,30 @@ export function lobbyNet(options: LoopbackOptions = {}): LoopbackNetwork {
 }
 
 let counter = 0;
-export function makeSeeker(net: LoopbackNetwork, name: string, opts: { answer?: boolean | null; tid?: string; seed?: number } = {}): Seeker {
+/**
+ * A transport shaped like Trystero's: its `selfId` is '' until `join` resolved (TrysteroTransport learns it only when
+ * the library has loaded on join).
+ */
+export function lateIdTransport(t: LoopbackTransport): Transport {
+  let joined = false;
+  return {
+    get selfId(): string {
+      return joined ? t.selfId : '';
+    },
+    async join(roomId: string, roomKey: string): Promise<void> {
+      await Promise.resolve();
+      await t.join(roomId, roomKey);
+      joined = true;
+    },
+    leave: () => t.leave(),
+    peers: () => t.peers(),
+    send: (channel, msg, to) => t.send(channel, msg, to),
+    on: (channel, handler) => t.on(channel, handler),
+    onPeer: (handler) => t.onPeer(handler),
+  };
+}
+
+export function makeSeeker(net: LoopbackNetwork, name: string, opts: { answer?: boolean | null; tid?: string; seed?: number; lateId?: boolean } = {}): Seeker {
   const tid = opts.tid ?? `${name}-${++counter}`;
   const rand = mulberry32(opts.seed ?? counter * 7919);
   const s: Seeker = {
@@ -42,7 +66,7 @@ export function makeSeeker(net: LoopbackNetwork, name: string, opts: { answer?: 
     room: undefined as unknown as LobbyRoom,
   };
   s.room = new LobbyRoom({
-    transport: net.create(tid),
+    transport: opts.lateId ? lateIdTransport(net.create(tid)) : net.create(tid),
     identity: fakeNetIdentity(`p-${tid}`, name),
     now: () => Date.now(),
     random: (n) => Uint8Array.from({ length: n }, () => Math.floor(rand() * 256)),

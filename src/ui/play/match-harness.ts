@@ -14,7 +14,11 @@ import MatchHarness from './MatchHarness.svelte';
 
 export interface MatchHarnessApi {
   /** Set the fake status: `seeking` (with `waitedMs`, `alone`), `check` (with `secondsLeft`, `accepted`, `mine`), or any other phase. */
-  set(phase: MatchmakerStatus['phase'], o?: { waitedMs?: number; alone?: boolean; secondsLeft?: number; accepted?: string[]; mine?: boolean; queue?: QueueId; looking?: number; notice?: string | null }): void;
+  set(phase: MatchmakerStatus['phase'], o?: { waitedMs?: number; alone?: boolean; secondsLeft?: number; accepted?: string[]; mine?: boolean; queue?: QueueId; looking?: number; notice?: string | null; again?: boolean }): void;
+  /** Unmount the page's match host (as on a table route), or mount it again. */
+  host(on: boolean): void;
+  /** SEARCH AGAIN presses. */
+  searches(): number;
   /** Move the fake clock. */
   advance(ms: number): void;
   answers(): boolean[];
@@ -51,8 +55,9 @@ export function mount(target: HTMLElement): void {
   const emit = (): void => {
     for (const l of listeners) l(status);
   };
-  let notice: string | null = null;
-  const fake: Matchmaker & { now(): number; notice(): string | null } = {
+  let notice: { text: string; again: boolean } | null = null;
+  let searches = 0;
+  const fake: Matchmaker & { now(): number; notice(): string | null; takeNotice(): { text: string; again: boolean } | null; searchAgain(): void } = {
     status: () => status,
     subscribe(l) {
       listeners.add(l);
@@ -79,12 +84,18 @@ export function mount(target: HTMLElement): void {
     avoid: () => Promise.resolve(),
     dispose: () => undefined,
     now: () => now,
-    notice: () => notice,
+    notice: () => notice?.text ?? null,
+    takeNotice() {
+      const n = notice;
+      notice = null;
+      return n;
+    },
+    searchAgain: () => void searches++,
   };
   const api: MatchHarnessApi = {
     set(phase, o = {}) {
       const queue = o.queue ?? '1v1.constructed.ranked';
-      notice = o.notice ?? null;
+      notice = o.notice ? { text: o.notice, again: o.again ?? false } : null;
       const looking = o.looking ?? 0;
       if (phase === 'seeking') {
         status = { phase, lobby: lobby(looking, queue), since: now - (o.waitedMs ?? 0), window: { rating: 100, band: 0 }, alone: o.alone ?? false, deckId: 'deck-1', queues: [queue] };
@@ -118,13 +129,20 @@ export function mount(target: HTMLElement): void {
     homes: () => homes,
     chimes: () => chimes,
     title: () => document.title,
+    host(on) {
+      if (on && !app) app = mountSvelte(MatchHarness, { target, props });
+      else if (!on && app) {
+        void unmount(app);
+        app = null;
+      }
+    },
+    searches: () => searches,
   };
   window.__matchHarness = api;
   document.title = 'Spellplane';
   // The Plain look on the page, as the app shell sets it.
   for (const [k, v] of Object.entries(lookCssVars(plain, 'plain'))) document.documentElement.style.setProperty(k, v);
   document.documentElement.dataset.look = 'plain';
-  const app = mountSvelte(MatchHarness, { target, props: { matchmaker: fake, onhome: () => homes++, chime: () => chimes++ } });
-  void app;
-  void unmount;
+  const props = { matchmaker: fake, onhome: () => homes++, chime: () => chimes++ };
+  let app: ReturnType<typeof mountSvelte> | null = mountSvelte(MatchHarness, { target, props });
 }

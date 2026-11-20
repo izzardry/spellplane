@@ -5,9 +5,9 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 
-type Opts = { waitedMs?: number; alone?: boolean; secondsLeft?: number; accepted?: string[]; mine?: boolean; queue?: string; looking?: number; notice?: string | null };
+type Opts = { waitedMs?: number; alone?: boolean; secondsLeft?: number; accepted?: string[]; mine?: boolean; queue?: string; looking?: number; notice?: string | null; again?: boolean };
 const set = (page: Page, phase: string, o: Opts = {}) => page.evaluate(([p, x]) => window.__matchHarness!.set(p as never, x as never), [phase, o] as const);
-const api = <T,>(page: Page, fn: 'answers' | 'cancels' | 'homes' | 'chimes' | 'title') => page.evaluate((f) => window.__matchHarness![f]() as unknown, fn) as Promise<T>;
+const api = <T,>(page: Page, fn: 'answers' | 'cancels' | 'homes' | 'chimes' | 'title' | 'searches') => page.evaluate((f) => window.__matchHarness![f]() as unknown, fn) as Promise<T>;
 
 test.beforeEach(async ({ page }) => {
   const errors: string[] = [];
@@ -100,6 +100,15 @@ test('match found: seats with rating in ranked, the countdown, Enter accepts, Es
   });
 });
 
+test('Enter on a focused DECLINE declines; it never accepts', async ({ page }) => {
+  await set(page, 'check');
+  await expect(page.getByTestId('match-found')).toBeVisible();
+  await page.getByTestId('match-decline').focus();
+  await page.keyboard.press('Enter');
+  expect(await api<boolean[]>(page, 'answers')).toEqual([false]);
+  await expect(page.getByTestId('match-found')).toHaveCount(0);
+});
+
 test('ACCEPT and DECLINE by pointer; a notice after a match that fell through', async ({ page }) => {
   await set(page, 'check', { queue: 'ffa4.limited.casual' });
   await expect(page.getByTestId('match-found-queue')).toHaveText('4 FREE-FOR-ALL CASUAL · BOOSTER DECKS');
@@ -115,4 +124,21 @@ test('ACCEPT and DECLINE by pointer; a notice after a match that fell through', 
   expect(await api<boolean[]>(page, 'answers')).toEqual([false, true]);
   await set(page, 'seeking', { notice: 'Ben did not accept. Back in the queue.' });
   await expect(page.getByTestId('toast')).toContainText('Ben did not accept. Back in the queue.');
+});
+
+test('a notice set while the host was away (a table route) shows once when it mounts, with SEARCH AGAIN', async ({ page }) => {
+  const text = 'Ben could not be reached directly. Some networks do not allow it, and Spellplane uses no relay.';
+  await page.evaluate(() => window.__matchHarness!.host(false));
+  await set(page, 'seeking', { notice: text, again: true });
+  await page.evaluate(() => window.__matchHarness!.host(true));
+  const toast = page.getByTestId('toast');
+  await expect(toast).toContainText(text);
+  await toast.getByRole('button', { name: 'SEARCH AGAIN' }).click();
+  expect(await api<number>(page, 'searches')).toBe(1);
+  // Taken once: the next status shows no second toast.
+  const shown = page.getByTestId('toast').filter({ hasText: text });
+  const before = await shown.count();
+  expect(before).toBeLessThanOrEqual(1);
+  await page.evaluate(() => window.__matchHarness!.advance(1_000));
+  await expect(shown).toHaveCount(before);
 });

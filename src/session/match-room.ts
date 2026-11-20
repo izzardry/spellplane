@@ -26,6 +26,8 @@ export const ARRIVE_MS = 30_000;
 export interface MatchRoomMatchmaker {
   arrived(roomId: string): void;
   stranded(roomId: string, missing: string | null): void;
+  /** Which member this room still misses (the matchmaker's own arrival deadline names it). */
+  reaching?(roomId: string, missing: string | null): void;
 }
 
 let pageMatchmaker: MatchRoomMatchmaker | null = null;
@@ -140,11 +142,12 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
   const checkArrival = (): void => {
     if (arrived || stopped) return;
     const peers = connectedPeers(session);
-    if (others.every((s) => peers.has(s.peerId))) {
+    const missing = others.find((s) => !peers.has(s.peerId));
+    if (!missing) {
       arrived = true;
       clearTimeout(timer);
       mm?.arrived(record.roomId);
-    }
+    } else mm?.reaching?.(record.roomId, missing.name);
   };
   const timer = setTimeout(() => {
     if (stopped || arrived) return;
@@ -305,6 +308,11 @@ export async function applyRatedResult(o: { state: TableState; roomId: string; m
     }
     const seatOf = (peerId: string): SeatId | null => Object.values(o.state.seats).find((s) => s.peer === peerId)?.id ?? null;
     const seats = record.players.map((p) => seatOf(p.peerId));
+    // A player whose peer holds no seat any more (taken over by an invitee) is not counted, never read as no take-over.
+    if (seats.some((x) => x === null)) {
+      if (record.state !== 'finished') await o.matches.put({ ...record, state: 'finished' });
+      return null;
+    }
     const winnerIdx = seats.findIndex((s) => s !== null && result.winners.includes(s));
     const mineIdx = record.players.findIndex((p) => p.peerId === o.me);
     if (winnerIdx < 0 || mineIdx < 0) return null;
@@ -325,9 +333,11 @@ export async function applyRatedResult(o: { state: TableState; roomId: string; m
     const stored = (await o.ratings.get(key)) ?? freshRating(key, now);
     const change = { before: stored.rating, after: Math.max(100, stored.rating + own.delta), delta: 0 };
     change.delta = change.after - change.before;
-    await o.ratings.put(applyRating(stored, change, mineIdx === winnerIdx, now));
+    // The record says `rated` first: a failure before the rating is stored loses this one change rather than applying it
+    // twice on the next try.
     const next: MatchRecord = { ...record, state: 'finished', rated: { key, before: change.before, after: change.after }, delta: change.delta };
     await o.matches.put(next);
+    await o.ratings.put(applyRating(stored, change, mineIdx === winnerIdx, now));
     return next;
   } finally {
     applying.delete(key0);

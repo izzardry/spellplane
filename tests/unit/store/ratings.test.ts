@@ -103,6 +103,27 @@ describe('applyRatedResult', () => {
     }
   });
 
+  it('a record player whose peer holds no seat any more is not counted (never read as no take-over)', async () => {
+    const s = await stores();
+    await s.matches.put(record('1v1.constructed.ranked'));
+    const st = ended('s0');
+    const gone = { ...st, seats: { ...st.seats, s1: { ...st.seats.s1!, peer: 'peer-invitee' } } } as TableState;
+    expect(await applyRatedResult({ state: gone, roomId: 'amber-fox-93', me: 'peer-a', ratings: s.ratings, matches: s.matches })).toBeNull();
+    expect(await s.ratings.get('1v1.constructed')).toBeNull();
+    expect((await s.matches.get('amber-fox-93'))?.state).toBe('finished');
+  });
+
+  it('the match record is marked rated before the rating is stored: a failed rating write never applies twice', async () => {
+    const s = await stores();
+    await s.matches.put(record('1v1.constructed.ranked'));
+    const failing = { ...s.ratings, get: s.ratings.get.bind(s.ratings), put: () => Promise.reject(new Error('quota')) };
+    await expect(applyRatedResult({ state: ended('s0'), roomId: 'amber-fox-93', me: 'peer-a', ratings: failing, matches: s.matches })).rejects.toThrow('quota');
+    expect((await s.matches.get('amber-fox-93'))?.rated).toBeDefined();
+    // The retry finds the record rated and changes nothing.
+    expect(await applyRatedResult({ state: ended('s0'), roomId: 'amber-fox-93', me: 'peer-a', ratings: s.ratings, matches: s.matches })).toBeNull();
+    expect(await s.ratings.get('1v1.constructed')).toBeNull();
+  });
+
   it('a game without a result or without a MatchRecord is left alone', async () => {
     const s = await stores();
     expect(await applyRatedResult({ state: { ...ended('s0'), result: undefined } as TableState, roomId: 'amber-fox-93', me: 'peer-a', ratings: s.ratings, matches: s.matches })).toBeNull();

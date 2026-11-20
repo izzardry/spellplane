@@ -206,6 +206,38 @@ test.describe('quick match over a local lobby', () => {
     });
   });
 
+  test('B closes right after accepting: after 30 s A is off the room, back in the queue with its wait kept; the match is void', async ({ page }) => {
+    test.setTimeout(120_000);
+    const [a, b] = await openPages(page, 2, 'mmx');
+    let sinceA = 0;
+    let room = '';
+    await test.step('both accept; B closes its page once A moves to the room', async () => {
+      await seek(a!, deckRecord('deck-ann', 'Ann Selesnya', 'gw-m19-60.txt'));
+      await expect.poll(() => phase(a!)).toBe('seeking');
+      sinceA = (await status(a!)).since!;
+      await seek(b!, deckRecord('deck-ben', 'Ben Izzet', 'ur-m19-60.mtga.txt'));
+      await expect(a!.getByTestId('match-found')).toBeVisible({ timeout: 3_000 });
+      await expect(b!.getByTestId('match-found')).toBeVisible({ timeout: 3_000 });
+      await a!.getByTestId('match-accept').click();
+      await b!.getByTestId('match-accept').click();
+      await expect.poll(() => phase(a!), { timeout: 5_000 }).toBe('moving');
+      room = (await status(a!)).link!.roomId;
+      await b!.close();
+      await expect.poll(() => a!.evaluate(() => location.hash), { timeout: 10_000 }).toContain(`#/t/${room}/`);
+    });
+    await test.step('the arrival deadline on the matchmaker clock: off the room route, the notice with SEARCH AGAIN', async () => {
+      await tick(a!, 29_000);
+      expect(await phase(a!)).toBe('moving');
+      await tick(a!, 1_500);
+      await expect.poll(() => a!.evaluate(() => location.hash), { timeout: 10_000 }).not.toContain(room);
+      await expect(a!.getByTestId('toast')).toContainText('could not be reached directly', { timeout: 10_000 });
+      await expect(a!.getByTestId('toast').getByRole('button', { name: 'SEARCH AGAIN' })).toBeVisible();
+      await expect.poll(() => phase(a!), { timeout: 10_000 }).toBe('seeking');
+      expect((await status(a!)).since).toBe(sinceA);
+      await expect.poll(async () => ((await a!.evaluate(() => window.__spellplane!.mm!.matches!())) as MatchRecord[]).find((m) => m.roomId === room)?.state).toBe('void');
+    });
+  });
+
   test('four pages form one ffa4 match: four distinct seats, one room for all', async ({ page }) => {
     test.setTimeout(120_000);
     const pages = await openPages(page, 4, 'mm4');

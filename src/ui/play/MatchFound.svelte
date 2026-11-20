@@ -24,6 +24,9 @@
   let card: HTMLElement | null = $state(null);
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === 'Enter' && !status.mine) {
+      // Enter on another control (DECLINE, a link) keeps that control's own meaning.
+      const t = e.target instanceof Element ? e.target : null;
+      if (t && t.closest('button, a, input, select, textarea, [role="button"]') && t.closest('[data-testid="match-accept"]') === null) return;
       e.preventDefault();
       onanswer(true);
     }

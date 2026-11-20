@@ -2,9 +2,10 @@
  * M8-P7 property over whole matchmakers (PLAN Milestone 8, M8-P7 Sim; contracts.md Part G "Matchmaking" item 2): 2 to
  * 12 pages seek over a loopback lobby with seeded delay, drop and reordering, accept every match, and enter the game
  * room. Some pairs of browsers cannot reach each other (no relay): a member of a match with such a pair is not connected
- * to every other member, so after 30 s it is back in `seeking` with its waiting time kept. Asserted: nobody is ever in
- * two matches or two rooms at once, every member of a room agrees on its member list, and a stranded member keeps its
- * original waiting time.
+ * to every other member, so after 30 s it is back in `seeking` with its waiting time kept: the matchmaker's own arrival
+ * deadline does that (the test only reports `arrived` for a member that reaches everyone, as the match room does).
+ * Asserted: nobody is ever in two matches or two rooms at once, every member of a room agrees on its member list, a
+ * member never stays in `moving` past the deadline, and a stranded member keeps its original waiting time.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fc from 'fast-check';
@@ -82,10 +83,19 @@ describe('matchmakers with the 30-second arrival rule (property)', () => {
                 }
               }
             }
-            // A member arrives once every other member of its room is in that room and reachable; else it is stranded at 30 s.
+            // A member arrives once every other member of its room is in that room and reachable; else the matchmaker
+            // strands it at 30 s by itself.
             for (const [i, e] of enteredAt) {
               const { p, b } = run[i]!;
               if (inRoom.get(i) !== e.room) continue;
+              const now = p.mm.status();
+              if (now.phase !== 'moving' || now.link.roomId !== e.room) {
+                // Stranded by the matchmaker: it left the room.
+                if (Date.now() - e.at < ARRIVE_MS - 1_000) errors.push(`P${i} left ${e.room} before the deadline`);
+                inRoom.delete(i);
+                enteredAt.delete(i);
+                continue;
+              }
               const others = e.peers.filter((x) => x !== b.peerId);
               const here = others.every((peer) => {
                 const j = run.findIndex((r) => r.b.peerId === peer);
@@ -97,10 +107,8 @@ describe('matchmakers with the 30-second arrival rule (property)', () => {
                 if (!list.includes(e.room)) list.push(e.room);
                 arrivedRooms.set(i, list);
                 enteredAt.delete(i);
-              } else if (Date.now() - e.at >= ARRIVE_MS) {
-                const missing = others.find((peer) => !reach(b.peerId, peer)) ?? null;
-                p.mm.stranded(e.room, missing);
-                inRoom.delete(i);
+              } else if (Date.now() - e.at > ARRIVE_MS + 1_000) {
+                errors.push(`P${i} still moving to ${e.room} past the arrival deadline`);
                 enteredAt.delete(i);
               }
             }
@@ -152,8 +160,12 @@ describe('matchmakers with the 30-second arrival rule (property)', () => {
     for (let t = 0; t < 5_000 && a.mm.status().phase !== 'moving'; t += 50) await vi.advanceTimersByTimeAsync(50);
     const m = a.mm.status() as Moving;
     expect(m.phase).toBe('moving');
-    await vi.advanceTimersByTimeAsync(ARRIVE_MS);
-    a.mm.stranded(m.link.roomId, 'Ben');
+    // Nobody reports an arrival: the matchmaker's own deadline strands it (no table session needed).
+    await vi.advanceTimersByTimeAsync(ARRIVE_MS - 1_000);
+    expect(a.mm.status().phase).toBe('moving');
+    await vi.advanceTimersByTimeAsync(1_500);
+    expect(a.mm.status().phase).not.toBe('moving');
+    expect(a.hashes[a.hashes.length - 1]).toBe('#/');
     expect(a.mm.notice()).toBe('Ben could not be reached directly. Some networks do not allow it, and Spellplane uses no relay.');
     for (let t = 0; t < 3_000 && a.mm.status().phase !== 'seeking'; t += 50) await vi.advanceTimersByTimeAsync(50);
     expect(a.mm.status()).toMatchObject({ phase: 'seeking', since });

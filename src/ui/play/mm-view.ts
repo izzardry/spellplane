@@ -49,10 +49,13 @@ export function chimeCount(): number {
   return chimes;
 }
 
-/** The matchmaker's last short notice (a declined, missed or unreachable match), when it has one. */
-export function noticeOf(mm: Matchmaker): string | null {
-  const n = (mm as Matchmaker & { notice?: () => string | null }).notice;
-  return typeof n === 'function' ? n.call(mm) : null;
+/**
+ * Take the matchmaker's pending short notice (a declined, missed or unreachable match) once: shown on the next status
+ * outside the ready check and the move, whether the host was mounted when it was set or mounts later.
+ */
+export function takeNoticeOf(mm: Matchmaker): { text: string; again: boolean } | null {
+  const c = mm as Matchmaker & { takeNotice?: () => { text: string; again: boolean } | null };
+  return typeof c.takeNotice === 'function' ? c.takeNotice() : null;
 }
 
 /** `SEARCH AGAIN` after a match that could not be reached: the search resumes if it is not running already. */

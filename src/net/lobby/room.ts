@@ -60,6 +60,8 @@ export class LobbyRoom {
   private readonly connected = new Set<string>();
   private lastBeat = -Infinity;
   private joined = false;
+  /** The transport finished joining: its `selfId` is known (Trystero learns it only on join). */
+  private ready = false;
   private closed = false;
   private chain: Promise<void> = Promise.resolve();
 
@@ -77,6 +79,10 @@ export class LobbyRoom {
     if (this.joined || this.closed) return;
     this.joined = true;
     await this.o.transport.join(lobbyRoomId(this.o.realm ?? LOBBY_REALM, 0), LOBBY_KEY);
+    // Trystero's transport id exists only once joined: the broker judges tickets and offers by it.
+    this.state = { ...this.state, tid: this.o.transport.selfId };
+    this.ready = true;
+    if (this.closed) return;
     for (const p of this.o.transport.peers()) this.onPeer('join', p);
     this.beat();
   }
@@ -97,15 +103,20 @@ export class LobbyRoom {
     return this.closed;
   }
 
-  /** Sign and announce a ticket (a new search, or a changed one with a higher rev). `waitedMs` counts for a new search. */
-  async seek(draft: TicketDraft, waitedMs = 0): Promise<Ticket> {
+  /**
+   * Sign and announce a ticket (a new search, or a changed one with a higher rev). `waitedMs` counts for a new search;
+   * `since` (the search's start on this room's clock) wins over it, measured after signing so a kept wait stays exact.
+   */
+  async seek(draft: TicketDraft, waitedMs = 0, since?: number): Promise<Ticket> {
+    if (!this.ready) throw new Error('LobbyRoom.seek before the lobby was joined');
     const id = this.o.identity;
     const unsigned: Omit<Ticket, 'sig'> = { v: 1, tid: this.tid, peerId: id.peerId, pubKey: id.pubKey, ...draft };
     const sig = await id.sign(ticketText(unsigned));
     const ticket: Ticket = { ...unsigned, sig };
     if (this.closed) return ticket;
     this.state = { ...this.state, proto: ticket.proto };
-    this.apply({ kind: 'seek', now: this.o.now(), ticket, waitedMs });
+    const at = this.o.now();
+    this.apply({ kind: 'seek', now: at, ticket, waitedMs: since === undefined ? waitedMs : Math.max(0, at - since) });
     this.out(undefined, { v: 1, t: 'seek', ticket, waitedMs: waitedOf(this.state, this.o.now()) });
     this.beat();
     return ticket;
