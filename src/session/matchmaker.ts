@@ -140,6 +140,8 @@ export interface MatchmakerControl extends Matchmaker {
   decks(): DeckStore;
   /** The formed matches of this profile (debug hook). */
   matches(): MatchStore;
+  /** This profile's ratings (debug hook). */
+  ratings(): RatingStore;
   /** The page went to `hash` (the hashchange listener calls it): a networked room that is not the match's turns it off. */
   route(hash: string): void;
 }
@@ -521,6 +523,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     notice: () => lastNotice,
     decks: () => deps.decks,
     matches: () => deps.matches,
+    ratings: () => deps.ratings,
     route: onRoute,
     searchAgain() {
       if (!config || mode === 'moving') return;

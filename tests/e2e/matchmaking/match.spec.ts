@@ -9,7 +9,8 @@ import { expect, test, type Page } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
 import { stateHash } from '../../../src/core/hash';
-import type { TableState } from '../../../src/core/types';
+import type { MatchRecord, TableState } from '../../../src/core/types';
+import { ratingChanges } from '../../../src/net/lobby/rating';
 import type { DeckRecord } from '../../../src/store/types';
 import { openHome } from '../helpers/app';
 import { fixturesScript } from '../offline/helpers';
@@ -167,6 +168,41 @@ test.describe('quick match over a local lobby', () => {
         const games = (await p.evaluate(() => window.__spellplane!.games!.list())) as { code: string; kind: string }[];
         expect(games.find((g) => g.code === code)).toMatchObject({ kind: 'matched' });
       }
+    });
+  });
+
+  test('ranked 1v1 ended by a concession: both ratings change once, by opposite amounts from the frozen record', async ({ page }) => {
+    test.setTimeout(120_000);
+    const [a, b] = await openPages(page, 2, 'mmr');
+    const Q = '1v1.constructed.ranked';
+    await test.step('both seek ranked 1v1 and accept', async () => {
+      await seek(a!, deckRecord('deck-ann', 'Ann Selesnya', 'gw-m19-60.txt'), Q);
+      await seek(b!, deckRecord('deck-ben', 'Ben Izzet', 'ur-m19-60.mtga.txt'), Q);
+      await expect(a!.getByTestId('match-found-rating')).toHaveText(['1500', '1500'], { timeout: 3_000 });
+      await a!.getByTestId('match-accept').click();
+      await b!.getByTestId('match-accept').click();
+      await expectSeated([a!, b!], 2);
+    });
+    await test.step('B concedes: A wins; each browser applies the change once', async () => {
+      await b!.evaluate(() => window.__spellplane!.dispatch!({ type: 'concede' } as never));
+      for (const p of [a!, b!]) await expect.poll(async () => (await state(p)).result?.reason).toBe('concede');
+      const record = ((await a!.evaluate(() => window.__spellplane!.mm!.matches!())) as MatchRecord[])[0]!;
+      // The winner's seat is A's (B conceded); its index in the frozen record picks the expected change.
+      const st = await state(a!);
+      const winnerPeer = st.seats[st.result!.winners[0]!]!.peer;
+      const winner = record.players.findIndex((p) => p.peerId === winnerPeer) as 0 | 1;
+      const expected = ratingChanges(record.players.map((p, i) => ({ rating: p.rating, games: p.games, band: p.band, side: i as 0 | 1 })), winner)!;
+      const mineA = winner;
+      const after = (p: Page) => p.evaluate(() => window.__spellplane!.mm!.rating!('1v1.constructed')) as Promise<{ rating: number; games: number } | null>;
+      await expect.poll(async () => (await after(a!))?.rating, { timeout: 10_000 }).toBe(expected[mineA]!.after);
+      await expect.poll(async () => (await after(b!))?.rating, { timeout: 10_000 }).toBe(expected[1 - mineA]!.after);
+      const ra = (await after(a!))!;
+      const rb = (await after(b!))!;
+      expect(ra.rating - 1500).toBe(-(rb.rating - 1500));
+      expect(ra.rating).toBeGreaterThan(1500);
+      expect([ra.games, rb.games]).toEqual([1, 1]);
+      const rated = ((await a!.evaluate(() => window.__spellplane!.mm!.matches!())) as MatchRecord[])[0]!.rated;
+      expect(rated).toEqual({ key: '1v1.constructed', before: 1500, after: ra.rating });
     });
   });
 

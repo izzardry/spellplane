@@ -50,6 +50,7 @@ export function registerMmDebug(mm: Matchmaker | null | undefined, deps: { decks
     chimes: () => chimeCount(),
     notice: () => c.notice?.() ?? null,
     matches: async () => (c.matches ? c.matches().list() : []),
+    rating: async (key) => (c.ratings ? c.ratings().get(key) : null),
   };
   registerDebug({ mm: api });
 }
