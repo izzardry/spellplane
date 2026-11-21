@@ -110,9 +110,9 @@ export type HudMenuId =
   | 'keys'
   | 'settings';
 
-export type HudMenuGroupId = 'game' | 'deck' | 'table' | 'view' | 'voice' | 'help';
+export type HudMenuGroupId = 'game' | 'tools' | 'deck' | 'table' | 'view' | 'voice' | 'help';
 
-/** The Menu's groups in order (docs/design/m7-hud-proposal.md: Game, Deck, Table, View, Voice, Help). */
+/** The Menu's groups in order (docs/design/m7-hud-proposal.md: Game, Deck, Table, View, Voice, Help; Tokens and dice split from Game). */
 export const HUD_MENU: readonly { id: HudMenuGroupId; label: string; items: readonly HudMenuSpec[] }[] = [
   {
     id: 'game',
@@ -122,11 +122,18 @@ export const HUD_MENU: readonly { id: HudMenuGroupId; label: string; items: read
       { id: 'mulligan', label: 'Mulligan', icon: 'shuffle', action: 'mulligan', testid: 'menu-mulligan' },
       { id: 'shuffle', label: 'Shuffle library', icon: 'shuffle', action: 'shuffle', testid: 'menu-shuffle' },
       { id: 'untapAll', label: 'Untap all', icon: 'untap', action: 'untapAll', testid: 'menu-untap-all' },
+      { id: 'tidy', label: 'Tidy my side', icon: 'tidy', action: 'tidy', testid: 'menu-tidy' },
+    ],
+  },
+  // Gate M8 finding N10 (visual.md O-7: at most seven rows a group): the table's extras leave Game for their own group.
+  {
+    id: 'tools',
+    label: 'Tokens and dice',
+    items: [
       { id: 'token', label: 'Create token…', icon: 'token', action: 'token', testid: 'open-token' },
       { id: 'clip', label: 'Paperclip (drag onto cards)', icon: 'clip', testid: 'clip-tray' },
       { id: 'rollDie', label: 'Roll a die', icon: 'die', action: 'rollDie', testid: 'menu-roll-die' },
       { id: 'flipCoin', label: 'Flip a coin', icon: 'coin', action: 'flipCoin', testid: 'menu-flip-coin' },
-      { id: 'tidy', label: 'Tidy my side', icon: 'tidy', action: 'tidy', testid: 'menu-tidy' },
       { id: 'ask', label: 'Ask the table…', icon: 'ask', action: 'ask', testid: 'menu-ask' },
     ],
   },

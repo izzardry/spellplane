@@ -305,7 +305,7 @@
     box-sizing: border-box;
   }
   .plate.compact {
-    gap: var(--ds-space-sm);
+    gap: var(--ds-space-xs);
     padding: var(--ds-space-xs) var(--ds-space-sm) var(--ds-space-xs) var(--ds-space-xs);
   }
   /* The active player's plate: a heavier edge in the seat colour and "turn" told by the tracker. */
@@ -383,6 +383,10 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 10em;
+  }
+  /* A compact plate (a table of three or more) keeps a long name to 8 em, so a side plate fits beside the table. */
+  .compact .name {
+    max-width: 8em;
   }
   .goto {
     background: none;

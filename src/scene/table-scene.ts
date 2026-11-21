@@ -743,7 +743,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     shownMarksKey = [...shown].sort().join('|');
     const angle = viewerAngle(state, layout, viewerSeat);
     const names: string[] = [];
-    if (state) for (const seat of Object.values(state.seats)) names[seat.index] = seat.name;
+    // The viewer's own spot carries no name ring: its plate names it bottom left, and the ring stood half under the
+    // resting hand's top edge (gate M8 finding N9). The spot still takes a card dropped on it.
+    if (state) for (const seat of Object.values(state.seats)) names[seat.index] = seat.id === viewerSeat ? '' : seat.name;
     const inUse = state ? Object.keys(state.seats).length : layout.seats.length;
     // Library and graveyard (and the table's edge and territories) always; the optional zones only while used.
     const m = markings(layout, markedGame(opts.game), angle, inUse, names);
@@ -758,7 +760,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     markGeometry.computeBoundingSphere();
     markLabels = [...m.labels, ...extra.labels];
     // The theme's own pile and zone marks under the hairlines (M7-P1; themes/types.ts ThemeInstance.setMarks).
-    const seats = state ? Object.values(state.seats).map((s) => ({ index: s.index, colour: s.colour, named: !!s.name.trim() })) : layout.seats.map((sl) => ({ index: sl.index, colour: sl.index, named: false }));
+    // The viewer's own chair has no plaque either (its name ring is left out above, gate M8 finding N9).
+    const seats = state ? Object.values(state.seats).map((s) => ({ index: s.index, colour: s.colour, named: !!s.name.trim() && s.id !== viewerSeat })) : layout.seats.map((sl) => ({ index: sl.index, colour: sl.index, named: false }));
     runtime.setMarks(tableMarks(layout, opts.game, angle, seats, { keys: shownMarks, state }));
     dirty = true;
   }

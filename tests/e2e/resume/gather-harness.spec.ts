@@ -171,13 +171,20 @@ test.describe('the seat menu (persistence.md section 7)', () => {
 });
 
 test.describe('the claim page and its refusal screens (journey.md 4.11; contracts.md Part G item 6)', () => {
-  test('the warning above two ghost buttons, no filled button; sitting down; every refusal screen', async ({ page }) => {
+  test('the warning above WATCH INSTEAD and the filled SIT DOWN AS BEN, last, in one row; sitting down; every refusal screen', async ({ page }) => {
     await openGather(page, 'claim');
     const live = page.getByTestId('claim-live');
     await expect(live.getByTestId('claim-warning')).toHaveText('If another browser of yours still has this game, open the link there. Sitting down here discards that hand.');
-    await expect(live.getByTestId('claim-sit')).toHaveText('SIT DOWN HERE AS BEN');
-    await expect(live.getByTestId('claim-notnow')).toHaveText('NOT NOW');
-    await expect(filled(page, 'claim-live')).toHaveCount(0);
+    // journey.md 4.11, visual.md A2 (gate M8 finding N8): one filled button, the primary last, beside WATCH INSTEAD.
+    await expect(live.getByTestId('claim-sit')).toHaveText('SIT DOWN AS BEN');
+    await expect(live.getByTestId('claim-watch')).toHaveText('WATCH INSTEAD');
+    await expect(live.getByTestId('claim-notnow')).toHaveAccessibleName('Not now');
+    await expect(filled(page, 'claim-live')).toHaveCount(1);
+    await expect(filled(page, 'claim-live')).toHaveAttribute('data-testid', 'claim-sit');
+    const sit = (await live.getByTestId('claim-sit').boundingBox())!;
+    const watch = (await live.getByTestId('claim-watch').boundingBox())!;
+    expect(Math.abs(sit.y - watch.y)).toBeLessThan(1);
+    expect(sit.x).toBeGreaterThan(watch.x + watch.width);
     await expect(page.getByTestId('claim-looking')).toContainText('Looking for the table…');
     const texts: Record<string, string> = {
       used: 'This link was already used. Ask for a new one.',
@@ -233,13 +240,14 @@ test.describe('the claim page over the table (persistence.md section 7)', () => 
     await openGather(page, 'gathering');
     await page.evaluate(() => window.__gather!.setStatus({ live: true, rule: 2, waitingFor: [] }));
     await expect(page.getByTestId('gathering-card')).toHaveCount(0);
-    await test.step('the claim page, read-only table, no filled button', async () => {
+    await test.step('the claim page, read-only table, SIT DOWN AS BEN the one filled button', async () => {
       await page.evaluate(() => window.__gather!.setClaim({ seat: 's1', name: 'Ben', refusal: null }));
       const claim = page.getByTestId('claim-page');
       await expect(claim).toHaveAttribute('data-phase', 'ready');
-      await expect(claim.getByTestId('claim-sit')).toHaveText('SIT DOWN HERE AS BEN');
+      await expect(claim.getByTestId('claim-sit')).toHaveText('SIT DOWN AS BEN');
+      await expect(claim.getByTestId('claim-watch')).toBeVisible();
       await expect(claim.getByTestId('claim-warning')).toBeVisible();
-      await expect(claim.locator('.ds-btn--primary')).toHaveCount(0);
+      await expect(claim.locator('.ds-btn--primary')).toHaveCount(1);
       expect(await page.evaluate(() => window.__gather!.readOnly())).toBe(true);
       await designAudit(page);
       expect(await seriousViolations(page)).toEqual([]);

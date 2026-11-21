@@ -8,7 +8,6 @@
 <script lang="ts">
   import { onDestroy, type Snippet } from 'svelte';
   import Button from '../design/Button.svelte';
-  import PresenceDot from '../design/PresenceDot.svelte';
   import QrPlate from '../design/QrPlate.svelte';
   import Sheet from '../design/Sheet.svelte';
   import StatusLine from '../design/StatusLine.svelte';
@@ -23,6 +22,8 @@
     code = null,
     spectatorLink = null,
     onclose = undefined,
+    present = false,
+    compact = false,
   }: {
     title: string;
     text: string;
@@ -35,6 +36,13 @@
     /** The watch link; SPECTATOR LINK copies it. */
     spectatorLink?: string | null;
     onclose?: (() => void) | undefined;
+    /** The presence line's dot: solid when the awaited player is here, hollow and pulsing while waiting. */
+    present?: boolean;
+    /**
+     * Board 7's compact block (the plate menu's "Bring Ben back"): the QR code beside the title and its text, so the
+     * sheet fits an 800 px window inside the plate popover (gate M8 finding N11).
+     */
+    compact?: boolean;
   } = $props();
 
   let matrix = $state.raw<boolean[][] | null>(null);
@@ -90,35 +98,24 @@
   });
 </script>
 
-<Sheet label={title} width="narrow" {onclose} data-testid="invite-sheet">
-  {#snippet header()}
-    <div class="head">
-      <span class="well" aria-hidden="true">＋</span>
-      <div class="words">
-        <h2 class="ds-t-title">{title}</h2>
-        <p class="ds-t-reading">{text}</p>
-      </div>
-    </div>
-  {/snippet}
-  {#if matrix}
-    <div class="qr" data-testid="invite-qr">
-      <QrPlate {matrix} label="QR code of the link" data-testid="qr-plate" />
-    </div>
-  {/if}
+{#snippet linkAndStatus()}
   <label class="ds-field ds-field--square">
     <span class="ds-sr-only">Link</span>
     <input class="ds-field__input link" data-testid="share-link" readonly value={link} bind:this={field} onfocus={(e) => (e.currentTarget as HTMLInputElement).select()} />
   </label>
   <div class="actions">
-    <Button variant="primary" data-testid="copy-link" onclick={() => copy('link')}>{copied === 'link' ? 'COPIED ✓' : 'COPY LINK'}</Button>
-    {#if canShare}<Button data-testid="share" onclick={share}>SHARE</Button>{/if}
+    <Button variant="primary" size={compact ? 'sm' : undefined} data-testid="copy-link" onclick={() => copy('link')}>{copied === 'link' ? 'COPIED ✓' : 'COPY LINK'}</Button>
+    {#if canShare}<Button size={compact ? 'sm' : undefined} data-testid="share" onclick={share}>SHARE</Button>{/if}
   </div>
   {#if code}<p class="ds-t-meta code" data-testid="invite-code">Game code: <span class="mono">{code}</span></p>{/if}
   {#if status}
-    <StatusLine data-testid="invite-status">
-      {#snippet icon()}<PresenceDot state="connecting" label="waiting" />{/snippet}
-      {status}
-    </StatusLine>
+    <!-- One status word: the dot carries "waiting", the line says the rest, and wraps inside the sheet (gate M8 N11). -->
+    <div class="presence">
+      <StatusLine data-testid="invite-status">
+        {#snippet icon()}<span class="ds-dot {present ? 'ds-dot--here' : 'ds-dot--connecting'}" aria-hidden="true"></span>{/snippet}
+        {status}
+      </StatusLine>
+    </div>
   {/if}
   {#if spectatorLink || footer}
     <div class="foot">
@@ -126,7 +123,42 @@
       {@render footer?.()}
     </div>
   {/if}
-</Sheet>
+{/snippet}
+
+{#if compact}
+  <!-- Board 7's block inside the plate menu: no second sheet in the popover, the 124 px code beside the title and its two
+       lines, then the link, COPY LINK and the state (visual.md 2.8 "Plate menu"; gate M8 finding N11). -->
+  <section class="compact" aria-label={title} data-testid="invite-sheet" data-compact="true">
+    <div class="beside">
+      <div class="qr small" data-testid="invite-qr">
+        <QrPlate {matrix} size={124} label="QR code of the link" data-testid="qr-plate" />
+      </div>
+      <div class="words">
+        <h2 class="ds-t-heading">{title}</h2>
+        <p class="ds-t-meta">{text}</p>
+      </div>
+    </div>
+    {@render linkAndStatus()}
+  </section>
+{:else}
+  <Sheet label={title} width="narrow" {onclose} data-testid="invite-sheet">
+    {#snippet header()}
+      <div class="head">
+        <span class="well" aria-hidden="true">＋</span>
+        <div class="words">
+          <h2 class="ds-t-title">{title}</h2>
+          <p class="ds-t-reading">{text}</p>
+        </div>
+      </div>
+    {/snippet}
+    {#if matrix}
+      <div class="qr" data-testid="invite-qr">
+        <QrPlate {matrix} label="QR code of the link" data-testid="qr-plate" />
+      </div>
+    {/if}
+    {@render linkAndStatus()}
+  </Sheet>
+{/if}
 
 <style>
   .head {
@@ -156,6 +188,26 @@
     display: flex;
     justify-content: center;
   }
+  .compact {
+    display: flex;
+    flex-direction: column;
+    gap: var(--ds-space-md);
+    min-width: 0;
+  }
+  .beside {
+    display: flex;
+    gap: var(--ds-space-md);
+    align-items: flex-start;
+  }
+  .qr.small {
+    flex: none;
+  }
+  .compact h2 {
+    margin: 0;
+  }
+  .compact .actions :global(.ds-btn--primary) {
+    flex: 1;
+  }
   .link {
     font-family: var(--ds-font-mono);
     font-size: var(--ds-type-small);
@@ -174,6 +226,19 @@
     font-family: var(--ds-font-mono);
     color: var(--ds-ink);
     letter-spacing: 0.08em;
+  }
+  .presence :global(.ds-status) {
+    display: flex;
+    align-items: flex-start;
+    height: auto;
+    min-height: 24px;
+    padding: 7px 0;
+    box-sizing: border-box;
+    white-space: normal;
+    line-height: 1.4;
+  }
+  .presence :global(.ds-dot) {
+    margin-top: 2px;
   }
   .foot {
     display: flex;

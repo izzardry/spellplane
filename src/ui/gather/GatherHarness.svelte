@@ -76,7 +76,7 @@
   {:else if scene === 'claim'}
     <div class="claims">
       <div data-testid="claim-live">
-        <ClaimPage phase={claimPhase} seatName="Ben" onsit={(name) => { log(`sit ${name}`); claimPhase = 'sitting'; }} onnotnow={() => log('notnow')} />
+        <ClaimPage phase={claimPhase} seatName="Ben" onsit={(name) => { log(`sit ${name}`); claimPhase = 'sitting'; }} onnotnow={() => log('notnow')} onwatch={() => log('watch')} />
       </div>
       <div data-testid="claim-looking"><ClaimPage phase="looking" seatName="Ben" onsit={() => {}} onnotnow={() => log('notnow')} /></div>
       {#each screens as r (r.kind)}

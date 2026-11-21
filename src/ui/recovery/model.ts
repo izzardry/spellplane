@@ -30,7 +30,7 @@ export function seatAnswers(status: RecoveryStatus, seats: Readonly<Record<SeatI
 export function headline(status: RecoveryStatus, running: boolean): string | null {
   switch (status.phase) {
     case 'lost':
-      return 'This browser lost your hidden cards at this table';
+      return 'This browser lost your hidden cards';
     case 'proposed':
       if (status.round && !status.round.current) return 'Your recovery was interrupted by another confirmation round';
       return status.round?.holder ? 'The table holds your recovery' : `Recovery: waiting for the table to agree to a new hand of ${status.hand}`;
@@ -48,8 +48,8 @@ export function lostText(status: RecoveryStatus): string {
   return (
     `This browser has no save of your hand (${plural(status.lost.hand, 'card')}) and library (${plural(status.lost.library, 'card')})` +
     (status.lost.other > 0 ? ` nor of ${plural(status.lost.other, 'other hidden card')}. ` : '. ') +
-    `Re-import the deck you played: the table keeps your ${plural(status.publicCards, 'card')} in play, the rest of the deck becomes a new shuffled library, ` +
-    'and you draw a fresh hand once the table agrees. Everyone sees this in the log.'
+    `Re-import the deck you played: the table keeps your ${plural(status.publicCards, 'card')} in play, shuffles the rest into a new library, ` +
+    'and you draw a fresh hand once the table agrees.'
   );
 }
 

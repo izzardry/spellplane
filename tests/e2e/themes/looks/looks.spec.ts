@@ -192,11 +192,12 @@ for (const look of LOOKS) {
         expect(delta(bed, beside), `${zone} bed stands out`).toBeGreaterThan(5);
       }
       // Ada (seat colour 0) and Bo (seat colour 1) sit at the harness table: each glyph is drawn in the seat's colour.
-      // The fitted view keeps the table in the window; the near chair's plaque may sit below its edge, so every glyph on
-      // screen is checked and at least one must be.
+      // The viewer's own chair (s0, index 0) has no plaque: its plate names it (gate M8 finding N9). Every other glyph
+      // on screen is checked and at least one must be.
       const glyph = WORLDS[look].marks.glyph;
       let seen = 0;
       for (const [i, seat] of layout.seats.entries()) {
+        if (i === 0) continue;
         const av = seat.zones.avatar;
         const [dx, dy] = rot2(-glyph.offsetMm, 0, seat.angle);
         const at = await toScreen(page, av.x + dx, av.y + dy);

@@ -19,6 +19,7 @@
     current,
     nextPhaseKey,
     onphase,
+    compact = false,
   }: {
     turn: number;
     activeName: string;
@@ -29,6 +30,8 @@
     current: string;
     nextPhaseKey: string | null;
     onphase: (id: string) => void;
+    /** A narrow room (the activity drawer open): no turn number, a shorter name, tighter steps. */
+    compact?: boolean;
   } = $props();
 
   const steps = $derived(turnSteps(phases));
@@ -37,7 +40,7 @@
   const tip = $derived(nextPhaseKey ? ` (${nextPhaseKey} moves on)` : '');
 </script>
 
-<nav class="tracker" class:mine data-testid="turn-strip" data-mine={mine ? 'true' : 'false'} aria-label="Turn" style:--seat={activeColour === null ? 'currentColor' : `var(--sp-seat-${activeColour})`}>
+<nav class="tracker" class:mine class:compact data-testid="turn-strip" data-mine={mine ? 'true' : 'false'} aria-label="Turn" style:--seat={activeColour === null ? 'currentColor' : `var(--sp-seat-${activeColour})`}>
   <span class="who">
     <span class="active" data-testid="active-player">{activeName}</span>
     <!-- The seat's glyph beside the headline in the seat colour, so whose turn reads without hue (M5-P4). -->
@@ -111,6 +114,17 @@
   .turn {
     color: var(--ds-muted);
     font-variant-numeric: tabular-nums;
+  }
+  .compact .turn {
+    display: none;
+  }
+  .compact .whose {
+    max-width: 8.5em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .compact .main {
+    padding: 0 var(--ds-space-sm);
   }
   ol {
     display: flex;

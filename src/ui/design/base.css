@@ -475,6 +475,86 @@
   cursor: not-allowed;
 }
 
+/* ---- Select: a raised pill over the platform's own list (visual.md 2.8; board 5's set buttons) ------------------- */
+.ds-select {
+  position: relative;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  height: var(--ds-control-sm);
+  border-radius: var(--ds-radius-button);
+  background: var(--ds-panel-raised);
+  color: var(--ds-ink);
+  box-shadow: var(--ds-elevation-raised);
+  transition: transform var(--ds-duration-fast) var(--ds-ease-standard);
+}
+.ds-select--xs {
+  height: var(--ds-control-xs);
+}
+.ds-select--md {
+  height: var(--ds-control-md);
+}
+.ds-select__input {
+  -webkit-appearance: none;
+  appearance: none;
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0 40px 0 16px;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font-family: var(--ds-font-body);
+  font-size: var(--ds-type-small);
+  font-weight: var(--ds-weight-medium);
+  letter-spacing: var(--ds-label-spacing);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.ds-select--xs .ds-select__input {
+  padding: 0 32px 0 12px;
+  font-size: var(--ds-type-label);
+}
+.ds-select__input:focus-visible {
+  outline: 2px solid var(--ds-focus);
+  outline-offset: 2px;
+}
+.ds-select__chevron {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  display: inline-flex;
+  translate: 0 -50%;
+  pointer-events: none;
+  color: var(--ds-muted);
+}
+.ds-select--xs .ds-select__chevron {
+  right: 10px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .ds-select:hover:not(:has(.ds-select__input:disabled)) {
+    transform: translateY(-1px);
+  }
+}
+.ds-select:has(.ds-select__input:disabled) {
+  background: var(--ds-chip);
+  box-shadow: var(--ds-elevation-well);
+}
+.ds-select__input:disabled {
+  cursor: default;
+  opacity: 1;
+}
+.ds-select:has(.ds-select__input:disabled) .ds-select__chevron {
+  visibility: hidden;
+}
+
 /* ---- Stepper (Ztyle): eyebrow over value between two chevrons -------------------------------------------------- */
 .ds-stepper {
   display: inline-flex;
