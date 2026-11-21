@@ -7,9 +7,9 @@ import { attachDecksDebug, decksDebugDeps } from '../../../src/ui/decks/debug';
 const store = (): DeckStore => ({ list: async () => [], get: async () => null, put: async () => undefined, delete: async () => undefined });
 
 describe('attachDecksDebug', () => {
-  it('detaching leaves nothing of that page behind, in either order', () => {
+  it('detaching leaves no card source or listener of that page behind, in either order; the stores stay', () => {
     const a = { decks: store(), cardData: {} as CardDataSource, settings: null, now: () => 1 };
-    const b = { decks: store(), cardData: {} as CardDataSource, now: () => 2 };
+    const b = { decks: store(), cardData: {} as CardDataSource, now: () => 2, onchange: () => undefined };
     const offA = attachDecksDebug(a);
     const offB = attachDecksDebug(b);
     expect(decksDebugDeps().cardData).toBe(b.cardData);
@@ -19,9 +19,10 @@ describe('attachDecksDebug', () => {
     expect(decksDebugDeps().decks).toBe(b.decks);
     offB();
     expect(decksDebugDeps().cardData).toBeUndefined();
-    expect(decksDebugDeps().decks).toBeUndefined();
-    expect(decksDebugDeps().settings).toBeUndefined();
+    expect(decksDebugDeps().onchange).toBeUndefined();
     expect(decksDebugDeps().now?.()).toBeGreaterThan(2);
+    // The page load's first stores stay for the hook's select and selected on Home.
+    expect(decksDebugDeps().decks).toBe(a.decks);
     offB();
   });
 });

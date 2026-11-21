@@ -42,10 +42,13 @@ const offlineListeners = new Set<(on: boolean) => void>();
 let offline = false;
 
 /**
- * Add or replace the parts the hook works on; the returned function takes them away again (what an earlier attachment
- * or registerDecksPart set shows through), so a destroyed page leaves no card source or store behind in module state.
+ * Add or replace the parts the hook works on; the returned function takes the page's own parts away again (what an
+ * earlier attachment shows through), so a destroyed page leaves no card source or listener behind in module state. The
+ * page's stores (decks, settings) are the page load's own and stay, so `select` and `selected` work on Home too.
  */
 export function attachDecksDebug(more: DecksDebugAttach): () => void {
+  if (more.decks && !base.decks) base.decks = more.decks;
+  if (more.settings && !base.settings) base.settings = more.settings;
   const mine = { ...more };
   attached.push(mine);
   recompute();

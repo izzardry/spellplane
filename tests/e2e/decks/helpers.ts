@@ -64,10 +64,20 @@ export async function go(page: Page, hash: string): Promise<void> {
  * Every shown card face's width / height as the eye sees it: the layout box (before a tile's tilt) when the image is
  * scaled uniformly into it (computed object-fit contain) and its own pixels have the box's ratio (±1%). A face that is
  * stretched (fill), cropped (cover) or letterboxed from another ratio gives NaN, which fails every ratio check. Waits
- * for the images to decode, so the natural size is known.
+ * for the images on screen to load, so their natural size is known.
  */
 export async function faceRatios(page: Page): Promise<number[]> {
-  await expect.poll(() => page.locator('img[data-card-face]').evaluateAll((els) => (els as HTMLImageElement[]).every((e) => e.complete))).toBe(true);
+  // Lazy images below the fold never load: wait for the ones on screen, and measure every image that has its pixels.
+  await expect
+    .poll(() =>
+      page.locator('img[data-card-face]').evaluateAll((els) =>
+        (els as HTMLImageElement[]).every((e) => {
+          const r = e.getBoundingClientRect();
+          return e.complete || r.bottom <= 0 || r.top >= innerHeight || r.width === 0;
+        }),
+      ),
+    )
+    .toBe(true);
   return page.locator('img[data-card-face]').evaluateAll((els) =>
     (els as HTMLImageElement[])
       .filter((e) => e.offsetWidth > 0 && e.offsetHeight > 0 && e.naturalWidth > 0)

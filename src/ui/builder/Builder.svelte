@@ -460,7 +460,7 @@
     font-weight: var(--sp-font-weight-bold, 600);
   }
   kbd {
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-mono, var(--sp-font-mono));
     font-size: 10px;
     color: var(--sp-muted);
   }
@@ -497,7 +497,7 @@
   }
   .count {
     text-align: right;
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-mono, var(--sp-font-mono));
   }
   .pm {
     padding: 0;
