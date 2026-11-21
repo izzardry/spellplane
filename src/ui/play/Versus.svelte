@@ -93,7 +93,7 @@
       {#each columns as c, i (c.seat)}
         {#if i > 0}<span class="vs ds-t-eyebrow" aria-hidden="true">vs</span>{/if}
         <section class="col" data-testid="versus-col" data-seat={c.seat}>
-          <h2 class="ds-t-title"><SeatGlyph seat={i} colour={seatColours[c.colour]?.colour ?? 'currentColor'} size={28} label="Seat colour of {c.name}" /> {c.name}{c.me ? ' (you)' : ''}</h2>
+          <h2 class="ds-t-title"><SeatGlyph seat={c.index} colour={seatColours[c.colour]?.colour ?? 'currentColor'} size={28} label="Seat colour of {c.name}" /> {c.name}{c.me ? ' (you)' : ''}</h2>
           <p class="ds-t-eyebrow">DECK · {c.cards || '…'}</p>
           <ul>
             <li data-testid="versus-connected" data-on={c.connected}><span aria-hidden="true">{c.connected ? '✓' : '◌'}</span> connected</li>

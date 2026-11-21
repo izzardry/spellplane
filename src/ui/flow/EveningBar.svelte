@@ -45,7 +45,7 @@
       {#if holding}
         <Button size="xs" data-testid="evening-release" onclick={() => respond('release')}>Release</Button>
       {:else if mine !== 'ok'}
-        <Button variant="primary" size="xs" data-testid="evening-ok" onclick={() => respond('ok')}>OK</Button>
+        <Button variant="secondary" size="xs" data-testid="evening-ok" onclick={() => respond('ok')}>OK</Button>
         <Button size="xs" data-testid="evening-hold" onclick={() => respond('hold')}>Hold</Button>
       {/if}
     </span>

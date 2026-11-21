@@ -58,7 +58,7 @@
   {#if stage === 'lobby'}
     <div class="lobby-stage" class:with-draft={!!(evening && props.sets)}>
       <div class="lobby-main">
-        <WaitingRoom session={props.session} game={props.game} link={props.link} identity={props.identity} decks={props.decks} cardData={props.cardData} parseDecklist={props.parseDecklist} settings={props.settings} />
+        <WaitingRoom session={props.session} game={props.game} link={props.link} identity={props.identity} decks={props.decks} cardData={props.cardData} parseDecklist={props.parseDecklist} settings={props.settings} faces={props.faces} onleave={props.shell?.onleave} />
       </div>
       {#if evening && props.sets}
         <div class="lobby-side">

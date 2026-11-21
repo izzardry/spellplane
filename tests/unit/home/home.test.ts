@@ -190,11 +190,11 @@ describe('launchers', () => {
 
   it('CREATE TABLE makes a room with autoSetup and a private GameSummary', async () => {
     const deps = fakeDeps();
-    const hash = await launchPrivate(deps, prefs({ mode: 'private', private: { format: 'ffa3', decks: 'any' } }), deck('a', 60));
+    const hash = await launchPrivate(deps, prefs({ mode: 'private', private: { format: 'ffa3', decks: 'booster' } }), deck('a', 60));
     expect(hash).toBe(`#/t/amber-fox-river-12/${'K'.repeat(22)}`);
     expect(vi.mocked(deps.games!.create).mock.calls[0]![0]).toMatchObject({ code: 'amber-fox-river-12', key: 'K'.repeat(22), kind: 'private', format: 'ffa3', decks: 'constructed', deck: { id: 'a' } });
     const setup = takePendingSetup('amber-fox-river-12', { getItem: (k) => deps.store.get(k) ?? null, removeItem: (k) => void deps.store.delete(k) });
-    expect(setup).toMatchObject({ autoSetup: true, format: 'ffa3', lobby: { draft: null }, deckId: 'a' });
+    expect(setup).toMatchObject({ autoSetup: true, format: 'ffa3', lobby: { draft: null }, deckId: 'a', decks: 'booster' });
     expect(takePendingSetup('amber-fox-river-12', { getItem: (k) => deps.store.get(k) ?? null, removeItem: () => undefined })).toBeNull();
   });
 

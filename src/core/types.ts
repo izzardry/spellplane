@@ -410,6 +410,8 @@ export interface TableSettings {
   autoSetup?: boolean;
   /** Added by M8-C. Set by enterMatch for a game formed in the public lobby: no seat invites, rating rules apply (contracts.md Part D). */
   matched?: boolean;
+  /** Which decks the table takes: any deck, or booster (sealed) decks only (journey.md 4.8). Absent: any. */ // [M8-P4]
+  decks?: 'any' | 'booster'; // [M8-P4]
 }
 
 /** Default table settings (DESIGN "Turn flow and confirmation": 5-second pass timer). */

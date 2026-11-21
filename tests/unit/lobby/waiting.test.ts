@@ -24,6 +24,9 @@ import {
   versusDone,
   versusFailure,
 } from '../../../src/ui/lobby/waiting';
+import { createTable } from '../../../src/core/reducer/index';
+import { mtg } from '../../../src/games/index';
+import { boosterToLobby, lobbyToBooster } from '../../../src/ui/home/view';
 import { act, freshTable, sit } from './helpers';
 
 const A = 'aaaaaaaaaaaaaaaa';
@@ -67,7 +70,16 @@ describe('deck rule and allow', () => {
   it('reads the rule from the table settings, any by default', () => {
     expect(deckRuleOf(freshTable())).toBe('any');
     expect(deckRuleOf(freshTable(), 'booster')).toBe('booster');
-    expect(deckRuleOf(edit(freshTable(), (t) => ((t.settings as { decks?: string }).decks = 'booster')))).toBe('booster');
+    expect(deckRuleOf(edit(freshTable(), (t) => (t.settings.decks = 'booster')))).toBe('booster');
+  });
+  it('the table carries the rule through the reducer, so every seat reads the same one', () => {
+    // `settings { decks }` is a table setting (TableSettings.decks, [M8-P4]): a guest's picker reads what the creator set.
+    let t = act(twoSeated(), 's0', { type: 'settings', settings: { decks: 'booster' } });
+    expect(t.settings.decks).toBe('booster');
+    expect(deckRuleOf(t)).toBe('booster');
+    t = act(t, 's0', { type: 'settings', settings: { decks: 'any' } });
+    expect(deckRuleOf(t, 'booster')).toBe('any');
+    expect(() => act(t, 's0', { type: 'settings', settings: { decks: 'sealed' as never } })).toThrow(/decks/);
   });
 });
 
@@ -156,6 +168,7 @@ describe('versus', () => {
       ['Ben', 0, false, false],
     ]);
     expect(versusDone(cols)).toBe(false);
+    expect(cols.map((c) => c.index)).toEqual([0, 1]);
     t = edit(t, (x) => {
       x.seats.s0!.dealt = 0;
       x.seats.s1!.dealt = 0;
@@ -164,6 +177,16 @@ describe('versus', () => {
     expect(versusDone(cols)).toBe(true);
     expect(versusDone(versusColumns(t, 's0', () => false))).toBe(false);
     expect(versusFailure(versusColumns(t, 's0', () => false))).toBe('Ben could not be reached directly. Some networks do not allow it, and Spellplane uses no relay.');
+  });
+});
+
+describe('versus glyphs', () => {
+  it('a column carries the seat index, not its position (s0 and s2 at a three-seat table)', () => {
+    const t = sit(sit(freshTable('ffa3'), 's0', 'Ann', 0, A), 's2', 'Cleo', 2, B);
+    expect(versusColumns(t, 's0', () => true).map((c) => [c.seat, c.index])).toEqual([
+      ['s0', 0],
+      ['s2', 2],
+    ]);
   });
 });
 
@@ -189,6 +212,54 @@ describe('the concede chip', () => {
   });
 });
 
+describe('Two-Headed Giant reads the team', () => {
+  // Two teams as a 2v2 table has them (t0: s0 and s1, t1: s2 and s3), every seat taken, in the match.
+  function twoHg(): TableState {
+    const peers = [A, B, 'cccccccccccccccc', 'dddddddddddddddd'];
+    let t = createTable({ game: mtg, format: '2hg', seats: ['Ann', 'Ben', 'Cleo', 'Dan'].map((name, i) => ({ name: '', colour: i, team: i < 2 ? 't0' : 't1' })) });
+    ['Ann', 'Ben', 'Cleo', 'Dan'].forEach((name, i) => (t = sit(t, `s${i}`, name, i, peers[i]!)));
+    return edit(t, (x) => (x.stage = 'match'));
+  }
+  it('offers the chip when the team life reaches 0 (core changes Team.life, not Seat.life)', () => {
+    const t = twoHg();
+    const team = t.seats.s0!.team!;
+    expect(team).toBeDefined();
+    const start = t.teams[team]!.life;
+    const low = act(t, 's0', { type: 'life', seat: 's0', delta: -start });
+    expect(low.seats.s0!.life).toBe(start);
+    expect(concedeOffer(low, 's0')).toEqual({ reason: 'life', text: 'Your team is at 0 life.' });
+    const mate = low.teams[team]!.seats.find((s) => s !== 's0')!;
+    expect(concedeOffer(low, mate)?.reason).toBe('life');
+  });
+  it('counts the team poison against 15', () => {
+    const t = twoHg();
+    const team = t.seats.s0!.team!;
+    const mate = t.teams[team]!.seats.find((s) => s !== 's0')!;
+    let p = act(t, 's0', { type: 'playerCounter', seat: 's0', kind: 'poison', delta: 10 });
+    expect(concedeOffer(p, 's0')).toBeNull();
+    p = act(p, mate, { type: 'playerCounter', seat: mate, kind: 'poison', delta: 5 });
+    expect(concedeOffer(p, 's0')).toEqual({ reason: 'poison', text: 'Your team has 15 poison counters.' });
+  });
+  it('shows the team life on the overlay', () => {
+    const t = twoHg();
+    const team = t.seats.s0!.team!;
+    const over = edit(act(t, 's0', { type: 'life', seat: 's0', delta: -7 }), (x) => (x.result = { winners: [], reason: 'concede', atSeq: 9 }));
+    const life = over.teams[team]!.life;
+    for (const id of over.teams[team]!.seats) expect(gameOverView(over, 's0', 'private')!.players.find((p) => p.seat === id)!.life).toBe(life);
+  });
+});
+
+describe('booster setup round trip (Home and the room share one conversion)', () => {
+  it('a grid draft of 3 packs reads 3 in the room, and saves back the same', () => {
+    const b = { how: 'grid' as const, packs: 3, picks: 1, sets: ['M19'], pickTimer: false };
+    const lobby = boosterToLobby(b);
+    expect(lobbyToBooster(lobby)).toEqual(b);
+    const t = act(twoSeated(), 's0', { type: 'lobbySet', lobby });
+    expect(draftPacks(t)).toHaveLength(3);
+    expect(boosterToLobby(lobbyToBooster(lobby))).toEqual(lobby);
+  });
+});
+
 describe('game over', () => {
   const over = edit(twoSeated(), (x) => {
     x.stage = 'match';
@@ -203,6 +274,10 @@ describe('game over', () => {
     expect(gameOverView(over, 's0', 'private')?.reason).toBe('Ben conceded on turn 9.');
     expect(gameOverView(over, 's1', 'private')?.reason).toBe('You conceded on turn 9.');
     expect(gameOverView(twoSeated(), 's0', 'private')).toBeNull();
+  });
+  it('names the turn the game ended on, not the turn the table moved on to', () => {
+    const later = edit(over, (x) => (x.turn.number = 11));
+    expect(gameOverView(later, 's0', 'private', null, 9)?.reason).toBe('Ben conceded on turn 9.');
   });
   it('picks the primary by the kind of game', () => {
     expect(gameOverView(over, 's0', 'matched')?.primary.label).toBe('FIND ANOTHER MATCH');
