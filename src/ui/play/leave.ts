@@ -92,6 +92,15 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
     /* already disposed by leave */
   }
   if (purge) await o.games?.purge(o.code).catch(() => undefined);
+  // A purged computer game also drops both tables and Sparring's record (computer.md 2.5; M8-P6's deleteComputerGame,
+  // wired by M8-P8), so nothing of it is left in the profile.
+  if (purge && o.kind === 'computer') {
+    const code = o.code;
+    await within(
+      import('../../session/computer').then((m) => m.deleteComputerGame(code)),
+      ms,
+    );
+  }
   o.go('#/');
   if (purge) return 'purged';
   const code = o.code;

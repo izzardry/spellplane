@@ -203,11 +203,12 @@
   });
 
   const me = $derived<SeatId | null>(session.seat);
+  // Seat presence (presence.ts): the plate menu's connection line reads connecting too; the HUD's plates here or away.
+  const allPresence = $derived(gather ? seatPresence(st, net.peers, me) : null);
   const presence = $derived.by((): Readonly<Record<SeatId, 'here' | 'away'>> | undefined => {
-    if (!gather) return undefined;
-    const all = seatPresence(st, net.peers, me);
+    if (!allPresence) return undefined;
     const out: Record<SeatId, 'here' | 'away'> = {};
-    for (const [seat, p] of Object.entries(all)) out[seat] = p === 'away' ? 'away' : 'here';
+    for (const [seat, p] of Object.entries(allPresence)) out[seat] = p === 'away' ? 'away' : 'here';
     return out;
   });
 
@@ -232,7 +233,7 @@
 </script>
 
 {#snippet plateMenuTop(seat: SeatId, close: () => void)}
-  <SeatMenu table={st} {seat} {me} {muster} onleave={seat === me ? () => (close(), void leave()) : undefined} />
+  <SeatMenu table={st} {seat} {me} {muster} presence={allPresence?.[seat]} onleave={seat === me ? () => (close(), void leave()) : undefined} />
 {/snippet}
 {#snippet plateBadge(seat: SeatId)}
   <SeatBadge table={st} {seat} {me} />
