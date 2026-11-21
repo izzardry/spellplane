@@ -122,10 +122,23 @@ test.describe('journey: solo', () => {
       await expect(page.getByTestId('game-over')).toBeVisible({ timeout: 15_000 });
       await expect(page.getByTestId('game-over-headline')).toHaveText(/victory/i);
       expect((await state(page)).result?.winners).toEqual(['s0']);
-      await page.getByTestId('game-over-home').click();
-      await expect(page.getByTestId('route-home')).toBeVisible();
-      await homeIsClean(page);
     }, { timeout: 30_000 });
+
+    await test.step('REMATCH (journey.md 4.13): a new game against Sparring with the same deck', async () => {
+      await expect(page.getByTestId('game-over-primary')).toHaveText('REMATCH');
+      await page.getByTestId('game-over-primary').click();
+      await expect.poll(() => page.evaluate(() => location.hash), { timeout: 20_000 }).toMatch(/^#\/c\//);
+      await expect.poll(() => page.evaluate(() => location.hash), { timeout: 20_000 }).not.toBe(`#/c/${room}`);
+      await atTable(page, 'computer', 45_000);
+      await expect.poll(() => page.evaluate(() => window.__spellplane?.secrets?.().hand.length ?? 0), { timeout: 30_000 }).toBe(7);
+      expect((await state(page)).result).toBeUndefined();
+      await expect(page.getByTestId('game-over')).toHaveCount(0);
+      await expect(page.getByTestId('game-over-note')).toHaveCount(0);
+      // The finished game is in History; the new one is a game of its own.
+      await expect.poll(async () => (await gamesOf(page)).filter((g) => g.opponent === 'sparring').length, { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
+      await leaveByArrow(page);
+      await homeIsClean(page);
+    }, { timeout: 60_000 });
     expect(errors).toEqual([]);
   });
 
@@ -154,6 +167,20 @@ test.describe('journey: solo', () => {
       await atTable(page, 'practice');
       await expect(page).toHaveURL(new RegExp(`#/p/${room}$`));
       await expect.poll(() => page.evaluate(() => window.__spellplane?.session?.hash() ?? ''), { timeout: 20_000 }).toBe(hash);
+    }, { timeout: 45_000 });
+    await test.step('Concede; AGAIN (journey.md 4.13) opens a new practice table with the deck dealt', async () => {
+      await page.getByTestId('open-menu').click();
+      await page.getByRole('menuitem', { name: /concede/i }).click();
+      await page.getByTestId('concede-ok').click();
+      await expect(page.getByTestId('game-over')).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByTestId('game-over-primary')).toHaveText('AGAIN');
+      await page.getByTestId('game-over-primary').click();
+      await expect.poll(() => page.evaluate(() => location.hash), { timeout: 20_000 }).toMatch(/^#\/p\//);
+      await expect.poll(() => page.evaluate(() => location.hash), { timeout: 20_000 }).not.toBe(`#/p/${room}`);
+      await atTable(page, 'practice');
+      await expect.poll(() => page.evaluate(() => window.__spellplane?.secrets?.().hand.length ?? 0), { timeout: 20_000 }).toBe(7);
+      expect((await state(page)).result).toBeUndefined();
+      await expect(page.getByTestId('game-over-note')).toHaveCount(0);
     }, { timeout: 45_000 });
   });
 

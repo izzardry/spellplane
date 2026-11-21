@@ -114,14 +114,14 @@ test('a reload in each stage returns to that stage with the same pool, deck and 
   await a.getByTestId('lobby-packs').fill('1');
   await a.getByTestId('lobby-packs').blur();
   await expect.poll(async () => (await state(b)).lobby?.draft).toEqual({ format: 'pass', packs: 1, picks: 1 });
-  await expect(b.getByTestId('start-draft')).toHaveCount(0);
-  await expect(b.getByTestId('draft-start-blocked')).toContainText('to start');
+  await expect(b.getByTestId('room-start-draft')).toHaveCount(0);
+  await expect(b.getByTestId('setup-owner')).toContainText('chooses the setup');
   await shot(a, 'M2', 'flow-lobby', info.project.name);
   await reloadKeeps(b, a, 'lobby');
   await expect(b.getByTestId('lobby-packs')).toHaveValue('1');
 
   // Draft: one press starts it for everyone at once.
-  await a.getByTestId('start-draft').click();
+  await a.getByTestId('room-start-draft').click();
   await inStage(a, 'draft');
   await inStage(b, 'draft');
   await expect.poll(async () => (await view(b))?.pack?.cards.length ?? 0, { timeout: 30_000 }).toBeGreaterThan(0);
@@ -206,7 +206,7 @@ test('a reload in each stage returns to that stage with the same pool, deck and 
   await inStage(b, 'lobby');
   expect('draft' in (await state(a))).toBe(false);
   await expect.poll(async () => ((await secrets(a)).build ?? null) === null && ((await secrets(a)).pool ?? null) === null).toBe(true);
-  await expect(a.getByTestId('start-draft')).toBeVisible();
+  await expect(a.getByTestId('room-start-draft')).toBeVisible();
   await context.close();
 });
 
@@ -230,8 +230,8 @@ test('sealed: the pools open for everyone at once; the builder searches the card
   await a.getByTestId('lobby-packs').fill('1');
   await a.getByTestId('lobby-packs').blur();
   await expect.poll(async () => (await state(b)).lobby?.draft).toEqual({ format: 'sealed', packs: 1 });
-  await expect(a.getByTestId('start-draft')).toHaveText('Open the sealed pools');
-  await a.getByTestId('start-draft').click();
+  await expect(a.getByTestId('room-start-draft')).toHaveText('START THE DRAFT');
+  await a.getByTestId('room-start-draft').click();
   await inStage(a, 'build');
   await inStage(b, 'build');
   for (const p of [a, b]) expect((await secrets(p)).pool).toHaveLength(15);
@@ -265,7 +265,7 @@ test('Winston: the piles reach only the player looking at them, through the sess
   await expect.poll(async () => (await state(b)).lobby?.draft).toEqual({ format: 'winston', packs: 1 });
   // Winston has no pick timer to offer.
   await expect(a.getByTestId('lobby-pick-timer')).toHaveCount(0);
-  await a.getByTestId('start-draft').click();
+  await a.getByTestId('room-start-draft').click();
   await inStage(a, 'draft');
   await inStage(b, 'draft');
   // Each takes the pile it looks at; Ben, who does not deal, sees a pile only on his turn.

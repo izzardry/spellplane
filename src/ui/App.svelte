@@ -52,6 +52,8 @@
   // it registers its leave here; a hash change away from its route first runs that leave (save, leave the room,
   // dispose, Home, the toast) and only then switches the page. Any page the change named other than Home is kept.
   let leaveGuard: (() => Promise<void>) | null = null;
+  /** The longest the guard holds the table route, ms. */
+  const LEAVE_GUARD_MS = 5000;
   setLeaveGuardHost((leave) => (leaveGuard = leave));
   function onHashChange(): void {
     const next = parseRoute(location.hash);
@@ -59,7 +61,15 @@
     if (guard && leavesTable(route, next)) {
       leaveGuard = null;
       const target = location.hash;
-      void guard().finally(() => {
+      // The leave bounds each of its steps; a store that never answers must not hold the page either (M8-P8).
+      const left = new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, LEAVE_GUARD_MS);
+        void guard().finally(() => {
+          clearTimeout(t);
+          resolve();
+        });
+      });
+      void left.then(() => {
         // leave.ts goes Home; any other page the change named (Back to Decks, an invite or bring-back link pasted into
         // the tab, another table) is where the player asked to be. The left table itself is never the target.
         const asked = parseRoute(target);
@@ -104,6 +114,8 @@
         decks: props.decks,
         matches: props.matches ?? null,
         ratings: props.ratings ?? null,
+        matchmaker,
+        openPractice: props.openPractice,
       });
   });
   onMount(() => {
@@ -199,7 +211,7 @@
           cardData={props.cardData}
           sets={props.sets}
           faces={props.faces}
-          searching={() => ['seeking', 'check', 'moving'].includes(matchmaker.status().phase)}
+          searching={() => ['connecting', 'seeking', 'check', 'moving'].includes(matchmaker.status().phase)}
           {go}
         />
       {:else if route.name === 'history'}

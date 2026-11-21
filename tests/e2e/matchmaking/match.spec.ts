@@ -96,12 +96,10 @@ async function expectSeated(pages: Page[], seats: number): Promise<string> {
   await expect.poll(async () => new Set(await Promise.all(pages.map(async (p) => stateHash(await state(p))))).size, { timeout: 20_000 }).toBe(1);
   for (const p of pages) {
     const seen = await p.evaluate(() => (window as unknown as { __seen: string[] }).__seen);
-    // The automatic entry ran, and no waiting room was shown once the table knew it is a matched one. (The table
-    // frame looks the MatchRecord up asynchronously, so its waiting room may flash for a frame before that: a seam of
-    // the frame, reported to M8-P8.)
+    // The automatic entry ran, and no waiting room was ever shown: the table frame shows nothing under its cover until
+    // its MatchRecord lookup settled (M8-P8).
     expect(seen).toContain('matched-entry');
-    const after = seen.slice(seen.indexOf('matched-entry'));
-    expect(after.filter((x) => x === 'lobby' || x === 'waiting-room')).toEqual([]);
+    expect(seen.filter((x) => x === 'lobby' || x === 'waiting-room')).toEqual([]);
   }
   return rooms[0]!;
 }

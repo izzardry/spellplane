@@ -16,6 +16,8 @@ export type { TableKind };
 export const LEFT_NETWORKED = 'You left the table. The game goes on; your seat is kept.';
 /** The toast after leaving a computer or practice table (contracts.md Part G "Journey and Home" item 2). */
 export const LEFT_SOLO = 'Game saved. Continue any time.';
+/** The toast after leaving a game that ended (journey.md 4.13: an ended game cannot be continued; M8-P8). */
+export const LEFT_ENDED = 'Game over. It is in your History.';
 /** A solo game left after fewer own actions is not kept (contracts.md Part G "History and saving" item 2). */
 export const SOLO_KEEP_MIN_ACTIONS = 10;
 
@@ -71,6 +73,14 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
   }
   const toast = o.toast ?? ((text: string, action?: ToastAction): void => void toasts.info(text, action));
   const solo = o.kind === 'computer' || o.kind === 'practice';
+  // Read before the leave: a finished game is left with the ended copy and no way back in (no REJOIN, no Continue).
+  const ended = (() => {
+    try {
+      return o.session.getState().result != null;
+    } catch {
+      return false;
+    }
+  })();
   const ms = o.checkpointMs ?? 1500;
   let purge = false;
   if (solo) {
@@ -104,7 +114,8 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
   o.go('#/');
   if (purge) return 'purged';
   const code = o.code;
-  if (solo) {
+  if (ended) toast(LEFT_ENDED);
+  else if (solo) {
     const hash = o.kind === 'computer' ? computerHash(code) : practiceHash(code);
     toast(LEFT_SOLO, { label: 'Continue', run: () => o.go(hash) });
   } else {

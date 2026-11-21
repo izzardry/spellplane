@@ -44,6 +44,11 @@
   import Dialog from '../design/Dialog.svelte';
   import InviteSheet from '../lobby/InviteSheet.svelte';
   import { codeLabel } from '../lobby/waiting';
+  import MatchHost from '../play/MatchHost.svelte';
+  import QueueChip from '../play/QueueChip.svelte';
+  import { launchDeps } from '../home/deps';
+  import { FakeMatchmaker } from '../fakes';
+  import { findAgain, soloAgain, soloAgainLabel } from './again';
   import { leaveGuardHost, tableDeps } from './context';
   import { menuTop } from './menu-top';
   import { notices, type TableNotice } from './notices';
@@ -52,6 +57,9 @@
   let props: TableFrameProps = $props();
   /** How long Versus stays after it is done, ms: its "goes first" line is read (decision M8-P8). */
   const VERSUS_READ_MS = 600;
+  /** How long a notice stays in the slot, ms: as long as the HUD's toast shows it (Hud.svelte, 6 s; 10 s with an action). */
+  const NOTICE_MS = 6000;
+  const NOTICE_ACTION_MS = 10000;
 
   const deps = $derived(props.deps ?? tableDeps());
   const session = $derived(props.session);
@@ -62,8 +70,23 @@
   onMount(() => props.session.subscribe((s) => (st = s)));
   let net = $state.raw<SessionNetStatus>(untrack(() => props.session.netStatus()));
   onMount(() => props.session.subscribeNet((s) => (net = s)));
+  // The page's notice slot is this table's while the frame is mounted: a notice of an earlier table (or an earlier
+  // frame of this one) never shows here, and a notice leaves the slot once the HUD's toast for it has run out, so a
+  // HUD mounted again later (a rematch, a stage change) does not show it a second time.
+  notices.clear();
   let notice = $state.raw<TableNotice | null>(null);
-  onMount(() => notices.subscribe((n) => (notice = n)));
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+  onMount(() =>
+    notices.subscribe((n) => {
+      notice = n;
+      clearTimeout(noticeTimer);
+      if (n) noticeTimer = setTimeout(() => notices.clear(n.id), n.action ? NOTICE_ACTION_MS : NOTICE_MS);
+    }),
+  );
+  onDestroy(() => {
+    clearTimeout(noticeTimer);
+    notices.clear();
+  });
 
   // The viewer's theme (PLAN M4-P6); Paper where no app shell provides the choice (a harness).
   const themeChoice = themeContext();
@@ -81,18 +104,27 @@
   // `autoSetup`; does nothing at a table opened the old way. Not in the sandbox.
   onMount(() => (props.kind === 'sandbox' ? undefined : startAutoSetup(props.session)));
 
-  // A MatchRecord for this code makes the table a matched one (matchmaking.md 2.9).
+  // A MatchRecord for this code makes the table a matched one (matchmaking.md 2.9). Until the lookup settled, a
+  // networked table in the lobby stage shows nothing under the cover: a matched table never shows its waiting room.
   let record = $state.raw<MatchRecord | null>(null);
+  let recordChecked = $state(untrack(() => !props.code || !deps?.matches || !networked));
   $effect(() => {
     const code = props.code;
     const matches = deps?.matches;
-    if (!code || !matches || !networked) return;
+    if (!code || !matches || !networked) {
+      recordChecked = true;
+      return;
+    }
     let cancelled = false;
     matches.get(code).then(
       (r) => {
-        if (!cancelled) record = r;
+        if (cancelled) return;
+        record = r;
+        recordChecked = true;
       },
-      () => undefined,
+      () => {
+        if (!cancelled) recordChecked = true;
+      },
     );
     return () => {
       cancelled = true;
@@ -251,6 +283,35 @@
     versusHold = setTimeout(() => (versus = false), VERSUS_READ_MS);
   }
   onDestroy(() => clearTimeout(versusHold));
+
+  // The game-over overlay's primary (journey.md 4.13): a matched game searches again with the same setup; a solo table
+  // opens a new game of its kind (REMATCH against Sparring, AGAIN alone). Each leaves this table first.
+  const solo = $derived(props.kind === 'computer' || props.kind === 'practice' ? props.kind : null);
+  const matchmaker = $derived(deps?.matchmaker ?? null);
+  function findAnother(): void {
+    const r = record;
+    void leave().then(() => void findAgain(matchmaker, r));
+  }
+  const again = $derived.by(() => {
+    const k = solo;
+    const code = props.code;
+    if (!k || !code || !deps) return undefined;
+    const page = deps;
+    const games = props.games;
+    return {
+      label: soloAgainLabel(k),
+      run: () =>
+        void leave()
+          .then(() =>
+            soloAgain(
+              launchDeps({}, { games, go: (h) => (location.hash = h), openPractice: page.openPractice, now: () => Date.now(), page, matchmaker: page.matchmaker ?? new FakeMatchmaker() }),
+              k,
+              code,
+            ),
+          )
+          .catch(() => undefined),
+    };
+  });
 </script>
 
 {#snippet plateMenuTop(seat: SeatId, close: () => void)}
@@ -270,7 +331,9 @@
 
 {#snippet table()}
   {#if networked && deps}
-    {#if record && st.stage === 'lobby'}
+    {#if st.stage === 'lobby' && !recordChecked}
+      <!-- Looking up the MatchRecord: the cover is over the table; neither the waiting room nor the matched entry yet. -->
+    {:else if record && st.stage === 'lobby'}
       <MatchedEntry session={props.session} {record} decks={deps.decks ?? null} ratings={deps.ratings ?? null} matches={deps.matches ?? null} onleave={() => void leave()} />
     {:else if props.link && deps.identity && deps.decks}
       <Stage
@@ -309,7 +372,13 @@
 
     {#if versus}<Versus session={props.session} creator={me === 's0'} ondone={versusDone} onhome={() => void leave()} />{/if}
     <ConcedeChip session={props.session} />
-    {#if st.result}<GameOver session={props.session} {record} onhome={() => void leave()} />{/if}
+    {#if st.result}<GameOver session={props.session} {record} kind={solo ? 'solo' : undefined} onfind={networked ? findAnother : undefined} {again} onhome={() => void leave()} />{/if}
+    {#if solo && matchmaker}
+      <!-- Practise while you wait (journey.md 4.5; computer.md D15): the queue bar at the table's top edge and the match
+           found card over the table; ACCEPT moves to the match's room, and the leave guard saves this game first. -->
+      <div class="frame-queue"><QueueChip {matchmaker} onhome={() => void leave()} /></div>
+      <MatchHost {matchmaker} />
+    {/if}
 
     {#if networked && deps}
       <RecoveryPanel session={props.session} cardData={deps.cardData} parse={deps.parseDecklist ?? parsePlainList} />
@@ -378,6 +447,17 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .frame-queue {
+    position: fixed;
+    z-index: 35;
+    top: 64px;
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+  .frame-queue > :global(*) {
+    pointer-events: auto;
   }
   .frame-sheet {
     position: fixed;

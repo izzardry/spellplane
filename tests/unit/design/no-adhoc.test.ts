@@ -187,7 +187,6 @@ const LEGACY = new Set<string>(
     "src/ui/draft/Draft.svelte",
     "src/ui/empty/EmptyState.svelte",
     "src/ui/flow/EveningBar.svelte",
-    "src/ui/flow/LobbyDraft.svelte",
     "src/ui/hints/Hint.svelte",
     "src/ui/lobby/Lobby.svelte",
     "src/ui/lobby/SpectatorPanel.svelte",
@@ -203,7 +202,6 @@ const LEGACY = new Set<string>(
     "src/ui/touch/RadialMenu.svelte",
     "src/ui/touch/ThumbBar.svelte",
     "src/ui/version/VersionNotice.svelte",
-    "src/ui/voice/TalkIndicator.svelte",
     "src/ui/voice/VoicePanel.svelte",
   ],
 );

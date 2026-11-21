@@ -24,6 +24,7 @@
     kind = undefined,
     record = null,
     onfind = undefined,
+    again = undefined,
   }: {
     session: TableSession;
     onhome?: (() => void) | undefined;
@@ -33,6 +34,8 @@
     record?: MatchRecord | null;
     /** FIND ANOTHER MATCH (the matchmaker's search with the same setup); default: Home. */
     onfind?: (() => void) | undefined;
+    /** A solo table's primary (journey.md 4.13: REMATCH against Sparring, AGAIN alone), run in place of the rematch proposal. M8-P8. */
+    again?: { label: string; run: () => void } | undefined;
   } = $props();
 
   const themeChoice = themeContext();
@@ -71,6 +74,10 @@
     if (view.primary.id === 'findMatch') {
       if (onfind) onfind();
       else home();
+      return;
+    }
+    if (again && view.primary.id === 'rematch') {
+      again.run();
       return;
     }
     void propose();
@@ -118,7 +125,7 @@
         {:else if proposal && !proposal.passed}
           <StatusLine data-testid="rematch-waiting">{proposal.held ? 'Someone is holding the rematch.' : `Waiting for ${proposal.waiting.map((s) => (s === me ? 'you' : st.seats[s]?.name || s)).join(', ') || 'the others'} to answer.`}</StatusLine>
         {:else if seated}
-          <Button variant="primary" size="lg" waiting={busy} disabled={busy} data-testid="game-over-primary" data-action={view.primary.id} onclick={primary}>{view.primary.label}</Button>
+          <Button variant="primary" size="lg" waiting={busy} disabled={busy} data-testid="game-over-primary" data-action={view.primary.id} onclick={primary}>{again && view.primary.id === 'rematch' ? again.label : view.primary.label}</Button>
         {/if}
         <div class="row">
           {#if view.primary.id === 'findMatch' && seated}<Button variant="ghost" size="sm" data-testid="game-over-rematch" onclick={() => void propose()}>REMATCH</Button>{/if}

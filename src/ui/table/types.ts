@@ -5,7 +5,7 @@
 import type { CardDataSource, FaceSource, ParseResult, SetDataSource } from '../../data/types';
 import type { GameDefinition } from '../../games/types';
 import type { CreateTableScene } from '../../scene/types';
-import type { TableSession } from '../../session/types';
+import type { Matchmaker, TableSession } from '../../session/types';
 import type { DeckStore, GameStore, IdentityStore, MatchStore, RatingStore, SettingsStore } from '../../store/types';
 import type { HudShellProps } from '../props';
 import type { RoomLink } from '../types';
@@ -30,10 +30,14 @@ export interface TableDeps {
   /** The matched entry's stores (matchmaking.md 2.10). */
   matches?: MatchStore | null | undefined;
   ratings?: RatingStore | null | undefined;
+  /** The page's matchmaker: the match-found card and the queue bar over a computer or practice table (journey.md 4.5 "Practise while you wait"), FIND ANOTHER MATCH. */
+  matchmaker?: Matchmaker | undefined; // [M8-P8]
+  /** Opens a practice table (main.ts openPractice): the game-over overlay's AGAIN at a practice table. */
+  openPractice?: ((roomId: string) => Promise<TableSession>) | undefined; // [M8-P8]
 }
 
 /** What the frame hands its route's `onleave` (M8-P8). */
-export interface FrameLeave {
+export interface FrameLeave { // [M8-P8]
   checkpointer: { now(reason: 'leave'): Promise<void>; stop(): void; settled?(): Promise<void> };
 }
 
@@ -53,7 +57,7 @@ export interface TableFrameProps {
    * src/ui/play/leave.ts. The frame hands its checkpointer (M8-P8, additive: the argument is optional), so leaving
    * saves first and a purge waits for the writes already queued; a returned promise settles when the leave is done.
    */
-  onleave: (ctx?: FrameLeave) => void | Promise<unknown>;
+  onleave: (ctx?: FrameLeave) => void | Promise<unknown>; // [M8-P8] widened from () => void (additive: optional argument, optional promise)
   /** Added by M8-C: the page's sources and stores; without it the frame reads the context App sets (ui/table/context.ts). */
   deps?: TableDeps | undefined;
   /** Added by M8-C: the share link of a networked table (the waiting room's invite). */
