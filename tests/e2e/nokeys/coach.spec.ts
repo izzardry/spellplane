@@ -11,7 +11,7 @@ import { cardIn, coachNow, coachSeen, handIds, handPoint, mouseDrag, pileCentre,
 
 const overlap = (a: { x: number; y: number; width: number; height: number }, b: { x: number; y: number; width: number; height: number }) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
-/** The coach mark covers no card drawn on the table and sits in the lower part of the screen, above the hand. */
+/** The coach mark covers no card drawn on the table and sits in the lower part of the screen, clear of the hand. */
 async function clearOfThePlayArea(page: Page): Promise<void> {
   const mark = (await page.getByTestId('coach-mark').boundingBox())!;
   const vp = page.viewportSize()!;
@@ -37,9 +37,10 @@ async function clearOfThePlayArea(page: Page): Promise<void> {
     expect(overlap(mark, box), `covers the own ${kind}`).toBe(false);
   }
   // Not over the hand either.
+  // Never over a hand card: above the fan, or (a wide desktop window) beside it, over the own plate (gate M8 review).
   for (const h of await page.getByTestId('hand-card').all()) {
     const b = await h.boundingBox();
-    if (b) expect(mark.y + mark.height).toBeLessThanOrEqual(b.y + 1);
+    if (b) expect(overlap(mark, { x: b.x + 1, y: b.y + 1, width: b.width - 2, height: b.height - 2 }), 'covers a hand card').toBe(false);
   }
 }
 

@@ -22,16 +22,31 @@ export interface FanBox {
   z: number;
 }
 
-/** Layout of `n` hand cards in a `vw` x `vh` viewport with card `hovered` (index) raised. */
-export function fanLayout(n: number, vw: number, vh: number, hovered: number | null = null): FanBox[] {
+/**
+ * The free band of the bottom edge the fan may use, CSS px from the viewport's left edge (visual.md 2.9 board 7: the own
+ * plate bottom left, talk and the primary bottom right, the hand fan between them and nothing over a card face).
+ */
+export interface FanSpan {
+  left: number;
+  right: number;
+}
+
+/**
+ * Layout of `n` hand cards in a `vw` x `vh` viewport with card `hovered` (index) raised. With `span` the resting fan
+ * fits inside that band (centred in it, overlapping more where it must) instead of 80 % of the width. The raised card
+ * stays centred on its slot, inside the window: it is read for a moment and lies over everything (pulled into the band,
+ * it slid toward the middle and over the near battlefield the pointer was heading for).
+ */
+export function fanLayout(n: number, vw: number, vh: number, hovered: number | null = null, span: FanSpan | null = null): FanBox[] {
   if (n <= 0) return [];
   const h = vh * SCREEN_LAYER.handCardViewportFraction;
   const w = h * CARD_ASPECT;
-  const maxWidth = vw * SCREEN_LAYER.handWidthFraction;
+  const band = span && span.right - span.left >= w ? span : null;
+  const maxWidth = band ? Math.min(vw * SCREEN_LAYER.handWidthFraction, band.right - band.left) : vw * SCREEN_LAYER.handWidthFraction;
   const natural = n * w + (n - 1) * HAND_GAP_PX;
   const step = n === 1 ? 0 : natural <= maxWidth ? w + HAND_GAP_PX : (maxWidth - w) / (n - 1);
   const total = w + (n - 1) * step;
-  const left0 = (vw - total) / 2;
+  const left0 = band ? (band.left + band.right - total) / 2 : (vw - total) / 2;
   const boxes: FanBox[] = [];
   for (let i = 0; i < n; i++) {
     const left = left0 + i * step;

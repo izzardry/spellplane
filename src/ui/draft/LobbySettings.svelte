@@ -188,7 +188,8 @@
 {/snippet}
 
 <section class="settings" data-testid="lobby-settings" data-editable={editable ? 'true' : 'false'} aria-labelledby="lobby-settings-title">
-  <h2 id="lobby-settings-title">Game settings</h2>
+  <p class="ds-t-eyebrow eyebrow">Setup</p>
+  <h2 id="lobby-settings-title" class="ds-t-title">Table rules</h2>
   {#if !editable}
     <p class="hint" data-testid="lobby-settings-readonly">{st.stage === 'lobby' ? `The host, ${hostName}, chooses these.` : 'Fixed for this evening’s draft.'}</p>
   {/if}
@@ -236,8 +237,8 @@
         {/if}
         {#if packs !== null && packs > 1}
           <label class="check">
+            <span>A different set per pack</span>
             <input type="checkbox" data-testid="lobby-per-pack" disabled={!editable} checked={perPack} onchange={onPerPack} />
-            A different set per pack
           </label>
         {/if}
         {#if listState === 'loading'}<span class="hint" data-testid="lobby-sets-loading">Loading the set list…</span>{/if}
@@ -247,13 +248,13 @@
   {/if}
 
   <fieldset class="timers">
-    <legend>Timers</legend>
+    <legend class="ds-t-eyebrow">Timers</legend>
     {#if hasPickTimer(lobby.draft)}
-      <label class="check">
+      <label class="check row">
+        <span class="key">Pick timer</span>
         <input type="checkbox" data-testid="lobby-pick-timer" disabled={!editable} checked={lobby.pickTimer} onchange={onPickTimer} />
-        Pick timer
-        <span class="hint">45 s for a pack’s first pick, 3 s less for each pick after, at least 10 s; when it runs out the marked card, or else the first, is taken.</span>
       </label>
+      <p class="hint">45 s for a pack’s first pick, 3 s less for each pick after, at least 10 s; when it runs out the marked card, or else the first, is taken.</p>
     {/if}
     <label class="row">
       <span class="key">Pass timer</span>
@@ -267,97 +268,121 @@
 </section>
 
 <style>
+  /* A sheet in the waiting room's side column (board 5, visual.md 2.5 A5: settings rows put the label left and the
+     control right, 44 high). The native selects and number fields wear the kit's well (the kit has no select of its
+     own); nothing is cut: the control takes the width its longest choice needs (gate M8 finding F5). */
   .settings {
+    box-sizing: border-box;
     display: grid;
-    gap: var(--ds-space-sm, 8px);
-    padding: var(--ds-space-lg, 16px);
-    border-radius: var(--ds-radius-sheet, 8px);
-    box-shadow: var(--ds-elevation-sheet, none);
-    font-family: var(--ds-font-body, var(--sp-font));
-    font-size: var(--ds-type-body, 14px);
-    color: var(--ds-ink, var(--sp-fg));
-    background: var(--ds-panel, var(--sp-bg));
+    gap: var(--ds-space-xs);
+    padding: var(--ds-space-xl);
+    border-radius: var(--ds-radius-sheet);
+    box-shadow: var(--ds-elevation-sheet);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-body);
+    color: var(--ds-ink);
+    background: var(--ds-panel);
     min-width: 0;
   }
+  .eyebrow {
+    margin: 0;
+  }
   h2 {
-    margin: 0 0 4px;
-    font-size: var(--sp-font-size-large, 18px);
+    margin: 0 0 var(--ds-space-sm);
   }
   .row {
-    display: grid;
-    grid-template-columns: minmax(120px, 160px) minmax(0, 1fr);
+    display: flex;
     align-items: center;
-    gap: 8px;
+    justify-content: space-between;
+    gap: var(--ds-space-md);
+    min-height: var(--ds-control-md);
   }
   .sets {
     align-items: start;
+    padding-top: var(--ds-space-xs);
   }
   .key {
-    color: var(--sp-muted);
+    flex: 0 1 auto;
+    color: var(--ds-muted);
   }
   .set-list {
     display: grid;
-    gap: 6px;
+    gap: var(--ds-space-sm);
+    justify-items: end;
     min-width: 0;
   }
   .pack-set {
-    display: grid;
-    grid-template-columns: 56px minmax(0, 1fr);
+    display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--ds-space-sm);
   }
-  /* Swept to the kit (contracts.md Part G "Visual" item 4): selects and number fields are kit wells, 36 px. */
   select,
   input[type='number'] {
     box-sizing: border-box;
-    height: var(--ds-control-sm, 36px);
+    flex: 0 1 auto;
+    height: var(--ds-control-sm);
     font: inherit;
-    padding: 0 var(--ds-space-md, 12px);
+    padding: 0 var(--ds-space-md);
     border: 0;
-    border-radius: var(--ds-radius-pill, 18px);
-    background: var(--ds-chip, var(--sp-bg));
-    box-shadow: var(--ds-elevation-well, none);
-    color: var(--ds-ink, var(--sp-fg));
+    border-radius: var(--ds-radius-pill);
+    background: var(--ds-chip);
+    box-shadow: var(--ds-elevation-well);
+    color: var(--ds-ink);
     min-width: 0;
     max-width: 100%;
   }
   select:focus-visible,
-  input[type='number']:focus-visible {
-    outline: 2px solid var(--ds-focus, var(--sp-focus));
+  input:focus-visible {
+    outline: 2px solid var(--ds-focus);
     outline-offset: 2px;
   }
   input[type='number'] {
-    width: 6em;
+    width: 5em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
   }
   select:disabled,
   input:disabled {
-    color: var(--sp-fg);
+    color: var(--ds-ink);
     opacity: 0.75;
   }
+  /* A checkbox row: its words left, the box right, on one line. */
   .check {
     display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 6px;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--ds-space-md);
+    min-height: var(--ds-control-sm);
+    cursor: pointer;
+  }
+  .check input {
+    flex: none;
+    width: 20px;
+    height: 20px;
+    margin: 0;
+    accent-color: var(--ds-ink);
   }
   .timers {
     display: grid;
-    gap: 8px;
-    margin: 4px 0 0;
-    padding: 8px 12px 12px;
-    border: 1px solid var(--sp-border);
-    border-radius: var(--sp-radius-lg, 8px);
+    gap: var(--ds-space-xs);
+    margin: var(--ds-space-md) 0 0;
+    padding: var(--ds-space-md) 0 0;
+    border: 0;
+    border-top: 1px solid var(--ds-line);
+    min-width: 0;
   }
   legend {
-    color: var(--sp-muted);
-    padding: 0 4px;
+    float: left;
+    width: 100%;
+    padding: 0;
+    margin-bottom: var(--ds-space-xs);
   }
   .hint {
     margin: 0;
-    color: var(--sp-muted);
-    font-size: var(--sp-font-size-small, 12px);
+    color: var(--ds-muted);
+    font-size: var(--ds-type-small);
   }
   .warn {
-    color: var(--sp-warning);
+    color: var(--ds-warning);
   }
 </style>

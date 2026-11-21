@@ -71,7 +71,7 @@
 <section class="panel" data-testid="voice-panel" aria-label="Voice settings">
   <header>
     <h2>Voice</h2>
-    <button type="button" class="close" aria-label="Close voice settings" onclick={() => onclose?.()}>×</button>
+    <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs ds-icon-btn ds-btn--icon ds-icon-only close" aria-label="Close voice settings" title="Close" onclick={() => onclose?.()}>×</button>
   </header>
 
   {#if !listening}
@@ -220,8 +220,7 @@
     border-radius: var(--sp-radius-sm, 2px);
   }
   .close {
-    cursor: pointer;
-    padding: 0 6px;
+    flex: none;
   }
   ul {
     list-style: none;

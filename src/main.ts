@@ -5,6 +5,7 @@ import { createTableScene } from './scene/index';
 import { registerBaseRender } from './scene/lifecycle';
 import { createSoloSession, LONE_WAIT_MS, openNetSession, openSpectatorSession, type NetSession, type TableSession } from './session/index';
 import { liveIdentity } from './session/live-identity';
+import { randomNickname } from './ui/lobby/names';
 import { createPageTransport, KillableTransport, pageTransportKind } from './session/transports';
 import { createSetCache, openStores, requestPersistentStorage, SOLO_ROOM_ID, storageStatus, type LocalStores } from './store/index';
 import App from './ui/App.svelte';
@@ -142,6 +143,9 @@ async function boot(el: HTMLElement): Promise<void> {
     // A matched room (matchmaking.md 2.9; contracts.md Part D): seat 0 of its MatchRecord creates the table, every
     // other member never sits alone; so does a browser that opens a re-invite link (`rejoin`).
     const me = await identity.identity();
+    // A fresh browser that opens a link sits down under a made-up two-word nickname, as Home gives one on a first visit
+    // (journey.md J27 and 4.9; gate M8 finding F9: two guests were both "Player"). A spectator needs none.
+    if (!as.watch && !me.nickname.trim()) await identity.store.setNickname(randomNickname()).catch(() => undefined);
     const record = await stores.matches.get(link.roomId).catch(() => null);
     const here = parseRoute(location.hash);
     const rejoin = here.name === 'room' && here.room === link.roomId && !!here.rejoin;

@@ -26,7 +26,7 @@ test.describe('hand fan (DESIGN "Specification: geometry, layout and motion", Sc
     expect(raised.y + raised.height).toBeCloseTo(vp.height, 0);
   });
 
-  test('a large hand overlaps to fit 80% of the viewport width', async ({ page }) => {
+  test('a large hand overlaps to fit the band between the own plate and the primary (at most 80% of the width), centred in it', async ({ page }) => {
     await openHud(page);
     await page.evaluate(() =>
       window.__uiHarness!.update((s, sec) => {
@@ -51,9 +51,19 @@ test.describe('hand fan (DESIGN "Specification: geometry, layout and motion", Sc
         const rs = els.map((e) => e.getBoundingClientRect());
         return { left: Math.min(...rs.map((r) => r.left)), right: Math.max(...rs.map((r) => r.right)) };
       });
-    await expect.poll(async () => { const e = await extent(); return Math.round(e.right - e.left); }).toBe(Math.round(vp.width * 0.8));
+    // The band (visual.md 2.9 board 7; gate M8 F17): 16 px right of the own plate to 16 px left of talk and the primary.
+    const band = await page.evaluate(() => {
+      const l = window.__spellplane!.hud!.layout();
+      const plate = l.chrome.find((c) => c.name === 'own-plate');
+      const primary = l.chrome.find((c) => c.name === 'primary');
+      return { left: plate ? plate.rect.right + 16 : 16, right: primary ? primary.rect.left - 16 : l.viewport.width - 16 };
+    });
+    const want = Math.min(vp.width * 0.8, band.right - band.left);
+    await expect.poll(async () => { const e = await extent(); return Math.round(e.right - e.left); }).toBe(Math.round(want));
     const { left, right } = await extent();
-    expect(Math.abs((left + right) / 2 - vp.width / 2)).toBeLessThan(2);
+    expect(Math.abs((left + right) / 2 - (band.left + band.right) / 2)).toBeLessThan(2);
+    expect(left).toBeGreaterThanOrEqual(band.left - 1);
+    expect(right).toBeLessThanOrEqual(band.right + 1);
   });
 
   test('dragging a hand card up hands the drag to the scene at the cursor', async ({ page }) => {

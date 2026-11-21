@@ -35,7 +35,8 @@
   }
   .text {
     margin: 0;
-    font: var(--ds-type-body);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-body);
     color: var(--ds-ink);
   }
   .row {

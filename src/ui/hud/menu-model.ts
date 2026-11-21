@@ -77,3 +77,18 @@ export function shellGroups(groups: readonly object[] | null | undefined): HudMe
   });
   return out;
 }
+
+/**
+ * The whole Menu: the shell's groups first, then the HUD's. The evening's proposals ("Next game…", "New draft…", the
+ * HUD's `table` group) join the shell's "This game" group when there is one (journey.md 4.10: the actions that end this
+ * game live there; gate M8 finding F6), before a destructive item such as Concede (visual.md O-4).
+ */
+export function menuWithShell(shell: HudMenuGroup[], own: HudMenuGroup[]): HudMenuGroup[] {
+  const thisGame = shell.find((g) => g.id === 'top:this-game');
+  const table = own.find((g) => g.id === 'table');
+  if (!thisGame || !table || table.items.length === 0) return [...shell, ...own];
+  const firstDanger = thisGame.items.findIndex((i) => i.danger);
+  const at = firstDanger < 0 ? thisGame.items.length : firstDanger;
+  const merged: HudMenuGroup = { ...thisGame, items: [...thisGame.items.slice(0, at), ...table.items, ...thisGame.items.slice(at)] };
+  return [...shell.map((g) => (g === thisGame ? merged : g)), ...own.filter((g) => g !== table)];
+}

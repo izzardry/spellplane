@@ -182,12 +182,12 @@
 <style>
   /* Swept to the kit (contracts.md Part G "Visual" item 4): kit buttons and heights, --ds-* variables; not restructured. */
   .recovery {
+    /* Top left under the table's tools, clear of the opponent's plate at the top centre (gate M8 finding F19). */
     position: fixed;
     z-index: 64;
-    top: 56px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: min(560px, calc(100vw - 32px));
+    top: calc(var(--ds-edge, 16px) + var(--ds-control-md, 44px) + var(--ds-space-md, 12px));
+    left: var(--ds-edge, 16px);
+    width: min(400px, calc(100vw - 32px));
     box-sizing: border-box;
     background: var(--ds-panel);
     color: var(--ds-ink);
@@ -195,11 +195,15 @@
     border-left: 4px solid var(--ds-danger);
     border-radius: var(--ds-radius-sheet);
     padding: var(--ds-space-md) var(--ds-space-lg);
-    font: var(--ds-type-small);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
   }
+  /* A compact panel at the top left, so it stays above a left seat's plate: the title in body size, bold. */
   h2 {
-    margin: 0 0 var(--ds-space-sm);
-    font: var(--ds-type-title);
+    margin: 0 0 var(--ds-space-xs);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-body);
+    font-weight: var(--ds-weight-bold);
   }
   p {
     margin: var(--ds-space-xs) 0;
@@ -239,7 +243,8 @@
     border-radius: var(--ds-radius-sm);
     background: var(--ds-chip);
     color: var(--ds-ink);
-    font: var(--ds-type-body);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-body);
   }
   .muted {
     color: var(--ds-muted);

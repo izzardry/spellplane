@@ -26,7 +26,7 @@
   import Button from './design/Button.svelte';
   import Dialog from './design/Dialog.svelte';
   import HudMenu from './hud/HudMenu.svelte';
-  import { shellGroups } from './hud/menu-model';
+  import { menuWithShell, shellGroups } from './hud/menu-model';
   import './hud/hud.css';
   import NoDeck from './hud/NoDeck.svelte';
   import OpeningHand from './hud/OpeningHand.svelte';
@@ -45,7 +45,8 @@
   import { typersOf, typingSeats, type Typer } from './chat/typing';
   import { addPending, LogWatch, prunePending } from './chat/watch';
   import { inZoneKind, layoutOf } from './geometry';
-  import { fitInsets as fitInsetsFor, handOrder } from './hand';
+  import { fitInsets as fitInsetsFor, handOrder, type FanSpan } from './hand';
+  import { LAYOUT } from './design/tokens';
   import { applyOverrides, isMenuKey, isTextEntry, KeyEngine, keyLabel, matchesChord, RESERVED_KEYS } from './keymap';
   import { cardMenu, tableMenu, type MenuEntry } from './menu';
   import type { HudProps } from './props';
@@ -62,7 +63,7 @@
   import PileViewer from './PileViewer.svelte';
   import TokenSearch from './TokenSearch.svelte';
   import TurnStrip from './TurnStrip.svelte';
-  import TalkIndicator from './voice/TalkIndicator.svelte';
+  import TalkButton from './voice/TalkButton.svelte';
   import VoicePanel from './voice/VoicePanel.svelte';
   import { attachModifierTalkActions, attachTalkInput, focusKind, NOTE_FIELD_ATTR, runTalkAction } from './voice/input';
   import { PressTalk } from './voice/press';
@@ -83,6 +84,7 @@
   import SettingsPanel from './settings/Settings.svelte';
   import { isQuotaError, isStorageFullLine } from './settings/storage';
   import { registerDebug } from '../util/debug';
+  import { registerHudDebug } from './hud/debug';
   import { recentGestures } from '../scene/input/pointers';
   import RadialMenu from './touch/RadialMenu.svelte';
   import ThumbBar from './touch/ThumbBar.svelte';
@@ -430,11 +432,6 @@
     void vh;
     return safeAreaInsets();
   });
-  /**
-   * m8's stage (ui/flow/Stage.svelte) keeps its evening bar (Next game, New draft) in the bottom-left corner during a
-   * match while the shell passes no `evening` here; the own plate then sits above it instead of under it.
-   */
-  const eveningBarBelow = $derived(evening === undefined && session.evening !== undefined && st.stage === 'match');
   // The drawer opens over the table and never resizes it (m7-adjustments.md, M7-P2 "HUD layout": Activity), so the
   // table's framing ignores it.
   /**
@@ -443,12 +440,53 @@
    * covers the own library or a card (m7-hud-proposal, iPad: "never over a card"). The primary is 56 px high, 16 px up.
    */
   const rowAboveHand = $derived(full && (touchUi || vw <= 1100) ? 56 + 16 : 0);
+  /**
+   * The bottom row on a wide window (visual.md 2.9 board 7; gate M8 finding F17): the own plate bottom left, talk and
+   * the primary bottom right, and the hand fan in the band between them, 16 px clear of each, so nothing lies over a
+   * card face. The two clusters' widths are measured (a resize observer, not per frame); where the plate and the
+   * primary sit in a row above the hand (narrow windows, touch screens) the fan keeps the whole width.
+   */
+  let plateWidth = $state(0);
+  /** The width of each seat-edge plate (measured on resize), so the whole plate stays in the free room. */
+  let anchorWidths = $state<Record<string, number>>({});
+  /**
+   * The open activity drawer's reserve at the right edge: the drawer (360), its gap and the tilt handle beside it (8 + 44)
+   * and the edge inset; plates and the tracker keep left of it, so the drawer never covers a plate's menu.
+   */
+  const LOG_RESERVE = LAYOUT.edge + 360 + 8 + 44 + 8;
+  /** A seat-edge plate's centre x: at its anchor, kept inside the window and clear of an open drawer. */
+  function anchorX(x: number, width: number): number {
+    const lo = LAYOUT.edge + width / 2;
+    const hi = vw - (logOpen ? LOG_RESERVE : LAYOUT.edge) - width / 2;
+    return hi < lo ? lo : Math.min(Math.max(x, lo), hi);
+  }
+  let rightWidth = $state(0);
+  let stackWidth = $state(0);
+  const fanSpan = $derived.by<FanSpan | null>(() => {
+    if (!full || touchUi || vw <= 1100) return null;
+    const clear = LAYOUT.edge;
+    const left = plateWidth > 0 ? LAYOUT.edge + plateWidth + clear : LAYOUT.edge;
+    const right = vw - LAYOUT.edge - Math.max(rightWidth, stackWidth) - clear;
+    return right > left ? { left, right } : null;
+  });
   const fitInsets = $derived(fitInsetsFor(vh, false, teamFanShown, (thumbShown ? THUMB_BAR_SPACE_PX : 0) + rowAboveHand, safeInsets));
   /** Bottom of the block above the hand (toast, offer, prompt): above the teammate's fan and the thumb bar when shown. */
   const aboveHandBottom = $derived.by(() => {
     const thumb = thumbShown ? THUMB_BAR_SPACE_PX : 0;
     if (teamFanShown) return `${teamFanTop(vh) + 8 + thumb}px`;
     return thumb ? `calc(22vh + ${16 + thumb}px + var(--sp-above-row, 0px))` : null;
+  });
+
+  /**
+   * The coach mark sits above whatever the slot above the hand shows (KEEP and MULLIGAN, the no-deck line), never over it
+   * (gate M8 screenshot review: the first-run coach covered KEEP). Measured when the slot's height changes, not per frame.
+   */
+  let aboveEl = $state<HTMLElement | null>(null);
+  let aboveHeight = $state(0);
+  const coachBottom = $derived.by(() => {
+    void vh;
+    if (!aboveEl || aboveHeight < 8) return aboveHandBottom;
+    return `${Math.round(window.innerHeight - aboveEl.getBoundingClientRect().top)}px`;
   });
 
   // --- Card identity as this browser may know it ----------------------------------------------------------------
@@ -1347,6 +1385,7 @@
     installReducedMotionCss();
     const unwatchMotion = watchReducedMotion((v) => (reducedMotion = v));
     registerDebug({ a11y: { focus: () => focus, announcements: () => announcer.history() } });
+    registerHudDebug(() => document.querySelector('[data-testid="hud"]'));
     seenLog = entries.length;
     watch.start(entries);
     followTeam();
@@ -1564,7 +1603,7 @@
   <div class="layer">
     <!-- Top left: the Menu and Undo (docs/design/m7-hud-proposal.md, Always visible). -->
     {#if full}
-    <div class="top-left">
+    <div class="top-left" data-hud-chrome="tools">
       <nav class="toolbar sp-bar" aria-label="Table tools" data-testid="hud-bar">
         {#if onleave}
           <button type="button" class="ds-btn ds-icon-btn ds-btn--quiet sp-h-md sp-round" data-testid="leave" aria-label="Leave" title="Leave: the game is kept in your history" onclick={() => onleave?.()}
@@ -1593,20 +1632,17 @@
       </nav>
       {#if menuOpen}
         <div class="menu-pop">
-          <HudMenu groups={[...shellGroups(menuTop?.()), ...menuGroups]} label="Menu" anchor={menuButton ?? null} onclose={() => (menuOpen = false)} />
+          <HudMenu groups={menuWithShell(shellGroups(menuTop?.()), menuGroups)} label="Menu" anchor={menuButton ?? null} onclose={() => (menuOpen = false)} />
         </div>
       {/if}
       {#if themeChoice && themeOpen}
         <div class="theme-pop" bind:this={themeAnchor}><ThemePicker choice={themeChoice} sound={{ mode: soundMode ?? 'theme', set: setSoundMode }} view={{ prefs: viewPrefs, set: (name, value) => void view.set(name, value).catch(() => {}) }} onclose={() => (themeOpen = false)} /></div>
       {/if}
-      {#if liveVoice && voicePanel}
-        <div class="voice-pop"><VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} /></div>
-      {/if}
     </div>
     {/if}
 
     <!-- Top centre: the turn tracker and the plates without a seat edge. -->
-    <div class="top-centre">
+    <div class="top-centre" data-hud-chrome="tracker">
       {#if full}
       <TurnStrip
         turn={st.turn.number}
@@ -1624,7 +1660,7 @@
       <div class="plates-row">
         {#each others as seat (seat.id)}
           {#if !anchorOf(seat.id)}
-            <div class="plate-top" class:menu-open={!!openPlates[seat.id]}>{@render plate(seat, false)}</div>
+            <div class="plate-top" data-hud-chrome="plate" class:menu-open={!!openPlates[seat.id]}>{@render plate(seat, false)}</div>
           {/if}
         {/each}
       </div>
@@ -1634,13 +1670,13 @@
       {@const a = anchorOf(seat.id)}
       {#if a?.at}
         <!-- At the seat's table edge (SceneEvents.seatAnchors), moved by a transform when the camera settles. -->
-        <div class="plate-anchor" class:plate-top={a.at.y < vh / 2} class:menu-open={!!openPlates[seat.id]} style:transform="translate({Math.round(Math.min(Math.max(a.at.x, 120), vw - 120))}px, {Math.round(Math.min(Math.max(a.at.y, 70), vh - 200))}px)">{@render plate(seat, false)}</div>
+        <div class="plate-anchor" data-hud-chrome="plate" class:plate-top={a.at.y < vh / 2} class:menu-open={!!openPlates[seat.id]} bind:offsetWidth={anchorWidths[seat.id]} style:transform="translate({Math.round(anchorX(a.at.x, anchorWidths[seat.id] ?? 240))}px, {Math.round(Math.min(Math.max(a.at.y, 70), vh - 200))}px)">{@render plate(seat, false)}</div>
       {/if}
     {/each}
 
     <!-- Top right: the activity button and its ticker; the drawer opens over the right edge. -->
     {#if full}
-    <div class="right" class:open={logOpen}>
+    <div class="right" class:open={logOpen} data-hud-chrome="activity">
       {#if logOpen}
         <!-- The tilt keeps its visible handle while the drawer is open: beside the drawer, at the Activity button's place. -->
         <div class="view-beside"><ViewControl camera={() => scene?.camera ?? null} /></div>
@@ -1668,12 +1704,12 @@
     {/if}
 
     {#if st.seats[me]}
-      <div class="own-avatar" class:over-evening={eveningBarBelow}>{@render plate(st.seats[me], true)}</div>
+      <div class="own-avatar" data-hud-chrome="own-plate" bind:offsetWidth={plateWidth}>{@render plate(st.seats[me], true)}</div>
     {/if}
 
     <!-- Bottom right, above the primary: the stack's controls while something is on the stack (out of the top centre,
          where they covered the opponent's plate and row of card backs; gate M1, seam fix M8-P8). -->
-    <div class="stack-dock">
+    <div class="stack-dock" data-hud-chrome="stack" bind:offsetWidth={stackWidth}>
       {#if top && full}
         <div class="stack-chip ds-panel" data-testid="stack-chip">
           <span class="ds-label">Stack {st.stack.length}</span>
@@ -1694,10 +1730,14 @@
 
     <!-- Bottom right: Talk and the one primary button. -->
     {#if full}
-    <div class="bottom-right">
+    <div class="bottom-right" data-hud-chrome="primary" bind:offsetWidth={rightWidth}>
       {#if liveVoice}
         <div class="talk-cluster">
-          <TalkIndicator voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} muteKey={keyOf('mute') || 'M'} panelOpen={voicePanel} hold={talkHold} ontogglepanel={() => (voicePanel = !voicePanel)} />
+          {#if voicePanel}
+            <!-- The voice panel opens above the Talk button it belongs to (and from the Menu's "Voice and microphone…"). -->
+            <div class="voice-pop"><VoicePanel voice={liveVoice} {session} onclose={() => (voicePanel = false)} /></div>
+          {/if}
+          <TalkButton voice={liveVoice} talkKey={keyOf('talk') || 'Ctrl'} panelOpen={voicePanel} hold={talkHold} ontogglepanel={() => (voicePanel = !voicePanel)} />
         </div>
       {/if}
       {#if !spectating && !readOnly}
@@ -1718,12 +1758,12 @@
 
     <!-- Above the hand, centred (DESIGN "Specification: geometry, layout and motion", Screen layer); with a teammate's fan shown, above that fan too. -->
     {#if full && thumbShown && !readOnly}
-      <div class="thumbs" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
+      <div class="thumbs" data-hud-chrome="thumbs" style:bottom={teamFanShown ? `${teamFanTop(vh) + 8}px` : null}>
         <ThumbBar run={(a, phase) => commands.run(a, phase)} keyOf={(a) => keyOf(a)} talking={voice.talking === 'talk'} {resolveLit} />
       </div>
     {/if}
     <!-- The shell's notice shows in every chrome (a waiting room's "Ben left the table"); the rest only at the full HUD. -->
-    <div class="above-hand" data-testid="above-hand" style:bottom={aboveHandBottom}>
+    <div class="above-hand" data-testid="above-hand" data-hud-chrome="above-hand" style:bottom={aboveHandBottom} bind:this={aboveEl} bind:offsetHeight={aboveHeight}>
       {#if full}
       {#if storageFull && !storageFullDismissed}
         <div class="state"><EmptyState id="storageFull" action={{ label: 'Storage settings', run: () => openSettings('storage'), testid: 'empty-storage-settings' }} ondismiss={() => (storageFullDismissed = true)} /></div>
@@ -1825,6 +1865,7 @@
       onselect={(id) => (selection = selection.includes(id) ? selection.filter((s) => s !== id) : [...selection, id])}
       touch={touchUi}
       insets={safeInsets}
+      span={fanSpan}
       onradial={(id, x, y) => {
         menu = null;
         if (viewOnly) {
@@ -1889,7 +1930,7 @@
     onmore={(card, x, y) => openMenu(card, x, y)}
     onpile={pileAction}
   />
-  <CoachMark {coach} touch={touchUi} bottom={aboveHandBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
+  <CoachMark {coach} touch={touchUi} corner={!touchUi && vw > 1100} bottom={coachBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
   <!-- /M7-P5 -->
 
   {#if radial}
@@ -2182,9 +2223,20 @@
     gap: var(--ds-space-sm);
     pointer-events: auto;
   }
-  .menu-pop,
-  .theme-pop,
+  .talk-cluster {
+    position: relative;
+  }
   .voice-pop {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + var(--ds-space-sm));
+    z-index: 60;
+    pointer-events: auto;
+    max-height: calc(100vh - 2 * var(--ds-edge) - var(--ds-control-lg) - 96px);
+    overflow-y: auto;
+  }
+  .menu-pop,
+  .theme-pop {
     position: absolute;
     top: calc(var(--ds-control-md) + var(--ds-space-sm));
     left: 0;
@@ -2294,12 +2346,6 @@
     bottom: var(--ds-edge);
     z-index: 35;
   }
-  /* Only where the plate sits at the bottom edge (wide windows); narrower, it already sits above the hand. */
-  @media (min-width: 1101px) {
-    .own-avatar.over-evening {
-      bottom: calc(var(--ds-edge) + 2 * var(--ds-control-sm) + 3 * var(--ds-space-sm));
-    }
-  }
   .bottom-right {
     position: absolute;
     right: var(--ds-edge);
@@ -2336,8 +2382,9 @@
   }
   .above-hand {
     position: absolute;
-    /* Above the teammate's fan (z-index 19), so a hovered teammate card never covers OK and Hold. */
-    z-index: 20;
+    /* Above the teammate's fan (z-index 19) and the own fan (20), so a raised card never covers OK and Hold: the pointer
+       moving from the card up to the prompt would otherwise stay on the card (resume spec, the band-centred fan). */
+    z-index: 22;
     left: 50%;
     bottom: calc(22vh + 16px);
     transform: translateX(-50%);

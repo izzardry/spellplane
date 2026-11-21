@@ -148,6 +148,11 @@ export class TableRig {
   private look: TiltLook;
   /** The view is the fitted view of its tilt: it stays fitted through tilts, resizes and HUD changes. */
   private fitted = true;
+  /**
+   * The tilt in progress started from the fitted view: the own side's near corners (the own pile column sits there)
+   * are kept on screen while it moves (gate M8 finding F15), by zooming out about the anchor as far as the fitted view.
+   */
+  private keepNear = false;
   private lookMove: LookMove | null = null;
   /** Pan inertia, look-at mm per ms. */
   private vel = { x: 0, y: 0 };
@@ -371,7 +376,10 @@ export class TableRig {
     const a = this.screenToTableOrNull(s.x, s.y);
     // A cursor over the surround or above the horizon holds the view centre instead (outside the guarantee).
     this.anchor = a && onCameraTable(a, this.table) ? { table: a, screen: { x: s.x, y: s.y } } : null;
-    if (this.anchor) this.fitted = false;
+    if (this.anchor) {
+      if (this.fitted) this.keepNear = true;
+      this.fitted = false;
+    }
   }
 
   /** A tilt interaction starts, or one in progress changes its target. */
@@ -424,7 +432,31 @@ export class TableRig {
       half = Math.max(this.minHalf(t), room);
     }
     half = Math.max(this.minHalf(t), Math.min(half, this.halfRoom(at, t, bound)));
+    if (a && this.keepNear) ({ at, half } = this.keepNearInView(t, at, half, a, bound));
     this.look = { x: at.x, y: at.y, half };
+  }
+
+  /**
+   * Zoom out about the anchor (it stays under the cursor) until the table's two near corners, where the own pile column
+   * lies, are inside the window with a 16 px margin, never past the fitted view's zoom nor behind the seat.
+   */
+  private keepNearInView(t: number, at: TablePoint, half: number, a: { table: TablePoint; screen: ScreenPoint }, bound: number): { at: TablePoint; half: number } {
+    const near = [...this.frameCorners()].sort((p, q) => this.backOf(q) - this.backOf(p)).slice(0, 2);
+    const margin = 16;
+    const w = this.viewport.w;
+    const cap = this.maxHalf(t);
+    for (let i = 0; i < 16; i++) {
+      const box = this.screenBox(this.poseFor(t, { x: at.x, y: at.y, half }), near);
+      if (!box) break;
+      const over = Math.max(margin - box.x0, box.x1 - (w - margin), 0);
+      if (over < 0.5 || half >= cap - 1e-6) break;
+      const next = Math.min(cap, half * (1 + (2 * over) / Math.max(1, w)));
+      const nat = this.solve(t, next, a.table, a.screen) ?? at;
+      if (next > this.halfRoom(nat, t, bound) + 1e-9) break;
+      at = nat;
+      half = next;
+    }
+    return { at, half };
   }
 
   // --- Pose and projection ----------------------------------------------------------------------------------------
@@ -651,6 +683,7 @@ export class TableRig {
   panBy(dx: number, dy: number, at?: ScreenPoint): void {
     if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) return;
     this.fitted = false;
+    this.keepNear = false;
     this.lookMove = null;
     this.anchor = null;
     const vp = this.viewport;
@@ -674,6 +707,7 @@ export class TableRig {
   zoomAt(x: number, y: number, factor: number): void {
     if (!Number.isFinite(factor) || !(factor > 0)) return;
     this.fitted = false;
+    this.keepNear = false;
     this.lookMove = null;
     this.vel = { x: 0, y: 0 };
     this.anchor = null;
@@ -786,6 +820,7 @@ export class TableRig {
 
   private toLook(to: TiltLook, now: number, dur: number): void {
     this.fitted = false;
+    this.keepNear = false;
     this.anchor = null;
     this.vel = { x: 0, y: 0 };
     if (dur <= 0) {

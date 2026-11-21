@@ -31,6 +31,7 @@
     onhome,
     onbringback = undefined,
     onreadonly = undefined,
+    onclaiming = undefined,
     onwatch = undefined,
     children,
   }: {
@@ -46,6 +47,8 @@
     onbringback?: ((seat: SeatId) => void) | undefined;
     /** Called with true while the table must not take actions (standby, or a claim page shown), false once live. */
     onreadonly?: ((readOnly: boolean) => void) | undefined;
+    /** Called with true while the claim page shows (before SIT DOWN), false otherwise (gate M8 finding F19). */
+    onclaiming?: ((claiming: boolean) => void) | undefined;
     /** `WATCH` on a refusal screen; by default the game's watch link. */
     onwatch?: (() => void) | undefined;
     children?: Snippet;
@@ -92,6 +95,8 @@
   $effect(() => {
     const standby = !status.live || claiming;
     untrack(() => onreadonly?.(standby));
+    const showingClaim = claiming;
+    untrack(() => onclaiming?.(showingClaim));
     if (!status.live && timer === null && !waitedLong) timer = setTimeout(() => (waitedLong = true), PLAY_ON_AFTER_MS);
     if (status.live) {
       if (timer !== null) clearTimeout(timer);
@@ -301,13 +306,16 @@
   }
   .eyebrow {
     margin: 0;
-    font: var(--ds-type-title);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-title);
+    font-weight: var(--ds-heading-weight);
     letter-spacing: var(--ds-label-spacing);
     text-transform: uppercase;
   }
   .meta {
     margin: 0;
-    font: var(--ds-type-small);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
     color: var(--ds-muted);
     letter-spacing: var(--ds-label-spacing);
   }
@@ -327,7 +335,8 @@
   }
   .name {
     flex: 1;
-    font: var(--ds-type-body);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-body);
     font-weight: var(--ds-weight-bold);
     min-width: 0;
     overflow: hidden;
@@ -338,12 +347,14 @@
     display: inline-flex;
     align-items: center;
     gap: var(--ds-space-xs);
-    font: var(--ds-type-small);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
     color: var(--ds-muted);
   }
   .line {
     margin: 0;
-    font: var(--ds-type-small);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
     color: var(--ds-muted);
   }
   .danger {
@@ -386,7 +397,8 @@
     border-radius: var(--ds-radius-pill);
     background: var(--ds-panel);
     box-shadow: var(--ds-elevation-pop);
-    font: var(--ds-type-small);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
     color: var(--ds-ink);
     max-width: calc(100% - 32px);
     flex-wrap: wrap;

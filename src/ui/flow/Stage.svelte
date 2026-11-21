@@ -6,7 +6,8 @@
   - lobby: the M1 lobby (chairs, constructed decks, "Start the game") beside the lobby settings and the draft start;
   - draft: the draft HUD (ui/draft, M2-P4) over the session's DraftControls;
   - build: the builder (ui/builder, M2-P5 and M2-P6), with the evening bar (who is not Ready yet, a new draft);
-  - match: the table HUD, with the evening bar (next game, new draft).
+  - match: the table HUD; the evening's "Next game" and "New draft" are in its Menu's "This game" group (journey.md
+    4.10, gate M8 finding F6) and on the game-over overlay (journey.md 4.13), not in a bar over the table.
   In every stage the audit panel (ui/audit, M5-P2) shows the verdicts of the games that ended.
   M8-C: the lobby stage mounts the waiting room (ui/lobby/WaitingRoom.svelte, M8-P4) and the HUD gets the table frame's
   shell props (`shell`, contracts.md Part C).
@@ -57,17 +58,16 @@
   onMount(() => themeChoice?.subscribe((s) => (theme = s.theme)));
 </script>
 
+{#snippet draftRules()}
+  {#if evening && props.sets}<LobbyDraft session={props.session} {evening} sets={props.sets} />{/if}
+{/snippet}
+
 <div class="stage" data-testid="stage" data-stage={stage}>
   {#if stage === 'lobby'}
-    <div class="lobby-stage" class:with-draft={!!(evening && props.sets)}>
-      <div class="lobby-main">
-        <WaitingRoom session={props.session} game={props.game} link={props.link} identity={props.identity} decks={props.decks} cardData={props.cardData} parseDecklist={props.parseDecklist} settings={props.settings} faces={props.faces} onleave={props.shell?.onleave} {starter} />
-      </div>
-      {#if evening && props.sets}
-        <div class="lobby-side">
-          <LobbyDraft session={props.session} {evening} sets={props.sets} />
-        </div>
-      {/if}
+    <!-- The table's rules (draft mode, packs, sets, timers) are the waiting room's side column, under the invitation
+         (board 5; gate M8 finding F5), not a separate strip beside the room. -->
+    <div class="lobby-stage">
+      <WaitingRoom session={props.session} game={props.game} link={props.link} identity={props.identity} decks={props.decks} cardData={props.cardData} parseDecklist={props.parseDecklist} settings={props.settings} faces={props.faces} onleave={props.shell?.onleave} {starter} rules={evening && props.sets ? draftRules : undefined} />
     </div>
   {:else if stage === 'draft'}
     {#if draft}
@@ -85,12 +85,12 @@
     {/if}
   {:else}
     {#key st.games ?? 0}
-      <Hud session={props.session} createScene={props.createScene} faces={props.faces} cardData={props.cardData} game={props.game} {theme} settings={props.settings} parseDecklist={props.parseDecklist} {...props.shell ?? {}} />
+      <Hud session={props.session} createScene={props.createScene} faces={props.faces} cardData={props.cardData} game={props.game} {theme} settings={props.settings} parseDecklist={props.parseDecklist} {evening} {...props.shell ?? {}} />
     {/key}
   {/if}
-  {#if evening && (stage === 'build' || stage === 'match')}
-    <div class="evening" class:in-match={stage === 'match'}>
-      <EveningBar session={props.session} {evening} state={st} answer={stage !== 'match'} />
+  {#if evening && stage === 'build'}
+    <div class="evening">
+      <EveningBar session={props.session} {evening} state={st} answer />
     </div>
   {/if}
   {#if audit}
@@ -106,36 +106,6 @@
   }
   .lobby-stage {
     height: 100%;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .lobby-stage.with-draft {
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
-  }
-  .lobby-main {
-    min-height: 0;
-    height: 100%;
-  }
-  .lobby-side {
-    min-height: 0;
-    overflow-y: auto;
-    padding: 24px 16px 48px 0;
-    background: var(--sp-bg, #fff);
-  }
-  @media (max-width: 900px) {
-    .lobby-stage.with-draft {
-      grid-template-columns: minmax(0, 1fr);
-      grid-template-rows: auto auto;
-      height: auto;
-      max-height: 100%;
-      overflow-y: auto;
-    }
-    .lobby-main {
-      height: auto;
-    }
-    .lobby-side {
-      padding: 0 16px 48px;
-    }
   }
   .evening {
     position: absolute;
@@ -143,18 +113,6 @@
     left: 50%;
     transform: translateX(-50%);
     bottom: 12px;
-  }
-  /* In a match the bar sits in the bottom-left corner, below the own avatar, within the avatars' column (ui/hand.ts
-     FIT_INSET.avatars, 190 px) so it stays clear of the hand fan: its buttons wrap rather than reach the fan (M5 gate). */
-  .evening.in-match {
-    left: 12px;
-    transform: none;
-    bottom: 12px;
-    max-width: 166px;
-  }
-  .evening.in-match :global([data-testid='evening-bar']) {
-    max-width: 166px;
-    box-sizing: border-box;
   }
   .unavailable {
     margin: 48px auto;
