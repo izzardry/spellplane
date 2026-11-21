@@ -8,6 +8,7 @@
   import { onDestroy } from 'svelte';
   import type { SeatId, TableState } from '../../core/types';
   import type { SaveState } from '../../session/types';
+  import Badge from '../design/Badge.svelte';
   import { activeMuster, onActiveMuster } from '../gather/active';
   import { seatMenuModel } from './presence';
 
@@ -46,31 +47,14 @@
 </script>
 
 {#if kind === 'notSaving'}
-  <span class="ds-badge badge danger" data-testid="seat-badge" data-kind="notSaving" title="This browser is not saving. If you leave, your hand is lost.">NOT SAVING</span>
+  <Badge tone="danger" data-testid="seat-badge" data-kind="notSaving" title="This browser is not saving. If you leave, your hand is lost.">NOT SAVING</Badge>
 {:else if kind === 'reinvite'}
   {#if onopen}
     <button type="button" class="ds-btn ds-btn--ghost ds-btn--xs" data-testid="seat-badge" data-kind="reinvite" onclick={() => onopen?.()}>RE-INVITE</button>
   {:else}
-    <span class="ds-badge badge" data-testid="seat-badge" data-kind="reinvite">RE-INVITE</span>
+    <Badge data-testid="seat-badge" data-kind="reinvite">RE-INVITE</Badge>
   {/if}
 {:else if kind === 'moved'}
-  <span class="ds-badge badge" data-testid="seat-badge" data-kind="moved" title="A new browser took this seat over.">SEAT MOVED</span>
+  <Badge data-testid="seat-badge" data-kind="moved" title="A new browser took this seat over.">SEAT MOVED</Badge>
 {/if}
 
-<style>
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    min-height: 20px;
-    padding: 0 var(--ds-space-sm);
-    border-radius: var(--ds-radius-pill);
-    font: var(--ds-type-label);
-    letter-spacing: var(--ds-label-spacing);
-    background: var(--ds-badge);
-    color: var(--ds-badge-ink);
-  }
-  .danger {
-    background: var(--ds-danger);
-    color: var(--ds-on-ink);
-  }
-</style>

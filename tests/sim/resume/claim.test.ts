@@ -5,7 +5,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claimRefusal } from '../../../src/core/reducer/rejoin';
-import { closeAll, FAKE_TIMERS, net, settle, until, waitConverged, type Browser } from '../session/harness';
+import { closeAll, FAKE_TIMERS, net, open, settle, until, waitConverged, type Browser } from '../session/harness';
 import { loseSave } from './helpers';
 import { bringBack, comeBack, leave, moves, musterOf, newerHeadHeard, replaceBrowser, seated, tokenOf, untilLive } from './rejoin-helpers';
 import { closeWatchers, watch, type Watcher } from '../roles/harness';
@@ -74,6 +74,32 @@ describe('the sequencer checks of a re-invite (persistence.md section 7)', () =>
     const second = await replaceBrowser(network, browsers, link, 'again');
     second.session!.engine.setClock?.(() => Date.now());
     expect(await refusal(second.session!.claimSeat())).toMatch(/used|present/);
+  });
+
+  it('a blank browser reloaded after its address lost the token still holds the claim; a spent link forgets it', async () => {
+    const network = lossy(206);
+    const [ann, ben] = await seated(network, browsers, 2);
+    await loseSave(ben!);
+    const link = await bringBack(ann!, 's1');
+    const { token } = tokenOf(link);
+    const fresh = await replaceBrowser(network, browsers, link, 'blank');
+    expect(fresh.nonces.get('claim', 's1')).toBe(token);
+    // The page reloads; Gathering scrubbed the token from the address, so the route passes no claim.
+    fresh.session!.dispose();
+    fresh.session = null;
+    const again = await open(network, fresh, { settleMs: 200 });
+    expect(again.engine.seat()).toBeNull();
+    expect(again.claimInfo()).toEqual({ seat: 's1', name: 'Ben' });
+    await settle(again.claimSeat());
+    await waitConverged([ann!.session!, again], 'the claim');
+    expect(ann!.session!.getState().seats.s1!.peer).toBe('peer-blank');
+    expect(fresh.nonces.get('claim', 's1')).toBeNull();
+    // A second blank browser with the spent link is refused, and does not keep the token.
+    const late = await replaceBrowser(network, browsers, link, 'late');
+    expect(late.nonces.get('claim', 's1')).toBe(token);
+    late.session!.engine.setClock?.(() => Date.now());
+    expect(await refusal(late.session!.claimSeat())).toBe('used');
+    expect(late.nonces.get('claim', 's1')).toBeNull();
   });
 
   it('refuses a claim after 24 hours on the sequencer clock, and while the old browser is connected', async () => {

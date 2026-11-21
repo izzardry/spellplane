@@ -15,6 +15,7 @@
   import type { SeatId, TableState } from '../../core/types';
   import { scrubbedHash } from '../../session/invite';
   import type { ClaimView, MusterStatus, SessionMuster } from '../../session/types';
+  import PresenceDot from '../design/PresenceDot.svelte';
   import TeamPrompt from '../seat/TeamPrompt.svelte';
   import { notices } from '../table/notices';
   import BringBack from './BringBack.svelte';
@@ -217,8 +218,7 @@
             <li class="row" data-testid="gathering-row" data-seat={row.seat} data-state={row.state}>
               <span class="name">{row.name || row.seat}{row.me ? ' (you)' : ''}</span>
               <span class="state">
-                <span class="dot {row.state}" aria-hidden="true"></span>
-                {rowWord(row.state)}
+                <PresenceDot state={row.state === 'here' ? 'here' : row.state === 'connecting' ? 'connecting' : 'away'} label={rowWord(row.state)} />
               </span>
               {#if (row.state === 'away' || row.state === 'leftBefore') && bringable(row.seat)}
                 <button type="button" class="ds-btn ds-btn--ghost ds-btn--xs" data-testid="gathering-bring" onclick={() => bringBack(row.seat)}>BRING BACK</button>
@@ -338,33 +338,6 @@
     gap: var(--ds-space-xs);
     font: var(--ds-type-small);
     color: var(--ds-muted);
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-  .dot.here {
-    background: var(--ds-ink);
-  }
-  .dot.connecting {
-    box-shadow: inset 0 0 0 1.5px var(--ds-ink);
-    animation: pulse 1.2s var(--ds-ease-standard) infinite;
-  }
-  .dot.away,
-  .dot.leftBefore {
-    box-shadow: inset 0 0 0 1.5px var(--ds-muted);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .dot.connecting {
-      animation: none;
-      opacity: 0.6;
-    }
-  }
-  @keyframes pulse {
-    50% {
-      opacity: 0.3;
-    }
   }
   .line {
     margin: 0;

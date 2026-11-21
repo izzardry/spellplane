@@ -135,6 +135,8 @@ const SEAT_COLOURS = 8;
 const MUSTER_WAIT_MS = 5000;
 
 /** What a browser on standby may propose (persistence.md section 5; contracts.md Part G item 5). */
+/** Claim refusals a link never outgrows (used, taken back, void, expired, not valid): its kept token is forgotten. */
+const CLAIM_SPENT = /^\[claim:(used|takenBack|void|expired|wrong)\]/;
 const STANDBY_OK: ReadonlySet<string> = new Set(['chat', 'seatInvite', 'seatClaim', 'playOn']);
 
 /** `Ben`, `Ben and Cy`, `Ben, Cy and Dana`. */
@@ -415,6 +417,15 @@ class NetTable implements NetSession, SessionRecovery {
     this.hadSave = init.hadSave === true;
     this.knownHeadValue = init.knownHead ?? null;
     if (internals.claim) this.claimWanted = { ...internals.claim };
+    else if (engine.seat() === null) {
+      // A reload after the address lost its token (Gathering scrubs it): the claim kept beside the open nonces, while
+      // the saved copy (if any) gives this key pair no seat.
+      const seat = this.nonces.ids('claim').find((id) => !id.startsWith('team:'));
+      const token = seat === undefined ? null : this.nonces.get('claim', seat);
+      if (seat !== undefined && token) this.claimWanted = { seat, token };
+    }
+    // A blank browser keeps the link's claim until it is made or refused (persistence.md section 7).
+    if (this.claimWanted !== null && engine.seat() === null) this.nonces.set('claim', this.claimWanted.seat, this.claimWanted.token);
     this.followView(engine.state(), 'top');
     this.exposed = exposedFromLog(
       init.entries.flatMap((e) => (e.kind === 'action' ? [e.action] : [])),
@@ -2347,14 +2358,20 @@ class NetTable implements NetSession, SessionRecovery {
     const nm = (name ?? st.seats[c.seat]?.name ?? '').trim().slice(0, 64) || this.opts.identity.nickname || DEFAULT_NICKNAME;
     const a = this.stampAs({ type: 'seatClaim', seat: c.seat, claim: c.token, peer: this.peerId, name: nm }, c.seat);
     const why = explain(st, { ...a, seq: st.seq + 1 } as Action);
-    if (why !== null) throw new Error(why);
+    if (why !== null) {
+      // A refusal the claim cannot outgrow (used, taken back, void, expired, …): the kept token is forgotten.
+      if (CLAIM_SPENT.test(why)) this.nonces.delete('claim', c.seat);
+      throw new Error(why);
+    }
     this.nonces.set('claim', c.seat, c.token);
     if (!this.propose(a, false)) throw new Error(this.lastWarning());
     this.notify();
     try {
       await this.sequenced(a.cid);
     } catch (e) {
-      throw new Error(errorText(e).replace(/^refused: /, ''), { cause: e });
+      const reason = errorText(e).replace(/^refused: /, '');
+      if (CLAIM_SPENT.test(reason)) this.nonces.delete('claim', c.seat);
+      throw new Error(reason, { cause: e });
     }
   }
 
