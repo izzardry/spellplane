@@ -1035,7 +1035,7 @@ Ticked by the main session as packages are merged and gates pass.
 - [ ] M7-A8 Settings, menus, dialogs, notifications
 - [ ] M7-A9 Sound and motion
 - [ ] M7-A10 Accessibility pass
-- [ ] M8-C Contracts (M8, plus the M7 amendments)
+- [x] M8-C Contracts (M8, plus the M7 amendments)
 - [x] M7-P1 Table worlds, tilt and the arena still (with M7-P3 and the lifecycle part of M7-P6)
 - [x] M7-P2 Table HUD and in-table panels
 - [x] M7-P5 Card feel and play without keys (with M7-P4)
@@ -1047,4 +1047,4 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M8-P6 Computer opponent
 - [x] M8-P7 Matchmaking
 - [x] M8-P8 Journey integration
-- [ ] M8-G Gate (with M7's table checks) and owner review
+- [ ] M8-G Gate (with M7's table checks) and owner review (gate run 21 Nov: red, see docs/gates/M8.md)

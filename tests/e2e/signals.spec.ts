@@ -871,7 +871,12 @@ test.describe('theme switcher', () => {
       await expect(b.locator('html')).toHaveAttribute('data-theme', 'plain');
       expect(await loadedThemes(b)).toEqual(['paper', 'plain']);
       // Nothing but presence went out for the switch, and the table is the same in both browsers.
-      expect(await sentActs(a)).toBe(actsBefore);
+      // On a mismatch the message names what went out (CI once saw 7 → 9 here; the kinds tell a timer from the switch).
+      const acts = (await sent(a)).filter((m) => m.channel === 'act' || m.channel === 'prv');
+      expect(
+        acts.length,
+        `act/prv messages sent across the switch: ${JSON.stringify(acts.slice(actsBefore).map((m) => ({ channel: m.channel, t: (m.msg as { t?: string }).t, type: ((m.msg as { action?: { type?: string } }).action ?? {}).type })))}`,
+      ).toBe(actsBefore);
       // No message this page sent since names the theme.
       expect(JSON.stringify((await sent(a)).slice(outBefore))).not.toMatch(/"dusk"|theme/i);
       expect(await hash(a)).toBe(hashBefore);
