@@ -17,8 +17,8 @@
     ...rest
   }: { creatures: number[]; others: number[]; target?: number[] | undefined; size?: 'full' | 'small'; label: string; [attr: string]: unknown } = $props();
   const height = $derived(size === 'full' ? 148 : 64);
-  // Room for the count above and the mana value below.
-  const cols = $derived(curveColumns(creatures, others, target, height - (size === 'full' ? 40 : 30)));
+  // Room for the count above and the mana value below (about 15 + 13.5 px of text and two 4 px gaps, base.css).
+  const cols = $derived(curveColumns(creatures, others, target, height - (size === 'full' ? 40 : 38)));
 </script>
 
 <figure class="ds-curve-chart" style:margin="0" {...rest}>

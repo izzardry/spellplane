@@ -226,7 +226,9 @@ export const LAYOUT = {
   /** HUD edge inset from the window. */
   edge: 16,
   /** Stacking order of the HUD layers (critique, Start page 4: "Nothing defines what may cover what"). */
-  z: { table: 0, plates: 10, strip: 20, hand: 30, toolbar: 40, drawer: 50, popover: 60, toast: 70, dialog: 80, coach: 90 },
+  // [M8-P1] Re-valued to the order the kit renders (base.css reads them as --ds-z-*): a kit menu sits above a dialog's
+  // scrim (a menu opened inside a dialog), coach marks above both, toasts on top; `menu` is new.
+  z: { table: 0, plates: 10, strip: 20, hand: 30, toolbar: 40, drawer: 50, popover: 60, dialog: 80, menu: 82, coach: 85, toast: 90 },
 } as const;
 
 /** Every card-feel and table cue (themes/types.ts SoundCue), for looks that play them all. */
@@ -628,6 +630,7 @@ export function designCssVars(look: LookTokens, reduced = false): Record<string,
   for (const [k, v] of Object.entries(LAYOUT.type)) vars[`--ds-type-${k}`] = `${v}px`;
   for (const [k, v] of Object.entries(LAYOUT.control)) vars[`--ds-control-${kebab(k)}`] = `${v}px`;
   vars['--ds-edge'] = `${LAYOUT.edge}px`;
+  for (const [k, v] of Object.entries(LAYOUT.z)) vars[`--ds-z-${k}`] = String(v); // [M8-P1] the stacking order
   vars['color-scheme'] = look.scheme;
   return vars;
 }

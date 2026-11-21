@@ -8,7 +8,10 @@ import { curveColumns, CURVE_PX_PER_CARD, eight, sparkHeights } from '../../../s
 import { popoverPlace } from '../../../src/ui/design/menu';
 import { fnv1a, packArt, packOutline, starPoints } from '../../../src/ui/design/pack-art';
 import { stepOption } from '../../../src/ui/design/segmented';
-import { thumbCardSize, thumbDiscs, thumbRects } from '../../../src/ui/design/thumb';
+import { thumbBox, thumbCardSize, thumbDiscs, thumbRects } from '../../../src/ui/design/thumb';
+import { createTable } from '../../../src/core/reducer';
+import { mtg } from '../../../src/games/mtg/index';
+import { thumbOf } from '../../../src/session/summary';
 
 describe('packArt', () => {
   it('is pure and seeded by "<code>:<index>" (FNV-1a)', () => {
@@ -77,6 +80,26 @@ describe('table thumbnail', () => {
     expect(thumbDiscs(thumb, 4).map((d) => d.seat)).toEqual([0, 1, 2, 3]);
     const [bottom, top] = thumbDiscs(thumb, 2);
     expect(bottom!.cy).toBeGreaterThan(top!.cy);
+  });
+  it('is the right way up: a seat-0 card from thumbOf lands in the lower half, next to disc 0', () => {
+    // Table space: y points away from seat 0 (docs/DESIGN.md "Table space"), so seat 0 sits at negative y.
+    const st = createTable({ game: mtg, format: '1v1', seats: [{ name: 'A', colour: 0 }, { name: 'B', colour: 1 }] });
+    const put = (id: string, seat: 's0' | 's1', y: number): void => {
+      st.cards[id] = { id, owner: seat, controller: seat, zone: `battlefield:${seat}`, face: 'up', faceIndex: 0, tapped: false, pose: { x: 0, y, rot: seat === 's0' ? 0 : 180 }, counters: {} };
+      st.zones[`battlefield:${seat}`]!.ids.push(id);
+    };
+    put('near', 's0', -300);
+    put('far', 's1', 300);
+    const t = thumbOf(st)!;
+    const box = thumbBox(t);
+    const mid = box.y + box.h / 2;
+    const [near, far] = thumbRects(t);
+    const [d0, d1] = thumbDiscs(box, 2).map((d) => ({ ...d, cy: d.cy + box.y }));
+    expect(near!.seat).toBe(0);
+    expect(near!.y + near!.h / 2).toBeGreaterThan(mid);
+    expect(far!.y + far!.h / 2).toBeLessThan(mid);
+    expect(d0!.cy).toBeGreaterThan(mid);
+    expect(d1!.cy).toBeLessThan(mid);
   });
   it('draws at most 80 cards', () => {
     const many = { w: 1000, h: 600, cards: Array.from({ length: 120 }, (_, i) => [i, i, 0, 0] as [number, number, 0 | 1, number]) };

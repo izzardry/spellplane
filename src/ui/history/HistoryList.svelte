@@ -143,7 +143,7 @@
               onopen(g);
             }}
           >
-            <TableThumb thumb={g.thumb ?? null} seats={g.players.map((p, i) => ({ colour: seatColour(p.colour, i), life: p.life, computer: g.opponent === 'sparring' && !p.me }))} width={128} />
+            <TableThumb thumb={g.thumb ?? null} seats={g.players.map((p, i) => ({ colour: seatColour(p.colour, i), life: p.life, computer: g.opponent === 'sparring' && !p.me, me: p.me, away: p.away }))} width={128} />
             <span class="hrow__text">
               <span class="hrow__head">
                 <span class="hrow__title" data-testid="history-title">{rowTitle(g)}</span>
