@@ -41,7 +41,10 @@ async function emptyTable(page: Page, ids: string[]): Promise<Pt> {
   const cs = (await cards(page)).filter((c) => ids.includes(c.id));
   const bottom = Math.max(...cs.map((c) => c.screen.y + c.screen.height));
   const left = Math.min(...cs.map((c) => c.screen.x));
-  return { x: Math.round(left - 60), y: Math.round(bottom + 40) };
+  const p = { x: Math.round(left - 60), y: Math.round(bottom + 40) };
+  // The point is the table itself, not a HUD element over it (a press there would never reach the scene).
+  expect(await page.evaluate((q) => document.elementFromPoint(q.x, q.y)?.tagName ?? null, p)).toBe('CANVAS');
+  return p;
 }
 const camMoved = (a: { position: number[] }, b: { position: number[] }) => Math.hypot(...a.position.map((v, i) => v - b.position[i]!));
 
