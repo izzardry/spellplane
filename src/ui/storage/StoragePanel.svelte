@@ -8,13 +8,27 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { backupFileName, backupText, exportBackup, readBackupText, restoreBackup, suggestReplaceIdentity } from '../../store/backup';
+  import type { CardData } from '../../data/types';
+  import { IdbCardCache } from '../../store/cards';
   import { requestPersistentStorage } from '../../store/persist';
   import { formatBytes, storageStatus, type StorageStatus } from '../../store/quota';
   import type { LocalStores } from '../../store/stores';
   import type { BackupImport } from '../../store/types';
+  import { freeBasicTest, type LoadCards } from '../decks/state/sealed-import';
   import { PERSIST_HINT } from './hints';
 
-  let { stores, now = () => Date.now(), reload = () => location.reload() }: { stores: LocalStores; now?: () => number; reload?: () => void } = $props();
+  let {
+    stores,
+    now = () => Date.now(),
+    reload = () => location.reload(),
+    loadCards,
+  }: { stores: LocalStores; now?: () => number; reload?: () => void; /** Card data by id (CardDataSource.getMany); default: this browser's card cache. [M8-P3] */ loadCards?: LoadCards } = $props();
+
+  /** The card cache of `stores`, read without the network: what a sealed deck's free basics are recognised by when no source is passed. */
+  async function cachedCards(sids: string[]): Promise<Record<string, CardData>> {
+    const records = await new IdbCardCache(() => Promise.resolve(stores.db)).getMany(sids);
+    return Object.fromEntries(records.map((r) => [r.id, r.data as CardData]));
+  }
 
   let status = $state<StorageStatus | null>(null);
   let persistMessage = $state('');
@@ -70,7 +84,9 @@
     input.value = '';
     result = null;
     if (!file) return;
-    const data = readBackupText(await file.text());
+    const text = await file.text();
+    // A booster deck's basics are free (decks.md section 7, D25): their card data is loaded before the seal is checked.
+    const data = readBackupText(text, { isFreeBasic: await freeBasicTest(text, loadCards ?? cachedCards, () => null) });
     importing = { name: file.name, data };
     replaceIdentity = await suggestReplaceIdentity(stores, data);
     overwrite = false;

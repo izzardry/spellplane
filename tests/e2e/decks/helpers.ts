@@ -60,13 +60,23 @@ export async function go(page: Page, hash: string): Promise<void> {
   await page.evaluate((h) => (location.hash = h), hash);
 }
 
-/** Every card face image's rendered width / height. */
+/**
+ * Every shown card face's width / height as the eye sees it: the layout box (before a tile's tilt) when the image is
+ * scaled uniformly into it (computed object-fit contain) and its own pixels have the box's ratio (±1%). A face that is
+ * stretched (fill), cropped (cover) or letterboxed from another ratio gives NaN, which fails every ratio check. Waits
+ * for the images to decode, so the natural size is known.
+ */
 export async function faceRatios(page: Page): Promise<number[]> {
-  // The layout box (before the tile's tilt), which is what the face is scaled into.
+  await expect.poll(() => page.locator('img[data-card-face]').evaluateAll((els) => (els as HTMLImageElement[]).every((e) => e.complete))).toBe(true);
   return page.locator('img[data-card-face]').evaluateAll((els) =>
-    (els as HTMLElement[])
-      .filter((e) => e.offsetWidth > 0 && e.offsetHeight > 0)
-      .map((e) => e.offsetWidth / e.offsetHeight),
+    (els as HTMLImageElement[])
+      .filter((e) => e.offsetWidth > 0 && e.offsetHeight > 0 && e.naturalWidth > 0)
+      .map((e) => {
+        const box = e.offsetWidth / e.offsetHeight;
+        const own = e.naturalWidth / e.naturalHeight;
+        const fit = getComputedStyle(e).objectFit;
+        return fit === 'contain' && Math.abs(own - box) / box < 0.01 ? box : Number.NaN;
+      }),
   );
 }
 

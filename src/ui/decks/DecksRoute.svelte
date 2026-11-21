@@ -31,6 +31,7 @@
     faces = undefined,
     searching = undefined,
     go = undefined,
+    replace = undefined,
   }: {
     route: Extract<Route, { name: 'decks' | 'deckNew' | 'deck' | 'deckOpen' }>;
     decks?: DeckStore | null;
@@ -41,6 +42,8 @@
     /** True while a matchmaking search runs (contracts.md Part E). */
     searching?: (() => boolean) | undefined;
     go?: ((hash: string) => void) | undefined;
+    /** Navigate in place of the current history entry (redirects); default: location.replace of the hash. */
+    replace?: ((hash: string) => void) | undefined;
   } = $props();
 
   const isOffline = (): boolean => decksOffline() || (typeof navigator !== 'undefined' && navigator.onLine === false);
@@ -55,6 +58,8 @@
       now: () => Date.now(),
       newId: newDeckId,
       go: go ?? ((hash: string) => void (location.hash = hash)),
+      // A same-document location.replace changes the hash, fires hashchange and keeps the history length.
+      replace: replace ?? ((hash: string) => location.replace(new URL(hash, location.href).href)),
       searching: searching ?? (() => false),
       offline: isOffline,
       // The hook's switch and the browser's own online / offline events; the page releases both on destroy.

@@ -14,7 +14,7 @@
   import type { ListLibraryProps } from './props';
   import { foundCards as found, listUi } from './state.svelte';
 
-  let { build, onChange, card, sort, search, decks, origin }: ListViewProps & ListLibraryProps = $props();
+  let { build, onChange, card, sort, search, decks, origin, loadCards }: ListViewProps & ListLibraryProps = $props();
 
   const SORT_LABELS: Record<BuilderSort, string> = { colour: 'Colour', manaValue: 'Mana value', type: 'Type' };
 
@@ -197,7 +197,7 @@
   {/if}
 
   {#if decks}
-    <Library {decks} {build} {origin} card={lookup} onOpen={change} />
+    <Library {decks} {build} {origin} {loadCards} card={lookup} onOpen={change} />
   {/if}
 </section>
 
