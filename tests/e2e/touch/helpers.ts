@@ -203,35 +203,49 @@ export async function emptyTable(page: Page, ids: string[], also: Pt[] = []): Pr
   for (const dx of [40, 80, 140]) candidates.push({ x: right + dx, y: midY }, { x: left - dx, y: midY });
   for (const dy of [30, 60]) candidates.push({ x: left - 30, y: top - dy }, { x: right + 30, y: top - dy });
   const layout = await hook<HudLayout>(page, 'hud.layout');
+  // Then the whole window on a 40 px grid, nearest the cards first (cards zoomed past the window leave no room around them).
+  const cx = (left + right) / 2;
+  const grid: Pt[] = [];
+  for (let y = 40; y < layout.viewport.height - 24; y += 40) for (let x = 40; x < layout.viewport.width - 24; x += 40) grid.push({ x, y });
+  grid.sort((a, b) => Math.hypot(a.x - cx, a.y - midY) - Math.hypot(b.x - cx, b.y - midY));
+  candidates.push(...grid);
   const boxes = [...layout.chrome.map((c) => ({ name: c.name, ...c.rect })), ...layout.hand.map((h) => ({ name: `hand ${h.card}`, ...h.rect }))];
-  const vp = layout.viewport;
-  const tried: string[] = [];
-  for (const c of candidates) {
-    const p = { x: Math.round(c.x), y: Math.round(c.y) };
-    const pts = [p, ...also.map((o) => ({ x: p.x + o.x, y: p.y + o.y }))];
-    const why = await page.evaluate(
-      ({ pts: list, boxes: bs, cards: cardRects, vp: v }) => {
-        for (const q of list) {
-          if (q.x < 24 || q.y < 24 || q.x > v.width - 24 || q.y > v.height - 24) return `off screen at ${q.x},${q.y}`;
-          const card = cardRects.find((r) => q.x >= r.x - 12 && q.x <= r.x + r.width + 12 && q.y >= r.y - 12 && q.y <= r.y + r.height + 12);
-          if (card) return `card ${card.id}`;
-          const box = bs.find((b) => q.x >= b.left - 8 && q.x <= b.right + 8 && q.y >= b.top - 8 && q.y <= b.bottom + 8);
-          if (box) return `HUD ${box.name}`;
-          const el = document.elementFromPoint(q.x, q.y);
-          if (el?.tagName !== 'CANVAS') return el ? `${el.tagName}${el.getAttribute('data-testid') ? `[data-testid=${el.getAttribute('data-testid')}]` : ''} ${(el.textContent ?? '').trim().slice(0, 40)} in ${el.closest('[data-hud-chrome],[data-testid]')?.getAttribute('data-hud-chrome') ?? el.closest('[data-testid]')?.getAttribute('data-testid') ?? '?'}` : 'nothing';
-        }
-        return null;
-      },
-      { pts, boxes, cards: all.filter((x) => x.visible).map((x) => ({ id: x.id, ...x.screen })), vp },
-    );
-    if (why === null) {
-      // Name what stood at the points passed over, in the test's output (CI's log).
-      if (tried.length) console.log(`[emptyTable] passed over ${tried.join('; ')}; using ${p.x},${p.y}`);
-      return p;
-    }
-    tried.push(`${p.x},${p.y}: ${why}`);
+  const points = candidates.map((c) => ({ x: Math.round(c.x), y: Math.round(c.y) }));
+  // Every candidate is judged in one round trip: the first free one wins, with why each one before it was passed over.
+  const res = await page.evaluate(
+    ({ points: list, also: offs, boxes: bs, cards: cardRects, vp: v }) => {
+      const why = (q: { x: number; y: number }): string | null => {
+        if (q.x < 24 || q.y < 24 || q.x > v.width - 24 || q.y > v.height - 24) return `off screen at ${q.x},${q.y}`;
+        const card = cardRects.find((r) => q.x >= r.x - 12 && q.x <= r.x + r.width + 12 && q.y >= r.y - 12 && q.y <= r.y + r.height + 12);
+        if (card) return `card ${card.id}`;
+        const box = bs.find((b) => q.x >= b.left - 8 && q.x <= b.right + 8 && q.y >= b.top - 8 && q.y <= b.bottom + 8);
+        if (box) return `HUD ${box.name}`;
+        const el = document.elementFromPoint(q.x, q.y);
+        if (el?.tagName === 'CANVAS') return null;
+        if (!el) return 'nothing';
+        const testid = el.getAttribute('data-testid');
+        const holder = el.closest('[data-hud-chrome]')?.getAttribute('data-hud-chrome') ?? el.parentElement?.closest('[data-testid]')?.getAttribute('data-testid') ?? '?';
+        return `${el.tagName}${testid ? `[data-testid=${testid}]` : ''} "${(el.textContent ?? '').trim().slice(0, 40)}" in ${holder}`;
+      };
+      const tried: string[] = [];
+      for (const p of list) {
+        let reason: string | null = null;
+        for (const q of [p, ...offs.map((o) => ({ x: p.x + o.x, y: p.y + o.y }))]) if ((reason = why(q))) break;
+        if (reason === null) return { found: p, tried };
+        tried.push(`${p.x},${p.y}: ${reason}`);
+      }
+      return { found: null, tried };
+    },
+    { points, also, boxes, cards: all.filter((x) => x.visible).map((x) => ({ id: x.id, ...x.screen })), vp: layout.viewport },
+  );
+  const tried = res.tried;
+  if (res.found) {
+    // Name what stood at the points passed over (other than cards), in the test's output (CI's log).
+    const notCards = tried.filter((t) => !t.includes(': card ') && !t.includes('off screen'));
+    if (notCards.length) console.log(`[emptyTable] passed over ${notCards.slice(0, 12).join('; ')}; using ${res.found.x},${res.found.y}`);
+    return res.found;
   }
-  throw new Error(`no empty table point near ${ids.join(', ')}:\n${tried.join('\n')}`);
+  throw new Error(`no empty table point near ${ids.join(', ')}:\n${tried.slice(0, 40).join('\n')}`);
 }
 
 /** The last action entries of the log (type and fields, without the session's stamps). */

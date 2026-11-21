@@ -389,7 +389,8 @@ test('a two-finger double-tap fits the whole table', async ({ page }, info) => {
   await fingers(page, twoFingers({ x: m.x - 30, y: m.y }, { x: m.x + 30, y: m.y }, { x: m.x - 140, y: m.y }, { x: m.x + 140, y: m.y }));
   await settled(page);
   expect(camMoved(fitted, await pose(page))).toBeGreaterThan(10);
-  const at = { x: 600, y: 360 };
+  // Both fingers on the table: a control over the zoomed-in card (its selection strip) would take a finger instead.
+  const at = await emptyTable(page, bf, [{ x: -40, y: 0 }, { x: 40, y: 0 }]);
   await onCanvas(page, [{ x: at.x - 40, y: at.y }, { x: at.x + 40, y: at.y }]);
   const one = [
     { type: 'down' as const, id: 1, x: at.x - 40, y: at.y, wait: 0 },
