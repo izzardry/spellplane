@@ -477,6 +477,18 @@
     return thumb ? `calc(22vh + ${16 + thumb}px + var(--sp-above-row, 0px))` : null;
   });
 
+  /**
+   * The coach mark sits above whatever the slot above the hand shows (KEEP and MULLIGAN, the no-deck line), never over it
+   * (gate M8 screenshot review: the first-run coach covered KEEP). Measured when the slot's height changes, not per frame.
+   */
+  let aboveEl = $state<HTMLElement | null>(null);
+  let aboveHeight = $state(0);
+  const coachBottom = $derived.by(() => {
+    void vh;
+    if (!aboveEl || aboveHeight < 8) return aboveHandBottom;
+    return `${Math.round(window.innerHeight - aboveEl.getBoundingClientRect().top)}px`;
+  });
+
   // --- Card identity as this browser may know it ----------------------------------------------------------------
   /** The face this viewer may see: public identity, else own hand or own face-down identity, else a targeted reveal. Never a library face. */
   function refOf(id: InstanceId): CardRef | null {
@@ -1630,7 +1642,7 @@
     {/if}
 
     <!-- Top centre: the turn tracker and the plates without a seat edge. -->
-    <div class="top-centre" class:beside-log={logOpen} data-hud-chrome="tracker">
+    <div class="top-centre" data-hud-chrome="tracker">
       {#if full}
       <TurnStrip
         turn={st.turn.number}
@@ -1751,7 +1763,7 @@
       </div>
     {/if}
     <!-- The shell's notice shows in every chrome (a waiting room's "Ben left the table"); the rest only at the full HUD. -->
-    <div class="above-hand" data-testid="above-hand" data-hud-chrome="above-hand" style:bottom={aboveHandBottom}>
+    <div class="above-hand" data-testid="above-hand" data-hud-chrome="above-hand" style:bottom={aboveHandBottom} bind:this={aboveEl} bind:offsetHeight={aboveHeight}>
       {#if full}
       {#if storageFull && !storageFullDismissed}
         <div class="state"><EmptyState id="storageFull" action={{ label: 'Storage settings', run: () => openSettings('storage'), testid: 'empty-storage-settings' }} ondismiss={() => (storageFullDismissed = true)} /></div>
@@ -1918,7 +1930,7 @@
     onmore={(card, x, y) => openMenu(card, x, y)}
     onpile={pileAction}
   />
-  <CoachMark {coach} touch={touchUi} bottom={aboveHandBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
+  <CoachMark {coach} touch={touchUi} bottom={coachBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
   <!-- /M7-P5 -->
 
   {#if radial}
@@ -2251,14 +2263,6 @@
     align-items: center;
     gap: var(--ds-space-sm);
     z-index: 30;
-  }
-  /* With the activity drawer open (LOG_RESERVE: the 360 px drawer, the tilt handle beside it and the edge, 436 px), the
-     tracker and the plates under it centre in the room left of it, so the drawer never covers a plate's menu. */
-  .top-centre.beside-log {
-    left: calc((100% - 436px + var(--ds-edge)) / 2);
-  }
-  .top-centre.beside-log .plates-row {
-    max-width: min(900px, calc(100vw - 436px - var(--ds-edge)));
   }
   /* A narrow column above the primary, clear of the hand fan and of the top centre. */
   .stack-dock {

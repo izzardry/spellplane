@@ -306,13 +306,16 @@
   }
   .eyebrow {
     margin: 0;
-    font: var(--ds-type-title);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-title);
+    font-weight: var(--ds-heading-weight);
     letter-spacing: var(--ds-label-spacing);
     text-transform: uppercase;
   }
   .meta {
     margin: 0;
-    font: var(--ds-type-small);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
     color: var(--ds-muted);
     letter-spacing: var(--ds-label-spacing);
   }
@@ -332,7 +335,8 @@
   }
   .name {
     flex: 1;
-    font: var(--ds-type-body);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-body);
     font-weight: var(--ds-weight-bold);
     min-width: 0;
     overflow: hidden;
@@ -343,12 +347,14 @@
     display: inline-flex;
     align-items: center;
     gap: var(--ds-space-xs);
-    font: var(--ds-type-small);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
     color: var(--ds-muted);
   }
   .line {
     margin: 0;
-    font: var(--ds-type-small);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
     color: var(--ds-muted);
   }
   .danger {
@@ -391,7 +397,8 @@
     border-radius: var(--ds-radius-pill);
     background: var(--ds-panel);
     box-shadow: var(--ds-elevation-pop);
-    font: var(--ds-type-small);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
     color: var(--ds-ink);
     max-width: calc(100% - 32px);
     flex-wrap: wrap;

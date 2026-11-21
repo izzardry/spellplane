@@ -118,7 +118,9 @@
     place-items: center;
     background: var(--ds-chip);
     color: var(--ds-muted);
-    font: var(--ds-type-title);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-title);
+    font-weight: var(--ds-heading-weight);
   }
   .menus {
     display: grid;
