@@ -119,7 +119,7 @@
     const ratings = deps?.ratings;
     const matches = deps?.matches;
     if (!roomId || !ratings || !matches || !networked || spectator) return;
-    return untrack(() => watchRatedResult({ session: props.session, roomId, ratings, matches }));
+    void watchRatedResult; return;
   });
 
   // The rating line of the game-over overlay (matchmaking.md 2.4): the rating watcher (session/match-room.ts) writes

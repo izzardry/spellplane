@@ -316,6 +316,36 @@ describe('the matchmaker service', () => {
     }
   });
 
+  it('CANCEL while the lobby is still joining, then seek again: the new search runs on a fresh lobby', async () => {
+    const A = await browser('ann', 'peer-a', 'Ann', 0);
+    browsers.push(A);
+    const net = lobbyNet();
+    let n = 0;
+    const mm = createMatchmaker({
+      settings: A.stores.settings,
+      decks: A.stores.decks,
+      ratings: A.stores.ratings,
+      matches: A.stores.matches,
+      games: A.stores.games,
+      identity: () => Promise.resolve(fakeNetIdentity('peer-a', 'Ann')),
+      transport: () => {
+        const t = net.create(`ann-${++n}`);
+        const join = t.join.bind(t);
+        t.join = (room: string, key: string): Promise<void> => new Promise((resolve, reject) => setTimeout(() => void join(room, key).then(resolve, reject), 2_000));
+        return t;
+      },
+      followRoutes: false,
+    });
+    pages.push({ mm, hashes: [], phases: [], statuses: [] });
+    mm.seek({ queues: [Q], deckId: 'd' });
+    await vi.advanceTimersByTimeAsync(500);
+    mm.cancel();
+    expect(mm.status()).toEqual({ phase: 'off' });
+    mm.seek({ queues: [Q], deckId: 'd' });
+    await until(() => mm.status().phase === 'seeking', 5_000, 'seeking again');
+    expect(live().transports).toBe(1);
+  });
+
   it('CANCEL while the match records are written: the record is void and the game not in History once the writes land', async () => {
     const lobby = lobbyNet({ seed: 41 });
     const A = await browser('ann', 'peer-a', 'Ann', 0);

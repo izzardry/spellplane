@@ -310,6 +310,8 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
   };
 
   const closeRoom = (): void => {
+    // A join still under way is given up (it finds its room gone and resolves null); the next open starts afresh.
+    opening = null;
     if (lingerTimer !== null) {
       clearTimeout(lingerTimer);
       lingerTimer = null;
