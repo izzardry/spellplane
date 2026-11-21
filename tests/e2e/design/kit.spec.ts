@@ -206,6 +206,8 @@ for (const look of LOOKS) {
 
     test('card faces are whole: 63:88, not clipped, and at full opacity in a tile that may not be picked', async ({ page }) => {
       await openKit(page, look);
+      // Measure at rest: an entrance fade still running (a slow runner) reads as a dimmed face.
+      await page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.effect?.getComputedTiming().endTime !== Infinity).map((a) => a.finished.catch(() => undefined))));
       const faces = await page.evaluate(() => {
         const imgs = [...document.querySelectorAll<HTMLImageElement>('.ds-tile img, .ds-fan img')];
         return imgs.map((img) => {

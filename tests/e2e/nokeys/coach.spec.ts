@@ -54,6 +54,10 @@ test('one coach mark at a time, at its moment, gone once done and never again: d
   await expect(mark).toContainText('Click your library to draw');
   await expect(mark).not.toContainText(/\bpress\b|\bkey\b/i);
   await clearOfThePlayArea(page);
+  // Nothing covers the text's first glyph (no pointer square on the bar), and GOT IT wears the bar's ink (gate M8 F4).
+  const ink = await mark.evaluate((el) => ({ after: getComputedStyle(el, '::after').display, bar: getComputedStyle(el).color, button: getComputedStyle(el.querySelector('[data-testid="coach-dismiss"]')!).color }));
+  expect(ink.after).toBe('none');
+  expect(ink.button).toBe(ink.bar);
 
   // Drawing (here the opening hand through the hook, then until a land is in hand) is what it teaches: it goes.
   await call(page, 'draw', 7);

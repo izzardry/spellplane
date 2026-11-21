@@ -176,7 +176,7 @@
     background: var(--sp-surface, #fff);
     color: var(--sp-fg, #111);
     border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-md, 4px);
+    border-radius: var(--sp-radius-lg, 8px);
     padding: 8px 10px;
     font: var(--sp-font-size-small, 12px) / 1.4 var(--sp-font, system-ui);
     pointer-events: auto;

@@ -12,7 +12,7 @@
 -->
 <script lang="ts">
   import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
-  import type { SeatId, TableState } from '../../core/types';
+  import type { Format, SeatId, TableState } from '../../core/types';
   import { scrubbedHash } from '../../session/invite';
   import type { ClaimView, MusterStatus, SessionMuster } from '../../session/types';
   import PresenceDot from '../design/PresenceDot.svelte';
@@ -111,7 +111,9 @@
   const names = (ids: readonly SeatId[]): string => joinNames(ids.map((id) => table.seats[id]?.name || id));
   // The seats PLAY ON WITHOUT names: those waited for that the table does not already mark away.
   const missing = $derived(status.waitingFor.filter((id) => table.seats[id]?.away !== true));
-  const meta = $derived([table.format.toUpperCase(), `TURN ${table.turn.number}`, ...(code ? [code.replace(/-/g, ' ').toUpperCase()] : [])].join(' · '));
+  /** The format as the player knows it (journey.md 4.12; gate M8 finding F13: not the raw id 'FFA4'). */
+  const FORMAT_LABEL: Record<Format, string> = { '1v1': '1V1', ffa3: '3 FFA', ffa4: '4 FFA', '2hg': '2V2' };
+  const meta = $derived([FORMAT_LABEL[table.format] ?? String(table.format).toUpperCase(), `TURN ${table.turn.number}`, ...(code ? [code.replace(/-/g, ' ').toUpperCase()] : [])].join(' · '));
   const newest = $derived.by(() => {
     const k = status.knownHead;
     if (k !== null) {
@@ -292,7 +294,7 @@
     flex-direction: column;
     gap: var(--ds-space-md);
     padding: var(--ds-space-xl);
-    border-radius: var(--ds-radius-md);
+    border-radius: var(--ds-radius-sheet);
     background: var(--ds-panel);
     color: var(--ds-ink);
     box-shadow: var(--ds-elevation-pop);

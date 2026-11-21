@@ -436,6 +436,10 @@
   .volume input {
     flex: 1;
     min-width: 0;
+    /* The look's ink on the slider, not the browser's blue (gate M8 finding F12). */
+    accent-color: var(--ds-ink);
+    height: var(--ds-control-xs, 28px);
+    cursor: pointer;
   }
   .goto:hover {
     text-decoration: underline;
@@ -538,6 +542,11 @@
     left: 0;
     bottom: calc(100% + 6px);
     min-width: 220px;
+    /* Inside the window whichever way it opens (gate M8 finding F11: BRING BACK's link ran past the bottom at
+       1280 × 800); a taller menu scrolls. */
+    max-height: calc(100vh - 140px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     padding: var(--ds-space-md);
     display: grid;
     gap: var(--ds-space-sm);

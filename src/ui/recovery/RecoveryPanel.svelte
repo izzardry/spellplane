@@ -193,7 +193,7 @@
     color: var(--ds-ink);
     box-shadow: var(--ds-elevation-pop);
     border-left: 4px solid var(--ds-danger);
-    border-radius: var(--ds-radius-md);
+    border-radius: var(--ds-radius-sheet);
     padding: var(--ds-space-md) var(--ds-space-lg);
     font: var(--ds-type-small);
   }

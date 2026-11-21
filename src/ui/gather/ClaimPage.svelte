@@ -84,7 +84,7 @@
     flex-direction: column;
     gap: var(--ds-space-md);
     padding: var(--ds-space-xl);
-    border-radius: var(--ds-radius-md);
+    border-radius: var(--ds-radius-sheet);
     background: var(--ds-panel);
     color: var(--ds-ink);
     box-shadow: var(--ds-elevation-pop);

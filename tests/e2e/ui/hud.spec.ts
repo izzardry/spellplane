@@ -599,3 +599,40 @@ test.describe('app shell routes (M8-C, contracts.md Part C: #/ Home, #/solo the 
     await expect(page.getByTestId('hud')).toBeVisible();
   });
 });
+
+test.describe('reveal to (DESIGN hidden information, reveal paths; gate M8 finding F3)', () => {
+  test('the menu opened over a hand card stays inside the window: every choice can be reached', async ({ page }) => {
+    await openHud(page, { seats: ['Anna', 'Ben', 'Cleo', 'Dan'] });
+    const card = page.locator('[data-testid="hand-card"][data-card="h1"]');
+    const box = (await card.boundingBox())!;
+    const vp = page.viewportSize()!;
+    // Near the foot of the card, low on the screen: a menu opened at the pointer would run off the bottom.
+    await page.mouse.move(box.x + box.width / 2, Math.min(vp.height - 6, box.y + box.height - 8));
+    await page.keyboard.press('KeyW');
+    const menu = page.getByTestId('reveal-to');
+    await expect(menu).toBeVisible();
+    const m = (await menu.boundingBox())!;
+    expect(m.y).toBeGreaterThanOrEqual(0);
+    expect(m.y + m.height).toBeLessThanOrEqual(vp.height);
+    expect(m.x + m.width).toBeLessThanOrEqual(vp.width);
+    for (const b of await menu.getByRole('button').all()) {
+      const r = (await b.boundingBox())!;
+      expect(r.y + r.height, (await b.textContent()) ?? '').toBeLessThanOrEqual(vp.height);
+    }
+    await menu.getByRole('button', { name: 'Everyone' }).click();
+    await expect.poll(async () => (await drafts(page)).at(-1)).toMatchObject({ type: 'revealTo', instanceId: 'h1', seats: ['s1', 's2', 's3'] });
+  });
+});
+
+test.describe('menu in a short window (gate M8 finding F11)', () => {
+  test.use({ viewport: { width: 1280, height: 480 } });
+  test('the HUD menu stays inside the window and scrolls', async ({ page }) => {
+    await openHud(page);
+    await page.getByTestId('open-menu').click();
+    const pop = page.getByTestId('menu-popover');
+    await expect(pop).toBeVisible();
+    const box = (await pop.boundingBox())!;
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.y + box.height).toBeLessThanOrEqual(480);
+  });
+});

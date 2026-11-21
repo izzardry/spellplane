@@ -141,8 +141,9 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
   });
 
   await test.step('versus, then seven cards each and the same first player; a reload during versus deals once', async () => {
-    // B's versus screen is up (it stays at least 1.2 s): reload B during it, before anything else is read.
-    await expect(b.getByTestId('versus')).toBeVisible();
+    // B's versus screen came up (it stays at least 1.2 s, but a slow runner may be past it by the time a locator
+    // looks, so the page's own record says it was there): reload B at once, before anything else is read.
+    await expect.poll(() => b.evaluate(() => (window as unknown as { __versus: string[] }).__versus.length)).toBe(1);
     await b.reload();
     await expect(a.getByTestId('stage')).toHaveAttribute('data-stage', 'match', { timeout: 15_000 });
     // The versus screen came up on the creator's page, with both players and no deck name.

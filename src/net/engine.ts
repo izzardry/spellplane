@@ -59,6 +59,8 @@ import { track, untrack } from '../util/lifecycle';
 
 /** How often the engine checks liveness and resends what is unanswered. */
 export const TICK_MS = 250;
+/** A tick this much later than the last means the page's main thread was blocked (see `tick`). */
+export const TICK_STALL_MS = 2000;
 /** An unanswered hello is resent after this long. */
 export const HELLO_RETRY_MS = 1000;
 /** Pending proposals are resent when the oldest has been unanswered this long. */
@@ -346,6 +348,8 @@ class Engine implements NetEngine {
   private lastSeats: TableState['seats'] | null = null;
 
   private tickTimer: ReturnType<typeof setInterval> | null = null;
+  /** When the last tick ran on the page's own clock (performance.now): a late tick means the main thread was blocked. */
+  private lastTickReal: number | null = null;
   private hbTimer: ReturnType<typeof setInterval> | null = null;
   /** The message log, a ring of MESSAGE_LOG_LIMIT records whose oldest is at `logStart`. */
   private readonly log: NetMessageRecord[] = [];
@@ -2103,8 +2107,15 @@ class Engine implements NetEngine {
   private tick(): void {
     if (this.closed) return;
     const now = this.now();
+    // A tick that runs long after the last one follows a stall of this page's main thread (a theme's shaders compiling
+    // on a slow machine): the peers' heartbeats are still queued behind it, so nobody is marked away on this tick; a
+    // peer that really went quiet is on the next one (gate M8: a theme switch on a CI runner claimed the sequencer).
+    const real = typeof performance === 'undefined' ? null : performance.now();
+    const stalled = real !== null && this.lastTickReal !== null && real - this.lastTickReal > TICK_STALL_MS;
+    this.lastTickReal = real;
     let changed = false;
     for (const [t, e] of this.peerMap) {
+      if (stalled) break;
       if (e.info.status === 'handshake') {
         // A connection that never completes its handshake and that the transport no longer lists is dropped.
         if (now - e.lastHeard > 2 * AWAY_AFTER_MS && !this.opts.transport.peers().includes(t)) this.removePeer(t);

@@ -91,7 +91,8 @@
   <div class="versus ds-root" role="dialog" aria-modal="true" aria-label="Setting up the table" data-testid="versus" data-done={done}>
     <div class="cols">
       {#each columns as c, i (c.seat)}
-        {#if i > 0}<span class="vs ds-t-eyebrow" aria-hidden="true">vs</span>{/if}
+        <!-- Only between two players: with three or four the row wraps, and a "vs" ended a row (gate M8 finding F10). -->
+        {#if i > 0 && columns.length === 2}<span class="vs ds-t-eyebrow" aria-hidden="true">vs</span>{/if}
         <section class="col" data-testid="versus-col" data-seat={c.seat}>
           <h2 class="ds-t-title"><SeatGlyph seat={c.index} colour={seatColours[c.colour]?.colour ?? 'currentColor'} size={28} label="Seat colour of {c.name}" /> {c.name}{c.me ? ' (you)' : ''}</h2>
           <p class="ds-t-eyebrow">DECK · {c.cards || '…'}</p>

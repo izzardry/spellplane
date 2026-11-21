@@ -15,7 +15,7 @@
   }: {
     hints: HintController;
     keyOf?: (action: ActionId) => string | null;
-    /** 'corner': fixed at the top centre of the screen, below the turn strip; 'inline': in the page flow. */
+    /** 'corner': fixed by the own hand, low on the screen; 'inline': in the page flow. */
     placement?: 'corner' | 'inline';
   } = $props();
 
@@ -57,17 +57,25 @@
     position: fixed;
     /* Under the context and radial menus (60, 62), which may open over it, above the HUD panels. */
     z-index: 55;
-    /* Top centre, below the turn strip and the notices: clear of the hand fan, the log, the toolbar and the avatars
-       (M5 gate); over the far side of the table, which stays live under it. */
-    left: 50%;
-    transform: translateX(-50%);
-    top: calc(140px + env(safe-area-inset-top, 0px));
+    /* By the own hand, never over the opponent's side (gate M8 finding F2; m7-adjustments.md section 7, "Entering a
+       table"): bottom left, above the own plate's row and clear of the hand fan in the middle; the table stays live
+       under it. */
+    left: calc(16px + env(safe-area-inset-left, 0px));
+    bottom: calc(176px + env(safe-area-inset-bottom, 0px));
+    /* Wide and low: three lines at most, so it fits between the own plate and the middle of the screen. */
+    max-width: min(420px, calc(100vw - 32px));
     /* Never blocking: only the button takes pointer events. */
     pointer-events: none;
   }
   .hint :global(.ds-btn) {
     align-self: flex-end;
     pointer-events: auto;
+  }
+  /* A touch screen raises the plate row above the thumb bar: the hint sits above the own plate. */
+  @media (pointer: coarse) {
+    .hint.corner {
+      bottom: calc(340px + env(safe-area-inset-bottom, 0px));
+    }
   }
   /* A touch target is the kit's md height (44 px). */
   @media (pointer: coarse) {

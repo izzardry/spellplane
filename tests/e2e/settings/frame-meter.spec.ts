@@ -32,14 +32,20 @@ test.describe('frame meter (M7-A0)', () => {
     // Plain draws on demand: once the table settles, the meter says idle.
     await expect.poll(async () => (await snapshot(page)).idle, { timeout: 10_000 }).toBe(true);
     await expect(meter).toContainText('idle');
-    // A phase measured through the hook.
-    const phase = await page.evaluate(async () => {
-      const fps = window.__spellplane!.fps!;
-      fps.begin();
-      await new Promise((r) => setTimeout(r, 300));
-      return fps.end();
-    });
-    expect(phase.callbacks).toBeGreaterThan(0);
+    // A phase measured through the hook counts animation-frame callbacks. A busy CI runner may run none within one
+    // short phase (no timing is asserted): measure phases until one counted.
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async () => {
+            const fps = window.__spellplane!.fps!;
+            fps.begin();
+            await new Promise((r) => setTimeout(r, 300));
+            return fps.end().callbacks;
+          }),
+        { timeout: 15_000 },
+      )
+      .toBeGreaterThan(0);
     // The meter sits in the lower left corner, clear of the cards in the hand.
     await call(page, 'importDecklist', decklist('gw-m19-60.txt'));
     await call(page, 'draw', 7);

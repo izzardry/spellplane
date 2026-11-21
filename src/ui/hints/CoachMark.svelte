@@ -73,9 +73,17 @@
     border-radius: 50%;
     background: var(--ds-accent, var(--sp-focus));
   }
+  /* The bar points at nothing: the kit's pointer square (.ds-coach::after) has no placement class here and sat over the
+     first glyph of the text (gate M8 finding F4). */
+  .coach::after {
+    display: none;
+  }
+  /* The button wears the coach's ink: a ghost button takes the look's ink, which is light in Graphite and Codex and
+     vanished on their light coach bar (gate M8 finding F4). */
   .coach :global(.ds-btn) {
     pointer-events: auto;
     flex: none;
+    color: var(--ds-coach-ink);
   }
   @keyframes appear {
     from {

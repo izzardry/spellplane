@@ -37,6 +37,12 @@ test.describe('Gathering (journey.md 4.12)', () => {
     await test.step('the card over the dimmed table', async () => {
       await expect(card).toBeVisible();
       await expect(page.getByTestId('gathering-title')).toHaveText('Getting everyone back');
+      // The format as players name it, not the raw id (gate M8 F13).
+      await expect(card.locator('.meta')).toContainText('4 FFA');
+      await expect(card.locator('.meta')).not.toContainText('FFA4');
+      // A sheet, not a pill: in Plain the button radius is 9999 px and clipped the card into an ellipse (gate M8 F1).
+      const radius = await card.evaluate((el) => parseFloat(getComputedStyle(el).borderTopLeftRadius));
+      expect(radius).toBeLessThanOrEqual(32);
       const rows = page.getByTestId('gathering-row');
       await expect(rows).toHaveCount(4);
       await expect(page.locator('[data-testid="gathering-row"][data-seat="s0"]')).toContainText('Ann (you)');

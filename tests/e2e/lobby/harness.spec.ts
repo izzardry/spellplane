@@ -366,6 +366,8 @@ test.describe('lobby harness (M8-P4)', () => {
     await expect(page.getByTestId('versus-col')).toHaveCount(2);
     await expect(page.locator('[data-testid="versus-col"][data-seat="s0"]')).toContainText('DECK · 60');
     await expect(page.locator('[data-testid="versus-col"][data-seat="s1"]')).toContainText('DECK · 40');
+    // One "vs" between the two.
+    await expect(page.getByTestId('versus').locator('.vs')).toHaveCount(1);
     await expect(page.locator('[data-testid="versus-col"][data-seat="s1"] [data-testid="versus-connected"]')).toHaveAttribute('data-on', 'false');
     await expect(page.getByTestId('versus')).not.toContainText('Gruul');
     await page.clock.runFor(29_000);

@@ -189,7 +189,7 @@
   }
   .tick {
     padding: 4px 10px;
-    border-radius: var(--ds-radius-md);
+    border-radius: var(--ds-radius-card);
     border-left: 3px solid var(--seat);
     background: var(--ds-panel);
     color: var(--ds-ink);

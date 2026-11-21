@@ -19,7 +19,7 @@
  * (DESIGN "Card faces are never restyled"). scene/theme-runtime.ts owns the theme, materials, post chain and quality.
  * Paper stays one cheap pass: no lights, boxes, shadows or post, the same draw calls as before.
  */
-import { lifecycleRender, registerBaseRender, trackContext, untrackContext } from './lifecycle';
+import { lifecycleRender, liveContexts, registerBaseRender, trackContext, untrackContext } from './lifecycle';
 import { track, untrack } from '../util/lifecycle';
 import * as THREE from 'three';
 import type { ActionDraft } from '../core/actions';
@@ -368,6 +368,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   canvas.setAttribute('data-scene', 'table');
   if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
   host.appendChild(canvas);
+  // A context the browser takes while the table lives (not the forced loss of dispose, which runs after `disposed`):
+  // three.js stops drawing until it is restored, then the whole frame is drawn again, shadows included. The warning
+  // names the page's live contexts, so a loss in a test run can be told from a remount (gate M8 finding F16).
+  const onContextLost = (): void => {
+    if (!disposed) console.warn(`[scene] the browser took the table's WebGL context (live contexts on this page: ${liveContexts()})`);
+  };
+  const onContextRestored = (): void => {
+    dirty = true;
+    renderer.shadowMap.needsUpdate = true;
+  };
+  canvas.addEventListener('webglcontextlost', onContextLost);
+  canvas.addEventListener('webglcontextrestored', onContextRestored);
 
   const marqueeEl = document.createElement('div');
   marqueeEl.setAttribute('data-scene', 'marquee');
@@ -4248,6 +4260,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       // What the renderer still held, and the context and frame loop released (contracts.md Part C).
       untrackContext(renderer);
       untrack('rafLoops', frameLoop);
+      canvas.removeEventListener('webglcontextlost', onContextLost);
+      canvas.removeEventListener('webglcontextrestored', onContextRestored);
       // Free the WebGL context now, not at GC: browsers cap live contexts (about 16).
       renderer.forceContextLoss();
       canvas.remove();

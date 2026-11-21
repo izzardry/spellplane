@@ -291,7 +291,7 @@
   .file {
     border: 1px solid var(--ds-border);
     background: var(--ds-panel);
-    border-radius: var(--ds-radius-md);
+    border-radius: var(--ds-radius-card);
     padding: 0 10px;
     height: 28px;
     box-sizing: border-box;

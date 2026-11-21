@@ -75,7 +75,23 @@
       onclose();
     }
   }
+  /**
+   * Keep the whole menu inside the window (gate M8 finding F11: at 900 px height it ran past the bottom): measured once
+   * when it opens and when its content grows, it shrinks to the room left below its top (or above its bottom, when it
+   * opens upward) and scrolls.
+   */
+  function fit(): void {
+    if (!el || typeof window === 'undefined') return;
+    const r = el.getBoundingClientRect();
+    const margin = 8;
+    if (r.bottom > window.innerHeight - margin) el.style.maxHeight = `${Math.max(120, window.innerHeight - margin - Math.max(margin, r.top))}px`;
+    else if (r.top < margin) el.style.maxHeight = `${Math.max(120, r.bottom - margin)}px`;
+  }
   onMount(() => {
+    fit();
+    // Content that grows after it opened (the plate menu's BRING BACK link and QR code) is fitted again.
+    const grow = typeof ResizeObserver === 'function' ? new ResizeObserver(() => fit()) : null;
+    if (el) grow?.observe(el);
     if (autofocus) el?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')?.focus({ preventScroll: true });
     const away = (e: PointerEvent): void => {
       const t = e.target as Node | null;
@@ -84,6 +100,7 @@
     };
     window.addEventListener('pointerdown', away, true);
     return () => {
+      grow?.disconnect();
       window.removeEventListener('pointerdown', away, true);
       handOff?.();
     };

@@ -28,7 +28,7 @@
     flex-direction: column;
     gap: var(--ds-space-sm);
     padding: var(--ds-space-md);
-    border-radius: var(--ds-radius-md);
+    border-radius: var(--ds-radius-panel);
     background: var(--ds-panel);
     box-shadow: var(--ds-elevation-pop);
     max-width: 320px;

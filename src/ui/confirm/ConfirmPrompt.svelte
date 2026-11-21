@@ -150,7 +150,7 @@
     background: var(--sp-surface, #fff);
     color: var(--sp-fg, #111);
     border: 1px solid var(--sp-fg, #111);
-    border-radius: var(--sp-radius-md, 4px);
+    border-radius: var(--sp-radius-lg, 8px);
     font: var(--sp-font-size-small, 12px) / 1.4 var(--sp-font, system-ui);
   }
   .prompt {

@@ -108,7 +108,7 @@
     position: relative;
     height: calc(100vh - 32px);
     min-height: 480px;
-    border-radius: var(--ds-radius-md);
+    border-radius: var(--ds-radius-panel);
     overflow: hidden;
   }
   .fake-table {
@@ -127,7 +127,7 @@
   }
   .menu {
     background: var(--ds-panel);
-    border-radius: var(--ds-radius-md);
+    border-radius: var(--ds-radius-panel);
     box-shadow: var(--ds-elevation-pop);
     padding: 8px 0;
   }

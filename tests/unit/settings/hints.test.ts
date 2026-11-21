@@ -12,8 +12,9 @@ import { startPageHint } from '../../../src/ui/lobby/start-hint';
 const table = { where: 'table' as const, touch: false, voice: false };
 
 describe('which hint shows', () => {
-  it('welcome first, then the gestures on a touch screen, then the talk key at a table with voice', () => {
-    expect(nextHint([], table)).toBe('welcome');
+  it('no welcome at a table; the gestures on a touch screen, then the talk hint once voice is joined (gate M8 F2)', () => {
+    expect(nextHint([], table)).toBeNull();
+    expect(nextHint([], { ...table, voice: true })).toBe('talkKey');
     // M7-P5: no hint teaches the table's keys any more (the gesture coach marks teach the table, ui/hints/coach.ts).
     expect(nextHint(['welcome'], table)).toBeNull();
     expect(nextHint(['welcome'], { ...table, voice: true })).toBe('talkKey');
@@ -30,7 +31,7 @@ describe('which hint shows', () => {
   });
 
   it('ignores ids of other packages and builds', () => {
-    expect(nextHint(['installHomeScreen', 'somethingNew'], table)).toBe('welcome');
+    expect(nextHint(['installHomeScreen', 'somethingNew'], { ...table, where: 'start' })).toBe('welcome');
     expect(hintsSeenOf(['welcome', 'welcome', 3, null, 'x'])).toEqual(['welcome', 'x']);
     expect(hintsSeenOf('welcome')).toEqual([]);
   });
@@ -46,7 +47,9 @@ describe('texts', () => {
     ]);
     expect(hintText('tableKeys', key(remapped)).text).toContain('J taps it');
     // The talk hint names whatever the talk key is (Ctrl by the owner's decision).
-    expect(hintText('talkKey', key(remapped)).text).toMatch(/^Hold (Ctrl|Control) to talk/);
+    // It leads with the pointer route and names the key after it, as an accelerator (gate M8 F2).
+    expect(hintText('talkKey', key(remapped)).text).toMatch(/^You are in voice\. To talk by holding a press on the table/);
+    expect(hintText('talkKey', key(remapped)).text).toMatch(/holding (Ctrl|Control) talks too/);
     for (const id of FIRST_RUN_HINTS) {
       const t = hintText(id, key(MTG_KEYMAP));
       expect(t.title.length).toBeLessThanOrEqual(30);
@@ -65,7 +68,8 @@ describe('HintController', () => {
 
   it('a dismissed hint is stored and never shows again; the next one follows', async () => {
     const store = new MemorySettings();
-    const h = new HintController(store, table);
+    const start = { ...table, where: 'start' as const };
+    const h = new HintController(store, start);
     const seen: (string | null)[] = [];
     h.subscribe((x) => seen.push(x));
     await h.load();
@@ -74,7 +78,7 @@ describe('HintController', () => {
     expect(h.current()).toBeNull();
     expect(await store.get('hintsSeen')).toEqual(['welcome']);
     expect(seen).toEqual(['welcome', null]);
-    const again = new HintController(store, table);
+    const again = new HintController(store, start);
     await again.load();
     expect(again.current()).toBeNull();
   });
@@ -105,10 +109,11 @@ describe('HintController', () => {
 });
 
 describe('M5 gate: hints that fit the evening and the touch screen', () => {
-  it('the welcome ("import a deck to try it alone") waits for the start page or the solo table, not a networked evening', () => {
+  it('the welcome waits for the start page: never at a table, networked or solo (gate M8 F2)', () => {
     expect(nextHint([], { where: 'table', touch: true, voice: true, networked: true })).toBe('touchGestures');
     expect(nextHint([], { where: 'table', touch: false, voice: true, networked: true })).toBe('talkKey');
-    expect(nextHint([], { where: 'table', touch: false, voice: false })).toBe('welcome');
+    expect(nextHint([], { where: 'table', touch: false, voice: false })).toBeNull();
+    expect(hintText('welcome', () => null).text).not.toMatch(/lobby|import/i);
     expect(nextHint([], { where: 'start', touch: true, voice: false, networked: true })).toBe('welcome');
   });
 
@@ -116,7 +121,7 @@ describe('M5 gate: hints that fit the evening and the touch screen', () => {
     const touch = hintText('talkKey', () => 'Ctrl', true);
     expect(touch.text).not.toMatch(/Ctrl|key/i);
     expect(touch.text).toContain('Talk');
-    expect(hintText('talkKey', () => 'Ctrl').text).toContain('Hold Ctrl');
+    expect(hintText('talkKey', () => 'Ctrl').text).toContain('holding Ctrl');
     // On a desktop it also names the pointer route, and no other key (the mute key stays in the tooltips).
     expect(hintText('talkKey', () => 'Ctrl').text).toContain('Talk while I hold or drag');
     expect(hintText('talkKey', (a) => (a === 'mute' ? 'M' : 'Ctrl')).text).not.toMatch(/\bM\b/);

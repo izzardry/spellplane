@@ -407,11 +407,15 @@ test('tapping an avatar goes to that seat: the HUD avatar and the avatar spot on
   const view = await hook<{ seats: { seat: string; screen: { avatar: Pt } | null }[] }>(page, 'tableView');
   const other = view.seats.find((s) => s.seat !== 's0' && s.screen)!;
   await page.touchscreen.tap(Math.round(other.screen!.avatar.x), Math.round(other.screen!.avatar.y));
+  // A single tap is told from a double-tap only after the double-tap window, so the flight may start after `settled`
+  // has seen a still camera on a slow runner: wait for the move, then for the rest.
+  await expect.poll(async () => camMoved(fitted, await pose(page)), { timeout: 15_000 }).toBeGreaterThan(10);
   await settled(page);
   const there = await pose(page);
   expect(camMoved(fitted, there)).toBeGreaterThan(10);
   // The own avatar in the HUD brings the camera to the own side.
   await page.getByTestId('avatar-goto').first().tap();
+  await expect.poll(async () => camMoved(there, await pose(page)), { timeout: 15_000 }).toBeGreaterThan(10);
   await settled(page);
   const home = await pose(page);
   expect(camMoved(there, home)).toBeGreaterThan(10);

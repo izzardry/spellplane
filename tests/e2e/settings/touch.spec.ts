@@ -9,18 +9,30 @@ import { openHud } from '../ui/harness';
 
 test.use({ hasTouch: true, viewport: { width: 1194, height: 834 } });
 
-test('a touch screen gets the gesture hint after the welcome, with a thumb-sized button', async ({ page }) => {
+test('a touch screen gets the gesture hint by the own hand, never blocking, with a thumb-sized button', async ({ page }) => {
   await openHud(page);
   const hint = page.getByTestId('hint');
-  await expect(hint).toHaveAttribute('data-hint', 'welcome');
-  const button = hint.getByTestId('hint-dismiss');
-  const box = (await button.boundingBox())!;
-  expect(box.height).toBeGreaterThanOrEqual(44);
-  await button.tap();
+  // No welcome at a table (gate M8 F2): the gestures come first.
   await expect(hint).toHaveAttribute('data-hint', 'touchGestures');
+  await expect(hint).toHaveCount(1);
   await expect(hint).toContainText('Two fingers move the camera');
-  await hint.getByTestId('hint-dismiss').tap();
+  // By the own hand, not over the opponent's side (m7-adjustments.md section 7, "Entering a table").
+  const vh = page.viewportSize()!.height;
+  const box = (await hint.boundingBox())!;
+  expect(box.y + box.height / 2).toBeGreaterThan(vh / 2);
+  expect(box.y + box.height).toBeLessThanOrEqual(vh);
+  // Only its button takes the pointer, and it takes no focus.
+  const through = await page.evaluate(([x, y]) => document.elementFromPoint(x!, y!)?.closest('[data-testid="hint"]') === null, [box.x + 6, box.y + 6]);
+  expect(through).toBe(true);
+  await expect(hint).not.toBeFocused();
+  const button = hint.getByTestId('hint-dismiss');
+  expect((await button.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  await button.tap();
   await expect(hint).toHaveCount(0);
+  // Dismissed hints stay dismissed.
+  await openHud(page, { keepSettings: true });
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId('hint')).toHaveCount(0);
 });
 
 test('the settings panel opens by tap and its tabs are sized for thumbs', async ({ page }) => {
