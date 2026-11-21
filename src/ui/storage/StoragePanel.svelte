@@ -8,7 +8,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { backupFileName, backupText, exportBackup, readBackupText, restoreBackup, suggestReplaceIdentity } from '../../store/backup';
-  import type { CardData } from '../../data/types';
+  import { ScryfallCardDataSource } from '../../data/source';
   import { IdbCardCache } from '../../store/cards';
   import { requestPersistentStorage } from '../../store/persist';
   import { formatBytes, storageStatus, type StorageStatus } from '../../store/quota';
@@ -22,13 +22,14 @@
     now = () => Date.now(),
     reload = () => location.reload(),
     loadCards,
-  }: { stores: LocalStores; now?: () => number; reload?: () => void; /** Card data by id (CardDataSource.getMany); default: this browser's card cache. [M8-P3] */ loadCards?: LoadCards } = $props();
+  }: { stores: LocalStores; now?: () => number; reload?: () => void; /** Card data by id (CardDataSource.getMany); default: this profile's card cache, then Scryfall. [M8-P3] */ loadCards?: LoadCards } = $props();
 
-  /** The card cache of `stores`, read without the network: what a sealed deck's free basics are recognised by when no source is passed. */
-  async function cachedCards(sids: string[]): Promise<Record<string, CardData>> {
-    const records = await new IdbCardCache(() => Promise.resolve(stores.db)).getMany(sids);
-    return Object.fromEntries(records.map((r) => [r.id, r.data as CardData]));
-  }
+  /**
+   * Card data for a sealed deck's main cards outside its pool, when no source is passed: this profile's card cache
+   * first, then Scryfall through that cache (a backup usually arrives in a browser that has not seen its cards yet).
+   * Only a backup holding booster decks asks; offline, the unknown cards count as foreign.
+   */
+  const defaultCards: LoadCards = (sids) => new ScryfallCardDataSource({ cache: new IdbCardCache(() => Promise.resolve(stores.db)) }).getMany(sids);
 
   let status = $state<StorageStatus | null>(null);
   let persistMessage = $state('');
@@ -86,7 +87,7 @@
     if (!file) return;
     const text = await file.text();
     // A booster deck's basics are free (decks.md section 7, D25): their card data is loaded before the seal is checked.
-    const data = readBackupText(text, { isFreeBasic: await freeBasicTest(text, loadCards ?? cachedCards, () => null) });
+    const data = readBackupText(text, { isFreeBasic: await freeBasicTest(text, loadCards ?? defaultCards, () => null) });
     importing = { name: file.name, data };
     replaceIdentity = await suggestReplaceIdentity(stores, data);
     overwrite = false;
