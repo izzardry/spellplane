@@ -2,7 +2,8 @@
  * PLAN Milestone 8, M7-P5 "Read-only", on the real table scene in the scene harness (`?harness=scene`, no HUD, no
  * session): after `setReadOnly(true)` a drag, a double-click (on a card and on the library), a pile press and a
  * right-drag from a card dispatch nothing (the harness records every draft the scene dispatches) and leave the state
- * unchanged; the wheel still zooms and a right-click still inspects. Switched off, a double-click taps again.
+ * unchanged, and none of them reaches the scene's last read-only net (`readOnly.refused` stays 0: each route stops
+ * first); the wheel still zooms and a right-click still inspects. Switched off, a double-click taps again.
  * The #/solo version with the HUD, the coach mark and the strip is read-only.spec.ts.
  */
 import { expect, test, type Page } from '@playwright/test';
@@ -11,6 +12,9 @@ import { actions, addCard, card, harness, openScene, screenOf, settle, state } f
 
 const setReadOnly = (page: Page, on: boolean) => page.evaluate((v) => window.__spellplane!.readOnly!.set(v), on);
 const proposed = (page: Page) => hook<number>(page, 'readOnly.proposed');
+/** What reached the scene's last read-only net: every route must stop before it, so this stays 0. */
+const refused = (page: Page) => hook<number>(page, 'readOnly.refused');
+const lineDraft = (page: Page) => hook<boolean>(page, 'readOnly.lineDraft');
 const snapshot = async (page: Page) => JSON.stringify(await state(page));
 const camPos = (page: Page) => hook<{ position: number[] }>(page, 'camera').then((c) => c.position);
 const pileShown = (page: Page) => hook<{ pile: unknown }>(page, 'affordances').then((a) => a.pile);
@@ -26,6 +30,7 @@ test('the scene harness: read-only proposes nothing from a drag, a double-click,
   await setReadOnly(page, true);
   expect(await hook<boolean>(page, 'readOnly.on')).toBe(true);
   const before = { state: await snapshot(page), actions: (await actions(page)).length, proposed: await proposed(page) };
+  expect(await refused(page)).toBe(0);
 
   const fit = async () => {
     await page.evaluate(() => window.__sceneHarness!.camera.fit(false));
@@ -40,6 +45,7 @@ test('the scene harness: read-only proposes nothing from a drag, a double-click,
     await page.mouse.up();
     await settle(page);
     expect((await card(page, 'a'))!.pose).toMatchObject({ x: 0, y: -300 });
+    expect(await refused(page)).toBe(0);
     await fit();
   });
 
@@ -49,12 +55,14 @@ test('the scene harness: read-only proposes nothing from a drag, a double-click,
     await page.mouse.dblclick(lib.x, lib.y);
     await settle(page);
     expect((await card(page, 'a'))!.tapped).toBe(false);
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('a press on the library offers no pile action', async () => {
     await page.mouse.click(lib.x, lib.y);
     await page.mouse.move(lib.x + 2, lib.y + 2);
     expect(await pileShown(page)).toBeNull();
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('a right-drag from a card draws no line', async () => {
@@ -62,13 +70,17 @@ test('the scene harness: read-only proposes nothing from a drag, a double-click,
     await page.mouse.move(at.x, at.y);
     await page.mouse.down({ button: 'right' });
     await page.mouse.move(at.x + 150, at.y - 80, { steps: 10 });
+    // While the button is still held: no line is being drawn.
+    expect(await lineDraft(page)).toBe(false);
     await page.mouse.up({ button: 'right' });
     await settle(page);
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('nothing was dispatched or proposed, and the state is unchanged', async () => {
     expect((await actions(page)).length).toBe(before.actions);
     expect(await proposed(page)).toBe(before.proposed);
+    expect(await refused(page)).toBe(0);
     expect(await snapshot(page)).toBe(before.state);
   });
 
@@ -79,6 +91,7 @@ test('the scene harness: read-only proposes nothing from a drag, a double-click,
     await page.mouse.click(at.x, at.y, { button: 'right' });
     await expect.poll(async () => ((await harness(page, 'events')) as { type: string; args: unknown[] }[]).filter((e) => e.type === 'inspect').slice(n).map((e) => e.args[0])).toContain('a');
     expect((await actions(page)).length).toBe(before.actions);
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('the wheel still zooms', async () => {

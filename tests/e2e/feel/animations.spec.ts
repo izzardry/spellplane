@@ -7,7 +7,8 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import type { CardAnimationKind, MotionDebugState } from '../../../src/scene/types';
-import { hook } from '../helpers/app';
+import type { RenderMemory } from '../../../src/scene/types';
+import { hook, shot } from '../helpers/app';
 import { call, decklist, openSolo } from '../solo/helpers';
 import { cardIn, handIds, profileFor, state } from '../nokeys/helpers';
 import { framesDrawn, motion, pauseClock, step } from './helpers';
@@ -25,25 +26,31 @@ async function until(page: Page, pred: (m: MotionDebugState) => boolean, maxMs =
   throw new Error('the expected moment never came');
 }
 
+const idle = (m: MotionDebugState) => m.running.length === 0 && m.holds.length === 0;
+
 /**
  * Every animation has ended and nothing holds frames; then 500 ms of clock draw no frame. A card face or back still
- * loading (in real time, not on the page's paused clock) asks for one frame when it lands, so the quiet 500 ms are
- * polled for, as feel/helpers.ts idleFramesStop does: it fails only if frames keep coming.
+ * loading (in real time, not on the page's paused clock) asks for one frame when it lands: that is waited for first
+ * (no texture queued, loading or waiting for upload, the clock stepped so an upload can run), and only then is one
+ * strict 500 ms window measured.
  */
 async function endsAndStops(page: Page): Promise<void> {
-  await until(page, (m) => m.running.length === 0 && m.holds.length === 0, 3000);
+  await until(page, idle, 3000);
   await expect
     .poll(
       async () => {
-        // One last frame may be in flight.
-        await step(page, 64);
-        const a = await framesDrawn(page);
-        await step(page, 500);
-        return (await framesDrawn(page)) - a;
+        await step(page, 32);
+        return hook<number>(page, 'faceLoad.pending');
       },
       { timeout: 15_000 },
     )
     .toBe(0);
+  await until(page, idle, 3000);
+  // One last frame may be in flight.
+  await step(page, 64);
+  const a = await framesDrawn(page);
+  await step(page, 500);
+  expect((await framesDrawn(page)) - a, 'frames drawn in 500 ms with nothing moving').toBe(0);
 }
 
 async function table(page: Page, tag: string, info: Parameters<typeof profileFor>[0]): Promise<void> {
@@ -58,12 +65,17 @@ async function table(page: Page, tag: string, info: Parameters<typeof profileFor
 test('seven cards drawn at once fly one after another, all in hand within 600 ms; then the frames stop', async ({ page }, info) => {
   await table(page, 'feel-draw', info);
   await call(page, 'draw', 7);
-  const first = await until(page, (m) => running(m, 'draw').length > 0);
-  // Staggered: the cards do not all start at once (at most a few have begun when the first is under way).
-  const draws = running(first, 'draw');
-  expect(draws.length).toBeGreaterThan(0);
+  await until(page, (m) => running(m, 'draw').length > 0);
+  // Staggered: 48 ms in, seven separate flights (one start each: flights that start together are one entry), the first
+  // under way and the last not begun yet.
+  await step(page, 48);
+  const draws = running(await motion(page), 'draw');
+  expect(draws.length).toBe(7);
+  expect(new Set(draws.flatMap((r) => r.cards)).size).toBe(7);
   const progresses = draws.map((r) => r.progress);
-  expect(Math.min(...progresses)).toBeLessThan(Math.max(...progresses) + 1e-9);
+  expect(Math.max(...progresses)).toBeGreaterThan(0);
+  expect(Math.min(...progresses)).toBe(0);
+  await shot(page, 'M7', 'feel-mid-draw', info.project.name);
   // 600 ms after the first flight started, no draw runs any more.
   await step(page, 600);
   expect(running(await motion(page), 'draw')).toEqual([]);
@@ -112,6 +124,23 @@ test('shuffle, play, tap and untap, a counter, to graveyard and to exile each an
     await until(page, (m) => running(m, 'toExile').length > 0);
     await endsAndStops(page);
   });
+  const [d, e, f] = (await handIds(page)).slice(0, 3);
+  await test.step('attach: a card put on another moves onto it', async () => {
+    await hook(page, 'dispatch', { type: 'move', card: d, to: 'battlefield:s0', pose: { x: 150, y: -300, rot: 0 } });
+    await endsAndStops(page);
+    await hook(page, 'dispatch', { type: 'attach', card: d, to: a });
+    await until(page, (m) => running(m, 'attach').some((r) => r.cards.includes(d!)));
+    await endsAndStops(page);
+    expect((await cardIn(page, d!))?.attachedTo).toBe(a);
+  });
+  await test.step('clip: two cards clipped together pop', async () => {
+    await hook(page, 'dispatch', { type: 'move', card: e, to: 'battlefield:s0', pose: { x: 350, y: -300, rot: 0 } });
+    await hook(page, 'dispatch', { type: 'move', card: f, to: 'battlefield:s0', pose: { x: 370, y: -290, rot: 0 } });
+    await endsAndStops(page);
+    await hook(page, 'dispatch', { type: 'clipAdd', clip: 'feel-clip', cards: [e, f], anchor: { card: f, x: -15, y: -10 } });
+    await until(page, (m) => running(m, 'clip').some((r) => r.cards.includes(e!) && r.cards.includes(f!)));
+    await endsAndStops(page);
+  });
 });
 
 test('disposing the table mid-draw cancels every animation and releases every frame hold', async ({ page }) => {
@@ -127,9 +156,23 @@ test('disposing the table mid-draw cancels every animation and releases every fr
   const before = await hook<{ scenes: number; animations: number; holds: number }>(page, 'feel.totals');
   expect(before.scenes).toBe(1);
   expect(before.animations).toBeGreaterThan(0);
+  const mounted = await hook<RenderMemory>(page, 'render.memory');
+  expect(mounted.rafLoops).toBe(1);
+  expect(mounted.contexts).toBe(1);
+  // Keep the disposed scene's own frame counter: a frame loop or rAF that survived dispose would still draw.
+  await page.evaluate(() => {
+    const w = window as unknown as { __deadRender?: unknown; __spellplane: Record<string, unknown> };
+    w.__deadRender = w.__spellplane.render;
+  });
+  const deadFrames = () => page.evaluate(() => (window as unknown as { __deadRender: { framesDrawn(): number } }).__deadRender.framesDrawn());
   await harness(page, 'dispose');
   expect(await hook(page, 'feel.totals')).toEqual({ scenes: 0, animations: 0, holds: 0 });
+  // The lifecycle counters are back where they were before the mount: the harness page's only table is gone.
+  const gone = await hook<RenderMemory>(page, 'render.memory');
+  expect({ rafLoops: gone.rafLoops, contexts: gone.contexts, audioContexts: gone.audioContexts }).toEqual({ rafLoops: 0, contexts: 0, audioContexts: 0 });
+  const framesAtDispose = await deadFrames();
   await step(page, 200);
+  expect(await deadFrames(), 'frames drawn after dispose').toBe(framesAtDispose);
   expect(await hook(page, 'feel.totals')).toEqual({ scenes: 0, animations: 0, holds: 0 });
   // The scene's debug parts went with it.
   expect(await page.evaluate(() => typeof (window.__spellplane as Record<string, unknown>).motion)).toBe('undefined');
@@ -153,6 +196,8 @@ test('the page has one audio context, counted while the table holds it', async (
   await page.evaluate(() => (location.hash = '#/'));
   await expect.poll(() => hook<number>(page, 'audio.live')).toBe(0);
   await expect.poll(() => hook<string | null>(page, 'audio.state')).toBe('suspended');
+  // The table's coach marks went with it: the debug hook keeps no part of the dead table's HUD.
+  await expect.poll(() => page.evaluate(() => typeof (window.__spellplane as Record<string, unknown>).coach)).toBe('undefined');
   // A second table reuses it on its first press.
   await page.evaluate(() => (location.hash = '#/solo'));
   await expect.poll(() => page.evaluate(() => typeof (window.__spellplane as Record<string, unknown>).motion)).toBe('function');

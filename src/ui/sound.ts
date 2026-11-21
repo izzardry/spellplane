@@ -203,10 +203,47 @@ registerDebug({
 export function setPageAudioFactoryForTests(make: () => SoundContext | null): void {
   pageFactory = make;
   pageContext = null;
+  pageHolders.clear();
+  livePlayers.length = 0;
+  cancelChimeSuspend();
 }
 
 /** Whether `ctx` is the page's shared context (it is suspended, never closed, when a table lets it go). */
 const isPageContext = (ctx: SoundContext | null): boolean => ctx !== null && ctx === pageContext;
+
+/**
+ * The table players holding the page context now. Two can be alive at once (a route that keeps the old HUD for an
+ * outro, a harness with two HUDs): the context is counted under `audioContexts` from the first holder and let go,
+ * suspended, only when the last one leaves.
+ */
+const pageHolders = new Set<object>();
+/** The players alive, oldest first: the newest one rings the scene's feel cues, so a cue plays once. */
+const livePlayers: object[] = [];
+/** A suspend scheduled after the match-found chime played with no table holding the context. */
+let chimeSuspend: ReturnType<typeof setTimeout> | null = null;
+/** How long the chime needs before the page context may be suspended again, ms (it ends within 0.6 s). */
+const CHIME_SUSPEND_MS = 700;
+
+function cancelChimeSuspend(): void {
+  if (chimeSuspend !== null) clearTimeout(chimeSuspend);
+  chimeSuspend = null;
+}
+
+/** Hold the page context for a table player: counted from the first holder. */
+function holdPageContext(holder: object, ctx: SoundContext): void {
+  cancelChimeSuspend();
+  pageHolders.add(holder);
+  track('audioContexts', ctx);
+}
+
+/** Let the page context go for a table player: the last holder untracks it and suspends it. */
+function releasePageContext(holder: object, ctx: SoundContext): void {
+  if (!pageHolders.delete(holder) || pageHolders.size > 0) return;
+  untrack('audioContexts', ctx);
+  // Also when it still reads 'suspended': a resume asked for by the first press may be pending (WebKit), and a
+  // suspend queued after it wins.
+  if (ctx.state !== 'closed') ctx.suspend().catch(() => undefined);
+}
 
 /**
  * A match was found (SoundCue 'matchFound'; visual.md 2.3): one short, bright two-note chime, synthesised (no file),
@@ -253,6 +290,14 @@ export function playMatchFound(mode: SoundMode = 'theme', set?: SoundSet): boole
   try {
     if (ctx.state === 'suspended') ctx.resume().catch(() => undefined);
     (set?.matchFound ?? MATCH_FOUND_CHIME).play(ctx, SOUND_GAIN);
+    // Outside a table nothing else plays: once the chime is over, the audio thread stops again.
+    if (pageHolders.size === 0) {
+      cancelChimeSuspend();
+      chimeSuspend = setTimeout(() => {
+        chimeSuspend = null;
+        if (pageHolders.size === 0 && ctx === pageContext && ctx.state === 'running') ctx.suspend().catch(() => undefined);
+      }, CHIME_SUSPEND_MS);
+    }
     return true;
   } catch {
     return false;
@@ -283,10 +328,12 @@ export class ThemeSoundPlayer {
   ) {
     // The table scene says which look it draws and rings the viewer's own pickup and snap (util/feel.ts).
     this.setLookOf(tableTheme.value);
+    livePlayers.push(this);
     this.unsubscribe.push(
       tableTheme.subscribe((id) => this.setLookOf(id)),
       feelCues.subscribe((c) => {
-        if (isCue(c)) this.play([c]);
+        // One player rings a cue: the newest alive (two alive at once would play it twice).
+        if (isCue(c) && livePlayers[livePlayers.length - 1] === this) this.play([c]);
       }),
     );
   }
@@ -342,8 +389,9 @@ export class ThemeSoundPlayer {
     if (!this.enabled()) return;
     if (!this.ctx) this.ctx = this.makeContext();
     if (!this.ctx) return;
-    // Counted while this table holds it (contracts.md Part C; idempotent per context).
-    track('audioContexts', this.ctx);
+    // Counted while a table holds it (contracts.md Part C): the page context from its first holder to its last.
+    if (isPageContext(this.ctx)) holdPageContext(this, this.ctx);
+    else track('audioContexts', this.ctx);
     if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => undefined);
     this.sync();
   }
@@ -370,18 +418,20 @@ export class ThemeSoundPlayer {
 
   dispose(): void {
     for (const u of this.unsubscribe.splice(0)) u();
+    const at = livePlayers.indexOf(this);
+    if (at >= 0) livePlayers.splice(at, 1);
     this.stopAmbience();
     this.disposed = true;
     const ctx = this.ctx;
     this.ctx = null;
     if (!ctx) return;
-    untrack('audioContexts', ctx);
-    // The page's context is kept for the next table, suspended; a context of its own (a test's) is closed.
-    if (isPageContext(ctx)) {
-      // Also when it still reads 'suspended': a resume asked for by the first press may be pending (WebKit), and a
-      // suspend queued after it wins.
-      if (ctx.state !== 'closed') ctx.suspend().catch(() => undefined);
-    } else ctx.close().catch(() => undefined);
+    // The page's context is kept for the next table, suspended once no table holds it; a context of its own (a
+    // test's) is closed.
+    if (isPageContext(ctx)) releasePageContext(this, ctx);
+    else {
+      untrack('audioContexts', ctx);
+      ctx.close().catch(() => undefined);
+    }
   }
 
   private sync(): void {

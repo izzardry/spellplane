@@ -99,7 +99,13 @@
 
   onMount(() => {
     void coach.load();
-    registerDebug({ coach: { current: () => coach.current(), seen: () => coach.done(), saved: () => coach.saved() } });
+    const part = { current: () => coach.current(), seen: () => coach.done(), saved: () => coach.saved() };
+    registerDebug({ coach: part });
+    // The part must not keep a dead table's coach alive (back to Home): removed unless a newer HUD replaced it.
+    return () => {
+      const hook = typeof window === 'undefined' ? undefined : (window.__spellplane as Record<string, unknown> | undefined);
+      if (hook && hook.coach === part) delete hook.coach;
+    };
   });
 </script>
 
