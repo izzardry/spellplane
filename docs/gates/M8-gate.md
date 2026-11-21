@@ -138,3 +138,24 @@ Judged against `docs/design/m8/mock.html`, `visual.md`, `journey.md` and the own
 ## Real Safari
 
 **Not measured.** This Mac's screen was locked (`CGSSessionScreenIsLocked=Yes`), and other agents were busy on it. The task allows a measurement only with the screen unlocked and the machine quiet, so `pnpm perf -- --safari` was not started. There is no `docs/gates/M7-P6.md` to add numbers to.
+
+## Fix round (gate fixer, 21 Nov 2026 evening)
+
+Fixed in the product, each with a test:
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| F1 | Every panel, card, popover and sheet that used `--ds-radius-md` or `--sp-radius-md` (the button radius) now uses `--ds-radius-panel`, `-card` or `-sheet` (`--sp-radius-lg` for legacy panels). | `tests/unit/design/no-pill-panels.test.ts`; the Gathering card's radius in `resume/gather-harness.spec.ts` |
+| F2 | The welcome shows only on the start page, with current copy. The talk hint waits for JOIN VOICE and leads with "Talk while I hold or drag". Hints sit bottom left by the own hand, and above the own plate on a touch screen. | `unit/settings/hints.test.ts`, `settings/states.spec.ts`, `settings/touch.spec.ts`, gate M5's touch step, gate M7's entry check |
+| F3 | The reveal-to menu is moved inside the window by its measured size. | `ui/hud.spec.ts` "reveal to"; gate M3 green in Chromium and WebKit |
+| F4 | The coach bar has no pointer square over its first glyph, and GOT IT uses the coach ink. | `nokeys/coach.spec.ts` |
+| F10 | The versus screen shows "vs" only between two players. | `lobby/harness.spec.ts` |
+| F11 | The HUD menu fits itself into the window when it opens and when it grows. The plate menu is capped at the window height and scrolls. | `ui/hud.spec.ts` "menu in a short window" |
+| F12 | The plate menu's volume slider uses the look's ink. | — |
+| F13 | The Gathering line shows "4 FFA". | `resume/gather-harness.spec.ts` |
+| F14 | A deck tile cuts only the name before " (custom)". | `decks/library.spec.ts` |
+| F16 | The scene redraws after a WebGL context restore and warns on any loss while it lives, naming the live contexts. The cause is not proven: only one of four games lost its context, so it was not a remount. | — (WebKit unavailable; see below) |
+| CI theme switch | The BroadcastChannel transport and the net engine mark nobody gone on a beat or tick that follows a stall of the page's own main thread. CI named the stray messages as `sequencerClaim` and `away`: the switching page had stalled and taken over the table. | `sim/net/protocol.test.ts` (fails without the fix), `unit/net/broadcast-stall.test.ts` |
+| CI harness races | `nokeys/mouse-turn` (hover before click), `design/kit` (entrance fade), `touch/gestures` avatar tap (tap told from double-tap late), `settings/frame-meter` (no rAF in one short phase), `lobby/private` (versus already gone), `a11y/axe` audit panel (the round's own timer outlasted the scan). | the specs themselves |
+
+Left open: F5 (waiting room's legacy settings form), F6 (evening bar from turn 1), F7/F8 (deck page overflow and header), F9 (a fresh browser joins as "Player"), F15 (first-person piles off the right edge), the full `pnpm e2e` in WebKit, and real Safari. `journey/quick-match.spec.ts:111` failed on CI twice: Ann's join of the matched room timed out ("Timed out waiting for the table to sync") while Ben waited at DEALING. It passes locally in Chromium. The stall fix may cover it (a table mount stalls the page like a theme switch does), but that is unproven until CI runs.
