@@ -8,6 +8,11 @@
  * and to that element afterwards (a touch is implicitly captured by the element it pressed, as in Safari). Steps of one
  * gesture run inside one page.evaluate, so a double-tap's two taps never straddle a slow round trip; what the table did
  * is read back through the debug hook, never from pixels or timing.
+ *
+ * Quick gestures (a tap, a double-tap, a two-finger double-tap) go as one burst: every event is dispatched in one task
+ * and stamped with the time its finger moved (the event's `timeStamp`, which the table reads as a browser's own touch
+ * events), so a slow software-rendered frame between two taps can never stretch them past the double-tap window (gate
+ * M8 finding R3: CI's Linux WebKit failed a different double-tap each run).
  */
 import { devices, expect, type Page, type TestInfo } from '@playwright/test';
 import type { InstanceId, LogEntry, TableState } from '../../../src/core/types';
@@ -24,12 +29,18 @@ export const IPAD = ipadLandscape;
 export type Pt = { x: number; y: number };
 export type Step = { type: 'down' | 'move' | 'up' | 'cancel'; id: number; x: number; y: number; wait?: number };
 
-/** Fire finger steps in order; `wait` ms after a step (default one frame). */
-export async function fingers(page: Page, steps: Step[]): Promise<void> {
-  await page.evaluate(async (list) => {
+/**
+ * Fire finger steps in order; `wait` ms after a step (default one frame). With `burst`, the steps go in one task without
+ * waiting, each stamped `wait` ms after the one before and the last one now (the finger timing a browser reports for
+ * touches that a busy frame held back).
+ */
+export async function fingers(page: Page, steps: Step[], opts: { burst?: boolean } = {}): Promise<void> {
+  await page.evaluate(async ([list, burst]) => {
     const w = window as unknown as { __fingerTargets?: Map<number, Element> };
     const targets = (w.__fingerTargets ??= new Map<number, Element>());
     const names = { down: 'pointerdown', move: 'pointermove', up: 'pointerup', cancel: 'pointercancel' } as const;
+    const span = list.slice(0, -1).reduce((sum, s) => sum + (s.wait ?? 16), 0);
+    let stamp = performance.now() - span;
     for (const s of list) {
       let target = targets.get(s.id);
       if (s.type === 'down' || !target) {
@@ -37,8 +48,7 @@ export async function fingers(page: Page, steps: Step[]): Promise<void> {
         targets.set(s.id, target);
       }
       const pressed = s.type === 'down' || s.type === 'move';
-      target.dispatchEvent(
-        new PointerEvent(names[s.type], {
+      const ev = new PointerEvent(names[s.type], {
           pointerId: 100 + s.id,
           pointerType: 'touch',
           isPrimary: s.id === 1,
@@ -52,12 +62,14 @@ export async function fingers(page: Page, steps: Step[]): Promise<void> {
           bubbles: true,
           cancelable: true,
           composed: true,
-        }),
-      );
+        });
+      if (burst) Object.defineProperty(ev, 'timeStamp', { value: stamp });
+      target.dispatchEvent(ev);
       if (s.type === 'up' || s.type === 'cancel') targets.delete(s.id);
-      await new Promise((r) => setTimeout(r, s.wait ?? 16));
+      if (burst) stamp += s.wait ?? 16;
+      else await new Promise((r) => setTimeout(r, s.wait ?? 16));
     }
-  }, steps);
+  }, [steps, !!opts.burst] as const);
 }
 
 /** Steps moving finger `id` from a to b in n moves. */
@@ -70,17 +82,21 @@ export function path(id: number, a: Pt, b: Pt, n = 8, wait = 16): Step[] {
 /** One finger pressing at a, sliding to b, lifting there. */
 export const drag = (page: Page, a: Pt, b: Pt, n = 8) => fingers(page, [{ type: 'down', id: 1, ...a }, ...path(1, a, b, n), { type: 'up', id: 1, ...b }]);
 
-/** A quick tap of one finger, inside one evaluate (no round trip between press and release). */
-export const tap = (page: Page, p: Pt) => fingers(page, [{ type: 'down', id: 1, ...p, wait: 30 }, { type: 'up', id: 1, ...p }]);
+/** A quick tap of one finger, as one burst (30 ms between press and release). */
+export const tap = (page: Page, p: Pt) => fingers(page, [{ type: 'down', id: 1, ...p, wait: 30 }, { type: 'up', id: 1, ...p }], { burst: true });
 
-/** Two quick taps at p (a double-tap). */
+/** Two quick taps at p (a double-tap), as one burst: 30 ms down, 60 ms apart. */
 export const doubleTap = (page: Page, p: Pt) =>
-  fingers(page, [
-    { type: 'down', id: 1, ...p, wait: 30 },
-    { type: 'up', id: 1, ...p, wait: 60 },
-    { type: 'down', id: 1, ...p, wait: 30 },
-    { type: 'up', id: 1, ...p },
-  ]);
+  fingers(
+    page,
+    [
+      { type: 'down', id: 1, ...p, wait: 30 },
+      { type: 'up', id: 1, ...p, wait: 60 },
+      { type: 'down', id: 1, ...p, wait: 30 },
+      { type: 'up', id: 1, ...p },
+    ],
+    { burst: true },
+  );
 
 /** Two fingers from a0/b0 to a1/b1, interleaved like pointer events, both lifting at the end. */
 export function twoFingers(a0: Pt, b0: Pt, a1: Pt, b1: Pt, n = 10): Step[] {
@@ -134,13 +150,25 @@ export async function card(page: Page, id: InstanceId): Promise<DebugCard> {
 }
 export const centre = (c: DebugCard): Pt => ({ x: Math.round(c.screen.x + c.screen.width / 2), y: Math.round(c.screen.y + c.screen.height / 2) });
 
-/** Wait until no card moves and the camera is still (two equal poses a few frames apart). */
+/** Resolve after `n` animation frames of the page (the table steps its camera once per frame). */
+export const frames = (page: Page, n = 3) =>
+  page.evaluate((count) => new Promise<void>((r) => {
+    let left = count;
+    const step = () => (--left <= 0 ? r() : requestAnimationFrame(step));
+    requestAnimationFrame(step);
+  }), n);
+
+/**
+ * Wait until no card moves and the camera is still: two equal poses several drawn frames apart. A fixed pause alone
+ * could fall inside one slow software-rendered frame and read a camera mid-flight as still (gate M8 R3).
+ */
 export async function settled(page: Page): Promise<void> {
   await expect.poll(async () => (await cards(page)).every((c) => !c.moving), { timeout: 15_000 }).toBe(true);
   await expect
     .poll(
       async () => {
         const a = await pose(page);
+        await frames(page, 3);
         await page.waitForTimeout(80);
         const b = await pose(page);
         return Math.hypot(...a.position.map((v, i) => v - b.position[i]!)) < 0.01 && (await hook(page, 'rig.blend')) === null;
@@ -148,6 +176,62 @@ export async function settled(page: Page): Promise<void> {
       { timeout: 15_000 },
     )
     .toBe(true);
+}
+
+interface HudLayout {
+  viewport: { width: number; height: number };
+  hand: { card: string; rect: { left: number; top: number; right: number; bottom: number } }[];
+  chrome: { name: string; rect: { left: number; top: number; right: number; bottom: number } }[];
+}
+
+/**
+ * A point of empty table near the cards `ids`: on no drawn card and no HUD chrome or hand card (the debug hook's
+ * `hud.layout()`), with the table's canvas under it, and the same for each of `also` (offsets from it, for a second
+ * finger). Candidates go around the cards, the first below and left of them as the specs used before. Fails naming what
+ * stands at each candidate (gate M8 R3: a BUTTON stood at the one fixed point after a pinch on CI's Linux WebKit).
+ */
+export async function emptyTable(page: Page, ids: string[], also: Pt[] = []): Promise<Pt> {
+  const all = await cards(page);
+  const cs = all.filter((c) => ids.includes(c.id));
+  const top = Math.min(...cs.map((c) => c.screen.y));
+  const bottom = Math.max(...cs.map((c) => c.screen.y + c.screen.height));
+  const left = Math.min(...cs.map((c) => c.screen.x));
+  const right = Math.max(...cs.map((c) => c.screen.x + c.screen.width));
+  const midY = (top + bottom) / 2;
+  const candidates: Pt[] = [];
+  for (const dy of [40, 70, 20, 100]) for (const dx of [-60, -120, 0, 60]) candidates.push({ x: left + dx, y: bottom + dy });
+  for (const dx of [40, 80, 140]) candidates.push({ x: right + dx, y: midY }, { x: left - dx, y: midY });
+  for (const dy of [30, 60]) candidates.push({ x: left - 30, y: top - dy }, { x: right + 30, y: top - dy });
+  const layout = await hook<HudLayout>(page, 'hud.layout');
+  const boxes = [...layout.chrome.map((c) => ({ name: c.name, ...c.rect })), ...layout.hand.map((h) => ({ name: `hand ${h.card}`, ...h.rect }))];
+  const vp = layout.viewport;
+  const tried: string[] = [];
+  for (const c of candidates) {
+    const p = { x: Math.round(c.x), y: Math.round(c.y) };
+    const pts = [p, ...also.map((o) => ({ x: p.x + o.x, y: p.y + o.y }))];
+    const why = await page.evaluate(
+      ({ pts: list, boxes: bs, cards: cardRects, vp: v }) => {
+        for (const q of list) {
+          if (q.x < 24 || q.y < 24 || q.x > v.width - 24 || q.y > v.height - 24) return `off screen at ${q.x},${q.y}`;
+          const card = cardRects.find((r) => q.x >= r.x - 12 && q.x <= r.x + r.width + 12 && q.y >= r.y - 12 && q.y <= r.y + r.height + 12);
+          if (card) return `card ${card.id}`;
+          const box = bs.find((b) => q.x >= b.left - 8 && q.x <= b.right + 8 && q.y >= b.top - 8 && q.y <= b.bottom + 8);
+          if (box) return `HUD ${box.name}`;
+          const el = document.elementFromPoint(q.x, q.y);
+          if (el?.tagName !== 'CANVAS') return el ? `${el.tagName}${el.getAttribute('data-testid') ? `[data-testid=${el.getAttribute('data-testid')}]` : ''} ${(el.textContent ?? '').trim().slice(0, 40)} in ${el.closest('[data-hud-chrome],[data-testid]')?.getAttribute('data-hud-chrome') ?? el.closest('[data-testid]')?.getAttribute('data-testid') ?? '?'}` : 'nothing';
+        }
+        return null;
+      },
+      { pts, boxes, cards: all.filter((x) => x.visible).map((x) => ({ id: x.id, ...x.screen })), vp },
+    );
+    if (why === null) {
+      // Name what stood at the points passed over, in the test's output (CI's log).
+      if (tried.length) console.log(`[emptyTable] passed over ${tried.join('; ')}; using ${p.x},${p.y}`);
+      return p;
+    }
+    tried.push(`${p.x},${p.y}: ${why}`);
+  }
+  throw new Error(`no empty table point near ${ids.join(', ')}:\n${tried.join('\n')}`);
 }
 
 /** The last action entries of the log (type and fields, without the session's stamps). */

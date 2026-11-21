@@ -9,6 +9,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import type { CardFocus } from '../../../src/ui/a11y/index';
 import type { ViewState } from '../../../src/scene/types';
+import type { HudMenuDebug } from '../../../src/ui/hud/debug';
 import { hook } from '../helpers/app';
 import { menuItem, openZone, openLog } from '../helpers/hud';
 import { drafts, hoverCard, hoverNothing, openHud, ui } from '../ui/harness';
@@ -236,10 +237,21 @@ test.describe('keyboard card focus (PLAN M5-P4)', () => {
     await page.keyboard.press('ContextMenu');
     const menu = page.getByTestId('context-menu');
     await expect(menu).toBeVisible();
-    const m = (await menu.boundingBox())!;
+    // The menu's anchor, as the HUD reports it (gate M8 N2): the hand card, not the log line naming the same card. Two
+    // edge distances depended on the window's fonts (CI's wider menu was clamped back over the card).
+    const info = (await hook<HudMenuDebug | null>(page, 'hud.menu'))!;
+    expect(info.anchor).toMatchObject({ card: 'bf1', source: 'hand-card' });
+    const a = info.anchor!.rect;
     const hand = (await page.locator('[data-testid="hand-card"][data-card="bf1"]').boundingBox())!;
     const log = (await logCard.boundingBox())!;
-    expect(Math.abs(m.x - (hand.x + hand.width))).toBeLessThan(Math.abs(m.x - (log.x + log.width)));
+    // The anchor is that hand card's box (it may have risen a little since: the focused card lifts), not the log line's.
+    const meets = (r: typeof a, b: { x: number; y: number; width: number; height: number }) => r.left < b.x + b.width && b.x < r.right && r.top < b.y + b.height && b.y < r.bottom;
+    expect(meets(a, hand)).toBe(true);
+    expect(meets(a, log)).toBe(false);
+    // The menu stands beside that card: from its right edge, or ending at its left edge where the right has no room.
+    const m = info.rect;
+    const beside = Math.abs(m.left - a.right) <= 1 || Math.abs(m.right - a.left) <= 1;
+    expect(beside, `menu ${JSON.stringify(m)} beside the card ${JSON.stringify(a)}`).toBe(true);
     await page.keyboard.press('Escape');
   });
 

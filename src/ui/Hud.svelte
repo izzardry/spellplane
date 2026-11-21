@@ -54,6 +54,7 @@
   import CardFace from './CardFace.svelte';
   import CheatSheet from './CheatSheet.svelte';
   import ContextMenu from './ContextMenu.svelte';
+  import type { MenuAnchor } from './menu';
   import DeckImport from './DeckImport.svelte';
   import HandFan from './HandFan.svelte';
   import TeamHands from './hand/TeamHands.svelte';
@@ -244,7 +245,7 @@
   let inspectId = $state<InstanceId | null>(null);
   let inspectRef = $state<CardRef | null>(null);
   let viewer = $state<{ zone: ZoneId; looked: LookedCard[] | null; looking: 'top' | 'search' | null; shuffleOnClose: boolean } | null>(null);
-  let menu = $state<{ title: string; entries: MenuEntry[]; x: number; y: number; keyboard: boolean } | null>(null);
+  let menu = $state<{ title: string; entries: MenuEntry[]; x: number; y: number; keyboard: boolean; anchor?: MenuAnchor | null } | null>(null);
   let note = $state<{ target: { card: InstanceId } | { item: StackItemId }; x: number; y: number; text: string } | null>(null);
   /** The inline count prompt for draw N (Shift+D) and mill N (table menu). */
   let drawN = $state<{ text: string; what: 'draw' | 'mill' } | null>(null);
@@ -483,8 +484,23 @@
    */
   let aboveEl = $state<HTMLElement | null>(null);
   let aboveHeight = $state(0);
+  /**
+   * On a touch screen the slot above the hand (KEEP and MULLIGAN, the no-deck line) has a row of its own above the row
+   * of the own plate and the primary, so the coach mark stays in that lower row, in the room between the plate and the
+   * primary: below the table's near edge, over no button and no hand card (gate M8 finding N1: stacked above KEEP it
+   * stood at y 383 of an iPad's 834, over the near play area). Null where that room is too narrow for the mark (a
+   * portrait iPad): the mark then stands above the slot, as on a desktop.
+   */
+  const COACH_MIN_WIDTH = 280;
+  const coachRow = $derived.by<{ left: number; right: number } | null>(() => {
+    if (!touchUi || teamFanShown) return null;
+    const left = LAYOUT.edge + plateWidth + LAYOUT.edge;
+    const right = vw - LAYOUT.edge - rightWidth - LAYOUT.edge;
+    return right - left >= COACH_MIN_WIDTH ? { left, right } : null;
+  });
   const coachBottom = $derived.by(() => {
     void vh;
+    if (coachRow) return aboveHandBottom;
     if (!aboveEl || aboveHeight < 8) return aboveHandBottom;
     return `${Math.round(window.innerHeight - aboveEl.getBoundingClientRect().top)}px`;
   });
@@ -749,11 +765,11 @@
   });
 
   // --- Menus ----------------------------------------------------------------------------------------------------
-  function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false, point: { x: number; y: number } | null = keyboard ? null : { x, y }) {
+  function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false, point: { x: number; y: number } | null = keyboard ? null : { x, y }, anchor: MenuAnchor | null = null) {
     const c = card ? st.cards[card] : undefined;
     const next = c
-      ? { title: focusName(c.id), entries: [...cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), ...clipHereEntry(c.id, point)], x, y, keyboard }
-      : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y, keyboard };
+      ? { title: focusName(c.id), entries: [...cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), ...clipHereEntry(c.id, point)], x, y, keyboard, anchor }
+      : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y, keyboard, anchor };
     // Look, do not touch: only the entries that look; no menu at all when none is left.
     if (viewOnly) next.entries = lookOnly(next.entries);
     menu = next.entries.length > 0 ? next : null;
@@ -797,26 +813,30 @@
     // The menu hands focus back to the element that had it: the mirror, so a screen reader follows the card again.
     if (focus && mirrorEl && (document.activeElement === document.body || document.activeElement === null)) mirrorEl.focus({ preventScroll: true });
     const at = menuAnchor(card);
-    openMenu(card, at.x, at.y, true);
+    openMenu(card, at.x, at.y, true, null, at.anchor);
   }
-  /** Where a keyboard-opened menu stands: at the top right of the card (its focus ring, or its hand or pile element), else mid-screen or at the pointer. */
-  function menuAnchor(card: InstanceId | null): { x: number; y: number } {
+  /**
+   * Where a keyboard-opened menu stands: at the top right of the card (its focus ring, or its hand or pile element), else
+   * mid-screen or at the pointer. With the card's element it also returns that element's kind and box: a menu that does
+   * not fit right of the card stands at its left instead, beside the card rather than over it (gate M8 finding N2).
+   */
+  function menuAnchor(card: InstanceId | null): { x: number; y: number; anchor: MenuAnchor | null } {
     if (card !== null && typeof document !== 'undefined') {
       const sel = CSS.escape(card);
       // The card itself before any other element naming it (a log line's card name comes earlier in the DOM).
-      const els = [
-        document.querySelector(`[data-testid="focus-ring"][data-focus-card="${sel}"] polygon`),
-        document.querySelector(`[data-testid="hand-card"][data-card="${sel}"]`),
-        document.querySelector(`[data-testid="pile-card"][data-card="${sel}"]`),
-        ...document.querySelectorAll(`[data-card="${sel}"]`),
+      const els: [string, Element | null][] = [
+        ['focus-ring', document.querySelector(`[data-testid="focus-ring"][data-focus-card="${sel}"] polygon`)],
+        ['hand-card', document.querySelector(`[data-testid="hand-card"][data-card="${sel}"]`)],
+        ['pile-card', document.querySelector(`[data-testid="pile-card"][data-card="${sel}"]`)],
+        ...[...document.querySelectorAll(`[data-card="${sel}"]`)].map((el): [string, Element] => [(el as HTMLElement).dataset.testid ?? el.tagName.toLowerCase(), el]),
       ];
-      for (const el of els) {
+      for (const [source, el] of els) {
         const r = el?.getBoundingClientRect();
-        if (r && r.width > 0 && r.height > 0) return { x: Math.round(r.right), y: Math.round(r.top) };
+        if (r && r.width > 0 && r.height > 0) return { x: Math.round(r.right), y: Math.round(r.top), anchor: { card, source, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } } };
       }
     }
-    if (!focus && pointerSeen) return { x: pointer.x, y: pointer.y };
-    return { x: Math.round(vw / 2), y: Math.round(vh / 2) };
+    if (!focus && pointerSeen) return { x: pointer.x, y: pointer.y, anchor: null };
+    return { x: Math.round(vw / 2), y: Math.round(vh / 2), anchor: null };
   }
 
   /** Keyless library actions for the table menu (DESIGN "Card manipulation", Library actions: reveal top, mill N). */
@@ -1930,7 +1950,7 @@
     onmore={(card, x, y) => openMenu(card, x, y)}
     onpile={pileAction}
   />
-  <CoachMark {coach} touch={touchUi} corner={!touchUi && vw > 1100} bottom={coachBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
+  <CoachMark {coach} touch={touchUi} corner={!touchUi && vw > 1100} row={coachRow} bottom={coachBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
   <!-- /M7-P5 -->
 
   {#if radial}
@@ -1949,7 +1969,7 @@
   {/if}
 
   {#if menu}
-    <ContextMenu title={menu.title} entries={menu.entries} x={menu.x} y={menu.y} autofocus={menu.keyboard} onclose={() => (menu = null)} />
+    <ContextMenu title={menu.title} entries={menu.entries} x={menu.x} y={menu.y} anchor={menu.anchor ?? null} autofocus={menu.keyboard} onclose={() => (menu = null)} />
   {/if}
 
   {#if note}

@@ -36,6 +36,14 @@ async function clearOfThePlayArea(page: Page): Promise<void> {
     const box = { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) };
     expect(overlap(mark, box), `covers the own ${kind}`).toBe(false);
   }
+  // Over no button: the HUD's chrome (the own plate, the primary, the thumb bar, KEEP and MULLIGAN in the slot above the
+  // hand, the tools and the tracker) as the debug hook lays it out (gate M8 N1).
+  const layout = await hook<{ chrome: { name: string; rect: { left: number; top: number; right: number; bottom: number } }[] }>(page, 'hud.layout');
+  for (const c of layout.chrome) {
+    if (!['own-plate', 'primary', 'thumbs', 'above-hand', 'tools', 'tracker'].includes(c.name)) continue;
+    const r = { x: c.rect.left, y: c.rect.top, width: c.rect.right - c.rect.left, height: c.rect.bottom - c.rect.top };
+    expect(overlap(mark, r), `covers the ${c.name} ${JSON.stringify(c.rect)}`).toBe(false);
+  }
   // Not over the hand either.
   // Never over a hand card: above the fan, or (a wide desktop window) beside it, over the own plate (gate M8 review).
   for (const h of await page.getByTestId('hand-card').all()) {

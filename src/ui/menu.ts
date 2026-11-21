@@ -18,6 +18,23 @@ export interface MenuEntry {
   run: () => void;
 }
 
+/**
+ * The card element a keyboard-opened menu stands beside (gate M8 finding N2): the card, the kind of element found for it
+ * (its focus ring, its hand card, its pile card, …) and that element's box in window CSS px. The menu reports it on its
+ * element, and the debug hook's `hud.menu()` reads it back.
+ */
+export interface MenuAnchor {
+  card: string;
+  source: string;
+  rect: { left: number; top: number; right: number; bottom: number };
+}
+
+/** Where a menu of width `w` starts: right of the anchor point `x`, or, when it does not fit there, ending at the anchor card's left edge (`flipX`) if it fits that side. */
+export function menuLeft(x: number, w: number, vw: number, flipX: number | null, insetLeft = 0, insetRight = 0, margin = 4): number {
+  if (flipX === null || x + w <= vw - Math.max(0, insetRight) - margin) return x;
+  return flipX - w >= Math.max(0, insetLeft) + margin ? flipX - w : x;
+}
+
 /** Card actions in menu order (DESIGN "Card manipulation", "Combat and annotation", "The effect stack"). */
 export const CARD_MENU: readonly ActionId[] = [
   'tap',
