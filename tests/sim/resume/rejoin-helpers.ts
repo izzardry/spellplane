@@ -84,3 +84,55 @@ export async function bringBack(b: Browser, seat: string): Promise<string> {
   await vi.advanceTimersByTimeAsync(31_000);
   return settle(b.session!.muster.invite(seat), 30_000, 'the invite');
 }
+
+/** The tab is closed (or the machine sleeps): no `bye`, the transport just goes. */
+export function crash(network: LoopbackNetwork, b: Browser): void {
+  network.kill(b.peerId);
+  b.session!.dispose();
+  b.session = null;
+}
+
+/**
+ * Case-table row 6 of persistence.md section 5 (three players): Ben leaves, then Ann's and Cy's tabs close, so Ann's
+ * copy marks Ben away. Ben returns alone, plays on (PLAY ON WITHOUT ANN AND CY) and makes moves, and his tab closes.
+ * Ann returns and waits for Cy; Ben's browser comes back and Ann's engine hears his newer copy (hello), and Ben drops
+ * before Ann's copy caught up. Returns once Ann remembers Ben's copy as `knownHead` and Ben is gone again.
+ */
+export async function newerHeadHeard(network: LoopbackNetwork, browsers: Browser[]): Promise<{ ann: Browser; ben: Browser; cy: Browser; benSeat: string; cySeat: string }> {
+  const [ann, ben, cy] = (await seated(network, browsers, 3, 'ffa3')) as [Browser, Browser, Browser];
+  const benSeat = ben.session!.seat;
+  const cySeat = cy.session!.seat;
+  await moves(ann, 1);
+  await waitConverged([ann.session!, ben.session!, cy.session!], 'the first move');
+  await leave(ben);
+  await until(() => ann.session!.getState().seats[benSeat]!.away === true, 2000, 'Ben away');
+  await waitConverged([ann.session!, cy.session!], 'Ben away everywhere');
+  for (const b of [ann, cy]) await settle(b.session!.whenSaved());
+  crash(network, ann);
+  crash(network, cy);
+  // Ben alone: his copy shows Ann and Cy present; the table decides to play on without them.
+  const b = await comeBack(network, ben);
+  await until(() => !b.muster.muster().live && b.muster.muster().waitingFor.length === 2, 5000, 'Ben waits');
+  await settle(b.muster.playOn(['s0', cySeat]));
+  await until(() => b.muster.muster().live, 5000, 'Ben live');
+  await moves(ben, 3);
+  await settle(b.whenSaved());
+  const benSeq = b.engine.seq();
+  crash(network, ben);
+  // Ann alone: Ben away in her copy, Cy present: she waits for Cy.
+  const a = await comeBack(network, ann);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(a.muster.muster()).toMatchObject({ live: false, waitingFor: [cySeat], knownHead: null });
+  // Ben's browser comes back: Ann's engine verifies him and hears his newer copy before any catch-up; Ben drops.
+  network.revive(ben.peerId);
+  const back = returnFromSave(() => open(network, ben, { settleMs: 200 }));
+  await until(() => a.muster.muster().knownHead !== null, 5000, "Ben's newer copy heard");
+  expect(a.engine.seq()).toBeLessThan(benSeq);
+  network.kill(ben.peerId);
+  await settle(back.catch(() => undefined), 30_000, "Ben's page");
+  if (ben.session) {
+    ben.session.dispose();
+    ben.session = null;
+  }
+  return { ann, ben, cy, benSeat, cySeat };
+}

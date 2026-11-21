@@ -64,7 +64,7 @@ import { builtOn, changedObjects, namesAny, undoPlan, undoStackFromLog, type Oth
 import type { CardData } from '../data/types';
 import type { PackSeed } from '../draft/types';
 import { draftCardsOver } from '../net/draftcards';
-import { createNetEngine, NACK_DUPLICATE } from '../net/engine';
+import { createNetEngine, headKeyOf, NACK_DUPLICATE } from '../net/engine';
 import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
 import { createPrivateChannel } from '../net/private';
@@ -2134,10 +2134,19 @@ class NetTable implements NetSession, SessionRecovery {
     const mine = { seq: this.engine.seq(), play: this.engine.play?.() ?? 0 };
     let known = this.knownHeadValue;
     if (known !== null && !knownIsNewer(known, mine)) known = null;
-    for (const p of this.engine.peers()) {
-      if (p.status !== 'connected' || !p.head || p.peerId === '') continue;
-      const cand: KnownHead = { play: p.head.play, seq: p.head.seq, peer: p.peerId, seat: seatOfPeer(st, p.peerId) };
+    const consider = (cand: KnownHead): void => {
       if (knownIsNewer(cand, mine) && (known === null || knownIsNewer(cand, known))) known = cand;
+    };
+    for (const p of this.engine.peers()) {
+      // Seated players only (a spectator's or a claimant's copy decides no muster).
+      if (p.status !== 'connected' || p.peerId === '' || p.role === 'spectator') continue;
+      const seat = seatOfPeer(st, p.peerId);
+      if (seat === null) continue;
+      if (p.head) consider({ play: p.head.play, seq: p.head.seq, peer: p.peerId, seat });
+      // While gathering, the copy a verified peer reported in its hello, heartbeat or claim counts as well (persistence.md
+      // section 5, rule 3): it may drop before any head goes out, and its newer copy must not be forgotten.
+      const key = headKeyOf(p);
+      if (!this.stayed && key.play !== undefined) consider({ play: key.play, seq: key.seq, peer: p.peerId, seat });
     }
     if (known !== this.knownHeadValue && canonicalJson(known) !== canonicalJson(this.knownHeadValue)) {
       this.knownHeadValue = known;

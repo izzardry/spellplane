@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { claimRefusal } from '../../../src/core/reducer/rejoin';
 import { closeAll, FAKE_TIMERS, net, settle, until, waitConverged, type Browser } from '../session/harness';
 import { loseSave } from './helpers';
-import { bringBack, comeBack, leave, moves, musterOf, replaceBrowser, seated, tokenOf, untilLive } from './rejoin-helpers';
+import { bringBack, comeBack, leave, moves, musterOf, newerHeadHeard, replaceBrowser, seated, tokenOf, untilLive } from './rejoin-helpers';
+import { closeWatchers, watch, type Watcher } from '../roles/harness';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
@@ -81,7 +82,7 @@ describe('the sequencer checks of a re-invite (persistence.md section 7)', () =>
     const back = await comeBack(network, ben!);
     await waitConverged([ann!.session!, back]);
     expect(ann!.session!.getState().seats.s1!.invite).toBeUndefined();
-    expect(await refusal(late.session!.claimSeat())).toMatch(/void|present|otherDevice/);
+    expect(await refusal(late.session!.claimSeat())).toMatch(/^(void|present)$/);
   });
 
   it('a browser that still has its save ignores the token and resumes without a claim', async () => {
@@ -99,49 +100,63 @@ describe('the sequencer checks of a re-invite (persistence.md section 7)', () =>
 });
 
 describe('the muster rows of contracts.md Part G item 9', () => {
-  it('Ben announced a newer head, lost his storage and is re-seated by link: Ann becomes live', async () => {
-    const network = lossy(211);
-    const [ann, ben] = await seated(network, browsers, 2);
-    // Ann leaves; Ben plays on alone; Ann returns while Ben is there and hears his newer head, then Ben's browser dies.
-    await leave(ann!);
-    await moves(ben!, 3);
-    network.kill('peer-b');
-    await comeBack(network, ann!);
-    await vi.advanceTimersByTimeAsync(2000);
-    // Ann may or may not have heard Ben's head before he dropped; force the remembered head as the case states.
-    const m0 = musterOf(ann!);
-    if (m0.knownHead === null) {
-      // Ben never connected to the returning Ann: her copy shows Ben present, so she waits for him anyway.
-      expect(m0.live).toBe(false);
-    }
-    await loseSave(ben!);
-    await settle(ann!.session!.muster.playOn([]).catch(() => undefined));
-    await vi.advanceTimersByTimeAsync(31_000);
-    const st = ann!.session!.getState();
-    if (st.seats.s1!.away !== true) await settle(ann!.session!.muster.playOn(['s1']));
-    const link = await bringBack(ann!, 's1');
+  /** Row 6 of the case table, then Cy back: Ann waits only because of Ben's newer copy (knownHead). */
+  async function onlyKnownHeadMissing(seed: number) {
+    const network = net({ seed, delay: { min: 40, max: 120 } });
+    const r = await newerHeadHeard(network, browsers);
+    const c = await comeBack(network, r.cy);
+    await waitConverged([r.ann.session!, c], 'Ann and Cy');
+    await vi.advanceTimersByTimeAsync(3000);
+    const m = musterOf(r.ann);
+    expect(m).toMatchObject({ live: false, playOnHere: true, waitingFor: [r.benSeat] });
+    expect(m.knownHead).toMatchObject({ peer: 'peer-b', seat: r.benSeat });
+    return { network, ...r };
+  }
+
+  it('Ben announced a newer head, lost his storage and is re-seated by link: the claim clears knownHead, Ann is live by rule 3', async () => {
+    const { network, ann, ben, benSeat } = await onlyKnownHeadMissing(211);
+    await loseSave(ben);
+    const link = await bringBack(ann, benSeat);
+    expect(musterOf(ann).live).toBe(false);
     const fresh = await replaceBrowser(network, browsers, link, 'newben');
     await settle(fresh.session!.claimSeat());
-    await untilLive(ann!);
-    expect(musterOf(ann!).knownHead).toBeNull();
+    await waitConverged([ann.session!, fresh.session!], 'the claim');
+    await untilLive(ann);
+    expect(musterOf(ann).knownHead).toBeNull();
+    expect(ann.session!.liveRule()).toBe(3);
+    // Nobody pressed PLAY ON: the claim alone made Ann live.
+    expect(ann.session!.log().some((e) => e.kind === 'action' && e.action.type === 'playOn')).toBe(false);
   });
 
-  it('PLAY ON WITH THIS TABLE: offered when only the remembered newer head fails rule 3; it clears it', async () => {
-    const network = lossy(212);
+  it('PLAY ON WITH THIS TABLE: offered when only the remembered newer head fails rule 3; it clears it and makes Ann live by rule 4', async () => {
+    const { ann } = await onlyKnownHeadMissing(212);
+    await settle(ann.session!.muster.playOn([]));
+    await untilLive(ann);
+    expect(musterOf(ann).knownHead).toBeNull();
+    expect(ann.session!.liveRule()).toBe(4);
+  });
+});
+
+describe('a claim while the old browser is connected (persistence.md section 7)', () => {
+  it("is refused by the sequencer with its own reason: the seat's key pair watches from its old browser", async () => {
+    const network = lossy(213);
     const [ann, ben] = await seated(network, browsers, 2);
-    await leave(ann!);
-    await moves(ben!, 2);
-    // Ann comes back, hears Ben's newer head, and Ben's connection drops before the catch-up reaches Ann.
-    network.kill('peer-b');
-    const a = await comeBack(network, ann!);
-    network.revive('peer-b');
-    await until(() => musterOf(ann!).knownHead !== null || musterOf(ann!).live, 10_000, 'the head heard');
-    if (musterOf(ann!).live) return; // already in step with Ben: nothing to decide
-    network.kill('peer-b');
-    await vi.advanceTimersByTimeAsync(8000);
-    const m = musterOf(ann!);
-    expect(m.live).toBe(false);
-    void a;
+    await leave(ben!);
+    const link = await bringBack(ann!, 's1');
+    // Ben's old browser opens the table to watch: connected, but sitting at no chair, so the seat stays away and the
+    // invite open; the reducer accepts the claim, only the sequencer's connection check refuses it.
+    let oldBen: Watcher | null = null;
+    try {
+      oldBen = await watch(network, 'oldben', 'peer-b', 'Ben');
+      await until(() => ann!.session!.engine.peers().some((p) => p.peerId === 'peer-b' && p.status === 'connected'), 10_000, 'the old browser connected');
+      expect(ann!.session!.getState().seats.s1!.away).toBe(true);
+      expect(ann!.session!.getState().seats.s1!.invite).toBeDefined();
+      const late = await replaceBrowser(network, browsers, link, 'late');
+      expect(await refusal(late.session!.claimSeat())).toBe('otherDevice');
+      expect(ann!.session!.getState().seats.s1!.peer).toBe('peer-b');
+    } finally {
+      if (oldBen) closeWatchers([oldBen]);
+    }
   });
 });
 

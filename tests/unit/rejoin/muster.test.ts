@@ -46,6 +46,16 @@ describe('musterStatus', () => {
     expect(m.seats.find((s) => s.seat === 's1')!.state).toBe('connecting');
   });
 
+  it('rule 2 counts seated players only, and not while a newer copy was heard of (knownHead)', () => {
+    // A spectator's page (no seat) in step and live does not make this browser live: it waits for s1.
+    const watcher: MusterPeer = { ...peer(9, H, true), peerId: 'p-watch' };
+    expect(musterStatus(input({ peers: [watcher] }))).toMatchObject({ live: false, waitingFor: ['s1'] });
+    // A seated live player in step whose copy is older than one heard of: standby, waiting for the newer copy's seat.
+    const known = { play: 13, seq: 44, peer: 'p2', seat: 's2' };
+    const m = musterStatus(input({ state: table(['s2'], 3), peers: [peer(1, H, true)], knownHead: known }));
+    expect(m).toMatchObject({ live: false, waitingFor: ['s2'], playOnHere: true });
+  });
+
   it('rule 3: everyone who was there is back and in step; seats marked away are not waited for', () => {
     expect(musterStatus(input({ peers: [peer(1)] }))).toMatchObject({ live: true, rule: 3 });
     const alone = musterStatus(input({ state: table(['s1']) }));

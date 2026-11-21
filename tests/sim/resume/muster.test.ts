@@ -9,7 +9,8 @@ import { closeAll, FAKE_TIMERS, hashOf, net, settle, until, waitConverged, type 
 import { playScript } from '../session/script';
 import { lostHiddenCards } from '../../../src/session/resume';
 import type { LoopbackNetwork } from '../../../src/net/loopback';
-import { comeBack, confirmedHash, leave, moves, musterOf, seated, untilLive } from './rejoin-helpers';
+import { comeBack, confirmedHash, crash, leave, moves, musterOf, newerHeadHeard, seated, untilLive } from './rejoin-helpers';
+import { watch, closeWatchers, type Watcher } from '../roles/harness';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
@@ -120,6 +121,52 @@ describe('the case table of persistence.md section 5', () => {
     expect(b.getState().seats.s0!.away).toBe(true);
   });
 
+  it('row 6: Ann heard a newer copy from Ben, who dropped before she caught up: she stays on standby, PLAY ON WITH THIS TABLE is offered', async () => {
+    const network = net({ seed: 107, delay: { min: 40, max: 120 } });
+    const { ann, cy, benSeat, cySeat } = await newerHeadHeard(network, browsers);
+    // Ben is gone again: Ann still waits for Cy, and now for Ben's newer table too.
+    await vi.advanceTimersByTimeAsync(3000);
+    let m = musterOf(ann);
+    expect(m.live).toBe(false);
+    expect(m.knownHead).toMatchObject({ seat: benSeat, peer: 'peer-b' });
+    expect(m.waitingFor).toEqual([cySeat, benSeat]);
+    expect(m.playOnHere).toBe(false);
+    // Cy returns with the same copy as Ann's: everyone her copy expects is here, only Ben's newer table is missing.
+    const c = await comeBack(network, cy);
+    await waitConverged([ann.session!, c], 'Ann and Cy');
+    await vi.advanceTimersByTimeAsync(3000);
+    m = musterOf(ann);
+    expect(m.live).toBe(false);
+    expect(m.knownHead).toMatchObject({ seat: benSeat });
+    expect(m.waitingFor).toEqual([benSeat]);
+    expect(m.playOnHere).toBe(true);
+    expect(ann.session!.liveRule()).toBeNull();
+  });
+
+  it('a spectator who stayed does not make a returning player live: Ben still waits for Ann', async () => {
+    const network = lossy(108);
+    const [ann, ben] = await seated(network, browsers, 2);
+    await moves(ann!, 2);
+    let sam: Watcher | null = null;
+    try {
+      sam = await watch(network, 'sam', 'peer-sam', 'Sam');
+      await until(() => sam!.session.engine.seq() === ann!.session!.engine.seq(), 10_000, 'Sam in step');
+      for (const b of [ann!, ben!]) await settle(b.session!.whenSaved());
+      // Both players' tabs close: Sam's copy (and Ben's) show both seats present.
+      crash(network, ann!);
+      crash(network, ben!);
+      await comeBack(network, ben!);
+      await vi.advanceTimersByTimeAsync(5000);
+      const m = musterOf(ben!);
+      expect(m.live).toBe(false);
+      expect(m.waitingFor).toEqual(['s0']);
+      // The spectator announced no head (its page holds no seat).
+      expect(network.delivered.some((d) => d.from === 'peer-sam' && (d.msg as { t?: string }).t === 'head')).toBe(false);
+    } finally {
+      if (sam) closeWatchers([sam]);
+    }
+  });
+
   it('a brand-new game is live by rule 3, a joiner by rule 2', async () => {
     const network = lossy(106);
     const [ann, ben] = await seated(network, browsers, 2);
@@ -215,12 +262,6 @@ describe('newest by moves (contracts.md Part G item 2)', () => {
   });
 });
 
-/** The tab is closed (or the machine sleeps): no `bye`, the transport just goes. */
-function crash(network: LoopbackNetwork, b: Browser): void {
-  network.kill(b.peerId);
-  b.session!.dispose();
-  b.session = null;
-}
 
 describe('standby (persistence.md section 5; contracts.md Part G item 5)', () => {
   it('three browsers all on standby wait for the fourth; one presses PLAY ON; a standby sequencer marks nobody away', async () => {

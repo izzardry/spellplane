@@ -647,6 +647,8 @@ class Engine implements NetEngine {
   /** Send the head to one peer, or to everyone (then the next is due when the confirmed seq changes again). */
   private sendHead(to?: PeerId): void {
     if (this.closed || !this.joined) return;
+    // A spectator's page holds no seat: its copy decides nobody's muster, so it announces no head (M8-P5).
+    if (this.role === 'spectator') return;
     // In the lobby every browser is live (persistence.md section 5): nothing to announce.
     if (this.replica.confirmed().stage === 'lobby') return;
     const msg = this.headMessage();
