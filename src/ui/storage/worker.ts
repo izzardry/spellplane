@@ -6,7 +6,8 @@
  * Lifecycle: the first worker of a browser activates at once and takes control of the page (src/sw.ts claims its
  * clients), so the shell is cached after the first visit. A later version installs in the background into its own
  * cache and then waits ('available'); the old worker keeps serving the old version's files meanwhile. `applyAt` posts
- * `SW_MESSAGE.skipWaiting` to the waiting worker ('applying') and reloads once it controls the page. Closing every tab
+ * `SW_MESSAGE.skipWaiting` to the waiting worker ('applying') and reloads once it controls the page, or after
+ * APPLY_FALLBACK_MS if the hand-over stalls (the reload lets the browser finish it). Closing every tab
  * of the app also lets the browser activate the waiting worker on the next visit, as browsers do anyway.
  */
 import { SW_MESSAGE, type UpdateStatus } from '../../util/pwa';
@@ -14,6 +15,15 @@ import { updateMayApply, type AppUpdate, type UpdatePlace } from '../update';
 
 /** How often a long-open page asks for a new version (the browser also checks on every navigation). */
 export const UPDATE_CHECK_MS = 60 * 60 * 1000;
+
+/**
+ * How long the page waits for the new version to take control after asking it to (skip-waiting) before it reloads
+ * anyway. A fetch that reaches the old worker while the browser hands over (a font or a lazy chunk the arriving page
+ * asks for) restarts the old worker, and Chromium then holds the new version back for as long as this page lives:
+ * neither `controllerchange` nor a state change arrives. Unloading the page releases it: the browser activates the
+ * waiting version before it serves the reload (gate M8 R1).
+ */
+export const APPLY_FALLBACK_MS = 3000;
 
 /** The worker script, next to index.html (vite.config.ts builds src/sw.ts to `sw.js`). */
 export const WORKER_FILE = 'sw.js';
@@ -51,6 +61,8 @@ export interface WorkerOptions {
   reload: () => void;
   /** Interval timer for the periodic update check; injectable for tests. */
   every?: (fn: () => void, ms: number) => unknown;
+  /** One-shot timer for the apply fallback (APPLY_FALLBACK_MS); injectable for tests. */
+  after?: (fn: () => void, ms: number) => unknown;
   /** Reports a failed registration (the app keeps working online without a worker). */
   onError?: (e: unknown) => void;
 }
@@ -87,6 +99,7 @@ export function registerWorker(opts: WorkerOptions): AppUpdate & { ready: Promis
   };
 
   let reloading = false;
+  let reloadedOnChange = false;
   /** Set when another tab applied the update: the new version already controls this page and waits for a reload. */
   let activatedElsewhere = false;
   const reload = (): void => {
@@ -98,8 +111,14 @@ export function registerWorker(opts: WorkerOptions): AppUpdate & { ready: Promis
     // A change this page asked for reloads it. Another tab applying the update does not reload a page mid-game: the
     // page keeps its notice and reloads when it reaches a place where the update may apply. The first worker taking
     // control of a fresh page changes nothing.
-    if (status === 'applying') reload();
-    else if (status === 'available') activatedElsewhere = true;
+    if (status === 'applying') {
+      // Once, even after the fallback's reload: Chromium can leave a reload that started during the hand-over pending
+      // for good once the new version has claimed the page, and a reload after the change replaces it (gate M8 R1).
+      if (reloadedOnChange) return;
+      reloadedOnChange = true;
+      reloading = true;
+      opts.reload();
+    } else if (status === 'available') activatedElsewhere = true;
   });
 
   const ready = opts.container
@@ -131,6 +150,8 @@ export function registerWorker(opts: WorkerOptions): AppUpdate & { ready: Promis
       if (waiting) {
         set('applying');
         waiting.postMessage({ type: SW_MESSAGE.skipWaiting });
+        // Normally `controllerchange` reloads the page first; if the hand-over stalls, the reload itself completes it.
+        (opts.after ?? ((fn, ms) => setTimeout(fn, ms)))(reload, APPLY_FALLBACK_MS);
         return true;
       }
       if (activatedElsewhere) {
