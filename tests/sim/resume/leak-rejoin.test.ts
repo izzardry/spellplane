@@ -186,7 +186,7 @@ describe('rejoin leaks (M8-P5)', () => {
       "the sequencer's refusal",
     );
     const nack = network.delivered.slice(sent).find((d) => (d.msg as { cid?: string; t?: string }).cid === 'forged-invite' && (d.msg as { t?: string }).t === 'nack')!;
-    expect((nack.msg as { reason: string }).reason).toMatch(/teammate/);
+    expect((nack.msg as unknown as { reason: string }).reason).toMatch(/teammate/);
     expect(ann!.session!.engine.seq()).toBe(seqBefore);
     expect(ann!.session!.getState().seats.s3!.invite).toBeUndefined();
     // Cy comes back and makes the link herself.
