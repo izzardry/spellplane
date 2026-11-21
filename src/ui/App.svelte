@@ -172,7 +172,8 @@
 {#if route.name !== 'room' && route.name !== 'practice' && route.name !== 'computer'}<UpdateNotice update={props.update} place={updatePlace} />{/if}
 <!-- [M8-P7] A search goes on over a solo table (the sandbox, practice, a computer game): the match-found card shows
      there too; its notices wait for Home's toast host. -->
-{#if route.name === 'solo' || route.name === 'practice' || route.name === 'computer'}<MatchHost {matchmaker} chime={soloChime} notices={false} />{/if}
+<!-- Practice and computer tables mount their own MatchHost in the table frame (M8-P8); only the sandbox needs this one. -->
+{#if route.name === 'solo'}<MatchHost {matchmaker} chime={soloChime} notices={false} />{/if}
 <OfflineNotice />
 <FrameMeter />
 

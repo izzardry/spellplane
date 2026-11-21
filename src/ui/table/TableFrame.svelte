@@ -46,6 +46,7 @@
   import InviteSheet from '../lobby/InviteSheet.svelte';
   import { codeLabel } from '../lobby/waiting';
   import MatchHost from '../play/MatchHost.svelte';
+  import { settingsChime } from '../play/mm-view';
   import QueueChip from '../play/QueueChip.svelte';
   import { launchDeps } from '../home/deps';
   import { FakeMatchmaker } from '../fakes';
@@ -312,6 +313,7 @@
   // opens a new game of its kind (REMATCH against Sparring, AGAIN alone). Each leaves this table first.
   const solo = $derived(props.kind === 'computer' || props.kind === 'practice' ? props.kind : null);
   const matchmaker = $derived(deps?.matchmaker ?? pageDeps?.matchmaker ?? null);
+  const matchChime = $derived(settingsChime(deps?.settings ?? pageDeps?.settings ?? null));
   function findAnother(): void {
     const r = record;
     void leave().then(() => void findAgain(matchmaker, r));
@@ -401,7 +403,8 @@
       <!-- Practise while you wait (journey.md 4.5; computer.md D15): the queue bar at the table's top edge and the match
            found card over the table; ACCEPT moves to the match's room, and the leave guard saves this game first. -->
       <div class="frame-queue"><QueueChip {matchmaker} onhome={() => void leave()} /></div>
-      <MatchHost {matchmaker} />
+      <!-- No toast host over a table: the matchmaker's notices wait for Home; the chime follows Settings `sound`. -->
+      <MatchHost {matchmaker} chime={matchChime} notices={false} />
     {/if}
 
     {#if networked && deps}
