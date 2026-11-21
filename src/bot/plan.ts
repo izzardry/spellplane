@@ -104,8 +104,9 @@ function fighter(p: BotPermanent): Fighter {
 
 /** The booking of a combat on the table (computer.md 5.6), from the bot's side. */
 function book(view: BotView, roundId: string, attackerSide: 'me' | 'opp'): BotStep {
-  const attackers = (attackerSide === 'me' ? view.mine : view.theirs).filter((p) => p.combat === 'attack');
-  const defenders = attackerSide === 'me' ? view.theirs : view.mine;
+  // Only creatures fight: a land or another card marked attacking or blocking is neither counted nor buried.
+  const attackers = (attackerSide === 'me' ? view.mine : view.theirs).filter((p) => p.combat === 'attack' && p.kind === 'creature');
+  const defenders = (attackerSide === 'me' ? view.theirs : view.mine).filter((p) => p.kind === 'creature');
   const blocks = new Map<InstanceId, Fighter[]>();
   for (const a of attackers) {
     const bs = view.blocks

@@ -131,6 +131,40 @@ describe('games store', () => {
     expect(await games.get('other-room-one-40')).not.toBeNull();
   });
 
+  it('purge of a computer game also removes Sparring\'s bot~ table, log, secrets and the computer record (computer.md 2.5)', async () => {
+    const s = await stores();
+    const games = createGameStore(s.db);
+    const code = 'c-amber-fox-31';
+    await seedTable(s, code);
+    await seedTable(s, `bot~${code}`);
+    await seedTable(s, 'bot~c-other-room-7');
+    const record = (roomId: string): ComputerGameRecord => ({
+      roomId,
+      createdAt: 1,
+      updatedAt: 1,
+      bot: {
+        config: { level: 'steady', pace: 'normal', seed: 'seed-7', name: 'Sparring' },
+        identity: { peerId: 'p-bot', nickname: 'Sparring', seatColour: 4, publicKey: {}, privateKey: {} } as unknown as ComputerGameRecord['bot']['identity'],
+        seat: 's1',
+        deck: { name: 'Red', choice: { kind: 'mirror' }, main: [] },
+      },
+      human: { deckId: null, deckName: 'Starter' },
+    });
+    await s.computer.put(record(code));
+    await s.computer.put(record('c-other-room-7'));
+    await games.create({ code, key: '', kind: 'solo', format: '1v1', decks: 'constructed', opponent: 'sparring', seat: 's0' });
+    await games.purge(code);
+    for (const room of [code, `bot~${code}`]) {
+      expect(await s.db.get('tables', room)).toBeUndefined();
+      expect(await s.db.get('secrets', room)).toBeUndefined();
+    }
+    expect((await s.db.getAll('log')).every((l) => l.roomId === 'bot~c-other-room-7')).toBe(true);
+    expect(await s.computer.get(code)).toBeNull();
+    // Another computer game keeps its rows.
+    expect(await s.computer.get('c-other-room-7')).not.toBeNull();
+    expect(await s.db.get('tables', 'bot~c-other-room-7')).toBeDefined();
+  });
+
   it('endOlderSolo(3) ends the fourth-newest unfinished solo game and no networked one', async () => {
     const s = await stores();
     let t = 1000;

@@ -82,6 +82,11 @@ export interface ComputerGameOptions {
   seed?: string;
   /** Added by M8-P6: the page's stores and services. */
   deps?: ComputerDeps;
+  /**
+   * Rematch (computer.md 2.4): the finished game's record. The new game plays the same two decks (the human's library
+   * deck `deckId`, Sparring's deck of the record) at the same level and pace, with a new seed and a new key pair.
+   */
+  rematchOf?: ComputerGameRecord;
 }
 
 /**
@@ -259,7 +264,8 @@ function portOf(bot: NetTable): BotSeatPort {
 }
 
 /** The handle the route receives (computer.md section 3). */
-function handleOf(o: Opened, config: BotConfig, runner: BotRunner, record: ComputerGameRecord | null, deps: ComputerDeps): ComputerHandle {
+function handleOf(o: Opened, config: BotConfig, runner: BotRunner, kept: ComputerGameRecord, deps: ComputerDeps): ComputerHandle {
+  const record = deps.computer ? kept : null;
   let disposed = false;
   const now = deps.now ?? (() => Date.now());
   const offResult = o.human.subscribe((s) => {
@@ -280,7 +286,8 @@ function handleOf(o: Opened, config: BotConfig, runner: BotRunner, record: Compu
     skipTurn: () => undefined,
     concede() {
       if (o.bot.getState().result !== undefined) return;
-      runner.pause();
+      // No pause: the result ends Sparring's play (plan.ts decides nothing once the game is over), and a paused runner
+      // would show PAUSED on its plate under the game-over overlay.
       o.bot.chat('I concede. Good game.');
       o.bot.dispatch({ type: 'concede' });
     },
@@ -314,17 +321,18 @@ function handleOf(o: Opened, config: BotConfig, runner: BotRunner, record: Compu
   };
   // Sparring's runner and session stay out of the handle (computer.md section 3: the route never receives the bot
   // session): only `runnerOf` and `botSessionOf` reach them, for tests and the debug hook.
-  internals.set(handle, { runner, bot: o.bot });
+  internals.set(handle, { runner, bot: o.bot, record: kept });
   return handle;
 }
 
 /** The runner and session behind each handle; module-private (see `runnerOf`, `botSessionOf`). */
-const internals = new WeakMap<ComputerHandle, { runner: BotRunner; bot: NetTable }>();
+const internals = new WeakMap<ComputerHandle, { runner: BotRunner; bot: NetTable; record: ComputerGameRecord }>();
 
 /** Create a computer game (computer.md section 3). */
 export async function createComputerGame(opts: ComputerGameOptions): Promise<ComputerGame> {
   const deps = await needDeps(opts.deps);
   const seed = opts.seed ?? randomSeed();
+  const again = opts.rematchOf;
   const human = await humanDeckOf(opts, deps, seed);
   const humanDeck = human.deck;
   await deps.cardData.getMany([...new Set(humanDeck.main.map((r) => r.sid))]);
@@ -333,12 +341,20 @@ export async function createComputerGame(opts: ComputerGameOptions): Promise<Com
   let choice: OpponentDeckChoice;
   let botName: string;
   try {
-    if (!deps.starter) throw new Error('no starter pool');
-    const d = await buildStarterDeck(deps.starter, { colour, seed, name: sparringDeckName(colour) });
-    await deps.cardData.getMany([...new Set(d.main.map((r) => r.sid))]);
-    botMain = { main: d.main, side: [] };
-    choice = { kind: 'sparring', colour, set: d.set };
-    botName = d.name;
+    if (again) {
+      // A rematch: Sparring brings the deck it played (computer.md 2.4 "the same decks").
+      botMain = { main: again.bot.deck.main.map((r) => ({ ...r })), side: [] };
+      choice = structuredClone(again.bot.deck.choice);
+      botName = again.bot.deck.name;
+      await deps.cardData.getMany([...new Set(botMain.main.map((r) => r.sid))]);
+    } else {
+      if (!deps.starter) throw new Error('no starter pool');
+      const d = await buildStarterDeck(deps.starter, { colour, seed, name: sparringDeckName(colour) });
+      await deps.cardData.getMany([...new Set(d.main.map((r) => r.sid))]);
+      botMain = { main: d.main, side: [] };
+      choice = { kind: 'sparring', colour, set: d.set };
+      botName = d.name;
+    }
   } catch {
     botMain = { main: humanDeck.main.map((r) => ({ ...r })), side: [] };
     choice = { kind: 'mirror' };
@@ -347,7 +363,7 @@ export async function createComputerGame(opts: ComputerGameOptions): Promise<Com
   }
   const keys = deps.botKeys ?? WEB_CRYPTO_BOT_KEYS;
   const exported = { ...(await keys.create()), nickname: 'Sparring', seatColour: (deps.identity.seatColour + 4) % 8 };
-  const config: BotConfig = { level: 'steady', pace: 'normal', seed, name: 'Sparring' };
+  const config: BotConfig = again ? { ...again.bot.config, seed } : { level: 'steady', pace: 'normal', seed, name: 'Sparring' };
   const now = deps.now ?? (() => Date.now());
   const record: ComputerGameRecord = {
     roomId: opts.roomId,
@@ -393,7 +409,7 @@ async function start(roomId: string, deps: ComputerDeps, record: ComputerGameRec
     throw err;
   }
   const runner = createBotRunner({ port: portOf(o.bot), config: record.bot.config, clock: deps.clock ?? pageClock, ctx: { seatIndex: o.bot.getState().seats[o.bot.seat]?.index ?? 1, seatRot: 180 }, ...(deps.onError ? { onError: deps.onError } : {}) });
-  return { session: o.human, handle: handleOf(o, record.bot.config, runner, deps.computer ? record : null, deps) };
+  return { session: o.human, handle: handleOf(o, record.bot.config, runner, record, deps) };
 }
 
 /** Resume a saved computer game (computer.md 10.3): both sessions on a new LocalNetwork, then the runner at once. */
@@ -421,6 +437,14 @@ export function runnerOf(handle: ComputerHandle): BotRunner | null {
   return internals.get(handle)?.runner ?? null;
 }
 
+/**
+ * The computer record of a handle's game (its decks, Sparring's level and pace), for `Rematch` (computer.md 2.4). It
+ * holds the bot's private JWK: the route keeps it in memory and hands it only to `openComputerGame({ rematchOf })`.
+ */
+export function recordOf(handle: ComputerHandle): ComputerGameRecord | null {
+  return internals.get(handle)?.record ?? null;
+}
+
 /** Sparring's session behind a handle (tests and the debug hook only: it holds Sparring's secrets). */
 export function botSessionOf(handle: ComputerHandle): NetTable | null {
   return internals.get(handle)?.bot ?? null;
@@ -430,9 +454,12 @@ export function botSessionOf(handle: ComputerHandle): NetTable | null {
  * What `#/c/<room>` opens (computer.md 10.3; journey.md 4.1 SOLO row): the saved game of that room, resumed at once,
  * else a new game for the human's deck (`deckId`, else a starter deck).
  */
-export async function openComputerGame(roomId: string, opts: { deckId?: string | null; deps?: ComputerDeps } = {}): Promise<ComputerGame> {
+export async function openComputerGame(roomId: string, opts: { deckId?: string | null; deps?: ComputerDeps; rematchOf?: ComputerGameRecord | null } = {}): Promise<ComputerGame> {
   const deps = await needDeps(opts.deps);
   const saved = await deps.computer?.get(roomId).catch(() => null);
   if (saved) return resumeComputerGame(roomId, deps);
+  // A rematch brings the finished game's decks: the human's library deck of its record (computer.md 2.4).
+  const again = opts.rematchOf ?? null;
+  if (again) return createComputerGame({ roomId, deckId: again.human.deckId, deckName: again.human.deckName, rematchOf: again, deps });
   return createComputerGame({ roomId, deckId: opts.deckId ?? null, deps });
 }

@@ -168,8 +168,9 @@ export function sparringDeckName(colour: keyof typeof BASIC): string {
 
 /**
  * The production pool: one Scryfall search per set through the card source (computer.md 8.1:
- * `e:<set> (t:creature or t:basic) r<=uncommon -is:digital`, paper only), remembered for the page. The cards join the
- * source's card cache, so the deck's cards resolve without a further request.
+ * `e:<set> (t:creature or t:basic) r<=uncommon -is:digital game:paper`), remembered for the page. `game:paper` is not
+ * repeated here: the source's `searchCards` sends every query as `(<query>) game:paper` (data/source.ts), so the request
+ * is the one of 8.1. The cards join the source's card cache, so the deck's cards resolve without a further request.
  */
 export function cardSourcePool(source: Pick<CardDataSource, 'searchCards'>): StarterPoolSource {
   const sets = new Map<string, Promise<CardData[]>>();

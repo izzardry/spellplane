@@ -24,6 +24,7 @@
     kind = undefined,
     record = null,
     onfind = undefined,
+    onrematch = undefined,
   }: {
     session: TableSession;
     onhome?: (() => void) | undefined;
@@ -33,6 +34,8 @@
     record?: MatchRecord | null;
     /** FIND ANOTHER MATCH (the matchmaker's search with the same setup); default: Home. */
     onfind?: (() => void) | undefined;
+    /** REMATCH without a next-game proposal (a computer game opens a new one, computer.md 2.4); default: propose. M8-P6 fix. */
+    onrematch?: (() => void) | undefined;
   } = $props();
 
   const themeChoice = themeContext();
@@ -71,6 +74,11 @@
     if (view.primary.id === 'findMatch') {
       if (onfind) onfind();
       else home();
+      return;
+    }
+    if (view.primary.id === 'rematch' && onrematch) {
+      busy = true;
+      onrematch();
       return;
     }
     void propose();

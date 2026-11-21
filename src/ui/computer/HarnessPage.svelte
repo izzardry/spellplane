@@ -4,7 +4,7 @@
 -->
 <script lang="ts">
   import type { ComputerGame } from '../../session/types';
-  import type { GameStore } from '../../store/types';
+  import type { ComputerGameRecord, GameStore } from '../../store/types';
   import type { TableDeps } from '../table/types';
   import ComputerRoute from './ComputerRoute.svelte';
 
@@ -19,7 +19,7 @@
   }: {
     what: 'table' | 'home';
     room: string;
-    open: (room: string) => Promise<ComputerGame>;
+    open: (room: string, opts?: { rematchOf?: ComputerGameRecord }) => Promise<ComputerGame>;
     deps: TableDeps;
     games: GameStore | null;
     go: (hash: string) => void;

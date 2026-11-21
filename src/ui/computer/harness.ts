@@ -18,6 +18,7 @@ import { createTableScene } from '../../scene/index';
 import type { ComputerDeps } from '../../session/computer';
 import { liveIdentity } from '../../session/live-identity';
 import type { ComputerGame } from '../../session/types';
+import type { ComputerGameRecord } from '../../store/types';
 import { openStores } from '../../store/stores';
 import { registerDebug } from '../../util/debug';
 import { live } from '../../util/lifecycle';
@@ -80,7 +81,7 @@ export function mount(target: HTMLElement): void {
   const cardData = injectedCards();
   const faces = createFaceSource(cardData);
   const starter = cardsPool(window.__spellplaneFixtures?.cards ?? []);
-  const room = /^#\/c\/([^/]+)$/.exec(location.hash)?.[1] ?? ROOM;
+  let room = /^#\/c\/([^/]+)$/.exec(location.hash)?.[1] ?? ROOM;
   const went: string[] = [];
   let current: ComputerGame | null = null;
   /** Sparring's session of the current game (the harness reads its hand for the specs; the route never does). */
@@ -95,8 +96,11 @@ export function mount(target: HTMLElement): void {
     return { cardData, identity, tables: s.tables, computer: s.computer, decks: s.decks, starter, onError: (e) => console.warn('Sparring:', e) };
   });
 
-  /** Resume the saved game of the room, else a new one: the green starter against Sparring's red deck. */
-  async function open(roomId: string): Promise<ComputerGame> {
+  /**
+   * Resume the saved game of the room, else a new one: the green starter against Sparring's red deck, or, for a
+   * REMATCH, the green starter against the deck Sparring played (with the route's fresh seed).
+   */
+  async function open(roomId: string, opts?: { rematchOf?: ComputerGameRecord }): Promise<ComputerGame> {
     const { botSessionOf, createComputerGame, resumeComputerGame } = await import('../../session/computer');
     const d = { ...(await deps) };
     const clock = botDebugClock();
@@ -106,13 +110,21 @@ export function mount(target: HTMLElement): void {
       ? await resumeComputerGame(roomId, d)
       : await (async () => {
           const human = await buildStarterDeck(starter, { colour: 'G', seed: 'harness-human' });
-          return createComputerGame({ roomId, deckId: null, deck: { main: human.main, side: [] }, deckName: human.name, colour: 'R', seed: 'harness', deps: d });
+          const again = opts?.rematchOf ? { rematchOf: opts.rematchOf } : { seed: 'harness' };
+          return createComputerGame({ roomId, deckId: null, deck: { main: human.main, side: [] }, deckName: human.name, colour: 'R', ...again, deps: d });
         })();
     current = g;
     currentBot = botSessionOf(g.handle);
     return g;
   }
 
+  /** The route's navigation: Home shows the stand-in Home; a REMATCH opens another computer room (`#/c/<room>`). */
+  const go = (h: string): void => {
+    went.push(h);
+    const next = /^#\/c\/([^/]+)$/.exec(h)?.[1];
+    if (next) room = decodeURIComponent(next);
+    show(h === '#/' ? 'home' : 'table');
+  };
   let page: ReturnType<typeof mountSvelte> | null = null;
   let shown: 'table' | 'home' = 'table';
   const show = (what: 'table' | 'home'): void => {
@@ -127,7 +139,7 @@ export function mount(target: HTMLElement): void {
       if (shown !== what || page) return;
       page = mountSvelte(HarnessPage, {
         target,
-        props: { what, room, open, deps: t, games: s.games, go: (h: string) => (went.push(h), show(h === '#/' ? 'home' : 'table')), oncontinue: () => show('table') },
+        props: { what, room, open, deps: t, games: s.games, go, oncontinue: () => show('table') },
       });
     });
   };
