@@ -596,6 +596,9 @@ class Engine implements NetEngine {
 
   // --- M8-P5: head, standby, rejoin checks ---------------------------------------------------------------
 
+  /** A standby sequencer holds own pending actions until it is live (sequenceOwn). */
+  private ownHeld = false;
+
   /** Set the flags of this browser's `head` (persistence.md section 6); a change is announced at once. */
   setHead(flags: { live?: boolean; saving?: boolean }): void {
     const live = flags.live ?? this.headLive;
@@ -608,7 +611,10 @@ class Engine implements NetEngine {
     // everyone stays live carries no head traffic; a changed `saving` rides on the next head.
     if (this.joined && !this.closed && ((!live && this.reconciled) || (live && this.someoneGathering()))) this.sendHead();
     if (live && !wasLive && this.mode === 'active') {
-      // Live now: the duties a standby sequencer held back (away marks, the game's timers) run.
+      // Live now: the own actions held on standby go out in order, then the duties a standby sequencer held back (away
+      // marks, the game's timers) run.
+      this.ownHeld = false;
+      for (const a of [...this.replica.pending()]) if (this.mode === 'active' && this.replica.seqOf(a.cid) === undefined) this.sequenceOwn(a);
       this.syncAwaySeats();
       this.armDeadlines();
       this.afterChange();
@@ -1401,6 +1407,7 @@ class Engine implements NetEngine {
   private activate(): void {
     this.mode = 'active';
     this.claimFrom = null;
+    this.ownHeld = false;
     // A new sequencer starts the 30 seconds of absence again (contracts.md Part G item 7).
     this.awaySince.clear();
     this.noteAway();
@@ -1512,6 +1519,13 @@ class Engine implements NetEngine {
 
   private sequenceOwn(action: Action): void {
     if (!this.seqr) return;
+    // M8-P5: a standby sequencer's own actions beyond chat, invites, claims and play on (an abandoned one proposed again
+    // after an adopt, say) wait in the pending queue until this browser is live; later own actions wait behind them, in
+    // order (setHead sequences them).
+    if (!this.headLive && (this.ownHeld || !STANDBY_TYPES.has(action.type))) {
+      this.ownHeld = true;
+      return;
+    }
     const state = this.replica.confirmed();
     const me = this.identity.peerId;
     const bad = this.senderPeerCheck(state, action, { peerId: me, role: this.role, nickname: this.identity.nickname });

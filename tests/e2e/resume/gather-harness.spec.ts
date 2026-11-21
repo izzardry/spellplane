@@ -6,7 +6,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import { seriousViolations } from '../a11y/helpers';
-import { designAudit } from './audit';
+import { designAudit } from '../helpers/design-audit';
 
 async function openGather(page: Page, scene: string, extra: Record<string, string> = {}): Promise<void> {
   const q = new URLSearchParams({ faces: 'placeholder', harness: 'gather', scene, ...extra });
@@ -184,6 +184,10 @@ test.describe('the claim page and its refusal screens (journey.md 4.11; contract
     await noBlur(page);
     await designAudit(page);
     expect(await seriousViolations(page)).toEqual([]);
+    // The seat's name seeds the field once; a cleared field stays empty (the player types another name).
+    await expect(live.getByTestId('claim-name')).toHaveValue('Ben');
+    await live.getByTestId('claim-name').fill('');
+    await expect(live.getByTestId('claim-name')).toHaveValue('');
     await live.getByTestId('claim-name').fill('Benjamin');
     await live.getByTestId('claim-sit').click();
     expect(await page.evaluate(() => window.__gather!.calls())).toEqual(['sit Benjamin']);

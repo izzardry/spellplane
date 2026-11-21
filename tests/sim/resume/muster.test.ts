@@ -8,7 +8,6 @@ import type { NetTable } from '../session/harness';
 import { closeAll, FAKE_TIMERS, hashOf, net, settle, until, waitConverged, type Browser } from '../session/harness';
 import { playScript } from '../session/script';
 import { lostHiddenCards } from '../../../src/session/resume';
-import type { LoopbackNetwork } from '../../../src/net/loopback';
 import { comeBack, confirmedHash, crash, leave, moves, musterOf, newerHeadHeard, seated, untilLive } from './rejoin-helpers';
 import { watch, closeWatchers, type Watcher } from '../roles/harness';
 

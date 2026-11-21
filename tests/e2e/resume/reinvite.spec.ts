@@ -15,7 +15,7 @@ import type { TableState } from '../../../src/core/types';
 import { seriousViolations } from '../a11y/helpers';
 import { hook } from '../helpers/app';
 import { decklist, freshProfile, freshRoom, open } from '../lobby/helpers';
-import { designAudit } from './audit';
+import { designAudit } from '../helpers/design-audit';
 
 type Room = { roomId: string; roomKey: string };
 
@@ -119,7 +119,7 @@ test('bring Ann back: her own profile resumes without a claim; a fresh profile s
       await expect(claim).toBeVisible({ timeout: 30_000 });
       await expect(claim.getByTestId('claim-warning')).toHaveText('If another browser of yours still has this game, open the link there. Sitting down here discards that hand.');
       await expect(claim.locator('.ds-btn--primary')).toHaveCount(0);
-      await designAudit(fresh, '[data-testid="claim-page"]');
+      await designAudit(fresh);
       expect(await seriousViolations(fresh, '[data-testid="claim-page"]')).toEqual([]);
       expect(await fresh.evaluate(() => location.hash)).not.toContain('/rejoin/');
       await claim.getByTestId('claim-sit').click();
@@ -127,7 +127,7 @@ test('bring Ann back: her own profile resumes without a claim; a fresh profile s
       await expect(fresh.getByTestId('claim-page')).toHaveCount(0);
       await expect(fresh.getByTestId('recovery')).toHaveAttribute('data-phase', 'lost', { timeout: 20_000 });
       expect(await seriousViolations(fresh, '[data-testid="recovery"]')).toEqual([]);
-      await designAudit(fresh, '[data-testid="recovery"]');
+      await designAudit(fresh);
       const seat = (await state(b)).seats.s0!;
       expect(seat.takeovers).toBe(1);
       expect(seat.peer).not.toBe(annPeer);

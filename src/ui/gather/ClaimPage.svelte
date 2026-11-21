@@ -10,6 +10,7 @@
     seat) with `WATCH` where watching is possible and `HOME`.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { CLAIM_WARNING, type ClaimRefusalScreen } from './model';
 
   let {
@@ -30,9 +31,13 @@
     onopenmine?: () => void;
   } = $props();
 
-  let name = $state('');
+  // The seat's name seeds the field once (it may arrive after mount); a field the player cleared stays empty.
+  let name = $state(untrack(() => seatName));
+  let seeded = untrack(() => seatName !== '');
   $effect(() => {
-    if (name === '' && seatName) name = seatName;
+    if (seeded || !seatName) return;
+    seeded = true;
+    untrack(() => (name = seatName));
   });
   const shown = $derived((seatName || 'this player').toUpperCase());
 </script>
