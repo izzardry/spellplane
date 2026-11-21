@@ -13,6 +13,7 @@
  */
 import type { Action, ActionDraft } from '../core/actions';
 import { canonicalJson } from '../core/hash';
+import { isPlayAction } from '../core/log';
 import { sha256Sync } from '../core/sha256';
 import type { SeatId, TableState } from '../core/types';
 import { isSpectatorId } from '../core/teams';
@@ -320,6 +321,15 @@ class Engine implements NetEngine {
   private reconciled = false;
   /** An unreconciled replica yielded the role to this claimant (ahead of it, or ranking first at the same seq). */
   private yieldTo: string | null = null;
+  /**
+   * M8-P5 (contracts.md Part G item 2): an active sequencer's read of a peer that reported more moves but no longer a
+   * copy (a fork, or a play count counted from a snapshot without one): the answer is only checked for a fork.
+   */
+  private forkRead: PeerId | null = null;
+  /** Peers whose copy this active sequencer read and found to be its own history (no fork): not read again. */
+  private readonly agreesWith = new Set<PeerId>();
+  /** The peer whose newer copy (found by a fork read) the current claim takes over, whatever the play counts say. */
+  private claimFrom: PeerId | null = null;
 
   private readonly myHashes = new Map<number, string>();
   private readonly seqrHashes = new Map<number, string>();
@@ -657,6 +667,7 @@ class Engine implements NetEngine {
     return { v: PROTOCOL_VERSION, t: 'claim', fromSeq: this.replica.seq(), seat: this.seat() ?? '', play: this.replica.play() };
   }
 
+  /** This replica's comparison key (contracts.md Part D: play, seq, peer id). */
   private myHeadKey(): HeadKey {
     return { play: this.replica.play(), seq: this.replica.seq(), peerId: this.identity.peerId };
   }
@@ -667,12 +678,26 @@ class Engine implements NetEngine {
     return { play: e.info.lastPlayAt === seq ? e.info.lastPlay : undefined, seq, peerId: e.info.peerId };
   }
 
-  /** A peer's copy is not merely this one: it is ahead by seq, or its announced head differs from this replica's. */
-  private differs(e: PeerEntry): boolean {
-    if (e.info.lastSeq > this.replica.seq()) return true;
-    const head = e.info.head;
-    if (!head || head.seq !== e.info.lastSeq) return e.info.lastPlayAt === e.info.lastSeq && (e.info.lastPlay ?? 0) > this.replica.play();
-    return head.seq !== this.replica.seq() || head.h !== sha256Sync(canonicalJson(this.replica.confirmed()));
+  /**
+   * Whether copy `theirs` is newer than this replica's by moves, then by seq (contracts.md Part G item 2), the peer id
+   * left out: two copies in step are never newer than each other, so a sequencer and its followers do not claim.
+   */
+  private newerThanMine(theirs: HeadKey): boolean {
+    return newerHead(theirs, { play: this.replica.play(), seq: this.replica.seq(), peerId: theirs.peerId }) > 0;
+  }
+
+  /**
+   * Whether this replica's copy is newer (contracts.md Part G item 2) than another copy that forks from it at `forkSeq`
+   * and runs `tail` (from at least `forkSeq`) to its holder's head: the play counts are compared from the fork on.
+   * Unknown (this replica no longer holds its own part from the fork on): false, the other copy is taken as before M8.
+   */
+  private keepsOwnAt(forkSeq: number, tail: readonly SequencedAction[], peerId: string): boolean {
+    const own = this.replica.tail(forkSeq - 1);
+    if (own === null || tail.length === 0) return false;
+    const moves = (xs: readonly SequencedAction[]): number => xs.filter((x) => x.seq >= forkSeq && isPlayAction(x)).length;
+    const base = this.replica.play() - moves(own);
+    const theirs: HeadKey = { play: base + moves(tail), seq: tail.at(-1)!.seq, peerId };
+    return newerHead(this.myHeadKey(), theirs) > 0;
   }
 
   /** Remember when each seat was first seen away (rejoin clock); a seat back is forgotten. */
@@ -815,6 +840,9 @@ class Engine implements NetEngine {
       this.requeueLost(() => true);
     }
     if (this.claimChecked === peer) this.claimChecked = null;
+    if (this.forkRead === peer) this.forkRead = null;
+    if (this.claimFrom === peer) this.claimFrom = null;
+    this.agreesWith.delete(peer);
     this.toldHeadAt.delete(peer);
     if (e.info.peerId && this.yieldTo === e.info.peerId) this.yieldTo = null;
     this.queued = this.queued.filter((q) => q.from !== peer);
@@ -1243,12 +1271,14 @@ class Engine implements NetEngine {
 
   /**
    * Whether a claim (`fromSeq`, `seat`) from `claimant` outranks this browser's own claim, for an unreconciled replica:
-   * the one further ahead wins; at the same seq, the lowest seat index (DESIGN Liveness: two claimants resolve by
-   * lowest seat index), a seated claimant before an unseated one, then the lower peer id.
+   * the one further ahead wins (M8-P5, contracts.md Part G item 2: more moves, then the higher seq; a claim without a
+   * play count compares by seq); at the same seq and moves, the lowest seat index (DESIGN Liveness: two claimants
+   * resolve by lowest seat index), a seated claimant before an unseated one, then the lower peer id.
    */
-  private outranks(claimant: string, fromSeq: number, seat: SeatId | ''): boolean {
+  private outranks(claimant: string, fromSeq: number, seat: SeatId | '', play?: number): boolean {
     const seq = this.replica.seq();
-    if (fromSeq !== seq) return fromSeq > seq;
+    const ahead = newerHead({ play, seq: fromSeq, peerId: claimant }, { play: this.replica.play(), seq, peerId: claimant });
+    if (ahead !== 0) return ahead > 0;
     const state = this.replica.confirmed();
     const index = (s: SeatId | '' | null): number => (s ? (state.seats[s]?.index ?? Number(/^s(\d+)$/.exec(s)?.[1] ?? Infinity)) : Infinity);
     const theirs = index(seat);
@@ -1259,6 +1289,8 @@ class Engine implements NetEngine {
 
   private stepDown(): void {
     this.mode = 'idle';
+    this.claimFrom = null;
+    this.forkRead = null;
     this.seqr = null;
     this.queued = [];
     this.clearHeld();
@@ -1291,7 +1323,16 @@ class Engine implements NetEngine {
    * sequencing and claims again, so it continues from the history the others acknowledged.
    */
   private aheadCheck(e: PeerEntry): void {
-    if (this.mode === 'active' && e.info.status === 'connected' && e.info.lastSeq > this.replica.seq()) this.startClaim(null);
+    // M8-P5 (contracts.md Part G item 2): further ahead means more moves, then the higher seq. A longer copy of chat
+    // lines with fewer moves does not make this sequencer give way; its followers' fork check adopts this history.
+    if (this.mode !== 'active' || e.info.status !== 'connected' || !this.newerThanMine(headKeyOf(e.info))) return;
+    if (e.info.lastSeq > this.replica.seq()) return this.startClaim(null);
+    // More moves, but no longer: another history, or the same one whose play count started from a snapshot without
+    // one. Read its last actions; a fork with more moves on their side is taken over by a claim (onSyncRes).
+    const t = e.info.transportId;
+    if (this.agreesWith.has(t) || this.sync !== null) return;
+    this.forkRead = t;
+    this.requestSync(t, 'overlap');
   }
 
   private connectedPeers(): [PeerId, PeerEntry][] {
@@ -1301,6 +1342,8 @@ class Engine implements NetEngine {
   private startClaim(prev: string | null): void {
     this.mode = 'claiming';
     this.seqr = null;
+    this.forkRead = null;
+    this.agreesWith.clear();
     // Held proposals are queued for the claim like any other (their proposers resend them too).
     for (const h of [...this.held.values()].flat()) if (this.queued.length < QUEUE_LIMIT) this.queued.push({ from: h.from, msg: h.msg });
     this.clearHeld();
@@ -1317,20 +1360,24 @@ class Engine implements NetEngine {
 
   /**
    * The claim completes once every connected peer reported its last seq (claimAck) and this replica took over the
-   * history of the one furthest ahead: it re-reads that peer's last actions to detect a fork (a former sequencer's
-   * actions nobody else received are not acknowledged and give way), then catches up to its head.
+   * history of the newest one: it re-reads that peer's last actions to detect a fork (a former sequencer's actions
+   * nobody else received are not acknowledged and give way), then catches up to its head. When this replica's own copy
+   * is newer than every acknowledged one, it keeps its history; the followers' overlap read (onClaim) adopts it.
    */
   private checkClaim(): void {
     if (this.mode !== 'claiming') return;
     let best: [PeerId, PeerEntry] | null = null;
     for (const pair of this.connectedPeers()) {
-      const ack = pair[1].claimAck;
-      if (ack === null) return this.updateStatus();
-      const b = best?.[1];
+      if (pair[1].claimAck === null) return this.updateStatus();
       // M8-P5 (contracts.md Part G item 2): the copy with more moves, then the longer one, then the smaller peer id.
-      if (!b || ack > (b.claimAck ?? 0) || (ack === b.claimAck && pair[1].info.peerId < b.info.peerId)) best = pair;
+      if (!best || newerHead(this.ackKey(pair[1]), this.ackKey(best[1])) > 0) best = pair;
     }
+    const from = this.claimFrom !== null ? this.connectedPeers().find(([t]) => t === this.claimFrom) : undefined;
+    if (from) best = from;
     if (!best) return this.activate();
+    // The same key as a peer's means the same copy length and moves: the smaller peer id (newerHead) decides, as it
+    // does for every other browser comparing the two.
+    if (!from && this.claimChecked !== best[0] && newerHead(this.myHeadKey(), this.ackKey(best[1])) > 0) return this.activate();
     const [to, e] = best;
     if (this.claimChecked !== to) {
       if (!this.sync) this.requestSync(to, 'overlap');
@@ -1345,6 +1392,7 @@ class Engine implements NetEngine {
 
   private activate(): void {
     this.mode = 'active';
+    this.claimFrom = null;
     // A new sequencer starts the 30 seconds of absence again (contracts.md Part G item 7).
     this.awaySince.clear();
     this.noteAway();
@@ -1395,7 +1443,7 @@ class Engine implements NetEngine {
     e.info.lastSeq = Math.max(e.info.lastSeq, m.fromSeq);
     this.noteNamed(e, e.info.peerId);
     this.recompute();
-    if (this.sequencer === this.identity.peerId && !this.reconciled && this.outranks(e.info.peerId, m.fromSeq, m.seat)) {
+    if (this.sequencer === this.identity.peerId && !this.reconciled && this.outranks(e.info.peerId, m.fromSeq, m.seat, m.play)) {
       // Our claim rests on a state the room has not confirmed, and theirs ranks first: follow them and catch up.
       this.yieldTo = e.info.peerId;
       this.recompute();
@@ -1576,9 +1624,19 @@ class Engine implements NetEngine {
     // has since given to other actions (catch-up from other peers goes through syncReq/syncRes).
     if (e.info.peerId !== this.sequencer || this.mode === 'active') return;
     const a = m.action;
+    // M8-P5: the sequencer's copy as it reported it before this seq (contracts.md Part G item 2).
+    const seqrNewer = this.newerThanMine(headKeyOf(e.info));
     e.info.lastSeq = Math.max(e.info.lastSeq, a.seq);
     const mine = this.replica.at(a.seq);
     if (a.seq <= this.replica.seq() && mine && mine.cid !== a.cid) {
+      if (seqrNewer && e.info.lastSeq < this.replica.seq()) {
+        // M8-P5: shorter, but with more moves: this replica holds a longer copy of fewer moves and takes the
+        // sequencer's history over (the overlap read finds the fork); the sequencer does not claim for it.
+        if (this.verify === 'no') this.verify = 'next';
+        this.heardSequencer = true;
+        this.ensureVerifyRead(from);
+        return;
+      }
       if (e.info.lastSeq < this.replica.seq()) {
         // Our sequencer is behind this replica and sent a seq of another history: it was cut off and sequenced alone,
         // and has not yet taken over from what the room acknowledged meanwhile (DESIGN "Multiplayer architecture":
@@ -1683,6 +1741,9 @@ class Engine implements NetEngine {
     // A gap may be plain reordering: give the missing seq a moment to arrive before asking.
     if (seqEntry && gap && this.now() - (this.gapSince ?? 0) >= GAP_WAIT_MS) return this.requestSync(seqEntry[0], kind);
     if (seqEntry && seqEntry[1].info.lastSeq > seq) return this.requestSync(seqEntry[0], kind);
+    // M8-P5: a sequencer behind this replica by seq but with more moves holds another history (contracts.md Part G
+    // item 2): the overlap read finds the fork, and this replica takes that history over (onSyncRes, keepsOwnAt).
+    if (seqEntry && seqEntry[1].info.lastSeq < seq && this.newerThanMine(headKeyOf(seqEntry[1].info))) return this.requestSync(seqEntry[0], 'overlap');
     // A reachable sequencer is the only source of history: a peer ahead of it holds seqs it has not continued yet
     // (it is catching up in a claim, or that peer kept another side's history after a split), and a plain tail from
     // that peer would land on top of whatever this replica holds without a fork check (review round 3).
@@ -1691,6 +1752,9 @@ class Engine implements NetEngine {
     for (const pair of this.peerMap) {
       const e = pair[1];
       if (e.info.status !== 'connected' || e.info.lastSeq <= seq) continue;
+      // M8-P5 (contracts.md Part G item 2): a longer copy with fewer moves is another history, not more of this one;
+      // its holder adopts this copy (an active sequencer's followers re-read it), so its tail is never taken.
+      if (!this.newerThanMine(headKeyOf(e.info))) continue;
       if (!best || e.info.lastSeq > best[1].info.lastSeq) best = pair;
     }
     if (best) this.requestSync(best[0], 'tail');
@@ -1730,6 +1794,10 @@ class Engine implements NetEngine {
     if (asked === null || asked.to !== from || asked.epoch !== answered.epoch || asked.kind !== answered.kind || asked.haveSeq !== answered.haveSeq) return;
     if (answered !== asked) this.asks = this.asks.filter((a) => a !== asked);
     this.sync = null;
+    if (this.forkRead === from) {
+      this.forkRead = null;
+      if (this.mode === 'active') return this.onForkRead(from, m);
+    }
     const fromSequencer = e.info.peerId === this.sequencer && this.mode !== 'active' && this.mode !== 'claiming';
     // A claimant takes over the history of the peer it asked; a follower that of its sequencer.
     const authoritative = fromSequencer || this.mode === 'claiming';
@@ -1786,6 +1854,12 @@ class Engine implements NetEngine {
     for (const a of m.tail) {
       const mine = a.seq <= this.replica.seq() ? this.replica.at(a.seq) : undefined;
       if (mine && mine.cid !== a.cid) {
+        // M8-P5 (contracts.md Part G item 2): a follower keeps a copy with more moves (then the longer one) than its
+        // sequencer's; it tells the sequencer its head, which then takes this copy over (aheadCheck, or its own read).
+        if (fromSequencer && this.mode === 'idle' && this.keepsOwnAt(a.seq, m.tail, e.info.peerId)) {
+          this.tellHead(from);
+          break;
+        }
         if (authoritative) return this.forkAt(from, a.seq);
         // Another peer's diverging copy: none of it is taken.
         break;
@@ -1810,6 +1884,29 @@ class Engine implements NetEngine {
     this.afterChange();
     this.checkClaim();
     this.maybeCatchUp();
+    this.updateStatus();
+  }
+
+  /**
+   * M8-P5: the answer to an active sequencer's fork read (aheadCheck). A fork whose other side has more moves (then the
+   * longer copy; counted from the fork on, contracts.md Part G item 2) is taken over by a claim from that peer; no
+   * fork: the peer holds this history, and is not read again until a claim or a new connection.
+   */
+  private onForkRead(from: PeerId, m: SyncResMessage): void {
+    const e = this.peerMap.get(from);
+    if (!e) return;
+    const tail = m.tail;
+    for (const a of tail) {
+      const mine = a.seq <= this.replica.seq() ? this.replica.at(a.seq) : undefined;
+      if (mine && mine.cid !== a.cid) {
+        if (!this.keepsOwnAt(a.seq, tail, e.info.peerId)) {
+          this.claimFrom = from;
+          this.startClaim(null);
+        }
+        return this.updateStatus();
+      }
+    }
+    if (m.snapshot === null && (tail.at(-1)?.seq ?? -1) <= this.replica.seq()) this.agreesWith.add(from);
     this.updateStatus();
   }
 

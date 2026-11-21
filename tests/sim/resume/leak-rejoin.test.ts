@@ -175,10 +175,11 @@ describe('rejoin leaks (M8-P5)', () => {
     void ben;
   });
 
-  it('PL-7: a split where both sides advance: the copy with more moves wins, own actions are replayed, nothing hidden crosses', async () => {
+  it('PL-7: a split where both sides advance: the copy with more moves wins over a longer one, own actions are replayed, nothing hidden crosses', async () => {
     const network = net({ seed: 307, delay: { min: 0, max: 100 } });
     const p = await playScript(network, browsers);
     const shownToA = trackDisclosures(p.b, 's0');
+    const fork = p.a.engine.seq();
     network.kill('peer-a');
     await until(() => p.b.engine.peers().every((x) => x.status !== 'connected'), 15_000, 'the split on B');
     await until(() => p.a.engine.peers().every((x) => x.status !== 'connected'), 15_000, 'the split on A');
@@ -187,14 +188,27 @@ describe('rejoin leaks (M8-P5)', () => {
     p.a.playFaceDown(p.a.secrets().hand[0]!, 'battlefield:s0', { x: 140, y: -200, rot: 0 });
     await until(() => p.a.engine.pending().length === 0, 10_000, 'Ann alone');
     await settle(p.b.draw(1));
+    // Ben's copy is the longer one (chat lines), Ann's has more moves.
+    for (let i = 0; i < 6; i++) p.b.chat(`alone ${i}`);
+    await until(() => p.b.engine.pending().length === 0, 10_000, 'Ben chats');
     const playA = p.a.engine.play!();
     const playB = p.b.engine.play!();
     expect(playA).toBeGreaterThan(playB);
+    expect(p.b.engine.seq()).toBeGreaterThan(p.a.engine.seq());
     network.revive('peer-a');
     await waitConverged([p.a, p.b], 'the split healed');
     await settle(Promise.all([p.a.whenSaved(), p.b.whenSaved()]));
+    // Ann's history sits right after the fork: the first action there that is not a sequencer's record is hers, and
+    // every one of Ben's actions of the split comes after her moves (played again on top).
+    const after = p.b.log().flatMap((e) => (e.kind === 'action' && e.seq > fork && e.action.type !== 'away' && e.action.type !== 'sequencerClaim' ? [e] : []));
+    expect(after[0]!.kind === 'action' && after[0]!.action.by).toBe('s0');
+    const lastAnn = after.findLastIndex((e) => e.kind === 'action' && e.action.by === 's0');
+    const firstBen = after.findIndex((e) => e.kind === 'action' && e.action.by === 's1');
+    expect(firstBen).toBeGreaterThan(lastAnn);
+    expect(p.b.log().filter((e) => e.kind === 'action' && e.action.type === 'chat' && e.action.text.startsWith('alone ')).length).toBe(6);
     // Both sides' moves survive (the losing side's are played again on top).
-    expect(p.a.engine.play!()).toBeGreaterThanOrEqual(playA);
+    expect(p.a.engine.play!()).toBeGreaterThan(playA);
+    expect(p.b.engine.play!()).toBe(p.a.engine.play!());
     const toB = { observed: await observedBy(network, p.B), owner: { state: p.a.engine.confirmedState(), secrets: p.a.secrets() }, disclosed: p.shownToB };
     cleanButSensitive(toB, { t: 'seq', leak: hiddenToken(toB.owner) });
     const toA = { observed: await observedBy(network, p.A), owner: { state: p.b.engine.confirmedState(), secrets: p.b.secrets() }, disclosed: shownToA };

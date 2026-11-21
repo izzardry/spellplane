@@ -95,6 +95,11 @@ export class TablePersistence {
   /** The state the last forced snapshot was taken from (see `saveAction`). */
   private lastState: TableState | null = null;
   private secretsQueued: SecretStore | null = null;
+  /**
+   * The newest secret store handed to any write so far. A queued write stores this one, not the store it was queued
+   * with: a coalesced `saveSecrets` runs in its first slot, ahead of actions queued after it with an older store.
+   */
+  private newestSecrets: SecretStore | null = null;
   /** A periodic snapshot fell due while held (see `holdSnapshot`): the next write that is not held makes it. */
   private due = false;
   /** Seq of the snapshot the queued writes leave in the record (queued, not necessarily written yet). */
@@ -141,13 +146,14 @@ export class TablePersistence {
     }
     const lastSeq = this.lastSeq;
     const play = this.o.play?.() ?? 0;
+    if (secrets) this.newestSecrets = secrets;
     this.writes = this.writes
       .then(async () => {
         const rebase = forced || (!covered && this.broken);
         const snapshot = rebase ? state : this.snapshot;
         const snapshotSeq = rebase ? state.seq : this.snapshotSeq;
         const snapshotPlay = rebase ? play : this.snapshotPlay;
-        await store.saveAction(this.o.roomId, entry, { ...this.record(state, snapshot, snapshotSeq, lastSeq, at), snapshotPlay }, secrets);
+        await store.saveAction(this.o.roomId, entry, { ...this.record(state, snapshot, snapshotSeq, lastSeq, at), snapshotPlay }, secrets ? (this.newestSecrets ?? secrets) : null);
         this.failing = false;
         this.savedAt = this.o.now();
         this.snapshot = snapshot;
@@ -170,9 +176,10 @@ export class TablePersistence {
     this.baseSeq = state.seq;
     this.due = false;
     const play = this.o.play?.() ?? 0;
+    if (secrets) this.newestSecrets = secrets;
     this.writes = this.writes
       .then(async () => {
-        await store.saveSnapshot({ ...this.record(state, state, state.seq, state.seq, this.o.now()), snapshotPlay: play }, secrets);
+        await store.saveSnapshot({ ...this.record(state, state, state.seq, state.seq, this.o.now()), snapshotPlay: play }, secrets ? (this.newestSecrets ?? secrets) : null);
         this.snapshot = state;
         this.snapshotSeq = state.seq;
         this.snapshotPlay = play;
@@ -191,10 +198,11 @@ export class TablePersistence {
     if (!store) return;
     const first = this.secretsQueued === null;
     this.secretsQueued = secrets;
+    this.newestSecrets = secrets;
     if (!first) return;
     this.writes = this.writes
       .then(async () => {
-        const s = this.secretsQueued;
+        const s = this.secretsQueued === null ? null : (this.newestSecrets ?? this.secretsQueued);
         this.secretsQueued = null;
         if (s) await store.saveSecrets(this.o.roomId, s);
       })
@@ -210,10 +218,13 @@ export class TablePersistence {
   saveRecord(): void {
     const store = this.o.store;
     if (!store) return;
+    // The lastSeq of this moment: an action queued after this write advances it before its own log entry is written.
+    const lastSeq = this.lastSeq;
     this.writes = this.writes
       .then(async () => {
-        await store.saveSnapshot({ ...this.record(this.snapshot, this.snapshot, this.snapshotSeq, this.lastSeq, this.o.now()), snapshotPlay: this.snapshotPlay }, null);
-        this.failing = false;
+        await store.saveSnapshot({ ...this.record(this.snapshot, this.snapshot, this.snapshotSeq, lastSeq, this.o.now()), snapshotPlay: this.snapshotPlay }, null);
+        // The stored log keeps its hole until an action write rebases it: NOT SAVING stays until then.
+        if (!this.broken) this.failing = false;
         this.savedAt = this.o.now();
       })
       .catch((e: unknown) => this.failed(e));

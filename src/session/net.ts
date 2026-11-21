@@ -247,6 +247,8 @@ export function exposedFromLog(log: readonly Action[], state: TableState, seat: 
     if (a.type === 'reveal' && a.by === seat && mine(a.instanceId)) out.add(a.instanceId);
     else if (a.type === 'flip' && a.by === seat && a.ref !== undefined && mine(a.card)) out.add(a.card);
     else if (a.type === 'revealTo' && a.by === seat && mine(a.instanceId)) out.add(a.instanceId);
+    // A card that stood in a public zone (face down too) under its id: every seat knows where that id went next.
+    else if ((a.type === 'move' || a.type === 'toZone') && mine(a.card) && state.zones[a.to]?.visibility === 'public') out.add(a.card);
     else if (a.type === 'lookAt' && a.by !== seat) {
       if (a.card !== undefined) {
         if (mine(a.card)) out.add(a.card);
@@ -256,7 +258,7 @@ export function exposedFromLog(log: readonly Action[], state: TableState, seat: 
       }
     }
   }
-  for (const [id, c] of Object.entries(state.cards)) if (c.owner === seat && c.identity !== undefined) out.add(id);
+  for (const [id, c] of Object.entries(state.cards)) if (c.owner === seat && (c.identity !== undefined || state.zones[c.zone]?.visibility === 'public')) out.add(id);
   return out;
 }
 
