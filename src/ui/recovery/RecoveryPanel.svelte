@@ -198,11 +198,12 @@
     font-family: var(--ds-font-body);
     font-size: var(--ds-type-small);
   }
+  /* A compact panel at the top left, so it stays above a left seat's plate: the title in body size, bold. */
   h2 {
-    margin: 0 0 var(--ds-space-sm);
+    margin: 0 0 var(--ds-space-xs);
     font-family: var(--ds-font-body);
-    font-size: var(--ds-type-title);
-    font-weight: var(--ds-heading-weight);
+    font-size: var(--ds-type-body);
+    font-weight: var(--ds-weight-bold);
   }
   p {
     margin: var(--ds-space-xs) 0;

@@ -921,6 +921,7 @@
   }
   .side {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--ds-space-lg);
     min-width: 0;
   }
