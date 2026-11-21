@@ -53,11 +53,18 @@ test.describe('frame meter (M7-A0)', () => {
     const box = (await meter.boundingBox())!;
     expect(box.x).toBeLessThan(40);
     expect(box.y + box.height).toBeGreaterThan(vp.height - 40);
-    for (const card of await page.getByTestId('hand-card').all()) {
-      const h = (await card.boundingBox())!;
-      const apart = box.x + box.width <= h.x || h.x + h.width <= box.x || box.y + box.height <= h.y || h.y + h.height <= box.y;
-      expect(apart, `the meter covers a hand card at ${JSON.stringify(h)}`).toBe(true);
-    }
+    // The fan may still be spreading the drawn cards on a slow runner: poll until it rests clear of the meter.
+    await expect
+      .poll(async () => {
+        const covered: string[] = [];
+        for (const card of await page.getByTestId('hand-card').all()) {
+          const h = (await card.boundingBox())!;
+          const apart = box.x + box.width <= h.x || h.x + h.width <= box.x || box.y + box.height <= h.y || h.y + h.height <= box.y;
+          if (!apart) covered.push(`the meter covers a hand card at ${JSON.stringify(h)}`);
+        }
+        return covered;
+      }, { timeout: 15_000 })
+      .toEqual([]);
   });
 
   test('"Show frame rate" in Settings shows the meter and is kept for this browser', async ({ page }, info) => {
