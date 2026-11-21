@@ -1547,7 +1547,7 @@
     </div>
     {/if}
 
-    <!-- Top centre: the turn tracker; the stack's controls appear under it only while something is on the stack. -->
+    <!-- Top centre: the turn tracker and the plates without a seat edge. -->
     <div class="top-centre">
       {#if full}
       <TurnStrip
@@ -1562,22 +1562,6 @@
       />
       {/if}
       {#if status}<div class="sp-status" data-testid="hud-status">{@render status()}</div>{/if}
-      {#if top && full}
-        <div class="stack-chip ds-panel" data-testid="stack-chip">
-          <span class="ds-label">Stack {st.stack.length}</span>
-          {#if !readOnly}
-          <button type="button" class="ds-btn sp-h-xs sp-pill" class:lit={resolveLit} data-testid="resolve" title="Resolve{keyOf('resolve') ? ` (${keyOf('resolve')})` : ''}" onclick={() => commands.run('resolve')}>Resolve</button>
-          {#if resolveTargets.length}
-            <span class="to" data-testid="resolve-to">to
-              {#each resolveTargets as t (t.zone)}
-                <button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-pill" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
-              {/each}
-            </span>
-          {/if}
-          <button type="button" class="ds-btn sp-h-xs sp-pill" title="Counter{keyOf('counterTop') ? ` (${keyOf('counterTop')})` : ''}" onclick={() => commands.run('counterTop')}>Counter</button>
-          {/if}
-        </div>
-      {/if}
       <!-- Other players' plates without a reported seat edge sit in a row under the tracker. -->
       <div class="plates-row">
         {#each others as seat (seat.id)}
@@ -1628,6 +1612,27 @@
     {#if st.seats[me]}
       <div class="own-avatar" class:over-evening={eveningBarBelow}>{@render plate(st.seats[me], true)}</div>
     {/if}
+
+    <!-- Bottom right, above the primary: the stack's controls while something is on the stack (out of the top centre,
+         where they covered the opponent's plate and row of card backs; gate M1, seam fix M8-P8). -->
+    <div class="stack-dock">
+      {#if top && full}
+        <div class="stack-chip ds-panel" data-testid="stack-chip">
+          <span class="ds-label">Stack {st.stack.length}</span>
+          {#if !readOnly}
+          <button type="button" class="ds-btn sp-h-xs sp-pill" class:lit={resolveLit} data-testid="resolve" title="Resolve{keyOf('resolve') ? ` (${keyOf('resolve')})` : ''}" onclick={() => commands.run('resolve')}>Resolve</button>
+          {#if resolveTargets.length}
+            <span class="to" data-testid="resolve-to">to
+              {#each resolveTargets as t (t.zone)}
+                <button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-pill" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
+              {/each}
+            </span>
+          {/if}
+          <button type="button" class="ds-btn sp-h-xs sp-pill" title="Counter{keyOf('counterTop') ? ` (${keyOf('counterTop')})` : ''}" onclick={() => commands.run('counterTop')}>Counter</button>
+          {/if}
+        </div>
+      {/if}
+    </div>
 
     <!-- Bottom right: Talk and the one primary button. -->
     {#if full}
@@ -2151,17 +2156,37 @@
     gap: var(--ds-space-sm);
     z-index: 30;
   }
+  /* A narrow column above the primary, clear of the hand fan and of the top centre. */
+  .stack-dock {
+    position: absolute;
+    right: var(--ds-edge);
+    bottom: calc(var(--ds-edge) + var(--ds-control-lg) + var(--ds-space-sm));
+    z-index: 35;
+    display: flex;
+    justify-content: flex-end;
+    pointer-events: none;
+  }
+  @media (max-width: 1100px) {
+    .stack-dock {
+      bottom: calc(22vh + 16px + var(--ds-control-lg) + var(--ds-space-sm));
+    }
+  }
+  .touch-ui .stack-dock {
+    bottom: calc(22vh + 16px + var(--thumb-space, 0px) + var(--ds-control-lg) + var(--ds-space-sm));
+  }
   .stack-chip {
     pointer-events: auto;
     display: flex;
-    gap: var(--ds-space-sm);
-    align-items: center;
-    padding: var(--ds-space-xs) var(--ds-space-sm) var(--ds-space-xs) var(--ds-space-md);
+    flex-direction: column;
+    gap: var(--ds-space-xs);
+    align-items: stretch;
+    padding: var(--ds-space-sm);
   }
   .stack-chip .to {
-    display: inline-flex;
+    display: flex;
+    flex-direction: column;
     gap: 2px;
-    align-items: center;
+    align-items: stretch;
     color: var(--ds-muted);
   }
   .plates-row {

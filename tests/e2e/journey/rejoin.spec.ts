@@ -8,7 +8,7 @@
  * (`net.setClock`), never slept through. Fixtures, the local transport.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { atTable, dispatch, freshProfile, gamesOf, hands, leaveByArrow, navTo, openSite, pages, privateTable, readyWith, sameHash, state, tableHash } from '../helpers/journey';
+import { atTable, decklist, dispatch, freshProfile, gamesOf, hands, leaveByArrow, navTo, openSite, pages, privateTable, readyWith, sameHash, state, tableHash } from '../helpers/journey';
 
 test.describe('journey: leave, History, rejoin and bring back', () => {
   test('Ann leaves and returns from History live on Ben’s copy; Ben brings Ann back to a fresh browser', async ({ browser }, info) => {
@@ -42,7 +42,8 @@ test.describe('journey: leave, History, rejoin and bring back', () => {
 
       await test.step('History lists the game first on Ann’s page; Ben plays on', async () => {
         await navTo(a, 'HISTORY');
-        await expect(a.getByTestId('history-row').first()).toBeVisible();
+        // What the History page shows first, not only the store's order.
+        await expect(a.getByTestId('history-row').first()).toHaveAttribute('data-code', room);
         expect((await gamesOf(a))[0]?.code).toBe(room);
         for (let i = 0; i < 3; i++) await dispatch(b, { type: 'life', seat: 's1', delta: -1 });
         await expect.poll(async () => (await state(b)).seats.s1?.life).toBe(17);
@@ -88,6 +89,25 @@ test.describe('journey: leave, History, rejoin and bring back', () => {
         await expect(c.getByTestId('recovery')).toBeVisible({ timeout: 20_000 });
         await sameHash([b, c]);
         expect((await gamesOf(c))[0]?.code).toBe(room);
+      }, { timeout: 60_000 });
+
+      await test.step('the recovery completes: the deck re-imported, a new hand of 7 agreed by Ben, one state', async () => {
+        await expect(c.getByTestId('recovery')).toHaveAttribute('data-phase', 'lost', { timeout: 20_000 });
+        await c.getByTestId('recovery-hand').fill('7');
+        await c.getByTestId('recovery-start').click();
+        const dialog = c.getByTestId('recovery-import');
+        await dialog.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
+        await dialog.getByTestId('deck-check').click();
+        await dialog.getByTestId('deck-import-go').click();
+        await expect(dialog).toHaveCount(0);
+        await expect(b.getByTestId('confirm-prompt')).toContainText('new hand of 7?', { timeout: 15_000 });
+        await b.getByTestId('prompt-ok').click();
+        await expect(c.getByTestId('recovery-done')).toContainText('a hand of 7', { timeout: 30_000 });
+        for (const p of [b, c]) {
+          await expect.poll(async () => (await state(p)).zones['hand:s0']!.ids.length, { timeout: 15_000 }).toBe(7);
+          expect((await state(p)).seats.s0!.recovering).toBeUndefined();
+        }
+        await sameHash([b, c]);
       }, { timeout: 60_000 });
     } finally {
       await context.close();
