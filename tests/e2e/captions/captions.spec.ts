@@ -46,6 +46,9 @@ test.describe('captions with the fake engine', () => {
 
     // Anna taps the card with the hover key (her last action on a card).
     const at = await centreOf(a, card);
+    // Come to the card from above the table: a path across the hand fan raises a hand card, whose raised face then lies
+    // over the near battlefield where this card was played.
+    await a.mouse.move(at.x, 120);
     await a.mouse.move(at.x, at.y, { steps: 3 });
     await a.keyboard.press('t');
     await expect.poll(async () => (await state(b)).cards[card]?.tapped, { timeout: 15_000 }).toBe(true);
@@ -169,6 +172,9 @@ test.describe('captions with the fake engine', () => {
     const card = await playCard(table);
     await a.bringToFront();
     const at = await centreOf(a, card);
+    // Come to the card from above the table: a path across the hand fan raises a hand card, whose raised face then lies
+    // over the near battlefield where this card was played.
+    await a.mouse.move(at.x, 120);
     await a.mouse.move(at.x, at.y, { steps: 3 });
     await a.keyboard.press('n');
     const input = a.getByTestId('note-input');

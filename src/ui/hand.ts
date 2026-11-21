@@ -33,8 +33,9 @@ export interface FanSpan {
 
 /**
  * Layout of `n` hand cards in a `vw` x `vh` viewport with card `hovered` (index) raised. With `span` the resting fan
- * fits inside that band (centred in it, overlapping more where it must) instead of 80 % of the width; the raised card
- * is kept inside the band as well where it fits.
+ * fits inside that band (centred in it, overlapping more where it must) instead of 80 % of the width. The raised card
+ * stays centred on its slot, inside the window: it is read for a moment and lies over everything (pulled into the band,
+ * it slid toward the middle and over the near battlefield the pointer was heading for).
  */
 export function fanLayout(n: number, vw: number, vh: number, hovered: number | null = null, span: FanSpan | null = null): FanBox[] {
   if (n <= 0) return [];
@@ -46,8 +47,6 @@ export function fanLayout(n: number, vw: number, vh: number, hovered: number | n
   const step = n === 1 ? 0 : natural <= maxWidth ? w + HAND_GAP_PX : (maxWidth - w) / (n - 1);
   const total = w + (n - 1) * step;
   const left0 = band ? (band.left + band.right - total) / 2 : (vw - total) / 2;
-  const lo = band ? band.left : 0;
-  const hi = band ? band.right : vw;
   const boxes: FanBox[] = [];
   for (let i = 0; i < n; i++) {
     const left = left0 + i * step;
@@ -55,8 +54,7 @@ export function fanLayout(n: number, vw: number, vh: number, hovered: number | n
       const hh = vh * SCREEN_LAYER.handHoverViewportFraction;
       const hw = hh * CARD_ASPECT;
       const centred = left + w / 2 - hw / 2;
-      const [min, max] = hi - lo >= hw ? [lo, hi - hw] : [0, Math.max(0, vw - hw)];
-      boxes.push({ left: Math.min(Math.max(min, centred), max), bottom: 0, width: hw, height: hh, z: n + 1 });
+      boxes.push({ left: Math.min(Math.max(0, centred), Math.max(0, vw - hw)), bottom: 0, width: hw, height: hh, z: n + 1 });
     } else boxes.push({ left, bottom: 0, width: w, height: h, z: i + 1 });
   }
   return boxes;

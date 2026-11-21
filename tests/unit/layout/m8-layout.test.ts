@@ -28,11 +28,12 @@ describe('the hand fan between the own plate and the primary (F17)', () => {
     });
   }
 
-  it('a raised card stays inside the band where it fits', () => {
+  it('a raised card stays centred on its slot, inside the window', () => {
     const span = { left: 392, right: 1144 };
-    const raised = fanLayout(7, 1440, 900, 0, span)[0]!;
-    expect(raised.left).toBeGreaterThanOrEqual(span.left);
-    expect(raised.left + raised.width).toBeLessThanOrEqual(span.right);
+    const rest = fanLayout(7, 1440, 900, null, span)[3]!;
+    const raised = fanLayout(7, 1440, 900, 3, span)[3]!;
+    expect(raised.left + raised.width / 2).toBeCloseTo(rest.left + rest.width / 2);
+    expect(fanLayout(7, 1440, 900, 0, { left: 0, right: 600 })[0]!.left).toBeGreaterThanOrEqual(0);
   });
 
   it('a band narrower than one card is ignored (the old 80 % layout)', () => {

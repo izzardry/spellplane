@@ -1930,7 +1930,7 @@
     onmore={(card, x, y) => openMenu(card, x, y)}
     onpile={pileAction}
   />
-  <CoachMark {coach} touch={touchUi} bottom={coachBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
+  <CoachMark {coach} touch={touchUi} corner={!touchUi && vw > 1100} bottom={coachBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
   <!-- /M7-P5 -->
 
   {#if radial}
@@ -2382,8 +2382,9 @@
   }
   .above-hand {
     position: absolute;
-    /* Above the teammate's fan (z-index 19), so a hovered teammate card never covers OK and Hold. */
-    z-index: 20;
+    /* Above the teammate's fan (z-index 19) and the own fan (20), so a raised card never covers OK and Hold: the pointer
+       moving from the card up to the prompt would otherwise stay on the card (resume spec, the band-centred fan). */
+    z-index: 22;
     left: 50%;
     bottom: calc(22vh + 16px);
     transform: translateX(-50%);
