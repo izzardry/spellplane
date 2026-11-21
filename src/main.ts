@@ -137,7 +137,7 @@ async function boot(el: HTMLElement): Promise<void> {
    * Join a table link with the networked session (the table route leaves it when the route goes away). A join still
    * under way when the page leaves that link's route is cancelled, so its engine and transport do not live on.
    */
-  async function openRoom(link: RoomLink, as: { watch?: boolean } = {}): Promise<NetSession> {
+  async function openRoom(link: RoomLink, as: { watch?: boolean; signal?: AbortSignal } = {}): Promise<NetSession> {
     if (!stores || !identity) throw new Error('this browser blocks local storage, which a table needs for your identity and your hidden cards');
     // A matched room (matchmaking.md 2.9; contracts.md Part D): seat 0 of its MatchRecord creates the table, every
     // other member never sits alone; so does a browser that opens a re-invite link (`rejoin`).
@@ -149,6 +149,9 @@ async function boot(el: HTMLElement): Promise<void> {
     const neverAlone = (!!record && !creator) || rejoin;
     let transport: KillableTransport | null = null;
     const joining = new AbortController();
+    // The route gave the join up (RoomRoute: it went away, or the link or watching changed).
+    if (as.signal?.aborted) joining.abort();
+    else as.signal?.addEventListener('abort', () => joining.abort(), { once: true });
     const onHash = (): void => {
       const r = parseRoute(location.hash);
       if (r.name !== 'room' || r.room !== link.roomId || r.key !== link.roomKey || (r.watch === true) !== (as.watch === true)) joining.abort();

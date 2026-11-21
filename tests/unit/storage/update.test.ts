@@ -6,7 +6,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import type { Stage } from '../../../src/core/types';
-import { FakeAppUpdate, registerWorker, UPDATE_CHECK_MS, type ContainerLike, type RegistrationLike, type WorkerLike } from '../../../src/ui/storage/worker';
+import { APPLY_FALLBACK_MS, FakeAppUpdate, registerWorker, UPDATE_CHECK_MS, type ContainerLike, type RegistrationLike, type WorkerLike } from '../../../src/ui/storage/worker';
 import { updateMayApply, type UpdatePlace } from '../../../src/ui/update';
 import { SW_MESSAGE, type UpdateStatus } from '../../../src/util/pwa';
 
@@ -104,11 +104,20 @@ function setup(opts: { controlled?: boolean; fail?: boolean } = {}) {
   }
   const reload = vi.fn();
   const timers: { fn: () => void; ms: number }[] = [];
+  const once: { fn: () => void; ms: number }[] = [];
   const onError = vi.fn();
-  const update = registerWorker({ container, url: '/spellplane/sw.js', scope: '/spellplane/', reload, every: (fn, ms) => timers.push({ fn, ms }), onError });
+  const update = registerWorker({
+    container,
+    url: '/spellplane/sw.js',
+    scope: '/spellplane/',
+    reload,
+    every: (fn, ms) => timers.push({ fn, ms }),
+    after: (fn, ms) => once.push({ fn, ms }),
+    onError,
+  });
   const seen: UpdateStatus[] = [];
   update.subscribe((s) => seen.push(s));
-  return { container, update, reload, timers, onError, seen };
+  return { container, update, reload, timers, once, onError, seen };
 }
 
 const MATCH: UpdatePlace = { route: 'room', stage: 'match' };
@@ -148,6 +157,36 @@ describe('the page’s worker', () => {
     container.takeOver(next);
     expect(reload).toHaveBeenCalledTimes(1);
     expect(seen).toEqual(['available', 'applying']);
+  });
+
+  it('a hand-over that stalls (no controllerchange) still reloads once, after APPLY_FALLBACK_MS (gate M8 R1)', async () => {
+    const { container, update, reload, once } = setup();
+    await update.ready;
+    const next = container.reg.newVersion();
+    expect(once).toEqual([]);
+    expect(update.applyAt(LOBBY)).toBe(true);
+    expect(next.posted).toEqual([{ type: SW_MESSAGE.skipWaiting }]);
+    expect(once.map((t) => t.ms)).toEqual([APPLY_FALLBACK_MS]);
+    expect(reload).not.toHaveBeenCalled();
+    once[0]!.fn();
+    expect(reload).toHaveBeenCalledTimes(1);
+    // The new version claims the page while that reload is pending: the page reloads once more, which replaces a
+    // navigation Chromium leaves hanging after a stalled hand-over; a second change does nothing.
+    container.takeOver(next);
+    expect(reload).toHaveBeenCalledTimes(2);
+    container.takeOver(next);
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  it('the fallback after a hand-over that worked does not reload twice', async () => {
+    const { container, update, reload, once } = setup();
+    await update.ready;
+    const next = container.reg.newVersion();
+    update.applyAt(LOBBY);
+    container.takeOver(next);
+    expect(reload).toHaveBeenCalledTimes(1);
+    once[0]!.fn();
+    expect(reload).toHaveBeenCalledTimes(1);
   });
 
   it('a version already waiting when the page starts is offered at once', async () => {

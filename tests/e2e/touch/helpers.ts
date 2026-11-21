@@ -166,6 +166,15 @@ export async function lastActions(page: Page, n: number): Promise<Record<string,
 export async function tableWithCards(page: Page, info: TestInfo, opts: { battlefield?: number; hand?: number } = {}): Promise<{ bf: InstanceId[]; hand: InstanceId[] }> {
   const profile = `touch-${info.workerIndex}-${Math.random().toString(36).slice(2, 10)}`;
   await openSolo(page, profile);
+  // On a touch screen the first-run gesture hint (ui/hints) stands by the own hand, low on the left, and its button
+  // takes the presses there (gate M8 R3: a long-press on empty table landed on GOT IT on CI's Linux WebKit, whose text
+  // runs taller). The hint has its own specs (settings/touch.spec.ts); the gestures start on a table without it.
+  if (await page.evaluate(() => navigator.maxTouchPoints > 0)) {
+    const hint = page.getByTestId('hint');
+    await expect(hint).toHaveAttribute('data-hint', 'touchGestures', { timeout: 15_000 });
+    await hint.getByTestId('hint-dismiss').tap();
+    await expect(hint).toHaveCount(0);
+  }
   await call(page, 'importDecklist', decklist('gw-m19-60.txt'));
   const nb = opts.battlefield ?? 3;
   const nh = opts.hand ?? 2;
