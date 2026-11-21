@@ -846,6 +846,20 @@ test.describe('theme switcher', () => {
       const sent = async (p: Page) => (await hook<{ dir: string; channel: string; msg: unknown }[]>(p, 'net.messages')).filter((m) => m.dir === 'out');
       // Heartbeats and presence keep flowing; actions and private messages are what a switch must not cause.
       const sentActs = async (p: Page) => (await sent(p)).filter((m) => m.channel === 'act' || m.channel === 'prv').length;
+      // The start's own traffic (setup actions, commitments) may still be going out when the HUD shows, on a slow CI
+      // runner: count from a settled table, where both browsers hold one state and no action went out between polls.
+      let lastActs = -1;
+      await expect
+        .poll(
+          async () => {
+            const n = await sentActs(a);
+            const settled = n === lastActs && (await hash(a)) === (await hash(b));
+            lastActs = n;
+            return settled;
+          },
+          { intervals: [500], timeout: 30_000 },
+        )
+        .toBe(true);
       const outBefore = (await sent(a)).length;
       const actsBefore = await sentActs(a);
       const hashBefore = await hash(a);

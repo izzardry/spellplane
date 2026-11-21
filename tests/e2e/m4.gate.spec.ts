@@ -219,6 +219,9 @@ async function dumpStores(page: Page, profile: string): Promise<unknown> {
   }, `spellplane-${profile}`);
 }
 
+/** The picker's summary line for a chosen theme: "Theme: Paper" in the M1 lobby, "Look: Paper" in M8's waiting room. */
+const chosenLine = (theme: ThemeId): RegExp => new RegExp(`(Theme|Look): ${THEME_LABELS[theme]}`);
+
 /** Pick a theme in the lobby's picker (DESIGN "Themes and rendering": themes are chosen per viewer). */
 async function pickLobbyTheme(page: Page, theme: ThemeId): Promise<void> {
   const details = page.getByTestId('lobby-theme');
@@ -226,7 +229,7 @@ async function pickLobbyTheme(page: Page, theme: ThemeId): Promise<void> {
   if (!(LISTED_THEME_IDS as readonly string[]).includes(theme)) {
     await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
     await expect.poll(() => currentTheme(page), { timeout: 20_000 }).toBe(theme);
-    await expect(details).toContainText(`Theme: ${THEME_LABELS[theme]}`);
+    await expect(details).toContainText(chosenLine(theme));
     return;
   }
   await details.locator('summary').click();
@@ -234,7 +237,7 @@ async function pickLobbyTheme(page: Page, theme: ThemeId): Promise<void> {
   // choice as the picker did; the lobby's picker shows the theme chosen.
   await page.evaluate((t) => window.__spellplane!.theme!.set(t), theme);
   await expect.poll(() => currentTheme(page), { timeout: 20_000 }).toBe(theme);
-  await expect(details).toContainText(`Theme: ${THEME_LABELS[theme]}`);
+  await expect(details).toContainText(chosenLine(theme));
   await details.locator('summary').click();
 }
 

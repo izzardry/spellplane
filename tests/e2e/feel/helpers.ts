@@ -44,8 +44,17 @@ export async function idleFramesStop(page: Page): Promise<void> {
 
 /** Stop the page's clock (installed before the page loaded): frames run only through `step`. */
 export async function pauseClock(page: Page): Promise<void> {
-  const now = await page.evaluate(() => Date.now());
-  await page.clock.pauseAt(now + 1000);
+  // The pause must lie ahead of the page's clock when it lands: on a busy CI runner more than a second of page time can
+  // pass between reading the clock and pausing it ("Cannot fast-forward to the past"); then read it again.
+  for (let attempt = 0; ; attempt++) {
+    const now = await page.evaluate(() => Date.now());
+    try {
+      await page.clock.pauseAt(now + 1000);
+      break;
+    } catch (e) {
+      if (attempt >= 4 || !/past/i.test(String(e))) throw e;
+    }
+  }
   await page.clock.runFor(32);
 }
 
