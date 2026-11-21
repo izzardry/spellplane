@@ -191,6 +191,9 @@
   .look input {
     width: 3.5em;
     font: inherit;
+    /* The row's kit height (28 px, beside its sp-h-xs buttons; M8-P8 seam fix for the journey's design audit). */
+    box-sizing: border-box;
+    height: 28px;
   }
   button {
     font: inherit;

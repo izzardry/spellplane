@@ -94,6 +94,34 @@
     };
   });
 
+  // The rating line of the game-over overlay (matchmaking.md 2.4): the rating watcher (session/match-room.ts) writes
+  // `rated` into the MatchRecord once the result is in, so the record is read again until it carries it (ranked only).
+  const resultAt = $derived(st.result?.atSeq ?? null);
+  $effect(() => {
+    const at = resultAt;
+    const code = props.code;
+    const matches = deps?.matches;
+    if (at === null || !code || !matches || !networked) return;
+    let cancelled = false;
+    let tries = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const read = (): void => {
+      matches.get(code).then(
+        (r) => {
+          if (cancelled) return;
+          record = r;
+          if (r && r.queue.endsWith('.ranked') && !r.rated && ++tries < 40) timer = setTimeout(read, 250);
+        },
+        () => undefined,
+      );
+    };
+    read();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  });
+
   let readOnly = $state(false);
 
   // Leaving (journey.md 4.10 "Leaving"): the arrow, `Leave to home`, the own plate's `Leave table`, GameOver's HOME and
@@ -259,7 +287,7 @@
 
     {#if dealing}<Versus session={props.session} creator={me === 's0'} />{/if}
     <ConcedeChip session={props.session} />
-    {#if st.result}<GameOver session={props.session} onhome={() => void leave()} />{/if}
+    {#if st.result}<GameOver session={props.session} {record} onhome={() => void leave()} />{/if}
 
     {#if networked && deps}
       <RecoveryPanel session={props.session} cardData={deps.cardData} parse={deps.parseDecklist ?? parsePlainList} />

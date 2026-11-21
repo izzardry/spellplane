@@ -148,12 +148,18 @@
     color: var(--sp-muted, #5f5f5f);
     border-style: dotted;
   }
+  /* One of the kit's control heights (28 px, visual.md DS-4; swept by M8-P8 for the journey's design audit). */
   button {
+    box-sizing: border-box;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     background: var(--sp-surface, #fff);
     color: var(--sp-fg, #111);
     border: 1px solid var(--sp-border, #d8d8d8);
     border-radius: var(--sp-radius-sm, 2px);
-    padding: 2px 8px;
+    padding: 0 8px;
     font: inherit;
     cursor: pointer;
   }

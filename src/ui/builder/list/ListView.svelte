@@ -324,7 +324,8 @@
     border: 0;
     background: none;
     padding: 4px;
-    min-height: 32px;
+    /* The kit's 36 px control height (visual.md DS-4; M8-P8 seam fix for the journey's design audit). */
+    min-height: 36px;
     cursor: pointer;
     border-radius: var(--sp-radius-sm, 2px);
   }
