@@ -958,7 +958,12 @@ class Engine implements NetEngine {
   private onVerified(from: PeerId, e: PeerEntry, hello: HelloMessage, w: WelcomeMessage): void {
     // The same identity on another connection that is gone or away (liveTwin) is a reload or reconnect: the newer
     // connection replaces it.
-    for (const [t, other] of [...this.peerMap]) if (t !== from && other.info.peerId === hello.peerId) this.removePeer(t);
+    for (const [t, other] of [...this.peerMap]) {
+      if (t === from || other.info.peerId !== hello.peerId) continue;
+      this.removePeer(t);
+      // M8-P5: a late `bye {leave}` of the replaced connection is not a player leaving: the player is here again.
+      this.gone.delete(t);
+    }
     e.info.peerId = hello.peerId;
     e.info.status = 'connected';
     e.info.lastSeq = Math.max(hello.lastSeq, w.seq);
@@ -1070,7 +1075,8 @@ class Engine implements NetEngine {
         // M8-P5: the connection was reported gone before its bye arrived: still a player who left on purpose.
         const gone = this.gone.get(from);
         this.gone.delete(from);
-        if (gone !== undefined) this.leaveEv.emit(gone, seatOfPeer(this.replica.confirmed(), gone));
+        const back = gone !== undefined && this.connectedPeers().some(([, e]) => e.info.peerId === gone);
+        if (gone !== undefined && !back) this.leaveEv.emit(gone, seatOfPeer(this.replica.confirmed(), gone));
         return;
       }
       if (msg.t !== 'hello' && !this.opts.transport.peers().includes(from)) return;

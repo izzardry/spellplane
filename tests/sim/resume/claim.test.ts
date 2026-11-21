@@ -40,8 +40,15 @@ describe('the sequencer checks of a re-invite (persistence.md section 7)', () =>
     await until(() => ann!.session!.getState().seats.s1!.away === true, 2000, 'Ben away');
     await expect(settle(ann!.session!.muster.invite('s1'))).rejects.toThrow(/less than 30 seconds/);
     await vi.advanceTimersByTimeAsync(31_000);
-    const link = await settle(ann!.session!.muster.invite('s1'));
-    expect(link).toMatch(/#\/t\/amber-fox-river-42\/[\w-]{22}\/rejoin\/s1\/[\w-]{22}$/);
+    // The page runs with test flags in its address: they belong to this browser and stay out of the shared link.
+    vi.stubGlobal('location', { href: 'https://tables.example/app/?profile=ann&transport=local#/t/amber-fox-river-42/x', hash: '#/t/amber-fox-river-42/x' });
+    let link: string;
+    try {
+      link = await settle(ann!.session!.muster.invite('s1'));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(link).toMatch(/^https:\/\/tables\.example\/app\/#\/t\/amber-fox-river-42\/[\w-]{22}\/rejoin\/s1\/[\w-]{22}$/);
   });
 
   it('a blank browser claims the seat; the address, used twice, is refused; the 24 hours run on the sequencer clock', async () => {
@@ -83,6 +90,21 @@ describe('the sequencer checks of a re-invite (persistence.md section 7)', () =>
     await waitConverged([ann!.session!, back]);
     expect(ann!.session!.getState().seats.s1!.invite).toBeUndefined();
     expect(await refusal(late.session!.claimSeat())).toMatch(/^(void|present)$/);
+  });
+
+  it('the old browser coming back from its save after its seat was taken over is told so, not handed the old seat', async () => {
+    const network = lossy(205);
+    const [ann, ben] = await seated(network, browsers, 2);
+    await leave(ben!);
+    const link = await bringBack(ann!, 's1');
+    const fresh = await replaceBrowser(network, browsers, link, 'newben');
+    await settle(fresh.session!.claimSeat());
+    await waitConverged([ann!.session!, fresh.session!], 'the claim');
+    await leave(fresh);
+    await until(() => ann!.session!.getState().seats.s1!.away === true, 2000, 'the new browser away');
+    // Ben's own save still maps s1 to his key pair; the room's copy gave it to the new browser.
+    await expect(comeBack(network, ben!)).rejects.toThrow(/Your seat was taken over from another browser \(link made by Ann\)/);
+    expect(ann!.session!.getState().seats.s1!.peer).toBe('peer-newben');
   });
 
   it('a browser that still has its save ignores the token and resumes without a claim', async () => {

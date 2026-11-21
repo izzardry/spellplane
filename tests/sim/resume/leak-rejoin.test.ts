@@ -114,7 +114,7 @@ describe('rejoin leaks (M8-P5)', () => {
       await loseSave(p.B);
       // The stage is the lobby in the script: a seat away in the lobby can be invited like any other.
       const link = await bringBack(p.A, 's1');
-      expect(link).toMatch(/^.*#\/t\/[a-z]+-[a-z]+-[a-z]*-?\d+\/[\w-]{22}\/rejoin\/s[0-3]\/[\w-]{22}$/);
+      expect(link).toMatch(/^(https?:\/\/[^?#]*)?#\/t\/[a-z]+-[a-z]+-[a-z]*-?\d+\/[\w-]{22}\/rejoin\/s[0-3]\/[\w-]{22}$/);
       const blank = await replaceBrowser(network, browsers, link, 'newben');
       await settle(blank.session!.claimSeat());
       await waitConverged([p.a, blank.session!], 'the claim');

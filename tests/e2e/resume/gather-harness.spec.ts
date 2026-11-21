@@ -43,8 +43,9 @@ test.describe('Gathering (journey.md 4.12)', () => {
       await expect(page.locator('[data-testid="gathering-row"][data-seat="s1"]')).toContainText('Not here');
       await expect(page.locator('[data-testid="gathering-row"][data-seat="s2"]')).toContainText('Connecting…');
       await expect(page.locator('[data-testid="gathering-row"][data-seat="s3"]')).toContainText('Left before you');
-      // Not here and Left before you carry BRING BACK; Here and Connecting do not.
-      await expect(page.getByTestId('gathering-bring')).toHaveCount(2);
+      // Only Left before you (the seat the table marks away) carries BRING BACK: a link opens only for an away seat.
+      await expect(page.getByTestId('gathering-bring')).toHaveCount(1);
+      await expect(page.locator('[data-testid="gathering-row"][data-seat="s3"]').getByTestId('gathering-bring')).toBeVisible();
       await expect(page.getByTestId('gathering-newest')).toHaveText('Newest table: yours · turn 6');
       expect(await page.evaluate(() => window.__gather!.readOnly())).toBe(true);
       await expect(filled(page, 'gathering-card')).toHaveCount(0);
@@ -59,17 +60,20 @@ test.describe('Gathering (journey.md 4.12)', () => {
       await expect(page.getByTestId('gathering-play-on')).toHaveText('PLAY ON WITHOUT CY');
       await expect(page.getByTestId('gathering-play-on-line')).toHaveText("The table with more moves is kept; the other side's moves are played again on top where they still fit.");
     });
-    await test.step('LOOK AT THE TABLE hides the card and shows the banner', async () => {
+    await test.step('LOOK AT THE TABLE hides the card and shows the banner; the table can be looked at (not inert)', async () => {
       await page.getByTestId('gathering-look').click();
       await expect(card).toHaveCount(0);
       await expect(page.getByTestId('gathering-banner')).toContainText('Waiting for Cy');
+      expect(await page.evaluate(() => document.querySelector('[data-testid="fake-table"]')!.closest('[inert]') === null)).toBe(true);
+      expect(await page.evaluate(() => window.__gather!.readOnly())).toBe(true);
       await page.getByTestId('gathering-back-to-card').click();
       await expect(card).toBeVisible();
+      expect(await page.evaluate(() => document.querySelector('[data-testid="fake-table"]')!.closest('[inert]') !== null)).toBe(true);
     });
     await test.step('BRING BACK and HOME reach the frame', async () => {
       await page.getByTestId('gathering-bring').first().click();
       await page.getByTestId('gathering-home').click();
-      expect(await page.evaluate(() => window.__gather!.calls())).toEqual(['bring s1', 'home']);
+      expect(await page.evaluate(() => window.__gather!.calls())).toEqual(['bring s3', 'home']);
     });
     await test.step('PLAY ON WITHOUT CY plays on, the table goes live and the scrim leaves', async () => {
       await page.getByTestId('gathering-play-on').click();
@@ -187,6 +191,15 @@ test.describe('the claim page and its refusal screens (journey.md 4.11; contract
 });
 
 test.describe('the team prompt (contracts.md Part G item 1)', () => {
+  test('a frame mounted on a 1v1 table that turns into 2HG shows the prompt for the claimed teammate', async ({ page }) => {
+    await openGather(page, 'teamswitch');
+    await expect(page.getByTestId('fake-table')).toHaveAttribute('data-format', '1v1');
+    await expect(page.getByTestId('team-prompt')).toHaveCount(0);
+    await page.evaluate(() => window.__gather!.setFormat('2hg'));
+    await expect(page.getByTestId('fake-table')).toHaveAttribute('data-format', '2hg');
+    await expect(page.getByTestId('team-prompt')).toBeVisible();
+  });
+
   test('Dana is back from a new browser (link made by Cy). Show him your hand? SHOW', async ({ page }) => {
     await openGather(page, 'team');
     const prompt = page.getByTestId('team-prompt');

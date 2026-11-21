@@ -171,11 +171,19 @@
     if (m) location.hash = `#/t/${m[1]}/${m[2]}/watch`;
   }
 
-  const team = $derived(muster.team?.() ?? null);
+  // The session's team view exists once the table is in a team format; a frame mounted on a 1v1 lobby that turns into
+  // 2HG must show the prompt then, so the derivation reads the table (a plain call to the session is not reactive).
+  const team = $derived.by(() => {
+    void table.format;
+    return muster.team?.() ?? null;
+  });
+  /** A link opens only for a seat the table marks away (the reducer's `[invite:present]`): `Left before you` rows. */
+  const bringable = (seat: SeatId): boolean => table.seats[seat]?.away === true && table.settings.matched !== true;
+  const bringFirst = $derived(status.seats.find((r) => !r.me && bringable(r.seat))?.seat ?? null);
 </script>
 
 <div class="gathering" data-testid="gathering" data-live={status.live ? 'true' : 'false'}>
-  <div class="table" inert={!status.live || claiming}>
+  <div class="table" inert={claiming || (!status.live && !looking)}>
     {@render children?.()}
   </div>
   {#if claiming}
@@ -192,8 +200,8 @@
     {#if looking}
       <div class="banner" role="status" data-testid="gathering-banner">
         <span class="t">{missing.length ? `Waiting for ${names(missing)}` : 'Waiting for the others'}</span>
-        {#if missing.length}
-          <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" onclick={() => bringBack(missing[0]!)}>Bring back</button>
+        {#if bringFirst !== null}
+          <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" onclick={() => bringBack(bringFirst)}>Bring back</button>
         {/if}
         {#if waitedLong && missing.length}
           <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" disabled={busy} onclick={() => playOn(missing)}>Play on without {names(missing)}</button>
@@ -212,7 +220,7 @@
                 <span class="dot {row.state}" aria-hidden="true"></span>
                 {rowWord(row.state)}
               </span>
-              {#if (row.state === 'away' || row.state === 'leftBefore') && table.settings.matched !== true}
+              {#if (row.state === 'away' || row.state === 'leftBefore') && bringable(row.seat)}
                 <button type="button" class="ds-btn ds-btn--ghost ds-btn--xs" data-testid="gathering-bring" onclick={() => bringBack(row.seat)}>BRING BACK</button>
               {/if}
             </li>

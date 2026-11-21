@@ -6,6 +6,7 @@
  * - The link in Ann's own profile resumes her seat without a claim (her save still has the game).
  * - A fresh profile opens a new link, sits down as Ann (the claim page: warning, no filled button), the address bar
  *   loses `/rejoin/`, the recovery panel opens by itself, and Ben's page shows the seat back with one take-over.
+ * - Ann's old profile, reopened from its save after the take-over, is told its seat moved (no old seat handed out).
  * - A second use of that link shows `This link was already used. Ask for a new one.`
  * Timing is never asserted: state is polled through the debug hook; the 30 seconds run on the page clock.
  */
@@ -133,6 +134,15 @@ test('bring Ann back: her own profile resumes without a claim; a fresh profile s
       expect(seat.away).toBeUndefined();
       await sameHash(fresh, b);
       await fresh.close();
+    });
+
+    await test.step("Ann's old profile opens the table again from its save: its seat was taken over, the page says so", async () => {
+      const old = await context.newPage();
+      await open(old, `/t/${room.roomId}/${room.roomKey}`, { profile: profiles.a, transport: 'local' });
+      await expect(old.getByTestId('room-error')).toContainText('Your seat was taken over from another browser (link made by Ben).', { timeout: 30_000 });
+      expect(await seatOf(old)).toBeNull();
+      expect((await state(b)).seats.s0!.peer).not.toBe(annPeer);
+      await old.close();
     });
 
     await test.step('a second use of the link shows This link was already used', async () => {

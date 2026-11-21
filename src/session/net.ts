@@ -1909,6 +1909,22 @@ class NetTable implements NetSession, SessionRecovery {
         this.claimWanted = null;
       }
       await this.awaitMuster();
+      // The seat the saved copy maps to this key pair may have been taken over meanwhile (persistence.md section 7):
+      // that shows only once the copy is in step with the room's.
+      if (!this.live() && this.peerConnected()) {
+        await this.until(
+          () => {
+            const st = this.engine.status();
+            return this.disposed || (st !== 'syncing' && st !== 'joining');
+          },
+          () => null,
+          timeoutMs,
+          'the table to sync',
+        ).catch(() => undefined);
+      }
+      if (this.disposed) throw new Error('The session is closed');
+      const moved = this.seatMoved();
+      if (moved !== null) throw new Error(moved);
       return;
     }
     this.sitting = true;
@@ -2226,9 +2242,12 @@ class NetTable implements NetSession, SessionRecovery {
     return `Your seat was taken over from another browser${maker ? ` (link made by ${maker})` : ''}. Your saved hand for this game can no longer be used.`;
   }
 
-  /** The re-invite link base: this page's address without its hash. */
+  /**
+   * The re-invite link base: this page's address without its query and hash. Test flags such as `?profile=` belong to
+   * this browser only and must not travel with a shared link (as ui/lobby/room.ts pageBase does for room links).
+   */
   private linkBase(): string {
-    return typeof location === 'undefined' ? '' : location.href.split('#')[0]!;
+    return typeof location === 'undefined' ? '' : location.href.replace(/[?#].*$/, '');
   }
 
   /** Open a re-invite for an away seat; resolves to the link once sequenced (persistence.md section 7). */
