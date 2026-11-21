@@ -25,8 +25,6 @@ export interface PendingSetup {
   autoSetup: true;
   /** Lobby settings; `draft: null` plays constructed decks. */
   lobby: LobbySettings;
-  /** The deck to bring, if any (the waiting room's deck slot starts with it). */
-  deckId: string | null;
 }
 
 const PENDING = 'spellplane.pending.';
@@ -208,12 +206,12 @@ export const CONSTRUCTED_LOBBY: LobbySettings = { draft: null, sets: ['M19'], pi
 /** PRIVATE GAME: `CREATE TABLE` (journey.md 4.1, 4.8). */
 export async function launchPrivate(deps: LaunchDeps, prefs: HomePrefs, deck: DeckRecord | null): Promise<string> {
   await touchDeck(deps, deck, prefs);
-  return launchRoom(deps, { format: prefs.private.format, autoSetup: true, lobby: CONSTRUCTED_LOBBY, deckId: deck?.id ?? null }, { decks: deckSource(deck), deck });
+  return launchRoom(deps, { format: prefs.private.format, autoSetup: true, lobby: CONSTRUCTED_LOBBY }, { decks: deckSource(deck), deck });
 }
 
 /** DRAFT NIGHT: `OPEN DRAFT TABLE` with the booster setup as the lobby settings (journey.md 4.1, J12). */
 export async function launchDraft(deps: LaunchDeps, prefs: HomePrefs): Promise<string> {
-  return launchRoom(deps, { format: prefs.draft.format, autoSetup: true, lobby: boosterToLobby(prefs.draft.boosters), deckId: null }, { decks: 'draftLive', deck: null });
+  return launchRoom(deps, { format: prefs.draft.format, autoSetup: true, lobby: boosterToLobby(prefs.draft.boosters) }, { decks: 'draftLive', deck: null });
 }
 
 /** QUICK MATCH: `FIND MATCH` (journey.md 4.5; matchmaking.md 2.13). */

@@ -72,7 +72,7 @@ describe('applyPendingSetup', () => {
 
   it('applies autoSetup, the format with its starting life and the lobby settings, once', () => {
     const store = memory();
-    savePendingSetup('amber-fox-river-12', { format: 'ffa4', autoSetup: true, lobby: { draft: { format: 'pass', packs: 3, picks: 1 }, sets: ['M19'], pickTimer: false }, deckId: null }, store);
+    savePendingSetup('amber-fox-river-12', { format: 'ffa4', autoSetup: true, lobby: { draft: { format: 'pass', packs: 3, picks: 1 }, sets: ['M19'], pickTimer: false } }, store);
     const { session, sent } = fake('lobby');
     expect(applyPendingSetup(session, store)).toBe(true);
     expect(sent.map((a) => a.type)).toEqual(['settings', 'formatSet', 'lobbySet']);
@@ -87,7 +87,7 @@ describe('applyPendingSetup', () => {
     const store = memory();
     const { session, sent } = fake('match');
     expect(applyPendingSetup(session, store)).toBe(false);
-    savePendingSetup('amber-fox-river-12', { format: '1v1', autoSetup: true, lobby: { draft: null, sets: ['M19'], pickTimer: false }, deckId: null }, store);
+    savePendingSetup('amber-fox-river-12', { format: '1v1', autoSetup: true, lobby: { draft: null, sets: ['M19'], pickTimer: false } }, store);
     expect(applyPendingSetup(session, store)).toBe(false);
     expect(sent).toEqual([]);
   });

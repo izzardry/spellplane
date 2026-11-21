@@ -109,7 +109,7 @@
   });
 </script>
 
-<div class="history" data-testid="history-list">
+<div class="history" data-testid="history-list" data-loaded={loaded}>
   {#if withFilter}
     <div class="history__head">
       <Segmented
@@ -125,7 +125,9 @@
       />
     </div>
   {/if}
-  {#if loaded && failed}
+  {#if loaded && (failed || shown.length === 0) && limit !== undefined}
+    <!-- Home's recent games (journey.md 4.14): "On Home's fold the section is simply absent." -->
+  {:else if loaded && failed}
     <StatusLine tone="danger">Your games could not be loaded.</StatusLine>
     <Button size="sm" onclick={() => void load()}>TRY AGAIN</Button>
   {:else if loaded && shown.length === 0}

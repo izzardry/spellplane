@@ -81,10 +81,10 @@ describe('homeView: the primary button table', () => {
     const d = [deck('a', 60, { updatedAt: 5 }), deck('b', 60, { updatedAt: 9 })];
     const status: MatchmakerStatus = { phase: 'seeking', lobby, since: 1234, window: { rating: null, band: null }, alone: false, deckId: 'a', queues: ['1v1.constructed.casual'] };
     const v = homeView(prefs({ mode: 'solo', deckId: 'b' }), d, true, true, { available: true, status });
-    expect(v).toMatchObject({ mode: 'quick', primary: { label: 'SEARCHING', waiting: true }, cancel: true, deckLocked: true, optionsLocked: true, since: 1234, deck: { id: 'a' } });
+    expect(v).toMatchObject({ mode: 'quick', primary: { label: 'SEARCHING', waiting: true, action: 'cancel' }, cancel: true, deckLocked: true, optionsLocked: true, since: 1234, deck: { id: 'a' } });
     expect(v.line).toBe('1 LOOKING NOW · 1 IN YOUR QUEUE');
     expect(homeView(prefs(), d, true, true, { available: true, status: { ...status, alone: true } }).line).toBe(COPY.alone);
-    expect(homeView(prefs(), d, true, true, { available: true, status: { phase: 'connecting' } })).toMatchObject({ primary: { label: 'CONNECTING…', waiting: true }, deckLocked: true });
+    expect(homeView(prefs(), d, true, true, { available: true, status: { phase: 'connecting' } })).toMatchObject({ primary: { label: 'CONNECTING…', waiting: true, action: 'cancel' }, deckLocked: true });
     expect(homeView(prefs(), d, true, true, { available: true, status: { phase: 'failed', problem: 'otherTab', text: 'x' } })).toMatchObject({ useHere: true, primary: { label: COPY.otherTab } });
   });
 
@@ -194,7 +194,7 @@ describe('launchers', () => {
     expect(hash).toBe(`#/t/amber-fox-river-12/${'K'.repeat(22)}`);
     expect(vi.mocked(deps.games!.create).mock.calls[0]![0]).toMatchObject({ code: 'amber-fox-river-12', key: 'K'.repeat(22), kind: 'private', format: 'ffa3', decks: 'constructed', deck: { id: 'a' } });
     const setup = takePendingSetup('amber-fox-river-12', { getItem: (k) => deps.store.get(k) ?? null, removeItem: (k) => void deps.store.delete(k) });
-    expect(setup).toMatchObject({ autoSetup: true, format: 'ffa3', lobby: { draft: null }, deckId: 'a' });
+    expect(setup).toMatchObject({ autoSetup: true, format: 'ffa3', lobby: { draft: null } });
     expect(takePendingSetup('amber-fox-river-12', { getItem: (k) => deps.store.get(k) ?? null, removeItem: () => undefined })).toBeNull();
   });
 

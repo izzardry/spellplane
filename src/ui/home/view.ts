@@ -79,8 +79,8 @@ export interface HomeView {
     disabled: boolean;
     /** Pressed in with a timer (searching, connecting). */
     waiting: boolean;
-    /** What a press does. */
-    action: 'play' | 'firstRun' | 'find' | 'create' | 'draft' | 'none';
+    /** What a press does; `cancel`: a tap on the waiting pill cancels the search (journey.md 4.1 primary states), as its ✕ does. */
+    action: 'play' | 'firstRun' | 'find' | 'create' | 'draft' | 'cancel' | 'none';
   };
   /** The round cancel beside a waiting primary. */
   cancel: boolean;
@@ -165,12 +165,12 @@ export function homeView(prefs: HomePrefs, decks: readonly DeckRecord[], online:
   const disable = (line: string, tone: 'muted' | 'danger' = 'muted'): HomeView => ({ ...view, primary: { ...view.primary, disabled: true, action: 'none' }, line, tone });
 
   // Searching (journey.md 4.5).
-  if (status.phase === 'connecting') return { ...view, primary: { label: 'CONNECTING…', disabled: false, waiting: true, action: 'none' }, cancel: true, line: COPY.connecting };
+  if (status.phase === 'connecting') return { ...view, primary: { label: 'CONNECTING…', disabled: false, waiting: true, action: 'cancel' }, cancel: true, line: COPY.connecting };
   if (status.phase === 'seeking') {
     const inQueue = status.queues.reduce((n, q) => n + (status.lobby.byQueue[q] ?? 0), 0);
     const looking = status.lobby.seekers.length + 1;
     const line = status.alone ? COPY.alone : `${looking} LOOKING NOW · ${inQueue} IN YOUR QUEUE`;
-    return { ...view, primary: { label: 'SEARCHING', disabled: false, waiting: true, action: 'none' }, cancel: true, line, since: status.since };
+    return { ...view, primary: { label: 'SEARCHING', disabled: false, waiting: true, action: 'cancel' }, cancel: true, line, since: status.since };
   }
   if (status.phase === 'check' || status.phase === 'moving') return { ...view, primary: { label: 'MATCH FOUND', disabled: false, waiting: true, action: 'none' }, cancel: false, line: null };
   if (status.phase === 'failed' && status.problem === 'otherTab') return { ...view, primary: { label: COPY.otherTab, disabled: true, waiting: false, action: 'none' }, line: status.text, useHere: true };

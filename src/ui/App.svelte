@@ -31,11 +31,10 @@
   import FrameMeter from './perf/FrameMeter.svelte';
   import Shell from './shell/Shell.svelte';
   import Home from './home/Home.svelte';
-  import HistoryList from './history/HistoryList.svelte';
+  import HistoryPage from './history/HistoryPage.svelte';
   import DecksRoute from './decks/DecksRoute.svelte';
   import ComputerRoute from './computer/ComputerRoute.svelte';
   import SoloRoute from './play/SoloRoute.svelte';
-  import { summaryHash } from './play/launch';
   import { setLeaveGuardHost, setTableDeps } from './table/context';
   import { keepsTarget, leavesTable } from './table/leave-guard';
   import { FakeMatchmaker } from './fakes';
@@ -203,10 +202,7 @@
           {go}
         />
       {:else if route.name === 'history'}
-        <section class="sp-page">
-          <h1 class="ds-t-heading">History</h1>
-          <HistoryList games={props.games ?? null} onopen={(g) => go(summaryHash(g))} />
-        </section>
+        <HistoryPage games={props.games ?? null} {go} />
       {:else if route.name === 'settings'}
         <div class="sp-page"><SettingsPage settings={props.settings} keymap={props.game?.keymap ?? []} /></div>
       {:else if route.name === 'about'}

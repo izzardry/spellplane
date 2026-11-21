@@ -5,9 +5,10 @@
  * networked game never removed automatically.
  */
 import { afterEach, describe, expect, it } from 'vitest';
+import { BOT_TABLE_PREFIX, prefixedTableStore } from '../../../src/store/computer';
 import { createGameStore, GAMES_KEPT } from '../../../src/store/games';
 import { openStores, type LocalStores } from '../../../src/store/stores';
-import type { GameSummary } from '../../../src/store/types';
+import type { ComputerGameRecord, GameSummary } from '../../../src/store/types';
 import { logEntry, sampleSecrets, sampleState, tableRecord, uniqueDbName } from '../store/helpers';
 
 const open: LocalStores[] = [];
@@ -26,7 +27,91 @@ async function seedTable(s: LocalStores, code: string): Promise<void> {
   await s.tables.saveAction(code, logEntry(code, 2), tableRecord(code, 2), sampleSecrets());
 }
 
+/** A computer game's rows (computer.md 2.5): the human's table, Sparring's `bot~` table and the computer record. */
+async function seedComputerGame(s: LocalStores, code: string): Promise<void> {
+  await seedTable(s, code);
+  const bot = prefixedTableStore(s.tables, BOT_TABLE_PREFIX);
+  await bot.saveAction(code, logEntry(code, 1), tableRecord(code, 1), sampleSecrets());
+  const record: ComputerGameRecord = {
+    roomId: code,
+    createdAt: 1,
+    updatedAt: 2,
+    bot: { config: { level: 'steady', pace: 'normal', seed: '0'.repeat(64), name: 'Sparring' }, identity: { privateJwk: { kty: 'EC' }, publicJwk: { kty: 'EC' }, peerId: '0123456789abcdef', nickname: 'Sparring', seatColour: 1 }, seat: 's1', deck: { name: 'Green', choice: { kind: 'sparring', colour: 'G', set: 'M19' }, main: [] } },
+    human: { deckId: null, deckName: 'Starter' },
+  };
+  await s.computer.put(record);
+}
+
+/** Every row anywhere that names `code` (its own key or `bot~<code>`), by store. */
+async function rowsOf(s: LocalStores, code: string): Promise<Record<string, number>> {
+  const mine = (room: string): boolean => room === code || room === BOT_TABLE_PREFIX + code;
+  const out: Record<string, number> = {};
+  const count = (store: string, n: number): void => {
+    if (n > 0) out[store] = n;
+  };
+  count('games', (await s.db.getAll('games')).filter((g) => g.code === code).length);
+  count('tables', (await s.db.getAll('tables')).filter((t) => mine(t.roomId)).length);
+  count('log', (await s.db.getAll('log')).filter((l) => mine(l.roomId)).length);
+  count('secrets', (await s.db.getAll('secrets')).filter((r) => mine(r.roomId)).length);
+  count('computer', (await s.db.getAll('computer')).filter((r) => r.roomId === code).length);
+  return out;
+}
+
 describe('games store', () => {
+  it('purge of a computer game also deletes Sparring\'s bot~ table, log and secrets and the computer record', async () => {
+    const s = await stores();
+    const games = createGameStore(s.db);
+    await seedComputerGame(s, 'c-amber-fox-93');
+    await seedComputerGame(s, 'c-other-room-4');
+    await games.create({ code: 'c-amber-fox-93', key: '', kind: 'solo', format: '1v1', decks: 'constructed', opponent: 'sparring' });
+    expect(Object.keys(await rowsOf(s, 'c-amber-fox-93')).sort()).toEqual(['computer', 'games', 'log', 'secrets', 'tables']);
+    expect((await rowsOf(s, 'c-amber-fox-93')).tables).toBe(2);
+    await games.purge('c-amber-fox-93');
+    expect(await rowsOf(s, 'c-amber-fox-93')).toEqual({});
+    // Another computer game keeps all of its rows.
+    expect(await rowsOf(s, 'c-other-room-4')).toEqual({ tables: 2, log: 3, secrets: 2, computer: 1 });
+  });
+
+  it('History\'s removal, the start-up purge and the cap of 50 take a computer game whole', async () => {
+    const s = await stores();
+    let t = 1_000_000;
+    const games = createGameStore(s.db, () => t);
+    // Removed from History: purgeRemoved at the next start (the undo toast's commit is games.purge, as above).
+    await seedComputerGame(s, 'c-removed-1');
+    await games.create({ code: 'c-removed-1', key: '', kind: 'solo', format: '1v1', decks: 'constructed', opponent: 'sparring' });
+    await games.remove('c-removed-1', t);
+    t += 60_000;
+    await games.purgeRemoved();
+    expect(await rowsOf(s, 'c-removed-1')).toEqual({});
+    // Over the cap: the oldest ended computer game is purged with its bot rows and record.
+    await seedComputerGame(s, 'c-ended-old');
+    t = 1;
+    await games.create({ code: 'c-ended-old', key: '', kind: 'solo', format: '1v1', decks: 'constructed', opponent: 'sparring' });
+    await games.put({ ...(await games.get('c-ended-old'))!, ended: 'result', endedAt: 2 });
+    for (let i = 0; i < GAMES_KEPT; i++) {
+      t = 10 + i;
+      await games.create({ code: `net-${i}`, key: 'k', kind: 'private', format: '1v1', decks: 'constructed' });
+    }
+    expect(await rowsOf(s, 'c-ended-old')).toEqual({});
+  });
+
+  it('purgeRemoved leaves a removal younger than the undo window (another tab may still show UNDO)', async () => {
+    const s = await stores();
+    let t = 100_000;
+    const games = createGameStore(s.db, () => t);
+    await games.create({ code: 'room-a-b-10', key: 'k', kind: 'private', format: '1v1', decks: 'constructed' });
+    await games.remove('room-a-b-10', t);
+    t += 3_000;
+    await games.purgeRemoved();
+    expect((await games.get('room-a-b-10'))?.deletedAt).toBe(100_000);
+    await games.restore('room-a-b-10');
+    expect((await games.list()).map((g) => g.code)).toEqual(['room-a-b-10']);
+    await games.remove('room-a-b-10', t);
+    t += 10_000;
+    await games.purgeRemoved();
+    expect(await games.get('room-a-b-10')).toBeNull();
+  });
+
   it('purge leaves no row of the code in log, tables, secrets, games, and keeps other codes', async () => {
     const s = await stores();
     const games = createGameStore(s.db);

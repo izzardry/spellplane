@@ -4,7 +4,7 @@
  * than 10 own actions is purged instead and shows no toast. M8-P2.
  */
 import { countOwnActions } from '../../session/summary';
-import type { TableSession } from '../../session/types';
+import type { SaveState, TableSession } from '../../session/types';
 import type { ComputerStore, GameStore, TableStore } from '../../store/types';
 import { toasts } from '../design/toasts';
 import type { TableKind } from '../table/types';
@@ -16,6 +16,8 @@ export type { TableKind };
 export const LEFT_NETWORKED = 'You left the table. The game goes on; your seat is kept.';
 /** The toast after leaving a computer or practice table (contracts.md Part G "Journey and Home" item 2). */
 export const LEFT_SOLO = 'Game saved. Continue any time.';
+/** The toast after leaving a solo table in a browser that keeps no games (storage blocked): no CONTINUE. */
+export const LEFT_SOLO_UNSAVED = 'This browser does not keep games, so this one was not saved.';
 /** A solo game left after fewer own actions is not kept (contracts.md Part G "History and saving" item 2). */
 export const SOLO_KEEP_MIN_ACTIONS = 10;
 
@@ -28,7 +30,7 @@ export interface LeaveOptions {
   /** Navigate to a hash. */
   go(hash: string): void;
   /** The frame's checkpointer (its `now('leave')` runs first). */
-  checkpointer?: { now(reason: 'leave'): Promise<void>; stop?(): void; settled?(): Promise<void> } | null;
+  checkpointer?: { now(reason: 'leave'): Promise<void>; stop?(): void; settled?(): Promise<void>; saveState?(): SaveState } | null;
   /** Show the one toast (default: the page's toast store). */
   toast?(text: string, action?: ToastAction): void;
   /** The room key of a networked table (else read from the game's summary). */
@@ -104,7 +106,10 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
   o.go('#/');
   if (purge) return 'purged';
   const code = o.code;
-  if (solo) {
+  if (solo && o.games === null && o.checkpointer?.saveState?.() === 'notSaving') {
+    // Nothing was saved (no games store: storage blocked, and the frame's checkpointer says so): nothing to continue.
+    toast(LEFT_SOLO_UNSAVED);
+  } else if (solo) {
     const hash = o.kind === 'computer' ? computerHash(code) : practiceHash(code);
     toast(LEFT_SOLO, { label: 'Continue', run: () => o.go(hash) });
   } else {
