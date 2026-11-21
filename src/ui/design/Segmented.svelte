@@ -75,6 +75,7 @@
     <button
       type="button"
       class="ds-seg__opt"
+      class:on={o.value === value}
       role="radio"
       aria-checked={o.value === value}
       tabindex={i === current ? 0 : -1}

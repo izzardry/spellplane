@@ -153,3 +153,17 @@ describe('the M8 kit tokens (PLAN M8-P1; visual.md 2.3, 2.12)', () => {
     expect(designCssVars(LOOKS.graphite)['--ds-texture-grain']).toBe('none');
   });
 });
+
+describe('stacking order (LAYOUT.z)', () => {
+  it('is one order: the kit reads it as --ds-z-*, and a menu opens above a dialog scrim', () => {
+    const vars = designCssVars(LOOKS.plain);
+    for (const [k, v] of Object.entries(LAYOUT.z)) expect(vars[`--ds-z-${k}`], k).toBe(String(v));
+    expect(LAYOUT.z.menu).toBeGreaterThan(LAYOUT.z.dialog);
+    expect(LAYOUT.z.coach).toBeGreaterThan(LAYOUT.z.menu);
+    expect(LAYOUT.z.toast).toBeGreaterThan(LAYOUT.z.coach);
+    const css = fs.readFileSync(path.join('src', 'ui', 'design', 'base.css'), 'utf8');
+    const zOf = (sel: string): string | undefined => new RegExp(`\\n${sel.replace(/[.]/g, '\\.')} \\{[^}]*?z-index:\\s*([^;]+);`).exec(css)?.[1];
+    const want: [string, keyof typeof LAYOUT.z][] = [['.ds-menu', 'menu'], ['.ds-scrim', 'dialog'], ['.ds-coach', 'coach'], ['.ds-toast-host', 'toast']];
+    for (const [sel, k] of want) expect(zOf(sel), sel).toBe(`var(--ds-z-${k}, ${LAYOUT.z[k]})`);
+  });
+});

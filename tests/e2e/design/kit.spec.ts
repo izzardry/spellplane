@@ -92,6 +92,10 @@ for (const look of LOOKS) {
       await page.keyboard.press('ArrowLeft');
       await page.keyboard.press('ArrowLeft');
       await expect(group.locator('[aria-checked="true"]')).toHaveAttribute('data-value', 'draft');
+      // As the seed did, a press on the selected card reports it too.
+      const before = await page.evaluate(() => window.__kitHarness!.events().length);
+      await group.locator('[data-value="draft"]').click();
+      await expect.poll(() => page.evaluate((n) => window.__kitHarness!.events().slice(n), before)).toEqual(['select:draft']);
     });
 
     test('every control shows a visible focus ring', async ({ page }) => {
@@ -107,6 +111,8 @@ for (const look of LOOKS) {
           const cs = getComputedStyle(ring);
           const ok = cs.outlineStyle !== 'none' && parseFloat(cs.outlineWidth) >= 2;
           if (!ok) out.push(`${el.tagName} ${el.className} "${(el.textContent ?? el.getAttribute('aria-label') ?? '').trim().slice(0, 20)}" outline ${cs.outlineStyle} ${cs.outlineWidth}`);
+          // One ring only: a field's input draws none of its own inside the well's ring.
+          if (ring !== el && getComputedStyle(el).outlineStyle !== 'none') out.push(`${el.tagName} ${el.className} draws a second ring (${getComputedStyle(el).outlineStyle})`);
         }
         return { checked: controls.length, out };
       });
@@ -214,7 +220,12 @@ for (const look of LOOKS) {
             }
             if (parseFloat(cs.opacity) < 1 || (cs.filter && cs.filter !== 'none') || (cs.mixBlendMode && cs.mixBlendMode !== 'normal')) dim = true;
           }
-          return { id: img.closest('[data-testid]')?.getAttribute('data-testid'), ratio: img.offsetWidth / img.offsetHeight, fit: getComputedStyle(img).objectFit, clipped, dim };
+          // The image itself trims nothing either: no rounded corners, clip path or mask.
+          const own = getComputedStyle(img);
+          const radii = [own.borderTopLeftRadius, own.borderTopRightRadius, own.borderBottomLeftRadius, own.borderBottomRightRadius];
+          const mask = own.maskImage || own.getPropertyValue('-webkit-mask-image') || 'none';
+          const trimmed = radii.some((v) => v !== '0px') || own.clipPath !== 'none' || mask !== 'none';
+          return { id: img.closest('[data-testid]')?.getAttribute('data-testid'), ratio: img.offsetWidth / img.offsetHeight, fit: own.objectFit, clipped, dim, trimmed };
         });
       });
       expect(faces.length).toBeGreaterThanOrEqual(7);
@@ -222,6 +233,7 @@ for (const look of LOOKS) {
         expect(Math.abs(f.ratio / (63 / 88) - 1), `${f.id} ratio`).toBeLessThan(0.01);
         expect(f.fit).toBe('contain');
         expect(f.clipped, `${f.id} clipped`).toBe(false);
+        expect(f.trimmed, `${f.id} trimmed by its own radius, clip path or mask`).toBe(false);
         expect(f.dim, `${f.id} dimmed`).toBe(false);
       }
       // The locked tile dims its text and well and names the reason.
@@ -253,6 +265,18 @@ for (const look of LOOKS) {
       // Creature bars are ink, other bars halftone, one target outline per column with a target.
       const parts = await page.getByTestId('curve').evaluate((el) => ({ cr: el.querySelectorAll('[data-part="creatures"]').length, sp: el.querySelectorAll('[data-part="others"]').length, tg: el.querySelectorAll('[data-part="target"]').length }));
       expect(parts).toEqual({ cr: 5, sp: 5, tg: 6 });
+      // The small chart's tallest column, its count and its mana value stay inside its 64 px box.
+      const small = await page.getByTestId('curve-small').evaluate((el) => {
+        const box = el.querySelector('.ds-curve')!.getBoundingClientRect();
+        const out: string[] = [];
+        for (const n of el.querySelectorAll('.ds-curve__n, .ds-curve__x')) {
+          const r = n.getBoundingClientRect();
+          if (r.top < box.top - 0.5 || r.bottom > box.bottom + 0.5) out.push(`${n.className} ${Math.round(r.top - box.top)}..${Math.round(r.bottom - box.top)} of ${Math.round(box.height)}`);
+        }
+        return { h: box.height, out };
+      });
+      expect(small.h).toBe(64);
+      expect(small.out).toEqual([]);
     });
 
     test('the design audit passes; screenshot', async ({ page }, info) => {
@@ -283,12 +307,12 @@ test.describe('coarse pointer', () => {
   const { defaultBrowserType: _ignored, ...ipad } = devices['iPad (gen 7)'];
   test.use({ ...ipad });
 
-  test('xs and sm controls keep their look and get a 44 px hit area', async ({ page }) => {
+  test('xs and sm controls and small segments keep their look and get a 44 px hit area', async ({ page }) => {
     await openKit(page, 'plain');
     expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
     const probe = await page.evaluate(() => {
       const out: { what: string; h: number; above: boolean; below: boolean }[] = [];
-      for (const sel of ['[data-testid="row-xs"] .ds-btn--xs', '[data-testid="row-xs"] .ds-btn--icon', '[data-testid="row-sm"] .ds-btn--sm']) {
+      for (const sel of ['[data-testid="row-xs"] .ds-btn--xs', '[data-testid="row-xs"] .ds-btn--icon', '[data-testid="row-sm"] .ds-btn--sm', '[data-testid="seg-filter"] [data-value="custom"]']) {
         const el = document.querySelector<HTMLElement>(sel)!;
         el.scrollIntoView({ block: 'center' });
         const r = el.getBoundingClientRect();
@@ -303,7 +327,7 @@ test.describe('coarse pointer', () => {
       return out;
     });
     for (const p of probe) {
-      expect([28, 36], p.what).toContain(Math.round(p.h));
+      expect([28, 30, 36], p.what).toContain(Math.round(p.h));
       expect(p.above && p.below, p.what).toBe(true);
     }
   });

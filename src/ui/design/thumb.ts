@@ -35,10 +35,12 @@ export function thumbCardSize(t: Pick<GameThumb, 'w' | 'h'>): { w: number; h: nu
   return { w, h: (w * 88) / 63 };
 }
 
-/** One rectangle per card (at most 80), centred on its position, sized for the thumbnail's box. */
+/** One rectangle per card (at most 80), centred on its position, sized for the thumbnail's box. A GameThumb keeps table
+ *  space's direction (y away from seat 0, docs/DESIGN.md "Table space"); SVG's y points down, so y is flipped here and
+ *  seat 0's cards land in the lower half, next to its disc (`thumbDiscs`). */
 export function thumbRects(t: GameThumb): ThumbRect[] {
   const s = thumbCardSize(thumbBox(t));
-  return t.cards.slice(0, 80).map(([x, y, tapped, seat]) => ({ x: x - s.w / 2, y: y - s.h / 2, w: s.w, h: s.h, tapped: tapped === 1, seat }));
+  return t.cards.slice(0, 80).map(([x, y, tapped, seat]) => ({ x: x - s.w / 2, y: t.h - y - s.h / 2, w: s.w, h: s.h, tapped: tapped === 1, seat }));
 }
 
 /** Seat discs at the table's edges: seat 0 bottom, 1 top, 2 left, 3 right (more seats share the bottom and top). */

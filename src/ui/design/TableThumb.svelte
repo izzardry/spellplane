@@ -45,7 +45,7 @@
   {#each discs as d (d.seat)}
     {@const s = seats[d.seat]}
     {#if s}
-      <g data-part="seat" data-seat={d.seat}>
+      <g data-part="seat" data-seat={d.seat} data-me={s.me ? 1 : undefined} data-away={s.away ? 1 : undefined}>
         {#if s.me}<circle cx={d.cx} cy={d.cy} r={r * 1.22} fill="none" style:stroke="var(--ds-ink)" stroke-width={r * 0.14} />{/if}
         <circle cx={d.cx} cy={d.cy} {r} fill={s.away ? 'none' : s.colour} stroke={s.colour} stroke-width={r * 0.18} style:fill={s.away ? 'var(--ds-panel-raised)' : undefined} />
         {#if s.life !== undefined}<text x={d.cx} y={d.cy} dy="0.35em" text-anchor="middle" font-size={r * 1.05} font-weight="600" style:fill={s.away ? s.colour : '#fff'} style:font-family="var(--ds-font-numeral)">{s.life}</text>{/if}

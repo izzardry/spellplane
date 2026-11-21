@@ -52,6 +52,15 @@ test('rows newest first, named by the other players, with the state line; ended 
   });
   await designAudit(page);
 
+  await test.step("the thumb rings the own disc and draws an away player's hollow (visual.md V19)", async () => {
+    const seats = page.locator('[data-code="older-game-one-11"] [data-part="seat"]');
+    await expect(seats).toHaveCount(3);
+    await expect(seats.nth(0)).toHaveAttribute('data-me', '1');
+    await expect(seats.nth(1)).not.toHaveAttribute('data-me', /.*/);
+    await expect(seats.nth(2)).toHaveAttribute('data-away', '1');
+    await expect(seats.nth(0)).not.toHaveAttribute('data-away', /.*/);
+  });
+
   await test.step('opening a row goes to its table', async () => {
     await rows.nth(0).getByRole('link', { name: /^Open/ }).click();
     await expect(page.getByTestId('harness-table')).toHaveAttribute('data-hash', '#/t/amber-fox-river-93/a2V5LWtleS1rZXkta2V5AA');

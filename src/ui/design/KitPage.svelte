@@ -82,7 +82,8 @@
       .map(([k, v]) => `${k}: ${v}`)
       .join('; ');
   }
-  const THUMB = { w: 1280, h: 720, cards: [[400, 520, 0, 0], [480, 520, 1, 0], [560, 520, 0, 0], [700, 200, 0, 1], [780, 200, 1, 1]] as [number, number, 0 | 1, number][] };
+  // A GameThumb in table space (y away from seat 0, as summary.ts's thumbOf writes it): seat 0's cards low, seat 1's high.
+  const THUMB = { w: 1280, h: 720, cards: [[400, 200, 0, 0], [480, 200, 1, 0], [560, 200, 0, 0], [700, 520, 0, 1], [780, 520, 1, 1]] as [number, number, 0 | 1, number][] };
 </script>
 
 <main class="kit" data-testid="kit-page" data-look={look}>
@@ -226,7 +227,7 @@
           <div class="ds-lands"><span>22 lands · 24 suggested</span><Button size="xs">+2 lands</Button></div>
           <div><div class="ds-drow"><b>4</b><span>Llanowar Elves</span><span class="ds-pips"><Pip colour="G" size={14} /></span><span class="ds-t-meta">1</span></div><div class="ds-drow"><b>2</b><span>Giant Growth</span><span class="ds-pips"><Pip colour="G" size={14} /></span><span class="ds-t-meta">1</span></div></div>
           <div class="kit-scale" style:align-items="flex-end">
-            <CurveChart size="small" creatures={[0, 4, 6, 4, 2, 1, 0, 0]} others={[0, 2, 3, 2, 1, 0, 1, 0]} label="Small curve" />
+            <CurveChart size="small" creatures={[0, 4, 6, 4, 2, 1, 0, 0]} others={[0, 2, 3, 2, 1, 0, 1, 0]} label="Small curve" data-testid="curve-small" />
             <PileStack count={40}><CardImage src={null} alt="Library, 40 cards" width={63} /></PileStack>
           </div>
         </div>

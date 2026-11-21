@@ -2,7 +2,8 @@
   A mode card (docs/design/m8/contracts.md Part B; visual.md V17, 2.8): 204 × 72, an icon in a round well, the name and
   one live line. A radio inside a `role="radiogroup"` the parent provides: one tab stop (the selected card), arrow
   keys move to the next card and select it. Selected: a 2 px ink ring and the icon well in ink. Locked while searching:
-  disabled, its content at 45 %. Added by M8-P1.
+  disabled, its content at 45 %. As the seed did, it carries `sel` and `locked` beside the aria state and calls
+  `onselect` on every press that is not locked, the selected card's too. Added by M8-P1.
 -->
 <script lang="ts">
   import './kit';
@@ -39,14 +40,14 @@
 <button
   type="button"
   class="ds-mode"
+  class:sel={selected}
+  class:locked
   role="radio"
   aria-checked={selected}
   tabindex={selected ? 0 : -1}
   disabled={locked || undefined}
   data-value={value}
-  onclick={() => {
-    if (!selected) onselect();
-  }}
+  onclick={() => onselect()}
   onkeydown={key}
   {...rest}
 >
