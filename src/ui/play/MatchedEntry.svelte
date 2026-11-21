@@ -53,9 +53,12 @@
     if (leaving) return;
     leaving = true;
     stop?.();
-    void abandonMatchedTable({ session, roomId: record.roomId, matches, games })
+    const started = session.getState().stage !== 'lobby';
+    // Purged after the leave: the leave's last checkpoint writes the History entry.
+    void Promise.resolve(onleave())
       .catch(() => undefined)
-      .then(() => onleave())
+      .then(() => abandonMatchedTable({ started, roomId: record.roomId, matches, games }))
+      .catch(() => undefined)
       .then(() => {
         for (const t of toasts.list()) if (t.text === LEFT_NETWORKED) toasts.dismiss(t.id);
         if (text) toasts.info(text);

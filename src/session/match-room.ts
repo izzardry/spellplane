@@ -305,9 +305,10 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
  * A matched game that will not be played after all (the entry gave up, or the player left before the start): its record
  * becomes void and its History entry is purged (journey.md 4.7). The page's matchmaker does it when it is still moving
  * to this room (and goes back to its search as designed); otherwise it is done here. A game that started is kept.
+ * Run it after the table was left: the leave's last checkpoint writes the History entry this purges.
  */
-export async function abandonMatchedTable(o: { session: Pick<TableSession, 'getState'>; roomId: string; matches: MatchStore | null; games: GameStore | null; matchmaker?: MatchRoomMatchmaker | null }): Promise<void> {
-  if (o.session.getState().stage !== 'lobby') return;
+export async function abandonMatchedTable(o: { started: boolean; roomId: string; matches: MatchStore | null; games: GameStore | null; matchmaker?: MatchRoomMatchmaker | null }): Promise<void> {
+  if (o.started) return;
   const mm = o.matchmaker === undefined ? pageMatchmaker : o.matchmaker;
   if (mm?.left?.(o.roomId) === true) return;
   const r = await o.matches?.get(o.roomId).catch(() => null);
