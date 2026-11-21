@@ -53,6 +53,9 @@ interface Opener {
   panel: (page: Page) => Loc;
 }
 
+/** The open log drawer (closed, the Activity cluster keeps data-testid="log" with data-open="false"). */
+const OPEN_LOG = '[data-testid="log"][data-open="true"]';
+
 /** Click `loc` if it is on screen; whether it was. */
 async function clickIfVisible(loc: Loc): Promise<boolean> {
   if (!(await loc.isVisible().catch(() => false))) return false;
@@ -77,14 +80,9 @@ const OPENERS: Opener[] = [
   {
     kind: 'drawer',
     name: 'log drawer',
-    open: async (page) => {
-      const log = page.locator('[data-testid="log"]');
-      if (!(await log.isVisible().catch(() => false))) return clickIfVisible(page.getByRole('button', { name: /^(log|activity)/i }).first());
-      // Open at a wide window already; else its toggle opens it.
-      if (await log.evaluate((el) => el.classList.contains('closed'))) await log.getByRole('button', { name: /^log$/i }).click();
-      return true;
-    },
-    panel: (page) => page.locator('[data-testid="log"]:not(.closed)'),
+    // Closed, the Activity cluster carries data-testid="log" too (data-open="false"); only the open drawer counts.
+    open: async (page) => (await page.locator(OPEN_LOG).isVisible().catch(() => false)) || clickIfVisible(page.getByTestId('open-log')),
+    panel: (page) => page.locator(OPEN_LOG),
   },
   { kind: 'dialog', name: 'settings', open: (page) => clickIfVisible(page.getByTestId('open-settings')), panel: (page) => page.getByTestId('settings').or(page.getByRole('dialog')).first() },
   // The rebuilt HUD (M7-P2) opens its dialogs from the Menu.
@@ -93,11 +91,26 @@ const OPENERS: Opener[] = [
     name: 'settings from the menu',
     open: async (page) => {
       if (!(await clickIfVisible(page.getByTestId('open-menu')))) return false;
-      return clickIfVisible(page.getByTestId('menu-popover').getByTestId('menu-settings'));
+      if (await clickIfVisible(page.getByTestId('menu-popover').getByTestId('open-settings'))) return true;
+      // The Menu opened but has no settings item: close it, so no later step finds its items still showing.
+      await page.keyboard.press('Escape');
+      return false;
     },
     panel: (page) => page.getByTestId('settings').or(page.getByRole('dialog')).first(),
   },
-  { kind: 'dialog', name: 'keys panel', open: (page) => clickIfVisible(page.getByTestId('open-cheat-sheet')), panel: (page) => page.getByTestId('cheat-sheet') },
+  {
+    kind: 'dialog',
+    name: 'keys panel',
+    open: async (page) => {
+      if (await clickIfVisible(page.getByTestId('open-cheat-sheet'))) return true;
+      // The rebuilt HUD (M7-P2) keeps the key sheet in the Menu.
+      if (!(await clickIfVisible(page.getByTestId('open-menu')))) return false;
+      if (await clickIfVisible(page.getByTestId('menu-popover').getByTestId('open-cheat-sheet'))) return true;
+      await page.keyboard.press('Escape');
+      return false;
+    },
+    panel: (page) => page.getByTestId('cheat-sheet'),
+  },
   { kind: 'dialog', name: 'theme picker', open: (page) => clickIfVisible(page.getByTestId('open-theme-settings')), panel: (page) => page.getByTestId('theme-picker').or(page.locator('.theme-pop')).first() },
   {
     kind: 'toast',
@@ -118,6 +131,8 @@ const OPENERS: Opener[] = [
 
 /** The kinds the acceptance names. */
 const REQUIRED: Kind[] = ['menu', 'drawer', 'dialog', 'toast'];
+/** The rebuilt HUD's (M7-P2) own routes: each must have opened its surface, so a stale selector cannot pass by another opener. */
+const REQUIRED_OPENERS = ['menu button', 'log drawer', 'settings from the menu', 'keys panel'];
 
 test('no element over the table computes a backdrop filter or a blur, whatever is open', async ({ page }, info) => {
   test.setTimeout(90_000);
@@ -140,4 +155,5 @@ test('no element over the table computes a backdrop filter or a blur, whatever i
     });
   info.annotations.push({ type: 'opened', description: opened.join(', ') });
   expect([...kinds].filter((k) => REQUIRED.includes(k)).sort()).toEqual([...REQUIRED].sort());
+  expect(REQUIRED_OPENERS.filter((n) => !opened.includes(n)), 'HUD routes that opened nothing').toEqual([]);
 });

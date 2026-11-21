@@ -69,3 +69,14 @@ for (const [name, device] of [
     });
   });
 }
+
+test('KEEP is remembered: a reload in turn 1 does not bring the chips back', async ({ page }, info) => {
+  await soloWithDeck(page, info, { hand: 7 });
+  await page.getByTestId('opening-keep').click();
+  await expect(page.getByTestId('opening-hand')).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId('hud')).toBeVisible();
+  await expect.poll(async () => (await state(page)).zones['hand:s0']?.ids.length).toBe(7);
+  await settled(page);
+  await expect(page.getByTestId('opening-hand')).toHaveCount(0);
+});
