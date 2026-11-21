@@ -35,6 +35,8 @@
   import DecksRoute from './decks/DecksRoute.svelte';
   import ComputerRoute from './computer/ComputerRoute.svelte';
   import SoloRoute from './play/SoloRoute.svelte';
+  import MatchHost from './play/MatchHost.svelte';
+  import { settingsChime } from './play/mm-view';
   import { setLeaveGuardHost, setTableDeps } from './table/context';
   import { keepsTarget, leavesTable } from './table/leave-guard';
   import { FakeMatchmaker } from './fakes';
@@ -87,6 +89,7 @@
   const cssVars = $derived(cssText(lookCssVars(theme, look)));
   // The page without a matchmaker (a harness, blocked storage) gets one that stays off.
   const matchmaker = untrack(() => props.matchmaker ?? new FakeMatchmaker());
+  const soloChime = untrack(() => settingsChime(props.settings ?? null));
   // What every table frame needs (ui/table/context.ts).
   untrack(() => {
     if (props.createScene && props.faces && props.cardData && props.game)
@@ -155,6 +158,9 @@
 <svelte:window onhashchange={onHashChange} />
 
 {#if route.name !== 'room' && route.name !== 'practice' && route.name !== 'computer'}<UpdateNotice update={props.update} place={updatePlace} />{/if}
+<!-- [M8-P7] A search goes on over a solo table (the sandbox, practice, a computer game): the match-found card shows
+     there too; its notices wait for Home's toast host. -->
+{#if route.name === 'solo' || route.name === 'practice' || route.name === 'computer'}<MatchHost {matchmaker} chime={soloChime} notices={false} />{/if}
 <OfflineNotice />
 <FrameMeter />
 

@@ -196,22 +196,24 @@ describe('broker over a loopback lobby', () => {
     expect(a.formed[0]!.roomId).toBe(b.formed[0]!.roomId);
   });
 
-  it('an early hold from a peer outside the offer never joins the room derivation', async () => {
+  it('an early hold or pass from a peer outside the offer never joins the room derivation nor silences the offer', async () => {
     const net = lobbyNet({ seed: 5, delay: { min: 5, max: 20 } });
     const a = seeker(net, 'ann', { tid: 'a8' });
     const b = seeker(net, 'ben', { tid: 'b8' });
     await a.room.join();
     await b.room.join();
-    // A third lobby member with a valid ticket (in another queue) predicts the match id and sends its own, validly
-    // signed hold for it to b8 before a8 and b8 even seek.
+    // A third lobby member with a valid ticket (in another queue) knows the match id (worst case: match ids carry
+    // a8's random salt, so in truth it cannot predict one) and sends its own, validly signed hold for it to b8 before
+    // a8 and b8 even seek, and a pass for it (which needs no signature).
     const raw = net.create('x8');
     await raw.join('x', 'y');
     await advance(100);
     const unsigned = { v: 1 as const, tid: 'x8', peerId: 'p-x8', pubKey: 'pk-p-x8', ...draft(['ffa4.constructed.casual']) };
     raw.send('ctl', { v: 1, t: 'seek', ticket: { ...unsigned, sig: `sig(pk-p-x8|${ticketText(unsigned)})` }, waitedMs: 0 } as unknown as Message);
     await advance(100);
-    const mid = midOf(Q1, ['a8', 'b8'], 'a8', 1);
+    const mid = midOf(Q1, ['a8', 'b8'], 'a8', 1, a.room.state.salt);
     raw.send('ctl', { v: 1, t: 'hold', mid, nonce: 'X'.repeat(22), sig: `sig(pk-p-x8|spellplane-v1|hold|${mid}|x8|p-x8)` } as unknown as Message, 'b8');
+    raw.send('ctl', { v: 1, t: 'pass', mid, reason: 'busy' } as unknown as Message, 'b8');
     await advance(100);
     await a.room.seek(draft([Q1]));
     await b.room.seek(draft([Q1]));
@@ -292,7 +294,7 @@ describe('broker over a loopback lobby', () => {
           }
         },
       ),
-      { numRuns: 12 },
+      { numRuns: 50 },
     );
-  }, 120_000);
+  }, 240_000);
 });

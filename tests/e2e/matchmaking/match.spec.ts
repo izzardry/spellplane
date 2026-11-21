@@ -96,12 +96,10 @@ async function expectSeated(pages: Page[], seats: number): Promise<string> {
   await expect.poll(async () => new Set(await Promise.all(pages.map(async (p) => stateHash(await state(p))))).size, { timeout: 20_000 }).toBe(1);
   for (const p of pages) {
     const seen = await p.evaluate(() => (window as unknown as { __seen: string[] }).__seen);
-    // The automatic entry ran, and no waiting room was shown once the table knew it is a matched one. (The table
-    // frame looks the MatchRecord up asynchronously, so its waiting room may flash for a frame before that: a seam of
-    // the frame, reported to M8-P8.)
+    // The automatic entry ran, and no waiting room was ever rendered: the frame holds the table until its MatchRecord
+    // lookup settled (PLAN M8-P7: no waiting room is rendered).
     expect(seen).toContain('matched-entry');
-    const after = seen.slice(seen.indexOf('matched-entry'));
-    expect(after.filter((x) => x === 'lobby' || x === 'waiting-room')).toEqual([]);
+    expect(seen.filter((x) => x === 'lobby' || x === 'waiting-room')).toEqual([]);
   }
   return rooms[0]!;
 }
@@ -208,6 +206,64 @@ test.describe('quick match over a local lobby', () => {
       expect([ra.games, rb.games]).toEqual([1, 1]);
       const rated = ((await a!.evaluate(() => window.__spellplane!.mm!.matches!())) as MatchRecord[])[0]!.rated;
       expect(rated).toEqual({ key: '1v1.constructed', before: 1500, after: ra.rating });
+    });
+  });
+
+  test('ranked 1v1: the loser reloads its table, then concedes; both browsers still apply the change once', async ({ page }) => {
+    test.setTimeout(120_000);
+    const [a, b] = await openPages(page, 2, 'mmrl');
+    const Q = '1v1.constructed.ranked';
+    const after = (p: Page) => p.evaluate(() => window.__spellplane!.mm!.rating!('1v1.constructed')) as Promise<{ rating: number; games: number } | null>;
+    await test.step('both seek ranked 1v1, accept and are dealt', async () => {
+      await seek(a!, deckRecord('deck-ann', 'Ann Selesnya', 'gw-m19-60.txt'), Q);
+      await seek(b!, deckRecord('deck-ben', 'Ben Izzet', 'ur-m19-60.mtga.txt'), Q);
+      await expect(a!.getByTestId('match-found')).toBeVisible({ timeout: 3_000 });
+      await expect(b!.getByTestId('match-found')).toBeVisible({ timeout: 3_000 });
+      await a!.getByTestId('match-accept').click();
+      await b!.getByTestId('match-accept').click();
+      await expectSeated([a!, b!], 2);
+    });
+    await test.step('B reloads: its table opens again at stage match, without the matched entry', async () => {
+      await b!.reload();
+      await expect(b!.getByTestId('table-frame')).toBeVisible({ timeout: 30_000 });
+      await expect.poll(async () => (await state(b!)).stage, { timeout: 30_000 }).toBe('match');
+      await expect.poll(async () => new Set(await Promise.all([a!, b!].map(async (p) => stateHash(await state(p))))).size, { timeout: 20_000 }).toBe(1);
+    });
+    await test.step('B concedes from the reloaded table: A wins, and both ratings change by opposite amounts', async () => {
+      await b!.evaluate(() => window.__spellplane!.dispatch!({ type: 'concede' } as never));
+      for (const p of [a!, b!]) await expect.poll(async () => (await state(p)).result?.reason).toBe('concede');
+      const record = ((await a!.evaluate(() => window.__spellplane!.mm!.matches!())) as MatchRecord[])[0]!;
+      const st = await state(a!);
+      const winner = record.players.findIndex((p) => p.peerId === st.seats[st.result!.winners[0]!]!.peer) as 0 | 1;
+      const expected = ratingChanges(record.players.map((p, i) => ({ rating: p.rating, games: p.games, band: p.band, side: i as 0 | 1 })), winner)!;
+      await expect.poll(async () => (await after(a!))?.rating, { timeout: 10_000 }).toBe(expected[winner]!.after);
+      await expect.poll(async () => (await after(b!))?.rating, { timeout: 10_000 }).toBe(expected[1 - winner]!.after);
+      expect([(await after(a!))!.games, (await after(b!))!.games]).toEqual([1, 1]);
+    });
+  });
+
+  test('a deck that cannot be read: the matched entry offers LEAVE; leaving voids the match and keeps it out of History', async ({ page }) => {
+    test.setTimeout(120_000);
+    const [a, b] = await openPages(page, 2, 'mmlv');
+    let room = '';
+    await test.step('A seeks with a deck id that is not in its library; both accept', async () => {
+      await a!.evaluate(() => window.__spellplane!.mm!.seek({ queues: ['1v1.constructed.casual'], deckId: 'no-such-deck' }));
+      await seek(b!, deckRecord('deck-ben', 'Ben Izzet', 'ur-m19-60.mtga.txt'));
+      await expect(a!.getByTestId('match-found')).toBeVisible({ timeout: 3_000 });
+      await expect(b!.getByTestId('match-found')).toBeVisible({ timeout: 3_000 });
+      await a!.getByTestId('match-accept').click();
+      await b!.getByTestId('match-accept').click();
+      await expect.poll(() => a!.evaluate(() => location.hash), { timeout: 10_000 }).toMatch(/^#\/t\//);
+      room = (await a!.evaluate(() => location.hash)).split('/')[2]!;
+    });
+    await test.step('A stays at the matched entry (nothing to commit) with a quiet LEAVE, and leaves by it', async () => {
+      await expect(a!.getByTestId('matched-entry')).toBeVisible({ timeout: 30_000 });
+      await expect(a!.getByTestId('matched-entry')).toHaveAttribute('data-stage', 'entering', { timeout: 30_000 });
+      await a!.getByTestId('matched-entry-leave').click();
+      await expect(a!.getByTestId('route-home')).toBeVisible({ timeout: 10_000 });
+      await expect.poll(async () => ((await a!.evaluate(() => window.__spellplane!.mm!.matches!())) as MatchRecord[]).find((m) => m.roomId === room)?.state, { timeout: 10_000 }).toBe('void');
+      await expect.poll(async () => ((await a!.evaluate(() => window.__spellplane!.games!.list())) as { code: string }[]).some((g) => g.code === room), { timeout: 10_000 }).toBe(false);
+      await expect(a!.getByTestId('toast').filter({ hasText: 'your seat is kept' })).toHaveCount(0);
     });
   });
 

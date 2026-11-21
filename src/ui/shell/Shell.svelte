@@ -15,7 +15,7 @@
 </script>
 
 <script lang="ts">
-  import { onDestroy, onMount, type Snippet } from 'svelte';
+  import { onDestroy, onMount, untrack, type Snippet } from 'svelte';
   import Button from '../design/Button.svelte';
   import Field from '../design/Field.svelte';
   import IconButton from '../design/IconButton.svelte';
@@ -26,6 +26,7 @@
   import HistoryPage from '../history/HistoryPage.svelte';
   import { randomNickname } from '../lobby/names';
   import MatchHost from '../play/MatchHost.svelte';
+  import { settingsChime } from '../play/mm-view';
   import QueueChip from '../play/QueueChip.svelte';
   import { themeContext } from '../settings/theme';
   import { tableDeps } from '../table/context';
@@ -60,6 +61,8 @@
   } = $props();
 
   // The page's stores and the viewer's theme (App.svelte's contexts); a harness passes its own as props.
+  // [M8-P7] The match-found chime under the viewer's sound setting.
+  const matchChime = untrack(() => settingsChime(_settings));
   const page = tableDeps();
   const theme = themeContext();
 
@@ -279,7 +282,7 @@
     {/if}
   </main>
 
-  <MatchHost {matchmaker} />
+  <MatchHost {matchmaker} chime={matchChime} />
   <ToastHost place="bottom-centre" />
 </div>
 

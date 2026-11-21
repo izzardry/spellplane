@@ -66,7 +66,8 @@ export class LobbyRoom {
   private chain: Promise<void> = Promise.resolve();
 
   constructor(private readonly o: LobbyRoomOptions) {
-    this.state = createBroker({ tid: o.transport.selfId, peerId: o.identity.peerId, proto: 0 });
+    // A random salt in this connection's match ids: unpredictable to others, never repeated by a later connection.
+    this.state = createBroker({ tid: o.transport.selfId, peerId: o.identity.peerId, proto: 0, salt: base64url(o.random(9)) });
     o.transport.on('ctl', (msg, from) => this.receive(msg, from));
     o.transport.onPeer((ev, peer) => this.onPeer(ev, peer));
   }

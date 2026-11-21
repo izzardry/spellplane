@@ -9,13 +9,15 @@
  *   match once every member's deck is committed, and the opening hands are dealt (session/entry.ts). A member that is
  *   not connected to every other member within 30 s goes back to seeking with its waiting time kept and leaves the
  *   room, so nobody ever ends in two rooms.
- * - `applyRatedResult(...)`: when a ranked 1v1 matched game gets `TableState.result`, the rating change is applied
+ * - `watchRatedResult(...)`: the table frame watches every networked table with a MatchRecord while it is mounted;
+ *   `applyRatedResult(...)`: when a ranked 1v1 matched game gets `TableState.result`, the rating change is applied
  *   once, locally, and stored as `MatchRecord.rated` (no change with a take-over or a recovery on either seat).
+ * - `abandonMatchedTable(...)`: a matched game left or given up before its start is void and not in History.
  */
 import type { Format, MatchRecord, SeatColourIndex, SeatId, TableState } from '../core/types';
 import { applyRating, freshRating, ratingChanges } from '../net/lobby/rating';
 import { ratingKeyOf, type MatchPlan } from '../net/lobby/types';
-import type { MatchStore, RatingStore } from '../store/types';
+import type { GameStore, MatchStore, RatingStore } from '../store/types';
 import { enterMatch, startAutoSetup } from './entry';
 import type { DeckImport, TableSession } from './types';
 
@@ -28,11 +30,17 @@ export interface MatchRoomMatchmaker {
   stranded(roomId: string, missing: string | null): void;
   /** Which member this room still misses (the matchmaker's own arrival deadline names it). */
   reaching?(roomId: string, missing: string | null): void;
+  /**
+   * The player left this matched room before its game started. True when the matchmaker was moving to it and took
+   * care of it (void record, purged History entry, search over); false otherwise.
+   */
+  left?(roomId: string): boolean;
 }
 
 let pageMatchmaker: MatchRoomMatchmaker | null = null;
-/** The page's matchmaker registers itself here (one per page). */
-export function setPageMatchmaker(mm: MatchRoomMatchmaker | null): void {
+/** The page's matchmaker registers itself here (one per page); `null` with `only` clears it only while `only` is registered. */
+export function setPageMatchmaker(mm: MatchRoomMatchmaker | null, only?: MatchRoomMatchmaker): void {
+  if (mm === null && only !== undefined && pageMatchmaker !== only) return;
   pageMatchmaker = mm;
 }
 
@@ -64,10 +72,15 @@ export function createsMatchTable(record: Pick<MatchRecord, 'players'>, peerId: 
   return record.players[0]?.peerId === peerId;
 }
 
-/** How a matched room's session opens (for main.ts openRoom): the queue's format; seat 0 creates, the others never sit alone. */
-export function matchSessionInternals(record: Pick<MatchRecord, 'players' | 'queue'>, peerId: string): { format: Format; createdHere: boolean; neverAlone: boolean } {
+/**
+ * How a matched room's session opens (for main.ts openRoom): the queue's format; seat 0 creates, the others never sit
+ * alone; each member sits in its planned chair (`s<i>` for the i-th player of the record), so the table's seats and
+ * Two-Headed Giant teams follow the offer whatever order the members arrive in.
+ */
+export function matchSessionInternals(record: Pick<MatchRecord, 'players' | 'queue'>, peerId: string): { format: Format; createdHere: boolean; neverAlone: boolean; preferSeat?: SeatId } {
   const creator = createsMatchTable(record, peerId);
-  return { format: formatOf(record), createdHere: creator, neverAlone: !creator };
+  const i = record.players.findIndex((p) => p.peerId === peerId);
+  return { format: formatOf(record), createdHere: creator, neverAlone: !creator, ...(i >= 0 ? { preferSeat: `s${i}` as SeatId } : {}) };
 }
 
 /** The starting life of a format (DESIGN "Players, seats and formats": 20, Two-Headed Giant 30). */
@@ -87,6 +100,9 @@ function connectedPeers(session: TableSession): Set<string> {
 
 export type MatchedEntryStage = 'connecting' | 'entering' | 'match' | 'stranded';
 
+/** Once every member is connected, the match must start within this, or the entry gives up (decision M8-P7). */
+export const START_MS = 30_000;
+
 export interface MatchedEntryOptions {
   session: TableSession;
   record: MatchRecord;
@@ -96,11 +112,15 @@ export interface MatchedEntryOptions {
   deck: DeckImport | null;
   /** The member could not reach everyone: leave the room (the matchmaker already went back to seeking). */
   onStranded?: (text: string) => void;
+  /**
+   * Every member was reached but the match did not start within START_MS (a deck that could not be read, a member that
+   * closed its page before the start): the entry gave up with this text; leave the room.
+   */
+  onStalled?: (text: string) => void;
   onStage?: (stage: MatchedEntryStage) => void;
   matchmaker?: MatchRoomMatchmaker | null;
-  ratings?: RatingStore | null;
-  matches?: MatchStore | null;
   arriveMs?: number;
+  startMs?: number;
   /**
    * Run the automatic setup (deal and roll once the table plays) here too. Default true; the table frame runs its own
    * (`startAutoSetup` on mount), so MatchedEntry.svelte passes false and two deals never race.
@@ -111,6 +131,14 @@ export interface MatchedEntryOptions {
 /** The unreachable text (matchmaker.ts MM_TEXT.unreachable). */
 export function unreachableText(name: string): string {
   return `${name} could not be reached directly. Some networks do not allow it, and Spellplane uses no relay.`;
+}
+
+/** The text when the own deck cannot be read at a matched table (decision M8-P7). */
+export const DECK_UNREADABLE = 'Your deck could not be read, so the match could not start.';
+
+/** The text when a member never got ready at a matched table (decision M8-P7). */
+export function notStartedText(name: string): string {
+  return `${name} did not get to the table, so the match could not start.`;
 }
 
 /**
@@ -125,19 +153,29 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
   const mine = plan.seats.findIndex((s) => s.peerId === me);
   const creator = mine === 0;
   const others = plan.seats.filter((s) => s.peerId !== me);
+  const want = plan.seats[mine]!.seat;
   let stopped = false;
   let stage: MatchedEntryStage = 'connecting';
   let arrived = false;
   let entered = false;
   let entering = false;
   let started = false;
+  let seatTries = 0;
   let stopAuto: (() => void) | null = null;
+  let startTimer: ReturnType<typeof setTimeout> | null = null;
   const setStage = (s: MatchedEntryStage): void => {
     if (stage === s) return;
     stage = s;
     o.onStage?.(s);
   };
   o.onStage?.(stage);
+
+  const seatOfPeer = (st: TableState, peer: string): TableState['seats'][SeatId] | undefined => Object.values(st.seats).find((x) => x.peer === peer);
+  const committed = (st: TableState, peer: string): boolean => {
+    const seat = seatOfPeer(st, peer);
+    return seat !== undefined && Object.hasOwn(st.commitments, seat.id);
+  };
+  const seatedMembers = (st: TableState): boolean => plan.seats.every((s) => committed(st, s.peerId));
 
   const checkArrival = (): void => {
     if (arrived || stopped) return;
@@ -147,7 +185,18 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
       arrived = true;
       clearTimeout(timer);
       mm?.arrived(record.roomId);
+      // Reached everyone: the match must now start in time, or the entry gives up with the reason.
+      startTimer = setTimeout(stall, o.startMs ?? START_MS);
     } else mm?.reaching?.(record.roomId, missing.name);
+  };
+  const stall = (): void => {
+    if (stopped) return;
+    const st = session.getState();
+    if (st.stage !== 'lobby') return;
+    const text = o.deck === null || !committed(st, me) ? DECK_UNREADABLE : notStartedText(plan.seats.find((s) => !committed(st, s.peerId))?.name ?? 'Another player');
+    setStage('stranded');
+    stop();
+    o.onStalled?.(text);
   };
   const timer = setTimeout(() => {
     if (stopped || arrived) return;
@@ -155,22 +204,40 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
     const missing = others.find((s) => !peers.has(s.peerId));
     setStage('stranded');
     stop();
-    ratingWatchers.get(`${record.roomId}|${me}`)?.();
     mm?.stranded(record.roomId, missing?.name ?? null);
     o.onStranded?.(unreachableText(missing?.name ?? 'Another player'));
   }, o.arriveMs ?? ARRIVE_MS);
 
-  const seatedMembers = (st: TableState): boolean =>
-    plan.seats.every((s) => Object.values(st.seats).some((x) => x.peer === s.peerId)) && plan.seats.every((s) => {
-      const seat = Object.values(st.seats).find((x) => x.peer === s.peerId);
-      return seat !== undefined && Object.hasOwn(st.commitments, seat.id);
-    });
+  /**
+   * Sit in the planned chair (seats and Two-Headed Giant teams follow the offer). The session took one on its own when
+   * it opened (the planned one when free, main.ts `preferSeat`); while another member that is not in its own planned
+   * chair holds this one, wait: it moves on. Resolves the chair to commit in, or null to wait for the next change.
+   */
+  const planned = (st: TableState): SeatId | null => {
+    if (session.seat === want && st.seats[want]?.peer === me) return want;
+    const holder = st.seats[want];
+    if (!holder) return session.seat;
+    const free = holder.peer === undefined && holder.name.trim() === '';
+    if (free && seatTries < 8) {
+      seatTries++;
+      session.takeSeat(want, mine as SeatColourIndex);
+      return null;
+    }
+    const other = holder.peer === undefined ? -1 : plan.seats.findIndex((s) => s.peerId === holder.peer);
+    // Another member sits here and is not in its own planned chair: it moves to it, then this chair frees.
+    // (Two members in each other's chairs never free one: both stay where they sit rather than wait for ever.)
+    if (other >= 0 && other !== mine && plan.seats[other]!.seat !== want && plan.seats[other]!.seat !== session.seat && seatTries < 8) return null;
+    return session.seat;
+  };
 
   const step = async (): Promise<void> => {
     if (stopped || entering) return;
     const st = session.getState();
     if (st.stage !== 'lobby') {
-      if (st.stage === 'match') setStage('match');
+      if (st.stage === 'match') {
+        setStage('match');
+        if (startTimer !== null) clearTimeout(startTimer);
+      }
       if (!entered && st.seats[session.seat]) {
         // A member that arrives after the start (a reload) still deals its hand.
         entered = true;
@@ -187,13 +254,11 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
     // The others wait for the creator's format before they commit (the format cannot change once a player is Ready).
     if (st.format !== plan.format) return;
     if (!entered) {
+      const seat = planned(st);
+      if (seat === null) return;
       entering = true;
       setStage('entering');
       try {
-        const want = plan.seats[mine]!.seat;
-        const holder = st.seats[want];
-        const free = holder !== undefined && (holder.peer === undefined || holder.peer === me) && (holder.peer !== undefined || holder.name.trim() === '');
-        const seat = free ? want : session.seat;
         await enterMatch(session, { seat, colour: mine as SeatColourIndex, deck: o.deck, matched: true, creator });
         entered = true;
         if (o.autoSetup !== false) stopAuto ??= startAutoSetup(session, { creator });
@@ -216,9 +281,6 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
     }
   };
 
-  // The rating watcher outlives the entry (MatchedEntry unmounts when the stage leaves the lobby): it runs until the
-  // result is applied or another entry for the same room replaces it.
-  if (o.ratings && o.matches) watchRatedResult({ session, roomId: record.roomId, me, ratings: o.ratings, matches: o.matches });
   const onState = (): void => {
     checkArrival();
     void step();
@@ -231,6 +293,7 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
     if (stopped) return;
     stopped = true;
     clearTimeout(timer);
+    if (startTimer !== null) clearTimeout(startTimer);
     offState();
     offNet();
     stopAuto?.();
@@ -238,15 +301,29 @@ export function runMatchedEntry(o: MatchedEntryOptions): () => void {
   return stop;
 }
 
-const ratingWatchers = new Map<string, () => void>();
+/**
+ * A matched game that will not be played after all (the entry gave up, or the player left before the start): its record
+ * becomes void and its History entry is purged (journey.md 4.7). The page's matchmaker does it when it is still moving
+ * to this room (and goes back to its search as designed); otherwise it is done here. A game that started is kept.
+ * Run it after the table was left: the leave's last checkpoint writes the History entry this purges.
+ */
+export async function abandonMatchedTable(o: { started: boolean; roomId: string; matches: MatchStore | null; games: GameStore | null; matchmaker?: MatchRoomMatchmaker | null }): Promise<void> {
+  if (o.started) return;
+  const mm = o.matchmaker === undefined ? pageMatchmaker : o.matchmaker;
+  if (mm?.left?.(o.roomId) === true) return;
+  const r = await o.matches?.get(o.roomId).catch(() => null);
+  if (r && (r.state === 'formed' || r.state === 'playing')) await o.matches?.put({ ...r, state: 'void' }).catch(() => undefined);
+  await o.games?.purge(o.roomId).catch(() => undefined);
+}
 
 /**
- * Watch a matched table for its sequenced result and apply the rating change once (applyRatedResult). One watcher per
- * room and identity; a new one replaces the old. Returns the stop function.
+ * Watch a matched table for its sequenced result and apply the rating change once (applyRatedResult). The table frame
+ * starts one for every networked table with a MatchRecord, at any stage, and stops it when it unmounts: a reload, a
+ * re-entry from History or CONTINUE, or a result that arrived while the player was away is applied when the table is
+ * open again (matchmaking.md 2.9: the absent player's browser applies it when it next syncs the room). `me` defaults to
+ * the peer of the session's own seat. Returns the stop function; nothing outlives it.
  */
-export function watchRatedResult(o: { session: TableSession; roomId: string; me: string; ratings: RatingStore; matches: MatchStore }): () => void {
-  const id = `${o.roomId}|${o.me}`;
-  ratingWatchers.get(id)?.();
+export function watchRatedResult(o: { session: Pick<TableSession, 'getState' | 'subscribe' | 'seat' | 'log'>; roomId: string; me?: string; ratings: RatingStore; matches: MatchStore }): () => void {
   let done = false;
   let stopped = false;
   let off: (() => void) | null = null;
@@ -255,22 +332,22 @@ export function watchRatedResult(o: { session: TableSession; roomId: string; me:
     stopped = true;
     off?.();
     off = null;
-    if (ratingWatchers.get(id) === stop) ratingWatchers.delete(id);
   };
   const check = (): void => {
     if (done) return;
     const st = o.session.getState();
     if (!st.result) return;
+    const me = o.me ?? st.seats[o.session.seat]?.peer;
+    if (!me) return;
     done = true;
-    void applyRatedResult({ state: st, roomId: o.roomId, me: o.me, ratings: o.ratings, matches: o.matches, recovered: recoveredSeats(o.session) }).then(
+    void applyRatedResult({ state: st, roomId: o.roomId, me, ratings: o.ratings, matches: o.matches, recovered: recoveredSeats(o.session) }).then(
       () => stop(),
       (e: unknown) => {
-        done = false;
+        if (!stopped) done = false;
         console.warn('Spellplane: the rating change could not be saved', e);
       },
     );
   };
-  ratingWatchers.set(id, stop);
   const unsubscribe = o.session.subscribe(check);
   if (stopped) unsubscribe();
   else off = unsubscribe;
