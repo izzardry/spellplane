@@ -25,6 +25,8 @@ export interface PendingSetup {
   autoSetup: true;
   /** Lobby settings; `draft: null` plays constructed decks. */
   lobby: LobbySettings;
+  /** Home's deck rule for a private game (`TableSettings.decks`); absent: any deck. Added by the M8-P4 fix. */
+  decks?: 'any' | 'booster';
 }
 
 const PENDING = 'spellplane.pending.';
@@ -52,7 +54,7 @@ export function takePendingSetup(roomId: string, store: Pick<Storage, 'getItem' 
 
 /**
  * Apply the setup Home kept for a room this tab created (`takePendingSetup`): automatic setup on, the format and the
- * lobby settings of the mode. The table route calls it once its session is open (M8-P8 wires it in the frame); it does
+ * lobby settings of the mode, and the deck rule of a private game. The table route calls it once its session is open (M8-P8 wires it in the frame); it does
  * nothing for a room without a kept setup or past its lobby. Resolves to whether it applied one.
  */
 export function applyPendingSetup(session: Pick<TableSession, 'roomId' | 'getState' | 'dispatch'>, store: Pick<Storage, 'getItem' | 'removeItem'> | null = safeSession()): boolean {
@@ -67,6 +69,8 @@ export function applyPendingSetup(session: Pick<TableSession, 'roomId' | 'getSta
     session.dispatch({ type: 'formatSet', format: setup.format, life });
   }
   session.dispatch({ type: 'lobbySet', lobby: structuredClone(setup.lobby) });
+  // The table carries Home's deck rule, so every seat's picker reads it (journey.md 4.8; M8-P4 fix).
+  if (setup.decks === 'booster' && st.settings.decks !== 'booster') session.dispatch({ type: 'settings', settings: { decks: 'booster' } });
   return true;
 }
 
@@ -206,7 +210,7 @@ export const CONSTRUCTED_LOBBY: LobbySettings = { draft: null, sets: ['M19'], pi
 /** PRIVATE GAME: `CREATE TABLE` (journey.md 4.1, 4.8). */
 export async function launchPrivate(deps: LaunchDeps, prefs: HomePrefs, deck: DeckRecord | null): Promise<string> {
   await touchDeck(deps, deck, prefs);
-  return launchRoom(deps, { format: prefs.private.format, autoSetup: true, lobby: CONSTRUCTED_LOBBY }, { decks: deckSource(deck), deck });
+  return launchRoom(deps, { format: prefs.private.format, autoSetup: true, lobby: CONSTRUCTED_LOBBY, decks: prefs.private.decks }, { decks: deckSource(deck), deck });
 }
 
 /** DRAFT NIGHT: `OPEN DRAFT TABLE` with the booster setup as the lobby settings (journey.md 4.1, J12). */

@@ -10,8 +10,11 @@
   let { value, mode, onchange = undefined, onclose = undefined }: { value: BoosterSetup; mode: 'deck' | 'draft'; onchange?: ((value: BoosterSetup) => void) | undefined; onclose?: (() => void) | undefined } = $props();
 </script>
 
+<!-- Like the kit sheet it stands in for, it draws its own scrim. -->
+<div class="ds-scrim" role="presentation">
 <Sheet label="Boosters" width="narrow" {onclose} data-testid="booster-setup" data-mode={mode}>
   {#snippet header()}<h2 class="ds-t-title">Boosters</h2>{/snippet}
   <p class="ds-t-meta" data-testid="booster-setup-value">{value.how} · {value.packs} × {value.sets.join(', ')}</p>
   <Button data-testid="booster-setup-two" onclick={() => onchange?.({ ...value, packs: 2 })}>TWO PACKS</Button>
 </Sheet>
+</div>

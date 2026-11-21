@@ -120,20 +120,37 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
     await a.clock.runFor(5000);
     expect((await state(a)).stage).toBe('lobby');
     await expect(b.getByTestId('missing-line')).toHaveText('Waiting for Ann to start the game.');
+    // Stop the page clock, so only runFor moves the count (a slow remote browser adds no time). No count runs yet, so
+    // the margin may be generous: a remote browser's clock moves on while the time is read ("fast-forward to the past").
+    await a.clock.pauseAt((await a.evaluate(() => Date.now())) + 2000);
     await a.getByTestId('ready-on').click();
-    await expect(a.getByTestId('start-game')).toHaveText(/^START · [123]$/);
+    await expect(a.getByTestId('start-game')).toHaveText('START · 3');
+    // Un-readying while the count runs stops it: the clock runs on and nothing starts.
+    await a.clock.runFor(1000);
+    await expect(a.getByTestId('start-game')).toHaveText('START · 2');
+    await a.getByTestId('ready-on').click();
+    await expect(a.getByTestId('start-game')).toHaveCount(0);
+    await a.clock.runFor(5000);
+    expect((await state(a)).stage).toBe('lobby');
+    await a.getByTestId('ready-on').click();
+    await expect(a.getByTestId('start-game')).toHaveText('START · 3');
     await a.clock.runFor(3100);
-    for (const p of [a, b]) await expect(p.getByTestId('stage')).toHaveAttribute('data-stage', 'match', { timeout: 15_000 });
+    // The page clock runs on its own again: the setup and the versus screen's timers follow real time from here.
+    await a.clock.resume();
+    await expect(b.getByTestId('stage')).toHaveAttribute('data-stage', 'match', { timeout: 15_000 });
   });
 
   await test.step('versus, then seven cards each and the same first player; a reload during versus deals once', async () => {
+    // B's versus screen is up (it stays at least 1.2 s): reload B during it, before anything else is read.
+    await expect(b.getByTestId('versus')).toBeVisible();
+    await b.reload();
+    await expect(a.getByTestId('stage')).toHaveAttribute('data-stage', 'match', { timeout: 15_000 });
     // The versus screen came up on the creator's page, with both players and no deck name.
     await expect.poll(() => a.evaluate(() => (window as unknown as { __versus: string[] }).__versus.length)).toBe(1);
     const versus = await a.evaluate(() => (window as unknown as { __versus: string[] }).__versus[0]!);
     expect(versus).toContain('Ann');
     expect(versus).toContain('Ben');
     expect(versus).not.toContain('Deck with');
-    await b.reload();
     await dealtOnce(a, b);
     for (const p of [a, b]) await expect(p.getByTestId('versus')).toHaveCount(0, { timeout: 15_000 });
     // Nothing deals again: one more reload leaves the hands as they are.
@@ -168,6 +185,31 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
     await dealtOnce(a, b);
     expect((await state(a)).result).toBeUndefined();
     for (const p of [a, b]) await expect(p.getByTestId('game-over')).toHaveCount(0);
+  });
+  await context.close();
+});
+
+test('BOOSTER DECKS ONLY set by the creator reaches the guest through the table (M8-P4 fix)', async ({ browser }, info) => {
+  const { context, a, b } = await twoPages(browser);
+  const room = freshRoom();
+  await test.step('the creator sets BOOSTER DECKS ONLY in the setup sheet; the table carries it', async () => {
+    await openTable(a, room, freshProfile(info, 'a'));
+    await setNickname(a, 'Ann');
+    await a.getByTestId('setup-edit').click();
+    await a.getByTestId('setup-decks').locator('[data-value="booster"]').click();
+    await expect.poll(async () => (await state(a)).settings.decks).toBe('booster');
+    await a.getByTestId('setup-sheet').getByRole('button', { name: 'Close' }).click();
+    await expect(a.getByTestId('setup-summary')).toContainText('BOOSTER DECKS ONLY');
+  });
+  await test.step('the guest reads the same rule: no pasted custom list, the summary says BOOSTER DECKS ONLY', async () => {
+    await openTable(b, room, freshProfile(info, 'b'));
+    await setNickname(b, 'Ben');
+    await expect(chair(b, 's1')).toHaveAttribute('data-mine', 'true', { timeout: 15_000 });
+    await expect(b.getByTestId('setup-summary')).toContainText('BOOSTER DECKS ONLY');
+    expect((await state(b)).settings.decks).toBe('booster');
+    // A booster-only table offers no pasted list and no starter deck (both are custom decks).
+    await expect(b.getByTestId('lobby-deck-text')).toHaveCount(0);
+    await expect(b.getByTestId('use-starter')).toHaveCount(0);
   });
   await context.close();
 });

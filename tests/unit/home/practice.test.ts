@@ -83,6 +83,14 @@ describe('applyPendingSetup', () => {
     expect(sent).toHaveLength(3);
   });
 
+  it('carries the Home BOOSTER DECKS ONLY onto the table as settings { decks } (M8-P4 fix)', () => {
+    const store = memory();
+    savePendingSetup('amber-fox-river-12', { format: '1v1', autoSetup: true, lobby: { draft: null, sets: ['M19'], pickTimer: false }, decks: 'booster' }, store);
+    const { session, sent } = fake('lobby');
+    expect(applyPendingSetup(session, store)).toBe(true);
+    expect(sent.at(-1)).toMatchObject({ type: 'settings', settings: { decks: 'booster' } });
+  });
+
   it('does nothing for a room without a kept setup or past its lobby', () => {
     const store = memory();
     const { session, sent } = fake('match');

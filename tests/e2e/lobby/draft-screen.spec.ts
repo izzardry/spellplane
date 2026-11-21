@@ -6,21 +6,21 @@
 import { expect, test } from '@playwright/test';
 import { seriousViolations } from '../a11y/helpers';
 import { openDraft, settled } from '../draft/bundle';
-import { lobbyAudit } from './audit';
+import { designAudit } from '../helpers/design-audit';
 
 test.describe('draft screens on the kit (M8-P4 sweep)', () => {
   test('the draft HUD: kit buttons at the kit heights, one primary, no blur; axe passes', async ({ page }) => {
     await openDraft(page, { format: 'pass', seats: 'Anna,Ben', packSize: 6 });
     await settled(page);
     await expect(page.getByTestId('draft-confirm')).toHaveClass(/ds-btn--primary/);
-    expect(await lobbyAudit(page)).toEqual([]);
+    await designAudit(page);
     expect(await seriousViolations(page)).toEqual([]);
   });
 
   test('the draft settings panel: kit wells at the kit heights; axe passes', async ({ page }) => {
     await openDraft(page, { view: 'lobby', seats: 'Anna,Ben,Cleo' });
     await expect(page.getByTestId('panel-s0').getByTestId('lobby-settings')).toBeVisible();
-    expect(await lobbyAudit(page)).toEqual([]);
+    await designAudit(page);
     expect(await seriousViolations(page)).toEqual([]);
   });
 });

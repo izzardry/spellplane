@@ -6,7 +6,7 @@
  * `view` room | invite | join | versus | over | chip; `me` s0 | s1 | spec; `ben` (Ben sits in s1), `annReady`,
  * `benReady`, `rule=booster` (the table's deck rule), `draft` (lobby settings with a live draft), `auto` (automatic
  * setup), `format`, `kind` private | matched | draft, `rated` (a rating change), `low` (Ben at 0 life), `poison`,
- * `apart` (the other browser not connected), `deck=<id>` (Home's selected deck).
+ * `apart` (the other browser not connected), `deck=<id>` (Home's selected deck), `empty` (an empty library).
  * Test API: window.__lobbyHarness.
  */
 import { mount as mountSvelte, unmount, type Component } from 'svelte';
@@ -44,6 +44,9 @@ export const HARNESS_DECKS: DeckRecord[] = [
   { id: 'deck-m19', name: 'M19 Booster Deck', main: refs(40, 'sid-dfc'), side: [], source: 'built', kind: 'sealed', createdAt: AT, updatedAt: AT + 1 },
 ];
 
+/** Ben's own library, on Ben's side only: the room on Ann's page must never show these names. */
+export const BEN_DECKS: DeckRecord[] = [{ id: 'deck-ben', name: 'Ben Secret Brew', main: refs(40, 'sid-dfc'), side: [], source: 'built', kind: 'custom', createdAt: AT, updatedAt: AT }];
+
 /** What the page exposes to Playwright. */
 export interface LobbyHarness {
   state(): TableState;
@@ -52,6 +55,8 @@ export interface LobbyHarness {
   setConnected(on: boolean): void;
   /** Apply an action as another seat (through core's reducer). */
   dispatchAs(by: SeatId, draft: ActionDraft): void;
+  /** Ready `by` with a deck of Ben's library (BEN_DECKS): the commitment the other seat's browser would send. */
+  readyAs(by: SeatId, deckId: string): void;
   joined: string | null;
   homeCalls: number;
   proposals: string[];
@@ -63,7 +68,7 @@ declare global {
   }
 }
 
-/** A fake room: actions go through core's reducer; `settings { decks }`, which the reducer does not take yet, is set directly. */
+/** A fake room: every action goes through core's reducer, as the networked session's sequencer applies it. */
 export class RoomModel extends FakeSession {
   private net: SessionNetStatus;
   private readonly netListeners = new Set<NetStatusListener>();
@@ -89,11 +94,6 @@ export class RoomModel extends FakeSession {
   override dispatch(draft: ActionDraft): Action {
     const st = this.getState();
     const action = { ...draft, by: this.seat, cid: `h-${this.sent.length + 1}`, seq: st.seq + 1 } as Action;
-    if (action.type === 'settings' && 'decks' in action.settings) {
-      this.sent.push(action);
-      this.setState({ ...st, seq: st.seq + 1, settings: { ...st.settings, ...action.settings } });
-      return action;
-    }
     const reason = explain(st, action);
     if (reason) throw new Error(reason);
     this.sent.push(action);
@@ -131,7 +131,7 @@ export function harnessTable(q: URLSearchParams): TableState {
   if (q.has('ben') || view !== 'room') t = act(t, 's1', { type: 'seatTake', seat: 's1', name: 'Ben', colour: 1, peer: BEN });
   if (q.has('draft')) t = act(t, 's0', { type: 'lobbySet', lobby: { draft: { format: 'pass', packs: 3, picks: 1 }, sets: ['M19'], pickTimer: false } });
   if (q.has('auto')) t = act(t, 's0', { type: 'settings', settings: { autoSetup: true } });
-  if (q.get('rule') === 'booster') t = { ...t, settings: { ...t.settings, decks: 'booster' } as TableState['settings'] };
+  if (q.get('rule') === 'booster') t = act(t, 's0', { type: 'settings', settings: { decks: 'booster' } });
   const ids = (seat: SeatId, k: number) => Array.from({ length: k }, (_, i) => `${seat}c${String(i).padStart(2, '0')}`);
   const ready = (seat: SeatId, k: number) => {
     t = act(t, seat, { type: 'ready', commits: ids(seat, k).map((id) => `h-${id}`), instanceIds: ids(seat, k), zone: `library:${seat}` });
@@ -159,7 +159,7 @@ export function mount(target: HTMLElement): { destroy(): void } {
   const seat: SeatId = meParam === 's1' ? 's1' : 's0';
   const session = new RoomModel(harnessTable(q), seat, !q.has('apart'), meParam === 'spec');
   const link = roomLink(location.href, 'amber-fox-93', 'AAAAAAAAAAAAAAAAAAAAAA');
-  let library = [...HARNESS_DECKS];
+  let library = q.has('empty') ? [] : [...HARNESS_DECKS];
   const decks: DeckStore = {
     list: async () => library,
     get: async (id) => library.find((d) => d.id === id) ?? null,
@@ -186,6 +186,12 @@ export function mount(target: HTMLElement): { destroy(): void } {
     library: async () => library,
     setConnected: (on) => session.setConnected(on),
     dispatchAs: (by, draft) => session.setState(act(session.getState(), by, draft)),
+    readyAs: (by, deckId) => {
+      const deck = BEN_DECKS.find((d) => d.id === deckId);
+      if (!deck) throw new Error(`no deck ${deckId}`);
+      const ids = deck.main.map((_, i) => `${by}r${String(i).padStart(2, '0')}`);
+      session.setState(act(session.getState(), by, { type: 'ready', commits: ids.map((id) => `h-${id}`), instanceIds: ids, zone: `library:${by}` }));
+    },
     joined: null,
     homeCalls: 0,
     proposals: session.proposals,
@@ -218,6 +224,7 @@ export function mount(target: HTMLElement): { destroy(): void } {
                     decks,
                     cardData: new FakeCardData(),
                     settings,
+                    onleave: onhome,
                     picker: HarnessPicker as unknown as Component<{ allow?: ((deck: DeckRecord) => true | string) | undefined; onpick: (deck: DeckRecord) => void; onclose?: (() => void) | undefined }>,
                     boosterSheet: HarnessBoosters as unknown as Component<{ value: BoosterSetup; mode: 'deck' | 'draft'; onchange?: ((value: BoosterSetup) => void) | undefined; onclose?: (() => void) | undefined }>,
                   },

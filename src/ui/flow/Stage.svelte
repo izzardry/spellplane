@@ -24,6 +24,7 @@
   import { BuilderView } from '../builder/index';
   import { DraftView } from '../draft/index';
   import WaitingRoom from '../lobby/WaitingRoom.svelte';
+  import { roomStarter, roomStarterPool } from '../lobby/starter';
   import type { HudShellProps } from '../props';
   import type { LobbyProps } from '../types';
   import EveningBar from './EveningBar.svelte';
@@ -43,6 +44,8 @@
 
   let st = $state.raw<TableState>(untrack(() => props.session.getState()));
   onMount(() => props.session.subscribe((s) => (st = s)));
+  // USE A STARTER DECK in the waiting room: M8-P6's generator over the table's card source (M8-P4 fix).
+  const starter = $derived(roomStarter(roomStarterPool(props.cardData)));
   const stage = $derived<StageId>(st.stage);
   const evening = $derived(props.session.evening);
   const draft = $derived(props.session.draft);
@@ -58,7 +61,7 @@
   {#if stage === 'lobby'}
     <div class="lobby-stage" class:with-draft={!!(evening && props.sets)}>
       <div class="lobby-main">
-        <WaitingRoom session={props.session} game={props.game} link={props.link} identity={props.identity} decks={props.decks} cardData={props.cardData} parseDecklist={props.parseDecklist} settings={props.settings} />
+        <WaitingRoom session={props.session} game={props.game} link={props.link} identity={props.identity} decks={props.decks} cardData={props.cardData} parseDecklist={props.parseDecklist} settings={props.settings} faces={props.faces} onleave={props.shell?.onleave} {starter} />
       </div>
       {#if evening && props.sets}
         <div class="lobby-side">
