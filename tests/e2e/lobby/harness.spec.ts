@@ -108,12 +108,13 @@ test.describe('lobby harness (M8-P4)', () => {
     await page.addInitScript(() => {
       const w = window as unknown as { __opened: string[] };
       w.__opened = [];
-      window.open = ((url?: string | URL) => (w.__opened.push(String(url)), window)) as typeof window.open;
+      window.open = ((url?: string | URL) => (w.__opened.push(String(url)), {} as Window)) as typeof window.open;
     });
     await harness(page, 'view=room&empty=1');
     await closeInvite(page);
     await page.getByTestId('open-boosters').click();
     expect(await page.evaluate(() => (window as unknown as { __opened: string[] }).__opened)).toEqual([expect.stringMatching(/#\/decks\/new$/)]);
+    await expect(page.getByTestId('lobby-note')).toHaveText('Decks opened in another tab. Your new deck shows up here when you come back.');
     // The room is still here: the new-deck flow opened beside it, not in its place.
     await expect(page.getByTestId('lobby')).toBeVisible();
     expect(new URL(page.url()).hash).toBe('');

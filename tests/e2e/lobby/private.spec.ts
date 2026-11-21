@@ -187,3 +187,28 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
   });
   await context.close();
 });
+
+test('BOOSTER DECKS ONLY set by the creator reaches the guest through the table (M8-P4 fix)', async ({ browser }, info) => {
+  const { context, a, b } = await twoPages(browser);
+  const room = freshRoom();
+  await test.step('the creator sets BOOSTER DECKS ONLY in the setup sheet; the table carries it', async () => {
+    await openTable(a, room, freshProfile(info, 'a'));
+    await setNickname(a, 'Ann');
+    await a.getByTestId('setup-edit').click();
+    await a.getByTestId('setup-decks').locator('[data-value="booster"]').click();
+    await expect.poll(async () => (await state(a)).settings.decks).toBe('booster');
+    await a.getByTestId('setup-sheet').getByRole('button', { name: 'Close' }).click();
+    await expect(a.getByTestId('setup-summary')).toContainText('BOOSTER DECKS ONLY');
+  });
+  await test.step('the guest reads the same rule: no pasted custom list, the summary says BOOSTER DECKS ONLY', async () => {
+    await openTable(b, room, freshProfile(info, 'b'));
+    await setNickname(b, 'Ben');
+    await expect(chair(b, 's1')).toHaveAttribute('data-mine', 'true', { timeout: 15_000 });
+    await expect(b.getByTestId('setup-summary')).toContainText('BOOSTER DECKS ONLY');
+    expect((await state(b)).settings.decks).toBe('booster');
+    // A booster-only table offers no pasted list and no starter deck (both are custom decks).
+    await expect(b.getByTestId('lobby-deck-text')).toHaveCount(0);
+    await expect(b.getByTestId('use-starter')).toHaveCount(0);
+  });
+  await context.close();
+});

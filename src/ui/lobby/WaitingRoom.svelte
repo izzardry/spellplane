@@ -416,12 +416,11 @@
 
   /** START WITH n PLAYERS: the empty chairs stay empty (the table cannot change its format once a player is Ready). */
   function startShort(): void {
-    // Like the countdown (countdownMayRun): every seated player is connected, and the start rules agree.
+    // Like the countdown (countdownMayRun): every seated player is connected (the empty chairs stay empty).
     if (!connected) {
       failure = 'Waiting for everyone to connect.';
       return;
     }
-    if (!drafting && startProblem(view, mySeat, host)) return;
     stopCount();
     try {
       if (drafting && session.evening) session.evening.start();
@@ -474,8 +473,10 @@
   function openBoosters(): void {
     note = '';
     const url = `${location.pathname}${location.search}#/decks/new`;
-    const w = typeof window.open === 'function' ? window.open(url, '_blank', 'noopener') : null;
-    if (w === null) note = 'Open Decks in another tab to open boosters; this table stays here.';
+    // Not the 'noopener' feature: with it window.open answers null even when the tab opened.
+    const w = typeof window.open === 'function' ? window.open(url, '_blank') : null;
+    if (w) w.opener = null;
+    if (!w) note = 'Open Decks in another tab to open boosters; this table stays here.';
     else note = 'Decks opened in another tab. Your new deck shows up here when you come back.';
   }
   async function relist(): Promise<void> {
