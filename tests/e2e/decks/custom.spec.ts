@@ -6,7 +6,7 @@
  */
 import { expect, test, type Page } from '@playwright/test';
 import type { DeckRecord } from '../../../src/store/types';
-import { deckAudit } from './audit';
+import { designAudit } from '../helpers/design-audit';
 import { decklist, decks, faceRatios, openDecks, profileOf } from './helpers';
 
 async function newCustomDeck(page: Page): Promise<string> {
@@ -37,7 +37,7 @@ test('search, click four times, autosave without DONE, undo and redo, five copie
   await test.step('faces keep 63:88 and the page passes the design audit', async () => {
     for (const r of await faceRatios(page)) expect(Math.abs(r - 63 / 88) / (63 / 88)).toBeLessThan(0.01);
     await page.mouse.move(5, 895);
-    expect(await deckAudit(page)).toEqual([]);
+    await designAudit(page);
   });
   await test.step('undo and redo walk the edits', async () => {
     await page.getByTestId('deck-undo').click();

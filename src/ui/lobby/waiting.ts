@@ -3,8 +3,8 @@
  * the game code as a name, the deck rule and the picker's `allow`, the creator's start pill and the line that says what
  * is missing, the join field, the versus lines, the 0-life offer and the game-over view. M8-P4. No DOM, no clock.
  */
-import type { DraftFormatSettings, LobbySettings, SeatId, TableState } from '../../core/types';
-import type { BoosterSetup, DeckRecord } from '../../store/types';
+import type { SeatId, TableState } from '../../core/types';
+import type { DeckRecord } from '../../store/types';
 import { isOccupied, readiness } from './seats';
 
 /** The game code as the game's name: `amber-fox-93` → `AMBER FOX 93` (journey.md rulings: "Game code"). */
@@ -16,11 +16,11 @@ export function codeLabel(roomId: string): string {
 export type DeckRule = 'any' | 'booster';
 
 /**
- * The table's deck rule. Read from the optional `TableSettings.decks` (contract addition [M8-P4]); until the reducer
- * accepts that setting (core/reducer/table.ts, frozen tonight) a table reads `any` unless `fallback` says otherwise.
+ * The table's deck rule: the optional `TableSettings.decks` ([M8-P4]; the creator's `settings { decks }`, which the
+ * launcher dispatches from Home's choice), else `fallback` (any). Every seat reads the same rule from the shared state.
  */
 export function deckRuleOf(state: TableState, fallback: DeckRule = 'any'): DeckRule {
-  const v = (state.settings as { decks?: unknown }).decks;
+  const v = state.settings.decks;
   return v === 'booster' || v === 'any' ? v : fallback;
 }
 
@@ -55,7 +55,8 @@ export function draftPacks(state: TableState): string[] {
   const lobby = state.lobby;
   if (!lobby || lobby.draft === null) return [];
   const d = lobby.draft as { packs?: number; grids?: number };
-  const n = Math.max(1, Math.min(3, d.packs ?? 3));
+  // A grid draft counts its grids as packs, as Home's launcher writes it (ui/home/view.ts boosterToLobby).
+  const n = Math.max(1, Math.min(3, d.packs ?? d.grids ?? 3));
   return Array.from({ length: n }, (_, i) => lobby.sets[Math.min(i, lobby.sets.length - 1)] ?? 'M19');
 }
 
@@ -156,6 +157,8 @@ export const VERSUS_FAIL_MS = 30_000;
 /** One player's column on the versus screen. */
 export interface VersusColumn {
   seat: SeatId;
+  /** The seat's index (its glyph), not the column's. */
+  index: number;
   name: string;
   colour: number;
   me: boolean;
@@ -185,6 +188,7 @@ export function versusColumns(state: TableState, me: SeatId | null, connected: (
       const hand = handCount(state, s.id);
       return {
         seat: s.id,
+        index: s.index,
         name: s.name,
         colour: s.colour,
         me: s.id === me,
@@ -222,9 +226,33 @@ export function concedeOffer(state: TableState, seat: SeatId | null): null | { r
   if (Object.values(state.seats).filter((x) => isOccupied(state, x.id)).length < 2) return null;
   const s = state.seats[seat];
   if (!s || s.conceded === true) return null;
-  if (s.life <= 0) return { reason: 'life', text: `You are at ${s.life} life.` };
-  if ((s.counters['poison'] ?? 0) >= POISON_LIMIT) return { reason: 'poison', text: `You have ${s.counters['poison']} poison counters.` };
+  const team = s.team !== undefined ? state.teams[s.team] : undefined;
+  const life = lifeOf(state, seat);
+  const poison = poisonOf(state, seat);
+  const we = team ? 'Your team is' : 'You are';
+  if (life <= 0) return { reason: 'life', text: `${we} at ${life} life.` };
+  if (poison >= (team ? TEAM_POISON_LIMIT : POISON_LIMIT)) return { reason: 'poison', text: `${team ? 'Your team has' : 'You have'} ${poison} poison counters.` };
   return null;
+}
+
+/** The poison count that ends a team in Two-Headed Giant. */
+export const TEAM_POISON_LIMIT = 15;
+
+/** A seat's life total: its team's in Two-Headed Giant (core's `life` changes Team.life there), else its own. */
+export function lifeOf(state: TableState, seat: SeatId): number {
+  const s = state.seats[seat];
+  if (!s) return 0;
+  const team = s.team !== undefined ? state.teams[s.team] : undefined;
+  return team ? team.life : s.life;
+}
+
+/** A seat's poison: in Two-Headed Giant the team's counters and every teammate's, else its own. */
+export function poisonOf(state: TableState, seat: SeatId): number {
+  const s = state.seats[seat];
+  if (!s) return 0;
+  const team = s.team !== undefined ? state.teams[s.team] : undefined;
+  if (!team) return s.counters['poison'] ?? 0;
+  return (team.counters['poison'] ?? 0) + team.seats.reduce((n, id) => n + (state.seats[id]?.counters['poison'] ?? 0), 0);
 }
 
 /** The kind of table, for the game-over overlay's primary (journey.md 4.13): GameSummary.kind plus a draft night. */
@@ -236,14 +264,16 @@ export interface GameOverView {
   primary: { id: 'findMatch' | 'rematch' | 'nextGame'; label: string };
   /** The rating line, only when the MatchRecord holds one. */
   rating: string | null;
-  players: { seat: SeatId; name: string; life: number; colour: number; won: boolean }[];
+  /** `index` is the seat's index (its glyph); `life` the team's in Two-Headed Giant. */
+  players: { seat: SeatId; index: number; name: string; life: number; colour: number; won: boolean }[];
 }
 
 /**
  * The game-over overlay's content (journey.md 4.13). `me` null is a spectator (`GAME OVER`). The primary follows the
- * table: matched → `FIND ANOTHER MATCH`, private and solo → `REMATCH`, draft night → `NEXT GAME`.
+ * table: matched → `FIND ANOTHER MATCH`, private and solo → `REMATCH`, draft night → `NEXT GAME`. `endTurn` is the
+ * turn the result came in on (default: the table's turn now).
  */
-export function gameOverView(state: TableState, me: SeatId | null, kind: EndKind, rated?: { before: number; after: number } | null): GameOverView | null {
+export function gameOverView(state: TableState, me: SeatId | null, kind: EndKind, rated?: { before: number; after: number } | null, endTurn?: number): GameOverView | null {
   const r = state.result;
   if (!r) return null;
   const won = me !== null && r.winners.includes(me);
@@ -252,7 +282,8 @@ export function gameOverView(state: TableState, me: SeatId | null, kind: EndKind
     .filter((s) => s.conceded === true)
     .sort((a, b) => a.index - b.index)
     .map((s) => (s.id === me ? 'You' : s.name));
-  const turn = state.turn.number;
+  // The turn the game ended on (the overlay keeps it from when the result came in), not the turn the table is at now.
+  const turn = endTurn ?? state.turn.number;
   const reason = conceded.length === 0 ? 'The game is over.' : `${names(conceded)} conceded on turn ${turn}.`;
   const primary = kind === 'matched' ? { id: 'findMatch' as const, label: 'FIND ANOTHER MATCH' } : kind === 'draft' ? { id: 'nextGame' as const, label: 'NEXT GAME' } : { id: 'rematch' as const, label: 'REMATCH' };
   let rating: string | null = null;
@@ -263,32 +294,8 @@ export function gameOverView(state: TableState, me: SeatId | null, kind: EndKind
   const players = Object.values(state.seats)
     .filter((s) => isOccupied(state, s.id))
     .sort((a, b) => a.index - b.index)
-    .map((s) => ({ seat: s.id, name: s.name, life: s.life, colour: s.colour, won: r.winners.includes(s.id) }));
+    .map((s) => ({ seat: s.id, index: s.index, name: s.name, life: lifeOf(state, s.id), colour: s.colour, won: r.winners.includes(s.id) }));
   return { headline, reason, primary, rating, players };
-}
-
-/** A draft night's booster setup (BoosterSetupSheet's value, store/types.ts) as the table's lobby settings (journey.md 4.4). */
-export function lobbyFromBoosters(b: BoosterSetup): LobbySettings {
-  const packs = Math.max(1, Math.round(b.packs));
-  const draft: DraftFormatSettings =
-    b.how === 'sealed'
-      ? { format: 'sealed', packs }
-      : b.how === 'rochester'
-        ? { format: 'rochester', packs, burn: 0 }
-        : b.how === 'winston'
-          ? { format: 'winston', packs }
-          : b.how === 'grid'
-            ? { format: 'grid', grids: Math.max(1, packs * 3) }
-            : { format: 'pass', packs, picks: Math.max(1, Math.round(b.picks)) };
-  return { draft, sets: b.sets.length ? [...b.sets] : ['M19'], pickTimer: b.pickTimer };
-}
-
-/** The table's lobby settings as a booster setup for the sheet; the default setup where the table has no draft. */
-export function boostersFromLobby(lobby: LobbySettings | undefined, fallback: BoosterSetup): BoosterSetup {
-  const d = lobby?.draft;
-  if (!lobby || !d || d.format === 'teamDraft' || d.format === 'teamSealed') return fallback;
-  const packs = d.format === 'grid' ? Math.max(1, Math.round(d.grids / 3)) : d.packs;
-  return { how: d.format, packs, picks: d.format === 'pass' ? d.picks : 1, sets: [...lobby.sets], pickTimer: lobby.pickTimer };
 }
 
 /** The game's kind for the overlay when the frame does not say: matched, a draft night, else a private table. */

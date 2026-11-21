@@ -46,9 +46,10 @@ function permanent(c: CardInstance, base: BotCard, me: SeatId): BotPermanent {
  * a `turnPass` (session/entry.ts rollFirstPlayer), which raises the number to 2. The starter is the outcome of the
  * newest `firstPlayer` round over the occupied seats in seat order (as the roll counts them); the first turn lasts
  * while every `turnPass` since that round's commit went to the starter (the roll's own hand-over). Without a roll, it is
- * turn 1 with no pass at all.
+ * turn 1 with no pass at all. A log that starts after the round's commit (a resume reads the log after the stored
+ * snapshot) cannot show it: then it is not the first turn, so Sparring draws rather than skips a draw.
  */
-export function firstTurnOfGame(state: TableState, actions: readonly Action[]): boolean {
+export function firstTurnOfGame(state: TableState, actions: readonly Action[], whole = true): boolean {
   let round: RngRound | undefined;
   for (const r of Object.values(state.rng)) if (r.purpose === 'firstPlayer' && (round === undefined || r.startSeq > round.startSeq)) round = r;
   if (round === undefined) return state.turn.number === 1 && !actions.some((a) => a.type === 'turnPass');
@@ -62,12 +63,20 @@ export function firstTurnOfGame(state: TableState, actions: readonly Action[]): 
   if (state.turn.active !== starter) return false;
   const rid = round.id;
   const from = actions.findIndex((a) => a.type === 'rngCommit' && a.rid === rid);
+  if (from < 0 && !whole) return false;
   for (let i = Math.max(0, from); i < actions.length; i++) {
     const a = actions[i]!;
     if (a.type === 'turnPass' && a.to !== starter) return false;
   }
   return true;
 }
+
+/** Whether `log` is the whole log of the table (a resumed session holds only the log after its snapshot). */
+export function logFromStart(state: TableState, log: readonly LogEntry[]): boolean {
+  return log.length === 0 ? state.seq === 0 : log[0]!.seq <= 1;
+}
+
+const PHASES: readonly string[] = ['untap', 'upkeep', 'draw', 'main1', 'combat', 'main2', 'end'];
 
 /** Build the view (computer.md 4.1). */
 export function buildView({ state, secrets, cardData, log, me }: ViewInput): BotView {
@@ -131,6 +140,17 @@ export function buildView({ state, secrets, cardData, log, me }: ViewInput): Bot
     if (a.type === 'stackPush' && a.card !== undefined) arrived.add(a.card);
     if (a.type === 'respond' && cueOf(cueRounds.get(a.round)) === 'blocksDone') combatDone = true;
   }
+  // A log that does not reach back to this turn's start (no turnPass in it and not the whole log: a resume after a
+  // snapshot taken during the turn) cannot show what the turn did. Sparring then reads it from the phase and keeps to
+  // the safe side: the turn has begun, the draw is done once the phase is past the draw step, the land once it is in
+  // main 1 or later. It may miss a land or a draw once; it never untaps, draws or plays a land twice.
+  const whole = logFromStart(state, log);
+  if (!actions.some((a) => a.type === 'turnPass') && !whole) {
+    const at = PHASES.indexOf(state.turn.phase);
+    phased = true;
+    if (at > PHASES.indexOf('draw')) drew = true;
+    if (at >= PHASES.indexOf('main1')) landPlayed = true;
+  }
 
   // Opening hand: the bot has not acted at the table yet in this game.
   let lastDealt = -1;
@@ -186,7 +206,7 @@ export function buildView({ state, secrets, cardData, log, me }: ViewInput): Bot
       .filter((l) => l.kind === 'block' && l.from.kind === 'card' && l.to.kind === 'card')
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       .map((l) => ({ blocker: l.from.id, attacker: l.to.id })),
-    thisTurn: { fresh: !phased, drew, firstOfGame: firstTurnOfGame(state, actions), landPlayed, arrived: [...arrived].sort(), steps, attacked, combatDone },
+    thisTurn: { fresh: !phased, drew, firstOfGame: firstTurnOfGame(state, actions, whole), landPlayed, arrived: [...arrived].sort(), steps, attacked, combatDone },
     opening: { pending: lastDealt >= 0 && !playedSinceDeal && state.stage === 'match', mulligans, bottomed },
     over: state.result !== undefined,
     cue: combatCue(state, log, opp, me),

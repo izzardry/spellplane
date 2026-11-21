@@ -216,8 +216,8 @@ test.describe('M2 gate @gate', () => {
       await fillNumber(A.page, 'lobby-picks', 1);
       await expect.poll(async () => (await state(B.page)).lobby).toEqual({ draft: { format: 'pass', packs: 3, picks: 1 }, sets: ['M19'], pickTimer: false });
       await expect(B.page.getByTestId('lobby-packs')).toHaveValue('3');
-      await expect(B.page.getByTestId('start-draft')).toHaveCount(0);
-      await expect(A.page.getByTestId('start-draft')).toBeEnabled();
+      await expect(B.page.getByTestId('room-start-draft')).toHaveCount(0);
+      await expect(A.page.getByTestId('room-start-draft')).toBeEnabled();
       await shot(A.page, 'M2', 'lobby-settings', project);
     });
     if (!lobbyOk) return finish();
@@ -283,7 +283,7 @@ test.describe('M2 gate @gate', () => {
     // ------------------------------------------------------------------------------------------------------------
     const picks: PickRec[] = [];
     const draftOk = await step('booster draft: Ann starts it; both draft three packs by the keyboard until the builder opens', async () => {
-      await A.page.getByTestId('start-draft').click();
+      await A.page.getByTestId('room-start-draft').click();
       for (const p of both) await inStage(p.page, 'draft');
       await expect.poll(async () => (await view(B.page))?.pack?.cards.length ?? 0, { timeout: 30_000 }).toBeGreaterThan(0);
       await expect(A.page.getByTestId('draft-title')).toContainText('pack 1 of 3');
@@ -633,8 +633,8 @@ test.describe('M2 gate @gate', () => {
       await A.page.getByTestId('lobby-mode').selectOption('sealed');
       await fillNumber(A.page, 'lobby-packs', 6);
       await expect.poll(async () => (await state(B.page)).lobby?.draft).toEqual({ format: 'sealed', packs: 6 });
-      await expect(A.page.getByTestId('start-draft')).toHaveText('Open the sealed pools');
-      await A.page.getByTestId('start-draft').click();
+      await expect(A.page.getByTestId('room-start-draft')).toHaveText('START THE DRAFT');
+      await A.page.getByTestId('room-start-draft').click();
       for (const p of both) await inStage(p.page, 'build');
       const packSize = picks.find((x) => x.seat === 's0')!.before.length;
       for (const p of both) {
@@ -661,7 +661,7 @@ test.describe('M2 gate @gate', () => {
       await A.page.getByTestId('lobby-mode').selectOption('rochester');
       await fillNumber(A.page, 'lobby-packs', 1);
       await expect.poll(async () => (await state(B.page)).lobby?.draft).toEqual({ format: 'rochester', packs: 1, burn: 0 });
-      await A.page.getByTestId('start-draft').click();
+      await A.page.getByTestId('room-start-draft').click();
       for (const p of both) await inStage(p.page, 'draft');
       await expect.poll(async () => (await view(A.page))?.pack?.public ?? false, { timeout: 30_000 }).toBe(true);
       // The pack lies face up for both: the same cards on both pages.

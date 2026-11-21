@@ -173,6 +173,15 @@ test.describe('HudShellProps on ?harness=ui', () => {
     await page.evaluate(() => window.__uiHarness!.hover('bf1'));
     for (const k of ['KeyD', 'KeyU', 'KeyT', 'Control+Enter']) await page.keyboard.press(k);
     expect(await page.evaluate(() => window.__uiHarness!.actions().length + window.__uiHarness!.calls().length)).toBe(0);
+    // View-only on every route: the plates show no steppers or hand reveal, and the scene is told not to act.
+    await setShell(page, { chrome: 'full' });
+    await setShell(page, { chrome: 'plates' });
+    await expect.poll(() => page.evaluate(() => window.__uiHarness!.scene().filter((c) => c.method === 'setReadOnly').map((c) => c.args[0]))).toEqual([false, true]);
+    await expect(page.getByTestId('life-plus')).toHaveCount(0);
+    await expect(page.getByTestId('life-minus')).toHaveCount(0);
+    await plate(page, 's1').getByTestId('plate-more').click();
+    await expect(plate(page, 's1').getByTestId('plate-details')).toBeVisible();
+    await expect(plate(page, 's1').getByTestId('plate-reveal-hand')).toHaveCount(0);
   });
 
   test('readOnly: no primary button and no Undo; the Menu still opens; life cannot be changed', async ({ page }) => {
@@ -205,6 +214,29 @@ test.describe('HudShellProps on ?harness=ui', () => {
       expect(n).toEqual({ actions: [], calls: [], drags: [] });
     };
     const menu = page.getByTestId('context-menu');
+    await test.step('the scene is told: it proposes no action', async () => {
+      await setShell(page, { readOnly: false });
+      await setShell(page, { readOnly: true });
+      await expect.poll(() => page.evaluate(() => window.__uiHarness!.scene().filter((c) => c.method === 'setReadOnly').map((c) => c.args[0]))).toEqual([false, true]);
+    });
+    await test.step('right-click the empty table: only Fit and the key sheet', async () => {
+      // A point where the bare table is on top (no card, plate or HUD control over it).
+      const at = await page.evaluate(() => {
+        for (let y = 0.3; y < 0.9; y += 0.05)
+          for (let x = 0.3; x < 0.9; x += 0.05) {
+            const px = Math.round(innerWidth * x);
+            const py = Math.round(innerHeight * y);
+            if ((document.elementFromPoint(px, py) as HTMLElement | null)?.dataset.testid === 'fake-scene') return { x: px, y: py };
+          }
+        return null;
+      });
+      expect(at, 'a bare spot of the table').not.toBeNull();
+      await page.mouse.click(at!.x, at!.y, { button: 'right' });
+      await expect(menu).toBeVisible();
+      expect((await menu.locator('[role="menuitem"]').evaluateAll((els) => els.map((e) => e.getAttribute('data-action')))).sort()).toEqual(['fitTable', 'help']);
+      await page.keyboard.press('Escape');
+      await expect(menu).toHaveCount(0);
+    });
     await test.step('right-click a table card: only Inspect and Zoom', async () => {
       await page.locator('[data-testid="scene-card"][data-card="bf1"]').click({ button: 'right' });
       await expect(menu).toBeVisible();
@@ -254,6 +286,21 @@ test.describe('HudShellProps on ?harness=ui', () => {
       await page.mouse.up();
     });
     await nothing();
+  });
+
+  test('readOnly turning on closes an acting overlay that is open: the card menu, the draw prompt', async ({ page }) => {
+    const menu = page.getByTestId('context-menu');
+    await page.locator('[data-testid="scene-card"][data-card="bf1"]').click({ button: 'right' });
+    await expect(menu.locator('[data-action="tap"]')).toBeVisible();
+    await setShell(page, { readOnly: true });
+    await expect(menu).toHaveCount(0);
+    await setShell(page, { readOnly: false });
+    await page.mouse.move(5, 300);
+    await page.keyboard.press('Shift+KeyD');
+    await expect(page.getByTestId('draw-n')).toBeVisible();
+    await setShell(page, { readOnly: true });
+    await expect(page.getByTestId('draw-n')).toHaveCount(0);
+    expect(await page.evaluate(() => window.__uiHarness!.actions())).toEqual([]);
   });
 
   test('primaryOverride: shows its label, runs it, and the button returns to its own step when cleared', async ({ page }) => {

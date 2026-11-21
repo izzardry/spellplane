@@ -21,6 +21,18 @@ async function fixtureDecks(): Promise<DeckRecord[]> {
   return [gw, ur, ...importLibrary(LIBRARY).decks].map((d) => ({ ...d, summary: summarise(d, lookup) }));
 }
 
+/** What the scan finds in what would leave the browser for `deck`: its id, name, card ids, card names, oracle ids, colour words, extra fields. */
+function leaks(deck: DeckRecord, info: object): string[] {
+  const found: string[] = [];
+  const keys = Object.keys(info).sort();
+  if (keys.join() !== 'band,cards,kind,size,strength,v') found.push(`fields ${keys.join(', ')}`);
+  const bytes = JSON.stringify(info);
+  const secrets = [deck.id, deck.name, ...[...deck.main, ...deck.side, ...(deck.seal?.pool ?? [])].flatMap((r) => [r.sid, lookup(r)?.name ?? '', lookup(r)?.oracle_id ?? ''])].filter((s) => s.length > 0);
+  for (const s of new Set(secrets)) if (bytes.includes(s)) found.push(`${s} leaked`);
+  for (const w of COLOUR_WORDS) if (bytes.toLowerCase().includes(w.toLowerCase())) found.push(`colour ${w} leaked`);
+  return found;
+}
+
 describe('queue deck info leak (M8-P3)', () => {
   it('queueDeckInfo holds six facts and no card id, name or colour', async () => {
     const decks = await fixtureDecks();
@@ -29,18 +41,17 @@ describe('queue deck info leak (M8-P3)', () => {
       const info = queueDeckInfo(deck);
       if (!info) continue;
       checked++;
-      expect(Object.keys(info).sort()).toEqual(['band', 'cards', 'kind', 'size', 'strength', 'v']);
-      const bytes = JSON.stringify(info);
-      const secrets = [deck.id, deck.name, ...[...deck.main, ...deck.side, ...(deck.seal?.pool ?? [])].flatMap((r) => [r.sid, lookup(r)?.name ?? '', lookup(r)?.oracle_id ?? ''])].filter((s) => s.length > 0);
-      for (const s of secrets) expect(bytes.includes(s), `${s} leaked`).toBe(false);
-      for (const w of COLOUR_WORDS) expect(bytes.toLowerCase().includes(w.toLowerCase()), `colour ${w} leaked`).toBe(false);
+      expect(leaks(deck, info)).toEqual([]);
     }
     expect(checked).toBeGreaterThanOrEqual(3);
   });
 
-  it('fails when a leak is injected (the scan sees a name)', async () => {
+  it('the scan reports an injected leak: the cover card, the deck name, a colour', async () => {
     const [deck] = await fixtureDecks();
-    const leaky = JSON.stringify({ ...queueDeckInfo(deck!), cover: deck!.summary!.cover });
-    expect(leaky.includes(deck!.summary!.cover!.sid)).toBe(true);
+    const info = queueDeckInfo(deck!)!;
+    const cover = deck!.summary!.cover!;
+    expect(leaks(deck!, { ...info, cover })).toEqual(expect.arrayContaining(['fields band, cards, cover, kind, size, strength, v', `${cover.sid} leaked`]));
+    expect(leaks(deck!, { ...info, kind: deck!.name })).toEqual([`${deck!.name} leaked`]);
+    expect(leaks(deck!, { ...info, band: 'green' })).toEqual(['colour green leaked']);
   });
 });

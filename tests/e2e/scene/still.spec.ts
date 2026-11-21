@@ -79,6 +79,19 @@ test.describe('the arena still', () => {
     }
   });
 
+  test('a return to Home does not draw the arena again: the same look and size resolve the kept still', async ({ page }) => {
+    await openScene(page);
+    await page.evaluate(() => window.__sceneHarness!.dispose());
+    const before = await memory(page);
+    const r = await page.evaluate(() => window.__sceneHarness!.arenaStillKept('plain', [640, 640, 800, 640]));
+    expect(r.map((x) => x.bytes > 0)).toEqual([true, true, true, true]);
+    expect(r.map((x) => x.kept)).toEqual([false, true, false, true]);
+    // Two draws (640 and 800 px), each with its own context, released afterwards.
+    const m = await memory(page);
+    expect(m.disposals - before.disposals).toBe(2);
+    expect(m.contexts).toBe(0);
+  });
+
   test('resolves null when WebGL is unavailable', async ({ page }) => {
     await openScene(page);
     const before = await memory(page);

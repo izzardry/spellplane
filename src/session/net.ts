@@ -64,7 +64,7 @@ import { builtOn, changedObjects, namesAny, undoPlan, undoStackFromLog, type Oth
 import type { CardData } from '../data/types';
 import type { PackSeed } from '../draft/types';
 import { draftCardsOver } from '../net/draftcards';
-import { createNetEngine, NACK_DUPLICATE } from '../net/engine';
+import { createNetEngine, headKeyOf, NACK_DUPLICATE } from '../net/engine';
 import { createNetIdentity } from '../net/identity';
 import type { ChatChannel, SequencedAction } from '../net/messages';
 import { createPrivateChannel } from '../net/private';
@@ -135,6 +135,8 @@ const SEAT_COLOURS = 8;
 const MUSTER_WAIT_MS = 5000;
 
 /** What a browser on standby may propose (persistence.md section 5; contracts.md Part G item 5). */
+/** Claim refusals a link never outgrows (used, taken back, void, expired, not valid): its kept token is forgotten. */
+const CLAIM_SPENT = /^\[claim:(used|takenBack|void|expired|wrong)\]/;
 const STANDBY_OK: ReadonlySet<string> = new Set(['chat', 'seatInvite', 'seatClaim', 'playOn']);
 
 /** `Ben`, `Ben and Cy`, `Ben, Cy and Dana`. */
@@ -178,6 +180,11 @@ export interface NetSessionInternals {
    * here never sits alone, syncs the public table and waits until `claimSeat` is called (the claim page's button).
    */
   claim?: { seat: SeatId; token: string };
+  /**
+   * [M8-P7] The chair to take when this browser holds none and it is free (a matched room: the plan's seat, so teams
+   * and seats follow the offer, session/match-room.ts); otherwise the lowest free chair, as without it.
+   */
+  preferSeat?: SeatId;
 }
 
 /** The seq-0 table of a room nobody saved (DESIGN "Players, seats and formats", Seats: every chair free). */
@@ -247,6 +254,8 @@ export function exposedFromLog(log: readonly Action[], state: TableState, seat: 
     if (a.type === 'reveal' && a.by === seat && mine(a.instanceId)) out.add(a.instanceId);
     else if (a.type === 'flip' && a.by === seat && a.ref !== undefined && mine(a.card)) out.add(a.card);
     else if (a.type === 'revealTo' && a.by === seat && mine(a.instanceId)) out.add(a.instanceId);
+    // A card that stood in a public zone (face down too) under its id: every seat knows where that id went next.
+    else if ((a.type === 'move' || a.type === 'toZone') && mine(a.card) && state.zones[a.to]?.visibility === 'public') out.add(a.card);
     else if (a.type === 'lookAt' && a.by !== seat) {
       if (a.card !== undefined) {
         if (mine(a.card)) out.add(a.card);
@@ -256,7 +265,7 @@ export function exposedFromLog(log: readonly Action[], state: TableState, seat: 
       }
     }
   }
-  for (const [id, c] of Object.entries(state.cards)) if (c.owner === seat && c.identity !== undefined) out.add(id);
+  for (const [id, c] of Object.entries(state.cards)) if (c.owner === seat && (c.identity !== undefined || state.zones[c.zone]?.visibility === 'public')) out.add(id);
   return out;
 }
 
@@ -413,6 +422,15 @@ class NetTable implements NetSession, SessionRecovery {
     this.hadSave = init.hadSave === true;
     this.knownHeadValue = init.knownHead ?? null;
     if (internals.claim) this.claimWanted = { ...internals.claim };
+    else if (engine.seat() === null) {
+      // A reload after the address lost its token (Gathering scrubs it): the claim kept beside the open nonces, while
+      // the saved copy (if any) gives this key pair no seat.
+      const seat = this.nonces.ids('claim').find((id) => !id.startsWith('team:'));
+      const token = seat === undefined ? null : this.nonces.get('claim', seat);
+      if (seat !== undefined && token) this.claimWanted = { seat, token };
+    }
+    // A blank browser keeps the link's claim until it is made or refused (persistence.md section 7).
+    if (this.claimWanted !== null && engine.seat() === null) this.nonces.set('claim', this.claimWanted.seat, this.claimWanted.token);
     this.followView(engine.state(), 'top');
     this.exposed = exposedFromLog(
       init.entries.flatMap((e) => (e.kind === 'action' ? [e.action] : [])),
@@ -1882,9 +1900,11 @@ class NetTable implements NetSession, SessionRecovery {
   sitIfUnseated(): Action | null {
     if (this.disposed || this.engine.seat() !== null) return null;
     const st = this.engine.state();
-    const free = Object.values(st.seats)
+    const open = (s: TableState['seats'][SeatId]): boolean => s.peer === undefined && s.name.trim() === '';
+    const prefer = this.internals.preferSeat !== undefined && Object.hasOwn(st.seats, this.internals.preferSeat) ? st.seats[this.internals.preferSeat] : undefined;
+    const free = prefer && open(prefer) ? prefer : Object.values(st.seats)
       .sort((a, b) => a.index - b.index)
-      .find((s) => s.peer === undefined && s.name.trim() === '');
+      .find(open);
     if (!free) return null;
     this.seatAttempts++;
     const taken = new Set(Object.values(st.seats).filter((s) => s.id !== free.id && (s.peer !== undefined || s.name.trim() !== '')).map((s) => s.colour));
@@ -1907,6 +1927,22 @@ class NetTable implements NetSession, SessionRecovery {
         this.claimWanted = null;
       }
       await this.awaitMuster();
+      // The seat the saved copy maps to this key pair may have been taken over meanwhile (persistence.md section 7):
+      // that shows only once the copy is in step with the room's.
+      if (!this.live() && this.peerConnected()) {
+        await this.until(
+          () => {
+            const st = this.engine.status();
+            return this.disposed || (st !== 'syncing' && st !== 'joining');
+          },
+          () => null,
+          timeoutMs,
+          'the table to sync',
+        ).catch(() => undefined);
+      }
+      if (this.disposed) throw new Error('The session is closed');
+      const moved = this.seatMoved();
+      if (moved !== null) throw new Error(moved);
       return;
     }
     this.sitting = true;
@@ -2132,10 +2168,19 @@ class NetTable implements NetSession, SessionRecovery {
     const mine = { seq: this.engine.seq(), play: this.engine.play?.() ?? 0 };
     let known = this.knownHeadValue;
     if (known !== null && !knownIsNewer(known, mine)) known = null;
-    for (const p of this.engine.peers()) {
-      if (p.status !== 'connected' || !p.head || p.peerId === '') continue;
-      const cand: KnownHead = { play: p.head.play, seq: p.head.seq, peer: p.peerId, seat: seatOfPeer(st, p.peerId) };
+    const consider = (cand: KnownHead): void => {
       if (knownIsNewer(cand, mine) && (known === null || knownIsNewer(cand, known))) known = cand;
+    };
+    for (const p of this.engine.peers()) {
+      // Seated players only (a spectator's or a claimant's copy decides no muster).
+      if (p.status !== 'connected' || p.peerId === '' || p.role === 'spectator') continue;
+      const seat = seatOfPeer(st, p.peerId);
+      if (seat === null) continue;
+      if (p.head) consider({ play: p.head.play, seq: p.head.seq, peer: p.peerId, seat });
+      // While gathering, the copy a verified peer reported in its hello, heartbeat or claim counts as well (persistence.md
+      // section 5, rule 3): it may drop before any head goes out, and its newer copy must not be forgotten.
+      const key = headKeyOf(p);
+      if (!this.stayed && key.play !== undefined) consider({ play: key.play, seq: key.seq, peer: p.peerId, seat });
     }
     if (known !== this.knownHeadValue && canonicalJson(known) !== canonicalJson(this.knownHeadValue)) {
       this.knownHeadValue = known;
@@ -2215,9 +2260,12 @@ class NetTable implements NetSession, SessionRecovery {
     return `Your seat was taken over from another browser${maker ? ` (link made by ${maker})` : ''}. Your saved hand for this game can no longer be used.`;
   }
 
-  /** The re-invite link base: this page's address without its hash. */
+  /**
+   * The re-invite link base: this page's address without its query and hash. Test flags such as `?profile=` belong to
+   * this browser only and must not travel with a shared link (as ui/lobby/room.ts pageBase does for room links).
+   */
   private linkBase(): string {
-    return typeof location === 'undefined' ? '' : location.href.split('#')[0]!;
+    return typeof location === 'undefined' ? '' : location.href.replace(/[?#].*$/, '');
   }
 
   /** Open a re-invite for an away seat; resolves to the link once sequenced (persistence.md section 7). */
@@ -2317,14 +2365,20 @@ class NetTable implements NetSession, SessionRecovery {
     const nm = (name ?? st.seats[c.seat]?.name ?? '').trim().slice(0, 64) || this.opts.identity.nickname || DEFAULT_NICKNAME;
     const a = this.stampAs({ type: 'seatClaim', seat: c.seat, claim: c.token, peer: this.peerId, name: nm }, c.seat);
     const why = explain(st, { ...a, seq: st.seq + 1 } as Action);
-    if (why !== null) throw new Error(why);
+    if (why !== null) {
+      // A refusal the claim cannot outgrow (used, taken back, void, expired, …): the kept token is forgotten.
+      if (CLAIM_SPENT.test(why)) this.nonces.delete('claim', c.seat);
+      throw new Error(why);
+    }
     this.nonces.set('claim', c.seat, c.token);
     if (!this.propose(a, false)) throw new Error(this.lastWarning());
     this.notify();
     try {
       await this.sequenced(a.cid);
     } catch (e) {
-      throw new Error(errorText(e).replace(/^refused: /, ''), { cause: e });
+      const reason = errorText(e).replace(/^refused: /, '');
+      if (CLAIM_SPENT.test(reason)) this.nonces.delete('claim', c.seat);
+      throw new Error(reason, { cause: e });
     }
   }
 

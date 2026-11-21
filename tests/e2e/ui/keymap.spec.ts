@@ -25,6 +25,8 @@ const first = async (page: Page) => (await drafts(page))[0];
 const expectDraft = (want: Record<string, unknown>): Check => async (page) => expect.poll(() => first(page)).toMatchObject(want);
 const expectCall = (method: string, args?: unknown[]): Check => async (page) =>
   expect.poll(() => ui<{ method: string; args: unknown[] }[]>(page, 'calls')).toContainEqual(args ? { method, args } : expect.objectContaining({ method }));
+/** Scene calls a key could have caused: without the HUD's read-only setting, which it pushes once the scene is ready (M7-P2). */
+const keyScene = async (page: Page) => (await ui<{ method: string; args: unknown[] }[]>(page, 'scene')).filter((c) => c.method !== 'setReadOnly');
 const expectScene = (method: string, args: unknown[]): Check => async (page) => expect.poll(() => ui<{ method: string; args: unknown[] }[]>(page, 'scene')).toContainEqual({ method, args });
 
 interface Scenario {
@@ -245,7 +247,7 @@ test.describe('no key fires while a text field has focus (PLAN M0-P4)', () => {
     await page.keyboard.up('Space');
     expect(await ui(page, 'actions')).toEqual([]);
     expect(await ui(page, 'calls')).toEqual([]);
-    expect(await ui(page, 'scene')).toEqual([]);
+    expect(await keyScene(page)).toEqual([]);
     expect(await ui(page, 'voice')).toEqual([]);
     await expect(page.getByTestId('cheat-sheet')).toHaveCount(0);
     await expect(page.getByTestId('inspect')).toHaveCount(0);
@@ -275,7 +277,7 @@ test.describe('no key fires while a text field has focus (PLAN M0-P4)', () => {
     await input.focus();
     expect(await ui(page, 'actions')).toEqual([]);
     expect(await ui(page, 'calls')).toEqual([]);
-    expect(await ui(page, 'scene')).toEqual([]);
+    expect(await keyScene(page)).toEqual([]);
     await input.fill('kicked');
     await page.keyboard.press('Enter');
     expect(await drafts(page)).toEqual([{ type: 'note', card: 'bf1', text: 'kicked' }]);

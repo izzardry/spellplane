@@ -70,11 +70,11 @@
   .big {
     font-size: 22px;
     font-weight: var(--sp-font-weight-bold, 600);
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-mono, var(--sp-font-mono));
   }
   .lands {
     margin-left: auto;
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-mono, var(--sp-font-mono));
   }
   .hint {
     margin: 0;
@@ -109,7 +109,7 @@
     min-width: 0;
   }
   .curve .n {
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-mono, var(--sp-font-mono));
   }
   .curve .bar {
     display: block;
@@ -120,7 +120,7 @@
   }
   .curve .mv {
     color: var(--sp-muted);
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-mono, var(--sp-font-mono));
   }
   .split {
     display: flex;
@@ -139,7 +139,7 @@
     margin: 0;
     padding: 0;
     list-style: none;
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-mono, var(--sp-font-mono));
   }
   .colours li {
     display: inline-flex;

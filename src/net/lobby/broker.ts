@@ -15,7 +15,7 @@
 import { sha256TextBytes } from '../../core/sha256';
 import type { QueueId } from '../../core/types';
 import type { LobbyMessage, PassReason, Ticket } from './messages';
-import { bestGroup, compatible, deriveRoom, JUDGE_SLACK_MS, midOf, nextBoundary, queueParts, ratingFor, splitTeams, type Candidate } from './pairing';
+import { bestGroup, compatible, deriveRoom, groupSize, JUDGE_SLACK_MS, midOf, nextBoundary, queueParts, ratingFor, splitTeams, type Candidate } from './pairing';
 
 export const COLLECT_MS = 200;
 export const HOLD_TTL_MS = 3_000;
@@ -91,10 +91,15 @@ export interface BrokerState {
   counter: number;
   retryAt: number;
   blocks: OfferBlock[];
-  /** Holds and readies that arrived before this browser reached that match id (reordering). */
-  early: Record<string, { holds: Record<string, string>; ready: string[] }>;
-  /** Match ids that were passed: a late offer of one is ignored. */
+  /**
+   * Holds, readies and passes that arrived before this browser reached that match id (reordering). Only those from the
+   * offer's members count once it arrives; the rest are dropped.
+   */
+  early: Record<string, { holds: Record<string, string>; ready: string[]; passes?: string[] }>;
+  /** Match ids that were passed: a late offer of one is answered `stale`. */
   dead: string[];
+  /** This broker's random salt in its match ids (from the room): ids of a new lobby connection never repeat old ones. */
+  salt: string;
 }
 
 export type BrokerEvent =
@@ -109,9 +114,7 @@ export type BrokerEvent =
   | { kind: 'message'; now: number; from: string; msg: LobbyMessage }
   /** The room signed and sent this browser's hold for `mid` with `nonce`. */
   | { kind: 'held'; now: number; mid: string; nonce: string }
-  | { kind: 'answer'; now: number; accept: boolean }
-  /** Back to seeking after a match room was never fully reached (30-second arrival rule), the waiting time kept. */
-  | { kind: 'resume'; now: number };
+  | { kind: 'answer'; now: number; accept: boolean };
 
 export interface Outgoing {
   to: string;
@@ -123,8 +126,8 @@ export type BrokerEffect =
   | { kind: 'hold'; mid: string; to: string[] }
   | { kind: 'check'; mid: string }
   | { kind: 'formed'; match: FormedMatch }
-  /** Another member declined or let the check lapse: back in the queue, waiting time kept. */
-  | { kind: 'returned'; reason: 'declined' | 'lapsed' }
+  /** Another member declined or let the check lapse: back in the queue, waiting time kept. `name`: who, when known. */
+  | { kind: 'returned'; reason: 'declined' | 'lapsed'; name?: string }
   /** This browser declined or let the check lapse: the search stopped. */
   | { kind: 'stopped'; reason: 'declined' | 'lapsed' };
 
@@ -135,9 +138,10 @@ export interface StepResult {
 }
 
 /** A fresh broker for this browser's lobby connection. */
-export function createBroker(self: { tid: string; peerId: string; proto: number }): BrokerState {
+export function createBroker(self: { tid: string; peerId: string; proto: number; salt?: string }): BrokerState {
   return {
     ...self,
+    salt: self.salt ?? '',
     phase: 'watching',
     ticket: null,
     since: null,
@@ -248,6 +252,11 @@ class Stepper {
   problem(offer: HeldOffer): PassReason | null {
     const me = this.s.ticket;
     if (!me || !offer.members.some((m) => m.tid === this.s.tid)) return 'stale';
+    // The queue's table size, distinct members, and in 2hg two teams of two (no team field otherwise).
+    if (offer.members.length !== groupSize(offer.queue) || new Set(offer.members.map((m) => m.tid)).size !== offer.members.length) return 'stale';
+    if (queueParts(offer.queue).format === '2hg') {
+      if (offer.members.filter((m) => m.team === 0).length !== 2 || offer.members.filter((m) => m.team === 1).length !== 2) return 'stale';
+    } else if (offer.members.some((m) => m.team !== undefined)) return 'stale';
     if (!me.queues.includes(offer.queue)) return 'window';
     for (const m of offer.members) {
       if (m.tid === this.s.tid) {
@@ -359,8 +368,8 @@ class Stepper {
     this.s.phase = 'moving';
     this.effects.push({ kind: 'formed', match: formed });
   }
-  /** A member of the current hold or check is out (pass, unseek, gone). */
-  memberOut(mid: string, reason: PassReason | 'gone'): void {
+  /** A member of the current hold or check is out (pass, unseek, gone); `who` is that member when known. */
+  memberOut(mid: string, reason: PassReason | 'gone', who?: string): void {
     if (this.s.hold && this.s.hold.offer.mid === mid) {
       const o = this.s.hold.offer;
       this.kill(mid);
@@ -369,9 +378,10 @@ class Stepper {
       return;
     }
     if (this.s.check && this.s.check.offer.mid === mid) {
+      const name = who === undefined ? undefined : this.s.peers[who]?.ticket?.name;
       this.kill(mid);
       this.toSeeking();
-      this.effects.push({ kind: 'returned', reason: reason === 'declined' ? 'declined' : 'lapsed' });
+      this.effects.push({ kind: 'returned', reason: reason === 'declined' ? 'declined' : 'lapsed', ...(name ? { name } : {}) });
       return;
     }
     const o = this.s.offers.find((x) => x.mid === mid);
@@ -392,7 +402,7 @@ class Stepper {
       const g = bestGroup({ c: me, waitMs: myWait }, others, queue, (a, b) => this.linked(a, b), (members) => this.blocked(queue, members));
       if (!g) continue;
       this.s.counter++;
-      const mid = midOf(queue, g.members, this.s.tid, this.s.counter);
+      const mid = midOf(queue, g.members, this.s.tid, this.s.counter, this.s.salt);
       const ticketOf = (t: string): Ticket => (t === this.s.tid ? me : this.s.peers[t]!.ticket!);
       let teams: Record<string, 0 | 1> | null = null;
       if (queueParts(queue).format === '2hg') teams = splitTeams(g.members.map((t) => ({ tid: t, rating: ratingFor(ticketOf(t), queue) ?? 0 })));
@@ -441,10 +451,10 @@ class Stepper {
         return;
       }
       case 'unseek': {
+        this.out(from);
         peer.ticket = null;
         peer.since = null;
         peer.state = 'watching';
-        this.out(from);
         return;
       }
       case 'beat': {
@@ -458,8 +468,22 @@ class Stepper {
       case 'offer': {
         const members = msg.members;
         if (!members.some((m) => m.tid === from) || !members.some((m) => m.tid === s.tid)) return;
-        if (s.dead.includes(msg.mid)) return;
+        // An offer this browser already passed (a late copy, or a reused id): `stale` again, so its anchor moves on at once.
+        if (s.dead.includes(msg.mid)) {
+          this.to([from], { v: 1, t: 'pass', mid: msg.mid, reason: 'stale' });
+          return;
+        }
         const offer: HeldOffer = { mid: msg.mid, queue: msg.queue, members, anchor: from };
+        // A member passed it before it reached this browser (reordering): it is over. Passes from anyone else are dropped.
+        const early = s.early[msg.mid];
+        if (early?.passes?.some((t) => members.some((m) => m.tid === t))) {
+          this.kill(msg.mid);
+          return;
+        }
+        if (early?.passes) {
+          delete early.passes;
+          if (Object.keys(early.holds).length === 0 && early.ready.length === 0) delete s.early[msg.mid];
+        }
         if (s.phase === 'seeking' || s.phase === 'collecting') this.addOffer(offer);
         else if (s.hold?.offer.mid === msg.mid || s.check?.offer.mid === msg.mid) return;
         else this.pass(offer, s.phase === 'watching' ? 'stale' : 'busy');
@@ -481,9 +505,18 @@ class Stepper {
       }
       case 'pass': {
         const inPlay = s.hold?.offer.mid === msg.mid || s.check?.offer.mid === msg.mid || s.offers.some((o) => o.mid === msg.mid);
-        const member = (s.hold?.offer ?? s.check?.offer ?? s.offers.find((o) => o.mid === msg.mid))?.members.some((m) => m.tid === from) ?? false;
-        if (inPlay && !member) return;
-        this.memberOut(msg.mid, msg.reason);
+        if (!inPlay) {
+          // Not (yet) an offer here: keep it until the offer arrives, where only a member's pass counts. Never kill an
+          // unknown id on anyone's word (a stray pass would silence the real offer).
+          if (s.dead.includes(msg.mid)) return;
+          if (!s.early[msg.mid] && Object.keys(s.early).length >= MAX_EARLY) return;
+          const e = (s.early[msg.mid] ??= { holds: {}, ready: [] });
+          if (!(e.passes ?? []).includes(from)) e.passes = [...(e.passes ?? []), from];
+          return;
+        }
+        const offer = s.hold?.offer.mid === msg.mid ? s.hold.offer : s.check?.offer.mid === msg.mid ? s.check.offer : s.offers.find((o) => o.mid === msg.mid);
+        if (!offer?.members.some((m) => m.tid === from)) return;
+        this.memberOut(msg.mid, msg.reason, from);
         return;
       }
       case 'ready': {
@@ -503,9 +536,9 @@ class Stepper {
   /** A peer stopped seeking or left: whatever it was part of here ends. */
   out(tid: string): void {
     const s = this.s;
-    if (s.hold && s.hold.offer.members.some((m) => m.tid === tid)) this.memberOut(s.hold.offer.mid, 'stale');
-    else if (s.check && s.check.offer.members.some((m) => m.tid === tid)) this.memberOut(s.check.offer.mid, 'declined');
-    for (const o of s.offers.filter((x) => x.members.some((m) => m.tid === tid))) this.memberOut(o.mid, 'stale');
+    if (s.hold && s.hold.offer.members.some((m) => m.tid === tid)) this.memberOut(s.hold.offer.mid, 'stale', tid);
+    else if (s.check && s.check.offer.members.some((m) => m.tid === tid)) this.memberOut(s.check.offer.mid, 'declined', tid);
+    for (const o of s.offers.filter((x) => x.members.some((m) => m.tid === tid))) this.memberOut(o.mid, 'stale', tid);
   }
 }
 
@@ -583,15 +616,6 @@ export function step(state: BrokerState, ev: BrokerEvent): StepResult {
         st.toWatching();
         st.effects.push({ kind: 'stopped', reason: 'declined' });
       }
-      break;
-    }
-    case 'resume': {
-      if (!s.ticket) break;
-      s.formed = null;
-      s.peers = {};
-      s.links = [];
-      st.toSeeking();
-      s.retryAt = ev.now;
       break;
     }
   }

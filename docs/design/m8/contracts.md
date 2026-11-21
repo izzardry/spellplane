@@ -31,7 +31,7 @@ The kit is `src/ui/design/`. M8-C lands every component below with these props a
 | --- | --- |
 | `Button` | `variant?: 'primary' \| 'secondary' \| 'ghost' \| 'quiet' \| 'danger'` (default `secondary`), `size?: Size` (default `md`), `pressed?: boolean`, `waiting?: boolean`, `disabled?: boolean`, `type?`, `href?: string` (renders a link), `onclick?`, `icon?: Snippet`, `trailing?: Snippet` (the timer of a waiting button), children |
 | `IconButton` | `label: string` (accessible name and tooltip), `size?: Size`, `variant?` as `Button`, `pressed?`, `disabled?`, `onclick?`, children (the icon) |
-| `Segmented` | `options: { value: string; label: string; disabled?: boolean; hint?: string }[]`, `value: string` (bindable), `size?: 'sm' \| 'md'`, `label: string`, `onchange?: (value: string) => void` |
+| `Segmented` | `options: { value: string; label: string; disabled?: boolean; hint?: string }[]`, `value: string` (bindable), `size?: 'sm' \| 'md'`, `label: string`, `onchange?: (value: string) => void` — [M8-P1] with `onchange` the control is controlled: it reports the pick and shows the `value` its parent passes back (a parent that refuses a pick keeps its option), so a parent that passes `onchange` sets `value` in it and does not also rely on `bind:value`; without `onchange` it writes `value` itself (`bind:value`) |
 | `Field` | `value: string` (bindable), `label: string`, `placeholder?`, `readonly?`, `square?: boolean` (link field), `icon?: Snippet`, `trailing?: Snippet`, `oninput?`, `onenter?` |
 | `Stepper` | `eyebrow?: string`, `value: string`, `onprev: () => void`, `onnext: () => void`, `prevLabel: string`, `nextLabel: string` |
 | `Chip` | `variant?: 'fill' \| 'line' \| 'on'`, `size?: 'xs' \| 'sm'`, `onclick?` (a button when given), `pressed?`, children |
@@ -81,13 +81,13 @@ export interface TableFrameProps {
   gather?: boolean;
   /** Extra shell members of the route (the computer game's cue button, badge and plate menu). The frame merges them over its own. */
   extraShell?: Pick<HudShellProps, 'primaryOverride' | 'plateBadge' | 'plateMenuTop' | 'menuTop'>;
-  onleave: () => void;                 // src/ui/play/leave.ts
+  onleave: (ctx?: FrameLeave) => void | Promise<unknown>; // src/ui/play/leave.ts; widened by M8-P8 (additive): the frame hands its checkpointer, the leave's promise is awaited
 }
 ```
 
 The frame chooses, by stage and kind: the waiting room (`WaitingRoom`), the matched entry (`MatchedEntry`, when a `MatchRecord` exists for the code), `Versus` (while the automatic setup runs), the draft and build stages, the HUD (inside `Gathering` when `gather`), and `GameOver` when `TableState.result` is set. It builds `HudShellProps` from `onleave`, `src/ui/table/menu-top.ts`, `SeatMenu`, `SeatBadge`, `presence.ts`, the notice store and `extraShell`. It starts `createCheckpointer(session, games)` on mount and stops it on unmount. `SoloRoute.svelte` (`#/p/<room>`) and `ComputerRoute.svelte` (`#/c/<room>`) open their session and render the frame; the sandbox (`#/solo`) renders it with `kind: 'sandbox'`.
 
-**Leave** (`src/ui/play/leave.ts`, M8-P2): `leaveTable({ session, kind, code, games, go })` runs `checkpoint('leave')`, `session.leave()`, disposes, navigates Home and shows one toast. Copy by kind: networked `You left the table. The game goes on; your seat is kept.` with `REJOIN`; computer and practice `Game saved. Continue any time.` with `CONTINUE`. A solo game with fewer than 10 own actions is purged instead and shows no toast.
+**Leave** (`src/ui/play/leave.ts`, M8-P2): `leaveTable({ session, kind, code, games, go })` runs `checkpoint('leave')`, `session.leave()`, disposes, navigates Home and shows one toast. Copy by kind: networked `You left the table. The game goes on; your seat is kept.` with `REJOIN`; computer and practice `Game saved. Continue any time.` with `CONTINUE`. A game that ended (TableState.result set) shows `Game over. It is in your History.` with no action (M8-P8). A solo game with fewer than 10 own actions is purged instead and shows no toast.
 
 **`TableSession.leave(): Promise<void>`** (contract, `session/types.ts`): a solo session resolves at once; M8-C's networked default is today's dispose path; M8-P5 makes it send `bye { reason: 'leave' }`.
 

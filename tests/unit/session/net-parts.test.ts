@@ -50,6 +50,58 @@ describe('session/persist.ts TablePersistence', () => {
     return { s, p, errors };
   }
 
+  it('a secret store saved while action writes wait is not overwritten by the older store those writes were queued with', async () => {
+    const start = table();
+    const { s, p } = await saver(start);
+    p.saveBase(start, SECRETS);
+    const run = steps(start, 4);
+    // A first secrets write is queued, then two actions with the store of that time, then a newer store (a deck being
+    // built): the coalesced secrets write sits in the first slot, ahead of the two action writes.
+    p.saveSecrets({ ...SECRETS, hand: ['a'] });
+    p.saveAction(run[0]!.action, run[0]!.after, { ...SECRETS, hand: ['a'] });
+    p.saveAction(run[1]!.action, run[1]!.after, { ...SECRETS, hand: ['a'] });
+    const newest: SecretStore = { ...SECRETS, hand: ['a'], build: { cards: [], main: [] } };
+    p.saveSecrets(newest);
+    await p.whenSaved();
+    expect((await s.tables.loadTable('room-1'))!.secrets).toEqual(newest);
+  });
+
+  it('saveRecord keeps NOT SAVING while the stored log still has a hole, and records the lastSeq of the time it was called', async () => {
+    const start = table();
+    const { s, p } = await saver(start);
+    p.saveBase(start, SECRETS);
+    const run = steps(start, 3);
+    p.saveAction(run[0]!.action, run[0]!.after, SECRETS);
+    await p.whenSaved();
+    // One action write fails: NOT SAVING, and the log has a hole until the next action rebases it.
+    const real = s.tables.saveAction.bind(s.tables);
+    s.tables.saveAction = () => Promise.reject(new Error('quota'));
+    p.saveAction(run[1]!.action, run[1]!.after, SECRETS);
+    await p.whenSaved();
+    s.tables.saveAction = real;
+    expect(p.failing).toBe(true);
+    p.saveRecord();
+    await p.whenSaved();
+    expect(p.failing).toBe(true);
+    // A record queued before the next action claims the lastSeq of its own time, not of a later queued action.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const snap = s.tables.saveSnapshot.bind(s.tables);
+    const seen: number[] = [];
+    s.tables.saveSnapshot = async (t, sec) => {
+      seen.push(t.lastSeq);
+      await gate;
+      return snap(t, sec);
+    };
+    p.saveRecord();
+    p.saveAction(run[2]!.action, run[2]!.after, SECRETS);
+    release();
+    await p.whenSaved();
+    s.tables.saveSnapshot = snap;
+    expect(seen[0]).toBe(run[1]!.action.seq);
+    expect(p.failing).toBe(false);
+  });
+
   it('holds the periodic snapshot while the page is alone in the room and makes it at the first write with a peer back (M5-P6)', async () => {
     const start = table();
     let alone = true;
@@ -305,5 +357,18 @@ describe('session/net.ts', () => {
     // Another seat's look at a whole own zone counts every card in it.
     const look = [{ type: 'lookAt', by: 's1', zone: 'library:s0', count: 1 }] as unknown as Action[];
     expect([...exposedFromLog(look, state, 's0')].sort()).toEqual(ids);
+  });
+
+  it('exposedFromLog: an own card that stood in a public zone under its id (face down too) counts, a move between hidden zones does not', () => {
+    const st = createTable({ game: mtg, format: '1v1', seats: [{ name: 'A', colour: 0 }, { name: 'B', colour: 1 }] });
+    const ids = ['c1', 'c2', 'c3'];
+    const state: TableState = reduce(st, { type: 'ready', by: 's0', cid: 'r', seq: 1, commits: ids.map((i) => `h-${i}`), instanceIds: ids, zone: 'library:s0' } as Action);
+    // c1 went to the battlefield (face down, no identity) and back on top of the library: every seat followed its id.
+    const log = [
+      { type: 'move', by: 's0', card: 'c1', to: 'battlefield:s0' },
+      { type: 'toZone', by: 's0', card: 'c1', to: 'library:s0', position: 'top' },
+      { type: 'toZone', by: 's0', card: 'c2', to: 'hand:s0', position: 'any' },
+    ] as unknown as Action[];
+    expect([...exposedFromLog(log, state, 's0')].sort()).toEqual(['c1']);
   });
 });

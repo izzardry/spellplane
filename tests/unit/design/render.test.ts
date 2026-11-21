@@ -6,6 +6,8 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import BoosterFan from '../../../src/ui/design/BoosterFan.svelte';
 import BoosterPack from '../../../src/ui/design/BoosterPack.svelte';
+import ModeCard from '../../../src/ui/design/ModeCard.svelte';
+import Segmented from '../../../src/ui/design/Segmented.svelte';
 import PileStack from '../../../src/ui/design/PileStack.svelte';
 import StrengthPips from '../../../src/ui/design/StrengthPips.svelte';
 import TableThumb from '../../../src/ui/design/TableThumb.svelte';
@@ -17,6 +19,22 @@ const attr = (html: string, tag: string, name: string): string | null => {
   return m ? m[1]! : null;
 };
 const visible = (html: string): string => /<span class="ds-t-eyebrow"[^>]*>([^<]*)<\/span>/.exec(html)?.[1] ?? '';
+
+describe('the seed\'s state classes (contracts.md Part B: no class is renamed)', () => {
+  it('Segmented marks the chosen option `on`; ModeCard marks `sel` and `locked`', () => {
+    const seg = render(Segmented, { props: { label: 'F', value: 'b', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }] } }).body;
+    const opts = [...seg.matchAll(/<button\b[^>]*>/g)].map((m) => m[0]);
+    expect(opts).toHaveLength(2);
+    expect(opts[0]).not.toMatch(/class="[^"]*\bon\b/);
+    expect(opts[1]).toMatch(/class="[^"]*\bon\b/);
+    const sel = render(ModeCard, { props: { value: 'solo', name: 'Solo', selected: true, onselect: () => {} } }).body;
+    expect(sel).toMatch(/class="[^"]*\bds-mode\b[^"]*\bsel\b/);
+    expect(sel).not.toMatch(/class="[^"]*\blocked\b/);
+    const locked = render(ModeCard, { props: { value: 'quick', name: 'Quick', selected: false, locked: true, onselect: () => {} } }).body;
+    expect(locked).toMatch(/class="[^"]*\blocked\b/);
+    expect(locked).not.toMatch(/class="[^"]*\bsel\b/);
+  });
+});
 
 describe('StrengthPips', () => {
   it('names the five bands of decks.md D19: Rough, Casual, Solid, Tuned, Fierce', () => {

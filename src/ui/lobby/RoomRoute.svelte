@@ -18,6 +18,10 @@
   import { parseRoute, routeHash } from '../routes';
   import { lobbyStores } from './start';
   import { applyPendingSetup } from '../play/launch';
+  import Button from '../design/Button.svelte';
+
+  /** After this long a join reads `Still connecting…` (journey.md 4.9). */
+  const STILL_CONNECTING_MS = 10_000;
 
   /**
    * Joins the networked table of a room link and resolves once this browser holds a chair (main.ts, over the page's
@@ -91,19 +95,37 @@
     };
   });
 
-  // Joining that never completes: the signalling relays are out of reach (DESIGN "Multiplayer architecture": say so plainly).
+  // Joining that never completes: after 10 s `Still connecting…` (journey.md 4.9), then the signalling relays are out
+  // of reach (DESIGN "Multiplayer architecture": say so plainly).
+  let joinLong = $state(false);
   let joinSlow = $state(false);
   $effect(() => {
     if (joinState !== 'joining') return;
+    const long = setTimeout(() => (joinLong = true), STILL_CONNECTING_MS);
     const t = setTimeout(() => (joinSlow = true), CONNECT_CHECK_MS);
     return () => {
+      clearTimeout(long);
       clearTimeout(t);
+      joinLong = false;
       joinSlow = false;
     };
   });
+  /** A join refused because every chair is taken (session/net.ts: before the game, or once it has started). */
+  const full = $derived(/\bfull\b/i.test(error));
+  const startedFull = $derived(/started and every chair is taken/i.test(error));
+
+  /**
+   * Follow `/watch` being added or dropped on this room's link. A change to another page is not followed: App may keep
+   * this route mounted while its leave guard runs, and reading such a change as "not watching" would sit a spectator
+   * down at the table (M8-P8).
+   */
+  function followHash(): void {
+    const r = parseRoute(location.hash);
+    if (r.name === 'room' && r.room === roomId && r.key === roomKey) watching = r.watch === true;
+  }
 </script>
 
-<svelte:window onhashchange={() => (watching = watchingIn(location.hash))} />
+<svelte:window onhashchange={followHash} />
 
 {#if room && app.createScene && app.faces && app.cardData && app.game}
   <div class="fill" style={cssVars} data-testid="route-room">
@@ -128,26 +150,48 @@
     {/key}
   </div>
 {:else}
-  <main class="sp-page" style={cssVars} data-testid="route-room">
-    <h1>Table {roomId}</h1>
+  <!-- Joining and failure pages (journey.md 4.9): kit type and buttons, one way Home, WATCH where a chair cannot be had. -->
+  <main class="ds-page ds-root join-page" style={cssVars} data-testid="route-room">
+    <p class="ds-t-eyebrow">Table</p>
     {#if !link}
-      <p role="alert">This is not a valid table link: the key at its end should be 22 letters, digits, dashes or underscores. Ask for the link again.</p>
+      <p class="ds-t-reading" role="alert" data-testid="room-malformed">This is not a complete table link. Ask for it again.</p>
     {:else if joinState === 'joining'}
-      <p role="status" data-testid="room-joining">{watching ? 'Joining the table as a spectator…' : 'Joining the table…'}</p>
-      {#if joinSlow}<p role="alert" data-testid="connectivity-problem"><strong>{EMPTY_STATES.relayUnreachable.title}.</strong> {RELAYS_TEXT}</p>{/if}
-      {#if !watching}<p><a href={watchHash} data-testid="watch-instead">Watch without taking a chair</a></p>{/if}
+      <p class="ds-t-reading" role="status" data-testid="room-joining">{joinLong ? 'Still connecting…' : watching ? 'Joining the table as a spectator…' : 'Joining the table…'}</p>
+      {#if joinSlow}<p class="ds-t-reading" role="alert" data-testid="connectivity-problem"><strong>{EMPTY_STATES.relayUnreachable.title}.</strong> {RELAYS_TEXT}</p>{/if}
     {:else if joinState === 'failed'}
-      <p role="alert" data-testid="room-error">Could not join this table: {error}</p>
-      {#if !watching}<p><a href={watchHash} data-testid="watch-instead">Watch this table as a spectator</a></p>{/if}
+      <p class="ds-t-reading" role="alert" data-testid="room-error">
+        {startedFull
+          ? "This game has started and every seat is taken. If one of them is yours, ask a player at the table to bring you back from your name's menu."
+          : full
+            ? 'This table is full.'
+            : `Could not join this table: ${error}`}
+      </p>
     {:else}
-      <p>This page cannot join tables.</p>
+      <p class="ds-t-reading">This page cannot join tables.</p>
     {/if}
-    <p><a href="#/">Home</a></p>
+    <div class="ds-row join-actions">
+      {#if link && !watching && (joinState === 'failed' || joinLong)}
+        <Button href={watchHash} size="md" data-testid="watch-instead">{joinState === 'failed' ? 'WATCH' : 'WATCH INSTEAD'}</Button>
+      {:else if link && !watching && joinState === 'joining'}
+        <Button href={watchHash} size="md" variant="quiet" data-testid="watch-instead">WATCH WITHOUT A CHAIR</Button>
+      {/if}
+      <Button href="#/" size="md" variant="ghost" data-testid="room-home">HOME</Button>
+    </div>
   </main>
 {/if}
 
 <style>
   .fill {
     height: 100%;
+  }
+  .join-page {
+    max-width: 40em;
+    margin: 0 auto;
+    padding: 48px 16px;
+    display: grid;
+    gap: 16px;
+  }
+  .join-actions {
+    gap: 8px;
   }
 </style>

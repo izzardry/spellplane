@@ -45,3 +45,24 @@ test('Enter opens the drawer with the chat field focused', async ({ page }, info
   await expect(page.locator(drawer)).toBeVisible();
   await expect(page.getByTestId('chat-input')).toBeFocused();
 });
+
+test('with reduced motion the closed log still shows its ticker lines (they rest visible, then cut away)', async ({ page }, info) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await soloWithDeck(page, info);
+  await call(page, 'draw', 2);
+  const line = page.getByTestId('log-ticker').locator('li').first();
+  await expect(line).toBeAttached();
+  // Opacity, not toBeVisible: Playwright counts an element at opacity 0 as visible.
+  await expect(line).toHaveCSS('opacity', '1');
+  await expect(page.locator(drawer)).toHaveCount(0);
+});
+
+test('the open drawer is 360 px wide and its chat field one of the kit heights', async ({ page }, info) => {
+  await soloWithDeck(page, info);
+  await page.getByTestId('open-log').click();
+  await expect(page.locator(drawer)).toBeVisible();
+  expect((await page.locator(drawer).boundingBox())!.width).toBeCloseTo(360, 0);
+  const h = (await page.getByTestId('chat-input').boundingBox())!.height;
+  const sm = parseFloat(await page.getByTestId('hud').evaluate((el) => getComputedStyle(el).getPropertyValue('--ds-control-sm')));
+  expect(h).toBeCloseTo(sm, 0);
+});

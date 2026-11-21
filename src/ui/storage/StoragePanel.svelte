@@ -8,13 +8,28 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { backupFileName, backupText, exportBackup, readBackupText, restoreBackup, suggestReplaceIdentity } from '../../store/backup';
+  import { ScryfallCardDataSource } from '../../data/source';
+  import { IdbCardCache } from '../../store/cards';
   import { requestPersistentStorage } from '../../store/persist';
   import { formatBytes, storageStatus, type StorageStatus } from '../../store/quota';
   import type { LocalStores } from '../../store/stores';
   import type { BackupImport } from '../../store/types';
+  import { freeBasicTest, type LoadCards } from '../decks/state/sealed-import';
   import { PERSIST_HINT } from './hints';
 
-  let { stores, now = () => Date.now(), reload = () => location.reload() }: { stores: LocalStores; now?: () => number; reload?: () => void } = $props();
+  let {
+    stores,
+    now = () => Date.now(),
+    reload = () => location.reload(),
+    loadCards,
+  }: { stores: LocalStores; now?: () => number; reload?: () => void; /** Card data by id (CardDataSource.getMany); default: this profile's card cache, then Scryfall. [M8-P3] */ loadCards?: LoadCards } = $props();
+
+  /**
+   * Card data for a sealed deck's main cards outside its pool, when no source is passed: this profile's card cache
+   * first, then Scryfall through that cache (a backup usually arrives in a browser that has not seen its cards yet).
+   * Only a backup holding booster decks asks; offline, the unknown cards count as foreign.
+   */
+  const defaultCards: LoadCards = (sids) => new ScryfallCardDataSource({ cache: new IdbCardCache(() => Promise.resolve(stores.db)) }).getMany(sids);
 
   let status = $state<StorageStatus | null>(null);
   let persistMessage = $state('');
@@ -70,7 +85,9 @@
     input.value = '';
     result = null;
     if (!file) return;
-    const data = readBackupText(await file.text());
+    const text = await file.text();
+    // A booster deck's basics are free (decks.md section 7, D25): their card data is loaded before the seal is checked.
+    const data = readBackupText(text, { isFreeBasic: await freeBasicTest(text, loadCards ?? defaultCards, () => null) });
     importing = { name: file.name, data };
     replaceIdentity = await suggestReplaceIdentity(stores, data);
     overwrite = false;

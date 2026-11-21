@@ -7,6 +7,7 @@ import { expect, test } from '@playwright/test';
 import { shot } from '../helpers/app';
 import { designAudit } from '../helpers/design-audit';
 import { fixtureDeck, fixtureGame, openHomeHarness, seedDecks, seedGames } from '../helpers/home';
+import { atTable, countOf, homeIsClean, navTo, openFreshHome, residue, seedDeck, soloOpponent, state } from '../helpers/journey';
 
 const uniq = (label: string): string => `${label}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -23,8 +24,11 @@ test('a fresh profile sees Home, the nav, the empty hero and PLAY enabled; nothi
   await expect(page.getByTestId('home-status')).toHaveText('No deck yet: you get a starter deck.');
   // The profile chip carries a made-up nickname.
   await expect(page.getByTestId('profile-name-chip')).toHaveText(/^[A-Z][a-z]+ [A-Z][a-z]+$/);
-  // No CONTINUE strip and no recent games without a game.
+  // No CONTINUE strip and no recent games without a game: on Home the section is simply absent (journey.md 4.14).
   await expect(page.getByTestId('home-continue')).toHaveCount(0);
+  await expect(page.getByTestId('home-recent').getByTestId('history-list')).toHaveAttribute('data-loaded', 'true');
+  await expect(page.getByTestId('history-empty')).toHaveCount(0);
+  expect((await page.getByTestId('home-recent').innerText()).trim()).toBe('');
   expect(Object.values(await page.evaluate(() => window.__homeHarness!.live())).every((n) => n === 0)).toBe(true);
   // No WebGL context on Home: no canvas at all.
   await expect(page.locator('canvas')).toHaveCount(0);
@@ -224,6 +228,25 @@ test('searching: the pill is pressed with the timer, the deck is locked, and the
     await expect(page.getByTestId('history-page')).toBeVisible();
     await expect(page.getByTestId('queue-bar')).toHaveCount(0);
   });
+
+  await test.step('a tap on the searching pill cancels too (journey.md 4.1)', async () => {
+    await page.getByTestId('shell-nav').getByRole('radio', { name: 'PLAY' }).click();
+    await page.evaluate((since) => {
+      window.__homeHarness!.setStatus({
+        phase: 'seeking',
+        lobby: { shard: 0, nat: 'open', seekers: [], byQueue: {}, unreachable: 0, otherVersion: 0, full: false } as never,
+        since,
+        window: { rating: null, band: null },
+        alone: false,
+        deckId: 'a',
+        queues: ['1v1.constructed.casual'],
+      });
+    }, new Date('2026-11-20T10:30:00Z').getTime());
+    await expect(page.getByTestId('home-primary')).toHaveAttribute('aria-pressed', 'true');
+    await page.getByTestId('home-primary').click();
+    await expect.poll(() => page.evaluate(() => window.__homeHarness!.status().phase)).toBe('off');
+    await expect(page.getByTestId('home-primary')).toHaveText('FIND MATCH');
+  });
 });
 
 test('offline: the modes that need the network say so; Solo still plays', async ({ page, context }) => {
@@ -277,6 +300,22 @@ test('first run: one PLAY builds and saves a starter deck and opens a practice t
   });
 });
 
+test('STARTER DECK in Private game: a failed fetch offers the sheet; TRY AGAIN builds the deck and Home stays', async ({ page }) => {
+  await openHomeHarness(page, { profile: uniq('starter-link'), query: { starter: 'fail' } });
+  await page.getByTestId('mode-private').click();
+  await expect(page.getByTestId('home-primary')).toBeDisabled();
+  await page.getByTestId('home-starter-deck').click();
+  await expect(page.getByTestId('first-run-sheet')).toBeVisible();
+  await page.evaluate(() => window.__homeHarness!.starter('ok'));
+  // TRY AGAIN runs the link that failed, not the (disabled) primary.
+  await page.getByTestId('first-run-retry').click();
+  await expect(page.getByTestId('hero-name')).toHaveText('Starter · Green');
+  await expect(page.getByTestId('home-primary')).toHaveText('CREATE TABLE');
+  await expect(page.getByTestId('home-primary')).toBeEnabled();
+  await expect(page.getByTestId('harness-table')).toHaveCount(0);
+  expect((await page.evaluate(() => window.__homeHarness!.decks())).map((d) => d.name)).toEqual(['Starter · Green']);
+});
+
 test('at 390 px nothing scrolls sideways', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openHomeHarness(page, { profile: uniq('narrow') });
@@ -289,6 +328,11 @@ test('at 390 px nothing scrolls sideways', async ({ page }) => {
     await page.evaluate((h) => (location.hash = h), hash);
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   }
+  // On a phone the nav is a bottom tab bar (journey.md section 4).
+  const bar = await page.locator('.shell__nav').boundingBox();
+  expect(bar).not.toBeNull();
+  expect(bar!.y + bar!.height).toBeGreaterThan(844 - 2);
+  expect(bar!.height).toBeGreaterThanOrEqual(56);
 });
 
 test('the real app opens at ./ on Home, not a table: shell, nav, primary; no canvas and nothing alive', async ({ page }) => {
@@ -300,9 +344,46 @@ test('the real app opens at ./ on Home, not a table: shell, nav, primary; no can
   await expect(page.getByTestId('scene-host')).toHaveCount(0);
   await expect(page.locator('canvas')).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.__spellplane?.home?.route())).toBe('home');
+  // The backdrop's arena still is drawn by a temporary renderer: once it is done, nothing of it is alive.
+  await expect(page.getByTestId('shell-backdrop')).not.toHaveAttribute('data-still', 'pending', { timeout: 20_000 });
   const counts = await page.evaluate(() => window.__spellplane?.home?.live?.() ?? null);
   expect(counts).not.toBeNull();
   expect(Object.values(counts!).every((n) => n === 0)).toBe(true);
+  const m = await residue(page);
+  expect(m ? { geometries: m.geometries, textures: m.textures, programs: m.programs } : null).toEqual({ geometries: 0, textures: 0, programs: 0 });
+});
+
+test('the real app: SOLO · ALONE imports the selected deck and deals seven; the still is not drawn again', async ({ page }, info) => {
+  test.setTimeout(90_000);
+  await openFreshHome(page, info, 'alone-deal');
+  await expect(page.getByTestId('shell-backdrop')).not.toHaveAttribute('data-still', 'pending', { timeout: 20_000 });
+  const first = await page.getByTestId('shell-backdrop').getAttribute('data-still');
+  const src = first === 'still' ? await page.getByTestId('shell-still').getAttribute('src') : null;
+  await seedDeck(page);
+  await test.step('PLAY: the practice table holds the deck, seven in hand and the rest in the library', async () => {
+    await soloOpponent(page, 'ALONE');
+    await page.getByTestId('home-primary').click();
+    await atTable(page, 'practice');
+    await expect
+      .poll(async () => {
+        const s = await state(page).catch(() => null);
+        return s ? [countOf(s, 'hand:s0'), countOf(s, 'library:s0')] : null;
+      }, { timeout: 20_000 })
+      .toEqual([7, 53]);
+  });
+  await test.step('back on Home the shell reuses the still of its look', async () => {
+    await page.getByTestId('leave').click();
+    await homeIsClean(page);
+    // Cached per look: the backdrop is never pending again and shows the same object URL.
+    await expect(page.getByTestId('shell-backdrop')).toHaveAttribute('data-still', first!);
+    if (src) await expect(page.getByTestId('shell-still')).toHaveAttribute('src', src);
+    await navTo(page, 'HISTORY');
+    // The app's History is the History sheet (the same component as on the harness page).
+    await expect(page.getByTestId('route-history').getByTestId('history-page')).toBeVisible();
+    // The game was left after fewer than ten own actions, so it was not kept.
+    await expect(page.getByTestId('history-empty')).toBeVisible();
+    await expect(page.getByTestId('shell-backdrop')).toHaveAttribute('data-still', first!);
+  });
 });
 
 test('the profile chip: a made-up nickname, renamed in the popover and kept over a reload; the gear opens Settings', async ({ page }) => {
@@ -314,6 +395,11 @@ test('the profile chip: a made-up nickname, renamed in the popover and kept over
   const popover = page.getByTestId('profile-popover');
   await expect(popover).toBeVisible();
   await designAudit(page);
+  // A press outside closes it; the chip opens it again.
+  await page.getByTestId('home-status').click();
+  await expect(popover).toHaveCount(0);
+  await page.getByTestId('profile-chip').click();
+  await expect(popover).toBeVisible();
   const field = popover.getByRole('textbox', { name: 'Nickname' });
   await field.fill('Quiet Heron');
   await field.press('Enter');

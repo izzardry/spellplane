@@ -110,7 +110,7 @@
     {:else if opening}<span class="reason" data-testid="tile-opening"><Badge>{deck.seal?.revealed ?? 0} of {deck.seal?.sets.length ?? 0} opened</Badge></span>{/if}
     {#if actions && !locked}
       <div class="actions" data-testid="tile-actions">
-        <Button size="sm" variant="primary" data-testid="tile-play" onclick={(e) => (e.stopPropagation(), onplay?.())}>Play</Button>
+        <Button size="sm" data-testid="tile-play" onclick={(e) => (e.stopPropagation(), onplay?.())}>Play</Button>
         <Button size="sm" data-testid="tile-edit" onclick={(e) => (e.stopPropagation(), onopen?.())}>Edit</Button>
         <span bind:this={more} class="more"
           ><IconButton size="sm" label="More for {deck.name}" icon="more" data-testid="tile-more" onclick={(e) => (e.stopPropagation(), more && onmenu?.(more))} /></span

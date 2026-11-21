@@ -78,9 +78,11 @@ export function hintText(id: FirstRunHint, key: (action: ActionId) => string | n
           title: 'Talk',
           text: 'Touch and hold Talk in the bar at the bottom to talk to the table; let go to stop.',
         };
+      // The one hint that names a key (DECISIONS [M7-P5]): push-to-talk is the default gate and, on a desktop, the held
+      // talk key is its only route until the viewer turns on a pointer one, which the hint names.
       return {
         title: 'Talk',
-        text: `Hold ${k('talk', 'the talk key')} to talk to the table; a quick ${k('talk', 'press')} with another key stays a shortcut. ${k('mute', 'M')} mutes you.`,
+        text: `Hold ${k('talk', 'the talk key')} to talk to the table. To talk by holding a press on the table instead, turn on "Talk while I hold or drag" in Settings, Voice.`,
       };
   }
 }

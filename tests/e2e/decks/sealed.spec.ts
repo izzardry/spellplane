@@ -8,7 +8,7 @@
 import { expect, test } from '@playwright/test';
 import { canonicalJson } from '../../../src/core/hash';
 import type { DeckRecord } from '../../../src/store/types';
-import { deckAudit } from './audit';
+import { designAudit } from '../helpers/design-audit';
 import { decks, faceRatios, go, openDecks, profileOf } from './helpers';
 
 const SEED = 'a1'.repeat(32);
@@ -61,7 +61,7 @@ test('OPEN saves the pool first, reveals per pack and ends on a 40-card deck; un
 
   await test.step('the pool page passes the design audit and faces keep 63:88', async () => {
     await page.mouse.move(5, 895);
-    expect(await deckAudit(page)).toEqual([]);
+    await designAudit(page);
     for (const r of await faceRatios(page)) expect(Math.abs(r - 63 / 88) / (63 / 88)).toBeLessThan(0.01);
   });
 
@@ -126,4 +126,54 @@ test('the setup sheet opens 3 packs; an unfinished opening resumes from its tile
   await page.getByTestId('open-next').click();
   await expect(page.getByTestId('deck-page')).toHaveAttribute('data-kind', 'sealed');
   await expect.poll(async () => (await decks<DeckRecord>(page, 'get', id))!.main.length).toBeGreaterThan(0);
+});
+
+test('the browser Back walks the path backwards: never onto an opening that is over, never a second new deck', async ({ page }, info) => {
+  await openDecks(page, { profile: profileOf(info) });
+  const hash = (): Promise<string> => page.evaluate(() => location.hash);
+  let id = '';
+
+  await test.step('library, new deck, OPEN, BUILD DECK: Back from the deck page goes to the chooser, then the library', async () => {
+    await decks(page, 'nextSeed', SEED);
+    await page.getByTestId('new-deck').click();
+    await expect(page.getByTestId('new-deck-chooser')).toBeVisible();
+    await expect(page.getByTestId('open-setup')).toHaveText(/6 × M19/);
+    await page.getByTestId('open-boosters').click();
+    await expect(page.getByTestId('opening')).toBeVisible();
+    id = decodeURIComponent((await hash()).replace(/^#\/decks\//, '').replace(/\/open$/, ''));
+    for (let i = 1; i < 6; i++) {
+      await expect(page.getByTestId('opening-pack')).toHaveText(`Pack ${i} of 6`);
+      await page.getByTestId('open-next').click();
+    }
+    await expect(page.getByTestId('open-next')).toHaveText('Build deck');
+    await page.getByTestId('open-next').click();
+    await expect(page.getByTestId('deck-page')).toHaveAttribute('data-kind', 'sealed');
+    await expect.poll(hash).toBe(`#/decks/${id}`);
+    await page.goBack();
+    await expect.poll(hash).toBe('#/decks/new');
+    await expect(page.getByTestId('new-deck-chooser')).toBeVisible();
+    await page.goBack();
+    await expect.poll(hash).toBe('#/decks');
+    await expect(page.getByTestId('deck-library')).toBeVisible();
+  });
+
+  await test.step('an old link to the finished opening opens the deck page in its place', async () => {
+    await go(page, `#/decks/${id}/open`);
+    await expect(page.getByTestId('deck-page')).toHaveAttribute('data-kind', 'sealed');
+    await expect.poll(hash).toBe(`#/decks/${id}`);
+    await page.goBack();
+    await expect.poll(hash).toBe('#/decks');
+  });
+
+  await test.step('#/decks/new/custom: Back from the deck it made goes to the library and makes no second deck', async () => {
+    const before = (await decks<DeckRecord[]>(page, 'list')).length;
+    await go(page, '#/decks/new/custom');
+    await expect(page.getByTestId('card-search')).toBeVisible();
+    await expect.poll(hash).toMatch(/^#\/decks\/(?!new)/);
+    await expect.poll(async () => (await decks<DeckRecord[]>(page, 'list')).length).toBe(before + 1);
+    await page.goBack();
+    await expect.poll(hash).toBe('#/decks');
+    await expect(page.getByTestId('deck-library')).toBeVisible();
+    expect((await decks<DeckRecord[]>(page, 'list')).length).toBeLessThanOrEqual(before + 1);
+  });
 });

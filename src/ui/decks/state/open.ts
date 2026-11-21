@@ -97,12 +97,22 @@ export async function basicRefs(cardData: CardDataSource, set: SetCode | undefin
   return out;
 }
 
-/** The suggestion for a sealed record's pool (card data loaded first). */
+/** Pool cards without card data that still allow a suggestion: beyond this, autobuild would fill the deck with basics. */
+export const SUGGEST_MISSING_LIMIT = 3;
+
+/** Said when the pool's card data did not load, so no deck is suggested. */
+export const NO_SUGGESTION_TEXT = 'The cards of these boosters did not load, so no deck was suggested. Try SUGGEST A DECK again when online.';
+
+/**
+ * The suggestion for a sealed record's pool (card data loaded first); null without a seal, or when more than
+ * SUGGEST_MISSING_LIMIT pool cards have no data (a suggestion from what is left would be basics only).
+ */
 export async function suggestFor(deck: DeckRecord, cardData: CardDataSource): Promise<Suggestion | null> {
   const seal = deck.seal;
   if (!seal) return null;
   const sids = [...new Set(seal.pool.map((r) => r.sid))];
   await cardData.getMany(sids).catch(() => ({}));
+  if (seal.pool.filter((r) => cardData.peek(r.sid) === null).length > SUGGEST_MISSING_LIMIT) return null;
   const basics = await basicRefs(cardData, seal.sets[0]);
   return autobuild(seal.pool, (r) => cardData.peek(r.sid), basics);
 }
@@ -125,7 +135,9 @@ export async function finishOpening(deps: Pick<OpenDeps, 'decks' | 'cardData' | 
     if (r.ok) out = r.deck;
   }
   out = { ...settleEdited(out), updatedAt: deps.now() };
-  out.summary = summarise(out, (r) => deps.cardData.peek(r.sid));
+  // Without a suggestion (the pool's data did not load) no summary is written, so the deck page suggests once it has
+  // the data (takeSuggest).
+  if (suggestion) out.summary = summarise(out, (r) => deps.cardData.peek(r.sid));
   await deps.decks.put(out);
   return { deck: out, suggestion };
 }

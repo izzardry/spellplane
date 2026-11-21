@@ -764,6 +764,10 @@ export class RecordingScene implements TableScene {
   zoneAt(_x: number, _y: number): ZoneId | null {
     return null;
   }
+  /** Records "Look, do not touch" (M7-P5), so a harness can see the HUD hand it to the scene. */
+  setReadOnly(on: boolean): void {
+    this.calls.push({ method: 'setReadOnly', args: [on] });
+  }
   startDrag(card: InstanceId, x: number, y: number): void {
     this.calls.push({ method: 'startDrag', args: [card, x, y] });
   }

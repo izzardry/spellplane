@@ -8,7 +8,7 @@
 import { expect, test } from '@playwright/test';
 import type { DeckRecord } from '../../../src/store/types';
 import { settleAnimations } from '../helpers/design-audit';
-import { deckAudit } from './audit';
+import { designAudit } from '../helpers/design-audit';
 import { decks, domCounts, faceRatios, go, libraryV1, openDecks, profileOf, seenOpacity } from './helpers';
 
 test('an empty library shows the new-deck tile and the four paths', async ({ page }, info) => {
@@ -172,8 +172,12 @@ test.describe('a seeded library', () => {
   test('card faces keep 63:88; the design audit passes; the deck page opened and closed 20 times leaves the DOM as it was', async ({ page }) => {
     await expect.poll(async () => (await faceRatios(page)).length).toBe(2);
     for (const r of await faceRatios(page)) expect(Math.abs(r - 63 / 88) / (63 / 88)).toBeLessThan(0.01);
+    // A tile's actions show on hover (and always for the selected tile on a coarse pointer): audit with them shown.
+    await page.locator('[data-testid="deck-tile"][data-kind="custom"]').hover();
+    await expect(page.locator('[data-testid="deck-tile"][data-kind="custom"]').getByTestId('tile-play')).toBeVisible();
+    await designAudit(page);
     await page.mouse.move(1400, 880);
-    expect(await deckAudit(page)).toEqual([]);
+    await designAudit(page);
     const id = (await page.locator('[data-testid="deck-tile"][data-kind="custom"]').getAttribute('data-deck-id'))!;
     const before = await domCounts(page);
     for (let i = 0; i < 20; i++) {

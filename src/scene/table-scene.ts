@@ -40,7 +40,7 @@ import { CardBoxes, CardLayer, ContactShadows, boxShape, legibleOutlineMm, type 
 import { BACK_KEY, FaceTextures } from './faces';
 import { FOIL_SHEEN, TABLE_FOIL, foilHue, foilSheenColour } from './foil';
 import { ambientDue, uploadScale } from './pacing';
-import { AdaptiveResolution, REST_AFTER_MS } from './resolution';
+import { AdaptiveResolution, frameScale, restDue } from './resolution';
 import { renderSwitches } from './switches';
 import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
@@ -84,7 +84,7 @@ import { CaptionLayer, captionBadge, captionPoint } from './captions';
 import { badgeItems, drawnPose, entryAt, entryOutline, entryScale, hoverHighlights, itemAnchor, labelPoint, notePoint, registerStackHover, slotAt, stackCollapsed, stackEntries, stackSlotPose, type DebugStackEntry, type StackEntry } from './stack';
 import { StackBadgeView } from './stack-badge';
 import { resolveDrop, zoneTargetAt, type DropResult, type Extent, type SnapCard } from './snap';
-import { attackDrop, attackPose, inHandBand, libraryBottomSlot, opponents, samePileHover, sameSelectionAnchor, selectionAnchorOf, type AttackDrop } from './affordances';
+import { attackDrop, attackPose, libraryBottomSlot, opponents, samePileHover, sameSelectionAnchor, selectionAnchorOf, type AttackDrop } from './affordances';
 import { attachPressHold } from './press-hold';
 import { TextLayer, type TextSpec } from './text';
 import { recentGestures, TouchPointers } from './input/pointers';
@@ -434,8 +434,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const sl = st ? seatLayoutOf(st, layout, viewerSeat) : null;
     return sl ? lateralOf(sl.territory, sl.angle) : 0;
   };
+  /** The HUD's insets as last read (on mount and when the attribute changes; never read per pointer move). */
+  let insetsNow = readInsets();
   const insetObserver = new MutationObserver(() => {
-    rig.setInsets(readInsets());
+    insetsNow = readInsets();
+    rig.setInsets(insetsNow);
     dirty = true;
   });
   insetObserver.observe(host, { attributes: true, attributeFilter: ['data-fit-insets'] });
@@ -683,8 +686,16 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   let readOnly = opts.readOnly === true;
   /** The actions this scene proposed (the read-only spec counts them through the debug hook). */
   let proposed = 0;
+  /**
+   * The actions a route tried to propose while read-only and this net dropped: every route stops before it gets here,
+   * so the read-only specs assert it stays 0 (a route that forgets its own check shows up here, not in `proposed`).
+   */
+  let refused = 0;
   const dispatch = (actions: ActionDraft[]) => {
-    if (readOnly) return;
+    if (readOnly) {
+      refused += actions.length;
+      return;
+    }
     for (const a of actions) {
       proposed++;
       opts.dispatch(a);
@@ -728,6 +739,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const segs = [...m.segments, ...extra.segments];
     const pos: number[] = [];
     for (let i = 0; i < segs.length; i += 4) pos.push(segs[i]!, 0.05, -segs[i + 1]!, segs[i + 2]!, 0.05, -segs[i + 3]!);
+    // three.js frees a GL buffer only for the attributes on a geometry at its dispose: release the old one first (the
+    // geometry is uploaded again on the next draw).
+    if (markGeometry.getAttribute('position')) markGeometry.dispose();
     markGeometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     markGeometry.computeBoundingSphere();
     markLabels = [...m.labels, ...extra.labels];
@@ -1375,15 +1389,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   /** The full pixel ratio the adaptive resolution was last told. */
   let resolutionBase = 0;
 
-  /**
-   * The render scale for a frame (scene/resolution.ts): the motion scale within a run of frames or while the theme
-   * animates by itself; the full ratio for the frame that redraws a still table at rest; else the scale in effect
-   * (one frame after a pause, e.g. a hover, does not resize the buffers).
-   */
+  /** The render scale for a drawn frame (scene/resolution.ts frameScale). */
   function scaleFor(rest: boolean, continuous: boolean): number {
-    if (rest) return 1;
-    if (continuous || animated()) return resolution.motionScale();
-    return runtime.renderScale;
+    return frameScale({ rest, continuous, animated: animated(), motion: resolution.motionScale(), current: runtime.renderScale });
   }
 
   function tick(): void {
@@ -1522,7 +1530,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (foilsDrawn.size > 0 && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs) ambient = true;
     if (ambient && !changed && !dirty && !ambientDue(frameCost, now - drewAt)) ambient = false;
     // A still table drawn below the full pixel ratio (a run of frames just ended) is drawn once more at the full ratio.
-    const rest = !changed && !dirty && !ambient && runtime.renderScale < 1 && !animated() && now - drewAt >= REST_AFTER_MS;
+    const rest = restDue({ changed, dirty, ambient, animated: animated(), renderScale: runtime.renderScale, sinceDrawMs: now - drewAt });
     if (changed || dirty || ambient || rest) {
       if (foilsDrawn.size > 0) lastSheen = now;
       rescaledLast = runtime.setRenderScale(scaleFor(rest, continuous));
@@ -1970,13 +1978,14 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   /**
    * Whether a screen point is over the viewer's hand fan (M7-P4: "hand cards fan and make room as a card passes over
    * the hand"): the bottom band the HUD keeps clear for the fan (the host's data-fit-insets bottom), when the viewer has
-   * a hand. Without a HUD (the scene harness) there is no fan and no band.
+   * a hand. Without a HUD (the scene harness) there is no fan and no band. The one band for the magnet, the preview and
+   * the drop (handDropAt): read from the insets the HUD hands over, never from its DOM.
    */
   function overHandBand(x: number, y: number): boolean {
     const zone = ownHandZone();
     if (!zone || !state?.zones[zone]) return false;
     const vp = rig.viewport;
-    const bottom = readInsets().bottom;
+    const bottom = insetsNow.bottom;
     if (bottom < vp.h * SCREEN_LAYER.handCardViewportFraction) return false;
     const c = toCanvas(x, y);
     return c.y >= vp.h - bottom + HAND_BAND_GAP_PX && c.y <= vp.h && c.x >= 0 && c.x <= vp.w;
@@ -2115,7 +2124,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   const hintEl = document.createElement('div');
   hintEl.setAttribute('data-scene', 'drop-hint');
   hintEl.setAttribute('data-testid', 'drop-hint');
-  Object.assign(hintEl.style, { position: 'absolute', left: '0', top: '0', display: 'none', pointerEvents: 'none', zIndex: '3', padding: '3px 10px', borderRadius: '999px', font: '600 13px/1.3 system-ui, sans-serif', whiteSpace: 'nowrap', transform: 'translate(-50%, -50%)' });
+  Object.assign(hintEl.style, { position: 'absolute', left: '0', top: '0', display: 'none', pointerEvents: 'none', zIndex: '3', padding: '3px 10px', borderRadius: '999px', fontFamily: 'var(--ds-font-body)', fontWeight: 'var(--ds-weight-medium)', fontSize: 'var(--ds-type-label)', lineHeight: '1.3', whiteSpace: 'nowrap', transform: 'translate(-50%, -50%)' });
   host.appendChild(hintEl);
 
   /** The top card of its zone's pile (the one a press on the pile picks up). */
@@ -2124,20 +2133,18 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     return !!ids && ids[ids.length - 1] === rc.id;
   }
 
-  /** The own hand when a drop at this viewport point goes there: the hand band at the bottom of the screen, the hand fan, or the own avatar spot. */
+  /**
+   * The own hand when a drop at this viewport point goes there: the own avatar spot (or another hand target of the
+   * layout), or the hand band at the bottom of the screen while the HUD shows the viewer's fan (overHandBand, the band the
+   * magnet and the preview use; not in the scene harness, which has no HUD: there the bottom of the screen is table).
+   * Run on every pointer move of a drag: no DOM read, no hit-testing.
+   */
   function handDropAt(x: number, y: number, p: TablePoint): ZoneId | null {
     if (!state || viewerSeat === null) return null;
-    const hand = opts.game.zones.find((z) => z.presentation === 'fan' && z.scope === 'seat');
-    const own: ZoneId = `${hand?.id ?? 'hand'}:${viewerSeat}`;
-    if (!state.zones[own]) return null;
+    const own = ownHandZone();
+    if (!own || !state.zones[own]) return null;
     if (zoneTargetAt(p, targets())?.zone === own) return own;
-    // The band at the bottom of the screen is the hand's only while the HUD shows the viewer's fan (not in the scene
-    // harness, which has no HUD: there the bottom of the screen is table).
-    const fanShown = typeof document !== 'undefined' && document.querySelector('[data-testid="hand"]') !== null;
-    const vh = typeof window === 'undefined' ? canvasRect().bottom : window.innerHeight;
-    if (fanShown && inHandBand(y, vh, vh)) return own;
-    const el = typeof document !== 'undefined' && typeof document.elementFromPoint === 'function' ? document.elementFromPoint(x, y) : null;
-    return el instanceof Element && el.closest('[data-testid="hand"]') ? own : null;
+    return overHandBand(x, y) ? own : null;
   }
 
   /** The attacker the drop would block (scene/combat.ts), as finishDrag decides it: a block wins over an attack. */
@@ -3771,7 +3778,12 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     // Card motion, running animations and frame holds (M7-P4).
     motion: () => motionDebug(),
     // Look, do not touch (M7-P5): the switch and the count of actions this scene proposed.
-    readOnly: { on: () => readOnly, set: (on: boolean) => setReadOnlyNow(on), proposed: () => proposed },
+    // Face and back textures still queued, loading or waiting for upload (M7-P5: a card face landing in real time asks
+    // for one more frame; the render-on-demand spec waits for none before it measures a quiet window).
+    faceLoad: { pending: () => faces.pending },
+    // `refused` counts what reached the last net while read-only (0 when every route stops first); `lineDraft` whether a
+    // line is being drawn now.
+    readOnly: { on: () => readOnly, set: (on: boolean) => setReadOnlyNow(on), proposed: () => proposed, refused: () => refused, lineDraft: () => lineView.draft !== null },
   };
   registerDebug(debugParts);
 
@@ -3992,8 +4004,11 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
       if (clipDrag) finishClipDrag(true);
       cancelHold();
       if (itemDrag) finishItemDrag(true);
+      // A line being drawn is dropped (with the stack badge's own line); a press, a marquee (selecting for reading is
+      // allowed) and the camera's pan and tilt carry on: each route checks `readOnly` when the press turns into something.
+      if (lineView.draft || gesture?.kind === 'line') stackBadge.trackLine(null);
       if (lineView.draft) lineView.draft = null;
-      if (gesture && gesture.kind !== 'pan' && gesture.kind !== 'tilt') gesture = null;
+      if (gesture && gesture.kind !== 'press' && gesture.kind !== 'marquee' && gesture.kind !== 'pan' && gesture.kind !== 'tilt') gesture = null;
       pileWant = null;
     }
     readOnly = on;
@@ -4184,6 +4199,8 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
         rc.leaving = null;
       }
       forgetMotion(motionKey);
+      // No scene, no table theme (a newer scene that set its own keeps it).
+      if (tableTheme.value === theme.id) tableTheme.set(null);
       frameMeter.releaseRender(meterSource);
       pressHold.dispose();
       touchInput.reset();

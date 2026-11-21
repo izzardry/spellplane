@@ -191,6 +191,10 @@ export function settings(d: Draft, a: ActionOf<'settings'>): void {
       if (typeof v !== 'boolean') reject(`${k} must be a boolean`);
       if (k === 'matched' && d.settings.matched === true && !v) reject('a matched table stays matched');
       d.settingsW()[k] = v;
+    } else if (k === 'decks') {
+      // Added by M8-P4 (fix): the table's deck rule, so every seat's picker reads the same rule (journey.md 4.8).
+      if (v !== 'any' && v !== 'booster') reject("decks is 'any' or 'booster'");
+      d.settingsW().decks = v;
     } else {
       reject(`unknown setting ${k}`);
     }

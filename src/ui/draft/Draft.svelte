@@ -348,7 +348,7 @@
     color: var(--sp-muted);
   }
   .timer {
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-numeral, var(--sp-font-mono));
     padding: 0 6px;
     border: 1px solid var(--sp-border);
     border-radius: var(--sp-radius-sm, 4px);
@@ -388,14 +388,14 @@
     font-weight: var(--sp-font-weight-bold, 600);
   }
   .pool {
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-numeral, var(--sp-font-mono));
     color: var(--sp-muted);
   }
   .packs {
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-numeral, var(--sp-font-mono));
   }
   .pack-icon {
     display: inline-block;

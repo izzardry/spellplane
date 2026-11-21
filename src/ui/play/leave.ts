@@ -4,8 +4,8 @@
  * than 10 own actions is purged instead and shows no toast. M8-P2.
  */
 import { countOwnActions } from '../../session/summary';
-import type { TableSession } from '../../session/types';
-import type { GameStore } from '../../store/types';
+import type { SaveState, TableSession } from '../../session/types';
+import type { ComputerStore, GameStore, TableStore } from '../../store/types';
 import { toasts } from '../design/toasts';
 import type { TableKind } from '../table/types';
 import { computerHash, practiceHash, roomHash, type ToastAction } from './launch';
@@ -16,6 +16,10 @@ export type { TableKind };
 export const LEFT_NETWORKED = 'You left the table. The game goes on; your seat is kept.';
 /** The toast after leaving a computer or practice table (contracts.md Part G "Journey and Home" item 2). */
 export const LEFT_SOLO = 'Game saved. Continue any time.';
+/** The toast after leaving a solo table in a browser that keeps no games (storage blocked): no CONTINUE. */
+export const LEFT_SOLO_UNSAVED = 'This browser does not keep games, so this one was not saved.';
+/** The toast after leaving a game that ended (journey.md 4.13: an ended game cannot be continued; M8-P8). */
+export const LEFT_ENDED = 'Game over. It is in your History.';
 /** A solo game left after fewer own actions is not kept (contracts.md Part G "History and saving" item 2). */
 export const SOLO_KEEP_MIN_ACTIONS = 10;
 
@@ -28,13 +32,19 @@ export interface LeaveOptions {
   /** Navigate to a hash. */
   go(hash: string): void;
   /** The frame's checkpointer (its `now('leave')` runs first). */
-  checkpointer?: { now(reason: 'leave'): Promise<void>; stop?(): void; settled?(): Promise<void> } | null;
+  checkpointer?: { now(reason: 'leave'): Promise<void>; stop?(): void; settled?(): Promise<void>; saveState?(): SaveState } | null;
   /** Show the one toast (default: the page's toast store). */
   toast?(text: string, action?: ToastAction): void;
   /** The room key of a networked table (else read from the game's summary). */
   key?: string;
   /** Upper bound on the leave checkpoint, ms (persistence.md section 2: at most 1.5 s). */
   checkpointMs?: number;
+  /**
+   * A computer game's own purge (computer.md 2.5), run after the human's session is disposed and before Home: the route
+   * disposes Sparring's handle (its last saves) and then deletes both tables and the computer record, which waits for
+   * those saves, so none of them writes a row back.
+   */
+  purgeComputer?: () => Promise<void>;
 }
 
 /** What leaving did, for tests and the frame. */
@@ -65,6 +75,14 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
   }
   const toast = o.toast ?? ((text: string, action?: ToastAction): void => void toasts.info(text, action));
   const solo = o.kind === 'computer' || o.kind === 'practice';
+  // Read before the leave: a finished game is left with the ended copy and no way back in (no REJOIN, no Continue).
+  const ended = (() => {
+    try {
+      return o.session.getState().result != null;
+    } catch {
+      return false;
+    }
+  })();
   const ms = o.checkpointMs ?? 1500;
   let purge = false;
   if (solo) {
@@ -92,10 +110,17 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
     /* already disposed by leave */
   }
   if (purge) await o.games?.purge(o.code).catch(() => undefined);
+  // A purged computer game also drops both tables and Sparring's record (computer.md 2.5): the route's purge disposes
+  // Sparring first, so its last saves land before the delete. Home does not wait past the bound; the delete goes on.
+  if (purge && o.kind === 'computer' && o.purgeComputer) await within(o.purgeComputer(), ms);
   o.go('#/');
   if (purge) return 'purged';
   const code = o.code;
-  if (solo) {
+  if (ended) toast(LEFT_ENDED);
+  else if (solo && o.games === null && o.checkpointer?.saveState?.() === 'notSaving') {
+    // Nothing was saved (no games store: storage blocked, and the frame's checkpointer says so): nothing to continue.
+    toast(LEFT_SOLO_UNSAVED);
+  } else if (solo) {
     const hash = o.kind === 'computer' ? computerHash(code) : practiceHash(code);
     toast(LEFT_SOLO, { label: 'Continue', run: () => o.go(hash) });
   } else {
@@ -103,4 +128,20 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
     toast(LEFT_NETWORKED, { label: 'Rejoin', run: () => o.go(roomHash(code, key)) });
   }
   return 'left';
+}
+
+/** The stores a computer game was saved into (session/computer deleteComputerGame). */
+export type ComputerStores = { tables: TableStore | null; computer: ComputerStore | null };
+
+/**
+ * The purge of a short computer game for `LeaveOptions.purgeComputer` (computer.md 2.5): dispose Sparring's handle (its
+ * runner, the bot session and the record's last write), then delete both tables and the record once those saves have
+ * landed. Without `stores` the delete takes the page's (session/computer provideComputerDeps). M8-P8.
+ */
+export function computerPurge(handle: { dispose(): void }, roomId: string, stores?: ComputerStores | null): () => Promise<void> {
+  return async () => {
+    handle.dispose();
+    const m = await import('../../session/computer');
+    await m.deleteComputerGame(roomId, stores ?? undefined);
+  };
 }

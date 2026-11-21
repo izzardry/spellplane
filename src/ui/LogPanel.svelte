@@ -98,7 +98,7 @@
     if (lines.length < seen) seen = lines.length;
   });
   const unread = $derived(open ? 0 : Math.max(0, lines.length - seen));
-  /** The newest unread lines, at most TICKER_LINES, each shown for TICKER_MS (a CSS fade; no timers, no per-frame state). */
+  /** The newest unread lines, at most TICKER_LINES, each shown for TICKER_MS (a CSS fade, or a delayed cut under reduced motion; no timers, no per-frame state). */
   const ticker = $derived(open ? [] : lines.slice(Math.max(seen, lines.length - TICKER_LINES)));
 
   function send() {
@@ -116,7 +116,7 @@
     <!-- The ticker repeats lines the page's live region already announces (ui/a11y), so it is hidden from screen readers. -->
     <ol class="ticker" aria-hidden="true" data-testid="log-ticker">
       {#each ticker as l (l.key)}
-        <li class="tick" style:--seat={l.colour === null ? 'transparent' : `var(--sp-seat-${l.colour})`} style:animation-duration="{TICKER_MS}ms"><SeatGlyph colour={l.colour} />{tickerText(l)}</li>
+        <li class="tick" style:--seat={l.colour === null ? 'transparent' : `var(--sp-seat-${l.colour})`} style:--life="{TICKER_MS}ms"><SeatGlyph colour={l.colour} />{tickerText(l)}</li>
       {/each}
     </ol>
   </div>
@@ -202,8 +202,26 @@
     box-sizing: border-box;
     opacity: 0;
     animation-name: tick;
+    animation-duration: var(--life);
     animation-timing-function: linear;
     animation-fill-mode: forwards;
+  }
+  /*
+   * Reduced motion: the page-wide rule (ui/a11y/motion.ts) cuts every animation to 1 ms, which would end each line
+   * invisible at once. The line rests visible instead and is cut away after its lifetime (the rule leaves delays alone).
+   */
+  @media (prefers-reduced-motion: reduce) {
+    .tick {
+      opacity: 1;
+      animation-name: tick-cut;
+      animation-delay: var(--life);
+    }
+  }
+  @keyframes tick-cut {
+    from,
+    to {
+      opacity: 0;
+    }
   }
   @keyframes tick {
     0% {
@@ -224,7 +242,7 @@
   .log {
     display: flex;
     flex-direction: column;
-    width: min(340px, calc(100vw - 32px));
+    width: min(360px, calc(100vw - 32px));
     max-height: 100%;
     box-sizing: border-box;
     font: var(--ds-type-small) / 1.4 var(--ds-font-body);
@@ -247,12 +265,16 @@
   .chat {
     margin: var(--ds-space-sm);
     font: inherit;
-    min-height: 34px;
+    height: var(--ds-control-sm);
+    box-sizing: border-box;
     padding: 0 var(--ds-space-md);
     color: var(--ds-ink);
     background: var(--ds-panel);
     border: 1px solid var(--ds-border);
     border-radius: var(--ds-radius-sm);
+  }
+  :global(.touch-ui) .chat {
+    height: var(--ds-control-md);
   }
   .chat:focus {
     outline: 2px solid var(--ds-focus);

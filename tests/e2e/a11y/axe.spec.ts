@@ -13,7 +13,7 @@ import type { StackBadgeState } from '../../../src/scene/types';
 import type { CardFocus } from '../../../src/ui/a11y/index';
 import { SETTINGS_SECTIONS } from '../../../src/ui/settings/sections';
 import { hook } from '../helpers/app';
-import { menuItem, openZone, propose } from '../helpers/hud';
+import { menuItem, openLog, openZone, propose } from '../helpers/hud';
 import { decklist as lobbyDecklist, freshProfile, freshRoom, open, openTable, startPageLoaded } from '../lobby/helpers';
 import { appUrl, fixturesScript, freshProfile as offlineProfile, noNetwork, waitForSession } from '../offline/helpers';
 import { IPAD, card, centre, fingers, holdDown, radial, tableWithCards } from '../touch/helpers';
@@ -46,7 +46,8 @@ test.describe('axe: no serious or critical violations (PLAN M5-P4)', () => {
   test('the table HUD, with a hand, the log open, a prompt-free table', async ({ page }, info) => {
     await soloTable(page, info);
     await sceneReady(page);
-    await expect(page.getByTestId('log')).toBeVisible();
+    // Closed, the Activity cluster carries data-testid="log" too: open the drawer itself (M7-P2).
+    await openLog(page);
     expect(await seriousViolations(page)).toEqual([]);
   });
 

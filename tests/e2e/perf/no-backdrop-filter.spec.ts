@@ -4,10 +4,12 @@
  * is a measured cost in Safari; PLAN Milestone 8, M7-P1 Lifecycle). With a table mounted and the HUD's menu-like panels,
  * the log drawer, a dialog and a toast open in turn, no element whose box intersects the scene host computes a
  * `backdrop-filter` (or its WebKit prefix) other than none, or a `filter` with a blur. Each surface is scanned only once
- * it is on screen; a menu, a drawer and a dialog must each have been scanned (a toast where the HUD shows one).
+ * it is on screen; a menu, a drawer, a dialog and a toast must each have been scanned (the toast is raised by importing
+ * a decklist: the HUD's "Imported N cards"). The scan covers each element's ::before and ::after too.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { freshProfile, openSolo } from '../solo/helpers';
+import { menuItem } from '../helpers/hud';
+import { decklist, freshProfile, openSolo } from '../solo/helpers';
 
 interface Offender {
   tag: string;
@@ -27,11 +29,15 @@ function offenders(page: Page): Promise<Offender[]> {
     for (const el of Array.from(document.querySelectorAll('body *'))) {
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.height === 0 || r.right <= h.left || r.left >= h.right || r.bottom <= h.top || r.top >= h.bottom) continue;
-      const cs = getComputedStyle(el) as CSSStyleDeclaration & { webkitBackdropFilter?: string };
-      const backdrop = cs.backdropFilter || cs.webkitBackdropFilter || 'none';
-      const filter = cs.filter || 'none';
-      if ((backdrop !== 'none' && backdrop !== '') || /blur/i.test(filter))
-        out.push({ tag: el.tagName.toLowerCase(), testid: el.getAttribute('data-testid'), cls: String(el.className), backdrop, filter });
+      // The element and its generated boxes (a pseudo-element's box lies within its element's here).
+      for (const pseudo of [null, '::before', '::after']) {
+        const cs = getComputedStyle(el, pseudo) as CSSStyleDeclaration & { webkitBackdropFilter?: string };
+        if (pseudo && (cs.content === 'none' || cs.content === 'normal')) continue;
+        const backdrop = cs.backdropFilter || cs.webkitBackdropFilter || 'none';
+        const filter = cs.filter || 'none';
+        if ((backdrop !== 'none' && backdrop !== '') || /blur/i.test(filter))
+          out.push({ tag: el.tagName.toLowerCase() + (pseudo ?? ''), testid: el.getAttribute('data-testid'), cls: String(el.className), backdrop, filter });
+      }
     }
     return out;
   });
@@ -46,6 +52,9 @@ interface Opener {
   open: (page: Page) => Promise<boolean>;
   panel: (page: Page) => Loc;
 }
+
+/** The open log drawer (closed, the Activity cluster keeps data-testid="log" with data-open="false"). */
+const OPEN_LOG = '[data-testid="log"][data-open="true"]';
 
 /** Click `loc` if it is on screen; whether it was. */
 async function clickIfVisible(loc: Loc): Promise<boolean> {
@@ -71,14 +80,9 @@ const OPENERS: Opener[] = [
   {
     kind: 'drawer',
     name: 'log drawer',
-    open: async (page) => {
-      const log = page.locator('[data-testid="log"]');
-      if (!(await log.isVisible().catch(() => false))) return clickIfVisible(page.getByRole('button', { name: /^(log|activity)/i }).first());
-      // Open at a wide window already; else its toggle opens it.
-      if (await log.evaluate((el) => el.classList.contains('closed'))) await log.getByRole('button', { name: /^log$/i }).click();
-      return true;
-    },
-    panel: (page) => page.locator('[data-testid="log"]:not(.closed)'),
+    // Closed, the Activity cluster carries data-testid="log" too (data-open="false"); only the open drawer counts.
+    open: async (page) => (await page.locator(OPEN_LOG).isVisible().catch(() => false)) || clickIfVisible(page.getByTestId('open-log')),
+    panel: (page) => page.locator(OPEN_LOG),
   },
   { kind: 'dialog', name: 'settings', open: (page) => clickIfVisible(page.getByTestId('open-settings')), panel: (page) => page.getByTestId('settings').or(page.getByRole('dialog')).first() },
   // The rebuilt HUD (M7-P2) opens its dialogs from the Menu.
@@ -87,25 +91,48 @@ const OPENERS: Opener[] = [
     name: 'settings from the menu',
     open: async (page) => {
       if (!(await clickIfVisible(page.getByTestId('open-menu')))) return false;
-      return clickIfVisible(page.getByTestId('menu-popover').getByTestId('menu-settings'));
+      if (await clickIfVisible(page.getByTestId('menu-popover').getByTestId('open-settings'))) return true;
+      // The Menu opened but has no settings item: close it, so no later step finds its items still showing.
+      await page.keyboard.press('Escape');
+      return false;
     },
     panel: (page) => page.getByTestId('settings').or(page.getByRole('dialog')).first(),
   },
-  { kind: 'dialog', name: 'keys panel', open: (page) => clickIfVisible(page.getByTestId('open-cheat-sheet')), panel: (page) => page.getByTestId('cheat-sheet') },
+  {
+    kind: 'dialog',
+    name: 'keys panel',
+    open: async (page) => {
+      if (await clickIfVisible(page.getByTestId('open-cheat-sheet'))) return true;
+      // The rebuilt HUD (M7-P2) keeps the key sheet in the Menu.
+      if (!(await clickIfVisible(page.getByTestId('open-menu')))) return false;
+      if (await clickIfVisible(page.getByTestId('menu-popover').getByTestId('open-cheat-sheet'))) return true;
+      await page.keyboard.press('Escape');
+      return false;
+    },
+    panel: (page) => page.getByTestId('cheat-sheet'),
+  },
   { kind: 'dialog', name: 'theme picker', open: (page) => clickIfVisible(page.getByTestId('open-theme-settings')), panel: (page) => page.getByTestId('theme-picker').or(page.locator('.theme-pop')).first() },
   {
     kind: 'toast',
     name: 'toast',
     open: async (page) => {
-      // The kit's toast host (M7-P2 mounts it over the table) or the old HUD's toast: whichever this HUD has showing.
-      return page.getByTestId('toast').first().isVisible().catch(() => false);
+      // Importing a decklist raises the HUD's toast ("Imported 60 cards and a 3-card sideboard") over the table.
+      await menuItem(page, 'open-deck-import');
+      await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
+      await page.getByTestId('deck-check').click();
+      await page.getByTestId('deck-import-go').click();
+      await expect(page.getByTestId('deck-import')).toHaveCount(0);
+      return true;
     },
-    panel: (page) => page.getByTestId('toast').first(),
+    // The HUD's own toast or the kit's toast host, whichever shows it.
+    panel: (page) => page.getByTestId('toast').or(page.getByTestId('toast-host')).first(),
   },
 ];
 
-/** The kinds the acceptance names that the HUD on this branch can open without another package's code. */
-const REQUIRED: Kind[] = ['menu', 'drawer', 'dialog'];
+/** The kinds the acceptance names. */
+const REQUIRED: Kind[] = ['menu', 'drawer', 'dialog', 'toast'];
+/** The rebuilt HUD's (M7-P2) own routes: each must have opened its surface, so a stale selector cannot pass by another opener. */
+const REQUIRED_OPENERS = ['menu button', 'log drawer', 'settings from the menu', 'keys panel'];
 
 test('no element over the table computes a backdrop filter or a blur, whatever is open', async ({ page }, info) => {
   test.setTimeout(90_000);
@@ -127,6 +154,6 @@ test('no element over the table computes a backdrop filter or a blur, whatever i
       await page.keyboard.press('Escape');
     });
   info.annotations.push({ type: 'opened', description: opened.join(', ') });
-  // The toast joins REQUIRED once the rebuilt HUD (M7-P2) shows the kit's toast host over the table.
   expect([...kinds].filter((k) => REQUIRED.includes(k)).sort()).toEqual([...REQUIRED].sort());
+  expect(REQUIRED_OPENERS.filter((n) => !opened.includes(n)), 'HUD routes that opened nothing').toEqual([]);
 });

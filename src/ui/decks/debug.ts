@@ -28,16 +28,41 @@ export interface DecksDebugAttach {
   onchange?: (id: string) => void;
 }
 
-const deps: Required<Pick<DecksDebugAttach, 'now'>> & Omit<DecksDebugAttach, 'now'> = { now: () => Date.now() };
+type Deps = Required<Pick<DecksDebugAttach, 'now'>> & Omit<DecksDebugAttach, 'now'>;
+/** What registerDecksPart set (the page's deck store); the attachments of mounted pages lie over it, latest last. */
+const base: Deps = { now: () => Date.now() };
+const attached: DecksDebugAttach[] = [];
+const deps: Deps = { ...base };
+
+function recompute(): void {
+  for (const k of Object.keys(deps) as (keyof Deps)[]) delete deps[k];
+  Object.assign(deps, base, ...attached);
+}
 const offlineListeners = new Set<(on: boolean) => void>();
 let offline = false;
 
-/** Add or replace the parts the hook works on; returns a function that removes the listener-like parts again. */
+/**
+ * Add or replace the parts the hook works on; the returned function takes the page's own parts away again (what an
+ * earlier attachment shows through), so a destroyed page leaves no card source or listener behind in module state. The
+ * page's stores (decks, settings) are the page load's own and stay, so `select` and `selected` work on Home too.
+ */
 export function attachDecksDebug(more: DecksDebugAttach): () => void {
-  Object.assign(deps, more);
+  if (more.decks && !base.decks) base.decks = more.decks;
+  if (more.settings && !base.settings) base.settings = more.settings;
+  const mine = { ...more };
+  attached.push(mine);
+  recompute();
   return () => {
-    if (more.onchange && deps.onchange === more.onchange) delete deps.onchange;
+    const i = attached.indexOf(mine);
+    if (i < 0) return;
+    attached.splice(i, 1);
+    recompute();
   };
+}
+
+/** What the hook works on now (tests). */
+export function decksDebugDeps(): Readonly<DecksDebugAttach> {
+  return { ...deps };
 }
 
 /** Whether the hook set the card search offline. */
@@ -61,7 +86,10 @@ async function load(sids: string[]): Promise<void> {
 
 /** Register `window.__spellplane.decks` over the page's deck library (null when storage cannot be opened). */
 export function registerDecksPart(decks: DeckStore | null): void {
-  if (decks) deps.decks = decks;
+  if (decks) {
+    base.decks = decks;
+    recompute();
+  }
   registerDebug({
     decks: {
       list: async () => (deps.decks ? deps.decks.list() : []),

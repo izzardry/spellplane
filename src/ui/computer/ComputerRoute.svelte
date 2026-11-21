@@ -12,20 +12,22 @@
   import { onMount, untrack } from 'svelte';
   import type { SeatId, TableState } from '../../core/types';
   import type { ComputerGame, ComputerStatus } from '../../session/types';
-  import type { GameStore } from '../../store/types';
+  import type { ComputerGameRecord, GameStore } from '../../store/types';
   import Badge from '../design/Badge.svelte';
   import CoachMark from '../design/CoachMark.svelte';
   import MenuPopover from '../design/MenuPopover.svelte';
   import type { MenuGroup } from '../design/menu';
   import SeatGlyph from '../design/SeatGlyph.svelte';
   import { HUD_SHELL } from '../hud/shell';
-  import { leaveTable } from '../play/leave';
+  import { newComputerRoom } from '../home/deps';
+  import { computerHash } from '../play/launch';
+  import { computerPurge, leaveTable, type ComputerStores } from '../play/leave';
   import type { HudShellProps } from '../props';
   import { tableDeps } from '../table/context';
   import TableFrame from '../table/TableFrame.svelte';
-  import type { TableDeps, TableFrameProps } from '../table/types';
+  import type { FrameLeave, TableDeps, TableFrameProps } from '../table/types';
   import { botDebugClock, setActiveComputer } from './debug';
-  import { COMPUTER_BADGE, CUE_COACH_TEXT, coachDue, cueButton, pauseWhileHidden, plateItems, type CueButton } from './shell';
+  import { COMPUTER_BADGE, CUE_COACH_TEXT, coachDue, cueButton, keepRematch, pauseWhileHidden, plateItems, takeRematch, type CueButton } from './shell';
 
   let {
     room,
@@ -37,8 +39,11 @@
   }: {
     room: string;
     go?: (hash: string) => void;
-    /** Opens the game (main.ts or a harness); default: the page's services from the table context. */
-    open?: ((room: string) => Promise<ComputerGame>) | undefined;
+    /**
+     * Opens the game (a harness); default: the page's services from the table context. `rematchOf` is the finished
+     * game's record when the room was opened by its REMATCH (computer.md 2.4: the same decks, a new seed).
+     */
+    open?: ((room: string, opts?: { rematchOf?: ComputerGameRecord }) => Promise<ComputerGame>) | undefined;
     /** History's games store; default the profile's. */
     games?: GameStore | null | undefined;
     /** The page's sources and stores for the frame; default the context App sets. */
@@ -54,17 +59,20 @@
   let game = $state.raw<ComputerGame | null>(null);
   let store = $state.raw<GameStore | null>(untrack(() => games ?? null));
   let error = $state('');
+  /** The stores the default opener saved this game into (the short-game purge deletes from them). */
+  let savedIn: ComputerStores | null = null;
 
   /** The default opener: the saved game of this room, else a new one for Home's selected deck (lazy chunk). */
-  async function openDefault(roomId: string): Promise<ComputerGame> {
+  async function openDefault(roomId: string, opts?: { rematchOf?: ComputerGameRecord }): Promise<ComputerGame> {
     const [m, page] = await Promise.all([import('../../session/computer'), import('./page')]);
-    if (!ctx) return m.openComputerGame(roomId);
+    if (!ctx) return m.openComputerGame(roomId, { rematchOf: opts?.rematchOf ?? null });
     const d = await page.pageComputerDeps(ctx);
     const clock = botDebugClock();
     if (clock) d.clock = clock;
     const deckId = ctx.settings ? await ctx.settings.get('home').then((h) => h.deckId, () => null) : null;
     if (store === null && games === undefined) store = (await page.pageStores())?.games ?? null;
-    return m.openComputerGame(roomId, { deckId, deps: d });
+    savedIn = { tables: d.tables, computer: d.computer };
+    return m.openComputerGame(roomId, { deckId, deps: d, rematchOf: opts?.rematchOf ?? null });
   }
 
   $effect(() => {
@@ -73,7 +81,8 @@
     let got: ComputerGame | null = null;
     let stop: (() => void) | null = null;
     let unregister: (() => void) | null = null;
-    untrack(() => (open ?? openDefault)(roomId)).then(
+    const again = takeRematch(roomId);
+    untrack(() => (open ?? openDefault)(roomId, again ? { rematchOf: again } : undefined)).then(
       async (g) => {
         got = g;
         if (cancelled) {
@@ -145,7 +154,8 @@
   const override = $derived.by((): HudShellProps['primaryOverride'] => {
     const g = game;
     if (!g || !st || st.result !== undefined || st.stage !== 'match') return null;
-    if (cue) return { label: cue.label, run: () => cue.run() };
+    // Pressing the cue by any means (pointer, Enter, Space) counts as having seen the coach mark.
+    if (cue) return { label: cue.label, run: () => (dismissCoach(), cue.run()) };
     if (st.turn.active === g.handle.seat) return { label: "Sparring's turn", quiet: true, run: () => undefined };
     return null;
   });
@@ -176,7 +186,7 @@
     return () => clearTimeout(t);
   });
   function dismissCoach(): void {
-    if (coachDone) return;
+    if (coachDone || !showCoach) return;
     coachDone = true;
     const s = ctx?.settings;
     if (!s || !seen) return;
@@ -186,6 +196,14 @@
       .get('hintsSeen')
       .then((h) => (h.includes('coachSparring') ? undefined : s.set('hintsSeen', [...h, 'coachSparring'])))
       .catch(() => undefined);
+  }
+
+  /**
+   * Where the mark stands: below the cue where there is room (the frame's bar, the HUD's primary above the hand on a
+   * narrow or touch layout), above it when the cue sits at the window's lower edge (the HUD's primary on a desktop).
+   */
+  function coachPlacement(el: HTMLElement): 'above' | 'below' {
+    return el.getBoundingClientRect().bottom + 96 > window.innerHeight ? 'above' : 'below';
   }
 
   // Sparring's plate menu items (tonight: Pause / Resume Sparring, Sparring concedes).
@@ -207,8 +225,31 @@
   let menuOpen = $state(false);
   let menuButton = $state<HTMLElement | null>(null);
 
-  function leave(g: ComputerGame): void {
-    void leaveTable({ session: g.session, kind: 'computer', code: room, games: store, go });
+  /**
+   * REMATCH on the game-over overlay (computer.md 2.4): Sparring never answers a next-game proposal (4.2 item 6), so
+   * the overlay leaves this table, saved as on any leave and without its toast, for a new computer room that plays the
+   * same decks with a new seed (as Home's SOLO launcher opens one: a History row, the newest three solo games kept).
+   */
+  async function rematch(g: ComputerGame, c?: FrameLeave): Promise<unknown> {
+    const { recordOf } = await import('../../session/computer');
+    const again = recordOf(g.handle);
+    const next = newComputerRoom();
+    if (again) keepRematch(next, again);
+    const to = computerHash(next);
+    const deck = again?.human.deckId ? { deck: { id: again.human.deckId, name: again.human.deckName } } : {};
+    try {
+      await store?.create({ code: next, key: '', kind: 'solo', format: '1v1', decks: 'constructed', opponent: 'sparring', seat: 's0', ...deck });
+      await store?.endOlderSolo(3);
+    } catch {
+      /* History is best effort */
+    }
+    await leaveTable({ session: g.session, kind: 'computer', code: room, games: store, go: (h) => go(h === '#/' ? to : h), toast: () => undefined, checkpointer: c?.checkpointer ?? null, purgeComputer: computerPurge(g.handle, room, savedIn) });
+    return undefined;
+  }
+
+  function leave(g: ComputerGame, c?: FrameLeave): Promise<unknown> {
+    // A purge disposes Sparring before it deletes, so the handle's last saves never write a row back (M8-P8).
+    return leaveTable({ session: g.session, kind: 'computer', code: room, games: store, go, checkpointer: c?.checkpointer ?? null, purgeComputer: computerPurge(g.handle, room, savedIn) });
   }
 </script>
 
@@ -230,7 +271,7 @@
 
 {#if game}
   {@const g = game}
-  <TableFrame session={g.session} kind="computer" code={room} games={store} gather={false} {extraShell} deps={ctx ?? undefined} onleave={() => leave(g)} />
+  <TableFrame session={g.session} kind="computer" code={room} games={store} gather={false} {extraShell} deps={ctx ?? undefined} onleave={(c) => leave(g, c)} onrematch={(c) => rematch(g, c)} />
   {#if !HUD_SHELL}
     <!-- Sparring's plate slots while the HUD does not show them (contracts.md Part C fallback). -->
     <div class="sparring-chip ds-root ds-panel" data-testid="sparring-chip">
@@ -247,7 +288,7 @@
     </div>
   {/if}
   {#if showCoach && anchor}
-    <CoachMark {anchor} title={CUE_COACH_TEXT} placement="below" ondismiss={dismissCoach} data-testid="coach-sparring" />
+    <CoachMark {anchor} title={CUE_COACH_TEXT} placement={coachPlacement(anchor)} ondismiss={dismissCoach} data-testid="coach-sparring" />
   {/if}
 {:else if error}
   <main class="ds-page ds-root" data-testid="route-computer">

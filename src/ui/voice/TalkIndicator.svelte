@@ -68,13 +68,13 @@
   </span>
   {#if shown !== 'listening'}
     {#if !joined && settings.voice}
-      <button type="button" data-testid="voice-join" disabled={joining} onclick={join}>{joining ? 'Joining…' : 'Join voice'}</button>
+      <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs" data-testid="voice-join" disabled={joining} onclick={join}>{joining ? 'Joining…' : 'Join voice'}</button>
     {/if}
-    <button type="button" data-testid="voice-mute" aria-pressed={settings.muted} onclick={() => voice.toggleMute()}>
+    <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs" data-testid="voice-mute" aria-pressed={settings.muted} onclick={() => voice.toggleMute()}>
       {settings.muted ? 'Unmute' : 'Mute'} <kbd>{muteKey}</kbd>
     </button>
   {/if}
-  <button type="button" data-testid="voice-settings" aria-expanded={panelOpen} aria-label="Voice settings" onclick={() => ontogglepanel?.()}>⚙</button>
+  <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs" data-testid="voice-settings" aria-expanded={panelOpen} aria-label="Voice settings" onclick={() => ontogglepanel?.()}>⚙</button>
   {#if error}<span class="error" role="alert" data-testid="voice-error">{error}</span>{/if}
 </div>
 
@@ -148,19 +148,7 @@
     color: var(--sp-muted, #5f5f5f);
     border-style: dotted;
   }
-  button {
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: var(--sp-radius-sm, 2px);
-    padding: 2px 8px;
-    font: inherit;
-    cursor: pointer;
-  }
-  button[aria-pressed='true'] {
-    background: var(--sp-fg, #111);
-    color: var(--sp-surface, #fff);
-  }
+  /* The voice row's buttons are the kit's xs buttons (28 px, visual.md DS-4; M8-P8). */
   kbd {
     font-family: var(--sp-font-mono, monospace);
     opacity: 0.7;

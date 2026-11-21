@@ -109,7 +109,7 @@
   });
 </script>
 
-<div class="history" data-testid="history-list">
+<div class="history" data-testid="history-list" data-loaded={loaded}>
   {#if withFilter}
     <div class="history__head">
       <Segmented
@@ -125,7 +125,9 @@
       />
     </div>
   {/if}
-  {#if loaded && failed}
+  {#if loaded && (failed || shown.length === 0) && limit !== undefined}
+    <!-- Home's recent games (journey.md 4.14): "On Home's fold the section is simply absent." -->
+  {:else if loaded && failed}
     <StatusLine tone="danger">Your games could not be loaded.</StatusLine>
     <Button size="sm" onclick={() => void load()}>TRY AGAIN</Button>
   {:else if loaded && shown.length === 0}
@@ -143,7 +145,7 @@
               onopen(g);
             }}
           >
-            <TableThumb thumb={g.thumb ?? null} seats={g.players.map((p, i) => ({ colour: seatColour(p.colour, i), life: p.life, computer: g.opponent === 'sparring' && !p.me }))} width={128} />
+            <TableThumb thumb={g.thumb ?? null} seats={g.players.map((p, i) => ({ colour: seatColour(p.colour, i), life: p.life, computer: g.opponent === 'sparring' && !p.me, me: p.me, away: p.away }))} width={128} />
             <span class="hrow__text">
               <span class="hrow__head">
                 <span class="hrow__title" data-testid="history-title">{rowTitle(g)}</span>

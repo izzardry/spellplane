@@ -52,7 +52,8 @@ export async function designAuditFindings(page: Page, opts: DesignAuditOptions =
 
       // 1. Control heights. Segments are measured by their track; a mode card is a container (visual.md 2.5).
       const controls = [...document.querySelectorAll('button, [role="button"], a.ds-btn, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]):not([type="range"]), select, .ds-seg, .ds-tabs, .ds-field')].filter(
-        (el) => !skipped(el) && visible(el) && !el.closest('.ds-seg button, .ds-field input, .ds-tabs button') && !el.matches('.ds-seg button, .ds-field input, .ds-mode, .ds-tabs button'),
+        // A card in the hand fan is focusable (role="button") but is the card's own 63:88 size, not a control (M8-P8).
+        (el) => !skipped(el) && visible(el) && !el.closest('.ds-seg button, .ds-field input, .ds-tabs button') && !el.matches('.ds-seg button, .ds-field input, .ds-mode, .ds-tabs button, [data-testid="hand-card"]'),
       );
       for (const el of controls) {
         const h = el.getBoundingClientRect().height;

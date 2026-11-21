@@ -112,7 +112,7 @@
 </script>
 
 {#if visible && !importing}
-  <aside class="recovery ds-root" data-testid="recovery" data-phase={status.phase} data-running={running || busy} aria-live="polite">
+  <aside class="recovery ds-root" data-ds-layer="sheet" data-testid="recovery" data-phase={status.phase} data-running={running || busy} aria-live="polite">
     {#if title}<h2 data-testid="recovery-title">{title}</h2>{/if}
 
     {#if status.phase === 'lost' && !running}

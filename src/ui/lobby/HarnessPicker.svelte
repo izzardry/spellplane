@@ -14,6 +14,8 @@
   onMount(() => void (window as unknown as { __lobbyHarness?: { library(): Promise<DeckRecord[]> } }).__lobbyHarness?.library().then((d) => (decks = d)));
 </script>
 
+<!-- Like the kit sheet it stands in for, it draws its own scrim. -->
+<div class="ds-scrim" role="presentation">
 <Sheet label="Choose a deck" width="narrow" {onclose} data-testid="deck-picker">
   {#snippet header()}<h2 class="ds-t-title">Choose a deck</h2>{/snippet}
   <ul class="list">
@@ -28,6 +30,7 @@
     {/each}
   </ul>
 </Sheet>
+</div>
 
 <style>
   .list {

@@ -12,6 +12,7 @@
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import { perspectiveToggleTilt, type ActivePing, type TableScene, type ViewState } from '../scene/types';
   import type { PileHover, SelectionAnchor } from '../scene/types'; // M7-P5
+  import { resolveMotion } from '../scene/types'; // M7-P5
   import { attachPresence, type PresenceHandle } from '../scene/presence';
   import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
@@ -30,7 +31,7 @@
   import NoDeck from './hud/NoDeck.svelte';
   import OpeningHand from './hud/OpeningHand.svelte';
   import ViewControl from './hud/ViewControl.svelte';
-  import { gameNumber, openingHandShown } from './hud/opening';
+  import { gameNumber, openingHandShown, ownTurnEnded } from './hud/opening';
   import { passTarget, primaryAction } from './hud/turn';
   import { tickerText } from './hud/ticker';
   import { hudMenu, type HudMenuId } from './menu';
@@ -152,8 +153,6 @@
       if (shownNotice?.id === n.id) shownNotice = null;
     }, n.action ? 10000 : 6000));
   });
-  /** KEEP was pressed for this game (the chips leave; ui/hud/opening.ts). */
-  let keptGame = $state<number | null>(null);
 
   // --- Shared state, as views of the session (the HUD is mounted per session; it never swaps sessions) ----------
   const me = untrack(() => session.seat);
@@ -213,10 +212,27 @@
   }
   let sceneReady = $state(false);
   let sceneError = $state('');
-  // Look, do not touch (HudShellProps.readOnly): the scene proposes no action (TableScene.setReadOnly, M7-P5).
+  // Look, do not touch (HudShellProps.readOnly, or chrome 'plates'): the scene proposes no action (TableScene.setReadOnly,
+  // M7-P5). It is created with the setting (TableSceneOptions.readOnly) and told of every change.
   $effect(() => {
-    const ro = readOnly;
-    if (sceneReady) (scene as unknown as { setReadOnly?: (on: boolean) => void } | null)?.setReadOnly?.(ro);
+    const ro = viewOnly;
+    if (sceneReady) scene?.setReadOnly?.(ro);
+  });
+  // An acting overlay open when the table turns view-only (a gathering switching a live table to standby) closes: its
+  // handlers would act on the table.
+  $effect(() => {
+    if (!viewOnly) return;
+    untrack(() => {
+      menu = null;
+      radial = null;
+      note = null;
+      drawN = null;
+      askField = null;
+      revealTo = null;
+      tokenNear = null;
+      deckOpen = false;
+      leaving = null;
+    });
   });
   /** The viewer's reduced-motion setting, followed live (M5-P4 reduced-motion audit; ui/a11y/motion.ts). */
   let reducedMotion = $state(prefersReducedMotion());
@@ -1019,6 +1035,38 @@
     return a?.at ? a : null;
   };
 
+  // KEEP / MULLIGAN (ui/hud/opening.ts): closed for a game by KEEP or once the seat's own first turn ended. Remembered
+  // per room, seat and game in this tab (per-tab convenience, as the untap offer below; storage may be unavailable), so
+  // a remount or reload in turn 1 does not bring them back.
+  const openingKey = `spellplane:opening-closed:${untrack(() => session.roomId)}:${me}`;
+  let closedGame = $state<number | null>(
+    (() => {
+      try {
+        const v = sessionStorage.getItem(openingKey);
+        return v === null ? null : Number(v);
+      } catch {
+        return null;
+      }
+    })(),
+  );
+  function closeOpening(game: number): void {
+    if (closedGame === game) return;
+    closedGame = game;
+    try {
+      sessionStorage.setItem(openingKey, String(game));
+    } catch {
+      // Not remembered: the chips still follow the table.
+    }
+  }
+  let turnSeen = untrack(() => ({ number: st.turn.number, mine: isOwnTurn(st, me) }));
+  $effect(() => {
+    const now = { number: st.turn.number, mine: isOwnTurn(st, me) };
+    untrack(() => {
+      if (ownTurnEnded(turnSeen, now)) closeOpening(gameNumber(st));
+      turnSeen = now;
+    });
+  });
+
   // On Next turn, offer the new active player (or team) untap-and-draw; close the offer once the turn moves on
   // (DESIGN "Turn flow and confirmation": offered a single key, never done for them).
   // A page that opens (reload, rejoin) after the turn passed to this seat offers it too: from the log, or from the
@@ -1345,6 +1393,7 @@
         viewerSeat: me,
         theme,
         faces,
+        readOnly: viewOnly,
         dispatch: (d) => session.dispatch(d),
         events: {
           hover: (id) => (sceneHover = id),
@@ -1382,6 +1431,8 @@
       registerDebug({ touch: touchDebug });
       // The viewer's quality and follow toggles (Settings.quality, followStack, followActive).
       view.attach(scene);
+      // M7-P5: the viewer's Settings.motion (a 'system' setting follows ViewState.reducedMotion, which the scene reads already).
+      void settings?.get('motion').then((m) => { if (scene && m && m !== 'system') scene.setMotion?.(resolveMotion(m, reducedMotion)); }, () => undefined); // M7-P5
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
       presence = attachPresence(sceneHost!, scene, session.presence, {
         selfSeat: me,
@@ -1473,14 +1524,14 @@
     oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: seat.id, kind, delta })}
     onopenzone={openViewer}
     ongoto={() => scene?.camera.goToSeat(seat.id)}
-    readonly={spectating || readOnly}
+    readonly={spectating || viewOnly}
     compact={!mine && otherAvatars >= 3}
     away={isAway(seat.id)}
     badge={plateBadge}
     menuTop={plateMenuTop}
     voiceControls={!mine && !!liveVoice}
     peerAudio={!mine && liveVoice && seat.peer ? peerAudioOf(seat.peer) : undefined}
-    onrevealhand={!mine && !spectating && !readOnly && hand.length > 0 ? () => revealHandTo([seat.id]) : undefined}
+    onrevealhand={!mine && !spectating && !viewOnly && hand.length > 0 ? () => revealHandTo([seat.id]) : undefined}
   />
 {/snippet}
 
@@ -1547,7 +1598,7 @@
     </div>
     {/if}
 
-    <!-- Top centre: the turn tracker; the stack's controls appear under it only while something is on the stack. -->
+    <!-- Top centre: the turn tracker and the plates without a seat edge. -->
     <div class="top-centre">
       {#if full}
       <TurnStrip
@@ -1562,22 +1613,6 @@
       />
       {/if}
       {#if status}<div class="sp-status" data-testid="hud-status">{@render status()}</div>{/if}
-      {#if top && full}
-        <div class="stack-chip ds-panel" data-testid="stack-chip">
-          <span class="ds-label">Stack {st.stack.length}</span>
-          {#if !readOnly}
-          <button type="button" class="ds-btn sp-h-xs sp-pill" class:lit={resolveLit} data-testid="resolve" title="Resolve{keyOf('resolve') ? ` (${keyOf('resolve')})` : ''}" onclick={() => commands.run('resolve')}>Resolve</button>
-          {#if resolveTargets.length}
-            <span class="to" data-testid="resolve-to">to
-              {#each resolveTargets as t (t.zone)}
-                <button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-pill" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
-              {/each}
-            </span>
-          {/if}
-          <button type="button" class="ds-btn sp-h-xs sp-pill" title="Counter{keyOf('counterTop') ? ` (${keyOf('counterTop')})` : ''}" onclick={() => commands.run('counterTop')}>Counter</button>
-          {/if}
-        </div>
-      {/if}
       <!-- Other players' plates without a reported seat edge sit in a row under the tracker. -->
       <div class="plates-row">
         {#each others as seat (seat.id)}
@@ -1629,6 +1664,27 @@
       <div class="own-avatar" class:over-evening={eveningBarBelow}>{@render plate(st.seats[me], true)}</div>
     {/if}
 
+    <!-- Bottom right, above the primary: the stack's controls while something is on the stack (out of the top centre,
+         where they covered the opponent's plate and row of card backs; gate M1, seam fix M8-P8). -->
+    <div class="stack-dock">
+      {#if top && full}
+        <div class="stack-chip ds-panel" data-testid="stack-chip">
+          <span class="ds-label">Stack {st.stack.length}</span>
+          {#if !readOnly}
+          <button type="button" class="ds-btn sp-h-xs sp-pill" class:lit={resolveLit} data-testid="resolve" title="Resolve{keyOf('resolve') ? ` (${keyOf('resolve')})` : ''}" onclick={() => commands.run('resolve')}>Resolve</button>
+          {#if resolveTargets.length}
+            <span class="to" data-testid="resolve-to">to
+              {#each resolveTargets as t (t.zone)}
+                <button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-pill" class:default={t.isDefault} data-zone={t.zone} aria-label="Resolve to {t.label}{t.isDefault ? ' (default)' : ''}" onclick={() => commands.resolveTop(t.isDefault ? undefined : t.zone)}>{t.label}</button>
+              {/each}
+            </span>
+          {/if}
+          <button type="button" class="ds-btn sp-h-xs sp-pill" title="Counter{keyOf('counterTop') ? ` (${keyOf('counterTop')})` : ''}" onclick={() => commands.run('counterTop')}>Counter</button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+
     <!-- Bottom right: Talk and the one primary button. -->
     {#if full}
     <div class="bottom-right">
@@ -1668,9 +1724,9 @@
       {#if noDeck && !deckOpen && !readOnly}
         <NoDeck onchoose={onchoosedeck} onpaste={importOffered ? () => (deckOpen = true) : undefined} />
       {/if}
-      {#if !readOnly && openingHandShown(st, me, hand.length, keptGame)}
+      {#if !readOnly && openingHandShown(st, me, hand.length, closedGame)}
         <OpeningHand
-          onkeep={() => (keptGame = gameNumber(st))}
+          onkeep={() => closeOpening(gameNumber(st))}
           onmulligan={() => commands.run('mulligan')}
         />
       {/if}
@@ -1777,8 +1833,6 @@
       <TeamHands team={session.team} state={st} {faces} {vw} {vh} oninspect={(id, ref) => ((inspectId = id), (inspectRef = ref))} />
     {/if}
     {/if}
-    <!-- M7-P5 affordances: M7-P5 mounts its affordance layer and coach marks here (after the plates, before the dialogs). -->
-    <!-- /M7-P5 -->
   </div>
 
   {#if viewer}
@@ -2151,17 +2205,37 @@
     gap: var(--ds-space-sm);
     z-index: 30;
   }
+  /* A narrow column above the primary, clear of the hand fan and of the top centre. */
+  .stack-dock {
+    position: absolute;
+    right: var(--ds-edge);
+    bottom: calc(var(--ds-edge) + var(--ds-control-lg) + var(--ds-space-sm));
+    z-index: 35;
+    display: flex;
+    justify-content: flex-end;
+    pointer-events: none;
+  }
+  @media (max-width: 1100px) {
+    .stack-dock {
+      bottom: calc(22vh + 16px + var(--ds-control-lg) + var(--ds-space-sm));
+    }
+  }
+  .touch-ui .stack-dock {
+    bottom: calc(22vh + 16px + var(--thumb-space, 0px) + var(--ds-control-lg) + var(--ds-space-sm));
+  }
   .stack-chip {
     pointer-events: auto;
     display: flex;
-    gap: var(--ds-space-sm);
-    align-items: center;
-    padding: var(--ds-space-xs) var(--ds-space-sm) var(--ds-space-xs) var(--ds-space-md);
+    flex-direction: column;
+    gap: var(--ds-space-xs);
+    align-items: stretch;
+    padding: var(--ds-space-sm);
   }
   .stack-chip .to {
-    display: inline-flex;
+    display: flex;
+    flex-direction: column;
     gap: 2px;
-    align-items: center;
+    align-items: stretch;
     color: var(--ds-muted);
   }
   .plates-row {

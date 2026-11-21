@@ -6,7 +6,28 @@ import { describe, expect, it, vi } from 'vitest';
 import { importLibrary } from '../../../src/store/decks';
 import { DEFAULT_HOME_PREFS, type DeckRecord, type DeckStore, type Settings, type SettingsStore } from '../../../src/store/types';
 import { DeckLibrary, SEARCH_LOCK_TEXT, UNDO_WINDOW_MS } from '../../../src/ui/decks/state/library';
+import type { CardDataSource } from '../../../src/data/types';
 import { source } from './fixture-decks';
+
+/** The app's card source on a fresh page: nothing in memory until getMany loads it (which waits for `gate`). */
+function coldSource(gate: Promise<unknown> = Promise.resolve()): CardDataSource & { asked: number } {
+  const loaded = new Set<string>();
+  const cold = {
+    asked: 0,
+    get: (sid: string) => source.get(sid),
+    getMany: async (sids: string[]) => {
+      cold.asked++;
+      await gate;
+      for (const s of sids) loaded.add(s);
+      return source.getMany(sids);
+    },
+    peek: (sid: string) => (loaded.has(sid) ? source.peek(sid) : null),
+    resolveDeck: (l: Parameters<CardDataSource['resolveDeck']>[0]) => source.resolveDeck(l),
+    searchTokens: (q: string) => source.searchTokens(q),
+    relatedTokens: (c: Parameters<CardDataSource['relatedTokens']>[0]) => source.relatedTokens(c),
+  };
+  return cold;
+}
 
 const FILE = readFileSync(join(fileURLToPath(new URL('../../fixtures/decks', import.meta.url)), 'library-v1.json'), 'utf8');
 
@@ -98,5 +119,67 @@ describe('DeckLibrary', () => {
     expect(lib.decks.find((d) => d.id === dup!.id)?.summary).toBeDefined();
     await lib.rename('pasted-gw', '  Selesnya  ');
     expect(decks.map.get('pasted-gw')?.name).toBe('Selesnya');
+  });
+});
+
+describe('DeckLibrary with card data not yet in memory', () => {
+  async function warmed() {
+    const s = stores();
+    // A first visit leaves current summaries on every record: the next library load asks for no card data.
+    await new DeckLibrary({ decks: s.decks, settings: s.settings, cardData: source, newId: () => 'w', now: () => 1 }).load();
+    return s;
+  }
+
+  it('duplicate and convert load the card data before they summarise the copy', async () => {
+    const s = await warmed();
+    const cold = coldSource();
+    let n = 0;
+    const lib = new DeckLibrary({ decks: s.decks, settings: s.settings, cardData: cold, newId: () => `n${++n}`, now: () => 5_000_000_000_000 });
+    await lib.load();
+    expect(cold.asked).toBe(0);
+    const dup = (await lib.duplicate('pasted-gw'))!;
+    const conv = (await lib.convert('drafted-ur'))!;
+    for (const copy of [dup, conv]) {
+      const saved = s.decks.map.get(copy.id)!;
+      expect(saved.summary?.unknown).toBe(0);
+      expect(saved.summary?.colours.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('a copy whose card data does not load is saved without a summary, so the next load computes one', async () => {
+    const s = await warmed();
+    const offline = { ...coldSource(), getMany: () => Promise.reject(new Error('offline')) } as unknown as CardDataSource;
+    const lib = new DeckLibrary({ decks: s.decks, settings: s.settings, cardData: offline, newId: () => 'n1', now: () => 5_000_000_000_000 });
+    await lib.load();
+    const dup = (await lib.duplicate('pasted-gw'))!;
+    expect(s.decks.map.get(dup.id)!.summary).toBeUndefined();
+  });
+
+  it('a summary refresh never overwrites a record saved while its card data loaded, nor writes after dispose', async () => {
+    let open!: () => void;
+    const gate = new Promise<void>((r) => (open = r));
+    const s = stores();
+    const lib = new DeckLibrary({ decks: s.decks, settings: s.settings, cardData: coldSource(gate), newId: () => 'n1', now: () => 1 });
+    const loading = lib.load();
+    await vi.waitFor(() => expect(lib.decks).toHaveLength(2));
+    // The deck page autosaves an edit while the library still waits for card data.
+    const edited: DeckRecord = { ...s.decks.map.get('pasted-gw')!, main: [], updatedAt: 9_000_000_000_000 };
+    s.decks.map.set(edited.id, edited);
+    open();
+    await loading;
+    expect(s.decks.map.get('pasted-gw')).toBe(edited);
+    expect(s.decks.map.get('drafted-ur')!.summary).toBeDefined();
+
+    let open2!: () => void;
+    const gate2 = new Promise<void>((r) => (open2 = r));
+    const t = stores();
+    const before = JSON.stringify([...t.decks.map.values()]);
+    const left = new DeckLibrary({ decks: t.decks, settings: t.settings, cardData: coldSource(gate2), newId: () => 'n1', now: () => 1 });
+    const loading2 = left.load();
+    await vi.waitFor(() => expect(left.decks).toHaveLength(2));
+    await left.dispose();
+    open2();
+    await loading2;
+    expect(JSON.stringify([...t.decks.map.values()])).toBe(before);
   });
 });

@@ -24,7 +24,7 @@
   import StrengthPips from '../design/StrengthPips.svelte';
   import HistoryList from '../history/HistoryList.svelte';
   import { relTime, rowState, rowTitle } from '../history/rows';
-  import { launchDraft, launchEmpty, launchFirstRun, launchPrivate, launchQuick, launchSolo, makeStarterDeck, summaryHash, type LaunchDeps } from '../play/launch';
+  import { FirstRunError, launchDraft, launchEmpty, launchFirstRun, launchPrivate, launchQuick, launchSolo, makeStarterDeck, summaryHash, type LaunchDeps } from '../play/launch';
   import { tableDeps } from '../table/context';
   import type { RoomLink } from '../types';
   import { COMPUTER_AVAILABLE } from '../../session/computer';
@@ -89,6 +89,8 @@
   let recent = $state(0);
   let busy = $state(false);
   let firstRunFailed = $state(false);
+  /** What the first-run sheet's TRY AGAIN runs again: the primary (first run) or the STARTER DECK link. */
+  let retry: 'primary' | 'starter' = 'primary';
   let tick = $state(0);
   let ready = $state(false);
   let alive = true;
@@ -243,12 +245,23 @@
         case 'draft':
           await launchDraft(deps, p);
           break;
+        case 'cancel':
+          matchmaker.cancel();
+          break;
         case 'none':
           break;
       }
-    } catch {
-      if (view.primary.action === 'firstRun') firstRunFailed = true;
-      else deps.toast('That did not work. Try again.');
+    } catch (e) {
+      if (e instanceof FirstRunError) {
+        // The starter deck could not be built: the sheet (TRY AGAIN runs the first run again).
+        retry = 'primary';
+        firstRunFailed = true;
+      } else {
+        // The starter deck may already be saved (the start itself failed): read the library again, so the next press
+        // plays that deck instead of building a second one.
+        if (view.primary.action === 'firstRun') await reloadDecks();
+        deps.toast('That did not work. Try again.');
+      }
     } finally {
       if (alive) busy = false;
     }
@@ -264,10 +277,31 @@
       decks = [deck, ...decks.filter((d) => d.id !== deck.id)];
       prefs = { ...prefs, deckId: deck.id };
     } catch {
-      if (alive) firstRunFailed = true;
+      if (alive) {
+        retry = 'starter';
+        firstRunFailed = true;
+      }
     } finally {
       if (alive) busy = false;
     }
+  }
+
+  /** The library and the selected deck again (after a first run that saved its deck and then failed to start). */
+  async function reloadDecks(): Promise<void> {
+    try {
+      const [p, list] = await Promise.all([deps.settings?.get('home') ?? Promise.resolve(prefs), deps.decks?.list() ?? Promise.resolve(decks)]);
+      if (!alive) return;
+      prefs = { ...DEFAULT_HOME_PREFS, ...p };
+      decks = list;
+    } catch {
+      /* what is shown stays */
+    }
+  }
+
+  /** TRY AGAIN on the first-run sheet: the action that failed. */
+  function tryAgain(): void {
+    firstRunFailed = false;
+    void (retry === 'starter' ? starterDeck() : primary());
   }
 
   // After 400 ms of loading the status line says so (journey.md 4.1 "Other states").
@@ -460,7 +494,7 @@
       {#snippet footer()}
         <Button size="md" variant="ghost" onclick={() => ((firstRunFailed = false), void launchEmpty(deps, $state.snapshot(prefs) as HomePrefs))} data-testid="first-run-empty">OPEN AN EMPTY TABLE</Button>
         <Button size="md" variant="ghost" onclick={() => ((firstRunFailed = false), deps.go('#/decks/new/import'))} data-testid="first-run-paste">PASTE A DECK LIST</Button>
-        <Button size="md" variant="primary" onclick={() => ((firstRunFailed = false), void primary())} data-testid="first-run-retry">TRY AGAIN</Button>
+        <Button size="md" variant="primary" onclick={tryAgain} data-testid="first-run-retry">TRY AGAIN</Button>
       {/snippet}
     </Sheet>
   </div>

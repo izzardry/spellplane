@@ -12,8 +12,9 @@
 <script lang="ts">
   import { onMount, untrack, type Component } from 'svelte';
   import type { Format, SeatId, TableState } from '../../core/types';
+  import type { FaceSource } from '../../data/types';
   import { toViewerFrame } from '../../games/frame';
-  import type { BoosterSetup, DeckRecord, HomePrefs, SettingsStore } from '../../store/types';
+  import type { BoosterSetup, DeckRecord, DeckStore, HomePrefs, SettingsStore } from '../../store/types';
   import { DEFAULT_BOOSTER_SETUP } from '../../store/types';
   import type { SessionNetStatus } from '../../session/types';
   import { paper } from '../../themes/paper/index';
@@ -32,13 +33,13 @@
   import DeckPickerSheet from '../decks/DeckPickerSheet.svelte';
   import BoosterSetupSheet from '../decks/BoosterSetupSheet.svelte';
   import { EMPTY_STATES } from '../empty/states';
+  import { boosterToLobby, lobbyToBooster } from '../home/view';
   import { ConnectivityCheck, type ConnectivityReport } from './connectivity';
   import { pastedDeckId, readyVerdict } from './ready';
   import SpectatorPanel from './SpectatorPanel.svelte';
   import InviteSheet from './InviteSheet.svelte';
   import { chairChoice, chairs, colourClash, colourTakenBy, hostSeat, nicknameProblem, normaliseNickname, pickColour, readiness, seatOf, startProblem, SEAT_COLOURS, teamGroups, type Chair } from './seats';
   import {
-    boostersFromLobby,
     codeLabel,
     countdownMayRun,
     deckAllow,
@@ -46,14 +47,21 @@
     deckRuleOf,
     draftPacks,
     isLiveDraft,
-    lobbyFromBoosters,
     missingLine,
     START_COUNT,
     startPill,
     type DeckRule,
   } from './waiting';
 
-  type PickerProps = { allow?: ((deck: DeckRecord) => true | string) | undefined; onpick: (deck: DeckRecord) => void; onclose?: (() => void) | undefined };
+  type PickerProps = {
+    allow?: ((deck: DeckRecord) => true | string) | undefined;
+    onpick: (deck: DeckRecord) => void;
+    onclose?: (() => void) | undefined;
+    /** The room's own deck library and faces: the sheet opens no second store or card source. */
+    decks?: DeckStore | null;
+    faces?: FaceSource | null;
+    selectedId?: string | null;
+  };
   type BoosterProps = { value: BoosterSetup; mode: 'deck' | 'draft'; onchange?: ((value: BoosterSetup) => void) | undefined; onclose?: (() => void) | undefined };
 
   let {
@@ -67,15 +75,21 @@
     settings = undefined,
     deckRule: ruleFallback = undefined,
     starter = undefined,
+    faces = undefined,
+    onleave = undefined,
     picker = DeckPickerSheet as unknown as Component<PickerProps>,
     boosterSheet = BoosterSetupSheet as unknown as Component<BoosterProps>,
   }: LobbyProps & {
     /** The viewer's settings: the deck selected on Home (Settings.home.deckId) and, for the creator, Home's deck rule. */
     settings?: SettingsStore | undefined;
-    /** The table's deck rule when the table does not carry one; default: Home's choice for a private game, else any. */
+    /** The table's deck rule when the table does not carry one (TableSettings.decks); default any. */
     deckRule?: DeckRule | undefined;
     /** Makes a starter deck for USE A STARTER DECK (M8-P6's generator); absent or rejecting: the slot says so. */
     starter?: (() => Promise<DeckRecord>) | undefined;
+    /** Card faces for the deck picker's covers (the table's FaceSource). */
+    faces?: FaceSource | undefined;
+    /** ← HOME: the table frame's leave path (checkpoint, leave, the toast); without it the room goes to `#/`. */
+    onleave?: (() => void) | undefined;
     /** The deck picker sheet (M8-P3's DeckPickerSheet; a harness passes a fake). */
     picker?: Component<PickerProps>;
     /** The booster setup sheet (M8-P3's BoosterSetupSheet in mode 'draft'; a harness passes a fake). */
@@ -112,8 +126,6 @@
   let pickerOpen = $state(false);
   let setupOpen = $state(false);
   let boostersOpen = $state(false);
-  /** The creator's own rule choice when the table cannot carry it yet (the reducer does not take `decks`; M8-P8 seam). */
-  let ruleLocal = $state<DeckRule | null>(null);
   /** READY ✓ tapped again: this browser holds the start (journey.md 4.8: "any player can stop it by un-readying"). */
   let held = $state(false);
   let count = $state<number | null>(null);
@@ -143,7 +155,8 @@
   const nickProblem = $derived(nicknameProblem(nickname));
   /** Every seated player's browser is connected to this one. */
   const connected = $derived(list.filter((c) => c.occupied).every((c) => present(c.seat)));
-  const rule = $derived(deckRuleOf(st, ruleLocal ?? ruleFallback ?? (isHost ? (homePrefs?.private.decks ?? 'any') : 'any')));
+  // The table carries the rule (TableSettings.decks): every seat reads the same one from the shared state.
+  const rule = $derived(deckRuleOf(st, ruleFallback ?? 'any'));
   const allow = $derived(deckAllow(rule));
   const drafting = $derived(isLiveDraft(st));
   const packs = $derived(draftPacks(st));
@@ -166,7 +179,8 @@
   const decksLabel = $derived(drafting ? 'LIVE DRAFT' : rule === 'booster' ? 'BOOSTER DECKS ONLY' : 'ANY DECK');
   const summary = $derived(`${drafting ? 'DRAFT NIGHT' : 'PRIVATE GAME'} · ${FORMAT_LABEL[st.format]} · ${decksLabel} · ${passLabel}`);
   const hostName = $derived((host && st.seats[host]?.name) || 'The host');
-  const boosters = $derived(boostersFromLobby(st.lobby, homePrefs?.draft.boosters ?? DEFAULT_BOOSTER_SETUP));
+  // One conversion both ways, Home's (ui/home/view.ts): a grid's packs are its grids there and here.
+  const boosters = $derived(st.lobby && st.lobby.draft !== null ? lobbyToBooster(st.lobby) : (homePrefs?.draft.boosters ?? DEFAULT_BOOSTER_SETUP));
   /** Fewer players than chairs, at least two of them ready: START WITH n PLAYERS (journey.md 4.8). */
   const shortStart = $derived(isHost && open > 0 && seatedCount >= 2 && (drafting || list.filter((c) => c.occupied).every((c) => view.seats[c.seat]?.ready)));
 
@@ -198,6 +212,11 @@
     st = session.getState();
     net = session.netStatus();
     const timer = setInterval(() => (now = Date.now()), 1000);
+    // A deck made in another tab (OPEN SIX BOOSTERS) shows up when this tab is shown again.
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') void relist();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     void identity.get().then((r) => {
       selfPeer = r.peerId;
       nickname = r.nickname;
@@ -218,6 +237,7 @@
       unsub();
       unsubNet();
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
       stopCount();
     };
   });
@@ -396,6 +416,11 @@
 
   /** START WITH n PLAYERS: the empty chairs stay empty (the table cannot change its format once a player is Ready). */
   function startShort(): void {
+    // Like the countdown (countdownMayRun): every seated player is connected (the empty chairs stay empty).
+    if (!connected) {
+      failure = 'Waiting for everyone to connect.';
+      return;
+    }
     stopCount();
     try {
       if (drafting && session.evening) session.evening.start();
@@ -436,6 +461,29 @@
     pickerOpen = false;
   }
 
+  function home(): void {
+    if (onleave) onleave();
+    else location.hash = '#/';
+  }
+
+  /**
+   * OPEN SIX BOOSTERS: the new-deck flow opens in another tab of the same profile, so this table stays open; the room
+   * reads the library again when this tab is shown again, and the new booster deck is in CHANGE DECK.
+   */
+  function openBoosters(): void {
+    note = '';
+    const url = `${location.pathname}${location.search}#/decks/new`;
+    // Not the 'noopener' feature: with it window.open answers null even when the tab opened.
+    const w = typeof window.open === 'function' ? window.open(url, '_blank') : null;
+    if (w) w.opener = null;
+    if (!w) note = 'Open Decks in another tab to open boosters; this table stays here.';
+    else note = 'Decks opened in another tab. Your new deck shows up here when you come back.';
+  }
+  async function relist(): Promise<void> {
+    const d = await decks.list().catch(() => null);
+    if (d) savedDecks = d;
+  }
+
   function setFormat(f: string): void {
     if (f === st.format) return;
     try {
@@ -447,16 +495,16 @@
   function setDecks(v: string): void {
     note = '';
     if (v === 'draft') {
-      if (!drafting) setLobby(lobbyFromBoosters(boosters));
+      if (!drafting) setLobby(boosterToLobby(boosters));
       return;
     }
     if (drafting) setLobby({ draft: null, sets: st.lobby?.sets ?? ['M19'], pickTimer: false });
     const r: DeckRule = v === 'booster' ? 'booster' : 'any';
-    ruleLocal = r;
+    if ((st.settings.decks ?? 'any') === r) return;
     try {
-      session.dispatch({ type: 'settings', settings: { decks: r } as never });
-    } catch {
-      // The table does not carry the rule yet: it holds for this browser's picker only.
+      session.dispatch({ type: 'settings', settings: { decks: r } });
+    } catch (e) {
+      failure = e instanceof Error ? e.message : String(e);
     }
   }
   function setLobby(lobby: NonNullable<TableState['lobby']>): void {
@@ -499,7 +547,7 @@
 
 <main class="room ds-root" data-testid="lobby" aria-labelledby="lobby-title" data-invite={inviteOpen}>
   <header class="top">
-    <Button variant="ghost" size="sm" data-testid="room-home" onclick={() => (location.hash = '#/')}>← HOME</Button>
+    <Button variant="ghost" size="sm" data-testid="room-home" onclick={home}>← HOME</Button>
     <div class="title">
       <h1 id="lobby-title" class="ds-t-title">
         <span class="code" data-testid="room-code">{code}</span>
@@ -612,7 +660,7 @@
               {#if !showPaste || savedDecks.length === 0}
                 <div class="offers">
                   {#if rule !== 'booster'}<Button size="sm" data-testid="use-starter" onclick={useStarter}>USE A STARTER DECK</Button>{/if}
-                  <Button size="sm" data-testid="open-boosters" onclick={() => (location.hash = '#/decks/new')}>OPEN SIX BOOSTERS</Button>
+                  <Button size="sm" data-testid="open-boosters" onclick={openBoosters}>OPEN SIX BOOSTERS</Button>
                   {#if savedDecks.length > 0}<Button size="sm" data-testid="change-deck" onclick={() => (pickerOpen = true)}>CHANGE DECK</Button>{/if}
                 </div>
               {/if}
@@ -664,7 +712,7 @@
             {/if}
           {/if}
           <p class="line" role="status" data-testid="missing-line">{line}</p>
-          {#if !drafting}<p class="ds-t-meta" data-testid="ready-count">{ready.ready} of {Object.keys(st.seats).length} players ready.</p>{/if}
+          {#if !drafting}<p class="ds-t-meta" data-testid="ready-count">{readiness(view).ready} of {Object.keys(st.seats).length} players ready.</p>{/if}
           {#if startBlocked && !drafting}<p class="ds-t-meta" data-testid="start-blocked" hidden={startBlocked === line}>{startBlocked}</p>{/if}
           {#if failure}<p class="ds-status ds-status--danger" role="alert" data-testid="lobby-failure">{failure}</p>{/if}
           {#if note}<StatusLine data-testid="lobby-note">{note}</StatusLine>{/if}
@@ -742,12 +790,12 @@
   {#if pickerOpen}
     {@const Picker = picker}
     <div class="layer" role="presentation" data-testid="picker-layer" onclick={(e) => e.target === e.currentTarget && (pickerOpen = false)} onkeydown={(e) => e.key === 'Escape' && (pickerOpen = false)}>
-      <Picker {allow} onpick={pickDeck} onclose={() => (pickerOpen = false)} />
+      <Picker {allow} {decks} faces={faces ?? null} selectedId={selected?.id ?? null} onpick={pickDeck} onclose={() => (pickerOpen = false)} />
     </div>
   {/if}
 
   {#if setupOpen && isHost}
-    <div class="layer" role="presentation" onclick={(e) => e.target === e.currentTarget && (setupOpen = false)} onkeydown={(e) => e.key === 'Escape' && (setupOpen = false)}>
+    <div class="layer dim" role="presentation" onclick={(e) => e.target === e.currentTarget && (setupOpen = false)} onkeydown={(e) => e.key === 'Escape' && (setupOpen = false)}>
       <Sheet label="Table setup" width="narrow" onclose={() => (setupOpen = false)} data-testid="setup-sheet">
         {#snippet header()}<h2 class="ds-t-title">Table setup</h2>{/snippet}
         <p class="ds-t-eyebrow">TABLE</p>
@@ -798,7 +846,7 @@
   {#if boostersOpen && isHost}
     {@const Boosters = boosterSheet}
     <div class="layer" role="presentation" data-testid="boosters-layer" onclick={(e) => e.target === e.currentTarget && (boostersOpen = false)} onkeydown={(e) => e.key === 'Escape' && (boostersOpen = false)}>
-      <Boosters value={boosters} mode="draft" onchange={(b) => setLobby(lobbyFromBoosters(b))} onclose={() => (boostersOpen = false)} />
+      <Boosters value={boosters} mode="draft" onchange={(b) => setLobby(boosterToLobby(b))} onclose={() => (boostersOpen = false)} />
     </div>
   {/if}
 
@@ -1132,6 +1180,9 @@
     display: grid;
     place-items: center;
     padding: var(--ds-space-lg);
+  }
+  /* The kit's picker and booster sheets draw their own scrim: only the setup sheet (a bare Sheet) is dimmed here. */
+  .layer.dim {
     background: var(--ds-overlay);
   }
   .setup-boosters {

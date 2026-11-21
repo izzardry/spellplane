@@ -24,6 +24,8 @@
     kind = undefined,
     record = null,
     onfind = undefined,
+    onrematch = undefined,
+    again = undefined,
   }: {
     session: TableSession;
     onhome?: (() => void) | undefined;
@@ -33,6 +35,10 @@
     record?: MatchRecord | null;
     /** FIND ANOTHER MATCH (the matchmaker's search with the same setup); default: Home. */
     onfind?: (() => void) | undefined;
+    /** REMATCH without a next-game proposal (a computer game opens a new one, computer.md 2.4); default: propose. M8-P6 fix. */
+    onrematch?: (() => void) | undefined;
+    /** A solo table's primary (journey.md 4.13: REMATCH against Sparring, AGAIN alone), run in place of the rematch proposal. M8-P8. */
+    again?: { label: string; run: () => void } | undefined;
   } = $props();
 
   const themeChoice = themeContext();
@@ -45,14 +51,29 @@
   const me = untrack(() => session.seat);
   const seated = $derived(session.role !== 'spectator' && st.seats[me] !== undefined && (st.seats[me]!.peer !== undefined || st.seats[me]!.name !== ''));
   const rated = $derived(record?.rated ? { before: record.rated.before, after: record.rated.after } : null);
-  const view = $derived(gameOverView(st, seated ? me : null, kind ?? endKindOf(st), rated));
+  // The turn the game ended on: kept from when this result came in, so LOOK AT THE TABLE and later turns leave the
+  // reason line as it was (a plain cache, not state: it only follows the result's seq).
+  let ended: { at: number; turn: number } | null = null;
+  const endTurn = $derived.by(() => {
+    const r = st.result;
+    if (!r) return undefined;
+    if (ended?.at !== r.atSeq) ended = { at: r.atSeq, turn: st.turn.number };
+    return ended.turn;
+  });
+  const endKind = $derived(kind ?? endKindOf(st));
+  const view = $derived(gameOverView(st, seated ? me : null, endKind, rated, endTurn));
   const proposal = $derived(openProposal(st));
   const mine = $derived(proposal ? (st.confirm?.responses[me] ?? null) : null);
+  /** Who said NOT NOW (the round's holder), for the proposer's line. */
+  const holderName = $derived.by(() => {
+    const h = st.confirm?.holder;
+    return h === undefined ? '' : h === me ? 'You' : st.seats[h]?.name || h;
+  });
   let hidden = $state(false);
   let busy = $state(false);
   let note = $state('');
 
-  async function propose(): Promise<void> {
+  async function propose(event: 'nextGame' | 'newDraft' = 'nextGame'): Promise<void> {
     if (!session.evening) {
       note = 'This table cannot start another game.';
       return;
@@ -60,8 +81,9 @@
     busy = true;
     note = '';
     try {
-      const moved = await session.evening.propose('nextGame');
-      if (!moved) note = 'The rematch did not go ahead.';
+      const moved = await session.evening.propose(event);
+      // A NOT NOW is said by the declined line itself (the proposer may ask again).
+      if (!moved && !openProposal(session.getState())?.held) note = 'The rematch did not go ahead.';
     } finally {
       busy = false;
     }
@@ -71,6 +93,15 @@
     if (view.primary.id === 'findMatch') {
       if (onfind) onfind();
       else home();
+      return;
+    }
+    if (view.primary.id === 'rematch' && onrematch) {
+      busy = true;
+      onrematch();
+      return;
+    }
+    if (again && view.primary.id === 'rematch') {
+      again.run();
       return;
     }
     void propose();
@@ -87,6 +118,10 @@
     if (onhome) onhome();
     else location.hash = '#/';
   }
+  /** The dialog takes the focus when it opens (aria-modal); Escape hides it as LOOK AT THE TABLE does. */
+  function dialog(node: HTMLElement): void {
+    node.focus();
+  }
 </script>
 
 {#if view}
@@ -96,13 +131,13 @@
     </div>
   {:else}
     <div class="scrim ds-root" data-testid="game-over" data-headline={view.headline}>
-      <div class="card" role="dialog" aria-modal="true" aria-labelledby="game-over-title">
+      <div class="card" role="dialog" aria-modal="true" aria-labelledby="game-over-title" data-ds-layer="dialog" tabindex="-1" use:dialog onkeydown={(e) => e.key === 'Escape' && ((hidden = true), e.stopPropagation())}>
         <h1 id="game-over-title" class="headline" data-testid="game-over-headline">{view.headline}</h1>
         <p class="reason" data-testid="game-over-reason">{view.reason}</p>
         <ul class="players">
-          {#each view.players as p, i (p.seat)}
+          {#each view.players as p (p.seat)}
             <li data-won={p.won}>
-              <SeatGlyph seat={i} colour={seatColours[p.colour]?.colour ?? 'currentColor'} size={24} label="Seat colour of {p.name}" />
+              <SeatGlyph seat={p.index} colour={seatColours[p.colour]?.colour ?? 'currentColor'} size={24} label="Seat colour of {p.name}" />
               <span class="ds-t-eyebrow">{p.name}</span>
               <span class="life">{p.life}</span>
             </li>
@@ -110,18 +145,29 @@
         </ul>
         {#if view.rating}<p class="ds-t-eyebrow" data-testid="game-over-rating">{view.rating}</p>{/if}
         {#if proposal && proposal.by !== me && !proposal.passed && mine !== 'ok' && seated}
-          <p class="reason" data-testid="rematch-ask">{proposal.byName} proposes {proposal.event === 'nextGame' ? 'a rematch' : 'a new draft'}.</p>
-          <div class="row">
+          {#if mine === 'hold'}
+            <!-- NOT NOW said: the proposer sees it and may ask again; ACCEPT still takes the rematch. -->
+            <p class="reason" data-testid="rematch-ask">You said not now to {proposal.byName}'s {proposal.event === 'nextGame' ? 'rematch' : 'new draft'}.</p>
             <Button variant="primary" size="lg" data-testid="rematch-accept" onclick={() => respond('ok')}>ACCEPT</Button>
-            <Button variant="quiet" size="lg" data-testid="rematch-decline" onclick={() => respond('hold')}>NOT NOW</Button>
-          </div>
+          {:else}
+            <p class="reason" data-testid="rematch-ask">{proposal.byName} proposes {proposal.event === 'nextGame' ? 'a rematch' : 'a new draft'}.</p>
+            <div class="row">
+              <Button variant="primary" size="lg" data-testid="rematch-accept" onclick={() => respond('ok')}>ACCEPT</Button>
+              {#if !proposal.held}<Button variant="quiet" size="lg" data-testid="rematch-decline" onclick={() => respond('hold')}>NOT NOW</Button>{/if}
+            </div>
+          {/if}
+        {:else if proposal && !proposal.passed && proposal.held && proposal.by === me && seated}
+          <!-- The proposer's round was declined: say so, and offer the primary again (a new ask replaces the round). -->
+          <StatusLine data-testid="rematch-declined">{holderName} said not now.</StatusLine>
+          <Button variant="primary" size="lg" waiting={busy} disabled={busy} data-testid="game-over-primary" data-action={view.primary.id} onclick={primary}>{view.primary.label}</Button>
         {:else if proposal && !proposal.passed}
           <StatusLine data-testid="rematch-waiting">{proposal.held ? 'Someone is holding the rematch.' : `Waiting for ${proposal.waiting.map((s) => (s === me ? 'you' : st.seats[s]?.name || s)).join(', ') || 'the others'} to answer.`}</StatusLine>
         {:else if seated}
-          <Button variant="primary" size="lg" waiting={busy} disabled={busy} data-testid="game-over-primary" data-action={view.primary.id} onclick={primary}>{view.primary.label}</Button>
+          <Button variant="primary" size="lg" waiting={busy} disabled={busy} data-testid="game-over-primary" data-action={view.primary.id} onclick={primary}>{again && view.primary.id === 'rematch' ? again.label : view.primary.label}</Button>
         {/if}
         <div class="row">
           {#if view.primary.id === 'findMatch' && seated}<Button variant="ghost" size="sm" data-testid="game-over-rematch" onclick={() => void propose()}>REMATCH</Button>{/if}
+          {#if endKind === 'draft' && seated && !(proposal && !proposal.passed)}<Button variant="ghost" size="sm" data-testid="game-over-new-draft" onclick={() => void propose('newDraft')}>NEW DRAFT</Button>{/if}
           <Button variant="ghost" size="sm" data-testid="game-over-home" onclick={home}>HOME</Button>
           <Button variant="ghost" size="sm" data-testid="game-over-look" onclick={() => (hidden = true)}>LOOK AT THE TABLE</Button>
         </div>

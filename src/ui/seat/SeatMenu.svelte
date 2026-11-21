@@ -13,6 +13,7 @@
   import { untrack } from 'svelte';
   import type { SeatId, TableState } from '../../core/types';
   import type { SessionMuster } from '../../session/types';
+  import PresenceDot from '../design/PresenceDot.svelte';
   import BringBack from '../gather/BringBack.svelte';
   import { seatMenuModel, type Presence } from './presence';
 
@@ -60,9 +61,9 @@
       <p class="line" class:danger={model.notSaving} data-testid="seat-menu-saved">{model.saved}</p>
       {#if onleave}<button type="button" class="ds-btn ds-btn--quiet ds-btn--sm" data-testid="seat-menu-leave" onclick={() => onleave?.()}>Leave table</button>{/if}
     {:else if model.kind === 'here'}
-      <p class="line" data-testid="seat-menu-here"><span class="dot here" aria-hidden="true"></span>Here</p>
+      <p class="line" data-testid="seat-menu-here"><PresenceDot state="here" label="Here" /></p>
     {:else}
-      <p class="line" data-testid="seat-menu-away"><span class="dot away" aria-hidden="true"></span>{model.since ? `Away for ${model.since}` : 'Away'}</p>
+      <p class="line" data-testid="seat-menu-away"><PresenceDot state="away" label={model.since ? `Away for ${model.since}` : 'Away'} /></p>
       {#if model.why}
         <p class="meta" data-testid="seat-menu-why">{model.why}</p>
       {:else if model.canBring}
@@ -103,18 +104,6 @@
   }
   .danger {
     color: var(--ds-danger);
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex: none;
-  }
-  .dot.here {
-    background: var(--ds-ink);
-  }
-  .dot.away {
-    box-shadow: inset 0 0 0 1.5px var(--ds-muted);
   }
   .full {
     width: 100%;

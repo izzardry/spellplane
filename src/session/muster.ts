@@ -7,7 +7,7 @@
  * to play on (rule 4). A browser is live when
  *
  * 1. it stayed: it has been live since it joined and has not reloaded;
- * 2. it holds the same seq and hash as a connected peer whose head says live;
+ * 2. it holds the same seq and hash as a connected seated player whose head says live, and heard of no newer copy;
  * 3. everyone who was there is back: every occupied seat the state does not mark away is connected and in step with
  *    this copy, and no peer ever reported a newer head (`knownHead`, newest by (play, seq, peerId));
  * 4. the table decided (`playOn` applied; it clears `knownHead` and marks the missing seats away, so rule 3 holds).
@@ -107,11 +107,14 @@ export function musterStatus(arg: MusterInput | TableState, seat: SeatId | null 
   });
   if (state.stage === 'lobby') return verdict(true, 3, []);
   if (input.stayed) return verdict(true, 1, []);
-  if (connected.some((p) => p.head?.live === true && inStep(p.head, mine))) return verdict(true, 2, []);
+  // Rule 2 counts seated players only: a spectator's page is live by default and would make a stale copy playable.
+  // A live player in step with a copy older than one this browser heard of (knownHead) holds that older copy too: it
+  // does not know the newer table, so it does not make this browser live (persistence.md section 5, case-table row 6).
+  const seatedPeers = new Set(occupied.map((s) => s.peer));
+  if (!newer && connected.some((p) => seatedPeers.has(p.peerId) && p.head?.live === true && inStep(p.head, mine))) return verdict(true, 2, []);
   // Rule 3: every occupied seat not marked away is here and in step, and so is every connected seated peer.
   const rec = input.reconciled === true;
   const missing = occupied.filter((s) => s.id !== me && s.away !== true && !peerInStep(byPeer.get(s.peer!), mine, rec)).map((s) => s.id);
-  const seatedPeers = new Set(occupied.map((s) => s.peer));
   const strayOut = connected.some((p) => seatedPeers.has(p.peerId) && !peerInStep(p, mine, rec));
   if (missing.length === 0 && !strayOut && !newer) return verdict(true, input.decided === true ? 4 : 3, []);
   const waiting = [...missing];

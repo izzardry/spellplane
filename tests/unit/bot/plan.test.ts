@@ -112,6 +112,13 @@ describe('decide', () => {
     expect(cue).toEqual({ kind: 'book', round: 'r', life: [{ seat: 's0', delta: -3 }], bury: [], pings: [], settle: ['a'], line: '3 to you.' });
   });
 
+  it('books only creatures: a Forest the human marked attacking is not counted as dead', () => {
+    const turn = { number: 3, active: 's0', phase: 'combat' as const, mine: false };
+    const forest = permanentOf('f', 'Forest', { owned: false, combat: 'attack' });
+    const dmg = decide(view({ turn, theirs: [forest], mine: [], round: { id: 'r2', askedBy: 's0', label: 'Damage', cue: 'damage', answered: false, passed: false } }), steady, 's');
+    expect(dmg).toMatchObject({ kind: 'book', life: [], bury: [], pings: [] });
+  });
+
   it('on the Attack cue blocks well and answers; on Damage books its own life and its dead, pings the human dead', () => {
     const turn = { number: 6, active: 's0', phase: 'combat', mine: false };
     const attacker = creature('x', 2, 2, 2, [], { owned: false, combat: 'attack' });

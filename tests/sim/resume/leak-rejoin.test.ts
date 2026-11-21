@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SecretStore, TableState } from '../../../src/core/types';
 import { HEAD_KEYS } from '../../../src/net/validate';
+import { PROTOCOL_VERSION } from '../../../src/net/messages';
 import type { LoopbackOptions } from '../../../src/net/loopback';
 import { forbiddenFor, leakScan, type LeakScanInput } from '../../leak/leak';
 import { closeAll, FAKE_TIMERS, fixtureDeck, net, observedBy, settle, trackDisclosures, until, waitConverged, type Browser } from '../session/harness';
@@ -55,15 +56,29 @@ describe('rejoin leaks (M8-P5)', () => {
     const network = net({ seed: 301, ...FAULTS });
     const p = await playScript(network, browsers);
     const handBefore = [...p.a.secrets().hand];
+    const libraryBefore = p.a.secrets().libraryOrder.length;
+    const sidOf = (sec: SecretStore, id: string): string => sec.identities[id]!.card.sid;
+    const handSids = handBefore.map((id) => sidOf(p.a.secrets(), id));
+    const bouncedSid = sidOf(p.a.secrets(), p.faceDown);
+    const tuckedSid = sidOf(p.a.secrets(), p.spell);
     expect(handBefore.length).toBeGreaterThan(3);
     await leave(p.A);
+    // Ben plays on: he bounces Ann's face-down permanent to her hand, puts her spell on top of her library, draws,
+    // and plays thirty more actions.
+    p.b.dispatch({ type: 'toZone', card: p.faceDown, to: 'hand:s0', position: 'any' });
+    p.b.dispatch({ type: 'toZone', card: p.spell, to: 'library:s0', position: 'top' });
     await settle(p.b.draw(1));
-    p.b.chat('Ann is away');
-    await until(() => p.b.engine.pending().length === 0, 10_000, 'Ben plays');
+    for (let i = 0; i < 30; i++) p.b.chat(`Ann is away ${i}`);
+    await until(() => p.b.engine.pending().length === 0, 30_000, 'Ben plays');
     const a = await comeBack(network, p.A);
     await waitConverged([a, p.b], 'Ann back');
-    expect(a.secrets().hand).toEqual(handBefore);
-    const lost = lostHiddenCards(a.engine.confirmedState(), a.secrets(), a.seat);
+    // Her old hand plus the bounced card, the spell on top of her library, every id known to her browser.
+    expect(a.secrets().hand.map((id) => sidOf(a.secrets(), id)).sort()).toEqual([...handSids, bouncedSid].sort());
+    const st = a.engine.confirmedState();
+    expect(st.zones['library:s0']!.ids.length).toBe(libraryBefore + 1);
+    expect(sidOf(a.secrets(), a.secrets().libraryOrder[0]!)).toBe(tuckedSid);
+    for (const id of [...st.zones['hand:s0']!.ids, ...st.zones['library:s0']!.ids]) expect(a.secrets().identities[id], id).toBeDefined();
+    const lost = lostHiddenCards(st, a.secrets(), a.seat);
     expect(lost.hand).toEqual([]);
     expect(lost.library).toEqual([]);
     await settle(Promise.all([a.whenSaved(), p.b.whenSaved()]));
@@ -96,11 +111,14 @@ describe('rejoin leaks (M8-P5)', () => {
     const heads = network.delivered.filter((d) => (d.msg as { t?: string }).t === 'head').map((d) => d.msg as Record<string, unknown>);
     expect(heads.length).toBeGreaterThan(3);
     for (const h of heads) expect(Object.keys(h).sort()).toEqual([...HEAD_KEYS].sort());
-    const owner = { state: ann!.session!.engine.confirmedState(), secrets: ann!.session!.secrets() };
-    const ctl = network.delivered.filter((d) => d.channel === 'ctl' && d.to !== 'peer-a').map((d) => d.msg);
-    const input = { observed: ctl, owner, disclosed: [] };
-    // Injected: a head carrying a hidden card id and salt.
-    cleanButSensitive(input, { ...heads[0], card: hiddenToken(owner) });
+    // Every player's hidden cards, against what every other browser received on the control channel.
+    for (const b of [ann!, ben!, cy!]) {
+      const owner = { state: b.session!.engine.confirmedState(), secrets: b.session!.secrets() };
+      const ctl = network.delivered.filter((d) => d.channel === 'ctl' && d.to !== b.peerId).map((d) => d.msg);
+      const input = { observed: ctl, owner, disclosed: [] };
+      // Injected: a head carrying a hidden card id and salt.
+      cleanButSensitive(input, { ...heads[0], card: hiddenToken(owner) });
+    }
   });
 
   describe('a lost browser brought back by link', () => {
@@ -114,7 +132,7 @@ describe('rejoin leaks (M8-P5)', () => {
       await loseSave(p.B);
       // The stage is the lobby in the script: a seat away in the lobby can be invited like any other.
       const link = await bringBack(p.A, 's1');
-      expect(link).toMatch(/^.*#\/t\/[a-z]+-[a-z]+-[a-z]*-?\d+\/[\w-]{22}\/rejoin\/s[0-3]\/[\w-]{22}$/);
+      expect(link).toMatch(/^(https?:\/\/[^?#]*)?#\/t\/[a-z]+-[a-z]+-[a-z]*-?\d+\/[\w-]{22}\/rejoin\/s[0-3]\/[\w-]{22}$/);
       const blank = await replaceBrowser(network, browsers, link, 'newben');
       await settle(blank.session!.claimSeat());
       await waitConverged([p.a, blank.session!], 'the claim');
@@ -154,6 +172,23 @@ describe('rejoin leaks (M8-P5)', () => {
     // PL-6: the opponent's invite is refused by the reducer (and so never sequenced), even with the whole team away.
     await expect(settle(ann!.session!.muster.invite('s3'))).rejects.toThrow(/teammate/);
     expect(ann!.session!.getState().seats.s3!.invite).toBeUndefined();
+    // The same invite forged by Ben (an opponent too) straight onto the wire, past his page's own check: the sequencer
+    // refuses it (a nack to Ben), and nothing is sequenced.
+    const sequencer = [ann!, ben!, cy!].find((b) => b.session?.engine.isSequencer())!;
+    expect(sequencer).toBe(ann);
+    const seqBefore = ann!.session!.engine.seq();
+    const sent = network.delivered.length;
+    const forged = { type: 'seatInvite', seat: 's3', h: 'A'.repeat(43), exp: Date.now() + 60 * 60 * 1000, by: 's1', cid: 'forged-invite' };
+    network.route('peer-b', 'act', { v: PROTOCOL_VERSION, t: 'propose', cid: 'forged-invite', action: forged, prev: null } as never, 'peer-a');
+    await until(
+      () => network.delivered.slice(sent).some((d) => d.to === 'peer-b' && (d.msg as { t?: string; cid?: string }).t === 'nack' && (d.msg as { cid?: string }).cid === 'forged-invite'),
+      5000,
+      "the sequencer's refusal",
+    );
+    const nack = network.delivered.slice(sent).find((d) => (d.msg as { cid?: string; t?: string }).cid === 'forged-invite' && (d.msg as { t?: string }).t === 'nack')!;
+    expect((nack.msg as unknown as { reason: string }).reason).toMatch(/teammate/);
+    expect(ann!.session!.engine.seq()).toBe(seqBefore);
+    expect(ann!.session!.getState().seats.s3!.invite).toBeUndefined();
     // Cy comes back and makes the link herself.
     const c = await comeBack(network, cy!);
     await waitConverged([ann!.session!, c]);
@@ -175,10 +210,11 @@ describe('rejoin leaks (M8-P5)', () => {
     void ben;
   });
 
-  it('PL-7: a split where both sides advance: the copy with more moves wins, own actions are replayed, nothing hidden crosses', async () => {
+  it('PL-7: a split where both sides advance: the copy with more moves wins over a longer one, own actions are replayed, nothing hidden crosses', async () => {
     const network = net({ seed: 307, delay: { min: 0, max: 100 } });
     const p = await playScript(network, browsers);
     const shownToA = trackDisclosures(p.b, 's0');
+    const fork = p.a.engine.seq();
     network.kill('peer-a');
     await until(() => p.b.engine.peers().every((x) => x.status !== 'connected'), 15_000, 'the split on B');
     await until(() => p.a.engine.peers().every((x) => x.status !== 'connected'), 15_000, 'the split on A');
@@ -187,14 +223,27 @@ describe('rejoin leaks (M8-P5)', () => {
     p.a.playFaceDown(p.a.secrets().hand[0]!, 'battlefield:s0', { x: 140, y: -200, rot: 0 });
     await until(() => p.a.engine.pending().length === 0, 10_000, 'Ann alone');
     await settle(p.b.draw(1));
+    // Ben's copy is the longer one (chat lines), Ann's has more moves.
+    for (let i = 0; i < 6; i++) p.b.chat(`alone ${i}`);
+    await until(() => p.b.engine.pending().length === 0, 10_000, 'Ben chats');
     const playA = p.a.engine.play!();
     const playB = p.b.engine.play!();
     expect(playA).toBeGreaterThan(playB);
+    expect(p.b.engine.seq()).toBeGreaterThan(p.a.engine.seq());
     network.revive('peer-a');
     await waitConverged([p.a, p.b], 'the split healed');
     await settle(Promise.all([p.a.whenSaved(), p.b.whenSaved()]));
+    // Ann's history sits right after the fork: the first action there that is not a sequencer's record is hers, and
+    // every one of Ben's actions of the split comes after her moves (played again on top).
+    const after = p.b.log().flatMap((e) => (e.kind === 'action' && e.seq > fork && e.action.type !== 'away' && e.action.type !== 'sequencerClaim' ? [e] : []));
+    expect(after[0]!.kind === 'action' && after[0]!.action.by).toBe('s0');
+    const lastAnn = after.findLastIndex((e) => e.kind === 'action' && e.action.by === 's0');
+    const firstBen = after.findIndex((e) => e.kind === 'action' && e.action.by === 's1');
+    expect(firstBen).toBeGreaterThan(lastAnn);
+    expect(p.b.log().filter((e) => e.kind === 'action' && e.action.type === 'chat' && e.action.text.startsWith('alone ')).length).toBe(6);
     // Both sides' moves survive (the losing side's are played again on top).
-    expect(p.a.engine.play!()).toBeGreaterThanOrEqual(playA);
+    expect(p.a.engine.play!()).toBeGreaterThan(playA);
+    expect(p.b.engine.play!()).toBe(p.a.engine.play!());
     const toB = { observed: await observedBy(network, p.B), owner: { state: p.a.engine.confirmedState(), secrets: p.a.secrets() }, disclosed: p.shownToB };
     cleanButSensitive(toB, { t: 'seq', leak: hiddenToken(toB.owner) });
     const toA = { observed: await observedBy(network, p.A), owner: { state: p.b.engine.confirmedState(), secrets: p.b.secrets() }, disclosed: shownToA };

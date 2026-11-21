@@ -321,7 +321,7 @@
   <div class="surface" class:hidden={viewKind !== 'table'} data-testid="builder-surface" data-fit-insets={fitInsets} bind:this={host}></div>
   {#if viewKind === 'list' && build}
     <div class="list" data-testid="builder-list-host">
-      <ListView {build} onChange={change} card={lookup} sort={sortKey} {search} {decks} origin={listOrigin} />
+      <ListView {build} onChange={change} card={lookup} sort={sortKey} {search} {decks} origin={listOrigin} loadCards={(s: string[]) => cardData.getMany(s)} />
     </div>
   {/if}
 
@@ -460,7 +460,7 @@
     font-weight: var(--sp-font-weight-bold, 600);
   }
   kbd {
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-mono, var(--sp-font-mono));
     font-size: 10px;
     color: var(--sp-muted);
   }
@@ -497,7 +497,7 @@
   }
   .count {
     text-align: right;
-    font-family: var(--sp-font-mono);
+    font-family: var(--ds-font-mono, var(--sp-font-mono));
   }
   .pm {
     padding: 0;

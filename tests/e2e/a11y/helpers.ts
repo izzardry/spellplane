@@ -75,8 +75,8 @@ export async function twoInLobby(browser: Browser, info: TestInfo): Promise<{ co
 /** From the lobby, the host opens sealed pools for both; both land in the builder, shown in its list view. */
 export async function sealedBuilder(a: Page, b: Page): Promise<void> {
   await a.getByTestId('lobby-mode').selectOption('sealed');
-  await expect(a.getByTestId('start-draft')).toBeEnabled({ timeout: 15_000 });
-  await a.getByTestId('start-draft').click();
+  await expect(a.getByTestId('room-start-draft')).toBeEnabled({ timeout: 15_000 });
+  await a.getByTestId('room-start-draft').click();
   for (const p of [a, b]) {
     await expect(p.getByTestId('stage')).toHaveAttribute('data-stage', 'build', { timeout: 30_000 });
     await expect(p.getByTestId('builder')).toBeVisible({ timeout: 30_000 });

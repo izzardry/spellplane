@@ -81,4 +81,28 @@ describe('computer route shell', () => {
     stop();
     expect(listener).toBeNull();
   });
+
+  it('pauses at once when the page is already hidden at the start, and never resumes a Sparring that stopped', () => {
+    const calls: string[] = [];
+    let phase: 'waiting' | 'paused' | 'failed' = 'waiting';
+    const handle = { pause: () => (calls.push('pause'), (phase = 'paused')), resume: () => (calls.push('resume'), (phase = 'waiting')), status: () => ({ phase, text: '' }) };
+    let listener: (() => void) | null = null;
+    const doc = { hidden: true, addEventListener: (_: string, l: () => void) => (listener = l), removeEventListener: () => (listener = null) };
+    const stop = pauseWhileHidden(handle as never, doc as never);
+    expect(calls).toEqual(['pause']);
+    // Sparring stopped (three throws) while the page was hidden: showing the page leaves it stopped.
+    phase = 'failed';
+    doc.hidden = false;
+    listener!();
+    vi.advanceTimersByTime(1000);
+    expect(calls).toEqual(['pause']);
+    // Hidden again while stopped: nothing to pause, nothing to resume later.
+    doc.hidden = true;
+    listener!();
+    doc.hidden = false;
+    listener!();
+    vi.advanceTimersByTime(1000);
+    expect(calls).toEqual(['pause']);
+    stop();
+  });
 });

@@ -9,14 +9,15 @@
   import type { TableSession } from '../../session/types';
   import { concede } from '../../session/result';
   import Button from '../design/Button.svelte';
-  import { concedeOffer } from '../lobby/waiting';
+  import { concedeOffer, lifeOf, poisonOf } from '../lobby/waiting';
 
   let { session }: { session: TableSession } = $props();
   let st = $state.raw<TableState>(untrack(() => session.getState()));
   onMount(() => session.subscribe((s) => (st = s)));
   const seat = $derived(session.role === 'spectator' ? null : session.seat);
   const offer = $derived(concedeOffer(st, seat));
-  const key = $derived(seat ? `${st.games ?? 0}:${st.seats[seat]?.life}:${st.seats[seat]?.counters['poison'] ?? 0}` : '');
+  // The team's life and poison in Two-Headed Giant (waiting.ts lifeOf, poisonOf).
+  const key = $derived(seat ? `${st.games ?? 0}:${lifeOf(st, seat)}:${poisonOf(st, seat)}` : '');
   let notYet = $state('');
   let failure = $state('');
 

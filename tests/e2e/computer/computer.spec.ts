@@ -138,8 +138,21 @@ test.describe('Sparring on the computer harness', () => {
       await expect.poll(async () => (await view(page)).cards.filter((c) => c.zone === 'hand:s1').length).toBe(7);
       await expect(page.getByTestId('computer-badge').first()).toHaveText('COMPUTER');
       await expect(page.getByRole('button', { name: /invite|spectator link|talk/i })).toHaveCount(0);
-      await expect(page.getByRole('menuitem', { name: /invite/i })).toHaveCount(0);
+      // The Menu's entries exist only while it is open: open it, find Leave and no Invite, close it.
+      await page.getByTestId('open-menu').click();
+      await expect(page.getByTestId('menu-leave')).toBeVisible();
       await expect(page.getByTestId('menu-invite')).toHaveCount(0);
+      await expect(page.getByRole('menuitem', { name: /invite|spectator link/i })).toHaveCount(0);
+      await page.getByTestId('open-menu').click();
+      await expect(page.getByTestId('menu-leave')).toHaveCount(0);
+      // Sparring's plate menu holds its two items and nothing to invite or bring back.
+      await sparringPlate(page).getByTestId('plate-more').click();
+      const plate = page.locator('[data-testid="plate-details"][data-seat="s1"]');
+      await expect(plate.getByTestId('sparring-pauseSparring')).toBeVisible();
+      await expect(plate.getByTestId('sparring-sparringConcedes')).toBeVisible();
+      await expect(plate.getByText(/bring back|invite/i)).toHaveCount(0);
+      await sparringPlate(page).getByTestId('plate-more').click();
+      await expect(plate).toHaveCount(0);
       // The human's browser holds nothing of Sparring's hand (computer.md 12.1 scenario 5).
       const leak = await page.evaluate(() => {
         const s = window.__spellplane!.state!();
@@ -164,6 +177,8 @@ test.describe('Sparring on the computer harness', () => {
       await page.evaluate((id) => window.__spellplane!.dispatch!({ type: 'moveTemp', card: id, pose: { x: -60, y: -150, rot: 0 }, combat: 'attack', tap: true } as never), attacker.id);
       expect((await view(page)).phase).not.toBe('combat'); // any phase (contracts.md Part G "Computer opponent" item 1)
       await expect(primary(page)).toHaveText(/attack/i);
+      // In the window, not below its lower edge where the HUD's primary sits on a desktop layout.
+      await expect(page.getByTestId('coach-sparring')).toBeInViewport({ ratio: 1 });
       await expect(page.getByTestId('coach-sparring')).toContainText('Press ATTACK so Sparring can block and count the damage.');
       await primary(page).click();
       await expect(page.getByTestId('coach-sparring')).toHaveCount(0);
@@ -237,6 +252,24 @@ test.describe('Sparring on the computer harness', () => {
       // over the hint, so the click reaches the item.
       await page.getByTestId('sparring-sparringConcedes').click();
       await expect.poll(async () => (await view(page)).result).toEqual({ winners: ['s0'] });
+      await expect(page.getByTestId('computer-paused')).toHaveCount(0);
+    });
+
+    await test.step('REMATCH opens a new game against Sparring: seven cards in hand at a live table', async () => {
+      await expect(page.getByTestId('game-over')).toBeVisible();
+      await expect(page.getByTestId('game-over-primary')).toHaveText('REMATCH');
+      await page.getByTestId('game-over-primary').click();
+      await expect.poll(() => page.evaluate(() => window.__computerHarness!.went().at(-1) ?? '')).toMatch(/^#\/c\/c-[0-9a-z]{12}$/);
+      await expect(page.getByTestId('table-frame')).toHaveAttribute('data-kind', 'computer');
+      await expect.poll(() => page.evaluate(() => window.__spellplane!.bot!.active())).toBe(true);
+      await expect.poll(async () => (await view(page)).hand).toBe(7);
+      const v = await view(page);
+      expect(v.result).toBeNull();
+      expect(v.cards.filter((c) => c.zone === 'hand:s1')).toHaveLength(7);
+      expect(await page.evaluate(() => window.__spellplane!.state!().stage)).toBe('match');
+      await expect(page.getByTestId('game-over')).toHaveCount(0);
+      // No toast of a left game: the player did not leave, they asked for another one.
+      await expect(page.getByTestId('toast').filter({ hasText: 'Game saved' })).toHaveCount(0);
     });
     expect(errors).toEqual([]);
   });

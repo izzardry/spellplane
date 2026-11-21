@@ -8,6 +8,7 @@
 import { damageCounted } from '../../bot/cues';
 import { CUE_LABELS } from '../../bot/types';
 import type { ComputerHandle, TableSession } from '../../session/types';
+import type { ComputerGameRecord } from '../../store/types';
 
 /** The cue button: what the primary button shows instead of its own turn step (null: the HUD's own step). */
 export interface CueButton {
@@ -82,7 +83,11 @@ export function coachDue(cue: CueButton | null, seen: readonly string[]): boolea
   return cue !== null && cue.label === CUE_LABELS.attack && !seen.includes('coachSparring');
 }
 
-/** Pause Sparring while the page is hidden; resume 500 ms after it is visible again (computer.md section 6). Returns the stop function. */
+/**
+ * Pause Sparring while the page is hidden, also when it is hidden already at the start; resume 500 ms after it is
+ * visible again (computer.md section 6), unless Sparring stopped meanwhile (`failed`: three throws). Returns the stop
+ * function.
+ */
 export function pauseWhileHidden(handle: Pick<ComputerHandle, 'pause' | 'resume' | 'status'>, doc: Pick<Document, 'hidden' | 'addEventListener' | 'removeEventListener'>): () => void {
   let byUs = false;
   let t: ReturnType<typeof setTimeout> | null = null;
@@ -90,7 +95,8 @@ export function pauseWhileHidden(handle: Pick<ComputerHandle, 'pause' | 'resume'
     if (t) clearTimeout(t);
     t = null;
     if (doc.hidden) {
-      if (handle.status().phase !== 'paused') {
+      const phase = handle.status().phase;
+      if (phase !== 'paused' && phase !== 'failed') {
         handle.pause();
         byUs = true;
       }
@@ -98,13 +104,33 @@ export function pauseWhileHidden(handle: Pick<ComputerHandle, 'pause' | 'resume'
       t = setTimeout(() => {
         t = null;
         byUs = false;
-        handle.resume();
+        if (handle.status().phase === 'paused') handle.resume();
       }, 500);
     }
   };
   doc.addEventListener('visibilitychange', on);
+  if (doc.hidden) on();
   return () => {
     doc.removeEventListener('visibilitychange', on);
     if (t) clearTimeout(t);
   };
 }
+
+/**
+ * Rematch (computer.md 2.4): the finished game's record, kept in this page's memory for the new room the game-over
+ * overlay opens, so the new game plays the same decks. Never stored: the record holds Sparring's private JWK.
+ */
+const rematches = new Map<string, ComputerGameRecord>();
+
+/** Keep `record` for the new room `roomId` (one per room; the next open takes it). */
+export function keepRematch(roomId: string, record: ComputerGameRecord): void {
+  rematches.set(roomId, record);
+}
+
+/** The record kept for a rematch in `roomId` (and forget it), or null. */
+export function takeRematch(roomId: string): ComputerGameRecord | null {
+  const r = rematches.get(roomId) ?? null;
+  rematches.delete(roomId);
+  return r;
+}
+

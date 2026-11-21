@@ -31,12 +31,14 @@
   import FrameMeter from './perf/FrameMeter.svelte';
   import Shell from './shell/Shell.svelte';
   import Home from './home/Home.svelte';
-  import HistoryList from './history/HistoryList.svelte';
+  import HistoryPage from './history/HistoryPage.svelte';
   import DecksRoute from './decks/DecksRoute.svelte';
   import ComputerRoute from './computer/ComputerRoute.svelte';
   import SoloRoute from './play/SoloRoute.svelte';
-  import { summaryHash } from './play/launch';
-  import { setTableDeps } from './table/context';
+  import MatchHost from './play/MatchHost.svelte';
+  import { settingsChime } from './play/mm-view';
+  import { setLeaveGuardHost, setTableDeps } from './table/context';
+  import { keepsTarget, leavesTable } from './table/leave-guard';
   import { FakeMatchmaker } from './fakes';
   import type { TableSession } from '../session/types';
 
@@ -46,6 +48,39 @@
   const go = (hash: string): void => {
     location.hash = hash;
   };
+
+  // The browser's Back leaves a table like the arrow (journey.md 4.10 "Leaving"; M8-P8): while a table frame is shown
+  // it registers its leave here; a hash change away from its route first runs that leave (save, leave the room,
+  // dispose, Home, the toast) and only then switches the page. Any page the change named other than Home is kept.
+  let leaveGuard: (() => Promise<void>) | null = null;
+  /** The longest the guard holds the table route, ms. */
+  const LEAVE_GUARD_MS = 5000;
+  setLeaveGuardHost((leave) => (leaveGuard = leave));
+  function onHashChange(): void {
+    const next = parseRoute(location.hash);
+    const guard = leaveGuard;
+    if (guard && leavesTable(route, next)) {
+      leaveGuard = null;
+      const target = location.hash;
+      // The leave bounds each of its steps; a store that never answers must not hold the page either (M8-P8).
+      const left = new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, LEAVE_GUARD_MS);
+        void guard().finally(() => {
+          clearTimeout(t);
+          resolve();
+        });
+      });
+      void left.then(() => {
+        // leave.ts goes Home; any other page the change named (Back to Decks, an invite or bring-back link pasted into
+        // the tab, another table) is where the player asked to be. The left table itself is never the target.
+        const asked = parseRoute(target);
+        if (keepsTarget(asked) && location.hash !== target) location.hash = target;
+        route = parseRoute(location.hash);
+      });
+      return;
+    }
+    route = next;
+  }
 
   // The viewer's theme (PLAN M4-P6): kept in this browser's settings, shared with the shells below through the
   // context, applied to the whole page as CSS custom properties. The table waits for the stored choice, so a page
@@ -64,6 +99,7 @@
   const cssVars = $derived(cssText(lookCssVars(theme, look)));
   // The page without a matchmaker (a harness, blocked storage) gets one that stays off.
   const matchmaker = untrack(() => props.matchmaker ?? new FakeMatchmaker());
+  const soloChime = untrack(() => settingsChime(props.settings ?? null));
   // What every table frame needs (ui/table/context.ts).
   untrack(() => {
     if (props.createScene && props.faces && props.cardData && props.game)
@@ -80,6 +116,8 @@
         decks: props.decks,
         matches: props.matches ?? null,
         ratings: props.ratings ?? null,
+        matchmaker,
+        openPractice: props.openPractice,
       });
   });
   onMount(() => {
@@ -129,9 +167,13 @@
   const testid = (r: Route): string => `route-${r.name === 'diagJoin' ? 'diag' : r.name === 'deckNew' || r.name === 'deck' || r.name === 'deckOpen' ? 'decks' : r.name}`;
 </script>
 
-<svelte:window onhashchange={() => (route = parseRoute(location.hash))} />
+<svelte:window onhashchange={onHashChange} />
 
 {#if route.name !== 'room' && route.name !== 'practice' && route.name !== 'computer'}<UpdateNotice update={props.update} place={updatePlace} />{/if}
+<!-- [M8-P7] A search goes on over a solo table (the sandbox, practice, a computer game): the match-found card shows
+     there too; its notices wait for Home's toast host. -->
+<!-- Practice and computer tables mount their own MatchHost in the table frame (M8-P8); only the sandbox needs this one. -->
+{#if route.name === 'solo'}<MatchHost {matchmaker} chime={soloChime} notices={false} />{/if}
 <OfflineNotice />
 <FrameMeter />
 
@@ -166,14 +208,20 @@
   <Shell {route} settings={props.settings ?? null} {matchmaker} games={props.games ?? null} {go}>
     <div class="ds-root shell-route" data-testid={testid(route)}>
       {#if route.name === 'home'}
-        <Home {matchmaker} games={props.games ?? null} newRoom={props.newRoom} {go} />
+        <Home {matchmaker} games={props.games ?? null} newRoom={props.newRoom} openPractice={props.openPractice} {go} />
       {:else if route.name === 'decks' || route.name === 'deckNew' || route.name === 'deck' || route.name === 'deckOpen'}
-        <DecksRoute {route} decks={props.decks ?? null} settings={props.settings ?? null} />
+        <DecksRoute
+          {route}
+          decks={props.decks ?? null}
+          settings={props.settings ?? null}
+          cardData={props.cardData}
+          sets={props.sets}
+          faces={props.faces}
+          searching={() => ['connecting', 'seeking', 'check', 'moving'].includes(matchmaker.status().phase)}
+          {go}
+        />
       {:else if route.name === 'history'}
-        <section class="sp-page">
-          <h1 class="ds-t-heading">History</h1>
-          <HistoryList games={props.games ?? null} onopen={(g) => go(summaryHash(g))} />
-        </section>
+        <HistoryPage games={props.games ?? null} {go} />
       {:else if route.name === 'settings'}
         <div class="sp-page"><SettingsPage settings={props.settings} keymap={props.game?.keymap ?? []} /></div>
       {:else if route.name === 'about'}

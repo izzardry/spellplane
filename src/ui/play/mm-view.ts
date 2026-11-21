@@ -2,6 +2,8 @@
  * Small view helpers shared by the matchmaking UI (QueueChip, MatchFound, MatchHost, MatchedEntry). M8-P7.
  */
 import type { Matchmaker, MatchmakerStatus } from '../../session/types';
+import type { SettingsStore } from '../../store/types';
+import { playMatchFound } from '../sound';
 
 export { clockText, MM_TEXT, queueLabel, statusLine } from '../../session/matchmaker';
 
@@ -44,6 +46,20 @@ export function ringChime(chime: (() => void) | undefined): void {
     // A chime that fails stays silent.
   }
 }
+/** The page's match-found chime under the viewer's sound setting (Settings `sound`; 'off' plays nothing). */
+export function settingsChime(settings: SettingsStore | null): () => void {
+  return () => {
+    if (!settings) {
+      playMatchFound('theme');
+      return;
+    }
+    void settings.get('sound').then(
+      (mode) => void playMatchFound(mode),
+      () => void playMatchFound('theme'),
+    );
+  };
+}
+
 /** How often the matchFound chime was asked for on this page. */
 export function chimeCount(): number {
   return chimes;

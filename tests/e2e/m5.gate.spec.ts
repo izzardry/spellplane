@@ -365,7 +365,7 @@ test.describe('M5 gate @gate', () => {
         await input.blur();
       }
       await expect.poll(async () => (await state(B.page)).lobby).toEqual({ draft: { format: 'pass', packs: 3, picks: 1 }, sets: ['M19'], pickTimer: false });
-      await expect(A.page.getByTestId('start-draft')).toBeEnabled();
+      await expect(A.page.getByTestId('room-start-draft')).toBeEnabled();
       await shot(A.page, 'M5', 'ipad-lobby', project);
     });
     if (!lobbyOk) return finish();
@@ -454,7 +454,7 @@ test.describe('M5 gate @gate', () => {
 
     const picks: PickRec[] = [];
     const draftOk = await step('booster draft (touch): Ann taps Start; both draft three packs, every pick tap-tap, until the builder opens', async () => {
-      await A.page.getByTestId('start-draft').tap();
+      await A.page.getByTestId('room-start-draft').tap();
       for (const p of both) await inStage(p.page, 'draft');
       await expect.poll(async () => (await view(B.page))?.pack?.cards.length ?? 0, { timeout: 30_000 }).toBeGreaterThan(0);
       let shotPick = false;
@@ -874,7 +874,7 @@ test.describe('M5 gate @gate', () => {
       await packs.fill('6');
       await packs.blur();
       await expect.poll(async () => (await state(B.page)).lobby?.draft).toEqual({ format: 'sealed', packs: 6 });
-      await A.page.getByTestId('start-draft').tap();
+      await A.page.getByTestId('room-start-draft').tap();
       for (const p of both) await inStage(p.page, 'build');
       const packSize = picks.find((x) => x.seat === 's0')!.before.length;
       for (const p of both) await expect.poll(async () => (await secrets(p.page)).pool?.length ?? 0, { timeout: 20_000 }).toBe(6 * packSize);
@@ -906,7 +906,7 @@ test.describe('M5 gate @gate', () => {
       await packs.fill('1');
       await packs.blur();
       await expect.poll(async () => (await state(B.page)).lobby?.draft).toEqual({ format: 'rochester', packs: 1, burn: 0 });
-      await A.page.getByTestId('start-draft').tap();
+      await A.page.getByTestId('room-start-draft').tap();
       for (const p of both) await inStage(p.page, 'draft');
       await expect.poll(async () => (await view(A.page))?.pack?.public ?? false, { timeout: 30_000 }).toBe(true);
       lastHit.s0 = { x: 0.5, y: 0.3 };

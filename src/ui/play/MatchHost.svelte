@@ -13,7 +13,16 @@
   import MatchFound from './MatchFound.svelte';
   import { MATCH_FOUND_TITLE, mmNow, ringChime, searchAgain, takeNoticeOf } from './mm-view';
 
-  let { matchmaker, chime = undefined }: { matchmaker: Matchmaker; chime?: (() => void) | undefined } = $props();
+  let {
+    matchmaker,
+    chime = undefined,
+    notices = true,
+  }: {
+    matchmaker: Matchmaker;
+    chime?: (() => void) | undefined;
+    /** Show the matchmaker's notices as toasts (false over a solo table, where no toast host is mounted: Home shows them). */
+    notices?: boolean;
+  } = $props();
 
   let status = $state.raw<MatchmakerStatus>({ phase: 'off' });
   let now = $state(0);
@@ -40,7 +49,7 @@
     savedTitle = null;
     if (ticker !== null) clearInterval(ticker);
     ticker = null;
-    if (s.phase === 'moving') return;
+    if (s.phase === 'moving' || !notices) return;
     const n = takeNoticeOf(matchmaker);
     if (!n) return;
     if (n.again) toasts.info(n.text, { label: 'SEARCH AGAIN', run: () => searchAgain(matchmaker) });

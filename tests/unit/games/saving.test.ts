@@ -14,7 +14,7 @@ import { createSoloSession, SNAPSHOT_EVERY } from '../../../src/session/index';
 import { blankSummary, createGameStore, isEnded } from '../../../src/store/games';
 import { openStores, type LocalStores } from '../../../src/store/stores';
 import type { GameStore, GameSummary } from '../../../src/store/types';
-import { LEFT_NETWORKED, LEFT_SOLO, leaveTable } from '../../../src/ui/play/leave';
+import { LEFT_NETWORKED, LEFT_SOLO, LEFT_SOLO_UNSAVED, leaveTable } from '../../../src/ui/play/leave';
 import { live, resetLifecycleForTests } from '../../../src/util/lifecycle';
 import { cardSource } from '../session/helpers';
 import { sampleSecrets, sampleState, uniqueDbName } from '../store/helpers';
@@ -89,7 +89,7 @@ describe('summarise (pure, public state only)', () => {
     expect(g.thumb).toBeNull();
   });
 
-  it('caps the thumb at 80 cards and skips hidden zones', () => {
+  it('caps the thumb at 80 cards', () => {
     const st = sampleState();
     const ids: string[] = [];
     for (let i = 0; i < 100; i++) {
@@ -419,6 +419,16 @@ describe('leaveTable', () => {
     expect(toast.mock.calls[0]![0]).toBe(LEFT_SOLO);
     toast.mock.calls[0]![1].run();
     expect(go).toHaveBeenLastCalledWith('#/p/p-long');
+  });
+
+  it('without a games store a long solo game shows no CONTINUE: the toast says it was not saved', async () => {
+    const session = fakeSession('p-long');
+    for (let i = 1; i <= 10; i++) session.push(tap(i));
+    const toast = vi.fn();
+    const cp = createCheckpointer(session, null, { doc: null, win: null });
+    expect(await leaveTable({ session, kind: 'practice', code: 'p-long', games: null, go: vi.fn(), toast, checkpointer: cp })).toBe('left');
+    expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast.mock.calls[0]).toEqual([LEFT_SOLO_UNSAVED]);
   });
 
   it('a long practice game, reopened from its snapshot and left after three more moves, is kept', async () => {
