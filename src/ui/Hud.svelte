@@ -465,8 +465,8 @@
     const d = ((a.outwardDeg % 360) + 360) % 360;
     return d > 45 && d < 135 ? 'right' : d > 225 && d < 315 ? 'left' : null;
   };
-  /** The gap between a side seat's table edge and its plate. */
-  const SIDE_GAP = 24;
+  /** The gap between a side seat's table edge (its middle) and its plate: the edge's pile column stands out about 40 px there. */
+  const SIDE_GAP = 44;
   /**
    * How far a side plate that does not fit beside the table moves along its edge, away from that seat's pile column: a
    * seat's library and graveyard lie on its right hand, which on screen is the outward direction turned a quarter

@@ -118,7 +118,10 @@ test('bring Ann back: her own profile resumes without a claim; a fresh profile s
       const claim = fresh.getByTestId('claim-page');
       await expect(claim).toBeVisible({ timeout: 30_000 });
       await expect(claim.getByTestId('claim-warning')).toHaveText('If another browser of yours still has this game, open the link there. Sitting down here discards that hand.');
-      await expect(claim.locator('.ds-btn--primary')).toHaveCount(0);
+      // journey.md 4.11 (gate M8 finding N8): SIT DOWN AS ANN is the card's one filled button, WATCH INSTEAD beside it.
+      await expect(claim.locator('.ds-btn--primary')).toHaveCount(1);
+      await expect(claim.locator('.ds-btn--primary')).toHaveAttribute('data-testid', 'claim-sit');
+      await expect(claim.getByTestId('claim-watch')).toBeVisible();
       await designAudit(fresh);
       expect(await seriousViolations(fresh, '[data-testid="claim-page"]')).toEqual([]);
       expect(await fresh.evaluate(() => location.hash)).not.toContain('/rejoin/');

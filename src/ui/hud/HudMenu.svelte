@@ -117,6 +117,19 @@
     };
   });
   const shown = $derived(groups.filter((g) => g.items.length));
+  /** The groups in two columns: the first takes whole groups until it holds about half of the rows. */
+  const halves = $derived.by((): [HudMenuGroup[], HudMenuGroup[]] => {
+    const rows = (g: HudMenuGroup): number => g.items.length + (g.label ? 1 : 0);
+    const total = shown.reduce((n, g) => n + rows(g), 0);
+    const first: HudMenuGroup[] = [];
+    let n = 0;
+    for (const g of shown) {
+      if (first.length && n + rows(g) / 2 > total / 2) break;
+      first.push(g);
+      n += rows(g);
+    }
+    return [first, shown.slice(first.length)];
+  });
 </script>
 
 <div bind:this={el} class="ds-pop ds-menu sp-menu" class:sp-handing={handing} class:sp-columns={columns} data-columns={columns ? '2' : '1'} role="menu" aria-label={label} data-testid={testid} tabindex="-1" onkeydown={key}>
@@ -124,7 +137,7 @@
     <div class="sp-menu-top" data-testid="menu-top-slot">{@render top(onclose)}</div>
     {#if shown.length}<div class="sp-menu-divider" role="separator"></div>{/if}
   {/if}
-  {#each shown as g (g.id)}
+  {#snippet group(g: HudMenuGroup)}
     <div class="ds-menu-group" role="group" aria-label={g.label ?? label} data-group={g.id}>
       {#if g.label}<span class="ds-label" aria-hidden="true">{g.label}</span>{/if}
       {#each g.items as item (item.id)}
@@ -152,7 +165,19 @@
         >
       {/each}
     </div>
-  {/each}
+  {/snippet}
+  {#if columns}
+    <!-- Two columns of whole groups, balanced by their rows; each column starts without a divider. -->
+    <div class="sp-cols">
+      {#each halves as half, ci (ci)}
+        <div class="sp-col">
+          {#each half as g (g.id)}{@render group(g)}{/each}
+        </div>
+      {/each}
+    </div>
+  {:else}
+    {#each shown as g (g.id)}{@render group(g)}{/each}
+  {/if}
 </div>
 
 <style>
@@ -166,13 +191,19 @@
     contain: layout paint;
   }
   .sp-menu.sp-columns {
-    columns: 2;
-    column-gap: var(--ds-space-sm);
     width: min(600px, calc(100vw - 2 * var(--ds-edge, 16px)));
     max-width: none;
   }
-  .sp-columns .ds-menu-group {
-    break-inside: avoid;
+  .sp-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--ds-space-sm);
+    align-items: start;
+  }
+  .sp-col {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
   .sp-menu-top {
     display: grid;

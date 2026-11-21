@@ -384,9 +384,9 @@
     white-space: nowrap;
     max-width: 10em;
   }
-  /* A compact plate (a table of three or more) keeps a long name to 8 em, so a side plate fits beside the table. */
+  /* A compact plate (a table of three or more) keeps a long name to 9 em, so a side plate fits beside the table. */
   .compact .name {
-    max-width: 8em;
+    max-width: 9em;
   }
   .goto {
     background: none;

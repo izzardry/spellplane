@@ -102,6 +102,46 @@ test('an imported deck: the curve text, the land note and +N LANDS as one undo s
   await expect(page.getByTestId('deck-tile').getByTestId('simple-chip')).toBeVisible();
 });
 
+test("board 3's top row: SAMPLE HAND deals seven whole cards (mulligan, draw, new hand); the ⋯ menu sets the size and duplicates", async ({ page }, info) => {
+  await openDecks(page, { profile: profileOf(info), hash: '/decks/new/import' });
+  await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
+  await page.getByTestId('deck-check').click();
+  await page.getByTestId('deck-import-go').click();
+  await expect(page.getByTestId('deck-count')).toContainText('60');
+  const id = decodeURIComponent((await page.evaluate(() => location.hash)).replace('#/decks/', ''));
+  await test.step('the sample hand: 7 cards and their lands, MULLIGAN to 6, DRAW to 7, NEW HAND to 7; Escape closes', async () => {
+    await page.getByTestId('deck-sample').click();
+    const hand = page.getByTestId('sample-hand');
+    await expect(hand).toBeVisible();
+    await expect(hand.getByTestId('sample-card')).toHaveCount(7);
+    await expect(hand.getByTestId('sample-line')).toHaveText(/^7 cards · \d+ lands?$/);
+    for (const r of await faceRatios(page)) expect(Math.abs(r - 63 / 88) / (63 / 88)).toBeLessThan(0.01);
+    await expect(hand.locator('.ds-btn--primary')).toHaveCount(1);
+    await expect(hand.locator('.ds-btn--primary')).toHaveAttribute('data-testid', 'sample-new');
+    await hand.getByTestId('sample-mulligan').click();
+    await expect(hand.getByTestId('sample-card')).toHaveCount(6);
+    await hand.getByTestId('sample-draw').click();
+    await expect(hand.getByTestId('sample-card')).toHaveCount(7);
+    await hand.getByTestId('sample-new').click();
+    await expect(hand.getByTestId('sample-card')).toHaveCount(7);
+    await page.keyboard.press('Escape');
+    await expect(hand).toHaveCount(0);
+  });
+  await test.step('⋯: the deck size (the current one checked) and Duplicate, which opens the copy', async () => {
+    await page.getByTestId('deck-more').click();
+    const menu = page.getByTestId('deck-more-menu');
+    await expect(menu.getByTestId('deck-size-60')).toContainText('✓');
+    await menu.getByTestId('deck-size-40').click();
+    await expect(page.getByTestId('deck-count')).toContainText('/ 40');
+    await page.getByTestId('deck-undo').click();
+    await expect(page.getByTestId('deck-count')).toContainText('/ 60');
+    await page.getByTestId('deck-more').click();
+    await page.getByTestId('deck-more-menu').getByTestId('deck-more-duplicate').click();
+    await expect.poll(() => page.evaluate(() => location.hash)).not.toBe(`#/decks/${encodeURIComponent(id)}`);
+    await expect(page.getByTestId('deck-count')).toContainText('60');
+  });
+});
+
 test('the search runs 350 ms after the last key', async ({ page }, info) => {
   await openDecks(page, { profile: profileOf(info) });
   await newCustomDeck(page);

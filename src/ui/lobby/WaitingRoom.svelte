@@ -803,6 +803,7 @@
           code={codeLabel(link.roomId)}
           spectatorLink={watchLink}
           status={open > 0 ? `Waiting for players · ${seatedCount} of ${Object.keys(st.seats).length} here` : `Everyone is here · ${seatedCount} of ${Object.keys(st.seats).length}`}
+          present={open === 0}
           onclose={() => (inviteOpen = false)}
         />
       </aside>
@@ -960,7 +961,7 @@
   /* The seat plates stand outside the table's outline (gate M8 finding F5): the seats' box keeps a plate's height above
      and below the table, and, where seats sit beside it (three and four players), a plate's width on either side. */
   .seats {
-    --plate-w: 248px;
+    --plate-w: 280px;
     --plate-gap: 12px;
     display: grid;
     gap: var(--ds-space-md);
@@ -1308,6 +1309,12 @@
     .body {
       padding-left: var(--ds-space-lg);
       padding-right: var(--ds-space-lg);
+    }
+  }
+  /* A narrower column keeps a table between the side seats' plates. */
+  @media (max-width: 960px) {
+    .seats {
+      --plate-w: 224px;
     }
   }
   @media (max-width: 720px) {
