@@ -28,7 +28,7 @@
    * transport). Handed by main.ts next to AppProps and declared here, not in the ui/types.ts contract (decision M1-P8):
    * the integrator may take it into AppProps.
    */
-  type RoomOpener = { openRoom?: (link: RoomLink, as?: { watch?: boolean }) => Promise<NetSession> };
+  type RoomOpener = { openRoom?: (link: RoomLink, as?: { watch?: boolean; signal?: AbortSignal }) => Promise<NetSession> };
   let { app, room: roomId, roomKey, cssVars }: { app: Partial<AppProps> & RoomOpener; room: string; roomKey: string; cssVars: string } = $props();
 
   type RoomView = { session: TableSession; link: RoomLink; identity: IdentityStore; decks: DeckStore };
@@ -39,10 +39,15 @@
   };
   let watching = $state(typeof location === 'undefined' ? false : watchingIn(location.hash));
   const watchHash = $derived(routeHash({ name: 'room', room: roomId, key: roomKey, watch: true }));
+  // The same link object while the link is the same: the join below runs again only for another link (or watching),
+  // never because App handed the same room again (gate M8 R2: a second join with the same identity stalled the first).
+  let lastLink: RoomLink | null = null;
   const link = $derived.by((): RoomLink | null => {
     const given = app.link;
-    if (given && given.roomId === roomId && given.roomKey === roomKey) return given;
-    return parseRoomLink(pageBase(typeof location === 'undefined' ? '' : location.href), `#/t/${roomId}/${roomKey}`);
+    const next = given && given.roomId === roomId && given.roomKey === roomKey ? given : parseRoomLink(pageBase(typeof location === 'undefined' ? '' : location.href), `#/t/${roomId}/${roomKey}`);
+    if (next && lastLink && next.roomId === lastLink.roomId && next.roomKey === lastLink.roomKey && next.url === lastLink.url) return lastLink;
+    lastLink = next;
+    return next;
   });
   let room = $state.raw<RoomView | null>(null);
   let joinState = $state<'none' | 'joining' | 'failed'>('none');
@@ -62,12 +67,14 @@
     if (!(given && given.roomId === l.roomId) && !openRoom) return;
     let cancelled = false;
     let opened: { leave(): void } | null = null;
+    // A join this effect gives up (the route went away, or watching changed) stops at once instead of finishing.
+    const abandoned = new AbortController();
     joinState = 'joining';
     // main.ts handed in the session for this room, or the route joins the room itself (M1-P8).
     const session: Promise<TableSession> =
       given && given.roomId === l.roomId
         ? Promise.resolve(given)
-        : openRoom!(l, { watch }).then((s) => {
+        : openRoom!(l, { watch, signal: abandoned.signal }).then((s) => {
             if (cancelled) s.leave();
             else opened = s;
             return s;
@@ -89,6 +96,7 @@
     );
     return () => {
       cancelled = true;
+      abandoned.abort();
       opened?.leave();
       room = null;
       joinState = 'none';

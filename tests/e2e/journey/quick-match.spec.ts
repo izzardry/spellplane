@@ -116,6 +116,7 @@ test.describe('journey: Quick match', () => {
     for (const p of list) p.on('pageerror', (e) => errors.push(e.message));
     const phase = (p: Page) => p.evaluate(() => window.__spellplane!.mm!.status().phase);
     try {
+      for (const p of list) await p.addInitScript(ROOM_WATCH);
       let practice = '';
       await test.step('Ann plays a practice game and leaves it; both profiles have a deck', async () => {
         await openSite(a, freshProfile(info, 'ann'));
@@ -146,9 +147,32 @@ test.describe('journey: Quick match', () => {
         await expect(a.locator('[data-testid="table-frame"][data-kind="practice"]')).toBeVisible();
         for (const p of [a, b]) await p.getByTestId('match-accept').click();
         for (const p of [a, b]) await expect.poll(() => p.evaluate(() => location.hash), { timeout: 20_000 }).toMatch(/^#\/t\//);
-        await atTable(a, 'room');
+        expect(await b.evaluate(() => location.hash)).toBe(await a.evaluate(() => location.hash));
         await expect.poll(async () => (await gamesOf(a)).find((g) => g.code === practice)?.leftAt ?? null, { timeout: 15_000 }).toEqual(expect.any(Number));
-        await expect.poll(async () => (await state(a).catch(() => null))?.settings.matched === true, { timeout: 45_000 }).toBe(true);
+      }, { timeout: 90_000 });
+
+      await test.step('the matched table mounts on both pages: one join each, seven cards each, equal hashes', async () => {
+        for (const p of [a, b]) {
+          await atTable(p, 'room');
+          await expect
+            .poll(async () => {
+              const s = await state(p).catch(() => null);
+              return s ? { stage: s.stage, matched: s.settings.matched === true } : null;
+            }, { timeout: 45_000 })
+            .toEqual({ stage: 'match', matched: true });
+          await expect.poll(() => hands(p, ['s0', 's1']), { timeout: 30_000 }).toEqual([7, 7]);
+          // Each page joined the room once (gate M8 R2: the leave guard's two hash changes joined it twice, and the
+          // second join with the same identity stalled the first): the other page sees exactly one peer, connected.
+          await expect
+            .poll(() => p.evaluate(() => window.__spellplane!.net!.peers().map((x) => x.status)), { timeout: 15_000 })
+            .toEqual(['connected']);
+          // No waiting room was ever mounted on the way, not even before the frame found the MatchRecord.
+          expect(await seenOf(p)).toContain('matched-entry');
+          expect((await seenOf(p)).filter((x) => x === 'lobby' || x === 'waiting-room')).toEqual([]);
+        }
+        await sameHash([a, b]);
+        // The search ended with the match on both pages.
+        for (const p of [a, b]) expect(await phase(p)).toBe('off');
       }, { timeout: 90_000 });
       expect(errors).toEqual([]);
     } finally {
