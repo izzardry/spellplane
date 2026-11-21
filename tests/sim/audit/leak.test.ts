@@ -318,7 +318,7 @@ describe('shared leak test: the post-game audit', () => {
     // Cara, alone, sequences and plays on in game one; her history grows longer.
     await until(() => c.engine.isSequencer(), 30_000, 'Cara sequencing alone');
     for (let i = 0; i < 80; i++) {
-      c.dispatch({ type: 'chat', text: `hi ${i}`, channel: 'table' });
+      c.dispatch({ type: 'life', seat: 's2', delta: -1 });
       await vi.advanceTimersByTimeAsync(50);
     }
     c.dispatch({ type: 'ask', round: 'r-cara-attacks', label: 'Attacks?' });

@@ -8,8 +8,8 @@ import type { NetTable } from '../session/harness';
 import { closeAll, FAKE_TIMERS, hashOf, net, settle, until, waitConverged, type Browser } from '../session/harness';
 import { playScript } from '../session/script';
 import { lostHiddenCards } from '../../../src/session/resume';
-import type { LoopbackNetwork } from '../../../src/net/loopback';
-import { comeBack, confirmedHash, leave, moves, musterOf, seated, untilLive } from './rejoin-helpers';
+import { comeBack, confirmedHash, crash, leave, moves, musterOf, newerHeadHeard, seated, untilLive } from './rejoin-helpers';
+import { watch, closeWatchers, type Watcher } from '../roles/harness';
 
 vi.mock('../../../src/net/identity', async () => (await import('../net/fake-identity')).fakeIdentityModule);
 
@@ -120,6 +120,52 @@ describe('the case table of persistence.md section 5', () => {
     expect(b.getState().seats.s0!.away).toBe(true);
   });
 
+  it('row 6: Ann heard a newer copy from Ben, who dropped before she caught up: she stays on standby, PLAY ON WITH THIS TABLE is offered', async () => {
+    const network = net({ seed: 107, delay: { min: 40, max: 120 } });
+    const { ann, cy, benSeat, cySeat } = await newerHeadHeard(network, browsers);
+    // Ben is gone again: Ann still waits for Cy, and now for Ben's newer table too.
+    await vi.advanceTimersByTimeAsync(3000);
+    let m = musterOf(ann);
+    expect(m.live).toBe(false);
+    expect(m.knownHead).toMatchObject({ seat: benSeat, peer: 'peer-b' });
+    expect(m.waitingFor).toEqual([cySeat, benSeat]);
+    expect(m.playOnHere).toBe(false);
+    // Cy returns with the same copy as Ann's: everyone her copy expects is here, only Ben's newer table is missing.
+    const c = await comeBack(network, cy);
+    await waitConverged([ann.session!, c], 'Ann and Cy');
+    await vi.advanceTimersByTimeAsync(3000);
+    m = musterOf(ann);
+    expect(m.live).toBe(false);
+    expect(m.knownHead).toMatchObject({ seat: benSeat });
+    expect(m.waitingFor).toEqual([benSeat]);
+    expect(m.playOnHere).toBe(true);
+    expect(ann.session!.liveRule()).toBeNull();
+  });
+
+  it('a spectator who stayed does not make a returning player live: Ben still waits for Ann', async () => {
+    const network = lossy(108);
+    const [ann, ben] = await seated(network, browsers, 2);
+    await moves(ann!, 2);
+    let sam: Watcher | null = null;
+    try {
+      sam = await watch(network, 'sam', 'peer-sam', 'Sam');
+      await until(() => sam!.session.engine.seq() === ann!.session!.engine.seq(), 10_000, 'Sam in step');
+      for (const b of [ann!, ben!]) await settle(b.session!.whenSaved());
+      // Both players' tabs close: Sam's copy (and Ben's) show both seats present.
+      crash(network, ann!);
+      crash(network, ben!);
+      await comeBack(network, ben!);
+      await vi.advanceTimersByTimeAsync(5000);
+      const m = musterOf(ben!);
+      expect(m.live).toBe(false);
+      expect(m.waitingFor).toEqual(['s0']);
+      // The spectator announced no head (its page holds no seat).
+      expect(network.delivered.some((d) => d.from === 'peer-sam' && (d.msg as { t?: string }).t === 'head')).toBe(false);
+    } finally {
+      if (sam) closeWatchers([sam]);
+    }
+  });
+
   it('a brand-new game is live by rule 3, a joiner by rule 2', async () => {
     const network = lossy(106);
     const [ann, ben] = await seated(network, browsers, 2);
@@ -145,38 +191,76 @@ describe('leaving on the wire (persistence.md section 5)', () => {
 });
 
 describe('newest by moves (contracts.md Part G item 2)', () => {
-  it('a stale browser with four chat lines loses against a copy with three more moves; both converge', async () => {
-    const network = lossy(121);
-    const [ann, ben] = await seated(network, browsers, 2);
-    // A split: each side plays alone.
-    network.kill('peer-a');
-    await until(() => ben!.session!.getState().seats.s0!.away === true, 15_000, 'Ann away on Ben');
-    await until(() => ann!.session!.engine.peers().every((p) => p.status !== 'connected'), 15_000, 'Ben gone on Ann');
-    for (let i = 0; i < 4; i++) ann!.session!.chat(`alone ${i}`);
-    await until(() => ann!.session!.engine.pending().length === 0, 5000, 'Ann chats');
-    await moves(ben!, 3);
-    expect(ann!.session!.engine.seq()).toBeGreaterThan(0);
-    const benPlay = ben!.session!.engine.play!();
-    const annNotices: string[] = [];
-    ann!.session!.onNotice((t) => annNotices.push(t));
-    network.revive('peer-a');
-    await waitConverged([ann!.session!, ben!.session!], 'the split healed');
-    // Ben's three moves are the table; Ann's chat lines were played again on top.
-    expect(ann!.session!.engine.play!()).toBe(benPlay);
-    expect(lifeOf(ann!, 's1')).toBe(17);
-    const chats = ann!.session!.log().flatMap((e) => (e.kind === 'action' && e.action.type === 'chat' ? [e.action.text] : []));
-    expect(chats).toEqual(expect.arrayContaining(['alone 0', 'alone 1', 'alone 2', 'alone 3']));
-    // The losing side is told in plain words (contracts.md Part G item 2).
-    expect(annNotices).toContain("The table with more moves is kept; the other side's moves are played again on top where they still fit.");
+  const NOTICE = "The table with more moves is kept; the other side's moves are played again on top where they still fit.";
+
+  /**
+   * A split: `cut` is cut off from the others; the side named `movers` makes three moves (life changes), the other side
+   * writes `chats` chat lines alone, so its copy is longer by seq but has fewer moves. Then the split heals.
+   */
+  async function split(seed: number, n: 2 | 3, cutIndex: number, moversCut: boolean, chats: number) {
+    const network = lossy(seed);
+    const all = await seated(network, browsers, n, n === 3 ? 'ffa3' : undefined);
+    const cut = all[cutIndex]!;
+    const rest = all.filter((b) => b !== cut);
+    const fork = cut.session!.engine.seq();
+    network.kill(cut.peerId);
+    for (const b of rest) await until(() => b.session!.getState().seats[cut.session!.seat]!.away === true, 15_000, `${cut.name} away on ${b.name}`);
+    await until(() => cut.session!.engine.peers().every((p) => p.status !== 'connected'), 15_000, `the others gone on ${cut.name}`);
+    const movers = moversCut ? cut : rest[0]!;
+    const chatter = moversCut ? rest[0]! : cut;
+    await moves(movers, 3);
+    for (let i = 0; i < chats; i++) chatter.session!.chat(`alone ${i}`);
+    await until(() => chatter.session!.engine.pending().length === 0, 10_000, 'the chat lines');
+    // The chatting side's copy is the longer one, the moving side's has more moves.
+    expect(chatter.session!.engine.seq()).toBeGreaterThan(movers.session!.engine.seq());
+    expect(movers.session!.engine.play!()).toBeGreaterThan(chatter.session!.engine.play!());
+    const winnerPlay = movers.session!.engine.play!();
+    const moverLife = lifeOf(movers, movers.session!.seat);
+    const notices = new Map(all.map((b) => [b, [] as string[]]));
+    for (const b of all) b.session!.onNotice((t) => notices.get(b)!.push(t));
+    network.revive(cut.peerId);
+    await waitConverged(all.map((b) => b.session!), 'the split healed');
+    for (const b of all) {
+      // The copy with more moves is the table, whichever side elects the sequencer.
+      expect(b.session!.engine.play!(), b.name).toBe(winnerPlay);
+      expect(lifeOf(b, movers.session!.seat), b.name).toBe(moverLife);
+      const chatsSeen = b.session!.log().flatMap((e) => (e.kind === 'action' && e.action.type === 'chat' ? [e.action.text] : []));
+      expect(chatsSeen, b.name).toEqual(expect.arrayContaining(Array.from({ length: chats }, (_, i) => `alone ${i}`)));
+    }
+    // The moving side's history sits right after the fork: its first move is the first move after the fork point.
+    const log = movers.session!.log().flatMap((e) => (e.kind === 'action' && e.seq > fork ? [e] : []));
+    const firstMove = log.find((e) => e.kind === 'action' && e.action.type === 'life');
+    const firstChat = log.find((e) => e.kind === 'action' && e.action.type === 'chat');
+    expect(firstMove!.seq).toBeLessThan(firstChat!.seq);
+    // The browser whose own actions were played again is told; the side whose copy was kept is not.
+    expect(notices.get(chatter), chatter.name).toContain(NOTICE);
+    const kept = moversCut ? [cut] : rest;
+    for (const b of kept) expect(notices.get(b), b.name).not.toContain(NOTICE);
+  }
+
+  it('a stale browser with eight chat lines (the longer copy) loses against a copy with three more moves', async () => {
+    // Ann (s0, elects the sequencer) chats alone; Ben moves.
+    await split(121, 2, 0, false, 8);
+  });
+
+  it('the elected sequencer with more moves keeps its copy against a longer copy of chat lines', async () => {
+    // Ann (s0) is cut off and moves; Ben chats alone, longer by seq.
+    await split(122, 2, 0, true, 8);
+  });
+
+  it('the other orientation: the cut-off higher seat has the moves, the elected sequencer the longer chat copy', async () => {
+    await split(123, 2, 1, true, 8);
+  });
+
+  it('three browsers: the cut-off sequencer with more moves wins against two others who chatted', async () => {
+    await split(124, 3, 0, true, 8);
+  });
+
+  it('three browsers: a cut-off player with more moves wins against the sequencer side that chatted', async () => {
+    await split(125, 3, 2, true, 8);
   });
 });
 
-/** The tab is closed (or the machine sleeps): no `bye`, the transport just goes. */
-function crash(network: LoopbackNetwork, b: Browser): void {
-  network.kill(b.peerId);
-  b.session!.dispose();
-  b.session = null;
-}
 
 describe('standby (persistence.md section 5; contracts.md Part G item 5)', () => {
   it('three browsers all on standby wait for the fourth; one presses PLAY ON; a standby sequencer marks nobody away', async () => {

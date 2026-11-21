@@ -15,6 +15,7 @@
   import type { SeatId, TableState } from '../../core/types';
   import { scrubbedHash } from '../../session/invite';
   import type { ClaimView, MusterStatus, SessionMuster } from '../../session/types';
+  import PresenceDot from '../design/PresenceDot.svelte';
   import TeamPrompt from '../seat/TeamPrompt.svelte';
   import { notices } from '../table/notices';
   import BringBack from './BringBack.svelte';
@@ -171,11 +172,19 @@
     if (m) location.hash = `#/t/${m[1]}/${m[2]}/watch`;
   }
 
-  const team = $derived(muster.team?.() ?? null);
+  // The session's team view exists once the table is in a team format; a frame mounted on a 1v1 lobby that turns into
+  // 2HG must show the prompt then, so the derivation reads the table (a plain call to the session is not reactive).
+  const team = $derived.by(() => {
+    void table.format;
+    return muster.team?.() ?? null;
+  });
+  /** A link opens only for a seat the table marks away (the reducer's `[invite:present]`): `Left before you` rows. */
+  const bringable = (seat: SeatId): boolean => table.seats[seat]?.away === true && table.settings.matched !== true;
+  const bringFirst = $derived(status.seats.find((r) => !r.me && bringable(r.seat))?.seat ?? null);
 </script>
 
 <div class="gathering" data-testid="gathering" data-live={status.live ? 'true' : 'false'}>
-  <div class="table" inert={!status.live || claiming}>
+  <div class="table" inert={claiming || (!status.live && !looking)}>
     {@render children?.()}
   </div>
   {#if claiming}
@@ -192,8 +201,8 @@
     {#if looking}
       <div class="banner" role="status" data-testid="gathering-banner">
         <span class="t">{missing.length ? `Waiting for ${names(missing)}` : 'Waiting for the others'}</span>
-        {#if missing.length}
-          <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" onclick={() => bringBack(missing[0]!)}>Bring back</button>
+        {#if bringFirst !== null}
+          <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" onclick={() => bringBack(bringFirst)}>Bring back</button>
         {/if}
         {#if waitedLong && missing.length}
           <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" disabled={busy} onclick={() => playOn(missing)}>Play on without {names(missing)}</button>
@@ -209,10 +218,9 @@
             <li class="row" data-testid="gathering-row" data-seat={row.seat} data-state={row.state}>
               <span class="name">{row.name || row.seat}{row.me ? ' (you)' : ''}</span>
               <span class="state">
-                <span class="dot {row.state}" aria-hidden="true"></span>
-                {rowWord(row.state)}
+                <PresenceDot state={row.state === 'here' ? 'here' : row.state === 'connecting' ? 'connecting' : 'away'} label={rowWord(row.state)} />
               </span>
-              {#if (row.state === 'away' || row.state === 'leftBefore') && table.settings.matched !== true}
+              {#if (row.state === 'away' || row.state === 'leftBefore') && bringable(row.seat)}
                 <button type="button" class="ds-btn ds-btn--ghost ds-btn--xs" data-testid="gathering-bring" onclick={() => bringBack(row.seat)}>BRING BACK</button>
               {/if}
             </li>
@@ -330,33 +338,6 @@
     gap: var(--ds-space-xs);
     font: var(--ds-type-small);
     color: var(--ds-muted);
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-  .dot.here {
-    background: var(--ds-ink);
-  }
-  .dot.connecting {
-    box-shadow: inset 0 0 0 1.5px var(--ds-ink);
-    animation: pulse 1.2s var(--ds-ease-standard) infinite;
-  }
-  .dot.away,
-  .dot.leftBefore {
-    box-shadow: inset 0 0 0 1.5px var(--ds-muted);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .dot.connecting {
-      animation: none;
-      opacity: 0.6;
-    }
-  }
-  @keyframes pulse {
-    50% {
-      opacity: 0.3;
-    }
   }
   .line {
     margin: 0;

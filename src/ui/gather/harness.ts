@@ -4,7 +4,7 @@
  * so M8-P5's screens are proven without another package's code. Playwright drives it through `window.__gather`.
  * Implementer: M8-P5.
  *
- * URL: `?harness=gather&scene=gathering|menus|claim|team` (default `gathering`).
+ * URL: `?harness=gather&scene=gathering|menus|claim|team|teamswitch` (default `gathering`).
  */
 import { mount as mountSvelte, unmount } from 'svelte';
 import { createTable } from '../../core/reducer';
@@ -27,7 +27,9 @@ export interface GatherHarnessApi {
   /** Show (or with null, end) the claim page of a re-invite link over the Gathering scene. */
   setClaim(view: ClaimView | null): void;
   /** Switch the scene. */
-  scene(name: 'gathering' | 'menus' | 'claim' | 'team'): void;
+  scene(name: 'gathering' | 'menus' | 'claim' | 'team' | 'teamswitch'): void;
+  /** Scene `teamswitch`: the table under the mounted Gathering changes its format (the session's team view follows). */
+  setFormat(format: '1v1' | '2hg'): void;
 }
 
 declare global {
@@ -136,6 +138,16 @@ export function mount(target: HTMLElement): () => void {
       for (const l of [...teamListeners]) l();
     },
   };
+  // Scene `teamswitch`: like NetTable's `team` getter, the team view exists only while the table is in a team format.
+  let format: '1v1' | '2hg' = '1v1';
+  let setSwitchTable: ((t: TableState) => void) | null = null;
+  const switchMuster: SessionMuster = { ...muster, muster: () => ({ ...status, live: true, rule: 1, waitingFor: [] }), team: () => (format === '2hg' ? team : null) };
+  // The Gathering scene's table agrees with its rows: Ben (Not here) is not marked away, Dana (Left before you) is.
+  const gatherTable = ((): TableState => {
+    const t = fixtureTable('ffa4');
+    const { away: _away, ...ben } = t.seats.s1!;
+    return { ...t, seats: { ...t.seats, s1: ben, s3: { ...t.seats.s3!, away: true } } };
+  })();
   let app: ReturnType<typeof mountSvelte> | null = null;
   const show = (scene: string): void => {
     if (app) void unmount(app);
@@ -146,6 +158,10 @@ export function mount(target: HTMLElement): () => void {
         muster,
         team,
         table: fixtureTable('ffa4'),
+        gatherTable,
+        switchMuster,
+        switchTable: fixtureTable('1v1'),
+        bindSwitch: (set: (t: TableState) => void) => (setSwitchTable = set),
         teamTable: fixtureTable('2hg'),
         matchedTable: fixtureTable('1v1', true),
         onreadonly: (ro: boolean) => (readOnly = ro),
@@ -164,6 +180,10 @@ export function mount(target: HTMLElement): () => void {
     readOnly: () => readOnly,
     failInvite: (reason) => (failNext = reason),
     scene: (name) => show(name),
+    setFormat: (f) => {
+      format = f;
+      setSwitchTable?.(fixtureTable(f));
+    },
     setClaim: (view) => {
       claim = view;
       for (const l of [...listeners]) l(status);

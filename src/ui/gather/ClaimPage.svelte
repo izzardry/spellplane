@@ -10,6 +10,8 @@
     seat) with `WATCH` where watching is possible and `HOME`.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
+  import Field from '../design/Field.svelte';
   import { CLAIM_WARNING, type ClaimRefusalScreen } from './model';
 
   let {
@@ -30,9 +32,13 @@
     onopenmine?: () => void;
   } = $props();
 
-  let name = $state('');
+  // The seat's name seeds the field once (it may arrive after mount); a field the player cleared stays empty.
+  let name = $state(untrack(() => seatName));
+  let seeded = untrack(() => seatName !== '');
   $effect(() => {
-    if (name === '' && seatName) name = seatName;
+    if (seeded || !seatName) return;
+    seeded = true;
+    untrack(() => (name = seatName));
   });
   const shown = $derived((seatName || 'this player').toUpperCase());
 </script>
@@ -57,10 +63,10 @@
     </div>
   {:else}
     <p class="title" id="claim-title">Sit down as {seatName || 'this player'}?</p>
-    <label class="field">
-      <span class="label">Your name at the table</span>
-      <input class="ds-input" data-testid="claim-name" maxlength="64" bind:value={name} />
-    </label>
+    <div class="field">
+      <span class="label" aria-hidden="true">Your name at the table</span>
+      <Field label="Your name at the table" data-testid="claim-name" maxlength="64" bind:value={name} />
+    </div>
     <p class="text" data-testid="claim-warning">{CLAIM_WARNING}</p>
     <div class="actions">
       <button type="button" class="ds-btn ds-btn--ghost ds-btn--md" data-testid="claim-sit" disabled={phase === 'sitting'} onclick={() => onsit(name.trim() || seatName)}>SIT DOWN HERE AS {shown}</button>
@@ -102,16 +108,6 @@
     letter-spacing: var(--ds-label-spacing);
     text-transform: var(--ds-label-case);
     color: var(--ds-muted);
-  }
-  .ds-input {
-    box-sizing: border-box;
-    height: 44px;
-    padding: 0 var(--ds-space-md);
-    border-radius: var(--ds-radius-pill);
-    border: none;
-    background: var(--ds-chip);
-    color: var(--ds-ink);
-    font: var(--ds-type-body);
   }
   .actions {
     display: flex;

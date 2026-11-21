@@ -4,6 +4,7 @@
   prompt. Dev and test builds only. Implementer: M8-P5.
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { TableState } from '../../core/types';
   import type { SessionMuster, TeamControls } from '../../session/types';
   import SeatBadge from '../seat/SeatBadge.svelte';
@@ -18,6 +19,10 @@
     muster,
     team,
     table,
+    gatherTable,
+    switchMuster,
+    switchTable,
+    bindSwitch,
     teamTable,
     matchedTable,
     onreadonly,
@@ -27,6 +32,12 @@
     muster: SessionMuster;
     team: TeamControls;
     table: TableState;
+    /** The table under the Gathering scene (its away marks agree with the rows). */
+    gatherTable: TableState;
+    /** Scene `teamswitch`: a live muster whose team view follows the table's format. */
+    switchMuster: SessionMuster;
+    switchTable: TableState;
+    bindSwitch: (set: (t: TableState) => void) => void;
     teamTable: TableState;
     matchedTable: TableState;
     onreadonly: (ro: boolean) => void;
@@ -34,6 +45,8 @@
   } = $props();
 
   let claimPhase = $state<'looking' | 'ready' | 'sitting' | 'refused'>('ready');
+  let switched = $state.raw(untrack(() => switchTable));
+  untrack(() => bindSwitch((t) => (switched = t)));
   const screens = refusalScreens('Ben', 'Ann');
   const now = (): number => Date.now();
   // Ben was seen away three minutes ago.
@@ -43,7 +56,7 @@
 <main class="ds-root page" data-testid="gather-harness" data-scene={scene}>
   {#if scene === 'gathering'}
     <div class="stage" data-testid="gather-stage">
-      <Gathering {muster} {table} code="amber-fox-93" onhome={() => log('home')} onbringback={(seat) => log(`bring ${seat}`)} {onreadonly}>
+      <Gathering {muster} table={gatherTable} code="amber-fox-93" onhome={() => log('home')} onbringback={(seat) => log(`bring ${seat}`)} {onreadonly}>
         <div class="fake-table" data-testid="fake-table">The saved table</div>
       </Gathering>
     </div>
@@ -74,6 +87,12 @@
     </div>
   {:else if scene === 'team'}
     <TeamPrompt {team} />
+  {:else if scene === 'teamswitch'}
+    <div class="stage" data-testid="gather-stage">
+      <Gathering muster={switchMuster} table={switched} onhome={() => log('home')} {onreadonly}>
+        <div class="fake-table" data-testid="fake-table" data-format={switched.format}>The table</div>
+      </Gathering>
+    </div>
   {/if}
 </main>
 

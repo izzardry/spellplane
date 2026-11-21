@@ -6,6 +6,7 @@
  * - The link in Ann's own profile resumes her seat without a claim (her save still has the game).
  * - A fresh profile opens a new link, sits down as Ann (the claim page: warning, no filled button), the address bar
  *   loses `/rejoin/`, the recovery panel opens by itself, and Ben's page shows the seat back with one take-over.
+ * - Ann's old profile, reopened from its save after the take-over, is told its seat moved (no old seat handed out).
  * - A second use of that link shows `This link was already used. Ask for a new one.`
  * Timing is never asserted: state is polled through the debug hook; the 30 seconds run on the page clock.
  */
@@ -14,7 +15,7 @@ import type { TableState } from '../../../src/core/types';
 import { seriousViolations } from '../a11y/helpers';
 import { hook } from '../helpers/app';
 import { decklist, freshProfile, freshRoom, open } from '../lobby/helpers';
-import { designAudit } from './audit';
+import { designAudit } from '../helpers/design-audit';
 
 type Room = { roomId: string; roomKey: string };
 
@@ -118,7 +119,7 @@ test('bring Ann back: her own profile resumes without a claim; a fresh profile s
       await expect(claim).toBeVisible({ timeout: 30_000 });
       await expect(claim.getByTestId('claim-warning')).toHaveText('If another browser of yours still has this game, open the link there. Sitting down here discards that hand.');
       await expect(claim.locator('.ds-btn--primary')).toHaveCount(0);
-      await designAudit(fresh, '[data-testid="claim-page"]');
+      await designAudit(fresh);
       expect(await seriousViolations(fresh, '[data-testid="claim-page"]')).toEqual([]);
       expect(await fresh.evaluate(() => location.hash)).not.toContain('/rejoin/');
       await claim.getByTestId('claim-sit').click();
@@ -126,13 +127,22 @@ test('bring Ann back: her own profile resumes without a claim; a fresh profile s
       await expect(fresh.getByTestId('claim-page')).toHaveCount(0);
       await expect(fresh.getByTestId('recovery')).toHaveAttribute('data-phase', 'lost', { timeout: 20_000 });
       expect(await seriousViolations(fresh, '[data-testid="recovery"]')).toEqual([]);
-      await designAudit(fresh, '[data-testid="recovery"]');
+      await designAudit(fresh);
       const seat = (await state(b)).seats.s0!;
       expect(seat.takeovers).toBe(1);
       expect(seat.peer).not.toBe(annPeer);
       expect(seat.away).toBeUndefined();
       await sameHash(fresh, b);
       await fresh.close();
+    });
+
+    await test.step("Ann's old profile opens the table again from its save: its seat was taken over, the page says so", async () => {
+      const old = await context.newPage();
+      await open(old, `/t/${room.roomId}/${room.roomKey}`, { profile: profiles.a, transport: 'local' });
+      await expect(old.getByTestId('room-error')).toContainText(/Your seat was taken over from another browser \(link made by [^)]+\)\. Your saved hand for this game can no longer be used./, { timeout: 30_000 });
+      expect(await seatOf(old)).toBeNull();
+      expect((await state(b)).seats.s0!.peer).not.toBe(annPeer);
+      await old.close();
     });
 
     await test.step('a second use of the link shows This link was already used', async () => {
