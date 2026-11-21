@@ -30,7 +30,7 @@
   import NoDeck from './hud/NoDeck.svelte';
   import OpeningHand from './hud/OpeningHand.svelte';
   import ViewControl from './hud/ViewControl.svelte';
-  import { gameNumber, openingHandShown } from './hud/opening';
+  import { gameNumber, openingHandShown, ownTurnEnded } from './hud/opening';
   import { passTarget, primaryAction } from './hud/turn';
   import { tickerText } from './hud/ticker';
   import { hudMenu, type HudMenuId } from './menu';
@@ -152,8 +152,6 @@
       if (shownNotice?.id === n.id) shownNotice = null;
     }, n.action ? 10000 : 6000));
   });
-  /** KEEP was pressed for this game (the chips leave; ui/hud/opening.ts). */
-  let keptGame = $state<number | null>(null);
 
   // --- Shared state, as views of the session (the HUD is mounted per session; it never swaps sessions) ----------
   const me = untrack(() => session.seat);
@@ -213,10 +211,27 @@
   }
   let sceneReady = $state(false);
   let sceneError = $state('');
-  // Look, do not touch (HudShellProps.readOnly): the scene proposes no action (TableScene.setReadOnly, M7-P5).
+  // Look, do not touch (HudShellProps.readOnly, or chrome 'plates'): the scene proposes no action (TableScene.setReadOnly,
+  // M7-P5). It is created with the setting (TableSceneOptions.readOnly) and told of every change.
   $effect(() => {
-    const ro = readOnly;
-    if (sceneReady) (scene as unknown as { setReadOnly?: (on: boolean) => void } | null)?.setReadOnly?.(ro);
+    const ro = viewOnly;
+    if (sceneReady) scene?.setReadOnly?.(ro);
+  });
+  // An acting overlay open when the table turns view-only (a gathering switching a live table to standby) closes: its
+  // handlers would act on the table.
+  $effect(() => {
+    if (!viewOnly) return;
+    untrack(() => {
+      menu = null;
+      radial = null;
+      note = null;
+      drawN = null;
+      askField = null;
+      revealTo = null;
+      tokenNear = null;
+      deckOpen = false;
+      leaving = null;
+    });
   });
   /** The viewer's reduced-motion setting, followed live (M5-P4 reduced-motion audit; ui/a11y/motion.ts). */
   let reducedMotion = $state(prefersReducedMotion());
@@ -1019,6 +1034,38 @@
     return a?.at ? a : null;
   };
 
+  // KEEP / MULLIGAN (ui/hud/opening.ts): closed for a game by KEEP or once the seat's own first turn ended. Remembered
+  // per room, seat and game in this tab (per-tab convenience, as the untap offer below; storage may be unavailable), so
+  // a remount or reload in turn 1 does not bring them back.
+  const openingKey = `spellplane:opening-closed:${untrack(() => session.roomId)}:${me}`;
+  let closedGame = $state<number | null>(
+    (() => {
+      try {
+        const v = sessionStorage.getItem(openingKey);
+        return v === null ? null : Number(v);
+      } catch {
+        return null;
+      }
+    })(),
+  );
+  function closeOpening(game: number): void {
+    if (closedGame === game) return;
+    closedGame = game;
+    try {
+      sessionStorage.setItem(openingKey, String(game));
+    } catch {
+      // Not remembered: the chips still follow the table.
+    }
+  }
+  let turnSeen = untrack(() => ({ number: st.turn.number, mine: isOwnTurn(st, me) }));
+  $effect(() => {
+    const now = { number: st.turn.number, mine: isOwnTurn(st, me) };
+    untrack(() => {
+      if (ownTurnEnded(turnSeen, now)) closeOpening(gameNumber(st));
+      turnSeen = now;
+    });
+  });
+
   // On Next turn, offer the new active player (or team) untap-and-draw; close the offer once the turn moves on
   // (DESIGN "Turn flow and confirmation": offered a single key, never done for them).
   // A page that opens (reload, rejoin) after the turn passed to this seat offers it too: from the log, or from the
@@ -1345,6 +1392,7 @@
         viewerSeat: me,
         theme,
         faces,
+        readOnly: viewOnly,
         dispatch: (d) => session.dispatch(d),
         events: {
           hover: (id) => (sceneHover = id),
@@ -1473,14 +1521,14 @@
     oncounter={(kind, delta) => session.dispatch({ type: 'playerCounter', seat: seat.id, kind, delta })}
     onopenzone={openViewer}
     ongoto={() => scene?.camera.goToSeat(seat.id)}
-    readonly={spectating || readOnly}
+    readonly={spectating || viewOnly}
     compact={!mine && otherAvatars >= 3}
     away={isAway(seat.id)}
     badge={plateBadge}
     menuTop={plateMenuTop}
     voiceControls={!mine && !!liveVoice}
     peerAudio={!mine && liveVoice && seat.peer ? peerAudioOf(seat.peer) : undefined}
-    onrevealhand={!mine && !spectating && !readOnly && hand.length > 0 ? () => revealHandTo([seat.id]) : undefined}
+    onrevealhand={!mine && !spectating && !viewOnly && hand.length > 0 ? () => revealHandTo([seat.id]) : undefined}
   />
 {/snippet}
 
@@ -1668,9 +1716,9 @@
       {#if noDeck && !deckOpen && !readOnly}
         <NoDeck onchoose={onchoosedeck} onpaste={importOffered ? () => (deckOpen = true) : undefined} />
       {/if}
-      {#if !readOnly && openingHandShown(st, me, hand.length, keptGame)}
+      {#if !readOnly && openingHandShown(st, me, hand.length, closedGame)}
         <OpeningHand
-          onkeep={() => (keptGame = gameNumber(st))}
+          onkeep={() => closeOpening(gameNumber(st))}
           onmulligan={() => commands.run('mulligan')}
         />
       {/if}
