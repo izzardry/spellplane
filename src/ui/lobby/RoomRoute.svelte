@@ -110,8 +110,9 @@
       joinSlow = false;
     };
   });
-  /** A join refused because every chair is taken (net session: "the table is full"). */
+  /** A join refused because every chair is taken (session/net.ts: before the game, or once it has started). */
   const full = $derived(/\bfull\b/i.test(error));
+  const startedFull = $derived(/started and every chair is taken/i.test(error));
 </script>
 
 <svelte:window onhashchange={() => (watching = watchingIn(location.hash))} />
@@ -148,7 +149,13 @@
       <p class="ds-t-reading" role="status" data-testid="room-joining">{joinLong ? 'Still connecting…' : watching ? 'Joining the table as a spectator…' : 'Joining the table…'}</p>
       {#if joinSlow}<p class="ds-t-reading" role="alert" data-testid="connectivity-problem"><strong>{EMPTY_STATES.relayUnreachable.title}.</strong> {RELAYS_TEXT}</p>{/if}
     {:else if joinState === 'failed'}
-      <p class="ds-t-reading" role="alert" data-testid="room-error">{full ? 'This table is full.' : `Could not join this table: ${error}`}</p>
+      <p class="ds-t-reading" role="alert" data-testid="room-error">
+        {startedFull
+          ? "This game has started and every seat is taken. If one of them is yours, ask a player at the table to bring you back from your name's menu."
+          : full
+            ? 'This table is full.'
+            : `Could not join this table: ${error}`}
+      </p>
     {:else}
       <p class="ds-t-reading">This page cannot join tables.</p>
     {/if}

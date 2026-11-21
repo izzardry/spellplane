@@ -44,6 +44,15 @@ test.describe('journey: a private game', () => {
         }
       }, { timeout: 60_000 });
 
+      await test.step('a third profile opening the link of the running game: every seat is taken, WATCH and HOME', async () => {
+        const c = await context.newPage();
+        await openSite(c, freshProfile(info, 'cleo'), link.slice(link.indexOf('#') + 1));
+        await expect(c.getByTestId('room-error')).toContainText('This game has started and every seat is taken.', { timeout: 30_000 });
+        await expect(c.getByTestId('watch-instead')).toHaveText('WATCH');
+        await expect(c.getByTestId('room-home')).toBeVisible();
+        await c.close();
+      }, { timeout: 45_000 });
+
       await test.step('Ben concedes from the menu after one confirm; both see the overlay', async () => {
         await b.getByTestId('open-menu').click();
         await b.getByRole('menuitem', { name: /concede/i }).click();
