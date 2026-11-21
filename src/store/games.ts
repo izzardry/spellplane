@@ -1,16 +1,23 @@
 /**
  * The `games` store: one GameSummary per game for History and re-entry (persistence.md section 3; contracts.md Part E).
  * M8-C landed the basics; M8-P2 finishes them: `purge` removes the code's rows in games, tables, log and secrets in one
- * transaction; `endOlderSolo` keeps the newest unfinished solo games resumable (contracts.md Part G "History and
+ * transaction, and for a computer game also Sparring's `bot~<code>` rows and the computer record (computer.md 2.5); `endOlderSolo` keeps the newest unfinished solo games resumable (contracts.md Part G "History and
  * saving" item 1); at most `GAMES_KEPT` games are kept and an unfinished networked game is never removed automatically
  * (persistence.md section 4).
  */
 import type { IDBPDatabase } from 'idb';
+import { BOT_TABLE_PREFIX } from './computer';
 import { atomicWrite } from './tx';
 import type { GameStore, GameSummary, SpellplaneDB } from './types';
 
 /** History keeps 50 games (persistence.md D5). */
 export const GAMES_KEPT = 50;
+
+/**
+ * A removal younger than this is not purged by `purgeRemoved` (another tab's UNDO toast may still be up; the kit's undo
+ * toast lives 5 s).
+ */
+export const REMOVED_PURGE_AFTER_MS = 10_000;
 
 /** A complete summary from the launcher's meta (persistence.md section 3: `GameStore.create` before the session opens). */
 export function blankSummary(meta: Parameters<GameStore['create']>[0], now: number): GameSummary {
@@ -53,13 +60,24 @@ export function newestFirst(a: GameSummary, b: GameSummary): number {
 
 /** The games store on `db` (persistence.md section 3). `now` is injected for tests. */
 export function createGameStore(db: IDBPDatabase<SpellplaneDB>, now: () => number = () => Date.now()): GameStore & GameStoreExtras {
+  /**
+   * Every row of the game: its summary, the human's table, log and secrets, and for a computer game (computer.md 2.5:
+   * "deleting a computer game deletes the human's table, the bot's table and the computer record together") Sparring's
+   * `bot~<code>` table, log and secrets and the computer record. Absent rows are no error, so any code may go through
+   * it. A computer game still open in this page goes through session/computer.ts `deleteComputerGame` too, which waits
+   * for the last saves of its sessions (leave.ts `purgeComputer`).
+   */
   async function purge(code: string): Promise<void> {
-    const tx = db.transaction(['games', 'tables', 'log', 'secrets'], 'readwrite');
+    const bot = BOT_TABLE_PREFIX + code;
+    const tx = db.transaction(['games', 'tables', 'log', 'secrets', 'computer'], 'readwrite');
     await atomicWrite(tx, (t, track) => {
       track(t.objectStore('games').delete(code));
-      track(t.objectStore('tables').delete(code));
-      track(t.objectStore('log').delete(roomLogRange(code)));
-      track(t.objectStore('secrets').delete(code));
+      for (const room of [code, bot]) {
+        track(t.objectStore('tables').delete(room));
+        track(t.objectStore('log').delete(roomLogRange(room)));
+        track(t.objectStore('secrets').delete(room));
+      }
+      track(t.objectStore('computer').delete(code));
     });
   }
 
@@ -113,13 +131,15 @@ export function createGameStore(db: IDBPDatabase<SpellplaneDB>, now: () => numbe
       const at = now();
       for (const g of solo.slice(Math.max(0, keep))) await db.put('games', { ...g, ended: 'replaced', endedAt: at });
     },
-    async purgeRemoved() {
-      for (const g of await db.getAll('games')) if (g.deletedAt !== undefined) await purge(g.code);
+    async purgeRemoved(minAgeMs: number = REMOVED_PURGE_AFTER_MS) {
+      const at = now();
+      for (const g of await db.getAll('games')) if (g.deletedAt !== undefined && at - g.deletedAt >= minAgeMs) await purge(g.code);
     },
   };
 }
 
 /** Members beyond the contract (M8-P2): purge what a previous page soft-deleted (persistence.md section 3: "or at the next start"). */
 export interface GameStoreExtras {
-  purgeRemoved(): Promise<void>;
+  /** Purge the soft-deleted games removed at least `minAgeMs` ago (default `REMOVED_PURGE_AFTER_MS`). */
+  purgeRemoved(minAgeMs?: number): Promise<void>;
 }
