@@ -17,6 +17,7 @@
   import { createCheckpointer } from '../../session/checkpoint';
   import { createSessionMuster } from '../../session/muster';
   import { startAutoSetup } from '../../session/entry';
+  import { watchRatedResult } from '../../session/match-room';
   import { concede } from '../../session/result';
   import type { SessionNetStatus } from '../../session/types';
   import { paper } from '../../themes/paper/index';
@@ -81,22 +82,44 @@
   // `autoSetup`; does nothing at a table opened the old way. Not in the sandbox.
   onMount(() => (props.kind === 'sandbox' ? undefined : startAutoSetup(props.session)));
 
-  // A MatchRecord for this code makes the table a matched one (matchmaking.md 2.9).
+  // A MatchRecord for this code makes the table a matched one (matchmaking.md 2.9). Until the lookup settled, a
+  // networked table renders neither the waiting room nor the matched entry, so a matched table never flashes the
+  // waiting room ([M8-P7]).
   let record = $state.raw<MatchRecord | null>(null);
+  let recordChecked = $state(false);
   $effect(() => {
     const code = props.code;
     const matches = deps?.matches;
-    if (!code || !matches || !networked) return;
+    if (!code || !matches || !networked) {
+      recordChecked = true;
+      return;
+    }
     let cancelled = false;
     matches.get(code).then(
       (r) => {
-        if (!cancelled) record = r;
+        if (cancelled) return;
+        record = r;
+        recordChecked = true;
       },
-      () => undefined,
+      () => {
+        if (!cancelled) recordChecked = true;
+      },
     );
     return () => {
       cancelled = true;
     };
+  });
+
+  // [M8-P7] The rating of a ranked matched game (matchmaking.md 2.9): applied once by whichever mount of this table
+  // sees the sequenced result, at any stage (a reload, a re-entry from History, a result that came while the player
+  // was away), and stopped when the frame goes. applyRatedResult is idempotent through `MatchRecord.rated`.
+  const matchedRoom = $derived(record?.roomId ?? null);
+  $effect(() => {
+    const roomId = matchedRoom;
+    const ratings = deps?.ratings;
+    const matches = deps?.matches;
+    if (!roomId || !ratings || !matches || !networked || spectator) return;
+    return untrack(() => watchRatedResult({ session: props.session, roomId, ratings, matches }));
   });
 
   // The rating line of the game-over overlay (matchmaking.md 2.4): the rating watcher (session/match-room.ts) writes
@@ -270,8 +293,10 @@
 
 {#snippet table()}
   {#if networked && deps}
-    {#if record && st.stage === 'lobby'}
-      <MatchedEntry session={props.session} {record} decks={deps.decks ?? null} ratings={deps.ratings ?? null} matches={deps.matches ?? null} onleave={() => void leave()} />
+    {#if !recordChecked}
+      <!-- The MatchRecord lookup is still under way: nothing yet (never the waiting room of a matched table). -->
+    {:else if record && st.stage === 'lobby'}
+      <MatchedEntry session={props.session} {record} decks={deps.decks ?? null} matches={deps.matches ?? null} games={props.games ?? null} onleave={() => leave()} />
     {:else if props.link && deps.identity && deps.decks}
       <Stage
         session={props.session}

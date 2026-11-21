@@ -107,7 +107,8 @@ async function boot(el: HTMLElement): Promise<void> {
   const identity = stores ? liveIdentity(stores.identity) : null;
 
   // One matchmaker per page (matchmaking.md 2.13; a stub with phase `off` until M8-P7).
-  const matchmaker = stores ? createMatchmaker({ settings: stores.settings, decks: stores.decks, ratings: stores.ratings, matches: stores.matches }) : null;
+  // [M8-P7] The profile's own games store and identity: the matchmaker opens no second IndexedDB connection.
+  const matchmaker = stores ? createMatchmaker({ settings: stores.settings, decks: stores.decks, ratings: stores.ratings, matches: stores.matches, games: stores.games, identityStore: stores.identity }) : null;
   // The page's clock for networked sessions; specs pin it with `__spellplane.net.setClock` (dev and test builds).
   const clock = debug?.pageClock() ?? null;
   if (debug && matchmaker) debug.registerM8Debug({ matchmaker, decks: stores?.decks ?? null, games: stores?.games ?? null });
@@ -178,7 +179,8 @@ async function boot(el: HTMLElement): Promise<void> {
         : await openNetSession(
             { ...options, voice },
             // BroadcastChannel peers connect at once; over Trystero they come up seconds after the join.
-            { createdHere: creator, neverAlone, loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS },
+            // [M8-P7] A member of a matched room sits in its planned chair (teams and seats follow the offer).
+            { createdHere: creator, neverAlone, loneWaitMs: pageTransportKind() === 'local' ? 0 : LONE_WAIT_MS, ...(record ? { preferSeat: matchSessionInternals(record, me.peerId).preferSeat } : {}) },
             joining.signal,
           );
     } finally {

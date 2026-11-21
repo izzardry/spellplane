@@ -52,13 +52,22 @@ export interface MatchmakerDeps {
   tickMs?: number;
   /** Added by M8-P7. Follow the page's route (turn off in a networked room); default when a window exists. */
   followRoutes?: boolean;
+  /**
+   * Added by M8-P7. Whether the public relays that introduce players are reachable, asked JOIN_TIMEOUT_MS after the
+   * lobby was opened: false fails the search with the relay text (matchmaking.md 2.14), null when unknown or not
+   * applicable. Default: on the Trystero transport, whether the page is online and any relay socket is open; else null.
+   */
+  relays?: () => Promise<boolean | null>;
 }
 
 /** Whether this build has a working matchmaker: Home enables Quick match. */
 export const MATCHMAKING_AVAILABLE: boolean = true;
 /** "You are the only one looking" after this much of the own wait with no other seeker in the own queues (matchmaking.md 2.17). */
 export const ALONE_AFTER_MS = 10_000;
-/** Join of the lobby not complete after this: phase failed 'relays' (matchmaking.md 2.14). */
+/**
+ * Join of the lobby not complete after this, or no relay reachable this long after the lobby was opened: phase failed
+ * 'relays' (matchmaking.md 2.14).
+ */
 export const JOIN_TIMEOUT_MS = 15_000;
 /** A formed match stays in the lobby this long at most, so its last messages arrive (matchmaking.md 2.6). */
 export const LOBBY_LINGER_MS = 10_000;
@@ -72,9 +81,11 @@ export const MM_TEXT = {
   connecting: 'CONNECTING TO THE LOBBY…',
   alone: 'You are the only one looking right now.',
   relays: 'Cannot reach the public relays that introduce players to each other. Check your internet connection.',
+  blocked: 'This browser blocks local storage, which matchmaking needs for your identity.',
   missed: 'You missed the match. Search stopped.',
   unreachable: (name: string): string => `${name} could not be reached directly. Some networks do not allow it, and Spellplane uses no relay.`,
   notAccepted: (name: string): string => `${name} did not accept. Back in the queue.`,
+  notAnswered: (name: string): string => `${name} did not answer. Back in the queue.`,
 } as const;
 
 /** The queue text of the chip and the card: `1V1 RANKED`, `4 FREE-FOR-ALL CASUAL`. */
@@ -135,6 +146,8 @@ export interface MatchmakerControl extends Matchmaker {
   arrived(roomId: string): void;
   /** The match room was not reached in time: back to seeking, waiting time kept. */
   stranded(roomId: string, missing: string | null): void;
+  /** The player left the match room before its start: true when this matchmaker was moving to it and abandoned the match. */
+  left(roomId: string): boolean;
   /** The pending short notice (a declined, missed or unreachable match); null when none. Does not take it. */
   notice(): string | null;
   /** Take the pending notice once (MatchHost shows it): `again` offers SEARCH AGAIN (a match that could not be reached). */
@@ -179,6 +192,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       return b;
     });
   const listeners = new Set<(s: MatchmakerStatus) => void>();
+  /** The page's record of lobby messages across rooms: dev and test builds only (debug hook, leak test). */
   const log: LobbyMessageRecord[] = [];
   let room: LobbyRoom | null = null;
   let transport: Transport | null = null;
@@ -197,6 +211,9 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
   let arriveBy: number | null = null;
   let arriveMissing: string | null = null;
   let identityP: Promise<NetIdentity> | null = null;
+  /** The lobby being opened (one for every caller until it is joined or failed). */
+  let opening: Promise<LobbyRoom | null> | null = null;
+  let relayTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
   let generation = 0;
   /** `watch(true)` was asked for: stay in the lobby as a watcher without a search. */
@@ -213,16 +230,32 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     if (deps.games !== undefined) return deps.games;
     return (await ownStores().catch(() => null))?.games ?? null;
   };
+  const identityStore = async (): Promise<IdentityStore> => deps.identityStore ?? (await ownStores()).identity;
   const identity = (): Promise<NetIdentity> => {
     identityP ??= (async () => {
       if (deps.identity) return deps.identity();
-      const store = deps.identityStore ?? (await ownStores()).identity;
-      const r = await store.get();
+      const r = await (await identityStore()).get();
       return createNetIdentity(r.keyPair, r.peerId, r.nickname);
     })();
     identityP.catch(() => (identityP = null));
     return identityP;
   };
+  /** The nickname as it is now (a rename on Home or in Settings reaches the next ticket); the keys stay cached. */
+  const nickname = async (id: NetIdentity): Promise<string> => {
+    if (deps.identity) return id.nickname;
+    return (await (await identityStore()).get().catch(() => null))?.nickname ?? id.nickname;
+  };
+  const relays =
+    deps.relays ??
+    (deps.transport
+      ? (): Promise<null> => Promise.resolve(null)
+      : async (): Promise<boolean | null> => {
+          if ((await import('./transports')).pageTransportKind() !== 'trystero') return null;
+          if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+          const nostr = await import('trystero/nostr');
+          const sockets = (nostr.getRelaySockets as () => Record<string, { readyState: number }>)();
+          return Object.values(sockets).some((x) => x.readyState === 1);
+        });
 
   const status = (): MatchmakerStatus => {
     if (mode === 'off') return { phase: 'off' };
@@ -281,6 +314,10 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       clearTimeout(lingerTimer);
       lingerTimer = null;
     }
+    if (relayTimer !== null) {
+      clearTimeout(relayTimer);
+      relayTimer = null;
+    }
     if (room) {
       room.leave();
       room = null;
@@ -292,8 +329,26 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     stopTimer();
   };
 
-  const open = async (): Promise<LobbyRoom | null> => {
-    if (room) return room;
+  const fail = (problem: 'relays' | 'blocked', text: string): null => {
+    closeRoom();
+    mode = 'failed';
+    failed = { phase: 'failed', problem, text };
+    notify();
+    return null;
+  };
+
+  /** The joined lobby, opening it first when needed; every caller waits for the same join. Null when it failed or was given up. */
+  const open = (): Promise<LobbyRoom | null> => {
+    if (opening) return opening;
+    if (room) return Promise.resolve(room);
+    const p = openRoom().finally(() => {
+      if (opening === p) opening = null;
+    });
+    opening = p;
+    return p;
+  };
+
+  const openRoom = async (): Promise<LobbyRoom | null> => {
     const gen = ++generation;
     mode = 'connecting';
     failed = null;
@@ -302,47 +357,65 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     try {
       id = await identity();
     } catch {
-      mode = 'failed';
-      failed = { phase: 'failed', problem: 'relays', text: 'This browser blocks local storage, which matchmaking needs for your identity.' };
-      notify();
-      return null;
+      return disposed || gen !== generation ? null : fail('blocked', MM_TEXT.blocked);
     }
     if (disposed || gen !== generation) return null;
-    const make = deps.transport ?? (await import('./transports')).createPageTransport;
-    transport = make();
-    track('transports', transport);
-    const r = new LobbyRoom({
-      transport,
-      identity: id,
-      now,
-      random,
-      onEffect: (e) => void onEffect(e),
-      onChange: () => notify(),
-    });
-    // Keep the page's record of lobby messages across rooms (debug hook, leak test).
-    const push = r.log.push.bind(r.log);
-    r.log.push = (...items: LobbyMessageRecord[]): number => {
-      log.push(...items);
-      if (log.length > 2000) log.splice(0, log.length - 2000);
-      return push(...items);
-    };
+    let r: LobbyRoom;
+    try {
+      const make = deps.transport ?? (await import('./transports')).createPageTransport;
+      if (disposed || gen !== generation) return null;
+      transport = make();
+      track('transports', transport);
+      r = new LobbyRoom({
+        transport,
+        identity: id,
+        now,
+        random,
+        onEffect: (e) => void onEffect(e),
+        onChange: () => notify(),
+      });
+    } catch {
+      return fail('relays', MM_TEXT.relays);
+    }
+    if (__SPELLPLANE_DEBUG__) {
+      // Keep the page's record of lobby messages across rooms (debug hook, leak test).
+      const push = r.log.push.bind(r.log);
+      r.log.push = (...items: LobbyMessageRecord[]): number => {
+        log.push(...items);
+        if (log.length > 2000) log.splice(0, log.length - 2000);
+        return push(...items);
+      };
+    }
     room = r;
     startTimer();
     let joined = false;
     let joinTimer: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<void>((resolve) => (joinTimer = setTimeout(resolve, JOIN_TIMEOUT_MS)));
-    await Promise.race([r.join().then(() => (joined = true)), timeout]);
+    const openedAt = now();
+    try {
+      await Promise.race([r.join().then(() => (joined = true)), timeout]);
+    } catch {
+      // The transport could not join at all (its module did not load, no WebRTC): the lobby is out of reach.
+      if (joinTimer !== null) clearTimeout(joinTimer);
+      return disposed || room !== r ? null : fail('relays', MM_TEXT.relays);
+    }
     if (joinTimer !== null) clearTimeout(joinTimer);
     if (disposed || room !== r) return null;
-    if (!joined) {
-      closeRoom();
-      mode = 'failed';
-      failed = { phase: 'failed', problem: 'relays', text: MM_TEXT.relays };
-      notify();
-      return null;
-    }
+    if (!joined) return fail('relays', MM_TEXT.relays);
     mode = 'live';
     notify();
+    // Joined is not reached: Trystero's join returns before any relay answered. Ask the relays once the join's time
+    // is up; none reachable fails the search while nothing is under way (matchmaking.md 2.14).
+    relayTimer = setTimeout(() => {
+      relayTimer = null;
+      void relays()
+        .catch(() => null)
+        .then((ok) => {
+          if (ok !== false || room !== r || mode !== 'live') return;
+          const phase = r.state.phase;
+          if (phase === 'watching' || phase === 'seeking') fail('relays', MM_TEXT.relays);
+        });
+    }, Math.max(0, JOIN_TIMEOUT_MS - (now() - openedAt)));
     return r;
   };
 
@@ -357,9 +430,10 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       ratings[key] = { r: r?.rating ?? 1500, g: r?.games ?? 0 };
     }
     const id = await identity();
+    const nick = await nickname(id);
     // Without a nickname the player is named by its peer id, so two of them are never both "Player".
     // eslint-disable-next-line no-control-regex
-    const name = id.nickname.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24) || `Player ${id.peerId.slice(0, 4).toUpperCase()}`;
+    const name = nick.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\s+/g, ' ').trim().slice(0, 24) || `Player ${id.peerId.slice(0, 4).toUpperCase()}`;
     return {
       name,
       proto: PROTOCOL_VERSION,
@@ -388,7 +462,8 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
 
   const onEffect = async (e: BrokerEffect): Promise<void> => {
     if (e.kind === 'returned') {
-      pendingNotice = { text: e.reason === 'declined' ? 'Another player did not accept. Back in the queue.' : 'Another player did not answer. Back in the queue.', again: false };
+      const who = e.name ?? 'Another player';
+      pendingNotice = { text: e.reason === 'declined' ? MM_TEXT.notAccepted(who) : MM_TEXT.notAnswered(who), again: false };
     } else if (e.kind === 'stopped') {
       config = null;
       since = null;
@@ -442,8 +517,12 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     } catch (err) {
       console.warn('Spellplane: the match could not be saved', err);
     }
-    // Abandoned or stranded while the records were written: stay where the page is.
-    if (mode !== 'moving' || moving?.link.roomId !== f.roomId) return;
+    // Abandoned or stranded while the records were written: stay where the page is, and the match is void after all
+    // (the void ran before the record existed).
+    if (mode !== 'moving' || moving?.link.roomId !== f.roomId) {
+      voidMatch(f.roomId);
+      return;
+    }
     go(`#/t/${f.roomId}/${f.roomKey}`);
   };
 
@@ -598,6 +677,7 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
       if (follow) window.removeEventListener('hashchange', onHash);
       off();
       listeners.clear();
+      setPageMatchmaker(null, mm);
     },
     now,
     advance(ms) {
@@ -619,6 +699,11 @@ export function createMatchmaker(deps: MatchmakerDeps): MatchmakerControl {
     },
     stranded(roomId, missing) {
       strand(roomId, missing ?? arriveMissing);
+    },
+    left(roomId) {
+      if (mode !== 'moving' || moving?.link.roomId !== roomId) return false;
+      abandon();
+      return true;
     },
     reaching(roomId, missing) {
       if (mode === 'moving' && moving?.link.roomId === roomId) arriveMissing = missing;

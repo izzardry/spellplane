@@ -138,9 +138,9 @@ describe('matchmakers with the 30-second arrival rule (property)', () => {
           }
         },
       ),
-      { numRuns: 8 },
+      { numRuns: 50 },
     );
-  }, 240_000);
+  }, 480_000);
 
   it('a stranded member keeps its place: the exact waiting time and back to seeking within 30 s of moving', async () => {
     const lobby = lobbyNet({ seed: 7, delay: { min: 100, max: 300 } });

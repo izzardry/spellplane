@@ -178,6 +178,11 @@ export interface NetSessionInternals {
    * here never sits alone, syncs the public table and waits until `claimSeat` is called (the claim page's button).
    */
   claim?: { seat: SeatId; token: string };
+  /**
+   * [M8-P7] The chair to take when this browser holds none and it is free (a matched room: the plan's seat, so teams
+   * and seats follow the offer, session/match-room.ts); otherwise the lowest free chair, as without it.
+   */
+  preferSeat?: SeatId;
 }
 
 /** The seq-0 table of a room nobody saved (DESIGN "Players, seats and formats", Seats: every chair free). */
@@ -1882,9 +1887,11 @@ class NetTable implements NetSession, SessionRecovery {
   sitIfUnseated(): Action | null {
     if (this.disposed || this.engine.seat() !== null) return null;
     const st = this.engine.state();
-    const free = Object.values(st.seats)
+    const open = (s: TableState['seats'][SeatId]): boolean => s.peer === undefined && s.name.trim() === '';
+    const prefer = this.internals.preferSeat !== undefined && Object.hasOwn(st.seats, this.internals.preferSeat) ? st.seats[this.internals.preferSeat] : undefined;
+    const free = prefer && open(prefer) ? prefer : Object.values(st.seats)
       .sort((a, b) => a.index - b.index)
-      .find((s) => s.peer === undefined && s.name.trim() === '');
+      .find(open);
     if (!free) return null;
     this.seatAttempts++;
     const taken = new Set(Object.values(st.seats).filter((s) => s.id !== free.id && (s.peer !== undefined || s.name.trim() !== '')).map((s) => s.colour));

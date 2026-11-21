@@ -170,10 +170,13 @@ function hex(bytes: Uint8Array): string {
   return s;
 }
 
-/** The match id of an anchor's offer (matchmaking.md 2.4): 16 hex characters. */
-export function midOf(queue: QueueId, tids: readonly string[], anchorTid: string, counter: number): string {
+/**
+ * The match id of an anchor's offer (matchmaking.md 2.4): 16 hex characters. `salt` is the anchor's random per-lobby
+ * connection salt, so nobody else can predict an id and a new connection never repeats one (decision M8-P7).
+ */
+export function midOf(queue: QueueId, tids: readonly string[], anchorTid: string, counter: number, salt = ''): string {
   const sorted = [...tids].sort();
-  return hex(sha256TextBytes(`mm|${queue}|${sorted.join(',')}|${anchorTid}|${counter}`)).slice(0, 16);
+  return hex(sha256TextBytes(`mm|${queue}|${sorted.join(',')}|${anchorTid}|${counter}${salt ? `|${salt}` : ''}`)).slice(0, 16);
 }
 
 /** The room id words (a copy of ui/lobby/room.ts ROOM_WORDS, which net/ may not import; a unit test keeps them equal). */
