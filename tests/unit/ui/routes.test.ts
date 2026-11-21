@@ -10,6 +10,8 @@ import { describe, expect, it } from 'vitest';
 import type { TableState } from '../../../src/core/types';
 import { tableWith } from '../../../src/ui/fakes';
 import { menuTop } from '../../../src/ui/table/menu-top';
+import { leavesTable } from '../../../src/ui/table/leave-guard';
+import { parseRoute } from '../../../src/ui/routes';
 
 function table(over: Partial<TableState> = {}, settings: Partial<TableState['settings']> = {}): TableState {
   const { state } = tableWith(['Ann', 'Ben'], []);
@@ -54,6 +56,23 @@ describe('menuTop (the "This game" group)', () => {
     const items = menuTop('room', table(), 's0', { leave: () => ran.push('leave'), invite: () => ran.push('invite'), concede: () => ran.push('concede') })[0]!.items;
     for (const i of items) i.run?.();
     expect(ran).toEqual(['leave', 'invite', 'concede']);
+  });
+});
+
+describe('leavesTable (the browser\'s Back leaves like the arrow)', () => {
+  const r = (h: string) => parseRoute(h);
+  it('a table route left for Home, a shell page or another table is left', () => {
+    expect(leavesTable(r('#/c/c-abc'), r('#/'))).toBe(true);
+    expect(leavesTable(r('#/p/p-abc'), r('#/decks'))).toBe(true);
+    expect(leavesTable(r('#/t/amber-fox-42/QXVkaXRBdWRpdEF1ZGl0QQ'), r('#/history'))).toBe(true);
+    expect(leavesTable(r('#/c/c-abc'), r('#/c/c-def'))).toBe(true);
+    expect(leavesTable(r('#/t/amber-fox-42/QXVkaXRBdWRpdEF1ZGl0QQ'), r('#/t/other-room-7/QXVkaXRBdWRpdEF1ZGl0QQ'))).toBe(true);
+  });
+  it('the same table with another suffix, the sandbox and the shell pages are not', () => {
+    expect(leavesTable(r('#/t/amber-fox-42/QXVkaXRBdWRpdEF1ZGl0QQ'), r('#/t/amber-fox-42/QXVkaXRBdWRpdEF1ZGl0QQ/watch'))).toBe(false);
+    expect(leavesTable(r('#/c/c-abc'), r('#/c/c-abc'))).toBe(false);
+    expect(leavesTable(r('#/solo'), r('#/'))).toBe(false);
+    expect(leavesTable(r('#/'), r('#/decks'))).toBe(false);
   });
 });
 
