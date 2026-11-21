@@ -92,7 +92,7 @@
   import { CoachController } from './hints/coach'; // M7-P5
   import { RADIAL_SLOTS, THUMB_BAR, type RadialMenuState } from './touch/actions';
   import { blockPageGestures, safeAreaInsets, touchDevice } from './touch/device';
-  import { THUMB_BAR_SPACE_PX } from './touch/fan';
+  import { THUMB_BAR_SPACE_PX, clampMenu } from './touch/fan';
   import { slotAction } from './touch/radial';
   import { describeCard, describeFocus, focusCards, focusMoveOf, keepFocus, LogAnnouncements, moveFocus, zoneLabel, type CardFocus, type FocusMove } from './a11y/index';
   import { pageAnnouncer } from './a11y/announcer';
@@ -250,6 +250,10 @@
   let askField = $state<{ text: string } | null>(null);
   let askInput = $state<HTMLInputElement | undefined>();
   let revealTo = $state<{ cards: InstanceId[]; x: number; y: number } | null>(null);
+  /** The reveal-to menu's measured size: it opens at the pointer and is moved inside the window (gate M8 finding F3). */
+  let revealW = $state(0);
+  let revealH = $state(0);
+  const revealAt = $derived(revealTo ? clampMenu(revealTo.x, revealTo.y - 20, revealW || 220, revealH, vw, vh, undefined, 8) : { left: 0, top: 0 });
   let tokenNear = $state<{ near: InstanceId | null } | null>(null);
   let deckOpen = $state(false);
   let toast = $state<{ text: string; id: number } | null>(null);
@@ -339,10 +343,10 @@
     settingsOpen = true;
     themeOpen = false;
   }
-  /** First-run hints (M5-P5, ui/hints): one at a time, bottom right, never blocking. */
+  /** First-run hints (M5-P5, ui/hints): one at a time, by the own hand, never blocking; the talk hint once voice is joined. */
   const hints = new HintController(
     untrack(() => settings),
-    { where: 'table', touch: isTouchDevice(), voice: untrack(() => !!session.voice), spectator: untrack(() => session.role === 'spectator'), networked: untrack(() => !!session.voice) },
+    { where: 'table', touch: isTouchDevice(), voice: untrack(() => !!session.voice?.joined), spectator: untrack(() => session.role === 'spectator'), networked: untrack(() => !!session.voice) },
   );
   /** A save that failed for lack of space (M5-P5 storage full): from the log, or a quota error anywhere on the page. */
   let quotaError = $state(false);
@@ -1365,7 +1369,10 @@
     // remappings: it runs the talk actions like any talk key once it counts (the KeyEngine never matches a bare modifier).
     const chordOf = (action: 'talk' | 'teamTalk') => keymap.find((b) => b.action === action && b.context === 'table')?.chord ?? null;
     const modifierOff = attachModifierTalkActions(window, (action, phase) => hooks.voice(action, phase), { talkChord: () => chordOf('talk'), teamTalkChord: () => chordOf('teamTalk'), onHold: (h) => (talkHold = h) });
-    const speakOff = liveVoice?.subscribe(() => (speaking = liveVoice.speaking()));
+    const speakOff = liveVoice?.subscribe(() => {
+      speaking = liveVoice.speaking();
+      hints.setContext({ voice: liveVoice.joined });
+    });
     // Who is typing (M6-P2): presence, the connections (spectators' nicknames) and the seats (names, teams).
     refreshTypers();
     const typingOff = session.presence.subscribe(() => refreshTypers());
@@ -1973,7 +1980,7 @@
   {/if}
 
   {#if revealTo}
-    <div class="inline" style:left="{Math.min(revealTo.x, vw - 220)}px" style:top="{Math.max(8, revealTo.y - 20)}px" data-testid="reveal-to" role="menu">
+    <div class="inline" style:left="{revealAt.left}px" style:top="{revealAt.top}px" bind:offsetWidth={revealW} bind:offsetHeight={revealH} data-testid="reveal-to" role="menu">
       <p>Reveal {revealTo.cards.length === 1 ? nameOf(revealTo.cards[0]!) : `${revealTo.cards.length} cards`} to</p>
       {#if otherSeats.length === 0}
         <p class="muted">No other players at the table.</p>
@@ -2369,7 +2376,7 @@
     background: var(--ds-panel-raised);
     color: var(--ds-ink);
     border: 1px solid var(--ds-border);
-    border-radius: var(--ds-radius-md);
+    border-radius: var(--ds-radius-panel);
     box-shadow: var(--ds-elevation-pop);
     padding: 6px 8px;
     font-size: var(--ds-type-small);

@@ -105,7 +105,7 @@
     background: var(--ds-panel, var(--sp-surface));
     color: var(--ds-ink, var(--sp-fg));
     border: 1px solid var(--ds-border, var(--sp-border));
-    border-radius: var(--ds-radius-md, 10px);
+    border-radius: var(--ds-radius-panel);
     box-shadow: var(--ds-elevation-pop, var(--sp-hud-shadow));
     font-family: var(--ds-font-body, var(--sp-font));
     white-space: nowrap;

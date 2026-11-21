@@ -104,32 +104,18 @@ test.describe('empty and error states on the table (HUD harness)', () => {
 });
 
 test.describe('first-run hints', () => {
-  test('one at a time, never blocking: keys work while a hint shows; dismissed hints stay dismissed', async ({ page }) => {
+  test('no hint at a table on a desktop without voice: the welcome waits for the start page, keys work (gate M8 F2)', async ({ page }) => {
     await openHud(page);
-    const hint = page.getByTestId('hint');
-    await expect(hint).toHaveAttribute('data-hint', 'welcome');
-    await expect(hint).toHaveCount(1);
-    // The table stays live under the hint.
+    // The table is reached with its deck dealt: no welcome over the opponent's side (m7-adjustments.md section 7).
+    await page.waitForTimeout(300);
+    await expect(page.getByTestId('hint')).toHaveCount(0);
     await hoverCard(page, 'bf1');
     await page.keyboard.press('KeyT');
     await expect.poll(() => drafts(page)).toEqual([{ type: 'tap', card: 'bf1', tapped: true }]);
-    // Only its button takes the pointer.
-    const box = (await hint.boundingBox())!;
-    const through = await page.evaluate(([x, y]) => document.elementFromPoint(x!, y!)?.closest('[data-testid="hint"]') === null, [box.x + 6, box.y + 6]);
-    expect(through).toBe(true);
-    await expect(hint).not.toBeFocused();
-
-    // M7-P5: no hint teaches the table's keys after the welcome (the gesture coach marks teach the table instead).
-    await hint.getByTestId('hint-dismiss').click();
-    await expect(hint).toHaveCount(0);
-    await openHud(page, { keepSettings: true });
-    await page.waitForTimeout(300);
-    await expect(page.getByTestId('hint')).toHaveCount(0);
   });
 
   test('no hint teaches the table keys, remapped or not (M7-P5: keys stay accelerators, not the primary UI)', async ({ page }) => {
     await openHud(page);
-    await page.getByTestId('hint').getByTestId('hint-dismiss').click();
     await openHudSettings(page, 'keys');
     await page.locator('[data-testid="key-row"][data-action="tap"]').getByTestId('key-change').click();
     await page.keyboard.press('KeyJ');
@@ -137,11 +123,9 @@ test.describe('first-run hints', () => {
     await expect(page.getByTestId('hint')).toHaveCount(0);
   });
 
-  test('a touch screen gets the gesture hint instead of the keys; voice adds the talk key', async ({ page }) => {
+  test('a touch screen gets the gesture hint instead of the keys; joined voice adds the talk hint', async ({ page }) => {
     await openSettingsHarness(page, { touch: '1', voice: '1' });
     const hint = page.getByTestId('harness-hints').getByTestId('hint');
-    await expect(hint).toHaveAttribute('data-hint', 'welcome');
-    await hint.getByTestId('hint-dismiss').click();
     await expect(hint).toHaveAttribute('data-hint', 'touchGestures');
     await expect(hint).toContainText('long-press');
     await hint.getByTestId('hint-dismiss').click();
@@ -149,6 +133,14 @@ test.describe('first-run hints', () => {
     // A touch screen has no talk key to hold: the hint names the thumb bar's Talk button (M5 gate).
     await expect(hint).toContainText('Touch and hold Talk');
     await expect(hint).not.toContainText('Ctrl');
+  });
+
+  test('on a desktop the talk hint leads with the pointer route, not the key (gate M8 F2)', async ({ page }) => {
+    await openSettingsHarness(page, { voice: '1' });
+    const hint = page.getByTestId('harness-hints').getByTestId('hint');
+    await expect(hint).toHaveAttribute('data-hint', 'talkKey');
+    await expect(hint).toContainText('You are in voice');
+    await expect(hint).not.toContainText(/^Talk\s*Hold/);
   });
 
   test('the start page welcomes a new player once', async ({ page }) => {

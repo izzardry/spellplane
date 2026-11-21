@@ -118,7 +118,7 @@
     gap: var(--ds-space-sm);
     justify-items: center;
     padding: var(--ds-space-lg);
-    border-radius: var(--ds-radius-md);
+    border-radius: var(--ds-radius-sheet);
     background: var(--ds-panel-raised);
     color: var(--ds-ink);
     box-shadow: var(--ds-elevation-pop);

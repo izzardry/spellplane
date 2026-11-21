@@ -22,7 +22,9 @@ test('a goldfish turn by mouse only: draw, play a land, cast, tap and untap, cou
     const lib = await pileCentre(page, 'library');
     await page.mouse.click(lib.x, lib.y);
     await expect(page.getByTestId('pile-actions')).toHaveAttribute('data-zone', 'library:s0');
-    expect((await affordances(page)).pile).toMatchObject({ zone: 'library:s0', via: 'tap', owner: 's0' });
+    // On a slow runner the pointer's rest on the pile (hover) may show the actions before the click lands: poll until
+    // the click holds them.
+    await expect.poll(async () => (await affordances(page)).pile).toMatchObject({ zone: 'library:s0', via: 'tap', owner: 's0' });
     await page.getByTestId('pile-action-draw').click();
     await expect.poll(async () => (await handIds(page)).length).toBe(handBefore + 1);
   });

@@ -644,16 +644,12 @@ test.describe('M5 gate @gate', () => {
         const page = p.page;
         await front(p);
         if (p === A) {
-          await soft('first-run hints at the table: the touch gestures, then talking by the thumb bar (no welcome "try it alone" in an evening); each dismissed by a tap', async () => {
+          await soft('first-run hints at the table: the touch gestures (no welcome at a table; the talk hint waits for JOIN VOICE, gate M8 F2), dismissed by a tap', async () => {
             const hint = page.getByTestId('hint');
             await expect(hint).toHaveAttribute('data-hint', 'touchGestures');
             await shot(page, 'M5', 'first-run-hint-touch', project);
             await hint.getByTestId('hint-dismiss').tap();
-            await expect(hint).toHaveAttribute('data-hint', 'talkKey');
-            await expect(hint).not.toContainText('Ctrl');
-            await expect(hint).toContainText('Talk');
-            await shot(page, 'M5', 'first-run-hint-talk', project);
-            await hint.getByTestId('hint-dismiss').tap();
+            await expect(hint).toHaveCount(0);
           });
         }
         // Any first-run hint left (top left, under the toolbar): tap it away first.

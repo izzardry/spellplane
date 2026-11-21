@@ -615,6 +615,25 @@ describe('liveness and the sequencer’s clock', () => {
     await until(() => a.engine.peers().find((p) => p.peerId === 'peer2')!.status === 'connected', HEARTBEAT_MS + 500, 'back');
   });
 
+  it('a tick that runs long after the last (this page was blocked) marks nobody away; the next one does (gate M8)', async () => {
+    const sim = await connected({ engines: 3, seed: 15, ...DELAY });
+    const [a, , c] = sim.peers as [SimPeer, SimPeer, SimPeer];
+    c.transport.silent = true;
+    await vi.advanceTimersByTimeAsync(AWAY_AFTER_MS - 1000);
+    // Every tick now runs 3 s after the one before on the page's own clock: the main thread is blocked.
+    let real = performance.now();
+    const spy = vi.spyOn(performance, 'now').mockImplementation(() => (real += 3000));
+    try {
+      await vi.advanceTimersByTimeAsync(1500);
+      expect(a.engine.peers().find((p) => p.peerId === 'peer2')!.status).toBe('connected');
+    } finally {
+      spy.mockRestore();
+    }
+    // The page runs on time again: the silent peer is away on the next ticks.
+    await vi.advanceTimersByTimeAsync(600);
+    expect(a.engine.peers().find((p) => p.peerId === 'peer2')!.status).toBe('away');
+  });
+
   it('goes idle → joining → alone → connected, and closed after leave', async () => {
     const sim = makeSim({ engines: 0, seed: 16, ...DELAY });
     const seen: string[] = [];

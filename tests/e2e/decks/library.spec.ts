@@ -147,6 +147,10 @@ test.describe('a seeded library', () => {
     const list = await decks<DeckRecord[]>(page, 'list');
     expect(list.filter((d) => d.name.endsWith('(custom)'))).toHaveLength(1);
     expect(JSON.stringify(await decks(page, 'get', sid))).toBe(before);
+    // The copy's tile keeps "(custom)" in sight; only the name before it may be cut (gate M8 F14).
+    const suffix = page.getByTestId('tile-suffix');
+    await expect(suffix).toHaveText('(custom)');
+    expect(await suffix.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   });
 
   test('the picker with allow rejecting custom decks dims text and well, shows the reason, keeps the face at full opacity', async ({ page }) => {

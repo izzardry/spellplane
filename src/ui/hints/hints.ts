@@ -21,7 +21,10 @@ export interface HintContext {
   where: 'start' | 'table';
   /** The device has a touch screen (tablet): gestures instead of hover keys. */
   touch: boolean;
-  /** The table has live voice (a networked table with a talk key). */
+  /**
+   * The player has joined voice at this table (JOIN VOICE): the talk hint waits for it, so it never shows over a table
+   * the player has not chosen to talk at (gate M8 finding F2).
+   */
   voice: boolean;
   /** A spectator: no hover keys, no talking. */
   spectator?: boolean;
@@ -37,7 +40,9 @@ export function nextHint(seen: readonly string[], ctx: HintContext): FirstRunHin
   const fits = (id: FirstRunHint): boolean => {
     switch (id) {
       case 'welcome':
-        return !(ctx.where === 'table' && ctx.networked);
+        // Only on the start page (gate M8 finding F2; m7-adjustments.md section 7, "Entering a table": no hint covers
+        // the opponent's side). A table is reached from Home with its deck dealt, so there is nothing to welcome to.
+        return ctx.where === 'start';
       case 'tableKeys':
         // Retired by M7-P5 (PLAN Milestone 7, Play without memorising keys: keys stay accelerators and "no hint text
         // teaches keys"): the gesture coach marks (ui/hints/coach.ts) teach the table at the moment each gesture matters.
@@ -58,7 +63,7 @@ export function hintText(id: FirstRunHint, key: (action: ActionId) => string | n
     case 'welcome':
       return {
         title: 'Welcome to Spellplane',
-        text: 'A shared card table for friends, with no rules engine: you play as at a real table. Import a deck to try it alone, or open the lobby to invite friends.',
+        text: 'A shared card table for friends, with no rules engine: you play as at a real table. Choose a deck, then play alone, against the computer or with friends.',
       };
     case 'tableKeys':
       return {
@@ -78,11 +83,11 @@ export function hintText(id: FirstRunHint, key: (action: ActionId) => string | n
           title: 'Talk',
           text: 'Touch and hold Talk in the bar at the bottom to talk to the table; let go to stop.',
         };
-      // The one hint that names a key (DECISIONS [M7-P5]): push-to-talk is the default gate and, on a desktop, the held
-      // talk key is its only route until the viewer turns on a pointer one, which the hint names.
+      // Shown once the player joined voice (gate M8 finding F2). It leads with the pointer route, so the hint does not
+      // teach a key (PLAN M7: keys stay accelerators); the held talk key is named after it, as the accelerator it is.
       return {
         title: 'Talk',
-        text: `Hold ${k('talk', 'the talk key')} to talk to the table. To talk by holding a press on the table instead, turn on "Talk while I hold or drag" in Settings, Voice.`,
+        text: `You are in voice. To talk by holding a press on the table, turn on "Talk while I hold or drag" in Settings, Voice; holding ${k('talk', 'the talk key')} talks too.`,
       };
   }
 }

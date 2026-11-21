@@ -346,7 +346,7 @@
     margin: 4px 0 0;
     padding: 8px 12px 12px;
     border: 1px solid var(--sp-border);
-    border-radius: var(--sp-radius-md, 6px);
+    border-radius: var(--sp-radius-lg, 8px);
   }
   legend {
     color: var(--sp-muted);

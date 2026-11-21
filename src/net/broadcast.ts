@@ -21,6 +21,16 @@ type Frame =
 
 const BEAT_MS = 1000;
 const GONE_MS = 3500;
+/**
+ * A beat that runs this much later than due means this page's main thread was blocked (a theme's shaders compiling on
+ * a slow machine): the other pages' beats are still queued behind it, so nobody is dropped on that beat.
+ */
+export const STALL_MS = 2 * BEAT_MS;
+
+/** Whether a beat at `now` after the one at `last` follows a stall of this page (no peer is dropped on it). */
+export function stalledBeat(last: number | null, now: number): boolean {
+  return last !== null && now - last > STALL_MS;
+}
 
 export class BroadcastTransport implements Transport {
   private bc: BroadcastChannel | null = null;
@@ -38,9 +48,14 @@ export class BroadcastTransport implements Transport {
     this.bc = new BroadcastChannel(`spellplane-room-${roomId}`);
     this.bc.onmessage = (e: MessageEvent<Frame>) => this.receive(e.data);
     this.post({ k: 'hello', from: this.selfId });
+    let lastBeat: number | null = null;
     this.beat = setInterval(() => {
       this.post({ k: 'beat', from: this.selfId });
       const now = Date.now();
+      const stalled = stalledBeat(lastBeat, now);
+      lastBeat = now;
+      // After a stall the peers' queued beats run next: they are dropped on a later beat if they really went quiet.
+      if (stalled) return;
       for (const [peer, seen] of this.lastSeen) if (now - seen > GONE_MS) this.drop(peer);
     }, BEAT_MS);
     if (typeof addEventListener === 'function') addEventListener('pagehide', this.onUnload);

@@ -181,7 +181,9 @@ test.describe('axe: panels, prompts and notices (M5 review)', () => {
       await propose(a, 'nextGame', 'click');
       await expect(b.getByTestId('confirm-prompt')).toBeVisible({ timeout: 15_000 });
       expect(await seriousViolations(b)).toEqual([]);
-      await b.getByTestId('prompt-ok').click();
+      // The round passes by itself when its timer runs out, which a slow runner's axe scan can outlast: OK it while it
+      // is open; either way the next step checks that the next game came.
+      await b.getByTestId('prompt-ok').click({ timeout: 5_000 }).catch(() => undefined);
       for (const p of [a, b]) await expect(p.getByTestId('stage')).toHaveAttribute('data-stage', 'build', { timeout: 30_000 });
       const panel = b.getByTestId('audit-panel');
       await expect(panel).toBeVisible({ timeout: 30_000 });

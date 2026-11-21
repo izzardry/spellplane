@@ -120,7 +120,8 @@
   </div>
   <div class="text">
     <div class="name ds-t-list" title={deck.name}>
-      <span class="label">{deck.name}</span>
+      <!-- A converted copy keeps its "(custom)" suffix in sight: only the name before it is cut (gate M8 finding F14). -->
+      {#if deck.name.endsWith(' (custom)') && deck.name.length > 9}<span class="label">{deck.name.slice(0, -9)}</span><span class="suffix" data-testid="tile-suffix">(custom)</span>{:else}<span class="label">{deck.name}</span>{/if}
       {#if playing}<span class="check" aria-label="playing">✓</span>{/if}
       {#if selected}<span class="sel"><Chip variant="on" data-testid="tile-selected">Selected</Chip></span>{/if}
     </div>
@@ -270,6 +271,10 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
+  }
+  .suffix {
+    flex: none;
+    white-space: nowrap;
   }
   .row {
     display: flex;

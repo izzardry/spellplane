@@ -183,7 +183,7 @@
   }
   .named-preview.text {
     height: auto;
-    border-radius: var(--sp-radius-md, 4px);
+    border-radius: var(--sp-radius-lg, 8px);
     padding: 6px 8px;
     font-style: normal;
   }
