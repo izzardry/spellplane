@@ -52,7 +52,7 @@
 
 {#if session}
   {@const s = session}
-  <TableFrame session={s} {kind} {code} {games} gather={false} onleave={() => void leaveTable({ session: s, kind, code, games, go })} />
+  <TableFrame session={s} {kind} {code} {games} gather={false} onleave={(c) => leaveTable({ session: s, kind, code, games, go, checkpointer: c?.checkpointer ?? null })} />
 {:else if error}
   <main class="sp-page" data-testid="route-{kind}">
     <p role="alert">This table could not be opened: {error}</p>

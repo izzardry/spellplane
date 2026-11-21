@@ -36,7 +36,7 @@
   import ComputerRoute from './computer/ComputerRoute.svelte';
   import SoloRoute from './play/SoloRoute.svelte';
   import { summaryHash } from './play/launch';
-  import { setTableDeps } from './table/context';
+  import { setLeaveGuardHost, setTableDeps } from './table/context';
   import { FakeMatchmaker } from './fakes';
   import type { TableSession } from '../session/types';
 
@@ -46,6 +46,29 @@
   const go = (hash: string): void => {
     location.hash = hash;
   };
+
+  // The browser's Back leaves a table like the arrow (journey.md 4.10 "Leaving"; M8-P8): while a table frame is shown
+  // it registers its leave here; a hash change away from its route first runs that leave (save, leave the room,
+  // dispose, Home, the toast) and only then switches the page. A shell page the change named (Back to Decks) is kept.
+  let leaveGuard: (() => Promise<void>) | null = null;
+  setLeaveGuardHost((leave) => (leaveGuard = leave));
+  const tableRoute = (r: Route): boolean => r.name === 'room' || r.name === 'practice' || r.name === 'computer';
+  function onHashChange(): void {
+    const next = parseRoute(location.hash);
+    const guard = leaveGuard;
+    if (guard && tableRoute(route) && routeHash(next) !== routeHash(route)) {
+      leaveGuard = null;
+      const target = location.hash;
+      void guard().finally(() => {
+        // leave.ts goes Home; a shell page the Back named (Decks, History) is where the player asked to be.
+        const asked = parseRoute(target);
+        if (isShellRoute(asked) && asked.name !== 'home' && location.hash !== target) location.hash = target;
+        route = parseRoute(location.hash);
+      });
+      return;
+    }
+    route = next;
+  }
 
   // The viewer's theme (PLAN M4-P6): kept in this browser's settings, shared with the shells below through the
   // context, applied to the whole page as CSS custom properties. The table waits for the stored choice, so a page
@@ -129,7 +152,7 @@
   const testid = (r: Route): string => `route-${r.name === 'diagJoin' ? 'diag' : r.name === 'deckNew' || r.name === 'deck' || r.name === 'deckOpen' ? 'decks' : r.name}`;
 </script>
 
-<svelte:window onhashchange={() => (route = parseRoute(location.hash))} />
+<svelte:window onhashchange={onHashChange} />
 
 {#if route.name !== 'room' && route.name !== 'practice' && route.name !== 'computer'}<UpdateNotice update={props.update} place={updatePlace} />{/if}
 <OfflineNotice />
@@ -166,9 +189,18 @@
   <Shell {route} settings={props.settings ?? null} {matchmaker} games={props.games ?? null} {go}>
     <div class="ds-root shell-route" data-testid={testid(route)}>
       {#if route.name === 'home'}
-        <Home {matchmaker} games={props.games ?? null} newRoom={props.newRoom} {go} />
+        <Home {matchmaker} games={props.games ?? null} newRoom={props.newRoom} openPractice={props.openPractice} {go} />
       {:else if route.name === 'decks' || route.name === 'deckNew' || route.name === 'deck' || route.name === 'deckOpen'}
-        <DecksRoute {route} decks={props.decks ?? null} settings={props.settings ?? null} />
+        <DecksRoute
+          {route}
+          decks={props.decks ?? null}
+          settings={props.settings ?? null}
+          cardData={props.cardData}
+          sets={props.sets}
+          faces={props.faces}
+          searching={() => ['seeking', 'check', 'moving'].includes(matchmaker.status().phase)}
+          {go}
+        />
       {:else if route.name === 'history'}
         <section class="sp-page">
           <h1 class="ds-t-heading">History</h1>

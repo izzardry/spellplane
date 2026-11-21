@@ -49,5 +49,5 @@
     matches: props.matches ?? null,
     ratings: props.ratings ?? null,
   }}
-  onleave={() => void leaveTable({ session: props.session, kind: 'room', code: props.link.roomId, key: props.link.roomKey, games, go })}
+  onleave={(c) => leaveTable({ session: props.session, kind: 'room', code: props.link.roomId, key: props.link.roomKey, games, go, checkpointer: c?.checkpointer ?? null })}
 />

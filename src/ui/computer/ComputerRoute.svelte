@@ -23,7 +23,7 @@
   import type { HudShellProps } from '../props';
   import { tableDeps } from '../table/context';
   import TableFrame from '../table/TableFrame.svelte';
-  import type { TableDeps, TableFrameProps } from '../table/types';
+  import type { FrameLeave, TableDeps, TableFrameProps } from '../table/types';
   import { botDebugClock, setActiveComputer } from './debug';
   import { COMPUTER_BADGE, CUE_COACH_TEXT, coachDue, cueButton, pauseWhileHidden, plateItems, type CueButton } from './shell';
 
@@ -207,8 +207,8 @@
   let menuOpen = $state(false);
   let menuButton = $state<HTMLElement | null>(null);
 
-  function leave(g: ComputerGame): void {
-    void leaveTable({ session: g.session, kind: 'computer', code: room, games: store, go });
+  function leave(g: ComputerGame, c?: FrameLeave): Promise<unknown> {
+    return leaveTable({ session: g.session, kind: 'computer', code: room, games: store, go, checkpointer: c?.checkpointer ?? null });
   }
 </script>
 
@@ -230,7 +230,7 @@
 
 {#if game}
   {@const g = game}
-  <TableFrame session={g.session} kind="computer" code={room} games={store} gather={false} {extraShell} deps={ctx ?? undefined} onleave={() => leave(g)} />
+  <TableFrame session={g.session} kind="computer" code={room} games={store} gather={false} {extraShell} deps={ctx ?? undefined} onleave={(c) => leave(g, c)} />
   {#if !HUD_SHELL}
     <!-- Sparring's plate slots while the HUD does not show them (contracts.md Part C fallback). -->
     <div class="sparring-chip ds-root ds-panel" data-testid="sparring-chip">

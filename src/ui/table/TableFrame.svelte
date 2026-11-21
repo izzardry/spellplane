@@ -5,10 +5,14 @@
   GameOver once TableState.result is set. It builds HudShellProps from `onleave`, menu-top.ts, SeatMenu, SeatBadge,
   presence.ts, the notice store and `extraShell`, and starts the checkpointer on mount. While the HUD does not honour
   the shell props (HUD_SHELL false) a fallback bar (`frame-bar`: Leave, the primaryOverride button, the status) stands
-  in, except in the sandbox. A simple working version by M8-C; M8-P8 finishes it.
+  in, except in the sandbox. A simple working version by M8-C; finished by M8-P8: the "This game" menu with `Invite…`
+  (the invite sheet; private networked tables only) and `Concede` behind one confirm; the browser's Back leaves like
+  the arrow (App asks the frame through the leave guard of ui/table/context.ts); the checkpointer goes to leave.ts with
+  the leave; a cover in the look's backdrop cross-fades to the table (150 ms, opacity only) once the scene drew its
+  first frame (contracts.md Part G "Journey and Home" item 4).
 -->
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import type { MatchRecord, SeatId, TableState } from '../../core/types';
   import { createCheckpointer } from '../../session/checkpoint';
   import { createSessionMuster } from '../../session/muster';
@@ -36,7 +40,11 @@
   import Hints from '../storage/Hints.svelte';
   import UpdateNotice from '../storage/UpdateNotice.svelte';
   import VersionNotice from '../version/VersionNotice.svelte';
-  import { tableDeps } from './context';
+  import Button from '../design/Button.svelte';
+  import Dialog from '../design/Dialog.svelte';
+  import InviteSheet from '../lobby/InviteSheet.svelte';
+  import { codeLabel } from '../lobby/waiting';
+  import { leaveGuardHost, tableDeps } from './context';
   import { menuTop } from './menu-top';
   import { notices, type TableNotice } from './notices';
   import type { TableFrameProps } from './types';
@@ -62,7 +70,7 @@
 
   // Saving (persistence.md section 2): the checkpointer runs while the frame is mounted (a stub until M8-P2).
   const checkpointer = untrack(() => createCheckpointer(props.session, props.games));
-  onMount(() => () => checkpointer.stop());
+  onDestroy(() => checkpointer.stop());
   const muster = untrack(() => createSessionMuster(props.session));
   // The automatic setup (contracts.md Part D, session/entry.ts): deals and rolls once per seat and game at a table with
   // `autoSetup`; does nothing at a table opened the old way. Not in the sandbox.
@@ -88,10 +96,83 @@
 
   let readOnly = $state(false);
 
-  async function leave(): Promise<void> {
-    await checkpointer.now('leave').catch(() => undefined);
-    props.onleave();
+  // Leaving (journey.md 4.10 "Leaving"): the arrow, `Leave to home`, the own plate's `Leave table`, GameOver's HOME and
+  // the browser's Back all take this one path, once. leave.ts saves (the checkpointer), leaves, disposes, goes Home and
+  // shows the one toast.
+  let left = false;
+  const guardHost = untrack(() => (props.kind === 'sandbox' ? null : leaveGuardHost()));
+  function leave(): Promise<void> {
+    if (left) return Promise.resolve();
+    left = true;
+    guardHost?.(null);
+    return Promise.resolve(props.onleave({ checkpointer })).then(
+      () => undefined,
+      () => undefined,
+    );
   }
+  // The browser's Back (or any hash change the frame did not make) leaves like the arrow: App holds the table route
+  // until this ran. The sandbox lives for the page and is not guarded.
+  onMount(() => {
+    guardHost?.(leave);
+    return () => {
+      if (!left) guardHost?.(null);
+    };
+  });
+
+  // `Concede` asks once (journey.md 4.10, 4.13).
+  let conceding = $state(false);
+  function confirmConcede(): void {
+    conceding = false;
+    void concede(session);
+  }
+  // `Invite…` opens the invite sheet of a private networked table (not a matched or computer one).
+  let inviting = $state(false);
+  const inviteLink = $derived(props.kind === 'room' && !st.settings.matched && props.link ? props.link : null);
+  const openSeats = $derived(Object.values(st.seats).filter((x) => x.peer === undefined).length);
+
+  // The cover (contracts.md Part G "Journey and Home" item 4): the look's backdrop over the table until the scene drew
+  // its first frame, then a 150 ms fade of its opacity. A stage without a scene (the waiting room) fades at once; it
+  // never waits longer than 3 s. Nothing runs per frame after that.
+  let frameEl = $state<HTMLElement | undefined>();
+  let covered = $state(true);
+  let coverGone = $state(false);
+  onMount(() => {
+    let done = false;
+    let raf = 0;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    let observer: MutationObserver | null = null;
+    const reveal = (): void => {
+      if (done) return;
+      done = true;
+      observer?.disconnect();
+      covered = false;
+      timers.push(setTimeout(() => (coverGone = true), 400));
+    };
+    // The scene draws on the animation frame after its canvas is in the page: two frames after it appears, it drew.
+    const afterCanvas = (): void => {
+      raf = requestAnimationFrame(() => (raf = requestAnimationFrame(reveal)));
+    };
+    const hasCanvas = (): boolean => !!frameEl?.querySelector('canvas');
+    if (hasCanvas()) afterCanvas();
+    else if (frameEl && typeof MutationObserver !== 'undefined') {
+      observer = new MutationObserver(() => {
+        if (!hasCanvas()) return;
+        observer?.disconnect();
+        observer = null;
+        afterCanvas();
+      });
+      observer.observe(frameEl, { childList: true, subtree: true });
+      // A stage with no scene (waiting room, draft, an error page): reveal soon.
+      timers.push(setTimeout(() => (hasCanvas() ? undefined : reveal()), 600));
+    } else reveal();
+    timers.push(setTimeout(reveal, 3000));
+    return () => {
+      done = true;
+      observer?.disconnect();
+      cancelAnimationFrame(raf);
+      for (const t of timers) clearTimeout(t);
+    };
+  });
 
   const me = $derived<SeatId | null>(session.seat);
   const presence = $derived.by((): Readonly<Record<SeatId, 'here' | 'away'>> | undefined => {
@@ -105,7 +186,12 @@
   const shell = $derived.by((): HudShellProps => {
     const own: HudShellProps = {
       onleave: () => void leave(),
-      menuTop: () => menuTop(props.kind, st, me, { leave: () => void leave(), concede: me ? () => void concede(session) : undefined }),
+      menuTop: () =>
+        menuTop(props.kind, st, me, {
+          leave: () => void leave(),
+          concede: me ? () => (conceding = true) : undefined,
+          invite: inviteLink && openSeats > 0 ? () => (inviting = true) : undefined,
+        }),
       sandbox: props.kind === 'sandbox',
       notice,
       readOnly,
@@ -159,7 +245,7 @@
   {/if}
 {/snippet}
 
-<div class="table-frame" data-testid="table-frame" data-kind={props.kind}>
+<div class="table-frame" bind:this={frameEl} data-testid="table-frame" data-kind={props.kind}>
   {#if networked && props.session.role === 'spectator' && deps && props.link && deps.identity && deps.decks}
     <SpectatorView session={props.session} game={deps.game} link={props.link} identity={deps.identity} decks={deps.decks} cardData={deps.cardData} parseDecklist={deps.parseDecklist} createScene={deps.createScene} faces={deps.faces} settings={deps.settings} />
   {:else}
@@ -188,6 +274,35 @@
     <VersionNotice session={props.session} />
   {/if}
 
+  {#if inviting && inviteLink}
+    <div class="frame-sheet ds-root" data-testid="frame-invite">
+      <InviteSheet
+        title="Invite players"
+        text="Send this link, or let them scan the code. Whoever opens it sits down at your table."
+        link={inviteLink.url}
+        code={codeLabel(inviteLink.roomId)}
+        status={openSeats > 0 ? `${openSeats} open ${openSeats === 1 ? 'seat' : 'seats'}` : 'Every seat is taken'}
+        onclose={() => (inviting = false)}
+      />
+    </div>
+  {/if}
+
+  {#if conceding}
+    <div class="ds-root">
+      <Dialog open={conceding} label="Concede this game?" onclose={() => (conceding = false)} testid="concede-confirm">
+        <p class="ds-t-reading">The others see that you conceded. The table stays open for a rematch.</p>
+        {#snippet footer()}
+          <Button variant="ghost" size="md" onclick={() => (conceding = false)} data-testid="concede-cancel">CANCEL</Button>
+          <Button variant="danger" size="md" onclick={confirmConcede} data-testid="concede-ok">CONCEDE</Button>
+        {/snippet}
+      </Dialog>
+    </div>
+  {/if}
+
+  {#if !coverGone && props.kind !== 'sandbox'}
+    <div class="frame-cover" class:revealed={!covered} aria-hidden="true" data-testid="frame-cover" data-covered={covered}></div>
+  {/if}
+
   {#if !HUD_SHELL && props.kind !== 'sandbox'}
     <!-- The fallback bar while the HUD does not show the shell's slots (contracts.md Part C; PLAN "If a package is parked"). -->
     <div class="frame-bar ds-root" data-testid="frame-bar">
@@ -213,6 +328,30 @@
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .frame-sheet {
+    position: fixed;
+    z-index: 40;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    pointer-events: none;
+  }
+  .frame-sheet > :global(*) {
+    pointer-events: auto;
+  }
+  /* The look's backdrop over the table until its first frame; a fade of opacity only (visual.md motion). */
+  .frame-cover {
+    position: fixed;
+    z-index: 25;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 50% 60%, var(--ds-mat), var(--ds-frame));
+    opacity: 1;
+    transition: opacity 150ms ease-out;
+  }
+  .frame-cover.revealed {
+    opacity: 0;
   }
   .frame-status {
     display: inline-flex;
