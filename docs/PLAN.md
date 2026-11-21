@@ -1046,5 +1046,5 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M8-P5 Rejoin
 - [x] M8-P6 Computer opponent
 - [x] M8-P7 Matchmaking
-- [ ] M8-P8 Journey integration
+- [x] M8-P8 Journey integration
 - [ ] M8-G Gate (with M7's table checks) and owner review

@@ -5,7 +5,7 @@
  */
 import { countOwnActions } from '../../session/summary';
 import type { TableSession } from '../../session/types';
-import type { GameStore } from '../../store/types';
+import type { ComputerStore, GameStore, TableStore } from '../../store/types';
 import { toasts } from '../design/toasts';
 import type { TableKind } from '../table/types';
 import { computerHash, practiceHash, roomHash, type ToastAction } from './launch';
@@ -35,6 +35,12 @@ export interface LeaveOptions {
   key?: string;
   /** Upper bound on the leave checkpoint, ms (persistence.md section 2: at most 1.5 s). */
   checkpointMs?: number;
+  /**
+   * A computer game's own purge (computer.md 2.5), run after the human's session is disposed and before Home: the route
+   * disposes Sparring's handle (its last saves) and then deletes both tables and the computer record, which waits for
+   * those saves, so none of them writes a row back.
+   */
+  purgeComputer?: () => Promise<void>;
 }
 
 /** What leaving did, for tests and the frame. */
@@ -92,6 +98,9 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
     /* already disposed by leave */
   }
   if (purge) await o.games?.purge(o.code).catch(() => undefined);
+  // A purged computer game also drops both tables and Sparring's record (computer.md 2.5): the route's purge disposes
+  // Sparring first, so its last saves land before the delete. Home does not wait past the bound; the delete goes on.
+  if (purge && o.kind === 'computer' && o.purgeComputer) await within(o.purgeComputer(), ms);
   o.go('#/');
   if (purge) return 'purged';
   const code = o.code;
@@ -103,4 +112,20 @@ export async function leaveTable(o: LeaveOptions): Promise<LeaveOutcome> {
     toast(LEFT_NETWORKED, { label: 'Rejoin', run: () => o.go(roomHash(code, key)) });
   }
   return 'left';
+}
+
+/** The stores a computer game was saved into (session/computer deleteComputerGame). */
+export type ComputerStores = { tables: TableStore | null; computer: ComputerStore | null };
+
+/**
+ * The purge of a short computer game for `LeaveOptions.purgeComputer` (computer.md 2.5): dispose Sparring's handle (its
+ * runner, the bot session and the record's last write), then delete both tables and the record once those saves have
+ * landed. Without `stores` the delete takes the page's (session/computer provideComputerDeps). M8-P8.
+ */
+export function computerPurge(handle: { dispose(): void }, roomId: string, stores?: ComputerStores | null): () => Promise<void> {
+  return async () => {
+    handle.dispose();
+    const m = await import('../../session/computer');
+    await m.deleteComputerGame(roomId, stores ?? undefined);
+  };
 }

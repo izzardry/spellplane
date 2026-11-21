@@ -32,6 +32,11 @@ export interface TableDeps {
   ratings?: RatingStore | null | undefined;
 }
 
+/** What the frame hands its route's `onleave` (M8-P8). */
+export interface FrameLeave {
+  checkpointer: { now(reason: 'leave'): Promise<void>; stop(): void; settled?(): Promise<void> };
+}
+
 /** The table frame's props (contracts.md Part C, verbatim; `deps` and `link` added by M8-C). */
 export interface TableFrameProps {
   session: TableSession;
@@ -44,8 +49,11 @@ export interface TableFrameProps {
   gather?: boolean;
   /** Extra shell members of the route (the computer game's cue button, badge and plate menu). The frame merges them over its own. */
   extraShell?: Pick<HudShellProps, 'primaryOverride' | 'plateBadge' | 'plateMenuTop' | 'menuTop'>;
-  /** src/ui/play/leave.ts */
-  onleave: () => void;
+  /**
+   * src/ui/play/leave.ts. The frame hands its checkpointer (M8-P8, additive: the argument is optional), so leaving
+   * saves first and a purge waits for the writes already queued; a returned promise settles when the leave is done.
+   */
+  onleave: (ctx?: FrameLeave) => void | Promise<unknown>;
   /** Added by M8-C: the page's sources and stores; without it the frame reads the context App sets (ui/table/context.ts). */
   deps?: TableDeps | undefined;
   /** Added by M8-C: the share link of a networked table (the waiting room's invite). */

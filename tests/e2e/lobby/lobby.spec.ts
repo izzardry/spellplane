@@ -275,7 +275,8 @@ test.describe('connectivity failure (DESIGN "Multiplayer architecture": no relay
 
   test('a link with a malformed key is refused plainly', async ({ page }, info) => {
     await open(page, '/t/amber-fox-river-42/short', { profile: freshProfile(info, 'bad'), transport: 'local' });
-    await expect(page.getByTestId('route-room')).toContainText('not a valid table link');
+    // journey.md 4.9's copy for a malformed link (M8-P8).
+    await expect(page.getByTestId('route-room')).toContainText('This is not a complete table link. Ask for it again.');
   });
 });
 
