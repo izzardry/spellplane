@@ -316,6 +316,53 @@ describe('the matchmaker service', () => {
     }
   });
 
+  it('seek then watch(true), and a seek while a started join is still pending: one lobby, no throw, and the search runs', async () => {
+    const net = lobbyNet();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (e: unknown): void => void unhandled.push(e);
+    process.on('unhandledRejection', onUnhandled);
+    const slowMatchmaker = async (name: string): Promise<ReturnType<typeof createMatchmaker>> => {
+      const X = await browser(name, `peer-${name}`, name, browsers.length);
+      browsers.push(X);
+      const mm = createMatchmaker({
+        settings: X.stores.settings,
+        decks: X.stores.decks,
+        ratings: X.stores.ratings,
+        matches: X.stores.matches,
+        games: X.stores.games,
+        identity: () => Promise.resolve(fakeNetIdentity(`peer-${name}`, name)),
+        transport: () => {
+          const t = lateIdTransport(net.create(`${name}-late`));
+          const join = t.join.bind(t);
+          t.join = (room: string, key: string): Promise<void> => new Promise((resolve, reject) => setTimeout(() => void join(room, key).then(resolve, reject), 2_000));
+          return t;
+        },
+        followRoutes: false,
+      });
+      pages.push({ mm, hashes: [], phases: [], statuses: [] });
+      return mm;
+    };
+    try {
+      // Seek first, then rest on ONLINE: the watch must not cancel the search's join.
+      const a = await slowMatchmaker('ann');
+      a.seek({ queues: [Q], deckId: 'd' });
+      a.watch(true);
+      await until(() => a.status().phase === 'seeking', 5_000, 'ann seeking');
+      a.dispose();
+      // Watch first; the join has started (identity resolved, room built) when the seek comes: it waits for the join.
+      const b = await slowMatchmaker('ben');
+      b.watch(true);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(b.status().phase).toBe('connecting');
+      b.seek({ queues: [Q], deckId: 'd' });
+      await until(() => b.status().phase === 'seeking', 5_000, 'ben seeking');
+      expect(live().transports).toBe(1);
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('CANCEL while the lobby is still joining, then seek again: the new search runs on a fresh lobby', async () => {
     const A = await browser('ann', 'peer-a', 'Ann', 0);
     browsers.push(A);
