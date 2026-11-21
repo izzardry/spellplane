@@ -61,7 +61,10 @@
   const NOTICE_MS = 6000;
   const NOTICE_ACTION_MS = 10000;
 
-  const deps = $derived(props.deps ?? tableDeps());
+  // The page's context, read once at init (getContext): a route that passes its own `deps` (TableRoom, the computer
+  // route) still gets the page's matchmaker and practice opener from it.
+  const pageDeps = tableDeps();
+  const deps = $derived(props.deps ?? pageDeps);
   const session = $derived(props.session);
   const networked = $derived(props.kind === 'room' || props.kind === 'matched');
   const gather = $derived(props.gather ?? networked);
@@ -287,7 +290,7 @@
   // The game-over overlay's primary (journey.md 4.13): a matched game searches again with the same setup; a solo table
   // opens a new game of its kind (REMATCH against Sparring, AGAIN alone). Each leaves this table first.
   const solo = $derived(props.kind === 'computer' || props.kind === 'practice' ? props.kind : null);
-  const matchmaker = $derived(deps?.matchmaker ?? null);
+  const matchmaker = $derived(deps?.matchmaker ?? pageDeps?.matchmaker ?? null);
   function findAnother(): void {
     const r = record;
     void leave().then(() => void findAgain(matchmaker, r));
@@ -304,7 +307,7 @@
         void leave()
           .then(() =>
             soloAgain(
-              launchDeps({}, { games, go: (h) => (location.hash = h), openPractice: page.openPractice, now: () => Date.now(), page, matchmaker: page.matchmaker ?? new FakeMatchmaker() }),
+              launchDeps({}, { games, go: (h) => (location.hash = h), openPractice: page.openPractice ?? pageDeps?.openPractice, now: () => Date.now(), page, matchmaker: matchmaker ?? new FakeMatchmaker() }),
               k,
               code,
             ),

@@ -7,11 +7,27 @@
 import { expect, test } from '@playwright/test';
 import { atTable, deckList, homeIsClean, keydowns, navTo, openFreshHome } from '../helpers/journey';
 
+/**
+ * Records, for each time the frame's cover lifts (`data-covered` goes false), whether the frame held the scene's canvas
+ * at that moment: a cover removed by its time cap with no scene under it would record false. No timing.
+ */
+const COVER_WATCH = (): void => {
+  const w = window as unknown as { __reveals: boolean[] };
+  w.__reveals = [];
+  new MutationObserver(() => {
+    const cover = document.querySelector('[data-testid="frame-cover"]');
+    if (!cover || cover.getAttribute('data-covered') !== 'false' || cover.hasAttribute('data-watched')) return;
+    cover.setAttribute('data-watched', '');
+    w.__reveals.push(!!document.querySelector('[data-testid="table-frame"] canvas'));
+  }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-covered'] });
+};
+
 test.describe('journey: the first run', () => {
   test('a fresh profile presses PLAY once and sits at a table against Sparring with seven cards', async ({ page }, info) => {
     test.setTimeout(90_000);
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(e.message));
+    await page.addInitScript(COVER_WATCH);
 
     await test.step('the bare site is Home with an empty hero and PLAY', async () => {
       await openFreshHome(page, info, 'first');
@@ -39,6 +55,8 @@ test.describe('journey: the first run', () => {
       await expect(page.getByTestId('first-run-sheet')).toHaveCount(0);
       // The cover in the look's backdrop faded once the scene drew (contracts.md Part G "Journey and Home" item 4).
       await expect(page.getByTestId('frame-cover')).toHaveCount(0);
+      // It lifted once, with the scene's canvas under it (not only by its 3 s cap).
+      expect(await page.evaluate(() => (window as unknown as { __reveals: boolean[] }).__reveals)).toEqual([true]);
       expect(await keydowns(page)).toBe(0);
     }, { timeout: 60_000 });
 
