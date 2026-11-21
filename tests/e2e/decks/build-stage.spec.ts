@@ -7,7 +7,7 @@
 import { expect, test } from '@playwright/test';
 import { designCssVars, lookTokens } from '../../../src/ui/design/tokens';
 import { openBuilder } from '../builder/bundle';
-import { deckAudit } from './audit';
+import { designAudit } from '../helpers/design-audit';
 
 for (const view of ['table', 'list'] as const) {
   test(`the build stage passes the design audit (${view} view)`, async ({ page }) => {
@@ -22,6 +22,6 @@ for (const view of ['table', 'list'] as const) {
     // The swept controls are the kit's: 28 or 36 px.
     expect(await page.getByTestId('builder-ready').evaluate((b) => b.getBoundingClientRect().height)).toBe(36);
     expect(await page.getByTestId('dispenser-add').first().evaluate((b) => b.getBoundingClientRect().height)).toBe(28);
-    expect(await deckAudit(page, ['[data-testid="builder-list-host"] .main'])).toEqual([]);
+    await designAudit(page, { skip: ['[data-testid="builder-list-host"] .main'] });
   });
 }

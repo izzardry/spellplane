@@ -6,10 +6,10 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { CardRef, DeckBuild } from '../../../core/types';
-  import { isFreeBasic } from '../../../data/deck/analyse';
   import type { CardData } from '../../../data/types';
   import { buildFromDeckRecord, deckRecordFromBuild, exportFileName, exportLibrary, importLibrary, newDeckId, planImport } from '../../../store/decks';
   import type { DeckRecord, DeckStore } from '../../../store/types';
+  import { freeBasicTest, type LoadCards } from '../../decks/state/sealed-import';
   import { currentRecordId, forgetOtherPool, listUi, markSaved } from './state.svelte';
 
   let {
@@ -17,8 +17,16 @@
     build,
     origin,
     card,
+    loadCards,
     onOpen,
-  }: { decks: DeckStore; build: DeckBuild; origin?: DeckRecord['origin'] | undefined; card: (ref: CardRef) => CardData | null; onOpen: (build: DeckBuild) => void } = $props();
+  }: {
+    decks: DeckStore;
+    build: DeckBuild;
+    origin?: DeckRecord['origin'] | undefined;
+    card: (ref: CardRef) => CardData | null;
+    loadCards?: LoadCards | undefined;
+    onOpen: (build: DeckBuild) => void;
+  } = $props();
 
   /** Largest library file read (bytes). */
   const MAX_FILE = 20 * 1024 * 1024;
@@ -141,8 +149,10 @@
         status = `“${file.name}” is too large for a deck file.`;
         return;
       }
-      // Sealed decks are checked against their boosters; a basic land counts as free only when its card data is known.
-      const result = importLibrary(await file.text(), { isFreeBasic: (r) => isFreeBasic(card(r)), now: Date.now() });
+      // Sealed decks are checked against their boosters; a basic land counts as free when its card data is known, so the
+      // data of the main cards outside each pool is loaded first (decks.md section 7, D25).
+      const text = await file.text();
+      const result = importLibrary(text, { isFreeBasic: await freeBasicTest(text, loadCards, card), now: Date.now() });
       problems = [...result.errors, ...(result.notes ?? [])].map((e) => e.message);
       const existing = await decks.list();
       const plan = planImport(existing, result.decks, newDeckId);

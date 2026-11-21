@@ -460,6 +460,38 @@ export function checkSealedImport(record: DeckRecord, isFreeBasic: (ref: CardRef
   return { record: out, unsealed: true };
 }
 
+/**
+ * The Scryfall ids of the main-deck cards of sealed records that no pool copy accounts for: the cards
+ * checkSealedImport asks `isFreeBasic` about (decks.md section 7, invariant 4). A caller loads their card data first,
+ * so a booster deck's free basics keep it sealed (D25). Reads what importLibrary and readBackup read (a LibraryFile, a
+ * single record, or a backup's `decks`); entries that cannot be read give nothing. Each id is listed once.
+ */
+export function sealedOutsideSids(json: unknown): string[] {
+  let entries: unknown[] = [];
+  if (isObj(json) && Array.isArray(json.decks)) entries = json.decks;
+  else if (isObj(json) && 'main' in json && 'id' in json) entries = [json];
+  const out = new Set<string>();
+  for (const entry of entries) {
+    let record: DeckRecord;
+    try {
+      record = migrateDeckRecord(deckRecord(entry));
+    } catch (e) {
+      if (!(e instanceof Invalid)) throw e;
+      continue;
+    }
+    const seal = record.seal;
+    if (record.kind !== 'sealed' || !seal) continue;
+    const left = new Map<string, number>();
+    for (const r of seal.pool) left.set(refKeyOf(r), (left.get(refKeyOf(r)) ?? 0) + 1);
+    for (const r of record.main) {
+      const n = left.get(refKeyOf(r)) ?? 0;
+      if (n > 0) left.set(refKeyOf(r), n - 1);
+      else out.add(r.sid);
+    }
+  }
+  return [...out];
+}
+
 /** What importLibrary checks sealed records with (decks.md section 7, "The record's invariants"). */
 export interface ImportOptions {
   /**

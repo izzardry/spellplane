@@ -6,7 +6,7 @@
   applied as its first edit (contracts.md Part G "Decks" item 1). Implementer: M8-P3.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import type { CardRef } from '../../core/types';
   import { packsOfSeal } from '../../draft/solo-sealed';
   import type { DeckRecord } from '../../store/types';
@@ -24,18 +24,25 @@
   let gone = $state(false);
   let busy = $state(false);
 
+  /** Set when the opening is left: a load or save that ends later navigates nowhere. */
+  let destroyed = false;
+  onDestroy(() => (destroyed = true));
+
   async function load(): Promise<void> {
     const d = await env.decks.get(id).catch(() => null);
+    if (destroyed) return;
     if (!d || !d.seal) {
       gone = true;
       return;
     }
     const total = d.seal.sets.length;
     if (d.seal.revealed >= total) {
-      env.go(`#/decks/${encodeURIComponent(d.id)}`);
+      // Opened already (Back from its deck page lands here): the deck page in place of this entry, never a loop.
+      env.replace(`#/decks/${encodeURIComponent(d.id)}`);
       return;
     }
     const data = await loadSets(env.sets, d.seal.sets);
+    if (destroyed) return;
     const generated = packsOfSeal(d.seal, data);
     if (generated && generated.length === total) {
       packs = generated.map((p) => p.cards.map((c) => (c.ref.foil ? { sid: c.ref.sid, foil: true as const } : { sid: c.ref.sid })));
@@ -66,8 +73,10 @@
   async function build(): Promise<void> {
     if (!deck?.seal) return;
     deck = await saveRevealed(env.decks, deck, deck.seal.sets.length, env.now());
+    if (destroyed) return;
     markSuggest(deck.id);
-    env.go(`#/decks/${encodeURIComponent(deck.id)}`);
+    // The opening is over and cannot be shown again: its entry becomes the deck page, so Back leaves the deck.
+    env.replace(`#/decks/${encodeURIComponent(deck.id)}`);
   }
 
   const total = $derived(deck?.seal?.sets.length ?? 0);

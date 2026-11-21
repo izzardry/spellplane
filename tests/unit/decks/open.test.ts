@@ -78,6 +78,20 @@ describe('OPEN', () => {
     await editor.dispose();
   });
 
+  it("without the pool's card data no deck is suggested, and the deck page suggests once the data is there", async () => {
+    const { d } = deps();
+    const opened = await openBoosterDeck(d, 6, ['M19']);
+    // The page's source with nothing loaded and the network gone: every lookup fails.
+    const offline = { ...source, peek: () => null, getMany: () => Promise.reject(new Error('offline')), resolveDeck: () => Promise.reject(new Error('offline')) } as unknown as typeof source;
+    expect(await suggestFor({ ...opened, seal: { ...opened.seal!, revealed: 6 } }, offline)).toBeNull();
+    const { deck, suggestion } = await finishOpening({ ...d, cardData: offline }, opened);
+    expect(suggestion).toBeNull();
+    // No basics-only deck and no summary, so the automatic suggestion still runs on the deck page.
+    expect(deck.main).toHaveLength(0);
+    expect(deck.summary).toBeUndefined();
+    expect(takeSuggest(deck.id, deck)).toBe(true);
+  });
+
   it('a card from outside the pool answers notInPool; CONVERT makes a custom copy and the original is byte-equal', async () => {
     const { d } = deps();
     const { deck } = await finishOpening(d, await openBoosterDeck(d, 6, ['M19']));

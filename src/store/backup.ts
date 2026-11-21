@@ -14,7 +14,7 @@
  */
 import { canonicalJson } from '../core/hash';
 import type { SecretStore, Stage } from '../core/types';
-import { importLibrary, LIBRARY_LIMITS } from './decks';
+import { importLibrary, LIBRARY_LIMITS, type ImportOptions } from './decks';
 import { MAX_NICKNAME_LENGTH, peerIdOf, SEAT_COLOUR_COUNT } from './identity';
 import type { LocalStores } from './stores';
 import type { SpellplaneDB } from './types';
@@ -306,15 +306,25 @@ function settingsOf(v: unknown, errors: BackupImport['errors']): Partial<Setting
   return out as Partial<Settings>;
 }
 
-/** Read a parsed file (a BackupFile, or a deck-only LibraryFile) without writing anything. Implementer: M5-P3. Added by M5-C. */
-export function readBackup(json: unknown): BackupImport {
+/** How readBackup checks sealed decks (decks.md section 7): the caller's free-basic test, from card data it loaded first (sealedOutsideSids). */
+export interface ReadBackupOptions {
+  isFreeBasic?: ImportOptions['isFreeBasic'];
+}
+
+/**
+ * Read a parsed file (a BackupFile, or a deck-only LibraryFile) without writing anything. Implementer: M5-P3. Added by
+ * M5-C. Sealed decks are checked as importLibrary checks them, with `opts.isFreeBasic`; a deck that becomes custom is
+ * reported in `errors` with UNSEALED_NOTE (it is still imported).
+ */
+export function readBackup(json: unknown, opts: ReadBackupOptions = {}): BackupImport {
   const result: BackupImport = { decks: [], tables: [], identity: null, settings: {}, games: [], ratings: [], matches: [], computer: [], errors: [] };
   const fail = (message: string): BackupImport => ({ ...result, errors: [{ where: 'file', message }] });
+  const libOpts: ImportOptions = opts.isFreeBasic ? { isFreeBasic: opts.isFreeBasic } : {};
 
   // A deck library file (or a single exported deck) from the builder's library reads as a backup of decks only.
   if (isObj(json) && (json.format === LIBRARY_FILE_FORMAT || (json.format === undefined && 'main' in json && 'id' in json))) {
-    const lib = importLibrary(JSON.stringify(json));
-    return { ...result, decks: lib.decks, errors: lib.errors.map((e) => ({ where: e.index < 0 ? 'file' : `deck ${e.index + 1}`, message: e.message })) };
+    const lib = importLibrary(JSON.stringify(json), libOpts);
+    return { ...result, decks: lib.decks, errors: [...lib.errors, ...(lib.notes ?? [])].map((e) => ({ where: e.index < 0 ? 'file' : `deck ${e.index + 1}`, message: e.message })) };
   }
   if (!isObj(json) || json.format !== BACKUP_FILE_FORMAT) return fail('The file is not a Spellplane backup.');
   if (typeof json.version !== 'number' || !Number.isInteger(json.version) || json.version < 1) return fail('The backup has no valid version.');
@@ -323,9 +333,9 @@ export function readBackup(json: unknown): BackupImport {
   if (json.decks !== undefined) {
     if (!Array.isArray(json.decks)) result.errors.push({ where: 'decks', message: 'The decks were skipped: they are not a list.' });
     else {
-      const lib = importLibrary(JSON.stringify({ format: LIBRARY_FILE_FORMAT, version: 1, exportedAt: 0, decks: json.decks }));
+      const lib = importLibrary(JSON.stringify({ format: LIBRARY_FILE_FORMAT, version: 1, exportedAt: 0, decks: json.decks }), libOpts);
       result.decks = lib.decks;
-      for (const e of lib.errors) result.errors.push({ where: e.index < 0 ? 'decks' : `deck ${e.index + 1}`, message: e.message });
+      for (const e of [...lib.errors, ...(lib.notes ?? [])]) result.errors.push({ where: e.index < 0 ? 'decks' : `deck ${e.index + 1}`, message: e.message });
     }
   }
 
@@ -383,9 +393,9 @@ function m8Records(v: unknown, what: string, key: string, errors: BackupImport['
 }
 
 /** Parse a file's text and read it (readBackup); text that is not JSON is reported, never thrown. */
-export function readBackupText(text: string): BackupImport {
+export function readBackupText(text: string, opts: ReadBackupOptions = {}): BackupImport {
   try {
-    return readBackup(JSON.parse(text) as unknown);
+    return readBackup(JSON.parse(text) as unknown, opts);
   } catch (e) {
     if (!(e instanceof SyntaxError)) throw e;
     return { decks: [], tables: [], identity: null, settings: {}, games: [], ratings: [], matches: [], computer: [], errors: [{ where: 'file', message: 'The file is not a Spellplane backup (it is not JSON).' }] };

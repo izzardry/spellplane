@@ -39,7 +39,7 @@
   import { DeckEditor } from './state/editor';
   import { groupsOf, overCopies, rowsOf } from './state/rows';
   import { takeFresh } from './state/library';
-  import { basicRefs, suggestFor, suggestionText, takeSuggest } from './state/open';
+  import { basicRefs, NO_SUGGESTION_TEXT, suggestFor, suggestionText, takeSuggest } from './state/open';
 
   let { env, id }: { env: DecksEnv; id: string } = $props();
 
@@ -139,7 +139,7 @@
       return;
     }
     if (isOpening(d)) {
-      env.go(`#/decks/${encodeURIComponent(d.id)}/open`);
+      env.replace(`#/decks/${encodeURIComponent(d.id)}/open`);
       return;
     }
     const sids = [...new Set([...d.main, ...d.side, ...(d.seal?.pool ?? [])].map((r) => r.sid))];
@@ -191,7 +191,10 @@
   }
   function addSid(sid: string, from: Board = board): void {
     const card = env.cardData.peek(sid);
-    if (card) addCard(card, 1, from);
+    if (card) return addCard(card, 1, from);
+    // A card whose data did not load still moves (a pool card or a row of the deck): add takes card = null.
+    const r = apply((d) => add(d, { sid }, from, 1, null));
+    if (r?.ok) say(`Card added, ${countSid(from === 'side' ? r.deck.side : r.deck.main, sid)} in deck, ${r.deck.main.length} of ${size} cards.`);
   }
   function addBasic(name: BasicLandName): void {
     const ref = basics[name];
@@ -219,7 +222,10 @@
   async function suggest(): Promise<void> {
     if (!deck) return;
     const s = await suggestFor(deck, env.cardData);
-    if (!s) return;
+    if (!s) {
+      if (deck.seal) toasts.info(NO_SUGGESTION_TEXT);
+      return;
+    }
     cardsVersion++;
     const r = apply((d) => setMain(d, s.main, lookup));
     if (r?.ok) toasts.undo(suggestionText(s), () => undo());
@@ -239,19 +245,28 @@
     const s = Number(v) as DeckSize;
     if (deck && s !== size) apply((d) => setSize(d, s));
   }
+  /** The save failed (its toast is shown): the deck stays open and dirty (decks.md "Quota"). */
+  const unsaved = (): boolean => editor?.isDirty ?? false;
   async function done(): Promise<void> {
     commitName();
     await editor?.flush();
+    if (destroyed || unsaved()) return;
     env.go('#/decks');
   }
   async function convert(): Promise<void> {
     if (!deck) return;
     await editor?.flush();
+    if (destroyed || unsaved()) return;
     const copy = convertToCustom(deck, env.newId(), env.now());
     copy.summary = summarise(copy, lookup);
-    await env.decks.put(copy);
+    try {
+      await env.decks.put(copy);
+    } catch {
+      toasts.info("Could not save the custom copy: this browser's storage is full.");
+      return;
+    }
     converting = false;
-    env.go(`#/decks/${encodeURIComponent(copy.id)}`);
+    if (!destroyed) env.go(`#/decks/${encodeURIComponent(copy.id)}`);
   }
   function say(t: string): void {
     announce = t;

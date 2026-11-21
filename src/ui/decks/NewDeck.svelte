@@ -7,7 +7,7 @@
   Implementer: M8-P3.
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import type { SetCode } from '../../core/types';
   import { parseDecklist } from '../../data/decklist';
   import { FALLBACK_CORE_SET, latestCoreSet } from '../../data/sets';
@@ -37,13 +37,17 @@
   let failure = $state<string | null>(null);
   let starterBusy = $state(false);
 
+  /** Set when the chooser is left: a slow set download or save that ends later navigates nowhere. */
+  let destroyed = false;
+  onDestroy(() => (destroyed = true));
+
   onMount(() => {
     void env.sets
       .listSets()
       .then((s) => (setup = { ...setup, sets: [latestCoreSet(s)] }))
       .catch(() => undefined);
     if (path === 'boosters') showSetup = true;
-    else if (path === 'custom') void custom();
+    else if (path === 'custom') void custom(true);
     else if (path === 'import') importing = true;
   });
 
@@ -63,7 +67,7 @@
         d = await openBoosterDeck(deps, v.packs, [FALLBACK_CORE_SET]);
       }
       showSetup = false;
-      env.go(`#/decks/${encodeURIComponent(d.id)}/open`);
+      if (!destroyed) env.go(`#/decks/${encodeURIComponent(d.id)}/open`);
     } catch (e) {
       failure = e instanceof Error ? e.message : 'The booster data could not be loaded. Check your connection.';
       toasts.info(failure);
@@ -72,15 +76,26 @@
     }
   }
 
+  /** Write a new record; a failed write (storage full) says so and keeps the chooser open. */
+  async function save(d: DeckRecord): Promise<boolean> {
+    try {
+      await env.decks.put(d);
+      return true;
+    } catch {
+      toasts.info("Could not save the deck: this browser's storage is full.");
+      return false;
+    }
+  }
   function record(name: string, main: DeckRecord['main'], side: DeckRecord['side'], source: DeckRecord['source']): DeckRecord {
     const now = env.now();
     return { id: env.newId(), name, main, side, source, createdAt: now, updatedAt: now, kind: 'custom', size: main.length > 0 && main.length <= 45 ? 40 : 60 };
   }
-  async function custom(): Promise<void> {
+  /** `redirect`: entered through `#/decks/new/custom`, whose entry the new deck's page replaces (Back must not make another). */
+  async function custom(redirect = false): Promise<void> {
     const d = record('Untitled deck', [], [], 'built');
-    await env.decks.put(d);
+    if (!(await save(d))) return;
     markFresh(d.id);
-    env.go(`#/decks/${encodeURIComponent(d.id)}`);
+    if (!destroyed) (redirect ? env.replace : env.go)(`#/decks/${encodeURIComponent(d.id)}`);
   }
   async function simple(colour: 'W' | 'U' | 'B' | 'R' | 'G'): Promise<void> {
     if (starterBusy) return;
@@ -102,8 +117,8 @@
         { colour, seed: [...seedBytes].map((b) => b.toString(16).padStart(2, '0')).join(''), set },
       );
       const d = record(deck.name, deck.main, [], 'built');
-      await env.decks.put(d);
-      env.go('#/decks');
+      if (!(await save(d))) return;
+      if (!destroyed) env.go('#/decks');
     } catch {
       toasts.info('The simple deck could not be made.');
     } finally {
@@ -114,8 +129,8 @@
     // The dialog's lists are reactive proxies; the store needs plain records.
     const plain = $state.snapshot(deck);
     const d = record('Imported deck', plain.main.map((r) => ({ ...r })), plain.side.map((r) => ({ ...r })), 'pasted');
-    await env.decks.put(d);
-    env.go(`#/decks/${encodeURIComponent(d.id)}`);
+    if (!(await save(d))) return;
+    if (!destroyed) env.go(`#/decks/${encodeURIComponent(d.id)}`);
   }
   const packsLabel = $derived(`${setup.packs} × ${setup.sets[0] ?? ''}`);
 </script>

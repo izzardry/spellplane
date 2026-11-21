@@ -16,6 +16,12 @@ export interface DecksEnv {
   newId: () => string;
   /** Go to a hash route (`#/decks/<id>`, `#/` for Home). */
   go: (hash: string) => void;
+  /**
+   * Go to a hash route in place of the current history entry: for redirects (a finished opening to its deck page, a
+   * deck still opening to its opening, `#/decks/new/custom` to the deck it made), so the browser's Back walks the path
+   * backwards instead of landing on the redirect again (decks.md section 1).
+   */
+  replace: (hash: string) => void;
   /** True while a matchmaking search runs (the selected deck is locked; contracts.md Part E). */
   searching: () => boolean;
   /** True while card search cannot reach its source (offline, or the debug hook set it). */

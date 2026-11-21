@@ -3,6 +3,7 @@
  * here, not in the shared contract, until a contracts package adds them to ListViewProps (requested from the
  * integrator by M2-P6); the builder container passes them alongside the contract's props. Implementer: M2-P6.
  */
+import type { CardData } from '../../../data/types';
 import type { DeckRecord, DeckStore } from '../../../store/types';
 
 export interface ListLibraryProps {
@@ -10,4 +11,6 @@ export interface ListLibraryProps {
   decks?: DeckStore | undefined;
   /** Where a drafted or sealed pool came from: a saved pool is then a 'drafted' record with this origin (store/types.ts DeckRecord). */
   origin?: DeckRecord['origin'] | undefined;
+  /** Loads card data by id (CardDataSource.getMany), so an imported booster deck's basics are known before its seal is checked (decks.md section 7). [M8-P3] */
+  loadCards?: ((sids: string[]) => Promise<Record<string, CardData>>) | undefined;
 }

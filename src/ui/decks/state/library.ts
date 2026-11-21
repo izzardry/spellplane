@@ -32,6 +32,8 @@ export class DeckLibrary {
   filter: LibraryFilter = 'all';
   selectedId: string | null = null;
   private pending = new Map<string, { deck: DeckRecord; timer: unknown }>();
+  /** Set by dispose: a summary refresh still waiting for card data writes nothing after the library was left. */
+  private disposed = false;
 
   constructor(private readonly deps: LibraryDeps) {}
 
@@ -53,12 +55,29 @@ export class DeckLibrary {
     const sids = [...new Set(stale.flatMap((d) => d.main.map((r) => r.sid)))];
     await this.deps.cardData.getMany(sids).catch(() => ({}));
     for (const d of stale) {
+      if (this.disposed) return;
       const fresh: DeckRecord = { ...d, summary: summarise(d, (r) => this.deps.cardData.peek(r.sid)) };
-      // Only a summary that knows its cards is worth keeping.
-      if (fresh.summary!.unknown < fresh.main.length || fresh.main.length === 0) await this.deps.decks.put(fresh).catch(() => undefined);
+      // Only a summary that knows its cards is worth keeping, and only on the record it was computed from: a deck
+      // edited (autosaved) while the card data loaded keeps its newer lists.
+      if (knowsCards(fresh)) {
+        const now = await this.deps.decks.get(d.id).catch(() => null);
+        if (this.disposed) return;
+        if (!now || now.updatedAt !== d.updatedAt) continue;
+        await this.deps.decks.put(fresh).catch(() => undefined);
+      }
       this.decks = this.decks.map((x) => (x.id === d.id ? fresh : x));
     }
     this.changed();
+  }
+
+  /** A new record's summary from loaded card data, or none when the data did not load (the next load computes it). */
+  private async withSummary(copy: DeckRecord): Promise<DeckRecord> {
+    await this.deps.cardData.getMany([...new Set(copy.main.map((r) => r.sid))]).catch(() => ({}));
+    const summary = summarise(copy, (r) => this.deps.cardData.peek(r.sid));
+    const out: DeckRecord = { ...copy, summary };
+    if (knowsCards(out)) return out;
+    delete out.summary;
+    return out;
   }
 
   /** The tiles under the current filter, newest change first. */
@@ -86,9 +105,8 @@ export class DeckLibrary {
   async duplicate(id: string): Promise<DeckRecord | null> {
     const d = this.decks.find((x) => x.id === id);
     if (!d) return null;
-    const copy = duplicateDeck(d, this.deps.newId(), this.deps.now());
     // The copy's own summary at once, so its tile and Home read it before the library loads again.
-    copy.summary = summarise(copy, (r) => this.deps.cardData.peek(r.sid));
+    const copy = await this.withSummary(duplicateDeck(d, this.deps.newId(), this.deps.now()));
     await this.deps.decks.put(copy);
     this.decks = [copy, ...this.decks];
     this.changed();
@@ -110,8 +128,7 @@ export class DeckLibrary {
   async convert(id: string): Promise<DeckRecord | null> {
     const d = this.decks.find((x) => x.id === id);
     if (!d || d.kind !== 'sealed') return null;
-    const copy = convertToCustom(d, this.deps.newId(), this.deps.now());
-    copy.summary = summarise(copy, (r) => this.deps.cardData.peek(r.sid));
+    const copy = await this.withSummary(convertToCustom(d, this.deps.newId(), this.deps.now()));
     await this.deps.decks.put(copy);
     this.decks = [copy, ...this.decks];
     this.changed();
@@ -153,12 +170,18 @@ export class DeckLibrary {
 
   /** Leaving the library deletes what is waiting for its undo window. */
   async dispose(): Promise<void> {
+    this.disposed = true;
     const ids = [...this.pending.keys()];
     for (const id of ids) {
       (this.deps.clearTimer ?? ((t: unknown) => clearTimeout(t as ReturnType<typeof setTimeout>)))(this.pending.get(id)!.timer);
       await this.commit(id);
     }
   }
+}
+
+/** Whether a summary knows the deck's cards (an empty deck's always does). */
+function knowsCards(d: DeckRecord): boolean {
+  return !!d.summary && (d.summary.unknown < d.main.length || d.main.length === 0);
 }
 
 const fresh = new Set<string>();
