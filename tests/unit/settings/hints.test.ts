@@ -117,6 +117,9 @@ describe('M5 gate: hints that fit the evening and the touch screen', () => {
     expect(touch.text).not.toMatch(/Ctrl|key/i);
     expect(touch.text).toContain('Talk');
     expect(hintText('talkKey', () => 'Ctrl').text).toContain('Hold Ctrl');
+    // On a desktop it also names the pointer route, and no other key (the mute key stays in the tooltips).
+    expect(hintText('talkKey', () => 'Ctrl').text).toContain('Talk while I hold or drag');
+    expect(hintText('talkKey', (a) => (a === 'mute' ? 'M' : 'Ctrl')).text).not.toMatch(/\bM\b/);
   });
 });
 

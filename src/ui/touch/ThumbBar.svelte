@@ -84,38 +84,32 @@
 </div>
 
 <style>
+  /* The kit's Button recipe (ds-btn ds-btn--secondary ds-btn--md: 44 px, the touch target) applies as it is; only the
+     bar's layout and the two states the kit has no class for are set here, from kit variables. */
   .thumb-bar {
     display: flex;
-    gap: 6px;
+    gap: var(--ds-space-sm);
     pointer-events: auto;
     padding: 4px;
-    background: color-mix(in srgb, var(--sp-surface, #fff) 85%, transparent);
-    border: 1px solid var(--sp-border, #d8d8d8);
-    border-radius: 999px;
+    background: var(--ds-panel);
+    box-shadow: var(--ds-elevation-raised);
+    border-radius: var(--ds-radius-button);
     -webkit-user-select: none;
     user-select: none;
     -webkit-touch-callout: none;
   }
   button {
     min-width: calc(var(--target) + 20px);
-    min-height: var(--target);
-    padding: 0 14px;
-    border-radius: 999px;
-    border: 1px solid var(--sp-fg, #111);
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    font: 600 var(--sp-font-size, 14px) / 1 var(--sp-font, system-ui);
-    cursor: pointer;
-    touch-action: manipulation;
   }
   /* A Resolve that is not ready keeps full-contrast text (Paper meets WCAG AA throughout, M5 review): it is told apart
-     by a dashed border and normal weight instead of being dimmed; a ready one keeps the solid border and bold label. */
+     by a dashed frame and a lighter weight, never by dimming. */
   button.waiting {
-    border-style: dashed;
-    font-weight: 400;
+    outline: 1px dashed var(--ds-border);
+    outline-offset: -4px;
+    font-weight: var(--ds-weight-regular);
   }
   button.hold.on {
-    background: var(--sp-fg, #111);
-    color: var(--sp-bg, #fff);
+    background: var(--ds-ink);
+    color: var(--ds-panel);
   }
 </style>

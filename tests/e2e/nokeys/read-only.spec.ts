@@ -1,7 +1,8 @@
 /**
  * PLAN Milestone 8, M7-P5 "Read-only" (m7-adjustments.md D14: "look, do not touch"): after `setReadOnly(true)` a drag,
  * a double-click, a pile press and a right-drag from a card change neither the state hash nor the count of proposed
- * actions; the wheel zooms; inspect opens; no coach mark shows. And when it is switched off again, play works as before.
+ * actions, and none of them reaches the scene's last read-only net (`readOnly.refused` stays 0: each route stops
+ * first); the wheel zooms; inspect opens; no coach mark shows. And when it is switched off again, play works as before.
  */
 import { expect, test, type Page } from '@playwright/test';
 import { hook } from '../helpers/app';
@@ -10,6 +11,9 @@ import { cardIn, centreOf, goldfish, handIds, handPoint, keydowns, log, mouseDra
 
 const hash = (page: Page) => call<string>(page, 'hash');
 const proposed = (page: Page) => hook<number>(page, 'readOnly.proposed');
+/** What reached the scene's last read-only net: every route must stop before it, so this stays 0. */
+const refused = (page: Page) => hook<number>(page, 'readOnly.refused');
+const lineDraft = (page: Page) => hook<boolean>(page, 'readOnly.lineDraft');
 const setReadOnly = (page: Page, on: boolean) => page.evaluate((v) => window.__spellplane!.readOnly!.set(v), on);
 const camPos = (page: Page) => hook<{ position: number[] }>(page, 'camera').then((c) => c.position);
 
@@ -30,24 +34,30 @@ test('a read-only table takes no action from the mouse, while the wheel, hover a
     await setReadOnly(page, true);
     expect(await hook<boolean>(page, 'readOnly.on')).toBe(true);
     await expect(page.getByTestId('coach-mark')).toHaveCount(0);
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('a drag of a card on the table moves no card', async () => {
+    const pose = (await cardIn(page, land))?.pose;
+    expect(pose).toBeTruthy();
     const c = centreOf((await shownCard(page, land)).screen);
     const to = await tableToScreen(page, { x: 200, y: -380 });
     await page.mouse.move(c.x, c.y);
     await page.mouse.down();
     await page.mouse.move(to.x, to.y, { steps: 12 });
     expect((await hook<{ held: unknown }>(page, 'motion')).held).toBeNull();
+    expect((await shownCard(page, land)).dragging).toBe(false);
     await page.mouse.up();
     await settledTable(page);
-    expect((await cardIn(page, land))?.pose).toEqual((await cardIn(page, land))?.pose);
+    expect((await cardIn(page, land))?.pose).toEqual(pose);
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('a drag from the hand onto the table plays nothing', async () => {
     await mouseDrag(page, await handPoint(page, creature), await tableToScreen(page, { x: 0, y: -380 }));
     await settledTable(page);
     expect((await cardIn(page, creature))?.zone).toBe('hand:s0');
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('a double-click taps nothing; a double-click on the library draws nothing', async () => {
@@ -58,6 +68,7 @@ test('a read-only table takes no action from the mouse, while the wheel, hover a
     await page.waitForTimeout(300);
     expect((await cardIn(page, land))?.tapped).toBe(false);
     expect((await handIds(page)).length).toBe(before.hand);
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('a pile press or hover offers no pile action; a selected card shows no strip', async () => {
@@ -72,6 +83,7 @@ test('a read-only table takes no action from the mouse, while the wheel, hover a
     await page.waitForTimeout(300);
     await expect(page.getByTestId('selection-strip')).toHaveCount(0);
     expect((await hook<{ selection: unknown }>(page, 'affordances')).selection).toBeNull();
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('a right-drag from a card draws no line', async () => {
@@ -80,14 +92,18 @@ test('a read-only table takes no action from the mouse, while the wheel, hover a
     await page.mouse.move(c.x, c.y);
     await page.mouse.down({ button: 'right' });
     await page.mouse.move(to.x, to.y, { steps: 10 });
+    // While the button is still held: no line is being drawn.
+    expect(await lineDraft(page)).toBe(false);
     await page.mouse.up({ button: 'right' });
     await page.keyboard.press('Escape').catch(() => undefined);
     expect((await hook<unknown[]>(page, 'lines')).length).toBe(0);
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('nothing was proposed and the table is unchanged', async () => {
     expect(await hash(page)).toBe(before.hash);
     expect(await proposed(page)).toBe(before.proposed);
+    expect(await refused(page)).toBe(0);
     expect((await log(page)).length).toBe(before.log);
   });
 
@@ -112,6 +128,7 @@ test('a read-only table takes no action from the mouse, while the wheel, hover a
     await expect(page.getByTestId('inspect')).toBeVisible();
     await page.getByTestId('inspect').click();
     expect(await hash(page)).toBe(before.hash);
+    expect(await refused(page)).toBe(0);
   });
 
   await test.step('switched off: a double-click taps again', async () => {

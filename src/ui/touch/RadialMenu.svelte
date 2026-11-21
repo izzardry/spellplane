@@ -84,7 +84,7 @@
     <button
       type="button"
       role="menuitem"
-      class="ds-btn ds-btn--secondary ds-btn--md slot"
+      class="ds-btn ds-btn--secondary ds-btn--icon ds-btn--lg slot"
       data-testid="radial-{s.slot.id}"
       data-slot={s.slot.id}
       disabled={!enabled}
@@ -94,7 +94,7 @@
       onclick={(e) => pick(e, s.slot)}>{s.slot.label}</button
     >
   {/each}
-  <button type="button" role="menuitem" class="ds-btn ds-btn--secondary ds-btn--md slot more" data-testid="radial-more" aria-label="More actions" style:left="{layout.centre.x}px" style:top="{layout.centre.y}px" onclick={more}>⋯</button>
+  <button type="button" role="menuitem" class="ds-btn ds-btn--secondary ds-btn--icon ds-btn--md slot more" data-testid="radial-more" aria-label="More actions" style:left="{layout.centre.x}px" style:top="{layout.centre.y}px" onclick={more}>⋯</button>
 </div>
 
 <style>
@@ -110,37 +110,29 @@
     height: calc(2 * var(--radius) + var(--slot));
     transform: translate(-50%, -50%);
     border-radius: 50%;
-    background: color-mix(in srgb, var(--sp-surface, #fff) 70%, transparent);
-    border: 1px solid var(--sp-border, #d8d8d8);
-    box-shadow: 0 2px 12px rgb(0 0 0 / 0.18);
+    background: color-mix(in srgb, var(--ds-panel) 70%, transparent);
+    box-shadow: var(--ds-elevation-raised);
     pointer-events: auto;
   }
+  /* The kit's Button recipe applies as it is (ds-btn--icon ds-btn--lg: a 56 px circle; the centre's More is md, 44 px);
+     the slot is centred on its point by margins, so the kit's press transform does not move it off its place. Labels
+     wrap inside the circle at the kit's label size. */
   .slot {
     position: absolute;
-    width: var(--slot);
-    height: var(--slot);
-    transform: translate(-50%, -50%);
+    margin-left: calc(var(--ds-control-lg) / -2);
+    margin-top: calc(var(--ds-control-lg) / -2);
     border-radius: 50%;
-    border: 1px solid var(--sp-fg, #111);
-    background: var(--sp-surface, #fff);
-    color: var(--sp-fg, #111);
-    font: 600 10px / 1.1 var(--sp-font, system-ui);
     padding: 2px;
+    font-size: var(--ds-type-label);
+    line-height: 1.1;
+    white-space: normal;
     text-align: center;
-    pointer-events: auto;
-    cursor: pointer;
-    touch-action: manipulation;
     -webkit-user-select: none;
     user-select: none;
   }
-  .slot:disabled {
-    opacity: 0.35;
-    cursor: default;
-  }
   .slot.more {
-    width: 44px;
-    height: 44px;
-    font-size: 18px;
-    border-color: var(--sp-border, #d8d8d8);
+    margin-left: calc(var(--ds-control-md) / -2);
+    margin-top: calc(var(--ds-control-md) / -2);
+    font-size: var(--ds-type-heading);
   }
 </style>

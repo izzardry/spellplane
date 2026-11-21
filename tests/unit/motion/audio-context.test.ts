@@ -1,11 +1,11 @@
 // m7-adjustments.md, M7-P4 change 2 (now M7-P5): "One shared AudioContext, created on the first gesture, suspended when
 // the table is disposed, counted in RenderMemory.audioContexts"; contracts.md Part C: on Home every count is 0. And the
 // 'matchFound' cue (SoundCue; visual.md 2.3): one short chime synthesised in ui/sound.ts, scheduled on a fake context.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SoundSet } from '../../../src/themes/types';
 import { MATCH_FOUND_CHIME, ThemeSoundPlayer, pageAudioContext, playMatchFound, setPageAudioFactoryForTests, type SoundContext } from '../../../src/ui/sound';
 import { live, resetLifecycleForTests } from '../../../src/util/lifecycle';
-import { tableTheme } from '../../../src/util/feel';
+import { feelCues, tableTheme } from '../../../src/util/feel';
 
 /** A fake context that records its state changes and the sources scheduled on it. */
 function fakeContext() {
@@ -98,6 +98,39 @@ describe('one audio context for the page', () => {
     expect(live().audioContexts).toBe(0);
   });
 
+  it('two tables alive at once hold the one context together: the first to leave neither uncounts nor suspends it', () => {
+    const a = new ThemeSoundPlayer();
+    const b = new ThemeSoundPlayer();
+    a.unlock();
+    b.unlock();
+    expect(made).toHaveLength(1);
+    expect(live().audioContexts).toBe(1);
+    made[0]!.calls.length = 0;
+    a.dispose();
+    expect(live().audioContexts).toBe(1);
+    expect(made[0]!.calls).toEqual([]);
+    expect(made[0]!.raw.state).toBe('running');
+    b.dispose();
+    expect(live().audioContexts).toBe(0);
+    expect(made[0]!.calls).toEqual(['suspend']);
+  });
+
+  it('with two tables alive, a feel cue from the scene plays once (on the newest), then on the one left', () => {
+    const a = new ThemeSoundPlayer();
+    const b = new ThemeSoundPlayer();
+    a.unlock();
+    b.unlock();
+    const playA = vi.spyOn(a, 'play');
+    const playB = vi.spyOn(b, 'play');
+    feelCues.emit('pickup');
+    expect(playA).not.toHaveBeenCalled();
+    expect(playB.mock.calls).toEqual([[['pickup']]]);
+    b.dispose();
+    feelCues.emit('snap');
+    expect(playA.mock.calls).toEqual([[['snap']]]);
+    a.dispose();
+  });
+
   it('a table that never had a gesture makes no context and counts none', () => {
     const p = new ThemeSoundPlayer();
     p.dispose();
@@ -132,6 +165,33 @@ describe('the matchFound cue', () => {
     expect(made[0]!.started).toHaveLength(2);
     // Home holds no table: the page context is not counted.
     expect(live().audioContexts).toBe(0);
+  });
+
+  it('outside a table, the page context is suspended again once the chime is over; a table holding it keeps it running', () => {
+    vi.useFakeTimers();
+    try {
+      expect(playMatchFound('theme')).toBe(true);
+      expect(made[0]!.raw.state).toBe('running');
+      vi.advanceTimersByTime(1000);
+      expect(made[0]!.raw.state).toBe('suspended');
+      // A table holding the context: the chime leaves it running.
+      const p = new ThemeSoundPlayer();
+      p.unlock();
+      expect(playMatchFound('theme')).toBe(true);
+      vi.advanceTimersByTime(1000);
+      expect(made[0]!.raw.state).toBe('running');
+      // A table entered right after a chime outside one cancels the pending suspend.
+      p.dispose();
+      expect(playMatchFound('theme')).toBe(true);
+      const q = new ThemeSoundPlayer();
+      q.unlock();
+      vi.advanceTimersByTime(1000);
+      expect(made[0]!.raw.state).toBe('running');
+      q.dispose();
+      expect(made).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("a theme's own matchFound wins; a table's player plays the chime through its context", () => {

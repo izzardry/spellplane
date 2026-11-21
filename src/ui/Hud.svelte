@@ -12,6 +12,7 @@
   import type { ActionId, KeyChord, KeyContext } from '../games/types';
   import { perspectiveToggleTilt, type ActivePing, type TableScene, type ViewState } from '../scene/types';
   import type { PileHover, SelectionAnchor } from '../scene/types'; // M7-P5
+  import { resolveMotion } from '../scene/types'; // M7-P5
   import { attachPresence, type PresenceHandle } from '../scene/presence';
   import { hoveredStackItem } from '../scene/stack';
   import type { LookedCard } from '../session/types';
@@ -1430,6 +1431,8 @@
       registerDebug({ touch: touchDebug });
       // The viewer's quality and follow toggles (Settings.quality, followStack, followActive).
       view.attach(scene);
+      // M7-P5: the viewer's Settings.motion (a 'system' setting follows ViewState.reducedMotion, which the scene reads already).
+      void settings?.get('motion').then((m) => { if (scene && m && m !== 'system') scene.setMotion?.(resolveMotion(m, reducedMotion)); }, () => undefined); // M7-P5
       // Other players' cursors and drags in their seat colour (DESIGN "Players, seats and formats"; M1-P5).
       presence = attachPresence(sceneHost!, scene, session.presence, {
         selfSeat: me,
@@ -1825,8 +1828,6 @@
       <TeamHands team={session.team} state={st} {faces} {vw} {vh} oninspect={(id, ref) => ((inspectId = id), (inspectRef = ref))} />
     {/if}
     {/if}
-    <!-- M7-P5 affordances: M7-P5 mounts its affordance layer and coach marks here (after the plates, before the dialogs). -->
-    <!-- /M7-P5 -->
   </div>
 
   {#if viewer}

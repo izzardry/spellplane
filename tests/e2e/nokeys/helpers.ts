@@ -35,6 +35,8 @@ export interface ShownCard {
   selected: boolean;
   tapped: boolean;
   moving: boolean;
+  /** Held by a drag of this viewer's (the scene's debug card). */
+  dragging: boolean;
 }
 export const shown = (page: Page) => hook<ShownCard[]>(page, 'cards');
 export async function shownCard(page: Page, id: InstanceId): Promise<ShownCard> {
