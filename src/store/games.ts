@@ -6,6 +6,7 @@
  * (persistence.md section 4).
  */
 import type { IDBPDatabase } from 'idb';
+import { BOT_TABLE_PREFIX } from './computer';
 import { atomicWrite } from './tx';
 import type { GameStore, GameSummary, SpellplaneDB } from './types';
 
@@ -53,13 +54,20 @@ export function newestFirst(a: GameSummary, b: GameSummary): number {
 
 /** The games store on `db` (persistence.md section 3). `now` is injected for tests. */
 export function createGameStore(db: IDBPDatabase<SpellplaneDB>, now: () => number = () => Date.now()): GameStore & GameStoreExtras {
+  // A computer game goes whole (computer.md 2.5): Sparring's `bot~` copy of the table, its log and secrets and the
+  // computer record (with the bot's key and deck) go in the same transaction as the human's rows. For any other code
+  // those rows do not exist and the deletes do nothing (M8-P6 fix).
   async function purge(code: string): Promise<void> {
-    const tx = db.transaction(['games', 'tables', 'log', 'secrets'], 'readwrite');
+    const bot = BOT_TABLE_PREFIX + code;
+    const tx = db.transaction(['games', 'tables', 'log', 'secrets', 'computer'], 'readwrite');
     await atomicWrite(tx, (t, track) => {
       track(t.objectStore('games').delete(code));
-      track(t.objectStore('tables').delete(code));
-      track(t.objectStore('log').delete(roomLogRange(code)));
-      track(t.objectStore('secrets').delete(code));
+      for (const room of [code, bot]) {
+        track(t.objectStore('tables').delete(room));
+        track(t.objectStore('log').delete(roomLogRange(room)));
+        track(t.objectStore('secrets').delete(room));
+      }
+      track(t.objectStore('computer').delete(code));
     });
   }
 

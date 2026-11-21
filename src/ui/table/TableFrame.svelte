@@ -144,6 +144,14 @@
       () => undefined,
     );
   }
+  // REMATCH of a computer game (computer.md 2.4; M8-P6 fix): Sparring never answers a next-game proposal, so the route
+  // leaves this table for a new one with the same decks. It is a leave: once, and Back no longer asks the frame.
+  function rematch(): void {
+    if (left || !props.onrematch) return;
+    left = true;
+    guardHost?.(null);
+    void Promise.resolve(props.onrematch({ checkpointer })).catch(() => undefined);
+  }
   // The browser's Back (or any hash change the frame did not make) leaves like the arrow: App holds the table route
   // until this ran. The sandbox lives for the page and is not guarded.
   onMount(() => {
@@ -309,7 +317,7 @@
 
     {#if versus}<Versus session={props.session} creator={me === 's0'} ondone={versusDone} onhome={() => void leave()} />{/if}
     <ConcedeChip session={props.session} />
-    {#if st.result}<GameOver session={props.session} {record} onhome={() => void leave()} />{/if}
+    {#if st.result}<GameOver session={props.session} {record} onhome={() => void leave()} onrematch={props.onrematch ? rematch : undefined} />{/if}
 
     {#if networked && deps}
       <RecoveryPanel session={props.session} cardData={deps.cardData} parse={deps.parseDecklist ?? parsePlainList} />

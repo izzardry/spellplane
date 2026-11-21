@@ -54,6 +54,8 @@ export interface TableFrameProps {
    * saves first and a purge waits for the writes already queued; a returned promise settles when the leave is done.
    */
   onleave: (ctx?: FrameLeave) => void | Promise<unknown>;
+  /** The game-over overlay's REMATCH of a computer game (computer.md 2.4): leaves this table for a new one; without it REMATCH proposes the next game. */ // [M8-P6]
+  onrematch?: ((ctx?: FrameLeave) => void | Promise<unknown>) | undefined; // [M8-P6]
   /** Added by M8-C: the page's sources and stores; without it the frame reads the context App sets (ui/table/context.ts). */
   deps?: TableDeps | undefined;
   /** Added by M8-C: the share link of a networked table (the waiting room's invite). */

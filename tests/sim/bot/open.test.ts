@@ -7,7 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ManualClock } from '../../../src/bot/runner';
 import { stateHash } from '../../../src/core/hash';
-import { botSessionOf, createComputerGame, deleteComputerGame, MIRROR_NOTICE, openComputerGame, provideComputerDeps, resumeComputerGame } from '../../../src/session/computer';
+import { botSessionOf, createComputerGame, deleteComputerGame, MIRROR_NOTICE, openComputerGame, provideComputerDeps, recordOf, resumeComputerGame } from '../../../src/session/computer';
 import type { NetTable } from '../../../src/session/net';
 import type { ComputerGame } from '../../../src/session/types';
 import { BOT_TABLE_PREFIX } from '../../../src/store/computer';
@@ -68,6 +68,37 @@ describe('opening #/c/<room>', () => {
     await until(() => botOf(r).engine.seq() === (r.session as NetTable).engine.seq() && botOf(r).engine.pending().length === 0, 30_000, 'resumed');
     expect(await stateHash((r.session as NetTable).engine.confirmedState())).toBe(hash);
     expect((await stores.computer.list()).map((x) => x.roomId)).toEqual(['c-open-61']);
+  }, 60_000);
+
+  it('a rematch (computer.md 2.4) plays the same two decks at the same level and pace with a new seed', async () => {
+    const { deps, stores } = await simDeps(65);
+    const deck = humanDeck('W', 'library');
+    await stores.decks.put({ id: 'd-white', name: 'White weenie', main: deck.main, side: [], source: 'built', createdAt: 1, updatedAt: 1 });
+    deps.decks = stores.decks;
+    const g = await settle(openComputerGame('c-open-65', { deckId: 'd-white', deps }), 120_000, 'the first game');
+    open.push({ game: g, stores });
+    const first = recordOf(g.handle)!;
+    expect(first.roomId).toBe('c-open-65');
+    const botCards = sidsOf(botOf(g));
+    g.handle.dispose();
+    open.length = 0;
+
+    const { deps: next } = await simDeps(66, { stores });
+    next.decks = stores.decks;
+    // Home's selection is another deck now: the rematch still brings the deck of the finished game.
+    const r = await settle(openComputerGame('c-open-66', { deckId: 'd-other', deps: next, rematchOf: first }), 120_000, 'the rematch');
+    open.push({ game: r, stores });
+    const human = r.session as NetTable;
+    expect(human.getState().result).toBeUndefined();
+    expect(human.getState().stage).toBe('match');
+    expect(human.secrets().hand).toHaveLength(7);
+    expect(sidsOf(human)).toEqual(deck.main.map((x) => x.sid).sort());
+    expect(sidsOf(botOf(r))).toEqual(botCards);
+    const again = await stores.computer.get('c-open-66');
+    expect(again?.human).toEqual(first.human);
+    expect(again?.bot.deck).toEqual(first.bot.deck);
+    expect(again?.bot.config).toMatchObject({ level: first.bot.config.level, pace: first.bot.config.pace, name: 'Sparring' });
+    expect(again?.bot.config.seed).not.toBe(first.bot.config.seed);
   }, 60_000);
 
   it('gives a newcomer without a deck a green starter deck', async () => {
