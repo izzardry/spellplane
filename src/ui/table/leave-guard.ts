@@ -21,3 +21,11 @@ export function sameTable(a: Route, b: Route): boolean {
 export function leavesTable(current: Route, next: Route): boolean {
   return isTableRoute(current) && !sameTable(current, next);
 }
+
+/**
+ * Whether the page goes on to the hash the change named once the guard's leave ran (leave.ts has gone Home): yes, unless that is
+ * Home (then nothing more). Back to Decks keeps Decks; an invite or bring-back link pasted into the tab opens that room.
+ */
+export function keepsTarget(target: Route): boolean {
+  return target.name !== 'home';
+}

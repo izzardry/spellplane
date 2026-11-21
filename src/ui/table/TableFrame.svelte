@@ -50,6 +50,8 @@
   import type { TableFrameProps } from './types';
 
   let props: TableFrameProps = $props();
+  /** How long Versus stays after it is done, ms: its "goes first" line is read (decision M8-P8). */
+  const VERSUS_READ_MS = 600;
 
   const deps = $derived(props.deps ?? tableDeps());
   const session = $derived(props.session);
@@ -69,7 +71,10 @@
   onMount(() => themeChoice?.subscribe((s) => (theme = s.theme)));
 
   // Saving (persistence.md section 2): the checkpointer runs while the frame is mounted (a stub until M8-P2).
-  const checkpointer = untrack(() => createCheckpointer(props.session, props.games));
+  // A spectator's watching is not a game of theirs: nothing goes into History. A networked table's key is the link's,
+  // never read from the address at leave time (the browser's Back has already changed it).
+  const spectator = untrack(() => props.session.role === 'spectator');
+  const checkpointer = untrack(() => createCheckpointer(props.session, spectator ? null : props.games, props.link ? { key: props.link.roomKey } : {}));
   onDestroy(() => checkpointer.stop());
   const muster = untrack(() => createSessionMuster(props.session));
   // The automatic setup (contracts.md Part D, session/entry.ts): deals and rolls once per seat and game at a table with
@@ -128,7 +133,8 @@
   // the browser's Back all take this one path, once. leave.ts saves (the checkpointer), leaves, disposes, goes Home and
   // shows the one toast.
   let left = false;
-  const guardHost = untrack(() => (props.kind === 'sandbox' ? null : leaveGuardHost()));
+  // A spectator holds no seat and has nothing to save: the Back leaves the page at once, as before M8-P8.
+  const guardHost = untrack(() => (props.kind === 'sandbox' || spectator ? null : leaveGuardHost()));
   function leave(): Promise<void> {
     if (left) return Promise.resolve();
     left = true;
@@ -231,6 +237,20 @@
   });
   const override = $derived(shell.primaryOverride ?? null);
   const dealing = $derived(!!st.settings.autoSetup && st.stage === 'match' && !!me && st.seats[me]?.dealt !== (st.games ?? 0));
+  // Versus (journey.md 4.7) comes up while this seat's deal runs and stays until the screen itself says it is done
+  // (every player connected and dealt, at least 1.2 s on screen), then a short moment more, so its last line (who goes
+  // first) is read before the table opens.
+  let versus = $state(false);
+  let versusHold: ReturnType<typeof setTimeout> | undefined;
+  // Networked tables only: a computer game has its own shorter start (computer.md 2.2), a practice table none.
+  $effect(() => {
+    if (dealing && networked) versus = true;
+  });
+  function versusDone(): void {
+    clearTimeout(versusHold);
+    versusHold = setTimeout(() => (versus = false), VERSUS_READ_MS);
+  }
+  onDestroy(() => clearTimeout(versusHold));
 </script>
 
 {#snippet plateMenuTop(seat: SeatId, close: () => void)}
@@ -287,7 +307,7 @@
       {@render table()}
     {/if}
 
-    {#if dealing}<Versus session={props.session} creator={me === 's0'} />{/if}
+    {#if versus}<Versus session={props.session} creator={me === 's0'} ondone={versusDone} onhome={() => void leave()} />{/if}
     <ConcedeChip session={props.session} />
     {#if st.result}<GameOver session={props.session} {record} onhome={() => void leave()} />{/if}
 
@@ -322,7 +342,7 @@
       <Dialog open={conceding} label="Concede this game?" onclose={() => (conceding = false)} testid="concede-confirm">
         <p class="ds-t-reading">The others see that you conceded. The table stays open for a rematch.</p>
         {#snippet footer()}
-          <Button variant="ghost" size="md" onclick={() => (conceding = false)} data-testid="concede-cancel">CANCEL</Button>
+          <Button variant="ghost" size="md" onclick={() => (conceding = false)} data-testid="concede-cancel">KEEP PLAYING</Button>
           <Button variant="danger" size="md" onclick={confirmConcede} data-testid="concede-ok">CONCEDE</Button>
         {/snippet}
       </Dialog>

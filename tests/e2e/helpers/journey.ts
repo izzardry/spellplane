@@ -206,3 +206,35 @@ export async function findMatch(p: Page, opts: { format?: '1V1' | '4 FFA'; ranke
   await p.getByTestId('home-primary').click();
   await expect.poll(() => p.evaluate(() => window.__spellplane!.mm!.status().phase), { timeout: 15_000 }).toMatch(/seeking|check/);
 }
+
+/**
+ * How many rows of the profile's database name `room` in their key, per object store (stores with none are left out):
+ * `{}` means nothing of that game is left (a room's own rows and Sparring's `bot~<room>` ones alike).
+ */
+export function rowsNaming(p: Page, profile: string, room: string): Promise<Record<string, number>> {
+  return p.evaluate(
+    async ([name, needle]) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const r = indexedDB.open(name!);
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error ?? new Error('open'));
+      });
+      try {
+        const out: Record<string, number> = {};
+        for (const s of Array.from(db.objectStoreNames)) {
+          const keys = await new Promise<IDBValidKey[]>((resolve, reject) => {
+            const r = db.transaction(s, 'readonly').objectStore(s).getAllKeys();
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error ?? new Error('keys'));
+          });
+          const n = keys.filter((k) => JSON.stringify(k).includes(needle!)).length;
+          if (n > 0) out[s] = n;
+        }
+        return out;
+      } finally {
+        db.close();
+      }
+    },
+    [`spellplane-${profile}`, room],
+  );
+}

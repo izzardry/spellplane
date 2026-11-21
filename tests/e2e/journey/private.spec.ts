@@ -6,7 +6,30 @@
  * confirm; both see the overlay; Ann's `HOME` leads Home with the networked toast. Fixtures, the local transport.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { copied, decklist, dispatch, freshProfile, hands, mode, openSite, pages, privateTable, readyWith, sameHash, seedDeck, state } from '../helpers/journey';
+import { copied, decklist, dispatch, freshProfile, gamesOf, hands, homeIsClean, mode, openSite, pages, privateTable, readyWith, sameHash, seedDeck, state } from '../helpers/journey';
+
+/**
+ * Records the versus screen (journey.md 4.7) without timing: whether it came up, whether its "goes first" line was
+ * drawn, and its `data-done` when it went away.
+ */
+const VERSUS_WATCH = (): void => {
+  const w = window as unknown as { __versus: { seen: boolean; first: boolean; gone: boolean; doneAtGone: string | null } };
+  w.__versus = { seen: false, first: false, gone: false, doneAtGone: null };
+  let last: string | null = null;
+  const look = (): void => {
+    const v = document.querySelector<HTMLElement>('[data-testid="versus"]');
+    if (v) {
+      w.__versus.seen = true;
+      last = v.dataset.done ?? null;
+      if (v.querySelector('[data-testid="versus-first"]')) w.__versus.first = true;
+    } else if (w.__versus.seen && !w.__versus.gone) {
+      w.__versus.gone = true;
+      w.__versus.doneAtGone = last;
+    }
+  };
+  new MutationObserver(look).observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-done'] });
+};
+const versusOf = (p: Page): Promise<unknown> => p.evaluate(() => (window as unknown as { __versus: unknown }).__versus);
 
 test.describe('journey: a private game', () => {
   test('CREATE TABLE, the invite link, READY, the self-pressing start, seven cards, Concede, the overlay, HOME', async ({ browser }, info) => {
@@ -17,6 +40,7 @@ test.describe('journey: a private game', () => {
     for (const p of list) p.on('pageerror', (e) => errors.push(e.message));
     try {
       await a.clock.install();
+      for (const p of list) await p.addInitScript(VERSUS_WATCH);
       let link = '';
       await test.step('Ann creates the table from Home; the invite sheet; COPY LINK; Ben opens the link', async () => {
         link = await privateTable(a, b, { a: freshProfile(info, 'ann'), b: freshProfile(info, 'ben') });
@@ -34,6 +58,9 @@ test.describe('journey: a private game', () => {
         await expect(a.getByTestId('start-game')).toHaveText(/^START · [123]$/, { timeout: 15_000 });
         await a.clock.runFor(3_100);
         for (const p of [a, b]) await expect(p.getByTestId('stage')).toHaveAttribute('data-stage', 'match', { timeout: 20_000 });
+        // Versus on both pages: it ticks every line, names who goes first, and goes once everyone is dealt.
+        for (const p of [a, b]) await expect.poll(() => versusOf(p), { timeout: 30_000 }).toEqual({ seen: true, first: true, gone: true, doneAtGone: 'true' });
+        for (const p of [a, b]) await expect(p.getByTestId('versus')).toHaveCount(0);
         await expect.poll(() => hands(b, ['s0', 's1']), { timeout: 30_000 }).toEqual([7, 7]);
         await expect.poll(() => hands(a, ['s0', 's1']), { timeout: 30_000 }).toEqual([7, 7]);
         await sameHash([a, b]);
@@ -57,7 +84,8 @@ test.describe('journey: a private game', () => {
         await b.getByTestId('open-menu').click();
         await b.getByRole('menuitem', { name: /concede/i }).click();
         await expect(b.getByTestId('concede-confirm')).toBeVisible();
-        // CANCEL keeps the game going.
+        // KEEP PLAYING keeps the game going (journey.md 4.13).
+        await expect(b.getByTestId('concede-cancel')).toHaveText('KEEP PLAYING');
         await b.getByTestId('concede-cancel').click();
         await expect(b.getByTestId('concede-confirm')).toHaveCount(0);
         expect((await state(b)).result).toBeUndefined();
@@ -129,7 +157,69 @@ test.describe('journey: a private game', () => {
         await expect(b.getByTestId('toast').filter({ hasText: 'You left the table. The game goes on; your seat is kept.' })).toHaveCount(1);
         await expect.poll(async () => (await state(a)).seats[ben]?.away === true, { timeout: 10_000 }).toBe(true);
         await expect(b.getByTestId('home-continue')).toBeVisible();
-      }, { timeout: 30_000 });
+        // The summary carries the room key although Back had already changed the address when it was written.
+        const code = link.split('/t/')[1]!.split('/')[0]!;
+        const key = link.split('/t/')[1]!.split('/')[1]!;
+        expect((await gamesOf(b)).find((g) => g.code === code)?.key).toBe(key);
+        await b.getByTestId('home-continue').click();
+        await expect(b.getByTestId('table-frame')).toHaveAttribute('data-kind', 'room', { timeout: 20_000 });
+        await expect.poll(() => b.evaluate(() => window.__spellplane?.session?.seat() ?? ''), { timeout: 20_000 }).toBe(ben);
+      }, { timeout: 60_000 });
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("a joiner's Back from the waiting room keeps the room key; a spectator's Back takes no chair", async ({ browser }, info) => {
+    test.setTimeout(120_000);
+    const { context, list } = await pages(browser, 3);
+    const [a, b, c] = list as [Page, Page, Page];
+    try {
+      let link = '';
+      await test.step('Ann creates a private table from Home', async () => {
+        await openSite(a, freshProfile(info, 'ann'));
+        await seedDeck(a, 'gw-m19-60.txt');
+        await mode(a, 'private');
+        await a.getByTestId('home-primary').click();
+        await expect(a.getByTestId('invite-sheet')).toBeVisible({ timeout: 20_000 });
+        link = await a.getByTestId('share-link').inputValue();
+      }, { timeout: 40_000 });
+
+      await test.step("Ben follows the link from Home, is seated in the waiting room and presses Back: History has the key", async () => {
+        await openSite(b, freshProfile(info, 'ben'));
+        await expect(b.getByTestId('route-home')).toBeVisible();
+        await b.evaluate((h) => (location.hash = h), link.slice(link.indexOf('#')));
+        await expect(b.locator('[data-testid="chair"][data-seat="s1"]')).toHaveAttribute('data-mine', 'true', { timeout: 20_000 });
+        await b.goBack();
+        await expect(b.getByTestId('route-home')).toBeVisible({ timeout: 15_000 });
+        const [code, key] = link.split('/t/')[1]!.split('/') as [string, string];
+        await expect.poll(async () => (await gamesOf(b)).map((g) => [g.code, g.key]), { timeout: 10_000 }).toEqual([[code, key]]);
+      }, { timeout: 40_000 });
+
+      const cleo = freshProfile(info, 'cleo');
+      let seq = 0;
+      let seats = '';
+      await test.step('Cleo follows the watch link from Home', async () => {
+        await openSite(c, cleo);
+        await expect(c.getByTestId('route-home')).toBeVisible();
+        await c.evaluate((h) => (location.hash = h), `${link.slice(link.indexOf('#'))}/watch`);
+        await expect(c.getByTestId('spectator-view')).toBeVisible({ timeout: 20_000 });
+        const st = await state(a);
+        seq = st.seq;
+        seats = JSON.stringify(Object.values(st.seats).map((x) => [x.id, x.peer ?? null, x.name]));
+      }, { timeout: 40_000 });
+
+      await test.step("Cleo's Back: Home at once; Ann's table keeps its seats and its log; Cleo has no History row", async () => {
+        const peer = await c.evaluate(() => window.__spellplane?.net?.self() ?? '');
+        await c.goBack();
+        await expect(c.getByTestId('route-home')).toBeVisible({ timeout: 15_000 });
+        await homeIsClean(c);
+        expect(await gamesOf(c)).toEqual([]);
+        const st = await state(a);
+        expect(st.seq).toBe(seq);
+        expect(JSON.stringify(Object.values(st.seats).map((x) => [x.id, x.peer ?? null, x.name]))).toBe(seats);
+        if (peer) expect(Object.values(st.seats).some((x) => x.peer === peer)).toBe(false);
+      }, { timeout: 40_000 });
     } finally {
       await context.close();
     }

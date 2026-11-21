@@ -8,7 +8,7 @@
  * Sparring's pace runs on the debug hook's manual clock (`bot.setClock('manual')`, `bot.tick`), never slept through.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { atTable, homeIsClean, keydowns, leaveByArrow, openFreshHome, seedDeck, soloOpponent, state, tableHash, tenActions } from '../helpers/journey';
+import { atTable, gamesOf, homeIsClean, keydowns, leaveByArrow, openFreshHome, rowsNaming, seedDeck, soloOpponent, state, tableHash, tenActions } from '../helpers/journey';
 
 const SAVED = 'Game saved. Continue any time.';
 
@@ -168,5 +168,43 @@ test.describe('journey: solo', () => {
     await expect(page.getByTestId('toast').filter({ hasText: SAVED })).toHaveCount(0);
     await expect(page.getByTestId('home-continue')).toHaveCount(0);
     await homeIsClean(page);
+  });
+
+  test('a short Sparring game left at once leaves no row of either table nor its computer record', async ({ page }, info) => {
+    test.setTimeout(90_000);
+    const profile = await openFreshHome(page, info, 'short-sparring');
+    let room = '';
+    await test.step('SOLO · SPARRING, PLAY: seven cards; the game is saved', async () => {
+      room = await sparringFromHome(page);
+      await expect.poll(async () => Object.keys(await rowsNaming(page, profile, room)).sort(), { timeout: 20_000 }).toEqual(expect.arrayContaining(['computer', 'tables']));
+    }, { timeout: 60_000 });
+    await test.step('leave by the arrow at once: no toast, no CONTINUE, nothing of the game left', async () => {
+      await leaveByArrow(page);
+      await expect(page.getByTestId('toast').filter({ hasText: SAVED })).toHaveCount(0);
+      await expect(page.getByTestId('home-continue')).toHaveCount(0);
+      // The last saves of both seats land first, then the delete (computer.md 2.5): `bot~<room>` names the room too.
+      await expect.poll(() => rowsNaming(page, profile, room), { timeout: 20_000 }).toEqual({});
+      await homeIsClean(page);
+      expect(await rowsNaming(page, profile, room)).toEqual({});
+    }, { timeout: 30_000 });
+  });
+
+  test('a link pasted into a practice table\'s tab: the leave saves, then that table\'s page opens', async ({ page }, info) => {
+    test.setTimeout(90_000);
+    await openFreshHome(page, info, 'paste-link');
+    await seedDeck(page);
+    await soloOpponent(page, 'ALONE');
+    await page.getByTestId('home-primary').click();
+    await atTable(page, 'practice');
+    await expect(page.getByTestId('primary-action')).toBeVisible();
+    await tenActions(page);
+    const room = (await page.evaluate(() => location.hash)).replace(/^#\/p\//, '');
+    const link = '#/t/amber-fox-river-42/QXVkaXRBdWRpdEF1ZGl0QQ';
+    await page.evaluate((h) => (location.hash = h), link);
+    await expect(page.getByTestId('route-room')).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(new RegExp(`${link}$`));
+    await expect(page.locator('[data-testid="table-frame"][data-kind="practice"]')).toHaveCount(0);
+    // The leave saved the practice game (the toast shows on the shell's pages, not on a table's).
+    await expect.poll(async () => (await gamesOf(page)).find((g) => g.code === room)?.leftAt ?? null, { timeout: 10_000 }).toEqual(expect.any(Number));
   });
 });

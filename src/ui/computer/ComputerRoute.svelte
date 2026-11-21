@@ -19,7 +19,7 @@
   import type { MenuGroup } from '../design/menu';
   import SeatGlyph from '../design/SeatGlyph.svelte';
   import { HUD_SHELL } from '../hud/shell';
-  import { leaveTable } from '../play/leave';
+  import { computerPurge, leaveTable, type ComputerStores } from '../play/leave';
   import type { HudShellProps } from '../props';
   import { tableDeps } from '../table/context';
   import TableFrame from '../table/TableFrame.svelte';
@@ -54,6 +54,8 @@
   let game = $state.raw<ComputerGame | null>(null);
   let store = $state.raw<GameStore | null>(untrack(() => games ?? null));
   let error = $state('');
+  /** The stores the default opener saved this game into (the short-game purge deletes from them). */
+  let savedIn: ComputerStores | null = null;
 
   /** The default opener: the saved game of this room, else a new one for Home's selected deck (lazy chunk). */
   async function openDefault(roomId: string): Promise<ComputerGame> {
@@ -64,6 +66,7 @@
     if (clock) d.clock = clock;
     const deckId = ctx.settings ? await ctx.settings.get('home').then((h) => h.deckId, () => null) : null;
     if (store === null && games === undefined) store = (await page.pageStores())?.games ?? null;
+    savedIn = { tables: d.tables, computer: d.computer };
     return m.openComputerGame(roomId, { deckId, deps: d });
   }
 
@@ -208,7 +211,8 @@
   let menuButton = $state<HTMLElement | null>(null);
 
   function leave(g: ComputerGame, c?: FrameLeave): Promise<unknown> {
-    return leaveTable({ session: g.session, kind: 'computer', code: room, games: store, go, checkpointer: c?.checkpointer ?? null });
+    // A purge disposes Sparring before it deletes, so the handle's last saves never write a row back (M8-P8).
+    return leaveTable({ session: g.session, kind: 'computer', code: room, games: store, go, checkpointer: c?.checkpointer ?? null, purgeComputer: computerPurge(g.handle, room, savedIn) });
   }
 </script>
 

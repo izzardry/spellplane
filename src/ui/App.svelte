@@ -37,7 +37,7 @@
   import SoloRoute from './play/SoloRoute.svelte';
   import { summaryHash } from './play/launch';
   import { setLeaveGuardHost, setTableDeps } from './table/context';
-  import { leavesTable } from './table/leave-guard';
+  import { keepsTarget, leavesTable } from './table/leave-guard';
   import { FakeMatchmaker } from './fakes';
   import type { TableSession } from '../session/types';
 
@@ -50,7 +50,7 @@
 
   // The browser's Back leaves a table like the arrow (journey.md 4.10 "Leaving"; M8-P8): while a table frame is shown
   // it registers its leave here; a hash change away from its route first runs that leave (save, leave the room,
-  // dispose, Home, the toast) and only then switches the page. A shell page the change named (Back to Decks) is kept.
+  // dispose, Home, the toast) and only then switches the page. Any page the change named other than Home is kept.
   let leaveGuard: (() => Promise<void>) | null = null;
   setLeaveGuardHost((leave) => (leaveGuard = leave));
   function onHashChange(): void {
@@ -60,9 +60,10 @@
       leaveGuard = null;
       const target = location.hash;
       void guard().finally(() => {
-        // leave.ts goes Home; a shell page the Back named (Decks, History) is where the player asked to be.
+        // leave.ts goes Home; any other page the change named (Back to Decks, an invite or bring-back link pasted into
+        // the tab, another table) is where the player asked to be. The left table itself is never the target.
         const asked = parseRoute(target);
-        if (isShellRoute(asked) && asked.name !== 'home' && location.hash !== target) location.hash = target;
+        if (keepsTarget(asked) && location.hash !== target) location.hash = target;
         route = parseRoute(location.hash);
       });
       return;

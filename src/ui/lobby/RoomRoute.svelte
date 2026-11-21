@@ -113,9 +113,19 @@
   /** A join refused because every chair is taken (session/net.ts: before the game, or once it has started). */
   const full = $derived(/\bfull\b/i.test(error));
   const startedFull = $derived(/started and every chair is taken/i.test(error));
+
+  /**
+   * Follow `/watch` being added or dropped on this room's link. A change to another page is not followed: App may keep
+   * this route mounted while its leave guard runs, and reading such a change as "not watching" would sit a spectator
+   * down at the table (M8-P8).
+   */
+  function followHash(): void {
+    const r = parseRoute(location.hash);
+    if (r.name === 'room' && r.room === roomId && r.key === roomKey) watching = r.watch === true;
+  }
 </script>
 
-<svelte:window onhashchange={() => (watching = watchingIn(location.hash))} />
+<svelte:window onhashchange={followHash} />
 
 {#if room && app.createScene && app.faces && app.cardData && app.game}
   <div class="fill" style={cssVars} data-testid="route-room">

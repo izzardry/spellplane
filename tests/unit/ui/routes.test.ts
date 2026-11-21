@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import type { TableState } from '../../../src/core/types';
 import { tableWith } from '../../../src/ui/fakes';
 import { menuTop } from '../../../src/ui/table/menu-top';
-import { leavesTable } from '../../../src/ui/table/leave-guard';
+import { keepsTarget, leavesTable } from '../../../src/ui/table/leave-guard';
 import { parseRoute } from '../../../src/ui/routes';
 
 function table(over: Partial<TableState> = {}, settings: Partial<TableState['settings']> = {}): TableState {
@@ -73,6 +73,16 @@ describe('leavesTable (the browser\'s Back leaves like the arrow)', () => {
     expect(leavesTable(r('#/c/c-abc'), r('#/c/c-abc'))).toBe(false);
     expect(leavesTable(r('#/solo'), r('#/'))).toBe(false);
     expect(leavesTable(r('#/'), r('#/decks'))).toBe(false);
+  });
+  it('after the leave the page goes on to any page the change named but Home: a shell page, another table, a link', () => {
+    expect(keepsTarget(r('#/'))).toBe(false);
+    expect(keepsTarget(r('#/decks'))).toBe(true);
+    expect(keepsTarget(r('#/history'))).toBe(true);
+    expect(keepsTarget(r('#/t/amber-fox-42/QXVkaXRBdWRpdEF1ZGl0QQ'))).toBe(true);
+    expect(keepsTarget(r('#/t/amber-fox-42/QXVkaXRBdWRpdEF1ZGl0QQ/rejoin/s1'))).toBe(true);
+    expect(keepsTarget(r('#/c/c-def'))).toBe(true);
+    expect(keepsTarget(r('#/p/p-def'))).toBe(true);
+    expect(keepsTarget(r('#/solo'))).toBe(true);
   });
 });
 
