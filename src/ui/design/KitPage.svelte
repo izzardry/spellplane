@@ -448,9 +448,6 @@
     gap: var(--ds-space-xxl);
     align-items: flex-start;
   }
-  .deck-split > .tiles {
-    flex: 0 1 auto;
-  }
   .deck-hero {
     flex: 1 1 340px;
     display: flex;
