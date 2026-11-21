@@ -81,13 +81,13 @@ export interface TableFrameProps {
   gather?: boolean;
   /** Extra shell members of the route (the computer game's cue button, badge and plate menu). The frame merges them over its own. */
   extraShell?: Pick<HudShellProps, 'primaryOverride' | 'plateBadge' | 'plateMenuTop' | 'menuTop'>;
-  onleave: () => void;                 // src/ui/play/leave.ts
+  onleave: (ctx?: FrameLeave) => void | Promise<unknown>; // src/ui/play/leave.ts; widened by M8-P8 (additive): the frame hands its checkpointer, the leave's promise is awaited
 }
 ```
 
 The frame chooses, by stage and kind: the waiting room (`WaitingRoom`), the matched entry (`MatchedEntry`, when a `MatchRecord` exists for the code), `Versus` (while the automatic setup runs), the draft and build stages, the HUD (inside `Gathering` when `gather`), and `GameOver` when `TableState.result` is set. It builds `HudShellProps` from `onleave`, `src/ui/table/menu-top.ts`, `SeatMenu`, `SeatBadge`, `presence.ts`, the notice store and `extraShell`. It starts `createCheckpointer(session, games)` on mount and stops it on unmount. `SoloRoute.svelte` (`#/p/<room>`) and `ComputerRoute.svelte` (`#/c/<room>`) open their session and render the frame; the sandbox (`#/solo`) renders it with `kind: 'sandbox'`.
 
-**Leave** (`src/ui/play/leave.ts`, M8-P2): `leaveTable({ session, kind, code, games, go })` runs `checkpoint('leave')`, `session.leave()`, disposes, navigates Home and shows one toast. Copy by kind: networked `You left the table. The game goes on; your seat is kept.` with `REJOIN`; computer and practice `Game saved. Continue any time.` with `CONTINUE`. A solo game with fewer than 10 own actions is purged instead and shows no toast.
+**Leave** (`src/ui/play/leave.ts`, M8-P2): `leaveTable({ session, kind, code, games, go })` runs `checkpoint('leave')`, `session.leave()`, disposes, navigates Home and shows one toast. Copy by kind: networked `You left the table. The game goes on; your seat is kept.` with `REJOIN`; computer and practice `Game saved. Continue any time.` with `CONTINUE`. A game that ended (TableState.result set) shows `Game over. It is in your History.` with no action (M8-P8). A solo game with fewer than 10 own actions is purged instead and shows no toast.
 
 **`TableSession.leave(): Promise<void>`** (contract, `session/types.ts`): a solo session resolves at once; M8-C's networked default is today's dispose path; M8-P5 makes it send `bye { reason: 'leave' }`.
 

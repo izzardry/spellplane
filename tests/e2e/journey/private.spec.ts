@@ -6,7 +6,7 @@
  * confirm; both see the overlay; Ann's `HOME` leads Home with the networked toast. Fixtures, the local transport.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { copied, decklist, dispatch, freshProfile, gamesOf, hands, homeIsClean, mode, openSite, pages, privateTable, readyWith, sameHash, seedDeck, state } from '../helpers/journey';
+import { atTable, copied, decklist, dispatch, freshProfile, gamesOf, hands, homeIsClean, leaveByArrow, mode, openSite, pages, privateTable, readyWith, sameHash, seedDeck, soloOpponent, state } from '../helpers/journey';
 
 /**
  * Records the versus screen (journey.md 4.7) without timing: whether it came up, whether its "goes first" line was
@@ -98,10 +98,14 @@ test.describe('journey: a private game', () => {
         expect((await state(a)).result?.winners).toEqual(['s0']);
       }, { timeout: 40_000 });
 
-      await test.step("Ann's HOME: Home with the networked toast; the game is in History", async () => {
+      await test.step("Ann's HOME: Home with the ended toast (no REJOIN); the game is in History", async () => {
         await a.getByTestId('game-over-home').click();
         await expect(a.getByTestId('route-home')).toBeVisible({ timeout: 15_000 });
-        await expect(a.getByTestId('toast').filter({ hasText: 'You left the table. The game goes on; your seat is kept.' })).toHaveCount(1);
+        // An ended game cannot be continued (journey.md 4.13): the toast says so and offers no way back in.
+        const toast = a.getByTestId('toast').filter({ hasText: 'Game over. It is in your History.' });
+        await expect(toast).toHaveCount(1);
+        await expect(toast.getByRole('button', { name: /rejoin/i })).toHaveCount(0);
+        await expect(a.getByTestId('toast').filter({ hasText: 'You left the table.' })).toHaveCount(0);
         const games = await a.evaluate(() => window.__spellplane!.games!.list());
         expect(games[0]?.code).toBe(link.split('/t/')[1]!.split('/')[0]);
       }, { timeout: 30_000 });
@@ -164,6 +168,17 @@ test.describe('journey: a private game', () => {
         await b.getByTestId('home-continue').click();
         await expect(b.getByTestId('table-frame')).toHaveAttribute('data-kind', 'room', { timeout: 20_000 });
         await expect.poll(() => b.evaluate(() => window.__spellplane?.session?.seat() ?? ''), { timeout: 20_000 }).toBe(ben);
+      }, { timeout: 60_000 });
+
+      await test.step("a table's notice stays with its table: Ann leaves and opens a practice table, no notice there", async () => {
+        // Ben's leaving and coming back put a notice on Ann's table (Gathering, BringBack).
+        await expect(a.getByTestId('hud-notice')).toBeVisible({ timeout: 15_000 });
+        await leaveByArrow(a);
+        await soloOpponent(a, 'ALONE');
+        await a.getByTestId('home-primary').click();
+        await atTable(a, 'practice');
+        await expect(a.getByTestId('primary-action')).toBeVisible({ timeout: 20_000 });
+        await expect(a.getByTestId('hud-notice')).toHaveCount(0);
       }, { timeout: 60_000 });
     } finally {
       await context.close();

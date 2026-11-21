@@ -163,14 +163,13 @@ describe('no raw <button under src/ui/ without a kit class', () => {
 /**
  * Legacy files with raw buttons when M8-P1 landed the kit, swept by their owners (visual.md DS-9; contracts.md Part G
  * Visual 4). A plain allow-list: a swept file may stay listed (its owner cannot edit this file); M8-P8 or the gate
- * prunes it. It is not grown. Pruned by the M8-P1 fix round to the 18 files that still hold a raw button.
+ * prunes it. It is not grown. Pruned by the M8-P1 fix round to the 18 files that still hold a raw button, and by the M8-P8 fix round to 16.
  */
 const LEGACY = new Set<string>([
   'src/ui/about/About.svelte',
   'src/ui/builder/list/ListView.svelte',
   'src/ui/diag/Diag.svelte',
   'src/ui/empty/EmptyState.svelte',
-  'src/ui/flow/LobbyDraft.svelte',
   'src/ui/lobby/Lobby.svelte',
   'src/ui/lobby/SpectatorPanel.svelte',
   'src/ui/lobby/StartPage.svelte',
@@ -182,6 +181,5 @@ const LEGACY = new Set<string>([
   'src/ui/storage/Hints.svelte',
   'src/ui/storage/StoragePanel.svelte',
   'src/ui/version/VersionNotice.svelte',
-  'src/ui/voice/TalkIndicator.svelte',
   'src/ui/voice/VoicePanel.svelte',
 ]);
