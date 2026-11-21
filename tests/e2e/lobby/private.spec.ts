@@ -120,8 +120,9 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
     await a.clock.runFor(5000);
     expect((await state(a)).stage).toBe('lobby');
     await expect(b.getByTestId('missing-line')).toHaveText('Waiting for Ann to start the game.');
-    // Stop the page clock where it is, so only runFor moves the count (a slow remote browser adds no time).
-    await a.clock.pauseAt((await a.evaluate(() => Date.now())) + 50);
+    // Stop the page clock, so only runFor moves the count (a slow remote browser adds no time). No count runs yet, so
+    // the margin may be generous: a remote browser's clock moves on while the time is read ("fast-forward to the past").
+    await a.clock.pauseAt((await a.evaluate(() => Date.now())) + 2000);
     await a.getByTestId('ready-on').click();
     await expect(a.getByTestId('start-game')).toHaveText('START · 3');
     // Un-readying while the count runs stops it: the clock runs on and nothing starts.
