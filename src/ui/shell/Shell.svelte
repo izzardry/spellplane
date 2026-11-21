@@ -214,7 +214,7 @@
 
 <svelte:window onkeydown={closeMenus} onpointerdown={closeOutside} />
 
-<div class="ds-root shell" data-testid="shell">
+<div class="ds-root shell" class:shell--fit={route.name === 'deck'} data-testid="shell">
   <div class="shell__backdrop" aria-hidden="true" data-testid="shell-backdrop" data-still={stillState}>
     {#if stillUrl}<img class="shell__still" src={stillUrl} alt="" data-testid="shell-still" />{:else}<div class="shell__gradient" data-testid="shell-gradient"></div>{/if}
     <div class="shell__veil"></div>
@@ -287,7 +287,17 @@
 </div>
 
 <style>
-  .shell { position: relative; min-height: 100vh; min-height: 100dvh; color: var(--ds-ink); font-family: var(--ds-font-body); overflow-x: hidden; }
+  /* overflow-x: clip, not hidden: a hidden overflow is a scroll container that focus or scrollIntoView could scroll
+     sideways, taking the top bar and the left gutter off screen (gate M8 finding F7). */
+  .shell { position: relative; min-height: 100vh; min-height: 100dvh; color: var(--ds-ink); font-family: var(--ds-font-body); overflow-x: clip; }
+  /* A page that fills the window and scrolls inside its own panes (the deck page, board 3): the document never scrolls,
+     so the top bar stays on screen. Wide windows only; narrower, the page scrolls as one column. */
+  @media (min-width: 1101px) {
+    .shell--fit { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
+    .shell--fit .shell__main { flex: 1; min-height: 0; padding-bottom: 24px; }
+    .shell--fit .shell__main > :global(*),
+    .shell--fit .shell__main > :global(* > [data-testid='decks-route']) { height: 100%; min-height: 0; }
+  }
   .shell__backdrop { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
   .shell__still { width: 100%; height: 100%; object-fit: cover; display: block; }
   .shell__gradient { width: 100%; height: 100%; background: radial-gradient(ellipse at 50% 60%, var(--ds-mat), var(--ds-frame)); }

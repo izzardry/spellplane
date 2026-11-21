@@ -14,7 +14,6 @@
   import Icon from '../design/Icon.svelte';
   import IconButton from '../design/IconButton.svelte';
   import ModeCard from '../design/ModeCard.svelte';
-  import PileStack from '../design/PileStack.svelte';
   import Pip from '../design/Pip.svelte';
   import SealBand from '../design/SealBand.svelte';
   import Segmented from '../design/Segmented.svelte';
@@ -387,9 +386,8 @@
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
       <div class="hero__row" tabindex="0" role="group" aria-label="Deck {view.deck.name}; Left and Right change deck" onkeydown={heroKey} data-testid="hero-row">
         <IconButton label="Previous deck" disabled={view.deckLocked || view.deckIndex <= 0} onclick={() => step(-1)} data-testid="home-prev">‹</IconButton>
-        <PileStack count={6}>
-          <CardFan cards={fan} width={view.deckLocked ? 140 : 168} label="{view.deck.name}: cover and four cards" />
-        </PileStack>
+        <!-- The fan stands on the page over the arena; the pile's edges are under the cover card only (board 1; F18). -->
+        <CardFan cards={fan} width={view.deckLocked ? 140 : 168} label="{view.deck.name}: cover and four cards" />
         <IconButton label="Next deck" disabled={view.deckLocked || view.deckIndex >= view.deckCount - 1} onclick={() => step(1)} data-testid="home-next">›</IconButton>
       </div>
       <h2 class="hero__name" data-testid="hero-name">{view.deck.name}</h2>

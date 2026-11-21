@@ -10,7 +10,7 @@
   The rules of seats.ts, ready.ts and connectivity.ts stay; the data-testids of the M1 lobby are kept. M8-P4.
 -->
 <script lang="ts">
-  import { onMount, untrack, type Component } from 'svelte';
+  import { onMount, untrack, type Snippet, type Component } from 'svelte';
   import type { Format, SeatId, TableState } from '../../core/types';
   import type { FaceSource } from '../../data/types';
   import { toViewerFrame } from '../../games/frame';
@@ -79,7 +79,10 @@
     onleave = undefined,
     picker = DeckPickerSheet as unknown as Component<PickerProps>,
     boosterSheet = BoosterSetupSheet as unknown as Component<BoosterProps>,
+    rules = undefined,
   }: LobbyProps & {
+    /** The table's rules panel (the draft and timer settings of the stage, ui/flow/LobbyDraft), in the side column. */
+    rules?: Snippet | undefined;
     /** The viewer's settings: the deck selected on Home (Settings.home.deckId) and, for the creator, Home's deck rule. */
     settings?: SettingsStore | undefined;
     /** The table's deck rule when the table does not carry one (TableSettings.decks); default any. */
@@ -545,7 +548,7 @@
   }
 </script>
 
-<main class="room ds-root" data-testid="lobby" aria-labelledby="lobby-title" data-invite={inviteOpen}>
+<main class="room ds-root" data-testid="lobby" aria-labelledby="lobby-title" data-invite={inviteOpen} data-side={inviteOpen || !!rules}>
   <header class="top">
     <Button variant="ghost" size="sm" data-testid="room-home" onclick={home}>← HOME</Button>
     <div class="title">
@@ -567,7 +570,7 @@
       {#if !isHost && host}<p class="ds-t-meta who-sets" data-testid="setup-owner">{hostName} chooses the setup.</p>{/if}
 
       <section class="seats" aria-label="Seats">
-        <div class="table-box" style:aspect-ratio="{outer.w} / {outer.d}">
+        <div class="table-box" style:aspect-ratio="{outer.w} / {outer.d}" style:max-width="min(560px, calc(36vh * {(outer.w / outer.d).toFixed(3)}))">
           <svg viewBox="{-outer.w / 2} {-outer.d / 2} {outer.w} {outer.d}" aria-hidden="true">
             <rect class="table" x={-box.w / 2} y={-box.d / 2} width={box.w} height={box.d} rx="60" />
           </svg>
@@ -595,7 +598,7 @@
                 >
                   <SeatGlyph seat={c.index} colour={sc?.colour ?? 'currentColor'} size={36} label="Seat colour of {c.name}" />
                   <span class="who">
-                    <span class="name">{c.name}{c.mine ? ' (you)' : ''}{c.seat === host ? ' · host' : ''}</span>
+                    <span class="name" title={c.name}>{c.name}{#if c.mine || c.seat === host}<span class="ds-t-meta tag">{[c.mine ? 'you' : '', c.seat === host ? 'host' : ''].filter(Boolean).join(' · ')}</span>{/if}</span>
                     <span class="state" data-testid="seat-state">
                       <PresenceDot state={failed ? 'away' : seatPresence(c)} label={failed ? 'cannot connect' : seatPresence(c)} />
                       {failed ? 'CANNOT CONNECT' : seatState(c)}
@@ -772,6 +775,8 @@
       </details>
     </div>
 
+    {#if inviteOpen || rules}
+      <div class="side">
     {#if inviteOpen}
       <aside class="invite" aria-label="Invite">
         <InviteSheet
@@ -784,6 +789,9 @@
           onclose={() => (inviteOpen = false)}
         />
       </aside>
+    {/if}
+    {#if rules}<div class="rules">{@render rules()}</div>{/if}
+      </div>
     {/if}
   </div>
 
@@ -853,24 +861,29 @@
 </main>
 
 <style>
+  /* The header stays in the window; only the body scrolls, and only when the window is too short (gate M8 finding F5). */
   .room {
     box-sizing: border-box;
     height: 100%;
-    overflow-y: auto;
-    padding: var(--ds-space-xl) var(--ds-space-lg) var(--ds-space-xxxl);
-    display: grid;
-    gap: var(--ds-space-lg);
-    align-content: start;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
     font-family: var(--ds-font-body);
     font-size: var(--ds-type-body);
     color: var(--ds-ink);
     background: var(--ds-mat);
   }
   .top {
+    flex: none;
     display: flex;
     align-items: center;
-    gap: var(--ds-space-md);
-    flex-wrap: wrap;
+    gap: var(--ds-space-lg);
+    min-height: var(--ds-control-md);
+    padding: var(--ds-space-xl) var(--ds-space-xxl) var(--ds-space-md);
+  }
+  .top-actions,
+  .top > :global(:first-child) {
+    flex: 0 0 auto;
   }
   .title {
     flex: 1;
@@ -891,13 +904,24 @@
     gap: var(--ds-space-sm);
   }
   .body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    box-sizing: border-box;
+    padding: var(--ds-space-md) var(--ds-space-xxl) var(--ds-space-xxxl);
     display: grid;
     gap: var(--ds-space-xl);
     grid-template-columns: minmax(0, 1fr);
     align-items: start;
   }
-  .room[data-invite='true'] .body {
+  /* Board 5: the room in the middle, the invitation and the table's rules in a 336 px column on the right. */
+  .room[data-side='true'] .body {
     grid-template-columns: minmax(0, 1fr) 336px;
+  }
+  .side {
+    display: grid;
+    gap: var(--ds-space-lg);
+    min-width: 0;
   }
   .main {
     display: grid;
@@ -915,14 +939,16 @@
   .welcome {
     font-size: var(--ds-type-title);
   }
+  /* The seat plates sit on the table's edge, half outside it: the seats' box keeps that half inside the column, so a
+     side seat never runs off the window (gate M8 finding F5). */
   .seats {
     display: grid;
     gap: var(--ds-space-md);
+    padding: var(--ds-space-xxxl) 128px;
   }
   .table-box {
     position: relative;
     width: 100%;
-    max-height: 46vh;
     margin: 0 auto;
   }
   .table-box svg {
@@ -954,9 +980,9 @@
     display: inline-flex;
     align-items: center;
     gap: var(--ds-space-md);
-    width: 232px;
-    height: var(--ds-control-lg);
-    padding: 0 var(--ds-space-lg) 0 var(--ds-space-sm);
+    width: 248px;
+    min-height: var(--ds-control-lg);
+    padding: var(--ds-space-sm) var(--ds-space-lg) var(--ds-space-sm) var(--ds-space-sm);
     border: 0;
     border-radius: var(--ds-radius-plate);
     background: var(--ds-panel-raised);
@@ -995,16 +1021,25 @@
     min-width: 0;
     flex: 1;
   }
+  /* The name may take two lines rather than be cut; who it is (you, host) follows in meta type. */
   .name {
     font-weight: var(--ds-weight-bold);
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
+  }
+  .tag {
+    margin-left: var(--ds-space-sm);
+    font-weight: normal;
   }
   .state {
     display: inline-flex;
     align-items: center;
     gap: var(--ds-space-xs);
+    white-space: nowrap;
     font-size: var(--ds-type-label);
     letter-spacing: 0.08em;
     color: var(--ds-muted);
@@ -1169,9 +1204,9 @@
     outline: 2px solid var(--ds-focus);
     outline-offset: 2px;
   }
-  .invite {
-    position: sticky;
-    top: 0;
+  .invite :global(> *) {
+    width: 100%;
+    box-sizing: border-box;
   }
   .layer {
     position: fixed;
@@ -1203,13 +1238,17 @@
     height: 28px;
   }
   @media (max-width: 1100px) {
-    .room[data-invite='true'] .body {
+    .room[data-side='true'] .body {
       grid-template-columns: minmax(0, 1fr);
     }
-    .invite {
-      position: static;
+    .side {
       order: -1;
-      justify-self: center;
+      justify-items: center;
+    }
+    .top,
+    .body {
+      padding-left: var(--ds-space-lg);
+      padding-right: var(--ds-space-lg);
     }
   }
   @media (max-width: 720px) {
@@ -1219,8 +1258,12 @@
     .plate {
       width: 176px;
     }
+    .seats {
+      padding: 0;
+    }
     .table-box {
       aspect-ratio: auto !important;
+      max-width: none !important;
       display: grid;
       gap: var(--ds-space-md);
       justify-items: center;

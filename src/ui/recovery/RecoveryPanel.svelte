@@ -182,12 +182,12 @@
 <style>
   /* Swept to the kit (contracts.md Part G "Visual" item 4): kit buttons and heights, --ds-* variables; not restructured. */
   .recovery {
+    /* Top left under the table's tools, clear of the opponent's plate at the top centre (gate M8 finding F19). */
     position: fixed;
     z-index: 64;
-    top: 56px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: min(560px, calc(100vw - 32px));
+    top: calc(var(--ds-edge, 16px) + var(--ds-control-md, 44px) + var(--ds-space-md, 12px));
+    left: var(--ds-edge, 16px);
+    width: min(420px, calc(100vw - 32px));
     box-sizing: border-box;
     background: var(--ds-panel);
     color: var(--ds-ink);

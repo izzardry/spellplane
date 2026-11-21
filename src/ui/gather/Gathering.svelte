@@ -31,6 +31,7 @@
     onhome,
     onbringback = undefined,
     onreadonly = undefined,
+    onclaiming = undefined,
     onwatch = undefined,
     children,
   }: {
@@ -46,6 +47,8 @@
     onbringback?: ((seat: SeatId) => void) | undefined;
     /** Called with true while the table must not take actions (standby, or a claim page shown), false once live. */
     onreadonly?: ((readOnly: boolean) => void) | undefined;
+    /** Called with true while the claim page shows (before SIT DOWN), false otherwise (gate M8 finding F19). */
+    onclaiming?: ((claiming: boolean) => void) | undefined;
     /** `WATCH` on a refusal screen; by default the game's watch link. */
     onwatch?: (() => void) | undefined;
     children?: Snippet;
@@ -92,6 +95,8 @@
   $effect(() => {
     const standby = !status.live || claiming;
     untrack(() => onreadonly?.(standby));
+    const showingClaim = claiming;
+    untrack(() => onclaiming?.(showingClaim));
     if (!status.live && timer === null && !waitedLong) timer = setTimeout(() => (waitedLong = true), PLAY_ON_AFTER_MS);
     if (status.live) {
       if (timer !== null) clearTimeout(timer);

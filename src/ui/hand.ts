@@ -22,16 +22,32 @@ export interface FanBox {
   z: number;
 }
 
-/** Layout of `n` hand cards in a `vw` x `vh` viewport with card `hovered` (index) raised. */
-export function fanLayout(n: number, vw: number, vh: number, hovered: number | null = null): FanBox[] {
+/**
+ * The free band of the bottom edge the fan may use, CSS px from the viewport's left edge (visual.md 2.9 board 7: the own
+ * plate bottom left, talk and the primary bottom right, the hand fan between them and nothing over a card face).
+ */
+export interface FanSpan {
+  left: number;
+  right: number;
+}
+
+/**
+ * Layout of `n` hand cards in a `vw` x `vh` viewport with card `hovered` (index) raised. With `span` the resting fan
+ * fits inside that band (centred in it, overlapping more where it must) instead of 80 % of the width; the raised card
+ * is kept inside the band as well where it fits.
+ */
+export function fanLayout(n: number, vw: number, vh: number, hovered: number | null = null, span: FanSpan | null = null): FanBox[] {
   if (n <= 0) return [];
   const h = vh * SCREEN_LAYER.handCardViewportFraction;
   const w = h * CARD_ASPECT;
-  const maxWidth = vw * SCREEN_LAYER.handWidthFraction;
+  const band = span && span.right - span.left >= w ? span : null;
+  const maxWidth = band ? Math.min(vw * SCREEN_LAYER.handWidthFraction, band.right - band.left) : vw * SCREEN_LAYER.handWidthFraction;
   const natural = n * w + (n - 1) * HAND_GAP_PX;
   const step = n === 1 ? 0 : natural <= maxWidth ? w + HAND_GAP_PX : (maxWidth - w) / (n - 1);
   const total = w + (n - 1) * step;
-  const left0 = (vw - total) / 2;
+  const left0 = band ? (band.left + band.right - total) / 2 : (vw - total) / 2;
+  const lo = band ? band.left : 0;
+  const hi = band ? band.right : vw;
   const boxes: FanBox[] = [];
   for (let i = 0; i < n; i++) {
     const left = left0 + i * step;
@@ -39,7 +55,8 @@ export function fanLayout(n: number, vw: number, vh: number, hovered: number | n
       const hh = vh * SCREEN_LAYER.handHoverViewportFraction;
       const hw = hh * CARD_ASPECT;
       const centred = left + w / 2 - hw / 2;
-      boxes.push({ left: Math.min(Math.max(0, centred), Math.max(0, vw - hw)), bottom: 0, width: hw, height: hh, z: n + 1 });
+      const [min, max] = hi - lo >= hw ? [lo, hi - hw] : [0, Math.max(0, vw - hw)];
+      boxes.push({ left: Math.min(Math.max(min, centred), max), bottom: 0, width: hw, height: hh, z: n + 1 });
     } else boxes.push({ left, bottom: 0, width: w, height: h, z: i + 1 });
   }
   return boxes;

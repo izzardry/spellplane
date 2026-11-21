@@ -395,11 +395,14 @@
   {:else if status === 'loading' || !deck}
     <p class="ds-t-meta loading">Loading the deck…</p>
   {:else}
+    <!-- Board 3's top row (gate M8 finding F8): back, the name, kind and colours left; the count, the strength (once),
+         undo and redo, and the one filled DONE right, in one 44 px row that never wraps. -->
     <header class="top">
-      <Button variant="quiet" onclick={() => void done()} data-testid="deck-back" aria-label="Back to decks">← Decks</Button>
+      <IconButton label="Back to decks" icon="arrowLeft" onclick={() => void done()} data-testid="deck-back" />
       <input
         class="name ds-t-heading"
         aria-label="Deck name"
+        title={nameDraft}
         data-testid="deck-name"
         maxlength="60"
         bind:value={nameDraft}
@@ -412,6 +415,7 @@
       <span class="grow"></span>
       {#if !sealed}
         <Segmented
+          size="sm"
           label="Deck size"
           value={String(size)}
           onchange={changeSize}
@@ -424,17 +428,16 @@
       {/if}
       <span class="stat">
         <span class="ds-t-eyebrow">Cards</span>
-        <span class="ds-t-list" data-testid="deck-count"><b>{deck.main.length}</b> / {size}</span>
+        <span class="ds-t-list num" data-testid="deck-count"><b>{deck.main.length}</b> / {size}</span>
       </span>
+      <span class="divider" aria-hidden="true"></span>
       <span class="stat" data-testid="deck-strength" data-score={strength?.score ?? ''}>
         <span class="ds-t-eyebrow">Strength</span>
-        <span class="ds-t-list">
-          {#if strength}<b>{strength.score}</b> {BAND_LABELS[strength.band]}{:else}—{/if}
-          <StrengthPips band={strength ? bandNumber(strength.band) : null} score={strength?.score} />
-        </span>
+        <StrengthPips band={strength ? bandNumber(strength.band) : null} score={strength?.score} label={strength ? `Strength ${strength.score}, ${BAND_LABELS[strength.band]}` : undefined} />
       </span>
-      <Button data-testid="deck-undo" disabled={!canUndo} onclick={undo}>Undo</Button>
-      <Button data-testid="deck-redo" disabled={!canRedo} onclick={redo}>Redo</Button>
+      <span class="divider" aria-hidden="true"></span>
+      <IconButton label="Undo" icon="undo" data-testid="deck-undo" disabled={!canUndo} onclick={undo} />
+      <IconButton label="Redo" icon="undo" class="redo" data-testid="deck-redo" disabled={!canRedo} onclick={redo} />
       <Button variant="primary" data-testid="deck-done" onclick={() => void done()}>Done</Button>
     </header>
 
@@ -639,13 +642,14 @@
     align-items: center;
     gap: var(--ds-space-md);
     min-height: 44px;
-    flex-wrap: wrap;
+    flex: none;
   }
   .name {
     box-sizing: border-box;
+    flex: 0 1 420px;
     height: 36px;
-    min-width: 120px;
-    max-width: 360px;
+    min-width: 140px;
+    text-overflow: ellipsis;
     border: 0;
     border-bottom: 2px solid var(--ds-line);
     background: transparent;
@@ -671,12 +675,18 @@
     align-items: flex-end;
     gap: 2px;
   }
-  .stat .ds-t-list {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--ds-space-xs);
+  .stat {
+    flex: none;
+    white-space: nowrap;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+  .top :global(.redo svg) {
+    transform: scaleX(-1);
   }
   .strip {
+    flex: none;
     display: flex;
     align-items: center;
     gap: var(--ds-space-md);
@@ -823,9 +833,40 @@
   .gone {
     padding: var(--ds-space-md);
   }
+  /* Wide windows (board 3, at 1280 and 1440): the page fills the shell's main area (Shell.svelte .shell--fit) and the
+     card pane and the rail scroll inside it, so neither the document nor the top row ever scrolls (gate M8 finding F7). */
+  @media (min-width: 1101px) {
+    .page {
+      height: 100%;
+      min-height: 0;
+      padding: var(--ds-space-xl);
+      overflow: hidden;
+    }
+    .body {
+      flex: 1;
+      min-height: 0;
+      align-items: stretch;
+    }
+    .left {
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      /* Room for the cards' lift and count badges inside the scrolling pane. */
+      padding: 8px 8px 24px 4px;
+      margin: -8px -8px 0 -4px;
+    }
+    .rail {
+      position: static;
+      max-height: none;
+      min-height: 0;
+    }
+  }
   @media (max-width: 1100px) {
     .page {
       padding: var(--ds-space-md);
+    }
+    .top {
+      flex-wrap: wrap;
     }
     .body {
       grid-template-columns: minmax(0, 1fr);
