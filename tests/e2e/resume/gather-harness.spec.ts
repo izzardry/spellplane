@@ -57,13 +57,13 @@ test.describe('Gathering (journey.md 4.12)', () => {
       await page.clock.runFor(7000);
       await expect(page.getByTestId('gathering-play-on')).toHaveCount(0);
       await page.clock.runFor(1500);
-      await expect(page.getByTestId('gathering-play-on')).toHaveText('PLAY ON WITHOUT CY');
+      await expect(page.getByTestId('gathering-play-on')).toHaveText('PLAY ON WITHOUT BEN AND CY');
       await expect(page.getByTestId('gathering-play-on-line')).toHaveText("The table with more moves is kept; the other side's moves are played again on top where they still fit.");
     });
     await test.step('LOOK AT THE TABLE hides the card and shows the banner; the table can be looked at (not inert)', async () => {
       await page.getByTestId('gathering-look').click();
       await expect(card).toHaveCount(0);
-      await expect(page.getByTestId('gathering-banner')).toContainText('Waiting for Cy');
+      await expect(page.getByTestId('gathering-banner')).toContainText('Waiting for Ben and Cy');
       expect(await page.evaluate(() => document.querySelector('[data-testid="fake-table"]')!.closest('[inert]') === null)).toBe(true);
       expect(await page.evaluate(() => window.__gather!.readOnly())).toBe(true);
       await page.getByTestId('gathering-back-to-card').click();
@@ -75,11 +75,11 @@ test.describe('Gathering (journey.md 4.12)', () => {
       await page.getByTestId('gathering-home').click();
       expect(await page.evaluate(() => window.__gather!.calls())).toEqual(['bring s3', 'home']);
     });
-    await test.step('PLAY ON WITHOUT CY plays on, the table goes live and the scrim leaves', async () => {
+    await test.step('PLAY ON WITHOUT BEN AND CY plays on, the table goes live and the scrim leaves', async () => {
       await page.getByTestId('gathering-play-on').click();
       await expect(page.getByTestId('gathering')).toHaveAttribute('data-live', 'true');
       await expect(card).toHaveCount(0);
-      expect(await page.evaluate(() => window.__gather!.calls())).toContain('playOn s2');
+      expect(await page.evaluate(() => window.__gather!.calls())).toContain('playOn s1,s2');
       expect(await page.evaluate(() => window.__gather!.readOnly())).toBe(false);
     });
   });

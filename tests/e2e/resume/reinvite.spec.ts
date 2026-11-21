@@ -139,7 +139,7 @@ test('bring Ann back: her own profile resumes without a claim; a fresh profile s
     await test.step("Ann's old profile opens the table again from its save: its seat was taken over, the page says so", async () => {
       const old = await context.newPage();
       await open(old, `/t/${room.roomId}/${room.roomKey}`, { profile: profiles.a, transport: 'local' });
-      await expect(old.getByTestId('room-error')).toContainText('Your seat was taken over from another browser (link made by Ben).', { timeout: 30_000 });
+      await expect(old.getByTestId('room-error')).toContainText(/Your seat was taken over from another browser \(link made by [^)]+\)\. Your saved hand for this game can no longer be used./, { timeout: 30_000 });
       expect(await seatOf(old)).toBeNull();
       expect((await state(b)).seats.s0!.peer).not.toBe(annPeer);
       await old.close();
