@@ -534,7 +534,8 @@
       return n ? `DECK READY · ${n}` : 'READY';
     }
     if (c.away) return 'AWAY';
-    return drafting ? 'HERE' : 'CHOOSING A DECK';
+    // A draft night needs no deck: the presence word beside the dot says it all ("here"), not "here HERE".
+    return drafting ? '' : 'CHOOSING A DECK';
   }
   function seatPresence(c: Chair): 'here' | 'connecting' | 'away' {
     if (c.mine) return 'here';
@@ -570,7 +571,7 @@
       {#if !isHost && host}<p class="ds-t-meta who-sets" data-testid="setup-owner">{hostName} chooses the setup.</p>{/if}
 
       <section class="seats" aria-label="Seats">
-        <div class="table-box" style:aspect-ratio="{outer.w} / {outer.d}" style:max-width="min(560px, calc(36vh * {(outer.w / outer.d).toFixed(3)}))">
+        <div class="table-box" style:aspect-ratio="{outer.w} / {outer.d}" style:max-width="min(600px, calc(44vh * {(outer.w / outer.d).toFixed(3)}))">
           <svg viewBox="{-outer.w / 2} {-outer.d / 2} {outer.w} {outer.d}" aria-hidden="true">
             <rect class="table" x={-box.w / 2} y={-box.d / 2} width={box.w} height={box.d} rx="60" />
           </svg>
@@ -598,7 +599,7 @@
                 >
                   <SeatGlyph seat={c.index} colour={sc?.colour ?? 'currentColor'} size={36} label="Seat colour of {c.name}" />
                   <span class="who">
-                    <span class="name" title={c.name}>{c.name}{#if c.mine || c.seat === host}<span class="ds-t-meta tag">{[c.mine ? 'you' : '', c.seat === host ? 'host' : ''].filter(Boolean).join(' · ')}</span>{/if}</span>
+                    <span class="name" title={c.name}><span class="nm">{c.name}</span>{#if c.mine || c.seat === host}<span class="ds-t-meta tag">{[c.mine ? 'you' : '', c.seat === host ? 'host' : ''].filter(Boolean).join(' · ')}</span>{/if}</span>
                     <span class="state" data-testid="seat-state">
                       <PresenceDot state={failed ? 'away' : seatPresence(c)} label={failed ? 'cannot connect' : seatPresence(c)} />
                       {failed ? 'CANNOT CONNECT' : seatState(c)}
@@ -944,7 +945,7 @@
   .seats {
     display: grid;
     gap: var(--ds-space-md);
-    padding: var(--ds-space-xxxl) 128px;
+    padding: var(--ds-space-xxxl) 144px;
   }
   .table-box {
     position: relative;
@@ -980,9 +981,9 @@
     display: inline-flex;
     align-items: center;
     gap: var(--ds-space-md);
-    width: 248px;
-    min-height: var(--ds-control-lg);
-    padding: var(--ds-space-sm) var(--ds-space-lg) var(--ds-space-sm) var(--ds-space-sm);
+    width: 288px;
+    height: var(--ds-control-lg);
+    padding: 0 var(--ds-space-lg) 0 var(--ds-space-sm);
     border: 0;
     border-radius: var(--ds-radius-plate);
     background: var(--ds-panel-raised);
@@ -1021,18 +1022,25 @@
     min-width: 0;
     flex: 1;
   }
-  /* The name may take two lines rather than be cut; who it is (you, host) follows in meta type. */
+  /* The plate is a 56 px control (visual.md 2.5): the name on one line, wide enough for any made-up nickname, and who it
+     is (you, host) after it in meta type, which never shrinks; only a very long chosen name is cut, with its tooltip. */
   .name {
+    display: flex;
+    align-items: baseline;
+    gap: var(--ds-space-sm);
+    min-width: 0;
     font-weight: var(--ds-weight-bold);
-    overflow-wrap: anywhere;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
+    white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .nm {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .tag {
-    margin-left: var(--ds-space-sm);
+    flex: none;
     font-weight: normal;
   }
   .state {

@@ -42,7 +42,10 @@
       {#if target}<span><span class="ds-curve__key" style:border="1.5px dotted var(--ds-muted)"></span>A clear curve</span>{/if}
     </figcaption>
   {/if}
-  <table class="ds-sr-only">
+  <!-- A table sizes itself to its content whatever its width says: the 1 px box is a wrapper, so the hidden table never
+       widens the page (gate M8 finding F7: the shell scrolled sideways by the table's overflow). -->
+  <div class="ds-sr-only">
+  <table>
     <caption>{label}</caption>
     <thead><tr><th scope="col">Mana value</th><th scope="col">Creatures</th><th scope="col">Other spells</th>{#if target}<th scope="col">Target</th>{/if}</tr></thead>
     <tbody>
@@ -51,4 +54,5 @@
       {/each}
     </tbody>
   </table>
+  </div>
 </figure>

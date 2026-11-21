@@ -37,7 +37,7 @@ async function checkSizes(page: Page, name: string, project: string): Promise<vo
     await settleAnimations(page, 3_000);
     await expect.poll(async () => (await collisions(page)).hand, { message: 'seven hand cards in the fan' }).toBe(7);
     await expect.poll(async () => (await collisions(page)).hits, { message: `HUD over a hand card at ${size.width} × ${size.height}` }).toEqual([]);
-    await shot(page, 'M8', `layout-${name}-${size.width}`, project);
+    await shot(page, 'layout', `hand-clear-${name}-${size.width}`, project);
   }
 }
 

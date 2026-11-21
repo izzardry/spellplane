@@ -293,7 +293,7 @@
   /* A page that fills the window and scrolls inside its own panes (the deck page, board 3): the document never scrolls,
      so the top bar stays on screen. Wide windows only; narrower, the page scrolls as one column. */
   @media (min-width: 1101px) {
-    .shell--fit { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
+    .shell--fit { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: clip; }
     .shell--fit .shell__main { flex: 1; min-height: 0; padding-bottom: 24px; }
     .shell--fit .shell__main > :global(*),
     .shell--fit .shell__main > :global(* > [data-testid='decks-route']) { height: 100%; min-height: 0; }

@@ -840,7 +840,7 @@
       height: 100%;
       min-height: 0;
       padding: var(--ds-space-xl);
-      overflow: hidden;
+      overflow: clip;
     }
     .body {
       flex: 1;

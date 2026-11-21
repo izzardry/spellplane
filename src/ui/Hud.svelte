@@ -447,6 +447,19 @@
    * primary sit in a row above the hand (narrow windows, touch screens) the fan keeps the whole width.
    */
   let plateWidth = $state(0);
+  /** The width of each seat-edge plate (measured on resize), so the whole plate stays in the free room. */
+  let anchorWidths = $state<Record<string, number>>({});
+  /**
+   * The open activity drawer's reserve at the right edge: the drawer (360), its gap and the tilt handle beside it (8 + 44)
+   * and the edge inset; plates and the tracker keep left of it, so the drawer never covers a plate's menu.
+   */
+  const LOG_RESERVE = LAYOUT.edge + 360 + 8 + 44 + 8;
+  /** A seat-edge plate's centre x: at its anchor, kept inside the window and clear of an open drawer. */
+  function anchorX(x: number, width: number): number {
+    const lo = LAYOUT.edge + width / 2;
+    const hi = vw - (logOpen ? LOG_RESERVE : LAYOUT.edge) - width / 2;
+    return hi < lo ? lo : Math.min(Math.max(x, lo), hi);
+  }
   let rightWidth = $state(0);
   let stackWidth = $state(0);
   const fanSpan = $derived.by<FanSpan | null>(() => {
@@ -1617,7 +1630,7 @@
     {/if}
 
     <!-- Top centre: the turn tracker and the plates without a seat edge. -->
-    <div class="top-centre" data-hud-chrome="tracker">
+    <div class="top-centre" class:beside-log={logOpen} data-hud-chrome="tracker">
       {#if full}
       <TurnStrip
         turn={st.turn.number}
@@ -1645,7 +1658,7 @@
       {@const a = anchorOf(seat.id)}
       {#if a?.at}
         <!-- At the seat's table edge (SceneEvents.seatAnchors), moved by a transform when the camera settles. -->
-        <div class="plate-anchor" data-hud-chrome="plate" class:plate-top={a.at.y < vh / 2} class:menu-open={!!openPlates[seat.id]} style:transform="translate({Math.round(Math.min(Math.max(a.at.x, 120), vw - 120))}px, {Math.round(Math.min(Math.max(a.at.y, 70), vh - 200))}px)">{@render plate(seat, false)}</div>
+        <div class="plate-anchor" data-hud-chrome="plate" class:plate-top={a.at.y < vh / 2} class:menu-open={!!openPlates[seat.id]} bind:offsetWidth={anchorWidths[seat.id]} style:transform="translate({Math.round(anchorX(a.at.x, anchorWidths[seat.id] ?? 240))}px, {Math.round(Math.min(Math.max(a.at.y, 70), vh - 200))}px)">{@render plate(seat, false)}</div>
       {/if}
     {/each}
 
@@ -2238,6 +2251,14 @@
     align-items: center;
     gap: var(--ds-space-sm);
     z-index: 30;
+  }
+  /* With the activity drawer open (LOG_RESERVE: the 360 px drawer, the tilt handle beside it and the edge, 436 px), the
+     tracker and the plates under it centre in the room left of it, so the drawer never covers a plate's menu. */
+  .top-centre.beside-log {
+    left: calc((100% - 436px + var(--ds-edge)) / 2);
+  }
+  .top-centre.beside-log .plates-row {
+    max-width: min(900px, calc(100vw - 436px - var(--ds-edge)));
   }
   /* A narrow column above the primary, clear of the hand fan and of the top centre. */
   .stack-dock {
