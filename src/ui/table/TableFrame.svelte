@@ -161,10 +161,10 @@
   // The cover (contracts.md Part G "Journey and Home" item 4): the look's backdrop over the table until the scene drew
   // its first frame, then a 150 ms fade of its opacity. A stage without a scene (the waiting room) fades at once; it
   // never waits longer than 3 s. Nothing runs per frame after that.
-  let frameEl = $state<HTMLElement | undefined>();
   let covered = $state(true);
   let coverGone = $state(false);
-  onMount(() => {
+  /** The frame's root watches for the scene's canvas (an action: it gets the node at mount). */
+  function firstFrame(node: HTMLElement): { destroy(): void } {
     let done = false;
     let raf = 0;
     const timers: ReturnType<typeof setTimeout>[] = [];
@@ -180,27 +180,28 @@
     const afterCanvas = (): void => {
       raf = requestAnimationFrame(() => (raf = requestAnimationFrame(reveal)));
     };
-    const hasCanvas = (): boolean => !!frameEl?.querySelector('canvas');
+    const hasCanvas = (): boolean => !!node.querySelector('canvas');
     if (hasCanvas()) afterCanvas();
-    else if (frameEl && typeof MutationObserver !== 'undefined') {
+    else if (typeof MutationObserver !== 'undefined') {
       observer = new MutationObserver(() => {
         if (!hasCanvas()) return;
         observer?.disconnect();
         observer = null;
         afterCanvas();
       });
-      observer.observe(frameEl, { childList: true, subtree: true });
+      observer.observe(node, { childList: true, subtree: true });
       // A stage with no scene (waiting room, draft, an error page): reveal soon.
       timers.push(setTimeout(() => (hasCanvas() ? undefined : reveal()), 600));
     } else reveal();
     timers.push(setTimeout(reveal, 3000));
-    return () => {
-      done = true;
-      observer?.disconnect();
-      cancelAnimationFrame(raf);
-      for (const t of timers) clearTimeout(t);
+    return {
+      destroy() {
+        observer?.disconnect();
+        cancelAnimationFrame(raf);
+        for (const t of timers) clearTimeout(t);
+      },
     };
-  });
+  }
 
   const me = $derived<SeatId | null>(session.seat);
   // Seat presence (presence.ts): the plate menu's connection line reads connecting too; the HUD's plates here or away.
@@ -274,7 +275,7 @@
   {/if}
 {/snippet}
 
-<div class="table-frame" bind:this={frameEl} data-testid="table-frame" data-kind={props.kind}>
+<div class="table-frame" use:firstFrame data-testid="table-frame" data-kind={props.kind}>
   {#if networked && props.session.role === 'spectator' && deps && props.link && deps.identity && deps.decks}
     <SpectatorView session={props.session} game={deps.game} link={props.link} identity={deps.identity} decks={deps.decks} cardData={deps.cardData} parseDecklist={deps.parseDecklist} createScene={deps.createScene} faces={deps.faces} settings={deps.settings} />
   {:else}

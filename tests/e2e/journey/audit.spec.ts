@@ -11,15 +11,9 @@ import { openZone } from '../helpers/hud';
 import { designAudit } from '../helpers/design-audit';
 import { atTable, decklist, dispatch, freshProfile, mode, navTo, openFreshHome, openSite, pages, sameHash, seedDeck, soloOpponent, state } from '../helpers/journey';
 
-/**
- * A card in the hand fan is the card's own size (63:88), not a control: the audit's control heights do not apply to it
- * (decision M8-P8).
- */
-const SKIP = ['[data-testid="hand-card"]'];
-
 async function check(page: Page, where: string, scope?: string): Promise<void> {
   await page.mouse.move(2, 2);
-  await designAudit(page, { skip: SKIP });
+  await designAudit(page);
   expect(await seriousViolations(page, scope), where).toEqual([]);
 }
 
