@@ -7,6 +7,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { seriousViolations } from '../a11y/helpers';
 import { designAudit } from '../helpers/design-audit';
+import { pauseClock } from '../feel/helpers';
 
 async function openGather(page: Page, scene: string, extra: Record<string, string> = {}): Promise<void> {
   const q = new URLSearchParams({ faces: 'placeholder', harness: 'gather', scene, ...extra });
@@ -54,6 +55,12 @@ test.describe('Gathering (journey.md 4.12)', () => {
       expect(await seriousViolations(page)).toEqual([]);
     });
     await test.step('PLAY ON WITHOUT appears only after 8 s on the page clock', async () => {
+      // Only the page clock may count the 8 s: it is paused first and the card mounted afresh, so the real time the
+      // audit above took (seconds on a CI runner) does not count.
+      await pauseClock(page);
+      await page.evaluate(() => window.__gather!.scene('gathering'));
+      await expect(card).toBeVisible();
+      await expect(page.getByTestId('gathering-play-on')).toHaveCount(0);
       await page.clock.runFor(7000);
       await expect(page.getByTestId('gathering-play-on')).toHaveCount(0);
       await page.clock.runFor(1500);
