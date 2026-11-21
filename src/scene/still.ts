@@ -11,6 +11,8 @@
  *    width, box-blurred there three times (radius 2 px, by pixel loops), and returned as a PNG Blob.
  * 3. The renderer, the world's geometries, materials and textures are released at once; the context is counted while
  *    it lives (scene/lifecycle.ts) and lost on purpose afterwards. Without WebGL the promise resolves null.
+ * 4. The Blob is kept per look and size (a few of them), so a return to Home does not draw the arena again; a call
+ *    that resolved null is not kept.
  */
 import * as THREE from 'three';
 import { mtgLayout } from '../games/mtg/layout';
@@ -165,18 +167,44 @@ function drawArena(theme: Theme, w: number, h: number): HTMLCanvasElement | null
   }
 }
 
+/** Stills drawn, by look and `width x height`, at most STILL_CACHE of them (the oldest goes first). */
+const STILL_CACHE = 4;
+const stills = new Map<string, { theme: Theme; blob: Promise<Blob | null> }>();
+
+/** Forget every kept still (tests). */
+export function clearArenaStillCache(): void {
+  stills.clear();
+}
+
 /**
  * Render the empty arena of `theme` as a soft still: a PNG one sixteenth of `width` wide (the browser scales it up
- * when shown). Resolves null when WebGL or a 2D canvas is unavailable.
+ * when shown). Resolves null when WebGL or a 2D canvas is unavailable. The same look at the same size resolves the
+ * kept Blob (unless `onFrame` asks for the frame, which only a fresh draw has).
  */
-export async function renderArenaStill(theme: Theme, opts: ArenaStillOptions): Promise<Blob | null> {
-  if (typeof document === 'undefined') return null;
+export function renderArenaStill(theme: Theme, opts: ArenaStillOptions): Promise<Blob | null> {
+  if (typeof document === 'undefined') return Promise.resolve(null);
   const w = Math.max(16, Math.min(MAX_WIDTH, Math.round(opts.width)));
   const aspect = typeof innerWidth === 'number' && innerWidth > 0 && innerHeight > 0 ? innerHeight / innerWidth : 9 / 16;
   const h = Math.max(9, Math.round(opts.height ?? w * aspect));
+  if (opts.onFrame) return drawStill(theme, w, h, opts.onFrame);
+  const key = `${theme.id} ${w}x${h}`;
+  const kept = stills.get(key);
+  if (kept?.theme === theme) return kept.blob;
+  const blob = drawStill(theme, w, h).catch(() => null);
+  stills.delete(key);
+  stills.set(key, { theme, blob });
+  // A null (no WebGL, no 2D canvas) is not kept: a later call tries again.
+  void blob.then((b) => {
+    if (!b && stills.get(key)?.blob === blob) stills.delete(key);
+  });
+  while (stills.size > STILL_CACHE) stills.delete(stills.keys().next().value!);
+  return blob;
+}
+
+async function drawStill(theme: Theme, w: number, h: number, onFrame?: (frame: HTMLCanvasElement) => void): Promise<Blob | null> {
   const frame = drawArena(theme, w, h);
   if (!frame) return null;
-  opts.onFrame?.(frame);
+  onFrame?.(frame);
   const small = halveDown(frame, Math.max(1, Math.round(w * STILL_SCALE)));
   const ctx = small?.getContext('2d', { willReadFrequently: true });
   if (!small || !ctx) return null;

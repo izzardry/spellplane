@@ -2,7 +2,22 @@
 // adaptive policy must ignore frame gaps while the page is hidden or covered"; PLAN Milestone 8, M7-P1 Policy: "hidden
 // or covered frame gaps do not lower the resolution and the table at rest renders at full resolution").
 import { describe, expect, it } from 'vitest';
-import { AdaptiveResolution, COVERED_GAP_MS, MIN_PIXEL_RATIO, REST_AFTER_MS, RUN, SLOW_MS, THROTTLED_GAP_MS, foreignGap } from '../../../src/scene/resolution';
+import {
+  AdaptiveResolution,
+  COVERED_GAP_MS,
+  MIN_PIXEL_RATIO,
+  PROBE_MEMORY_MS,
+  REST_AFTER_MS,
+  RUN,
+  SLOW_MS,
+  THROTTLED_GAP_MS,
+  foreignGap,
+  frameScale,
+  restDue,
+} from '../../../src/scene/resolution';
+
+/** A gap rounded up to a whole number of 60 Hz frames. */
+const vsync = (ms: number): number => Math.ceil(ms / (1000 / 60) - 1e-9) * (1000 / 60);
 
 /** Feed `n` frames of `cost` ms each, `cost` apart, with the given context. */
 function feed(r: AdaptiveResolution, start: number, n: number, cost: number, ctx?: { hidden?: boolean; drawMs?: number }): number {
@@ -114,15 +129,98 @@ describe('the adaptive resolution and frames it should not count', () => {
     expect(foreignGap(200)).toBe(false);
   });
 
-  it('the table at rest is drawn at the full ratio after REST_AFTER_MS, whatever the motion scale', () => {
-    // scene/table-scene.ts scaleFor(rest) returns 1 for the rest frame; the policy's motion scale is only for runs.
+  it('a slow GPU that pays a share of each frame whatever the pixels, with gaps on vsync multiples, stays lowered', () => {
+    // The reviewer's cases: base ratio 2, draws of 2 ms, gaps rounded up to multiples of a 60 Hz frame.
+    const cases: [full: number, fixed: number][] = [
+      [66, 0.3],
+      [61, 0.5],
+      [66, 0.5],
+      [55, 0.5],
+      [80, 0.5],
+      [100, 0.5],
+    ];
+    for (const [full, fixed] of cases) {
+      const r = new AdaptiveResolution();
+      r.setBase(2);
+      let now = 0;
+      let changes = 0;
+      let last = r.motionScale();
+      // Five runs of 40 frames, each a drag or pan ended by a pause.
+      for (let run = 0; run < 5; run++) {
+        for (let i = 0; i < 40; i++) {
+          const gap = vsync(full * (fixed + (1 - fixed) * r.motionScale() ** 2));
+          now += gap;
+          r.observe(now, gap, { drawMs: 2 });
+          if (r.motionScale() !== last) changes++;
+          last = r.motionScale();
+        }
+        expect(r.motionScale() * 2, `${full} ms, ${fixed * 100} % fixed, run ${run}`).toBe(MIN_PIXEL_RATIO);
+        now += 2000;
+        r.pause();
+      }
+      // One step down to the floor, and no step-down-then-undo per run.
+      expect(changes, `${full} ms, ${fixed * 100} % fixed`).toBe(1);
+    }
+  });
+
+  it('a covered window probes once: a failed probe is remembered across runs', () => {
+    const r = new AdaptiveResolution();
+    r.setBase(2);
+    let now = 0;
+    let changes = 0;
+    let last = r.motionScale();
+    for (let run = 0; run < 5; run++) {
+      for (let i = 0; i < 40; i++) {
+        now += 100;
+        r.observe(now, 100, { drawMs: 2 });
+        if (r.motionScale() !== last) changes++;
+        last = r.motionScale();
+      }
+      expect(r.motionScale(), `run ${run}`).toBe(1);
+      now += 2000;
+      r.pause();
+    }
+    // Down for the probe and back once, in the first run only.
+    expect(changes).toBe(2);
+    // Long after, a suspect run may probe again.
+    now += PROBE_MEMORY_MS;
+    feed(r, now, RUN, 100, { drawMs: 2 });
+    expect(r.motionScale()).toBeLessThan(1);
+  });
+
+  it('the table at rest is drawn at the full ratio REST_AFTER_MS after a slow run, whatever the motion scale', () => {
     const r = new AdaptiveResolution();
     r.setBase(2);
     feed(r, 0, RUN * 3, 60, { drawMs: 50 });
-    expect(r.motionScale()).toBeLessThan(1);
-    expect(REST_AFTER_MS).toBeGreaterThan(0);
+    const motion = r.motionScale();
+    expect(motion).toBeLessThan(1);
+    // The run's frames draw at the motion scale.
+    const inRun = frameScale({ rest: false, continuous: true, animated: false, motion, current: 1 });
+    expect(inRun).toBe(motion);
     r.pause();
-    // A pause keeps the motion scale for the next run (no thrash) but never touches the rest frame's full ratio.
-    expect(r.motionScale()).toBeLessThan(1);
+    // A pause keeps the motion scale for the next run (no thrash).
+    expect(r.motionScale()).toBe(motion);
+    const still = { changed: false, dirty: false, ambient: false, animated: false, renderScale: inRun };
+    // Not before REST_AFTER_MS: a pause between gestures does not resize the buffers.
+    expect(restDue({ ...still, sinceDrawMs: 0 })).toBe(false);
+    expect(restDue({ ...still, sinceDrawMs: REST_AFTER_MS - 1 })).toBe(false);
+    // At REST_AFTER_MS the still table is drawn once more, at the full ratio.
+    expect(restDue({ ...still, sinceDrawMs: REST_AFTER_MS })).toBe(true);
+    expect(frameScale({ rest: true, continuous: false, animated: false, motion, current: inRun })).toBe(1);
+    // Drawn at the full ratio, it rests: no further rest frame.
+    expect(restDue({ ...still, renderScale: 1, sinceDrawMs: REST_AFTER_MS * 10 })).toBe(false);
+    // A frame after a pause that is not the rest frame (a hover) keeps the scale in effect.
+    expect(frameScale({ rest: false, continuous: false, animated: false, motion, current: inRun })).toBe(inRun);
+    // Anything that changes or is due is drawn as itself, not as the rest frame.
+    for (const k of ['changed', 'dirty', 'ambient'] as const) expect(restDue({ ...still, [k]: true, sinceDrawMs: REST_AFTER_MS }), k).toBe(false);
+  });
+
+  it('a theme that animates by itself never rests and stays at the motion scale', () => {
+    const r = new AdaptiveResolution();
+    r.setBase(2);
+    feed(r, 0, RUN * 3, 60, { drawMs: 50 });
+    const motion = r.motionScale();
+    expect(restDue({ changed: false, dirty: false, ambient: false, animated: true, renderScale: motion, sinceDrawMs: REST_AFTER_MS * 100 })).toBe(false);
+    expect(frameScale({ rest: false, continuous: false, animated: true, motion, current: 1 })).toBe(motion);
   });
 });
