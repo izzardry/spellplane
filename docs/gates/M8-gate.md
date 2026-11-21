@@ -1,5 +1,80 @@
 # Gate M8-G, verifier run (21 Nov 2026)
 
+## Final verifier run, after the fix round (21 Nov 2026, 19:57 to 20:45)
+
+- **Result: red.** Every gate is green in Chromium, but WebKit could not run, two full-e2e tests fail on `m8`, CI is red, and the screenshots show one new blocking layout defect (F17).
+- **Branch:** `m8` at `aa89d04`, the same as `origin/m8`. No product code was changed by this run.
+
+### Runs (this Mac, one Playwright run at a time, through the pnpm scripts)
+
+| What | Chromium | WebKit |
+| --- | --- | --- |
+| `pnpm shots -- M8` (gate M8) | 7 / 7, 29 screenshots | not run. Test 1 failed with `browserType.connect: Timeout 180000ms exceeded`, and I stopped the run by its pid. The exit code 3 that followed came from that stop, not from a prompt. |
+| `pnpm shots -- M7 --project=chromium` (gate M7) | 11 / 11, 29 screenshots. The entry check passes (F2 fixed) | not run; the iPad touch smoke is WebKit only |
+| `pnpm e2e:gate -- M0 … M5 --project=chromium` | M0 1/1, M1 2/2, M2 1/1, M3 1/1 (F3 fixed), M4 6/6, M5 6/6 | not run |
+| `pnpm check` (in oomph, reservation r959) | green. 336 files: 4552 passed, 1 skipped, 9 todo (the keymap's pending M6 actions). `tests/unit/ui/routes.test.ts` asserts that the five leak files of contracts.md Part A hold no `it.todo` | — |
+| The specs CI failed on, rerun here (`pnpm e2e -- --project=chromium tests/e2e/offline/update.spec.ts tests/e2e/journey/quick-match.spec.ts`) | 4 passed, **2 failed**: `offline/update.spec.ts:18` and `journey/quick-match.spec.ts:111` | — |
+| Full `pnpm e2e` | not rerun locally. CI ran it on `aa89d04` (below) | — |
+
+- **WebKit:** the Mac Studio (192.168.178.80) is at the login window again: `ioreg` reports `kCGSSessionUserNameKey="unknown"` and `kCGSessionLoginDoneKey=No`. Its browser server (pid 43453, since 16:49) accepts connections, but the Playwright WebKit processes it starts stay at about 70 MB and never open a page. This is the same failure as at 13:12 earlier today. I did not touch the Studio's server.
+- **oomph:** my run's first reservation (r950, 3 GB, granted but never used) was left behind while the guard queued a second one (r951). I released r950, which belonged to my own run, and r951 was then granted. No exit 4 or 5.
+
+### CI on `aa89d04` (run 44937340703): red, 3 tests
+
+| Test | Browser | Since | Local |
+| --- | --- | --- | --- |
+| `offline/update.spec.ts:18`: a new version waits mid-game and applies at the lobby | Chromium | Fails on `7347f97` and `aa89d04`; passed on `6f98270`. The fix-round commit `815648a` is the first to fail. | **fails**. The page reaches `#/lobby` and shows "Updating to the new version…" (status `applying`), but it never reloads: `waitForEvent('load')` times out after 30 s. |
+| `journey/quick-match.spec.ts:111`: practise while you wait | Chromium (also Linux WebKit before) | Has failed on CI since `8d8fb9d` | **fails**. Both ACCEPT and both hashes reach `#/t/…`, but `table-frame[data-kind=room]` never appears on Ann's page. Her snapshot shows Home with `SEARCHING 0:31` and "You are the only one looking right now." |
+| `touch/gestures.spec.ts:247`: a second finger after a long-press makes it a camera gesture | Linux WebKit | Fails on `7347f97` and `aa89d04` | not run (no WebKit) |
+
+The Linux WebKit failures of earlier runs pass in this run: the axe audit panel, the private-table versus, the frame meter, the avatar tap, mouse-turn, captions and voice/hold. Captions and voice/hold had failed on `7347f97`, so those shards are still flaky.
+
+### Screenshot review (Chromium; `artifacts/shots/M8/`, `artifacts/shots/M7/`)
+
+I judged each of the 29 M8 screenshots, and the M7 set, against `mock.html` (board 1 and the system board from an earlier render; boards 5 and 7 from their markup), `visual.md` and `journey.md`.
+
+| Screen | Verdict |
+| --- | --- |
+| 01 Home, first run | Good. Board 1's centred column: the empty deck slot, four mode cards, the option row, the 56 px primary and the status line. The arena behind is a pale, very soft shape. |
+| 02a New deck chooser | Good. Four cards, one filled primary. |
+| 02 Deck page (custom) | F7 still open. The document has scrolled sideways and down, so the top bar and the left gutter are off screen, and the found card is cut at the left edge. |
+| 02b, 10, 13c Decks library | Good. The cover fans, strength pips, sparklines and the seal band are there, and the copy reads "M19 boo… (custom)" (F14 fixed). The queue bar is board 2's ink pill. |
+| 03, 05 Home with the deck as hero | Good column and facts, the `CONTINUE` strip and the saved toast. **F18:** the fan sits on a white rectangle the width of the fan (about 400 × 280 px), with pile edges under it. Board 1 has no box: its cards stand on the page over the arena. The fan shows card backs because `?faces=placeholder` has no image URL (`ui/home/deps.ts` `pageFaces`, by design). |
+| 04 Sparring table | No hint over Sparring's side (F2 fixed). **F17:** the own plate (x 16 to 430) covers the middle of the first hand card. |
+| 06, 21 History | Good. The rows have thumbnails. There is still no board-6 detail column and no `TODAY` grouping (both later). 21 reads "TAWNY WREN AND PLAYER" (F9). |
+| 07, 07b Waiting room (1280 × 800) | F5 still open. The legacy "Game settings" form (native selects, "Constructed de▾") sits on a white strip at the right. The page has scrolled, so the header and `← HOME` are off screen and the open seat is cut at the top. Seat names truncate ("Silver Panda (y…") and their status wraps. The presence line runs past the invite sheet's edge. |
+| 08, 12, 12b, 20 Private, matched and 4 FFA tables (1280 × 800) | Seven cards each, and no hint at the top. **F17:** the plate covers the first two hand cards. The voice row floats over the faces of cards 5 to 7, and its ⚙ overlaps `MUTE`. The evening bar (F6) covers card 1, matched tables included. A "Your turn · UNTAP ALL AND DRAW" toast repeats the primary's action just above the hand. The seat's name tag is half hidden behind the hand. |
+| 09 Game over | Good overlay. |
+| 11 Match found | Good. |
+| 13a Booster setup, 14 Draft night | Good. Board 0's boosters and board 5's hero. |
+| 13, 13b Booster deck and its copy | The lock and the conversion work. F8 still open: the name field shows "M19 boosters · 21 No", and "40 / 40 39 Casual ▮ 39 CASUAL" still shows the strength twice. |
+| 15 Draft waiting room (1440 × 900) | The header is right. F5 is still open: the left chair runs off the left edge, and the settings form is legacy (an unlabelled checkbox, a Timers fieldset). |
+| 16 Gathering | F1 and F13 fixed: a rounded card reading "4 FFA · TURN 3 · TULIP COAST BEACH 31". Both absent players are "Player" (F9). |
+| 17, 18 Plate menu and Bring back | Good. The volume slider wears ink (F12 fixed), the menu fits the 800 px window (F11 fixed), and the QR code, the link and `COPY LINK` are there. The sheet's body runs below the window at 1280 × 800 ("This link works once…" is cut), but the popover scrolls. |
+| 19, 19b Claim page and recovery | F1 fixed: rounded cards. **F19:** the recovery panel ("This browser lost your hidden cards…") opens over the claim card before `SIT DOWN`, hiding its title. It stays over the opponent's plate afterwards. |
+| M7 goldfish (Plain, Graphite), smoke (Kitchen Table, Codex) | The four looks render. The coach mark is whole, and `GOT IT` shows in the dark looks (F4 fixed). **F17** appears in every look: the plate covers the lower half of the first hand card at 1440 × 900. |
+| M7 tilt (four looks × three poses) | One continuous tilt. **F15** is still open: at first person the own graveyard and library sit half off the right edge (Plain, Kitchen Table, Codex). At mid-tilt and bird's-eye the coach mark covers the own battlefield cards. |
+| M7 feel, entry, HUD menu, plate menu | The lift, the squared snap and the draw show. The pile popover is a rounded rectangle (F1 fixed). The HUD menu fills the window height and scrolls, cutting its last row ("Settings…"). The sandbox menu still offers `Import deck…` under DECK, which journey 4.10 removes from the in-game menu. |
+
+### Findings after the fix round
+
+| # | Severity | Status | Finding | Design | Fix |
+| --- | --- | --- | --- | --- | --- |
+| W1 | blocking | open (environment) | WebKit unverified: the Studio's console is at the login window, so no WebKit gate (M0 to M5, M7, M8) and no WebKit e2e could run. F16 cannot be checked. | PLAN Gate M8-G (Chromium and WebKit) | Log in at the Studio's console, then run `pnpm shots -- M8`, `pnpm shots -- M7` and `pnpm e2e:gate -- M0 … M5` in WebKit. |
+| R1 | blocking | new since `815648a` | The update never applies: at `#/lobby` the status stays "Updating to the new version…" and the page does not reload (`offline/update.spec.ts:18`, here and on CI). | DESIGN offline/update; PLAN quality gates (full e2e green) | Bisect `815648a`: the BroadcastChannel and engine stall changes, the scene's context listeners, the hint changes. Check that `controllerchange` arrives and that `reload()` runs once the status is `applying` (`src/ui/storage/worker.ts`). |
+| R2 | blocking | open | Practice-to-match handoff: after ACCEPT over a practice table, the matched room's table never mounts. The page falls back to Home with the search still running (`journey/quick-match.spec.ts:111`, here and on CI). | journey.md 4.5 / 4.6 (practise while you wait) | Follow what M8-P8's TableFrame and M8-P7's MatchHost do on accept from `#/p/…`. The single host from `99a33cc` is the first suspect. |
+| R3 | blocking | open (CI only) | `touch/gestures.spec.ts:247` fails on Linux WebKit, twice in a row since the fix round. | PLAN quality gates (CI green) | Rerun when WebKit is back. The fix round changed the tap handling in `Avatar.svelte` and `touch/gestures` timing. |
+| F17 | blocking | new | The HUD's bottom row collides with the own hand on every table. The plate covers one card at 1440 × 900 and two at 1280 × 800. The voice row sits on the right cards' faces, with its ⚙ over `MUTE`. The evening bar covers card 1. | visual.md 2.9 board 7 (a 760 px hand fan, centred, with the plate at the bottom left), O-1 to O-7; owner O1 ("placed buttons … ordering absent of design") | Narrow the fan, or offset it past the plate (the fan's left edge at least 16 px right of the plate). Move the voice row into the talk button (board 7: talk beside the primary). Drop the evening bar in matches (F6). |
+| F18 | minor | new | A white box the width of the fan, with pile edges, sits behind Home's deck hero. | visual.md 2.8 "Deck hero", board 1 | Remove the surface behind `.ds-fan` on Home. The stack edges belong under the cover card only. |
+| F19 | minor | open since run 1 (was noted under F1) | The recovery panel covers the claim card before `SIT DOWN`. | journey.md 4.11 | Show the recovery panel only after the seat is claimed, or stack it below the claim card. |
+| F5 to F9, F15 | minor | open | As in the first run (below). | — | — |
+| F1 to F4, F10 to F14 | — | fixed and seen in screenshots or gates | — | — | — |
+| F16 | needs triage | unverified (WebKit) | — | — | — |
+
+---
+
+## First verifier run (21 Nov 2026)
+
 - **Result: red.** The owner-facing summary is in `docs/gates/M8.md`. This file is the run record: what ran, what failed and why, the screenshot review, and the findings with their fixes.
 - **Branch:** `m8`. The gate ran on `561d93a`, the integration result with all eleven packages merged. The gate spec and the harness fixes are commit `8d8fb9d`.
 - **Specs:**

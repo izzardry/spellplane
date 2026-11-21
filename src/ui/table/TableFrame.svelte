@@ -177,6 +177,8 @@
   });
 
   let readOnly = $state(false);
+  /** The gathering shows its claim page: the recovery panel waits until the seat is taken (journey.md 4.11; gate M8 F19). */
+  let claiming = $state(false);
 
   // Leaving (journey.md 4.10 "Leaving"): the arrow, `Leave to home`, the own plate's `Leave table`, GameOver's HOME and
   // the browser's Back all take this one path, once. leave.ts saves (the checkpointer), leaves, disposes, goes Home and
@@ -389,7 +391,7 @@
     <SpectatorView session={props.session} game={deps.game} link={props.link} identity={deps.identity} decks={deps.decks} cardData={deps.cardData} parseDecklist={deps.parseDecklist} createScene={deps.createScene} faces={deps.faces} settings={deps.settings} />
   {:else}
     {#if gather}
-      <Gathering {muster} table={st} code={props.code} onhome={() => void leave()} onreadonly={(on) => (readOnly = on)}>
+      <Gathering {muster} table={st} code={props.code} onhome={() => void leave()} onreadonly={(on) => (readOnly = on)} onclaiming={(on) => (claiming = on)}>
         {@render table()}
       </Gathering>
     {:else}
@@ -408,7 +410,7 @@
     {/if}
 
     {#if networked && deps}
-      <RecoveryPanel session={props.session} cardData={deps.cardData} parse={deps.parseDecklist ?? parsePlainList} />
+      {#if !claiming}<RecoveryPanel session={props.session} cardData={deps.cardData} parse={deps.parseDecklist ?? parsePlainList} />{/if}
       {#if st.stage !== 'lobby'}<SpectatorPanel session={props.session} />{/if}
     {/if}
   {/if}

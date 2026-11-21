@@ -16,6 +16,7 @@
     touch = false,
     bottom = null,
     hidden = false,
+    corner = false,
   }: {
     coach: CoachController;
     touch?: boolean;
@@ -23,6 +24,11 @@
     bottom?: string | null;
     /** Nothing is shown (a read-only table, a prompt in the slot); the mark waits and returns. */
     hidden?: boolean;
+    /**
+     * A wide desktop window: the mark sits bottom left, just above the own plate and left of the hand fan, where it
+     * covers neither KEEP and MULLIGAN nor the own battlefield's near edge (gate M8 screenshot review).
+     */
+    corner?: boolean;
   } = $props();
 
   let id = $state<CoachMarkId | null>(untrack(() => coach.current()));
@@ -35,7 +41,7 @@
 </script>
 
 {#if id && shown && !hidden}
-  <aside class="coach ds-coach" style:bottom={bottom} data-testid="coach-mark" data-coach={id} data-anchor={shown.anchor} aria-live="polite">
+  <aside class="coach ds-coach" class:corner style:bottom={corner ? null : bottom} data-testid="coach-mark" data-coach={id} data-anchor={shown.anchor} aria-live="polite">
     <span class="dot" aria-hidden="true"></span>
     <span class="text ds-coach__text">{shown.text}</span>
     <Button variant="ghost" size={touch ? 'md' : 'xs'} data-testid="coach-dismiss" onclick={() => id && coach.dismiss(id)}>Got it</Button>
@@ -65,6 +71,15 @@
     font-size: var(--ds-type-body, 13px);
     line-height: 1.3;
     animation: appear 160ms ease-out;
+  }
+  .coach.corner {
+    left: calc(var(--ds-edge, 16px) + env(safe-area-inset-left, 0px));
+    /* The own plate (72 high, 16 from the edge) and 16 clear. */
+    bottom: calc(2 * var(--ds-edge, 16px) + 72px);
+    transform: none;
+    margin-bottom: 0;
+    /* No wider than the own plate under it, so it never reaches the fan beside the plate. */
+    max-width: 336px;
   }
   .dot {
     flex: none;

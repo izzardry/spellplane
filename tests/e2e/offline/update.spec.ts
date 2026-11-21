@@ -41,7 +41,10 @@ test('a new version waits mid-game with the notice, and applies at the lobby, re
   await page.evaluate(() => window.__spellplane!.session!.shuffle());
   expect(await updateStatus(page)).toBe('available');
 
-  // At the start page the update applies: the new worker takes over and the page reloads (the marker is gone).
+  // At the start page the update applies: the new worker takes over and the page reloads (the marker is gone). The
+  // start page fetches a font the solo table never needed, through the old worker, while the browser hands over;
+  // Chromium then holds the new version back until the page reloads, which worker.ts does after APPLY_FALLBACK_MS
+  // (gate M8 R1). The spec waits for the load, never for the time.
   const reloaded = page.waitForEvent('load', { timeout: 30_000 });
   await page.evaluate(() => (location.hash = '#/lobby'));
   await reloaded;

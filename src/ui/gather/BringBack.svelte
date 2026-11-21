@@ -116,7 +116,8 @@
   }
   .meta {
     margin: 0;
-    font: var(--ds-type-small);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-small);
     color: var(--ds-muted);
   }
   .danger {

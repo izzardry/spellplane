@@ -91,11 +91,14 @@
   }
   .title {
     margin: 0;
-    font: var(--ds-type-title);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-title);
+    font-weight: var(--ds-heading-weight);
   }
   .text {
     margin: 0;
-    font: var(--ds-type-body);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-body);
     color: var(--ds-muted);
   }
   .field {
@@ -104,7 +107,8 @@
     gap: var(--ds-space-xs);
   }
   .label {
-    font: var(--ds-type-label);
+    font-family: var(--ds-font-body);
+    font-size: var(--ds-type-label);
     letter-spacing: var(--ds-label-spacing);
     text-transform: var(--ds-label-case);
     color: var(--ds-muted);

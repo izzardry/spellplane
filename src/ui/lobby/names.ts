@@ -26,3 +26,9 @@ function pick(n: number, random: () => number): number {
 export function randomNickname(random: () => number = Math.random): string {
   return `${NICK_FIRST[pick(NICK_FIRST.length, random)]!} ${NICK_SECOND[pick(NICK_SECOND.length, random)]!}`;
 }
+
+/** Whether `name` has the shape of a made-up nickname (two words of the lists above), not one a player chose. */
+export function isMadeUpNickname(name: string): boolean {
+  const [first, second, ...rest] = name.trim().split(' ');
+  return rest.length === 0 && !!first && !!second && NICK_FIRST.includes(first) && NICK_SECOND.includes(second);
+}

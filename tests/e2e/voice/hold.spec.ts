@@ -315,10 +315,20 @@ test.describe('on a touch screen (iPad emulation: a touch context, the iPad Pro 
     expect(await pressSeen(a)).toBe(0);
 
     // A finger held still on the table: a held press until it lifts.
+    const longPresses = async (): Promise<number> => (await hook<{ kind: string }[]>(a, 'touch.gestures')).filter((g) => g.kind === 'longPress').length;
+    const longBefore = await longPresses();
     await fingers(a, [{ type: 'down', id: 1, ...p0 }]);
     await expect.poll(() => pressHeld(a)).toBe(true);
     await fingers(a, [{ type: 'up', id: 1, ...p0 }]);
     await expect.poll(() => pressHeld(a)).toBe(false);
+    // A finger held past the long-press (a slow runner's round trips) opens the table menu where it lifts (gate M8 R3:
+    // the pinch below then landed on that menu, not on the table): close it, so the pinch starts on the table.
+    if ((await longPresses()) > longBefore) {
+      await expect(a.getByTestId('context-menu')).toBeVisible();
+      await a.keyboard.press('Escape');
+    }
+    await expect(a.getByTestId('context-menu')).toHaveCount(0);
+    expect(await a.evaluate((p) => document.elementFromPoint(p.x, p.y)?.tagName ?? null, p0)).toBe('CANVAS');
 
     // A pinch is one press: it stays held when the first finger lifts and ends with the last one.
     const q = { x: p0.x + 60, y: p0.y };

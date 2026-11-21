@@ -45,22 +45,32 @@ export async function holdTalk(page: Page): Promise<void> {
 
 /** Store a setting in the profile's IndexedDB (as the settings panel would), before the table opens. */
 async function storeSetting(page: Page, profile: string, name: string, value: unknown): Promise<void> {
+  const db = `spellplane-${profile}`;
+  // The page creates the profile's database a moment after its debug hook appears (a slow runner: seconds). Opening it
+  // before would create an empty one without the settings store, and the put would throw inside the callback and hang
+  // the test (gate M8 R3, captions.spec on CI's Linux WebKit): wait until the page made it.
+  await expect.poll(() => page.evaluate(async (n) => (await indexedDB.databases()).some((d) => d.name === n), db), { timeout: 20_000 }).toBe(true);
   await page.evaluate(
     ([db, n, v]) =>
       new Promise<void>((resolve, reject) => {
         const req = indexedDB.open(db as string);
         req.onerror = () => reject(req.error);
         req.onsuccess = () => {
-          const tx = req.result.transaction('settings', 'readwrite');
-          tx.objectStore('settings').put({ name: n, value: v });
-          tx.oncomplete = () => {
+          try {
+            const tx = req.result.transaction('settings', 'readwrite');
+            tx.objectStore('settings').put({ name: n, value: v });
+            tx.oncomplete = () => {
+              req.result.close();
+              resolve();
+            };
+            tx.onerror = () => reject(tx.error);
+          } catch (e) {
             req.result.close();
-            resolve();
-          };
-          tx.onerror = () => reject(tx.error);
+            reject(e instanceof Error ? e : new Error(String(e)));
+          }
         };
       }),
-    [`spellplane-${profile}`, name, value] as const,
+    [db, name, value] as const,
   );
 }
 

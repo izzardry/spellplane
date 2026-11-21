@@ -1047,4 +1047,4 @@ Ticked by the main session as packages are merged and gates pass.
 - [x] M8-P6 Computer opponent
 - [x] M8-P7 Matchmaking
 - [x] M8-P8 Journey integration
-- [ ] M8-G Gate (with M7's table checks) and owner review (gate run 21 Nov: red, see docs/gates/M8.md)
+- [ ] M8-G Gate (with M7's table checks) and owner review (gate runs 21 Nov: red twice; the final run after the fix round is green on every gate in Chromium, but WebKit could not run, two e2e tests fail and F17 is open; see docs/gates/M8.md)

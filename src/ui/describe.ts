@@ -22,6 +22,7 @@ import { parseZoneId } from '../core/ids';
 import { parseChatText, type ChatTab } from '../core/log';
 import { isSpectatorId } from '../core/teams';
 import { spectatorLabel } from '../net/roles';
+import { isMadeUpNickname } from './lobby/names';
 
 /**
  * A piece of a log line: text, a table card that previews on hover, or (chat, M1-P6) a card named in double brackets
@@ -271,8 +272,8 @@ function chairLine(a: Action, chairs: Chairs): Seg[] | 'skip' | null {
     if (a.group !== undefined) chairs.moves.add(a.group);
     if (!prev || prev.peer !== a.peer) return a.group !== undefined ? [t('moves to another chair')] : null;
     // A first nickname over the placeholder a chair is taken with before the lobby saved one (session/net.ts
-    // DEFAULT_NICKNAME) is no rename worth a line.
-    if (prev.name !== a.name) return prev.name === '' || prev.name === PLACEHOLDER_NAME ? 'skip' : [t(`changes their name from ${prev.name}`)];
+    // DEFAULT_NICKNAME), or over the made-up one a fresh browser joins with (ui/lobby/names.ts), is no rename worth a line.
+    if (prev.name !== a.name) return prev.name === '' || prev.name === PLACEHOLDER_NAME || isMadeUpNickname(prev.name) ? 'skip' : [t(`changes their name from ${prev.name}`)];
     return prev.colour !== a.colour ? [t('changes their seat colour')] : 'skip';
   }
   if (a.type === 'seatLeave') {

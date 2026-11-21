@@ -45,6 +45,14 @@
   let props: Partial<AppProps> & { newRoom?: () => RoomLink; registerTable?: (session: TableSession) => () => void } = $props();
 
   let route = $state<Route>(parseRoute(typeof location === 'undefined' ? '' : location.hash));
+  /**
+   * Show `next` unless it is the route already shown. One move can fire several hashchange events (the leave guard's
+   * Home and its target land as two), and each new route object would wake every page reading it: a table route
+   * joined its room once per event, and the extra joins stalled the real one (gate M8 R2).
+   */
+  function show(next: Route): void {
+    if (JSON.stringify(next) !== JSON.stringify(untrack(() => route))) route = next;
+  }
   const go = (hash: string): void => {
     location.hash = hash;
   };
@@ -75,11 +83,11 @@
         // the tab, another table) is where the player asked to be. The left table itself is never the target.
         const asked = parseRoute(target);
         if (keepsTarget(asked) && location.hash !== target) location.hash = target;
-        route = parseRoute(location.hash);
+        show(parseRoute(location.hash));
       });
       return;
     }
-    route = next;
+    show(next);
   }
 
   // The viewer's theme (PLAN M4-P6): kept in this browser's settings, shared with the shells below through the

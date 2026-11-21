@@ -5,6 +5,7 @@ import { createTableScene } from './scene/index';
 import { registerBaseRender } from './scene/lifecycle';
 import { createSoloSession, LONE_WAIT_MS, openNetSession, openSpectatorSession, type NetSession, type TableSession } from './session/index';
 import { liveIdentity } from './session/live-identity';
+import { randomNickname } from './ui/lobby/names';
 import { createPageTransport, KillableTransport, pageTransportKind } from './session/transports';
 import { createSetCache, openStores, requestPersistentStorage, SOLO_ROOM_ID, storageStatus, type LocalStores } from './store/index';
 import App from './ui/App.svelte';
@@ -137,11 +138,14 @@ async function boot(el: HTMLElement): Promise<void> {
    * Join a table link with the networked session (the table route leaves it when the route goes away). A join still
    * under way when the page leaves that link's route is cancelled, so its engine and transport do not live on.
    */
-  async function openRoom(link: RoomLink, as: { watch?: boolean } = {}): Promise<NetSession> {
+  async function openRoom(link: RoomLink, as: { watch?: boolean; signal?: AbortSignal } = {}): Promise<NetSession> {
     if (!stores || !identity) throw new Error('this browser blocks local storage, which a table needs for your identity and your hidden cards');
     // A matched room (matchmaking.md 2.9; contracts.md Part D): seat 0 of its MatchRecord creates the table, every
     // other member never sits alone; so does a browser that opens a re-invite link (`rejoin`).
     const me = await identity.identity();
+    // A fresh browser that opens a link sits down under a made-up two-word nickname, as Home gives one on a first visit
+    // (journey.md J27 and 4.9; gate M8 finding F9: two guests were both "Player"). A spectator needs none.
+    if (!as.watch && !me.nickname.trim()) await identity.store.setNickname(randomNickname()).catch(() => undefined);
     const record = await stores.matches.get(link.roomId).catch(() => null);
     const here = parseRoute(location.hash);
     const rejoin = here.name === 'room' && here.room === link.roomId && !!here.rejoin;
@@ -149,6 +153,9 @@ async function boot(el: HTMLElement): Promise<void> {
     const neverAlone = (!!record && !creator) || rejoin;
     let transport: KillableTransport | null = null;
     const joining = new AbortController();
+    // The route gave the join up (RoomRoute: it went away, or the link or watching changed).
+    if (as.signal?.aborted) joining.abort();
+    else as.signal?.addEventListener('abort', () => joining.abort(), { once: true });
     const onHash = (): void => {
       const r = parseRoute(location.hash);
       if (r.name !== 'room' || r.room !== link.roomId || r.key !== link.roomKey || (r.watch === true) !== (as.watch === true)) joining.abort();
