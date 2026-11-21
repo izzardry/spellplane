@@ -53,10 +53,14 @@
   let leaveGuard: (() => Promise<void>) | null = null;
   setLeaveGuardHost((leave) => (leaveGuard = leave));
   const tableRoute = (r: Route): boolean => r.name === 'room' || r.name === 'practice' || r.name === 'computer';
+  /** The same table (a room's `/watch` or `/rejoin/…` suffix changing is not leaving it). */
+  const sameTable = (a: Route, b: Route): boolean =>
+    (a.name === 'room' && b.name === 'room' && a.room === b.room && a.key === b.key) ||
+    ((a.name === 'practice' || a.name === 'computer') && a.name === b.name && a.room === (b as typeof a).room);
   function onHashChange(): void {
     const next = parseRoute(location.hash);
     const guard = leaveGuard;
-    if (guard && tableRoute(route) && routeHash(next) !== routeHash(route)) {
+    if (guard && tableRoute(route) && !sameTable(route, next)) {
       leaveGuard = null;
       const target = location.hash;
       void guard().finally(() => {

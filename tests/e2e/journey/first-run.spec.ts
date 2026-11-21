@@ -37,6 +37,8 @@ test.describe('journey: the first run', () => {
       await expect(page.locator('[data-testid="log"][data-open="true"]')).toHaveCount(0);
       await expect(page.locator('[role="dialog"]:visible, [role="alertdialog"]:visible')).toHaveCount(0);
       await expect(page.getByTestId('first-run-sheet')).toHaveCount(0);
+      // The cover in the look's backdrop faded once the scene drew (contracts.md Part G "Journey and Home" item 4).
+      await expect(page.getByTestId('frame-cover')).toHaveCount(0);
       expect(await keydowns(page)).toBe(0);
     }, { timeout: 60_000 });
 

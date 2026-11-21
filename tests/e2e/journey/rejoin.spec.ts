@@ -35,7 +35,8 @@ test.describe('journey: leave, History, rejoin and bring back', () => {
         await leaveByArrow(a);
         await expect(a.getByTestId('toast').filter({ hasText: 'You left the table. The game goes on; your seat is kept.' })).toHaveCount(1);
         await expect.poll(async () => (await state(b)).seats.s0?.away === true, { timeout: 10_000 }).toBe(true);
-        await expect(b.getByTestId('hud-notice')).toContainText(/left/i, { timeout: 10_000 });
+        const ann = (await state(b)).seats.s0!.name;
+        await expect(b.getByTestId('hud-notice')).toContainText(`${ann} left. The game goes on; ${ann} can come back.`, { timeout: 10_000 });
         await expect(b.locator('[data-testid="avatar"][data-seat="s0"]')).toHaveAttribute('data-away', 'true');
       }, { timeout: 30_000 });
 
