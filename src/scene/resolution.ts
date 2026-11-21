@@ -26,9 +26,11 @@
  *   second), far slower than any frame worth adapting to: dropped too.
  * - Below that, one long gap with a short draw cannot tell a covered window from a slow GPU (the draw is the CPU time
  *   of the render calls; a GPU-bound frame keeps it short however slow the GPU is). So such a run is judged by effect:
- *   it steps down as any slow run does, and if the next run's median gap is not clearly shorter, fewer pixels did not
- *   help (a covered window is not paced by the scene's pixels; a slow GPU is): the step is undone and gaps are ignored
- *   until a frame at the display rate arrives or the run ends.
+ *   it goes straight to the floor (MIN_PIXEL_RATIO; one 0.8 step is too small to show on a GPU whose gaps land on
+ *   vsync multiples or that pays a share of each frame whatever the pixels), and if the next run's median gap is not
+ *   clearly shorter there, fewer pixels did not help (a covered window is not paced by the scene's pixels; a slow GPU
+ *   is): the scale goes back and gaps are ignored until a frame at the display rate arrives. A failed probe is
+ *   remembered for PROBE_MEMORY_MS across runs, so each new drag or pan does not probe (and reallocate) again.
  */
 
 /** Median frame cost (ms) of a run above which the motion scale goes down (under 48 fps). */
@@ -52,6 +54,8 @@ export const COVERED_GAP_MS = 50;
 export const COVERED_DRAW_MS = 8;
 /** A step down on such a run holds when the next run's median gap is at most this share of the one before. */
 export const HELPED_RATIO = 0.9;
+/** After a probe that did not help, suspect runs keep the scale for this long (ms), across pauses. */
+export const PROBE_MEMORY_MS = UP_MAX_MS;
 /** A gap this long (ms) with a short draw is a throttled window (about one frame a second), never the scene's cost. */
 export const THROTTLED_GAP_MS = 1000;
 
@@ -72,6 +76,55 @@ export function foreignGap(costMs: number, ctx: FrameContext = {}): boolean {
 /** Whether a run's gaps are long while its draws are short: a covered window or a slow GPU (judged by effect). */
 export function suspectRun(medianCostMs: number, medianDrawMs: number | null): boolean {
   return medianDrawMs !== null && medianCostMs >= COVERED_GAP_MS && medianDrawMs <= COVERED_DRAW_MS;
+}
+
+/** What the frame loop knows when it decides whether a still table is drawn once more at the full ratio. */
+export interface RestInput {
+  /** The table changed this tick (a card moved, an animation ran, a face arrived). */
+  changed: boolean;
+  /** Something asked for a redraw (a resize, a camera change, a new theme). */
+  dirty: boolean;
+  /** An ambient frame is due (a ping fading, the pending pulse, the foil sheen). */
+  ambient: boolean;
+  /** The theme animates by itself (lights, particles): it never rests. */
+  animated: boolean;
+  /** The render scale of the last drawn frame (1: the full ratio). */
+  renderScale: number;
+  /** Time since the last drawn frame, ms. */
+  sinceDrawMs: number;
+}
+
+/**
+ * Whether this tick draws the rest frame: nothing changed, nothing is due, the last frame was drawn below the full
+ * ratio, the theme does not animate by itself, and REST_AFTER_MS have passed since the last drawn frame.
+ */
+export function restDue(i: RestInput): boolean {
+  return !i.changed && !i.dirty && !i.ambient && !i.animated && i.renderScale < 1 && i.sinceDrawMs >= REST_AFTER_MS;
+}
+
+/** What decides the render scale of a frame that is drawn. */
+export interface FrameScaleInput {
+  /** The frame is the rest frame (restDue). */
+  rest: boolean;
+  /** The tick before this one drew too: a continuous run (an animation, a drag, a pan). */
+  continuous: boolean;
+  /** The theme animates by itself. */
+  animated: boolean;
+  /** The adaptive resolution's motion scale (AdaptiveResolution.motionScale). */
+  motion: number;
+  /** The scale in effect. */
+  current: number;
+}
+
+/**
+ * The render scale for a drawn frame: the full ratio for the rest frame; the motion scale within a run of frames or
+ * while the theme animates by itself; else the scale in effect (one frame after a pause, e.g. a hover, does not resize
+ * the buffers).
+ */
+export function frameScale(i: FrameScaleInput): number {
+  if (i.rest) return 1;
+  if (i.continuous || i.animated) return i.motion;
+  return i.current;
 }
 
 /** The lowest pixel ratio the motion scale goes to. */
@@ -95,6 +148,8 @@ export class AdaptiveResolution {
   private probe: { before: number; scale: number } | null = null;
   /** A step down did not shorten the gaps: frames are not counted until one at the display rate (or a new run). */
   private stalled = false;
+  /** When a probe last failed: suspect runs do not probe again until PROBE_MEMORY_MS later. */
+  private probeFailedAt = -Infinity;
   private fastSince: number | null = null;
   private upAfter = UP_AFTER_MS;
   private lastUp = -Infinity;
@@ -111,6 +166,7 @@ export class AdaptiveResolution {
     this.draws = [];
     this.probe = null;
     this.fastSince = null;
+    this.probeFailedAt = -Infinity;
   }
 
   /** The lowest scale: MIN_PIXEL_RATIO, or the full ratio if that is lower. */
@@ -153,15 +209,24 @@ export class AdaptiveResolution {
         this.draws = [];
         this.fastSince = null;
         this.stalled = true;
+        this.probeFailedAt = now;
         return;
       }
     }
     if (m > SLOW_MS) {
       this.fastSince = null;
-      const next = this.quantise(this.motion * STEP);
+      const drawn = this.draws.filter((d): d is number => d !== null);
+      const suspect = suspectRun(m, drawn.length === this.draws.length ? median(drawn) : null);
+      // A suspect run probes at the floor; after a failed probe it keeps the scale (fewer pixels did not help).
+      if (suspect && now - this.probeFailedAt < PROBE_MEMORY_MS) {
+        this.costs = [];
+        this.draws = [];
+        this.stalled = true;
+        return;
+      }
+      const next = suspect ? this.floor() : this.quantise(this.motion * STEP);
       if (next < this.motion) {
-        const drawn = this.draws.filter((d): d is number => d !== null);
-        if (suspectRun(m, drawn.length === this.draws.length ? median(drawn) : null)) this.probe = { before: m, scale: this.motion };
+        if (suspect) this.probe = { before: m, scale: this.motion };
         this.motion = next;
         this.costs = [];
         this.draws = [];

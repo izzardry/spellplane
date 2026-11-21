@@ -4,10 +4,12 @@
  * is a measured cost in Safari; PLAN Milestone 8, M7-P1 Lifecycle). With a table mounted and the HUD's menu-like panels,
  * the log drawer, a dialog and a toast open in turn, no element whose box intersects the scene host computes a
  * `backdrop-filter` (or its WebKit prefix) other than none, or a `filter` with a blur. Each surface is scanned only once
- * it is on screen; a menu, a drawer and a dialog must each have been scanned (a toast where the HUD shows one).
+ * it is on screen; a menu, a drawer, a dialog and a toast must each have been scanned (the toast is raised by importing
+ * a decklist: the HUD's "Imported N cards"). The scan covers each element's ::before and ::after too.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { freshProfile, openSolo } from '../solo/helpers';
+import { menuItem } from '../helpers/hud';
+import { decklist, freshProfile, openSolo } from '../solo/helpers';
 
 interface Offender {
   tag: string;
@@ -27,11 +29,15 @@ function offenders(page: Page): Promise<Offender[]> {
     for (const el of Array.from(document.querySelectorAll('body *'))) {
       const r = el.getBoundingClientRect();
       if (r.width === 0 || r.height === 0 || r.right <= h.left || r.left >= h.right || r.bottom <= h.top || r.top >= h.bottom) continue;
-      const cs = getComputedStyle(el) as CSSStyleDeclaration & { webkitBackdropFilter?: string };
-      const backdrop = cs.backdropFilter || cs.webkitBackdropFilter || 'none';
-      const filter = cs.filter || 'none';
-      if ((backdrop !== 'none' && backdrop !== '') || /blur/i.test(filter))
-        out.push({ tag: el.tagName.toLowerCase(), testid: el.getAttribute('data-testid'), cls: String(el.className), backdrop, filter });
+      // The element and its generated boxes (a pseudo-element's box lies within its element's here).
+      for (const pseudo of [null, '::before', '::after']) {
+        const cs = getComputedStyle(el, pseudo) as CSSStyleDeclaration & { webkitBackdropFilter?: string };
+        if (pseudo && (cs.content === 'none' || cs.content === 'normal')) continue;
+        const backdrop = cs.backdropFilter || cs.webkitBackdropFilter || 'none';
+        const filter = cs.filter || 'none';
+        if ((backdrop !== 'none' && backdrop !== '') || /blur/i.test(filter))
+          out.push({ tag: el.tagName.toLowerCase() + (pseudo ?? ''), testid: el.getAttribute('data-testid'), cls: String(el.className), backdrop, filter });
+      }
     }
     return out;
   });
@@ -97,15 +103,21 @@ const OPENERS: Opener[] = [
     kind: 'toast',
     name: 'toast',
     open: async (page) => {
-      // The kit's toast host (M7-P2 mounts it over the table) or the old HUD's toast: whichever this HUD has showing.
-      return page.getByTestId('toast').first().isVisible().catch(() => false);
+      // Importing a decklist raises the HUD's toast ("Imported 60 cards and a 3-card sideboard") over the table.
+      await menuItem(page, 'open-deck-import');
+      await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
+      await page.getByTestId('deck-check').click();
+      await page.getByTestId('deck-import-go').click();
+      await expect(page.getByTestId('deck-import')).toHaveCount(0);
+      return true;
     },
-    panel: (page) => page.getByTestId('toast').first(),
+    // The HUD's own toast or the kit's toast host, whichever shows it.
+    panel: (page) => page.getByTestId('toast').or(page.getByTestId('toast-host')).first(),
   },
 ];
 
-/** The kinds the acceptance names that the HUD on this branch can open without another package's code. */
-const REQUIRED: Kind[] = ['menu', 'drawer', 'dialog'];
+/** The kinds the acceptance names. */
+const REQUIRED: Kind[] = ['menu', 'drawer', 'dialog', 'toast'];
 
 test('no element over the table computes a backdrop filter or a blur, whatever is open', async ({ page }, info) => {
   test.setTimeout(90_000);
@@ -127,6 +139,5 @@ test('no element over the table computes a backdrop filter or a blur, whatever i
       await page.keyboard.press('Escape');
     });
   info.annotations.push({ type: 'opened', description: opened.join(', ') });
-  // The toast joins REQUIRED once the rebuilt HUD (M7-P2) shows the kit's toast host over the table.
   expect([...kinds].filter((k) => REQUIRED.includes(k)).sort()).toEqual([...REQUIRED].sort());
 });

@@ -19,7 +19,7 @@ import { loadTheme, type ThemeId } from '../themes/index';
 import { createBuilderSurfaceImpl } from './builder';
 import { createDraftSurfaceImpl } from './draft';
 import { createStage } from './stage';
-import { renderArenaStill } from './still';
+import { clearArenaStillCache, renderArenaStill } from './still';
 import { registerDebug } from '../util/debug';
 import type { Format } from '../core/types';
 import { TABLE_FORMAT_SEATS } from '../core/teams';
@@ -71,6 +71,11 @@ export interface SceneHarnessApi {
    * and whether the still contains card-face colours. `noWebgl` makes WebGL unavailable for this call.
    */
   arenaStill(theme: string, width: number, noWebgl?: boolean): Promise<ArenaStillReport | null>;
+  /**
+   * The arena still as Home asks for it (no frame wanted), for each of `widths` in turn after the cache is cleared:
+   * the Blob's size, and whether it is the very Blob an earlier call in the list resolved (the kept still).
+   */
+  arenaStillKept(theme: string, widths: number[]): Promise<{ bytes: number; kept: boolean }[]>;
 }
 
 /** What `arenaStill` reports (tests/e2e/scene/still.spec.ts). */
@@ -271,6 +276,18 @@ export function mount(target: HTMLElement): void {
       surface?.dispose();
       surface?.host.remove();
       surface = null;
+    },
+    async arenaStillKept(id, widths) {
+      const theme = await loadTheme(id as ThemeId);
+      clearArenaStillCache();
+      const seen: Blob[] = [];
+      const out: { bytes: number; kept: boolean }[] = [];
+      for (const width of widths) {
+        const b = await renderArenaStill(theme, { width });
+        out.push({ bytes: b?.size ?? 0, kept: !!b && seen.includes(b) });
+        if (b) seen.push(b);
+      }
+      return out;
     },
     async arenaStill(id, width, noWebgl = false) {
       const theme = await loadTheme(id as ThemeId);

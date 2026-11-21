@@ -40,7 +40,7 @@ import { CardBoxes, CardLayer, ContactShadows, boxShape, legibleOutlineMm, type 
 import { BACK_KEY, FaceTextures } from './faces';
 import { FOIL_SHEEN, TABLE_FOIL, foilHue, foilSheenColour } from './foil';
 import { ambientDue, uploadScale } from './pacing';
-import { AdaptiveResolution, REST_AFTER_MS } from './resolution';
+import { AdaptiveResolution, frameScale, restDue } from './resolution';
 import { renderSwitches } from './switches';
 import { clampShade } from './materials';
 import { setTextureAnisotropy } from './quality';
@@ -728,6 +728,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     const segs = [...m.segments, ...extra.segments];
     const pos: number[] = [];
     for (let i = 0; i < segs.length; i += 4) pos.push(segs[i]!, 0.05, -segs[i + 1]!, segs[i + 2]!, 0.05, -segs[i + 3]!);
+    // three.js frees a GL buffer only for the attributes on a geometry at its dispose: release the old one first (the
+    // geometry is uploaded again on the next draw).
+    if (markGeometry.getAttribute('position')) markGeometry.dispose();
     markGeometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     markGeometry.computeBoundingSphere();
     markLabels = [...m.labels, ...extra.labels];
@@ -1375,15 +1378,9 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
   /** The full pixel ratio the adaptive resolution was last told. */
   let resolutionBase = 0;
 
-  /**
-   * The render scale for a frame (scene/resolution.ts): the motion scale within a run of frames or while the theme
-   * animates by itself; the full ratio for the frame that redraws a still table at rest; else the scale in effect
-   * (one frame after a pause, e.g. a hover, does not resize the buffers).
-   */
+  /** The render scale for a drawn frame (scene/resolution.ts frameScale). */
   function scaleFor(rest: boolean, continuous: boolean): number {
-    if (rest) return 1;
-    if (continuous || animated()) return resolution.motionScale();
-    return runtime.renderScale;
+    return frameScale({ rest, continuous, animated: animated(), motion: resolution.motionScale(), current: runtime.renderScale });
   }
 
   function tick(): void {
@@ -1522,7 +1519,7 @@ export function createTableScene(host: HTMLElement, opts: TableSceneOptions): Sc
     if (foilsDrawn.size > 0 && theme.cardDressing.foilSheen && !reduced() && now - lastSheen >= FOIL_SHEEN.frameMs) ambient = true;
     if (ambient && !changed && !dirty && !ambientDue(frameCost, now - drewAt)) ambient = false;
     // A still table drawn below the full pixel ratio (a run of frames just ended) is drawn once more at the full ratio.
-    const rest = !changed && !dirty && !ambient && runtime.renderScale < 1 && !animated() && now - drewAt >= REST_AFTER_MS;
+    const rest = restDue({ changed, dirty, ambient, animated: animated(), renderScale: runtime.renderScale, sinceDrawMs: now - drewAt });
     if (changed || dirty || ambient || rest) {
       if (foilsDrawn.size > 0) lastSheen = now;
       rescaledLast = runtime.setRenderScale(scaleFor(rest, continuous));
