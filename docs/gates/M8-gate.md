@@ -1,5 +1,7 @@
 # Gate M8-G, verifier run (21 Nov 2026)
 
+> **Latest:** Round 2 (23:04 to 23:40, on `c2e34bc`) is the last section of this file. Result: red (W1 WebKit down, CI red with N1, N2 and R3, a flaky gate M0 spec, H1).
+
 ## Final verifier run, after the fix round (21 Nov 2026, 19:57 to 20:45)
 
 - **Result: red.** Every gate is green in Chromium, but WebKit could not run, two full-e2e tests fail on `m8`, CI is red, and the screenshots show one new blocking layout defect (F17).
@@ -234,3 +236,112 @@ Fixed in the product, each with a test:
 | CI harness races | `nokeys/mouse-turn` (hover before click), `design/kit` (entrance fade), `touch/gestures` avatar tap (tap told from double-tap late), `settings/frame-meter` (no rAF in one short phase), `lobby/private` (versus already gone), `a11y/axe` audit panel (the round's own timer outlasted the scan). | the specs themselves |
 
 Left open: F5 (waiting room's legacy settings form), F6 (evening bar from turn 1), F7/F8 (deck page overflow and header), F9 (a fresh browser joins as "Player"), F15 (first-person piles off the right edge), the full `pnpm e2e` in WebKit, and real Safari. `journey/quick-match.spec.ts:111` failed on CI twice: Ann's join of the matched room timed out ("Timed out waiting for the table to sync") while Ben waited at DEALING. It passes locally in Chromium. The stall fix may cover it (a table mount stalls the page like a theme switch does), but that is unproven until CI runs.
+
+---
+
+## Round 2: verifier run after the regression and layout rounds (21 Nov 2026, 23:04 to 23:40)
+
+- **Result: red.** `pnpm check` and every gate pass in Chromium, apart from one gate M0 run that failed on a random shuffle (H1). WebKit could not run, and CI is red with 5 tests.
+- **Branch:** `m8` at `c2e34bc` (the integrator's merge of `m8-regress` and `m8-layout`), the same as `origin/m8`. This run changed no product code and no test.
+- **What the two rounds fixed:** R1, R2, F6, F7, F9, F15, F17, F18 and F19, as the screenshots, the gates and CI show. F8 is fixed apart from one leftover. F5 is partly fixed. R3 is still open.
+- **New:** three CI failures (N1 to N3, blocking), a gate M0 spec that depends on an unseeded shuffle (H1), and minor layout defects (N4 to N11).
+
+### Runs (this Mac, one Playwright run at a time, through the pnpm scripts)
+
+| What | Chromium | WebKit |
+| --- | --- | --- |
+| `pnpm check` (oomph reservation r1025, peak 1.9 GB, 150 s) | green. tsc; svelte-check: 2028 files, 0 errors, 0 warnings; eslint clean (module boundaries included); vitest: 337 files, 4563 passed, 1 skipped, 9 todo | — |
+| `pnpm shots -- M8` (gate M8) | 7 / 7, 29 screenshots | not run (W1) |
+| `pnpm shots -- M7` (gate M7) | 11 / 11, 29 screenshots. The iPad touch smoke is WebKit only and was skipped | not run (W1) |
+| `pnpm e2e:gate -- M0` | **first run failed** (H1). It then passed 6 / 6 with `--repeat-each=6` | **hung at connect** (W1) |
+| `-- M1` / `M2` / `M3` | 2 / 2, 1 / 1, 1 / 1 | not run (W1) |
+| `-- M4` | 6 / 6 (the four scripted games, the screenshot matrix, the 300-card perf) | not run (W1) |
+| `-- M5` | 6 / 6 | not run (W1) |
+| The CI failures of this round and the last, rerun here (`a11y/keyboard`, `offline/update`, `journey/quick-match`, `nokeys/coach`, `signals`) | 135 passed, 1 skipped (the iPad coach test is WebKit only). `keyboard.spec.ts:219` **passes here** but fails on CI (N2) | — |
+| Full `pnpm e2e` | not run locally. CI ran it on `c2e34bc` (below) | — |
+
+- **WebKit (W1):** the Mac Studio is at the login window again. Over SSH, `ioreg` reports `kCGSSessionUserNameKey = unknown` and `kCGSessionLoginDoneKey = false`, and its browser server (`serve.sh`, pid 43450) has been running since before the last run.
+  - I started one probe, `pnpm e2e:gate -- M0 --project=webkit`, at 23:22. The Studio launched `Playwright.app` (pid 88516), which stayed at 72 MB and never opened a page, the same failure as at 13:12 and 20:20.
+  - At 23:23 I stopped the probe on this Mac by its pids: the Playwright runner and worker, then the test build's preview server it left. The guard then closed its SSH tunnel. The Studio's own WebKit process was gone by 23:26, so its server cleaned up.
+  - I did not touch the Studio, its server or `pw-remote.json`, and I did not wait or retry. No WebKit gate ran, and F16 is still unverified.
+- **No exit 3, 4 or 5** from the guard in any run.
+
+### CI on `c2e34bc` (run 44954804379): red, 5 failing tests
+
+`check` is green. Chromium: 942 passed, 1 failed. WebKit (Linux): 952 passed, 4 failed. No test is reported flaky.
+
+| Test | Browser | Failure | Local |
+| --- | --- | --- | --- |
+| `a11y/keyboard.spec.ts:219`: a keyboard-opened menu stands beside the hand card, not beside a log line that names the same card | Chromium **and** Linux WebKit | `expect(19.95).toBeLessThan(12.59)`: the menu's left edge is 20 px from the hand card's right edge but 12.6 px from the log line's. New in this round: it passed on `aa89d04` and on `a7de235`. | passes (Chromium) |
+| `nokeys/coach.spec.ts:118`: on an iPad, the first coach mark stays clear of the piles | Linux WebKit (WebKit only) | `clearOfThePlayArea`: the mark's top is at y 383 of 834, above the 55 % line (459), so it covers the near play area. New in this round. | WebKit only; not run |
+| `touch/gestures.spec.ts:250` (was `:247`): a second finger after a long-press makes it a camera gesture | Linux WebKit | The R3 fix's new check in `emptyTable` fails: the element at the empty-table point is a `BUTTON`, not the `CANVAS`. **R3 is still open.** | not run (no WebKit) |
+| `touch/gestures.spec.ts:121`: double-tap on empty space beside a card zooms to that card | Linux WebKit | The card ends 329 px from the window centre (limit 278). New on this run; the last run failed `:109` and `:383` of the same file instead. | not run (no WebKit) |
+
+Fixed on CI, compared with run 44941931782 on `a7de235`, all passing on `c2e34bc`:
+
+- **R1:** `offline/update.spec.ts:18`, in Chromium and WebKit.
+- **R2:** `journey/quick-match.spec.ts:111`, in both.
+- `signals.spec.ts:841`, in Chromium.
+- `offline/storage.spec.ts:46`, `nokeys/piles.spec.ts:85` and `voice/hold.spec.ts:279`, in WebKit.
+
+The new specs `layout/hand-clear` (F17) and `decks/page-fit` (F7/F8) pass in both browsers.
+
+### H1: the gate M0 spec depends on an unseeded shuffle
+
+- **The failure:** the first gate M0 run failed at `m0.gate.spec.ts:202` with `expect(warleader).toBeTruthy()` (received `undefined`). No library card was a Leonin Warleader.
+- **Why it can happen:** the spec imports `gw-m19-60.txt`, which has 2 Leonin Warleaders. It shuffles with the product's random shuffle, draws seven, mulligans, and puts one card on the bottom. Then it searches the library for a Warleader. When both copies are in the six-card hand, the library has none: about 0.9 % of runs.
+- **Evidence:** the six reruns passed. The next gate run overwrote the trace, so the hand at the failure is not on record. The failure fits the both-in-hand case, but that is not proven.
+- **What it is:** a test defect, not a product one. But a flaky test is a failing test, so gate M0 is not reliably green.
+- **Fix:** in `tests/e2e/m0.gate.spec.ts`, take the Warleader from the hand when the library has none. Otherwise, fetch a card the 6-card hand cannot hold every copy of (any 4-of), or pin the shuffle through the debug hook.
+
+### Screenshot review (Chromium; `artifacts/shots/M8/` at 1440 × 900 and 1280 × 800, `artifacts/shots/M7/` at 1440 × 900)
+
+I judged each screenshot against `mock.html` (boards 1, 2, 3, 5 and 7 from their markup and the earlier render), `visual.md` 2.4 to 2.9, `journey.md` 4.8, 4.10 and 4.11, the owner's request, and the findings.
+
+| Screen | Verdict |
+| --- | --- |
+| 01 Home, first run; 02a New deck | Good, as before. |
+| 03, 05 Home with the deck as hero | **F18 fixed.** The fan stands on the page over the arena, with no white box behind it. The pile edges sit under the cover only. The `CONTINUE` strip and the saved toast are right. |
+| 02 Deck page (1440 × 900) | **F7 fixed.** The shell's top bar and the left gutter stay put, and the found card is whole. **F8 fixed:** the name field is whole, and `CARDS 34 / 60` and `STRENGTH 29 CASUAL` each show once. Undo and redo are round buttons. The copy reads "1 cards" (minor). The found card's `×4` badge is cut at the card's top-right corner (minor). |
+| 13, 13b Booster deck and its copy | The lock, the pool row (`PLAINS + 6 …`) and `CONVERT TO CUSTOM DECK` are there. The original's header fits. The copy's name still truncates in the field: "M19 boosters · 21 Nov (cus…" (F8 leftover, minor). |
+| 02b, 10, 13c Decks library | The tiles are right in structure. **N6:** the `SIMPLE DECK` chip and the sparkline are clipped by the tile's bottom edge (10, 13c). "40 BOOSTER ▮▮ 39 CASUAL" runs past the booster tile's right edge (13c). The selected tile cuts its name to "Importe…" beside the ✓ and the `SELECTED` chip (10). The queue bar is board 2's ink pill. The seal band is flat across the well's foot, not board 0's band at −3° (minor). |
+| 06, 21 History | Good. **F9 fixed:** 21 reads "BRIGHT SPARROW AND AMBER LARK", and the profile chip of the blank browser shows its made-up name, "Fern Bison". There is still no detail column and no `TODAY` group (later, as before). |
+| 04 Sparring table (1440 × 900) | **F17 fixed.** The fan (x 455 to 1207) rests between the plate (to 437) and the primary (from 1224), clear of both. The log is closed, and no hint shows. The own seat's name tag is half hidden under the top edge of the hand (N9). |
+| 08, 12 Private and matched tables (1280 × 800) | **F17 fixed:** seven cards between the plate and a single round 56 px Talk button beside the primary. The voice row and its ⚙ are gone. **F6 fixed:** no evening bar, matched tables included. The coach mark (12) sits bottom left over the own plate. N9: in 08 the "Your turn. · UNTAP ALL AND DRAW" toast still repeats the primary's label just above the hand, and the name tag hides under the hand. |
+| 12b, 20 4 FFA tables (1280 × 800) | F17 fixed for the own hand. **N4:** the side seats' plates stand over those seats' battlefields and over the left seat's library column, and the top plate covers the top seat's graveyard label. Plate size is inconsistent: in 12b the side plates are compact 46 px pills, in 20 Amber Lark's is a full 72 px plate with the 40 px life. |
+| 07, 07b Waiting room (1280 × 800) | **F5 partly fixed.** The header stays (`← HOME`, title, `SETUP ✎`, `INVITE ⇪`) and only the body scrolls. Names no longer truncate ("Fern Jay you · host"). The rules panel moved from the white strip into the side column as a kit sheet. **Still open:** its controls are native selects (no kit select). **N11:** the invite sheet's presence line repeats the word ("WAITING · WAITING FOR PLAYERS · 1 OF 2 HERE") and runs to the sheet's edge. The seat status runs together ("here CHOOSING A DECK"). |
+| 15 Draft waiting room (1440 × 900) | F5: the left chair is on screen now (fixed). **Still open:** the "Table" select ("Free-for-all, four players ▾") runs about 14 px past the TABLE RULES card's right edge. The 4 FFA seat diagram puts the left and right open seats across the table, not around it, 23 px apart. One "INVITE A PLAYER" label sits below its seat while the others sit above. Board 5's centre (boosters, set buttons, pick timer, the `lg` primary) is a smaller ghost status pill here. |
+| 09 Game over, 11 Match found, 13a Booster setup, 14 Draft night | Good, as before. |
+| 16 Gathering | Good. "4 FFA · TURN 3 · FIELD FINCH CIDER 94", and the absent players have names (F9 fixed). |
+| 17 Plate menu (away) | Good content: away for 8 s, `BRING SAFFRON MARTEN BACK`, and the ink slider. **N7:** with the activity drawer open at 1280, the drawer's eye button and the drawer cover the tracker's last steps (`MAIN 2`, `END`). |
+| 18 Bring back | The QR code, the link and `COPY LINK` are there. The sheet still runs below an 800 px window ("Works once…" is cut), but the popover scrolls. It is the whole invite sheet nested in the plate popover, not board 7's compact 124 px QR block beside the title (minor). N11: "WAITING · WAITING FOR SAFFRON MARTEN". |
+| 19 Claim page | **F19 fixed:** the claim card stands alone; there is no recovery panel before `SIT DOWN`. **N8:** the card has no filled primary. `SIT DOWN HERE AS SAFFRON MARTEN` is a ghost pill, and `NOT NOW` stacks under it, left-aligned. Journey 4.11 asks for `SIT DOWN AS BEN` filled with `WATCH INSTEAD`, and A2 puts the primary last, at the right. |
+| 19b Recovery | F19 fixed: the panel sits top left under the tools, clear of the opponent's plate. In 4 FFA its bottom edge covers the top of the left seat's glyph (Amber Lark) by about 17 px (minor; the integrator reported it). |
+| M7 goldfish, smoke (four looks, 1440 × 900) | **F17 fixed in every look:** the fan clears the plate and the primary. The coach mark sits over the plate, and `GOT IT` shows in Graphite and Codex. N9: in Kitchen Table and Codex the "Your turn · Untap all and draw" toast repeats the primary above the hand. |
+| M7 tilt (four looks × three poses) | **F15 fixed:** at first person, the own graveyard and library are inside the window in Plain, Kitchen Table and Codex. The coach mark no longer covers the battlefield at mid-tilt or bird's-eye. At bird's-eye the hovered hand card is raised over the fan; that is pointer state, not a defect. |
+| M7 feel, entry, plate menu | Good. The lift, the squared snap, the draw flight and the `DRAW · SHUFFLE · SEARCH` popover are right. |
+| M7 HUD menu | As before: the menu fits the window and scrolls, so its last row ("Settings…") is cut at 900 px. The GAME group holds ten rows (O-7 says at most seven), and the sandbox menu still offers `Import deck…` under DECK (journey 4.10). Minor (N10). |
+
+### Findings, round 2
+
+| # | Severity | Status | Finding | Design | Fix |
+| --- | --- | --- | --- | --- | --- |
+| W1 | blocking | open (environment) | WebKit unverified. The Studio is at the login window and its WebKit never opens a page, so no WebKit gate ran (M0 to M5, M7, M8). F16 and the iPad smoke are unverified. | PLAN Gate M8-G (Chromium and WebKit) | Log in at the Studio's console, then run `pnpm shots -- M8`, `pnpm shots -- M7` and `pnpm e2e:gate -- M0 … M5` in WebKit. |
+| N1 | blocking (CI) | new in `m8-layout` (`8f2c29a`, `a2bd0ee`) | On a touch screen the first coach mark is stacked above `KEEP` and `MULLIGAN`. On the iPad that puts it at y 383 of 834, over the near play area (`nokeys/coach.spec.ts:118`, Linux WebKit). | M7 coach recipe (clear of the play area); visual.md 2.8 coach mark; `[M8-R2]` coach line | On touch, give the coach mark the desktop's place over the own plate, or put it in one row with `KEEP` and `MULLIGAN`. It must stay below 55 % of the height and off battlefield cards. |
+| N2 | blocking (CI) | new in this round | `a11y/keyboard.spec.ts:219` fails on CI in Chromium and WebKit, and passes here. The keyboard menu opens 20 px from the hand card's edge, which is farther than the log line's edge (12.6 px), probably because the hand fan moved into its new band (F17). The cause is not proven on Linux. | DESIGN keyboard focus (M5-P4) | Reproduce at CI's viewport. Assert the menu's anchor (the hand card's rect against the menu's, through the hook) rather than comparing two edge distances. If the menu really stands off the card, fix its placement. |
+| R3 | blocking (CI) | open | The touch gesture specs fail on Linux WebKit. `gestures.spec.ts:250` now fails at the R3 fix's own check, because a `BUTTON` covers the empty-table point after the pinch. `gestures.spec.ts:121` (double-tap zoom to a card) is new; the card ends 329 px from the centre. Each CI run fails a different subset of this file. | PLAN quality gates (CI green) | Name the button at that point in the assertion message (probably the coach mark's `GOT IT` or the Talk control). Check whether F15's anchored zoom-out changes the double-tap zoom. Run the file under Linux WebKit, not just Chromium's iPad emulation. |
+| H1 | blocking (flaky gate) | new (harness) | Gate M0 failed once in seven Chromium runs, because the spec's Leonin Warleader can be in the hand after an unseeded shuffle. | PLAN quality gates ("a flaky test is a failing test") | `tests/e2e/m0.gate.spec.ts`: take the Warleader from the hand when the library has none, or fetch a 4-of. |
+| F5 | minor | partly fixed | The header and seats are fixed, and the rules moved into the side column. Native selects remain, and in the draft room the "Table" select overflows its card. The 4 FFA seat diagram is cramped and its labels are inconsistent. | journey.md 4.8, board 5 | Kit Segmented controls for table and mode (as the setup sheet has). `min-width: 0` on the select's row. Seats around the table outline, labels on the outer side. |
+| F8 | minor | leftover | A converted copy's name truncates in the deck page's name field ("… (cus…"). | board 3 | Let the field grow with the name up to the stat group, or show the full name in its title. |
+| N4 | minor | new | 4 FFA at 1280 × 800: the side plates cover the side seats' battlefields and piles, and the plate size differs between two screenshots of the same table size. | visual.md 2.8 player plate; board 7 | Pin the side plates to the window edge outside the table's rectangle, at one size. |
+| N5 | minor | known (integrator) | In 4 FFA the recovery panel's bottom edge covers the left seat's plate glyph. | journey.md 4.11 | Cap the panel's height above the left plate's top, or stack it under the tools with the plates' clamp. |
+| N6 | minor | new | Deck tiles: the `SIMPLE DECK` chip and the sparkline are clipped by the tile's foot, the fact row runs past the tile's right edge, and the selected tile's name is cut to seven letters. | visual.md 2.8 deck tile (220 × 268) | Put the chip on the meta line's place only when it fits, or drop the strength name on the tile. Shorten the `SELECTED` chip to a check. |
+| N7 | minor | new | With the activity drawer open at 1280 × 800, the drawer and its eye button cover the tracker's `MAIN 2` and `END`. | board 7 (tracker centred, free) | Centre the tracker in the room left of the drawer, or shrink its step labels when the drawer is open. |
+| N8 | minor | new | The claim card has no filled primary, and its actions stack left-aligned. | journey.md 4.11; visual.md A2, one filled button per layer | `SIT DOWN AS …` primary, `WATCH INSTEAD` ghost, in one row, primary last. |
+| N9 | minor | carried | A "Your turn · UNTAP ALL AND DRAW" toast repeats the primary just above the hand, and the own seat's name tag sits half under the hand's top edge. | visual.md 2.8 status slot; owner O1 | Drop the toast when the primary already shows the step. Hide the own name tag while the hand rests. |
+| N10 | minor | carried | The HUD menu cuts its last row at 900 px (it scrolls). The GAME group has ten rows. The sandbox menu still offers `Import deck…`. | visual.md O-7; journey.md 4.10 | Split GAME into two groups. Move `Import deck…` to the sandbox's "No deck on this table" line. |
+| N11 | minor | carried | The invite sheet's presence line repeats "WAITING" and runs to the sheet's edge, and the seat status reads "here CHOOSING A DECK" without a separator. | journey.md 4.8 invite sheet | One status word, and a wrapping line inside the padding. A dot between presence and deck state. |
+| R1, R2, F6, F7, F9, F15, F17, F18, F19 | — | fixed and seen (screenshots, gates, CI) | — | — | — |
+| F16 | needs triage | unverified (WebKit) | — | — | — |
+
+**Real Safari:** not measured (the task did not ask for it this round, and the Studio is down).
