@@ -662,6 +662,15 @@ test.describe('@gate M8-G', () => {
           }, { timeout: 45_000 })
           .toBe(true);
         await expect(c.getByTestId('recovery-done')).toContainText('a hand of 7');
+        // K1 (round 4): Cy's page plays from Cy's seat: her plate is the own one and the fan holds exactly her hand.
+        await expect(c.locator('[data-testid="avatar"][data-me="true"]')).toHaveAttribute('data-seat', seat.c);
+        await expect
+          .poll(async () => {
+            const ids = await c!.locator('[data-testid="hand"] [data-testid="hand-card"]').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.card ?? '').sort());
+            return JSON.stringify(ids) === JSON.stringify([...(await state(c!)).zones[`hand:${seat.c}`]!.ids].sort());
+          }, { timeout: 15_000 })
+          .toBe(true);
+        await snap(c, '19c-recovery-done', project);
         const h = await sameHash([a, b, c]);
         expect(h).not.toBe('');
         expect(benHash).not.toBe('');
