@@ -1,6 +1,6 @@
 # Gate M8-G, verifier run (21 Nov 2026)
 
-> **Latest:** Round 3 (22 Nov 2026, 01:46 to 02:15, on `e5c2db3`) is the last section of this file. Result: red. CI fails one test (C1, the theme-switch race), and WebKit could not run on this Mac (W1). `pnpm check`, every gate in Chromium (M0 five times) and CI's Linux WebKit are green.
+> **Latest:** Round 4 (22 Nov 2026, 05:20 to 06:20, on `2d772f3`) is the last section of this file. Result: red, on one new blocking defect (K1): a player brought back into a fresh browser gets a table whose HUD still belongs to seat `s0`. Everything else is green: `pnpm check`, every gate in Chromium and in WebKit (the Studio is logged in again), and CI on `2d772f3` twice. C1, C2 and W1 are closed.
 
 ## Final verifier run, after the fix round (21 Nov 2026, 19:57 to 20:45)
 
@@ -457,3 +457,141 @@ Each screenshot was judged against:
 **Is everything green apart from the local WebKit run? No.** CI fails C1. Without C1 and C2, the rest is green: `pnpm check`, every gate in Chromium, gate M0 five times, and CI's Linux WebKit. The open design findings are all minor.
 
 **Real Safari:** not measured (not asked this round; the Studio is down).
+
+---
+
+## Round 4: verifier run after the net and polish2 rounds (22 Nov 2026, 05:20 to 06:20)
+
+- **Result: red, on one new blocking defect (K1).** A player brought back into a fresh browser gets a table whose HUD and camera still belong to seat `s0`. Their own hand is not in the fan, another player's plate says "you", and on their own turn the primary reads `WAITING FOR <their own name>`.
+- **Everything else is green:**
+  - `pnpm check`;
+  - every gate (M0 to M5, M7, M8) in Chromium **and in WebKit** on this Mac;
+  - CI on `2d772f3` twice: run 44984877717, attempt 1 and the rerun I triggered, with no failed and no flaky test.
+- **Branch:** `m8` at `2d772f3`, the integrator's merge of `m8-net` and `m8-polish2` plus the attach-helper fix. It is the same as `origin/m8`.
+  - This run committed no product or test change.
+  - The K1 probe was a temporary edit to the gate spec. I reverted it after one run.
+- **Fixed by the two rounds:**
+  - **On CI:** C1 and C2.
+  - **Environment:** W1. The Studio is logged in again.
+  - **WebKit:** F16 did not come back.
+  - **In the screenshots:** N4, N10, N11, N12, N13, N14, N15, E1, and F5's draft-room centre.
+- **Open:**
+  - K1 (blocking, new);
+  - N16 and N17 (minor, new);
+  - small leftovers of N11 and N13;
+  - F5's Mode label, which no screenshot shows.
+
+### Runs (this Mac, one Playwright run at a time, through the pnpm scripts)
+
+| What | Chromium | WebKit (Studio's browser server) |
+| --- | --- | --- |
+| `pnpm check` (oomph reservation r1127, peak 1.9 GB, 143 s) | green. tsc; svelte-check: 2035 files, 0 errors, 0 warnings; eslint clean (module boundaries included); vitest: 341 files, 4582 passed, 1 skipped, 9 todo | — |
+| `pnpm shots -- M8` (gate M8) | 7 / 7, 29 screenshots | 7 / 7, 29 screenshots |
+| `pnpm shots -- M7` (gate M7) | 11 / 11, 29 screenshots. The iPad touch smoke is WebKit only and was skipped | **12 / 12**, 30 screenshots, the iPad touch smoke included |
+| `pnpm e2e:gate -- M0` | 1 / 1 | 1 / 1 (and 1 / 1 in the probe before) |
+| `-- M1` / `M2` / `M3` | 2 / 2, 1 / 1, 1 / 1 | 2 / 2, 1 / 1, 1 / 1 |
+| `-- M4` | 6 / 6 | **6 / 6.** The four scripted games logged no "WebGL: context lost" (F16) |
+| `-- M5` | 6 / 6 | 6 / 6 |
+| K1 probe: gate M8 test 7 with five extra read-only lines after the recovery (temporary edit, reverted) | 1 / 1; output under K1 | — |
+| Full `pnpm e2e` | not rerun by me. CI ran it twice on this commit, and the integrator ran it here in both browsers (1901 passed, 79 skipped) | — |
+
+- **WebKit (W1 closed):** I checked the Studio over SSH, reading only.
+  - Its console user is logged in (`kCGSessionLoginDoneKey = Yes`), and `~/spellplane-pw/status` read `ready: 991 IOSurfaces`. `serve.sh` was running as pid 13972.
+  - My one probe (`pnpm e2e:gate -- M0 --project=webkit`) passed in 25 s. Every gate then ran in both browsers through the guard's tunnel.
+- **Guard:** no exit 3, 4 or 5, and no wait in any of my runs.
+- No log has a flaky or retried test.
+
+### CI on `2d772f3` (run 44984877717): green twice
+
+| Attempt | Result |
+| --- | --- |
+| 1 (the `m8` push, 04:24 to 04:45 UTC) | green. `check`: 341 files, 4582 passed. Chromium: 944 passed, 46 skipped. Linux WebKit: 957 passed, 33 skipped. 0 failed, 0 flaky |
+| 2 (my rerun, 04:47 to 05:10 UTC) | green, with the same counts. 0 failed, 0 flaky |
+| The integrator's run 44982332679 (`m8-r4-int`, same commit) | green |
+
+- **C1 fixed:** `signals.spec.ts:857` (was `:841`), the theme switch, passed in Chromium and Linux WebKit:
+  - on both attempts;
+  - on the integrator's run;
+  - on `m8-net` run 44977766535.
+
+  That makes four green runs in a row. Before the fix it failed on 2 of 3 runs. The fix is in DECISIONS (`[M8-R4]`):
+  - the BroadcastChannel transport now waits 12 s before it forgets a silent page;
+  - a heartbeat that is overdue goes out with the next message;
+  - liveness is judged on the page's own running time.
+
+  Nothing in the test was loosened: it asserts the same message count, and only its failure message grew.
+- **C2 fixed:** `signals.spec.ts:516` (speaking) now measures all eight seat colours in each look, and it passed for all eight looks in Chromium on both attempts. The threshold stays at 2 %; the product's ring gained an ink edge. WebKit skips the speaking tests, as before.
+- **Watch item, not a finding:** `lobby/private.spec.ts:61` failed once on Linux WebKit, in run 44978248634 on `9b31250` (the round-3 code before these merges), at "START · 3". It passed on `2d772f3` in both browsers on both attempts.
+
+### K1: a player brought back into a fresh browser plays from seat `s0`'s HUD
+
+- **What the screenshots show:** in 19b, after `SIT DOWN AS …`, Cy's page has Ann's plate at the bottom ("TAWNY WREN you 18" in Chromium, "GILDED CROW you 18" in WebKit). Cy's own plate is at the top, with `SEAT MOVED`. Before the claim (19), the claim page's table also labels Ann's plate "you".
+- **The probe:** gate M8 test 7, after the recovery and its checks, read Cy's page through the DOM and the debug hook. The edit was temporary and reverted.
+  - The session's seat is `s2`, so the claim worked.
+  - The own plate reads "UMBER OTTER you 18": Ann, seat `s0`.
+  - The hand fan holds exactly the seven card ids of `hand:s0`. None of Cy's seven recovered cards in `hand:s2` is in the fan; they show as a hand count of 7 on Cy's plate at the top.
+  - The probe's screenshot shows "Coral Shrike's turn" (Cy's turn), with Cy's primary disabled as `WAITING FOR CORAL SHRIKE`. Cy cannot play.
+- **Cause:**
+  - `src/ui/Hud.svelte:162` reads the viewer's seat once, at mount: `const me = untrack(() => session.seat)`. The seat feeds the hand fan, the own plate, the primary and the scene's `viewerSeat`.
+  - The claim page lies over a table frame whose HUD mounted before the claim. At that point `session.seat` falls back to `init.secrets.seat` (`src/session/net.ts:420`), which is `s0` for a blank profile.
+  - `claimSeat` (`net.ts:2364`) moves the engine to the claimed seat afterwards. But `TableFrame.svelte` keys the HUD only on `st.games`, so nothing remounts.
+- **Why no test caught it:**
+  - `resume/reinvite.spec.ts` and `journey/rejoin.spec.ts` claim seat `s0`, the same seat the HUD falls back to.
+  - Gate M8 claims `s2`, but it asserts only state: `s2`'s hand count, equal hashes and the leak scan. It checks nothing in the HUD.
+  - Earlier rounds' screenshot reviews missed the wrong "you" in 19b.
+- **Why it is blocking:** the owner asked for exactly this path: "re-inviting him via a link or QR code should work from ingame … and if the player rejoins with that link the state is synced". Journey 4.11 has the player recover and play on. In a 1v1 game, the host bringing back the guest (`s1`) is the common case.
+
+### Screenshot review (Chromium and WebKit; `artifacts/shots/M8/` at 1440 × 900 and 1280 × 800, `artifacts/shots/M7/` at 1440 × 900)
+
+Each screenshot was judged against:
+- `mock.html` (boards 1, 2, 3, 5, 6 and 7, read from their markup);
+- `visual.md` 2.4 to 2.9 (A1 to A6, O-1 to O-7);
+- `journey.md` 4.8, 4.10 and 4.11;
+- the owner's request;
+- the round 3 findings.
+
+The WebKit set matches the Chromium set, apart from:
+- the pixel density;
+- the generated names;
+- WebKit's extra `SHARE` button (Web Share) in the invite blocks.
+
+| Screen | Verdict |
+| --- | --- |
+| 01 Home first run, 02a New deck, 09 Game over, 11 Match found, 13a Booster setup, 14 Draft night, 16 Gathering | Good, as before. |
+| 03, 05 Home with the deck as hero | **E1 fixed.** The cover is a whole placeholder face (Llanowar Elves), upright in front of four fanned faces. The facts follow O-6: pip, kind, size, sparkline, strength. The `CONTINUE` strip and the saved toast are right. |
+| 02 Deck page; 13, 13b Booster deck and its copy | As in round 3: the copy's full name, the strength shown once, and `DONE` the one filled button. |
+| 02b, 10, 13c Decks library | **N15 fixed:** the short deck reads "⚠ 26 cards short" in the warning colour with the triangle. The tiles are as in round 3, and the selected tile keeps its ink check. |
+| 06, 21 History | **N14 fixed:** bottom right, a quiet trash icon behind a 1 × 24 divider, then one `sm` action: `CONTINUE` (06, solo) or `REJOIN` (21, a table with players). Time and code sit top right. 21 names the game from Cy's side ("TAWNY WREN AND NIGHT TROUT · Turn 3 · your turn"). There is still no detail column and no `TODAY` group (later, as before). |
+| Every shell screen | **N13 fixed:** the top bar's settings gear, the toasts' close and the booster sheet's close are kit SVG icons at A6 sizes. Leftover (minor): the counter steppers in the plate menu and the deck list rows' `−` / `+` are still small text glyphs. |
+| 04, 08, 12 Sparring, private and matched tables | As in round 3. The hand rests clear of the plate and the primary. There is no turn toast and no own name tag. |
+| 12b, 20 4 FFA tables (1280 × 800) | **N4 fixed:** the far plate stands above the table's far edge. That seat's `LIBRARY` label and pile are clear in both shots. The side plates are as in round 3. |
+| 07, 07b Waiting room (1280 × 800) | Header, seats and invite sheet are as in round 3. **N16 (new, minor):** the centre states the wait three times. Under the `lg` `READY`, a disabled pill reads `WAITING · 1 OPEN SEAT`, and two lines follow: "Waiting for one more player." and "0 of 2 players ready.". The header ("EVERYONE HERE IS CONNECTED") and the invite sheet ("WAITING FOR PLAYERS · 1 OF 2 HERE") add a fourth and a fifth. In 07b, `READY ✓` and `START · 3` stack as two `lg` pills over "Starting in 3…". Board 5 has one `lg` primary and one status line. The rules panel's Mode select is below the fold, so its new short label is not seen. |
+| 15 Draft waiting room (1440 × 900) | **F5 fixed for board 5's centre,** in two columns: the eyebrow and three closed boosters, then "3 boosters each" and its meta line. Below them, three `sm` set buttons (`1 M19 ▾` …), the ghost pick timer (`45 S A PICK`), the disabled `lg` `WAITING · 3 OPEN SEATS`, and one status line. The four seats stand around the table. |
+| 17 Plate menu (away) | **N12 fixed:** the activity log says it once, in plain words: "The table with more moves is kept; the other side's moves are played again on top where they still fit." There is no engine line. The adopt notice stands in the status slot above the primary, right-aligned. |
+| 18 Bring back | **N11 fixed:** a 124 px code beside a one-line `t-strong` title, then two lines of text, one status line, quiet `xs` `NEW LINK · TAKE BACK`, and the link field with `COPY LINK` in one row. The popover now ends inside the 800 px window. Leftovers (minor): the status line wraps ("WAITING FOR HAZEL / SEAL"). In WebKit the third button, `SHARE`, squeezes the link field to "http://localho". |
+| 19 Claim page | As in round 3 (N8 fixed). **K1:** behind the scrim, Ann's plate is labelled "you" on a page that has not sat down yet. |
+| 19b Recovery | **K1:** after `SIT DOWN`, the bottom plate is Ann's ("TAWNY WREN you 18"). Cy's plate is at the top with `SEAT MOVED`, and the fan shows seven backs, which are Ann's hand. The panel itself is as in round 3. |
+| K1 probe shot (`artifacts/shots/M8/k1-probe-after-recovery-chromium.png`, not a gate screenshot; the next `pnpm shots -- M8` deletes it) | Cy's turn, Cy's primary `WAITING FOR CORAL SHRIKE`, and Ann's plate as "you". **N17 (new, minor):** the recovery-done panel ("Recovered: a new library of 53 and a hand of 7.") puts its close × alone on a second line, left-aligned. O-1 puts icon actions at the right of the title row. |
+| M7 goldfish, smoke (four looks) | As in round 3: the fan clears the plate and the primary, and the coach mark sits over the plate. |
+| M7 tilt (four looks × three poses) | F15 stays fixed. |
+| M7 feel, entry, plate menu | Good, as before. |
+| M7 HUD menu | **N10 fixed:** there is no `Import deck…`. The groups are THIS GAME (2), GAME (5), TOKENS AND DICE (5), VIEW (3) and HELP (2), and `Settings…` shows at 900 px. |
+
+### Findings, round 4
+
+| # | Severity | Status | Finding | Design | Fix |
+| --- | --- | --- | --- | --- | --- |
+| K1 | blocking | new | After Bring back into a fresh browser, a player who claims a seat other than `s0` gets `s0`'s HUD and camera: `s0`'s plate as "you", `s0`'s hand in the fan, and the primary disabled on their own turn. Their recovered hand is unreachable. The claim page labels `s0` "you" before the claim as well. | owner request (re-invite by link or QR code from in game; the rejoined player plays on); journey.md 4.11 | Remount the HUD and scene when the session's seat changes: key the HUD in `TableFrame.svelte` on `st.games` and a reactive session seat, or derive `me` in `Hud.svelte` from a seat subscription and let the scene's `viewerSeat` follow it. Show the claim page's table as a watcher, with no "you". Add an e2e: Bring back a non-`s0` seat into a blank profile; after `SIT DOWN` and the recovery, the own plate is the claimed seat's, the `hand-card` ids equal `hand:<seat>`, and the primary is enabled on that seat's turn. |
+| N16 | minor | new | The waiting room states the wait three to five times: a disabled pill under `READY`, two lines under it, the header and the invite sheet. Two `lg` pills stack during the countdown. | visual.md 2.8 StatusLine ("one line per screen"), board 5; owner O1 ("ordering absent of design") | One `lg` primary (`READY`, then `START · 3`, or a disabled `WAITING · …`) and one status line under it. Drop the duplicate pill and sentence. |
+| N17 | minor | new | The recovery-done panel's close × sits alone under the text, left-aligned. | visual.md O-1, A2 | Put the × at the right of the text row. |
+| N11 | minor | leftover | The bring-back status line wraps to two lines. In WebKit the `SHARE` button squeezes the link field to 13 characters. | visual.md 2.8 plate menu | One-line status (ellipsis), and `SHARE` as an icon button, or in place of `COPY LINK` where Web Share exists. |
+| N13 | minor | leftover | The counter steppers (plate menu) and the deck rows' `−` / `+` are text glyphs. | visual.md A6 | The kit's minus and plus icons at 16 px. |
+| F5 | minor | unverified leftover | The Mode select's short label is below the fold in 07 and 15. | journey.md 4.8 | Scroll the rules panel into a gate screenshot, or check it in `lobby/` specs. |
+| C1, C2 | — | fixed (CI: 2 attempts on `2d772f3` plus 2 more runs) | — | — | — |
+| W1 | — | closed (environment) | The Studio is logged in. Every gate ran in WebKit here. | — | — |
+| F16 | — | not reproduced | Gate M4 in WebKit: 6 / 6, with no context loss in the four games. | — | Reopen if it returns. |
+| N4, N10, N12, N14, N15, E1, F5 (draft centre); N11 and N13 apart from the leftovers above | — | fixed and seen (screenshots) | — | — | — |
+
+**Is everything green apart from the local WebKit run?** The local WebKit run is green this time. `pnpm check`, every gate in both browsers and CI (twice, no flaky test) are green. The gate is red only on K1, a product defect in the bring-back path.
+
+**Real Safari:** not measured (not asked this round).
