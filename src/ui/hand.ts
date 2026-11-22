@@ -76,9 +76,10 @@ export function handOrder(state: TableState, secrets: SecretStore, seat: string)
  * edge, a 28 px strip, 6 clear, a 28 px chip, 4 clear; reserved even while the stack is empty, so the fitted view does
  * not jump when a spell goes on the stack), `log` the open log column at the right
  * (300 wide, 8 from the edge, 8 clear), `handGap` the margin above the hand fan (22% of viewport height), `avatars`
- * the avatar column at the left (150 plus padding, 8 from the edge, 8 clear).
+ * the avatar column at the left (150 plus padding, 8 from the edge, 8 clear), `farPlate` the room above the far edge
+ * for the plate across the table at three or more chairs (a 46 px compact plate and 4 clear; gate M8 N4).
  */
-export const FIT_INSET = { top: 74, log: 316, handGap: 8, avatars: 190 } as const;
+export const FIT_INSET = { top: 74, log: 316, handGap: 8, avatars: 190, farPlate: 50 } as const;
 
 /**
  * The teammate's fan above the own one at a Two-Headed Giant table (ui/hand/team.ts: a 12 px gap, cards at
@@ -99,7 +100,9 @@ export function fitInsets(vh: number, logOpen: boolean, teamFan = false, extraBo
   const team = teamFan ? TEAM_FAN_INSET.gap + Math.round(vh * TEAM_FAN_HEIGHT) + TEAM_FAN_INSET.label : 0;
   const px = (v: number) => Math.max(0, Math.round(v));
   const bottom = Math.round(vh * SCREEN_LAYER.handCardViewportFraction) + FIT_INSET.handGap + team + px(extraBottom) + px(safe.bottom);
-  // `sides`: side seats' plates stand on both sides of the table (three or more chairs), so the right keeps the left's room.
+  // `sides`: side seats' plates stand on both sides of the table (three or more chairs), so the right keeps the left's room,
+  // and the plate across the table stands above the table's far edge, clear of that seat's piles (gate M8 N4, round 3).
   const right = Math.max(logOpen ? FIT_INSET.log : 0, sides ? FIT_INSET.avatars : 0);
-  return `${FIT_INSET.top + px(safe.top)} ${right + px(safe.right)} ${bottom} ${FIT_INSET.avatars + px(safe.left)}`;
+  const top = FIT_INSET.top + (sides ? FIT_INSET.farPlate : 0);
+  return `${top + px(safe.top)} ${right + px(safe.right)} ${bottom} ${FIT_INSET.avatars + px(safe.left)}`;
 }

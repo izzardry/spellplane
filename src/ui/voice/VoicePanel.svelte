@@ -4,6 +4,7 @@
   session (M5-P7) has nothing to send: the panel shows only each player's volume and mute.
 -->
 <script lang="ts">
+  import Icon from '../design/Icon.svelte';
   import { onMount, untrack } from 'svelte';
   import type { PeerInfo } from '../../net/types';
   import { chosenDevice, setTalkWhileHolding, talkWhileHolding } from '../../voice/mic';
@@ -71,7 +72,7 @@
 <section class="panel" data-testid="voice-panel" aria-label="Voice settings">
   <header>
     <h2>Voice</h2>
-    <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs ds-icon-btn ds-btn--icon ds-icon-only close" aria-label="Close voice settings" title="Close" onclick={() => onclose?.()}>×</button>
+    <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs ds-icon-btn ds-btn--icon ds-icon-only close" aria-label="Close voice settings" title="Close" onclick={() => onclose?.()}><Icon name="close" size={16} /></button>
   </header>
 
   {#if !listening}

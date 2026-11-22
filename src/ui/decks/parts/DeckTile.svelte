@@ -15,6 +15,7 @@
   import type { DeckRecord } from '../../../store/types';
   import Badge from '../../design/Badge.svelte';
   import Button from '../../design/Button.svelte';
+  import Icon from '../../design/Icon.svelte';
   import IconButton from '../../design/IconButton.svelte';
   import Pip from '../../design/Pip.svelte';
   import SealBand from '../../design/SealBand.svelte';
@@ -136,7 +137,7 @@
       <span class="strength"><StrengthPips {band} score={s?.strength?.score} text={false} />{#if band}<span>{s?.strength?.score ?? ''}</span>{/if}</span>
     </div>
     <div class="row">
-      {#if s?.simple && !note}<span class="ds-t-meta meta simple" data-testid="simple-chip">Simple deck</span>{:else}<span class="ds-t-meta meta" class:warn={!!note}>{meta}</span>{/if}
+      {#if s?.simple && !note}<span class="ds-t-meta meta simple" data-testid="simple-chip">Simple deck</span>{:else if note}<span class="ds-t-meta meta warn" data-testid="tile-warning"><Icon name="warning" size={12} />{note}</span>{:else}<span class="ds-t-meta meta">{meta}</span>{/if}
       <Sparkline values={(s?.curve ?? [0, 0, 0, 0, 0, 0, 0, 0]).slice(0, 7)} label="Mana curve" />
     </div>
   </div>
@@ -311,8 +312,12 @@
     white-space: nowrap;
     text-overflow: ellipsis;
   }
+  /* visual.md 2.7: a deck short of cards is the one warning, in warning colour with its triangle (gate M8 N15). */
   .meta.warn {
-    color: var(--ds-danger);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: var(--ds-warning);
   }
   .sel {
     margin-left: auto;

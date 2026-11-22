@@ -5,8 +5,8 @@
  */
 import { expect, test } from '@playwright/test';
 import { openApp } from '../helpers/app';
-import { menuItem, openZone, plateDetails, openLog } from '../helpers/hud';
-import { drafts, hoverCard, hoverNothing, openHud, ui } from './harness';
+import { openDeckImport, openZone, plateDetails, openLog } from '../helpers/hud';
+import { drafts, hoverCard, hoverNothing, openHud, ui, withoutMyDeck } from './harness';
 
 test.describe('hand fan (DESIGN "Specification: geometry, layout and motion", Screen layer)', () => {
   test('cards are 22% of the viewport high, the hovered one 45%, upright and in the owner\'s order', async ({ page }) => {
@@ -488,7 +488,8 @@ test.describe('log (DESIGN "Turn flow and confirmation", Action log)', () => {
 test.describe('focus and keys (DESIGN "Input and interaction design")', () => {
   test('after a mouse click on a HUD button, Enter still focuses the chat; a keyboard-focused button takes its own Enter', async ({ page }) => {
     await openHud(page);
-    await menuItem(page, 'open-deck-import', 'click');
+    await withoutMyDeck(page);
+    await openDeckImport(page);
     await page.getByTestId('deck-import').getByRole('button', { name: 'Close' }).click();
     await expect(page.getByTestId('deck-import')).toHaveCount(0);
     await hoverNothing(page);
@@ -505,7 +506,8 @@ test.describe('focus and keys (DESIGN "Input and interaction design")', () => {
 test.describe('deck import (DESIGN "Pre-game", Constructed decks)', () => {
   test('paste a list, see unresolved lines with near matches, fix one and import into the session', async ({ page }) => {
     await openHud(page);
-    await menuItem(page, 'open-deck-import', 'click');
+    await withoutMyDeck(page);
+    await openDeckImport(page);
     await page.getByTestId('deck-text').fill('4 Test Bear\n2 Spark Jolts\n20 Verdant Field\nnot a card line\n\nSideboard\n1 Moon Sage');
     await page.getByTestId('deck-check').click();
     const errors = page.getByTestId('deck-error');
@@ -525,13 +527,16 @@ test.describe('deck import (DESIGN "Pre-game", Constructed decks)', () => {
     expect(calls[0]!.args[0].main.filter((r) => r.sid === 'sid-bolt')).toHaveLength(2);
     expect(calls[0]!.args[0].side).toEqual([{ sid: 'sid-dfc' }]);
     await plateDetails(page, 's0');
-    await expect(page.locator('[data-testid="zone-button"][data-zone="library:s0"] b')).toHaveText('29');
+    // The harness table's own library was emptied for the no-deck line: the 26 imported cards are all of it.
+    await expect(page.locator('[data-testid="zone-button"][data-zone="library:s0"] b')).toHaveText('26');
   });
 
   test('typing in the decklist never fires keys', async ({ page }) => {
     await openHud(page);
-    await hoverCard(page, 'bf1');
-    await menuItem(page, 'open-deck-import', 'click');
+    await withoutMyDeck(page);
+    // A card under the pointer, so a key that leaked out of the field would have a target.
+    await hoverCard(page, 'opp1');
+    await openDeckImport(page);
     await page.getByTestId('deck-text').focus();
     await page.keyboard.type('4 Test Bear tgedsa?');
     expect(await ui(page, 'actions')).toEqual([]);

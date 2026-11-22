@@ -3,6 +3,7 @@
   Policy disclaimer; Scryfall and MTGJSON credits). Links open in a new tab and are never fetched by the app.
 -->
 <script lang="ts">
+  import IconButton from '../design/IconButton.svelte';
   import { ABOUT_TEXT, CREDITS, FAN_CONTENT_NOTICE, FAN_CONTENT_POLICY_URL, LICENCE, SOURCE_URL } from './about';
 
   let { onclose, embedded = false }: { onclose?: () => void; embedded?: boolean } = $props();
@@ -11,7 +12,7 @@
 <section class="about" class:embedded data-testid="about" aria-labelledby="sp-about-title">
   <header>
     <h2 id="sp-about-title">About Spellplane</h2>
-    {#if onclose}<button type="button" class="x" data-testid="about-close" aria-label="Close" onclick={onclose}>×</button>{/if}
+    {#if onclose}<span class="x"><IconButton label="Close" size="sm" variant="quiet" icon="close" data-testid="about-close" onclick={onclose} /></span>{/if}
   </header>
   {#each ABOUT_TEXT as p (p)}<p>{p}</p>{/each}
 
@@ -79,11 +80,6 @@
     color: var(--sp-fg, #111);
   }
   .x {
-    font: inherit;
-    font-size: 16px;
-    background: none;
-    color: inherit;
-    border: none;
-    cursor: pointer;
+    display: inline-flex;
   }
 </style>

@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
   import { onMount, untrack, type Snippet, type Component } from 'svelte';
+  import { pickTimerMs } from '../../core/drafting';
   import type { Format, SeatId, TableState } from '../../core/types';
   import type { FaceSource } from '../../data/types';
   import { toViewerFrame } from '../../games/frame';
@@ -23,6 +24,7 @@
   import { checkDeck, parsePlainList, type CheckedDeck } from '../deck';
   import type { LobbyProps } from '../types';
   import Button from '../design/Button.svelte';
+  import Icon from '../design/Icon.svelte';
   import BoosterFan from '../design/BoosterFan.svelte';
   import Field from '../design/Field.svelte';
   import PresenceDot from '../design/PresenceDot.svelte';
@@ -35,6 +37,7 @@
   import { EMPTY_STATES } from '../empty/states';
   import { boosterToLobby, lobbyToBooster } from '../home/view';
   import { ConnectivityCheck, type ConnectivityReport } from './connectivity';
+  import { hasPickTimer } from '../draft/settings';
   import { pastedDeckId, readyVerdict } from './ready';
   import SpectatorPanel from './SpectatorPanel.svelte';
   import InviteSheet from './InviteSheet.svelte';
@@ -184,6 +187,21 @@
   const hostName = $derived((host && st.seats[host]?.name) || 'The host');
   // One conversion both ways, Home's (ui/home/view.ts): a grid's packs are its grids there and here.
   const boosters = $derived(st.lobby && st.lobby.draft !== null ? lobbyToBooster(st.lobby) : (homePrefs?.draft.boosters ?? DEFAULT_BOOSTER_SETUP));
+  /** Board 5's line under the boosters: how the packs go round. */
+  const draftHow = $derived.by(() => {
+    const d = st.lobby?.draft ?? null;
+    if (!d) return '';
+    if (d.format === 'pass' || d.format === 'teamDraft') return (d.picks ?? 1) > 1 ? `pick ${d.picks}, pass the rest` : 'pick one, pass the rest';
+    if (d.format === 'sealed' || d.format === 'teamSealed') return 'opened, not passed';
+    return `${d.format} draft`;
+  });
+  /** The pick timer's button: only for formats that have one (ui/draft/settings.ts hasPickTimer). */
+  const pickTimerShown = $derived(hasPickTimer(st.lobby?.draft ?? null));
+  const pickTimerOn = $derived(st.lobby?.pickTimer === true);
+  function togglePickTimer(): void {
+    if (!isHost || !st.lobby) return;
+    setLobby({ ...st.lobby, pickTimer: !st.lobby.pickTimer });
+  }
   /** Fewer players than chairs, at least two of them ready: START WITH n PLAYERS (journey.md 4.8). */
   const shortStart = $derived(isHost && open > 0 && seatedCount >= 2 && (drafting || list.filter((c) => c.occupied).every((c) => view.seats[c.seat]?.ready)));
 
@@ -656,13 +674,48 @@
         {/if}
       </section>
 
-      <div class="deck-and-start">
-        <section class="slot" aria-label="Your deck" data-testid="deck-slot" data-kind={drafting ? 'boosters' : me?.ready ? 'ready' : selected ? 'deck' : 'empty'}>
-          {#if drafting}
-            <p class="ds-t-eyebrow">LIVE BOOSTER DRAFT</p>
-            <BoosterFan sets={packs} count={packs.length} width={72} label="Closed boosters: your deck is drafted at this table" data-testid="slot-boosters" />
-            <p class="ds-t-meta">{packs.length} boosters each. Nothing to choose: your deck is drafted here.</p>
-          {:else if me?.ready}
+      <div class="deck-and-start" class:draft={drafting}>
+        {#if drafting}
+        <!-- Board 5's centre (journey.md 4.8; gate M8 F5): the closed boosters drawn from the set code, how many and how
+             they are drafted, one set button per pack and the pick timer (the creator changes them), then the lg primary
+             and one status line. Nothing to choose here: the deck is drafted at this table. -->
+        <section class="draft-centre" aria-label="The draft" data-testid="deck-slot" data-kind="boosters">
+          <div class="draft-packs">
+            <p class="ds-t-eyebrow">Live booster draft</p>
+            <BoosterFan sets={packs} count={packs.length} width={88} label="Closed boosters: your deck is drafted at this table" data-testid="slot-boosters" />
+          </div>
+          <div class="draft-info">
+          <h2 class="ds-t-heading" data-testid="draft-heading">{packs.length} booster{packs.length === 1 ? '' : 's'} each</h2>
+          <p class="ds-t-meta">15 cards a pack · {draftHow} · your deck is drafted here</p>
+          <div class="draft-sets" data-testid="draft-sets">
+            {#each packs as code, i (i)}
+              <Button size="sm" disabled={!isHost} title="Pack {i + 1}: {code}{isHost ? ' (change the boosters)' : ''}" data-testid="draft-pack-set" onclick={() => (boostersOpen = true)}>
+                {#snippet icon()}<span class="ds-t-meta pack-no">{i + 1}</span>{/snippet}{code}{#if isHost}<Icon name="chevronDown" size={16} />{/if}
+              </Button>
+            {/each}
+            {#if pickTimerShown}
+              <Button size="sm" variant="ghost" disabled={!isHost} pressed={pickTimerOn} title={isHost ? 'Pick timer on or off' : 'The pick timer'} data-testid="draft-pick-timer" onclick={togglePickTimer}>
+                {#snippet icon()}<Icon name="clock" size={16} />{/snippet}{pickTimerOn ? `${Math.round(pickTimerMs(0) / 1000)} s a pick` : 'No pick timer'}
+              </Button>
+            {/if}
+          </div>
+          <div class="draft-go">
+            {#if isHost && open === 0}
+              <Button variant="primary" size="lg" data-testid="room-start-draft" onclick={() => startShort()}>START THE DRAFT</Button>
+            {:else if shortStart}
+              <Button variant="ghost" size="lg" data-testid="start-short" onclick={startShort}>START WITH {seatedCount} PLAYERS</Button>
+            {:else}
+              <Button size="lg" disabled data-testid="start-pill">{isHost || open > 0 ? pill.label : `Waiting for ${hostName}`}</Button>
+            {/if}
+          </div>
+          <div class="draft-status"><StatusLine data-testid="missing-line">{line}</StatusLine></div>
+          {#if failure}<p class="ds-status ds-status--danger" role="alert" data-testid="lobby-failure">{failure}</p>{/if}
+          {#if note}<StatusLine data-testid="lobby-note">{note}</StatusLine>{/if}
+          </div>
+        </section>
+        {:else}
+        <section class="slot" aria-label="Your deck" data-testid="deck-slot" data-kind={me?.ready ? 'ready' : selected ? 'deck' : 'empty'}>
+          {#if me?.ready}
             <p class="ds-t-eyebrow">YOUR DECK</p>
             <p class="deck-name" data-testid="slot-deck-name">{readyDeckName || 'Your deck'}</p>
             <p class="ds-t-meta" data-testid="ready-done">You are ready. Your deck of {committed} cards is committed and locked to your chair.</p>
@@ -705,7 +758,7 @@
         <section class="primary" aria-label="Ready and start">
           {#if me?.ready}
             <Button size="lg" pressed={!held} data-testid="ready-on" data-held={held} onclick={toggleHeld}>{held ? 'READY' : 'READY ✓'}</Button>
-          {:else if !drafting}
+          {:else}
             <Button
               variant={isHost && pill.kind === 'start' ? 'secondary' : 'primary'}
               size="lg"
@@ -714,15 +767,7 @@
               onclick={pressReady}>READY</Button
             >
           {/if}
-          {#if isHost && drafting}
-            {#if open === 0}
-              <Button variant="primary" size="lg" data-testid="room-start-draft" onclick={() => startShort()}>START THE DRAFT</Button>
-            {:else if shortStart}
-              <Button variant="ghost" size="lg" data-testid="start-short" onclick={startShort}>START WITH {seatedCount} PLAYERS</Button>
-            {:else}
-              <span class="pill ds-t-eyebrow" role="status" data-testid="start-pill">{pill.label}</span>
-            {/if}
-          {:else if isHost}
+          {#if isHost}
             {#if pill.kind === 'start' && !startBlocked}
               <Button variant="primary" size="lg" data-testid="start-game" data-counting={pill.counting} onclick={start}>{pill.label}</Button>
             {:else if shortStart}
@@ -732,11 +777,12 @@
             {/if}
           {/if}
           <p class="line" role="status" data-testid="missing-line">{line}</p>
-          {#if !drafting}<p class="ds-t-meta" data-testid="ready-count">{readiness(view).ready} of {Object.keys(st.seats).length} players ready.</p>{/if}
-          {#if startBlocked && !drafting}<p class="ds-t-meta" data-testid="start-blocked" hidden={startBlocked === line}>{startBlocked}</p>{/if}
+          <p class="ds-t-meta" data-testid="ready-count">{readiness(view).ready} of {Object.keys(st.seats).length} players ready.</p>
+          {#if startBlocked}<p class="ds-t-meta" data-testid="start-blocked" hidden={startBlocked === line}>{startBlocked}</p>{/if}
           {#if failure}<p class="ds-status ds-status--danger" role="alert" data-testid="lobby-failure">{failure}</p>{/if}
           {#if note}<StatusLine data-testid="lobby-note">{note}</StatusLine>{/if}
         </section>
+        {/if}
       </div>
 
       {#if report.problems.length}
@@ -1123,6 +1169,55 @@
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: var(--ds-space-lg);
     align-items: start;
+  }
+  .deck-and-start.draft {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* The boosters beside what they mean and the primary, so the whole centre stays in an 800 px window under the seats. */
+  .draft-centre {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: var(--ds-space-xl) var(--ds-space-xxl);
+    min-width: 0;
+  }
+  .draft-packs,
+  .draft-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    min-width: 0;
+  }
+  .draft-centre p,
+  .draft-centre h2 {
+    margin: 0;
+  }
+  .draft-centre :global([data-testid='slot-boosters']) {
+    margin-top: var(--ds-space-sm);
+  }
+  .draft-info > .ds-t-meta {
+    margin-top: var(--ds-space-xs);
+  }
+  .draft-sets {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--ds-space-sm);
+    margin-top: var(--ds-space-lg);
+  }
+  .pack-no {
+    margin-right: 2px;
+  }
+  .draft-go {
+    margin-top: var(--ds-space-xl);
+  }
+  .draft-go :global(.ds-btn--lg) {
+    min-width: 240px;
+  }
+  .draft-status {
+    margin-top: 10px;
   }
   .slot {
     display: grid;

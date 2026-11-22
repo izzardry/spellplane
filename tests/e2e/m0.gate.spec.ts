@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { CardInstance, SecretStore, TableState } from '../../src/core/types';
 import { hook, shot } from './helpers/app';
-import { menuItem, openZone } from './helpers/hud';
+import { openDeckImport, openZone } from './helpers/hud';
 import { call, decklist, freshProfile, openSolo, waitForSession } from './solo/helpers';
 
 type ShownCard = {
@@ -144,7 +144,8 @@ test.describe('M0 gate @gate', () => {
     await evidence(page, 'empty-table', project);
 
     // --- Paste the decklist into the import dialog -----------------------------------------------------------------
-    await menuItem(page, 'open-deck-import', 'click');
+    // The sandbox's no-deck line opens the paste dialog (journey.md 4.10: `Import deck…` is not in the Menu).
+    await openDeckImport(page, 'click');
     await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
     await page.getByTestId('deck-check').click();
     await expect(page.getByTestId('deck-summary')).toContainText('60 cards in the deck, 3 in the sideboard');

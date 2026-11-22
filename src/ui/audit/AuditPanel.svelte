@@ -9,6 +9,7 @@
   one click away; it steps aside while a match is played. Not modal. Implementer: M5-P2.
 -->
 <script lang="ts">
+  import Icon from '../design/Icon.svelte';
   import SeatGlyph from '../a11y/SeatGlyph.svelte';
   import { onMount, untrack } from 'svelte';
   import { AUDIT_STATUS_TEXT } from '../../core/audit';
@@ -64,7 +65,7 @@
     <section class="audit" class:docked={lobby} aria-label="Audit" data-testid="audit-panel" data-game={shown.game.game}>
       <header>
         <h2>Audit of game {shown.game.game}</h2>
-        <button type="button" class="ds-btn sp-h-xs close" aria-label="Close the audit" data-testid="audit-close" onclick={() => (open = false)}>×</button>
+        <button type="button" class="ds-btn sp-h-xs close" aria-label="Close the audit" data-testid="audit-close" onclick={() => (open = false)}><Icon name="close" size={16} /></button>
       </header>
       <p class="about" data-testid="audit-about">{about(shown)}</p>
       <ul class="seats">

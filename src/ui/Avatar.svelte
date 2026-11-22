@@ -315,10 +315,14 @@
       0 0 0 1px var(--seat),
       var(--ds-elevation-raised);
   }
-  /* The speaking ring (M3-P3): a thick outline in the seat colour, so it reads without hue as well. */
+  /* The speaking ring (M3-P3): a thick ring in the seat colour at a 2 px gap, so it reads without hue as well. Its outer
+     edge is a hairline of ink at 35 % (the ink ladder's radio rings, visual.md 2.7), so a light seat colour (Wyrm's
+     grey #c9d1d9) still stands off the white plate (gate M8 round 3, C2). */
   .plate.speaking .disc {
-    outline: 3px solid var(--seat);
-    outline-offset: 2px;
+    box-shadow:
+      0 0 0 2px var(--ds-panel),
+      0 0 0 5px var(--seat),
+      0 0 0 6px color-mix(in srgb, var(--ds-ink) 35%, transparent);
   }
   .disc {
     display: grid;

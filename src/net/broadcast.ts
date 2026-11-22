@@ -1,10 +1,14 @@
 import type { Channel, Message, MessageHandler, PeerHandler, PeerId, Transport } from './transport';
 import { track, untrack } from '../util/lifecycle';
+import { OwnClock } from './liveness';
+import { AWAY_AFTER_MS } from './types';
 
 /**
  * Transport over BroadcastChannel (test harness, selected with ?transport=local).
  * Several pages of one browser context form a room. Presence is detected with
- * hello/here/bye frames plus a heartbeat, so a closed page is noticed within ~3 s.
+ * hello/here/bye frames plus a beat: a page that closes says bye and is gone at once; a page that falls silent without
+ * one is left to the engine's liveness rule (away after AWAY_AFTER_MS, DESIGN "Liveness") and forgotten here only after
+ * twice that.
  *
  * A page that goes away (`pagehide`: a reload, a close, a navigation) says `bye` so the others notice at once, but
  * does not report its peers gone to its own page: that page's engine is still running, and would act on a room it
@@ -20,10 +24,22 @@ type Frame =
   | { k: 'msg'; from: PeerId; to?: PeerId; channel: Channel; msg: Message };
 
 const BEAT_MS = 1000;
-const GONE_MS = 3500;
 /**
- * A beat that runs this much later than due means this page's main thread was blocked (a theme's shaders compiling on
- * a slow machine): the other pages' beats are still queued behind it, so nobody is dropped on that beat.
+ * A peer unheard for this long on this page's liveness clock (net/liveness.ts) is gone. Never shorter than the engine's
+ * away rule: a page whose main thread is blocked for a few seconds (a theme switch compiling shaders under software GL)
+ * is not a page that left. At 3.5 s the transport reported such a page gone, so the other page took over the sequencer
+ * and marked its seat away (gate M8 round 3, C1).
+ */
+export const GONE_MS = 2 * AWAY_AFTER_MS;
+/**
+ * How often the page checks its peers and steps its liveness clock. Finer than the beat, so that a late check counts
+ * little (at most two checks' worth) towards a peer's silence: a page whose own main thread stalls in chunks does not
+ * drop the others for its own slowness (gate M8 round 3, C1).
+ */
+const CHECK_MS = 250;
+/**
+ * A check that runs this much later than the last means this page's main thread was blocked (a theme's shaders
+ * compiling on a slow machine): the other pages' beats are still queued behind it, so nobody is dropped on that check.
  */
 export const STALL_MS = 2 * BEAT_MS;
 
@@ -36,7 +52,10 @@ export class BroadcastTransport implements Transport {
   private bc: BroadcastChannel | null = null;
   private readonly handlers = new Map<Channel, MessageHandler[]>();
   private readonly peerHandlers: PeerHandler[] = [];
+  /** When each peer was last heard, on the liveness clock `own`. */
   private readonly lastSeen = new Map<PeerId, number>();
+  /** This page's own on-time running (net/liveness.ts): a check counts at most two checks' worth while visible. */
+  private readonly own = new OwnClock({ cap: 2 * CHECK_MS, hiddenCap: STALL_MS });
   private beat: ReturnType<typeof setInterval> | null = null;
   private readonly onUnload = () => this.close(false);
 
@@ -48,16 +67,23 @@ export class BroadcastTransport implements Transport {
     this.bc = new BroadcastChannel(`spellplane-room-${roomId}`);
     this.bc.onmessage = (e: MessageEvent<Frame>) => this.receive(e.data);
     this.post({ k: 'hello', from: this.selfId });
-    let lastBeat: number | null = null;
+    let lastCheck: number | null = null;
+    let lastPost = -Infinity;
     this.beat = setInterval(() => {
-      this.post({ k: 'beat', from: this.selfId });
       const now = Date.now();
-      const stalled = stalledBeat(lastBeat, now);
-      lastBeat = now;
-      // After a stall the peers' queued beats run next: they are dropped on a later beat if they really went quiet.
+      // Beats go out by elapsed time, not by check count (a hidden page's checks run about once a second and beat each time).
+      if (now - lastPost >= BEAT_MS - CHECK_MS / 2) {
+        lastPost = now;
+        this.post({ k: 'beat', from: this.selfId });
+      }
+      const stalled = stalledBeat(lastCheck, now);
+      lastCheck = now;
+      this.own.step(now);
+      // After a stall the peers' queued beats run next: they are dropped on a later check if they really went quiet.
       if (stalled) return;
-      for (const [peer, seen] of this.lastSeen) if (now - seen > GONE_MS) this.drop(peer);
-    }, BEAT_MS);
+      const heard = this.own.at(now);
+      for (const [peer, seen] of this.lastSeen) if (heard - seen > GONE_MS) this.drop(peer);
+    }, CHECK_MS);
     if (typeof addEventListener === 'function') addEventListener('pagehide', this.onUnload);
   }
 
@@ -105,7 +131,7 @@ export class BroadcastTransport implements Transport {
 
   private see(peer: PeerId): void {
     const known = this.lastSeen.has(peer);
-    this.lastSeen.set(peer, Date.now());
+    this.lastSeen.set(peer, this.own.at(Date.now()));
     if (!known) for (const h of this.peerHandlers) h('join', peer);
   }
 

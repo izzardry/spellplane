@@ -12,7 +12,7 @@ import { AWAY_AFTER_MS, HASH_EVERY, HEARTBEAT_MS } from '../../../src/net/types'
 import { mulberry32 } from '../../../src/util/prng';
 import { scan } from '../../leak/scan';
 import { stream } from './scenarios';
-import { createNetEngine, HOLD_PREV_MS } from '../../../src/net/engine';
+import { createNetEngine, HOLD_PREV_MS, TICK_MS } from '../../../src/net/engine';
 import { boundNonce } from '../../../src/net/hello';
 import { LoopbackNetwork } from '../../../src/net/loopback';
 import { handshakeText, PROTOCOL_VERSION, toMessage, type SequencedAction } from '../../../src/net/messages';
@@ -43,6 +43,15 @@ const life = (p: SimPeer, cid: string, delta = -1): Action => ({ type: 'life', b
 const delivered = (sim: Sim, t: string): { msg: WireMessage; from: string; to: string }[] =>
   sim.net.delivered.filter((d) => d.msg.t === t).map((d) => ({ msg: d.msg as unknown as WireMessage, from: d.from, to: d.to }));
 const tid = (p: SimPeer): string => p.transport.selfId;
+const statusOf = (p: SimPeer, peerId: string): string | undefined => p.engine.peers().find((x) => x.peerId === peerId)?.status;
+/**
+ * The machine is blocked for `ms`: the clock moves on while no timer runs (fake timers keep each timer's remaining
+ * delay); then it runs on time for `thenMs`.
+ */
+async function blocked(ms: number, thenMs: number): Promise<void> {
+  vi.setSystemTime(Date.now() + ms);
+  await vi.advanceTimersByTimeAsync(thenMs);
+}
 
 describe('nack and rollback', () => {
   it('a refused proposal is nacked to its proposer only, which rolls it back; nobody else applies it', async () => {
@@ -620,18 +629,66 @@ describe('liveness and the sequencer’s clock', () => {
     const [a, , c] = sim.peers as [SimPeer, SimPeer, SimPeer];
     c.transport.silent = true;
     await vi.advanceTimersByTimeAsync(AWAY_AFTER_MS - 1000);
-    // Every tick now runs 3 s after the one before on the page's own clock: the main thread is blocked.
-    let real = performance.now();
-    const spy = vi.spyOn(performance, 'now').mockImplementation(() => (real += 3000));
-    try {
-      await vi.advanceTimersByTimeAsync(1500);
-      expect(a.engine.peers().find((p) => p.peerId === 'peer2')!.status).toBe('connected');
-    } finally {
-      spy.mockRestore();
-    }
+    // Every tick now runs 3 s after the one before: the main thread is blocked (the clock moves on, the timers wait).
+    for (let i = 0; i < 6; i++) await blocked(3000 - TICK_MS, TICK_MS);
+    expect(statusOf(a, 'peer2')).toBe('connected');
     // The page runs on time again: the silent peer is away on the next ticks.
     await vi.advanceTimersByTimeAsync(600);
-    expect(a.engine.peers().find((p) => p.peerId === 'peer2')!.status).toBe('away');
+    expect(statusOf(a, 'peer2')).toBe('away');
+  });
+
+  it('a page whose main thread stalls in chunks, each under TICK_STALL_MS, never judges the others away for it (gate M8 round 3, C1)', async () => {
+    const sim = await connected({ engines: 2, seed: 15, ...DELAY });
+    const [s, f] = sim.peers as [SimPeer, SimPeer];
+    expect(f.engine.sequencerId()).toBe('peer0');
+    const before = sim.peers.map((p) => p.engine.seq());
+    // The machine is blocked for 1.7 s at a time with 0.3 s of running between (a theme's shaders compiling under
+    // software GL): every tick after a chunk comes 1.95 s late, under the stall guard, and 10 s of wall clock pass in
+    // which neither page hears the other. On the wall clock each would judge the other away (the follower claims the
+    // sequencer, the sequencer records an `away`); on its own running time neither does.
+    s.transport.silent = true;
+    for (let i = 0; i < 5; i++) {
+      await blocked(1700, 300);
+      expect(statusOf(f, 'peer0')).toBe('connected');
+      expect(statusOf(s, 'peer1')).toBe('connected');
+    }
+    expect(f.engine.sequencerId()).toBe('peer0');
+    s.transport.silent = false;
+    await vi.advanceTimersByTimeAsync(3 * HEARTBEAT_MS);
+    for (const p of sim.peers) {
+      expect(p.trace.filter((a) => a.type === 'sequencerClaim' || a.type === 'away').map((a) => a.type)).toEqual([]);
+      expect(p.engine.sequencerId()).toBe('peer0');
+    }
+    expect(sim.peers.map((p) => p.engine.seq())).toEqual(before);
+    await expectConverged(sim.peers);
+  });
+
+  it('a peer that stays silent through the stalls is away after AWAY_AFTER_MS of the page’s own running, and the follower takes over', async () => {
+    const sim = await connected({ engines: 2, seed: 15, ...DELAY });
+    const [s, f] = sim.peers as [SimPeer, SimPeer];
+    s.transport.silent = true;
+    for (let i = 0; i < 5; i++) await blocked(1700, 300);
+    expect(statusOf(f, 'peer0')).toBe('connected');
+    // From here the follower runs on time: the sequencer, silent for 10 s of wall clock already, is away within
+    // AWAY_AFTER_MS of that running (sooner by what the chunks counted), and the follower claims the sequencer.
+    const took = await until(() => statusOf(f, 'peer0') === 'away', AWAY_AFTER_MS + TICK_MS, 'away on own running time', TICK_MS);
+    expect(took).toBeGreaterThan(AWAY_AFTER_MS / 4);
+    await until(() => f.engine.sequencerId() === 'peer1' && f.engine.isSequencing(), 4 * AWAY_AFTER_MS, 'takeover');
+  });
+
+  it('a page that was blocked sends its overdue heartbeat with the first message it handles (gate M8 round 3, C1)', async () => {
+    const sim = await connected({ engines: 2, seed: 15, ...DELAY });
+    const [s, f] = sim.peers as [SimPeer, SimPeer];
+    // Both pages are blocked for 3 s (the clock moves on, no timer runs); then the sequencer's page sequences an action.
+    vi.setSystemTime(Date.now() + 3000);
+    const after = Date.now();
+    expect(s.engine.propose(life(s, 'blocked-1'))).toBe(true);
+    await vi.advanceTimersByTimeAsync(60);
+    const log = f.engine.messages().filter((m) => m.at >= after);
+    const firstIn = log.find((m) => m.dir === 'in');
+    expect(firstIn).toBeDefined();
+    // The follower's heartbeat timer is still due later; the heartbeat goes out as it handles that first message.
+    expect(log.find((m) => m.dir === 'out' && m.msg.t === 'hb')?.at).toBe(firstIn!.at);
   });
 
   it('goes idle → joining → alone → connected, and closed after leave', async () => {

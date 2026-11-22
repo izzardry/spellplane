@@ -44,3 +44,21 @@ export async function hoverCard(page: Page, id: string) {
 export async function hoverNothing(page: Page) {
   await page.mouse.move(700, 120);
 }
+
+/** Take every card of mine (s0) off the harness table and out of my secrets, so the HUD shows the no-deck line. */
+export async function withoutMyDeck(page: Page) {
+  await page.evaluate(() =>
+    window.__uiHarness!.update((s, sec) => {
+      sec.hand = [];
+      sec.libraryOrder = [];
+      sec.identities = {};
+      for (const c of Object.values(s.cards)) if (c.owner === 's0') delete s.cards[c.id];
+      for (const z of Object.values(s.zones))
+        if (z.owner === 's0') {
+          z.ids = [];
+          if ('count' in z) z.count = 0;
+        }
+    }),
+  );
+  await expect(page.getByTestId('no-deck')).toBeVisible();
+}

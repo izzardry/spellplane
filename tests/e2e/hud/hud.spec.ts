@@ -126,7 +126,9 @@ test.describe('the Menu: rare tools one step away', () => {
     await page.getByTestId('open-menu').click();
     const pop = page.getByTestId('menu-popover');
     await expect(pop).toBeVisible();
-    for (const g of ['game', 'deck', 'view', 'help']) await expect(pop.locator(`[data-group="${g}"]`)).toBeVisible();
+    for (const g of ['game', 'tools', 'view', 'help']) await expect(pop.locator(`[data-group="${g}"]`)).toBeVisible();
+    // No Deck group: `Import deck…` left the Menu (journey.md 4.10; gate M8 N10).
+    await expect(pop.locator('[data-group="deck"]')).toHaveCount(0);
     // Keys show in muted type on the right, not in labels.
     await expect(pop.getByTestId('open-token').locator('.ds-key')).not.toHaveText('');
     // Keyboard: the first item has focus, arrows move it, Esc closes and returns focus to the Menu button.
@@ -137,8 +139,13 @@ test.describe('the Menu: rare tools one step away', () => {
     await expect(pop).toHaveCount(0);
     await expect(page.getByTestId('open-menu')).toBeFocused();
 
+    // `Import deck…` left the Menu (journey.md 4.10; gate M8 N10): the no-deck line opens the paste dialog.
+    await page.getByTestId('open-menu').click();
+    await expect(pop).toBeVisible();
+    await expect(pop.getByTestId('open-deck-import')).toHaveCount(0);
+    await expect(pop).not.toContainText('Import deck');
+    await page.keyboard.press('Escape');
     const opens: [string, string][] = [
-      ['open-deck-import', 'deck-import'],
       ['open-token', 'token-search'],
       ['open-cheat-sheet', 'cheat-sheet'],
       ['open-settings', 'settings'],

@@ -19,8 +19,20 @@ export function lobbyModes(format: TableState['format']): LobbyMode[] {
   return format === '2hg' ? [...base, 'teamDraft', 'teamSealed', 'constructed'] : [...base, 'constructed'];
 }
 
+/**
+ * The mode's name in the panel's select: short enough for the side column at 1280 px (gate M8 round 3 F5: "Constructed
+ * decks (no…" was cut), as the table formats are ("Free-for-all · 4").
+ */
+const SHORT: Partial<Record<DraftPresetId, string>> = { teamDraft: '2HG draft', teamSealed: '2HG sealed' };
+
 export function modeLabel(mode: LobbyMode): string {
-  return mode === 'constructed' ? 'Constructed decks (no draft)' : DRAFT_PRESETS[mode].label;
+  if (mode === 'constructed') return 'Own decks';
+  return SHORT[mode] ?? DRAFT_PRESETS[mode].label;
+}
+
+/** The mode's full name, for the select's tooltip. */
+export function modeName(mode: LobbyMode): string {
+  return mode === 'constructed' ? 'Own decks, no draft' : DRAFT_PRESETS[mode].label;
 }
 
 /**

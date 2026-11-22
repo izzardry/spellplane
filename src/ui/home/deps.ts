@@ -6,11 +6,13 @@ import type { CardRef } from '../../core/types';
 import type { StarterPoolSource } from '../../data/starter';
 import type { Matchmaker, TableSession } from '../../session/types';
 import type { GameStore } from '../../store/types';
+import { faceUrl } from '../decks/parts/face-url';
 import { toasts } from '../design/toasts';
 import { newRoom as freshRoom, pageBase } from '../lobby/room';
 import type { LaunchDeps } from '../play/launch';
 import type { TableDeps } from '../table/types';
 import type { RoomLink } from '../types';
+import { flags } from '../../util/flags';
 
 /** What the page hands Home (App.svelte) besides the table context. */
 export interface HomePage {
@@ -69,12 +71,32 @@ export function launchDeps(given: Partial<LaunchDeps>, home: HomePage): LaunchDe
   };
 }
 
-/** The hero's card images from the page's face source (placeholder faces show the card back: null). */
+/**
+ * The hero's card images from the page's face source, as the deck tiles get theirs (ui/decks/parts/face-url.ts): a
+ * Scryfall face is its URL, and a placeholder face (`?faces=placeholder`, test and dev builds) is drawn once as a small
+ * data URL, so the hero shows its cover face in screenshots too (gate M8 round 3 E1). Only under that flag: elsewhere a
+ * placeholder (an unknown card) stays the card back. Null (the back) when the face cannot be had.
+ */
 export function pageFaces(page: TableDeps | null): (ref: CardRef) => Promise<string | null> {
   const faces = page?.faces;
   if (!faces) return () => Promise.resolve(null);
+  const drawn = placeholders();
   return async (ref) => {
-    const f = await faces.faceFor(ref, 0, 'normal');
-    return f.kind === 'url' ? f.url : null;
+    try {
+      if (drawn) return await faceUrl(faces, ref, 'normal');
+      const f = await faces.faceFor(ref, 0, 'normal');
+      return f.kind === 'url' ? f.url : null;
+    } catch {
+      return null;
+    }
   };
+}
+
+/** Whether the page draws placeholder faces (the `?faces=placeholder` flag of test and dev builds). */
+function placeholders(): boolean {
+  try {
+    return flags().faces === 'placeholder';
+  } catch {
+    return false;
+  }
 }

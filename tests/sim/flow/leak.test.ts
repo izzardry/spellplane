@@ -32,6 +32,7 @@ import type { LobbySettings, SecretStore, Stage, TableState } from '../../../src
 import { POOL_KEY } from '../../../src/draft/secret';
 import type { LoopbackNetwork, LoopbackOptions } from '../../../src/net/loopback';
 import type { SequencedAction } from '../../../src/net/messages';
+import { ADOPT_LOG_LINE } from '../../../src/session/divergence';
 import type { NetSessionOptions } from '../../../src/session/types';
 import { mulberry32 } from '../../../src/util/prng';
 import { packLeakScan } from '../../leak/draft';
@@ -333,7 +334,9 @@ describe('shared leak test: hidden packs through the networked session', () => {
     replayMatches(start, log, host);
     // The split happened: Cleo's page took over the room's history, which does not hold the pass her page sequenced
     // alone at its seq; her pack was passed on to Anna once in the room's history, after her single pick.
-    expect(c.log().some((e) => e.kind === 'system' && /history diverged/.test(e.text))).toBe(true);
+    // The players' log says it in their words, as information (gate M8 N12), not the engine's "history diverged".
+    expect(c.log().some((e) => e.kind === 'system' && e.level === 'info' && e.text === ADOPT_LOG_LINE)).toBe(true);
+    expect(c.log().some((e) => e.kind === 'system' && /history diverged/.test(e.text))).toBe(false);
     expect(log.find((a) => a.seq === alone.seq)?.cid).not.toBe(alone.cid);
     const passes = log.filter((a) => a.type === 'packPass' && a.packId === own);
     expect(passes[0]).toMatchObject({ by: 's2', to: 's0', count: 14 });

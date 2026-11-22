@@ -385,10 +385,10 @@
       <span class="eyebrow" data-testid="hero-eyebrow">{view.deckLocked ? 'IN THE QUEUE WITH' : `YOUR DECK · ${view.deckIndex + 1} OF ${view.deckCount}`}</span>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
       <div class="hero__row" tabindex="0" role="group" aria-label="Deck {view.deck.name}; Left and Right change deck" onkeydown={heroKey} data-testid="hero-row">
-        <IconButton label="Previous deck" disabled={view.deckLocked || view.deckIndex <= 0} onclick={() => step(-1)} data-testid="home-prev">‹</IconButton>
+        <IconButton label="Previous deck" disabled={view.deckLocked || view.deckIndex <= 0} onclick={() => step(-1)} data-testid="home-prev" icon="chevronLeft" />
         <!-- The fan stands on the page over the arena; the pile's edges are under the cover card only (board 1; F18). -->
         <CardFan cards={fan} width={view.deckLocked ? 140 : 168} label="{view.deck.name}: cover and four cards" />
-        <IconButton label="Next deck" disabled={view.deckLocked || view.deckIndex >= view.deckCount - 1} onclick={() => step(1)} data-testid="home-next">›</IconButton>
+        <IconButton label="Next deck" disabled={view.deckLocked || view.deckIndex >= view.deckCount - 1} onclick={() => step(1)} data-testid="home-next" icon="chevronRight" />
       </div>
       <h2 class="hero__name" data-testid="hero-name">{view.deck.name}</h2>
       <div class="facts" data-testid="hero-facts">
@@ -447,7 +447,7 @@
       {busy && view.primary.action === 'firstRun' ? 'FETCHING THE DECKS…' : view.primary.label}
       {#snippet trailing()}{#if view.since !== null}<span class="timer" data-testid="home-timer">{elapsed}</span>{/if}{/snippet}
     </Button>
-    {#if view.cancel}<IconButton label="Cancel the search" size="lg" variant="ghost" onclick={() => matchmaker.cancel()} data-testid="home-cancel">✕</IconButton>{/if}
+    {#if view.cancel}<IconButton label="Cancel the search" size="lg" variant="ghost" onclick={() => matchmaker.cancel()} data-testid="home-cancel" icon="close" />{/if}
   </div>
   <StatusLine tone={view.tone} data-testid="home-status">{ready ? (rankedNote ?? view.line ?? '') : slow ? 'Loading your decks…' : ''}</StatusLine>
   {#if view.links.length}

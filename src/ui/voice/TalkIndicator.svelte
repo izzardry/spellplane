@@ -6,6 +6,7 @@
   player's volume: no microphone to join, nothing to mute.
 -->
 <script lang="ts">
+  import Icon from '../design/Icon.svelte';
   import { onMount, untrack } from 'svelte';
   import type { HoldAloneState, TalkIndicatorState } from '../../voice/types';
   import type { TalkIndicatorProps } from '../types';
@@ -74,7 +75,7 @@
       {settings.muted ? 'Unmute' : 'Mute'} <kbd>{muteKey}</kbd>
     </button>
   {/if}
-  <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs" data-testid="voice-settings" aria-expanded={panelOpen} aria-label="Voice settings" onclick={() => ontogglepanel?.()}>⚙</button>
+  <button type="button" class="ds-btn ds-btn--secondary ds-btn--xs" data-testid="voice-settings" aria-expanded={panelOpen} aria-label="Voice settings" onclick={() => ontogglepanel?.()}><Icon name="settings" size={16} /></button>
   {#if error}<span class="error" role="alert" data-testid="voice-error">{error}</span>{/if}
 </div>
 
