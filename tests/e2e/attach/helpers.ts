@@ -27,6 +27,8 @@ export async function dispatch(page: Page, a: Record<string, unknown>, by = 's0'
 
 /** A creature token with a fixture face on a battlefield. */
 export async function creature(page: Page, id: string, pose: Pose, sid = SIDS[0]!, zone = 'battlefield:s0'): Promise<void> {
+  // The scene registers its debug part after the session does (openSolo waits only for the session).
+  await expect.poll(() => page.evaluate(() => typeof window.__spellplane?.cards === 'function'), { timeout: 15_000 }).toBe(true);
   await dispatch(page, { type: 'createToken', card: id, zone, pose, ref: { sid } });
   await expect.poll(async () => (await shown(page)).some((c) => c.id === id && !c.moving), { timeout: 15_000 }).toBe(true);
 }
