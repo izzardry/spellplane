@@ -527,17 +527,33 @@ for (const theme of THEME_IDS) {
         await expect(avatar).toHaveAttribute(probe.attribute, probe.off);
         // The pointer rests on the table, so the talk key is not typed into a field.
         await a.mouse.move(700, 420);
-        await measure(a, info, theme, s, {
-          margin: 6,
-          region: async () => [await avatarRect(a, 's0')],
-          signal: async () => {
-            await a.keyboard.down('Control');
-            await expect(avatar).toHaveAttribute(probe.attribute, probe.on);
-          },
-          ready: () => frames(a, 4),
-        });
-        await a.keyboard.up('Control');
-        await expect(avatar).toHaveAttribute(probe.attribute, probe.off);
+        // The ring is drawn in the seat colour, and a new identity gets a random one, so one pair measured whichever
+        // colour Ann drew (CI once read 1.97 % on Wyrm's light grey). Every seat colour is measured instead, in a fixed
+        // order: the plate takes colour k exactly as the product sets it for a seat of colour k (Avatar.svelte
+        // `--seat: var(--sp-seat-k)`), and each must pass (gate M8 round 3, C2).
+        const seats = (await loadTheme(theme)).tokens.colours.seats;
+        for (let k = 0; k < seats.length; k++) {
+          await avatar.evaluate((el, c) => (el as HTMLElement).style.setProperty('--seat', `var(--sp-seat-${c})`), k);
+          expect(await avatar.evaluate((el) => getComputedStyle(el).getPropertyValue('--seat').trim())).toBe(seats[k]!.colour);
+          await measure(
+            a,
+            info,
+            theme,
+            s,
+            {
+              margin: 6,
+              region: async () => [await avatarRect(a, 's0')],
+              signal: async () => {
+                await a.keyboard.down('Control');
+                await expect(avatar).toHaveAttribute(probe.attribute, probe.on);
+              },
+              ready: () => frames(a, 4),
+            },
+            `speaking-seat${k}`,
+          );
+          await a.keyboard.up('Control');
+          await expect(avatar).toHaveAttribute(probe.attribute, probe.off);
+        }
       } finally {
         await close();
       }
@@ -863,6 +879,7 @@ test.describe('theme switcher', () => {
       const outBefore = (await sent(a)).length;
       const actsBefore = await sentActs(a);
       const hashBefore = await hash(a);
+      const switchAt = await a.evaluate(() => Date.now());
       // M7-P2 (taken by M8-C): Dusk left the picker; the switch goes through the debug hook.
       await setTheme(a, 'dusk');
       await expect.poll(() => currentTheme(a)).toBe('dusk');
@@ -873,9 +890,16 @@ test.describe('theme switcher', () => {
       // Nothing but presence went out for the switch, and the table is the same in both browsers.
       // On a mismatch the message names what went out (CI once saw 7 → 9 here; the kinds tell a timer from the switch).
       const acts = (await sent(a)).filter((m) => m.channel === 'act' || m.channel === 'prv');
+      // On a mismatch the message also names the silences across the switch (gaps over 1.5 s between messages, on each
+      // page's clock): what A heard from B, and what B sent. A gap in both means B fell silent; in A's only, A stalled.
+      const gaps = async (p: Page, dir: 'in' | 'out') => {
+        const at = (await hook<{ dir: string; at: number }[]>(p, 'net.messages')).filter((m) => m.dir === dir && m.at >= switchAt - 3000).map((m) => m.at);
+        return at.slice(1).map((x, i) => x - at[i]!).filter((g) => g > 1500);
+      };
+      const silences = acts.length === actsBefore ? '' : `; gaps A heard ${JSON.stringify(await gaps(a, 'in'))}, B sent ${JSON.stringify(await gaps(b, 'out'))}`;
       expect(
         acts.length,
-        `act/prv messages sent across the switch: ${JSON.stringify(acts.slice(actsBefore).map((m) => ({ channel: m.channel, t: (m.msg as { t?: string }).t, type: ((m.msg as { action?: { type?: string } }).action ?? {}).type })))}`,
+        `act/prv messages sent across the switch: ${JSON.stringify(acts.slice(actsBefore).map((m) => ({ channel: m.channel, t: (m.msg as { t?: string }).t, type: ((m.msg as { action?: { type?: string } }).action ?? {}).type })))}${silences}`,
       ).toBe(actsBefore);
       // No message this page sent since names the theme.
       expect(JSON.stringify((await sent(a)).slice(outBefore))).not.toMatch(/"dusk"|theme/i);

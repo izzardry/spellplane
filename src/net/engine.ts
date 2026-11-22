@@ -56,11 +56,17 @@ import {
 import { validPayload } from './validate';
 import { versionNotice, type VersionMismatch } from './version';
 import { track, untrack } from '../util/lifecycle';
+import { OwnClock } from './liveness';
 
 /** How often the engine checks liveness and resends what is unanswered. */
 export const TICK_MS = 250;
 /** A tick this much later than the last means the page's main thread was blocked (see `tick`). */
 export const TICK_STALL_MS = 2000;
+/**
+ * The most one tick counts on the liveness clock while the page is visible (net/liveness.ts OwnClock): a page that runs
+ * late never counts its own lateness towards a peer's silence.
+ */
+export const TICK_CREDIT_MS = 2 * TICK_MS;
 /** An unanswered hello is resent after this long. */
 export const HELLO_RETRY_MS = 1000;
 /** Pending proposals are resent when the oldest has been unanswered this long. */
@@ -169,6 +175,7 @@ interface PeerEntry {
   /** A welcome that arrived before the hello it answers could be checked. */
   early: WelcomeMessage | null;
   verifying: boolean;
+  /** When this peer was last heard, on the liveness clock (Engine.heardNow), not the wall clock. */
   lastHeard: number;
   helloAt: number;
   /** Last seq this peer acknowledged for our current claim, or null. */
@@ -348,8 +355,12 @@ class Engine implements NetEngine {
   private lastSeats: TableState['seats'] | null = null;
 
   private tickTimer: ReturnType<typeof setInterval> | null = null;
-  /** When the last tick ran on the page's own clock (performance.now): a late tick means the main thread was blocked. */
-  private lastTickReal: number | null = null;
+  /**
+   * The liveness clock (net/liveness.ts): this page's own on-time running, advanced by each tick. Peers are heard and
+   * judged away on it, so a page whose main thread stalls (even in several chunks, each shorter than TICK_STALL_MS)
+   * never marks the others away or claims the sequencer for its own slowness (gate M8 round 3, C1).
+   */
+  private readonly own = new OwnClock({ cap: TICK_CREDIT_MS, hiddenCap: TICK_STALL_MS });
   private hbTimer: ReturnType<typeof setInterval> | null = null;
   /** The message log, a ring of MESSAGE_LOG_LIMIT records whose oldest is at `logStart`. */
   private readonly log: NetMessageRecord[] = [];
@@ -817,7 +828,7 @@ class Engine implements NetEngine {
       keyOk: false,
       early: null,
       verifying: false,
-      lastHeard: this.now(),
+      lastHeard: this.heardNow(),
       helloAt: 0,
       claimAck: null,
       named: undefined,
@@ -956,7 +967,7 @@ class Engine implements NetEngine {
 
   /** Another connection verified as `peerId` that the transport still lists and that was heard within AWAY_AFTER_MS. */
   private liveTwin(from: PeerId, peerId: string): boolean {
-    const now = this.now();
+    const now = this.heardNow();
     const listed = this.opts.transport.peers();
     for (const [t, other] of this.peerMap) {
       if (t === from || other.info.peerId !== peerId || other.info.status !== 'connected') continue;
@@ -978,7 +989,7 @@ class Engine implements NetEngine {
     e.info.status = 'connected';
     e.info.lastSeq = Math.max(hello.lastSeq, w.seq);
     e.info.seat = hello.role === 'spectator' ? null : (seatOfPeer(this.replica.confirmed(), hello.peerId) ?? hello.seat);
-    e.lastHeard = this.now();
+    e.lastHeard = this.heardNow();
     this.noteNamed(e, w.sequencer);
     this.seen.add(hello.peerId);
     // A peer ahead of an active sequencer went on without it: claim before sequencing anything (the `away false`
@@ -1094,7 +1105,7 @@ class Engine implements NetEngine {
       this.sendHello(from, e);
       if (msg.t !== 'hello') return;
     }
-    e.lastHeard = this.now();
+    e.lastHeard = this.heardNow();
     if (e.info.status === 'away') {
       e.info.status = 'connected';
       // The peer may have gone on without us (we were the one cut off): learn every head before sequencing more. The
@@ -2104,23 +2115,29 @@ class Engine implements NetEngine {
     this.send('ctl', { v: PROTOCOL_VERSION, t: 'hb', seq: this.replica.seq(), sequencer: this.sequencer, play: this.replica.play() });
   }
 
+  /** Now on the liveness clock (net/liveness.ts): when a peer is heard, and what its silence is measured against. */
+  private heardNow(): number {
+    return this.own.at(this.now());
+  }
+
   private tick(): void {
     if (this.closed) return;
     const now = this.now();
-    // A tick that runs long after the last one follows a stall of this page's main thread (a theme's shaders compiling
-    // on a slow machine): the peers' heartbeats are still queued behind it, so nobody is marked away on this tick; a
-    // peer that really went quiet is on the next one (gate M8: a theme switch on a CI runner claimed the sequencer).
-    const real = typeof performance === 'undefined' ? null : performance.now();
-    const stalled = real !== null && this.lastTickReal !== null && real - this.lastTickReal > TICK_STALL_MS;
-    this.lastTickReal = real;
+    // Liveness runs on this page's own on-time running (OwnClock): a late tick counts at most TICK_CREDIT_MS, so a
+    // stall of this page's main thread (a theme's shaders compiling on a slow machine, in one piece or in several) never
+    // counts towards a peer's silence (gate M8: a theme switch on a CI runner claimed the sequencer).
+    const elapsed = this.own.step(now);
+    const heard = this.own.at(now);
+    // After a long stall the peers' heartbeats are still queued behind this tick: nobody is judged on it.
+    const stalled = elapsed > TICK_STALL_MS;
     let changed = false;
     for (const [t, e] of this.peerMap) {
       if (stalled) break;
       if (e.info.status === 'handshake') {
         // A connection that never completes its handshake and that the transport no longer lists is dropped.
-        if (now - e.lastHeard > 2 * AWAY_AFTER_MS && !this.opts.transport.peers().includes(t)) this.removePeer(t);
+        if (heard - e.lastHeard > 2 * AWAY_AFTER_MS && !this.opts.transport.peers().includes(t)) this.removePeer(t);
         else if (now - e.helloAt >= HELLO_RETRY_MS) this.sendHello(t, e);
-      } else if (e.info.status === 'connected' && now - e.lastHeard > AWAY_AFTER_MS) {
+      } else if (e.info.status === 'connected' && heard - e.lastHeard > AWAY_AFTER_MS) {
         e.info.status = 'away';
         this.presence.forget(t);
         changed = true;
