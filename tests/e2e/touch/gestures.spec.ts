@@ -17,6 +17,7 @@ import {
   centre,
   doubleTap,
   drag,
+  emptyTable,
   fingers,
   gestures,
   holdDown,
@@ -36,15 +37,13 @@ test.use(IPAD);
 test.skip(({ browserName }) => browserName !== 'webkit', 'the iPad is emulated in WebKit (PLAN M5, owner decisions)');
 
 const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
-/** A point of empty table: well below the own row of cards, above the hand fan. */
-async function emptyTable(page: Page, ids: string[]): Promise<Pt> {
-  const cs = (await cards(page)).filter((c) => ids.includes(c.id));
-  const bottom = Math.max(...cs.map((c) => c.screen.y + c.screen.height));
-  const left = Math.min(...cs.map((c) => c.screen.x));
-  const p = { x: Math.round(left - 60), y: Math.round(bottom + 40) };
-  // The point is the table itself, not a HUD element over it (a press there would never reach the scene).
-  expect(await page.evaluate((q) => document.elementFromPoint(q.x, q.y)?.tagName ?? null, p)).toBe('CANVAS');
-  return p;
+/** The table's canvas is under each point (a press there reaches the scene); else fail naming what is there. */
+async function onCanvas(page: Page, pts: Pt[]): Promise<void> {
+  const under = await page.evaluate((list) => list.map((q) => {
+    const el = document.elementFromPoint(q.x, q.y);
+    return el?.tagName === 'CANVAS' ? 'CANVAS' : `${el?.tagName ?? 'nothing'} ${el?.getAttribute('data-testid') ?? ''} "${(el?.textContent ?? '').trim().slice(0, 30)}" at ${q.x},${q.y}`;
+  }), pts);
+  expect(under, 'the table is under the fingers').toEqual(pts.map(() => 'CANVAS'));
 }
 const camMoved = (a: { position: number[] }, b: { position: number[] }) => Math.hypot(...a.position.map((v, i) => v - b.position[i]!));
 
@@ -104,7 +103,7 @@ test('double-tap taps the card and again untaps it: the same tap action as T', a
     { type: 'up', id: 1, ...a, wait: 40 },
     { type: 'down', id: 1, ...b, wait: 30 },
     { type: 'up', id: 1, ...b },
-  ]);
+  ], { burst: true });
   await expect.poll(async () => (await cards(page)).filter((x) => x.selected).map((x) => x.id)).toEqual([bf[2]]);
   expect((await state(page)).cards[bf[2]!]!.tapped).toBe(false);
 });
@@ -268,7 +267,7 @@ test('a second finger after a long-press makes it a camera gesture: the radial m
   expect((await state(page)).cards[id]!.pose).toEqual(before);
 
   // Long-press on empty table, then a two-finger tap without moving: the fingers lift and no table menu opens.
-  const empty = await emptyTable(page, bf);
+  const empty = await emptyTable(page, bf, [{ x: 80, y: 0 }]);
   await holdDown(page, empty);
   await fingers(page, [{ type: 'down', id: 2, x: empty.x + 80, y: empty.y, wait: 30 }, { type: 'up', id: 1, ...empty, wait: 0 }, { type: 'up', id: 2, x: empty.x + 80, y: empty.y }]);
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -390,14 +389,17 @@ test('a two-finger double-tap fits the whole table', async ({ page }, info) => {
   await fingers(page, twoFingers({ x: m.x - 30, y: m.y }, { x: m.x + 30, y: m.y }, { x: m.x - 140, y: m.y }, { x: m.x + 140, y: m.y }));
   await settled(page);
   expect(camMoved(fitted, await pose(page))).toBeGreaterThan(10);
-  const at = { x: 600, y: 360 };
+  // Both fingers on the table: a control over the zoomed-in card (its selection strip) would take a finger instead.
+  const at = await emptyTable(page, bf, [{ x: -40, y: 0 }, { x: 40, y: 0 }]);
+  await onCanvas(page, [{ x: at.x - 40, y: at.y }, { x: at.x + 40, y: at.y }]);
   const one = [
     { type: 'down' as const, id: 1, x: at.x - 40, y: at.y, wait: 0 },
     { type: 'down' as const, id: 2, x: at.x + 40, y: at.y, wait: 30 },
     { type: 'up' as const, id: 1, x: at.x - 40, y: at.y, wait: 0 },
     { type: 'up' as const, id: 2, x: at.x + 40, y: at.y, wait: 60 },
   ];
-  await fingers(page, [...one, ...one]);
+  await fingers(page, [...one, ...one], { burst: true });
+  await expect.poll(async () => (await gestures(page)).at(-1)?.kind).toBe('twoFingerDoubleTap');
   await settled(page);
   expect(camMoved(fitted, await pose(page))).toBeLessThan(1);
   expect((await gestures(page)).at(-1)).toMatchObject({ kind: 'twoFingerDoubleTap' });

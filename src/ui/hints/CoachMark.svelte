@@ -17,6 +17,7 @@
     bottom = null,
     hidden = false,
     corner = false,
+    row = null,
   }: {
     coach: CoachController;
     touch?: boolean;
@@ -29,6 +30,11 @@
      * covers neither KEEP and MULLIGAN nor the own battlefield's near edge (gate M8 screenshot review).
      */
     corner?: boolean;
+    /**
+     * A touch screen: the room between the own plate and the primary (window x, CSS px), where the mark stands centred,
+     * no wider than that room, in the row of the plate (gate M8 finding N1). Null: centred in the window.
+     */
+    row?: { left: number; right: number } | null;
   } = $props();
 
   let id = $state<CoachMarkId | null>(untrack(() => coach.current()));
@@ -41,7 +47,12 @@
 </script>
 
 {#if id && shown && !hidden}
-  <aside class="coach ds-coach" class:corner style:bottom={corner ? null : bottom} data-testid="coach-mark" data-coach={id} data-anchor={shown.anchor} aria-live="polite">
+  <aside
+    class="coach ds-coach"
+    class:corner
+    style:bottom={corner ? null : bottom}
+    style:left={!corner && row ? `${Math.round((row.left + row.right) / 2)}px` : null}
+    style:max-width={!corner && row ? `${Math.floor(Math.min(380, row.right - row.left))}px` : null} data-testid="coach-mark" data-coach={id} data-anchor={shown.anchor} aria-live="polite">
     <span class="dot" aria-hidden="true"></span>
     <span class="text ds-coach__text">{shown.text}</span>
     <Button variant="ghost" size={touch ? 'md' : 'xs'} data-testid="coach-dismiss" onclick={() => id && coach.dismiss(id)}>Got it</Button>

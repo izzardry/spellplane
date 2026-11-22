@@ -7,7 +7,7 @@
 -->
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { MenuEntry } from './menu';
+  import { menuLeft, type MenuAnchor, type MenuEntry } from './menu';
   import { safeAreaInsets } from './touch/device';
   import { clampMenu } from './touch/fan';
 
@@ -17,8 +17,19 @@
     x,
     y,
     autofocus = false,
+    anchor = null,
     onclose,
-  }: { title: string; entries: MenuEntry[]; x: number; y: number; /** Opened from the keyboard: focus the first entry. */ autofocus?: boolean; onclose: () => void } = $props();
+  }: {
+    title: string;
+    entries: MenuEntry[];
+    x: number;
+    y: number;
+    /** Opened from the keyboard: focus the first entry. */
+    autofocus?: boolean;
+    /** The card element the menu stands beside (a keyboard-opened menu): where it does not fit right of it, it stands at its left. */
+    anchor?: MenuAnchor | null;
+    onclose: () => void;
+  } = $props();
 
   let el = $state<HTMLElement | undefined>();
   let pos = $state({ left: 0, top: 0 });
@@ -27,7 +38,8 @@
     const w = el?.offsetWidth ?? 220;
     const h = el?.offsetHeight ?? 300;
     // Inside the screen and clear of the iPad's safe-area insets (zero elsewhere; M5-P1).
-    pos = clampMenu(x, y, w, h, window.innerWidth, window.innerHeight, safeAreaInsets());
+    const insets = safeAreaInsets();
+    pos = clampMenu(menuLeft(x, w, window.innerWidth, anchor ? Math.round(anchor.rect.left) : null, insets.left, insets.right), y, w, h, window.innerWidth, window.innerHeight, insets);
   });
 
   function outside(e: PointerEvent) {
@@ -86,6 +98,7 @@
   tabindex="-1"
   aria-label={title}
   data-testid="context-menu"
+  data-anchor={anchor ? JSON.stringify(anchor) : null}
   bind:this={el}
   style:left="{pos.left}px"
   style:top="{pos.top}px"
