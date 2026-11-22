@@ -17,7 +17,11 @@ function ids(ctx: HudMenuContext): HudMenuId[] {
 
 describe('HUD menu', () => {
   it('groups the rare tools as the proposal lists them', () => {
-    expect(HUD_MENU.map((g) => g.label)).toEqual(['Game', 'Deck', 'Table', 'View', 'Voice', 'Help']);
+    expect(HUD_MENU.map((g) => g.label)).toEqual(['Game', 'Tokens and dice', 'Deck', 'Table', 'View', 'Voice', 'Help']);
+  });
+
+  it('no group holds more than seven rows (visual.md O-7; gate M8 finding N10)', () => {
+    for (const g of HUD_MENU) expect(g.items.length, g.label).toBeLessThanOrEqual(7);
   });
 
   it("keeps every former toolbar function one step away (import deck, token, clip, view, keys, settings, look, voice, dictation, next game, new draft)", () => {

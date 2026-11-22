@@ -26,6 +26,7 @@
   import CurveChart from '../design/CurveChart.svelte';
   import Dialog from '../design/Dialog.svelte';
   import Field from '../design/Field.svelte';
+  import Icon from '../design/Icon.svelte';
   import IconButton from '../design/IconButton.svelte';
   import Pip from '../design/Pip.svelte';
   import Segmented from '../design/Segmented.svelte';
@@ -36,6 +37,10 @@
   import type { DecksEnv } from './env';
   import { cardLabel } from './env';
   import CardImage from './parts/CardImage.svelte';
+  import SampleHand from './parts/SampleHand.svelte';
+  import MenuPopover from '../design/MenuPopover.svelte';
+  import type { MenuGroup } from '../design/menu';
+  import { duplicateDeck } from '../../data/deck/seal';
   import { DeckEditor } from './state/editor';
   import { groupsOf, overCopies, rowsOf } from './state/rows';
   import { takeFresh } from './state/library';
@@ -65,6 +70,10 @@
   let announce = $state('');
   let nameDraft = $state('');
   let converting = $state(false);
+  /** Board 3's SAMPLE HAND and its ⋯ menu (decks.md D5: Play with this deck, Duplicate; Convert for a booster deck). */
+  let sampling = $state(false);
+  let moreAnchor = $state<HTMLElement | null>(null);
+  let moreOpen = $state(false);
   let offline = $state(untrack(() => env.offline()));
 
   // Search (custom decks).
@@ -253,6 +262,58 @@
     if (destroyed || unsaved()) return;
     env.go('#/decks');
   }
+  /** PLAY WITH THIS DECK: selects it for Home (refused while a search runs, as the library's PLAY) and goes Home. */
+  async function playWith(): Promise<void> {
+    if (!deck) return;
+    commitName();
+    await editor?.flush();
+    if (destroyed || unsaved()) return;
+    if (env.searching()) {
+      toasts.info('The deck is locked while you search. Cancel the search to play with another deck.');
+      return;
+    }
+    if (env.settings) {
+      const home = await env.settings.get('home');
+      await env.settings.set('home', { ...home, deckId: deck.id });
+    }
+    env.go('#/');
+  }
+  async function duplicate(): Promise<void> {
+    if (!deck) return;
+    commitName();
+    await editor?.flush();
+    if (destroyed || unsaved()) return;
+    const copy = duplicateDeck(deck, env.newId(), env.now());
+    copy.summary = summarise(copy, lookup);
+    try {
+      await env.decks.put(copy);
+    } catch {
+      toasts.info("Could not save the copy: this browser's storage is full.");
+      return;
+    }
+    if (!destroyed) env.go(`#/decks/${encodeURIComponent(copy.id)}`);
+  }
+  function moreGroups(): MenuGroup[] {
+    return [
+      {
+        items: [
+          { id: 'play', label: 'Play with this deck', testid: 'deck-more-play', run: () => void playWith() },
+          { id: 'duplicate', label: 'Duplicate', testid: 'deck-more-duplicate', run: () => void duplicate() },
+          ...(sealed ? [{ id: 'convert', label: 'Convert to custom deck', testid: 'deck-more-convert', run: () => (converting = true) }] : []),
+        ],
+      },
+      // The deck's size (a custom deck): rare after the first minutes, so it lives here, the current one checked.
+      ...(sealed
+        ? []
+        : [
+            {
+              title: 'Deck size',
+              id: 'size',
+              items: (['40', '60'] as const).map((v) => ({ id: `size${v}`, label: `${v} cards`, hint: String(size) === v ? '✓' : undefined, testid: `deck-size-${v}`, run: () => changeSize(v) })),
+            },
+          ]),
+    ];
+  }
   async function convert(): Promise<void> {
     if (!deck) return;
     await editor?.flush();
@@ -380,6 +441,7 @@
     }
     return out;
   };
+  const cardsText = (n: number): string => `${n} ${n === 1 ? 'card' : 'cards'}`;
   const generic = (card: CardData | null): string => {
     const m = card ? /\{(\d+|X)\}/.exec(manaCosts(card)) : null;
     return m ? m[1]! : '';
@@ -399,33 +461,24 @@
          undo and redo, and the one filled DONE right, in one 44 px row that never wraps. -->
     <header class="top">
       <IconButton label="Back to decks" icon="arrowLeft" onclick={() => void done()} data-testid="deck-back" />
-      <input
-        class="name ds-t-heading"
-        aria-label="Deck name"
-        title={nameDraft}
-        data-testid="deck-name"
-        maxlength="60"
-        bind:value={nameDraft}
-        onblur={commitName}
-        onkeydown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
-      />
+      <!-- The field grows with the name (a hidden copy of it sizes the cell), up to the room the row leaves; only a name
+           longer than that room is cut, with its tooltip (gate M8 finding F8). -->
+      <span class="name-wrap">
+        <span class="name name-size ds-t-heading" aria-hidden="true">{nameDraft || ' '}</span>
+        <input
+          class="name ds-t-heading"
+          aria-label="Deck name"
+          title={nameDraft}
+          data-testid="deck-name"
+          maxlength="60"
+          bind:value={nameDraft}
+          onblur={commitName}
+          onkeydown={(e) => e.key === 'Enter' && (e.currentTarget as HTMLInputElement).blur()}
+        />
+      </span>
       <Chip variant="line" data-testid="deck-kind">{sealed ? `🔒 Booster · ${deck.seal ? `${[...new Set(deck.seal.sets)].join('/')} × ${deck.seal.sets.length}` : ''}` : 'Custom'}</Chip>
       <span class="pips">{#each summary?.colours ?? [] as c (c)}<Pip colour={c} size={20} />{/each}</span>
-      {#if simple}<Chip data-testid="simple-chip">Simple deck</Chip>{/if}
       <span class="grow"></span>
-      {#if !sealed}
-        <Segmented
-          size="sm"
-          label="Deck size"
-          value={String(size)}
-          onchange={changeSize}
-          data-testid="deck-size"
-          options={[
-            { value: '40', label: '40' },
-            { value: '60', label: '60' },
-          ]}
-        />
-      {/if}
       <span class="stat">
         <span class="ds-t-eyebrow">Cards</span>
         <span class="ds-t-list num" data-testid="deck-count"><b>{deck.main.length}</b> / {size}</span>
@@ -438,6 +491,11 @@
       <span class="divider" aria-hidden="true"></span>
       <IconButton label="Undo" icon="undo" data-testid="deck-undo" disabled={!canUndo} onclick={undo} />
       <IconButton label="Redo" icon="undo" class="redo" data-testid="deck-redo" disabled={!canRedo} onclick={redo} />
+      <span class="divider" aria-hidden="true"></span>
+      <Button class="sample" data-testid="deck-sample" aria-label="Sample hand" disabled={deck.main.length === 0} title={deck.main.length === 0 ? 'Add cards to draw a sample hand' : 'Sample hand'} onclick={() => (sampling = true)}>
+        {#snippet icon()}<Icon name="hand" size={16} />{/snippet}<span class="sample-word">Sample hand</span>
+      </Button>
+      <span bind:this={moreAnchor} class="more-at"><IconButton label="More for this deck" icon="more" data-testid="deck-more" aria-haspopup="menu" aria-expanded={moreOpen} onclick={() => (moreOpen = !moreOpen)} /></span>
       <Button variant="primary" data-testid="deck-done" onclick={() => void done()}>Done</Button>
     </header>
 
@@ -500,7 +558,7 @@
             <Chip size="sm" variant={types.includes(t.value) ? 'on' : 'line'} pressed={types.includes(t.value)} onclick={() => toggleType(t.value)} data-testid="chip-type-{t.value}">{t.label}</Chip>
           {/each}
           <span class="grow"></span>
-          <span class="ds-t-meta" data-testid="result-count">{sealed ? `${poolRows.reduce((s, r) => s + r.n, 0)} cards` : scope === 'deck' ? `${inDeck.length} cards` : searched ? `${results.length} cards` : ''}</span>
+          <span class="ds-t-meta" data-testid="result-count">{sealed ? cardsText(poolRows.reduce((s, r) => s + r.n, 0)) : scope === 'deck' ? cardsText(inDeck.length) : searched ? cardsText(results.length) : ''}</span>
         </div>
         {#if sealed}
           <div class="row36" role="group" aria-label="Basic lands">
@@ -554,7 +612,8 @@
 
       <aside class="ds-sheet rail" aria-label="Deck">
         <div class="between">
-          <span class="ds-t-eyebrow">Mana curve</span>
+          <!-- The simple-deck mark sits with the curve it describes, so the top row keeps its room for the name (F8). -->
+          <span class="curve-head"><span class="ds-t-eyebrow">Mana curve</span>{#if simple}<Chip data-testid="simple-chip">Simple deck</Chip>{/if}</span>
           <span class="ds-t-meta">average {analysis ? analysis.avgMv.toFixed(1) : '0.0'}</span>
         </div>
         <CurveChart creatures={curve.cr} others={curve.sp} target={[...recipeFor(size).targets]} label={curveText(curveTotals)} data-testid="curve" />
@@ -615,6 +674,13 @@
     <div class="ds-sr-only" aria-live="polite" data-testid="deck-live">{announce}</div>
   {/if}
 
+  {#if sampling && deck}
+    <SampleHand main={deck.main} faces={env.faces} {lookup} onclose={() => (sampling = false)} />
+  {/if}
+  {#if moreOpen && deck}
+    <MenuPopover open={true} anchor={moreAnchor} placement="below" label="Deck actions" groups={moreGroups()} testid="deck-more-menu" onclose={() => (moreOpen = false)} />
+  {/if}
+
   {#if converting && deck}
     <Dialog open={true} label="Make a custom copy?" testid="convert-dialog" onclose={() => (converting = false)}>
       <p class="ds-t-reading">The copy can take any card. It is no longer a booster deck and plays as a custom deck. "{deck.name}" stays as it is.</p>
@@ -644,11 +710,26 @@
     min-height: 44px;
     flex: none;
   }
+  .name-wrap {
+    display: inline-grid;
+    flex: 0 1 auto;
+    min-width: 140px;
+  }
+  .name-wrap > .name {
+    grid-area: 1 / 1;
+  }
+  .name-size {
+    visibility: hidden;
+    white-space: pre;
+    overflow: hidden;
+    border-bottom-color: transparent;
+    line-height: 36px;
+  }
   .name {
     box-sizing: border-box;
-    flex: 0 1 420px;
+    width: 100%;
+    min-width: 0;
     height: 36px;
-    min-width: 140px;
     text-overflow: ellipsis;
     border: 0;
     border-bottom: 2px solid var(--ds-line);
@@ -681,6 +762,33 @@
   }
   .num {
     font-variant-numeric: tabular-nums;
+  }
+  .more-at {
+    display: inline-flex;
+  }
+  .curve-head {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--ds-space-sm);
+  }
+  /* Only the name gives way in the top row; every other part keeps its size (board 3: one row, one height). */
+  .top > :global(:not(.name-wrap):not(.grow)) {
+    flex-shrink: 0;
+  }
+  /* Under 1400 px SAMPLE HAND is a round icon button (its name stays its label), so the row fits at 1280. */
+  @media (max-width: 1399px) {
+    .top :global(.sample) {
+      width: var(--ds-control-md);
+      padding: 0;
+    }
+    .sample-word {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
   }
   .top :global(.redo svg) {
     transform: scaleX(-1);
@@ -730,12 +838,11 @@
     grid-template-columns: repeat(auto-fill, minmax(146px, 1fr));
     gap: var(--ds-space-lg) var(--ds-space-md);
   }
+  /* No content-visibility here: its paint containment cut the count badge that stands over the cell's corner (gate M8 F8). */
   .cell {
     position: relative;
     cursor: pointer;
     border-radius: var(--ds-radius-sm);
-    content-visibility: auto;
-    contain-intrinsic-size: 146px 204px;
     transition: transform var(--ds-duration-fast) var(--ds-ease-standard);
   }
   .cell:hover {

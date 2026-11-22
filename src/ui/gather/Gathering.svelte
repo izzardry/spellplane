@@ -200,7 +200,7 @@
       {#if screen}
         <ClaimPage phase="refused" seatName={claim?.name ?? ''} refusal={screen} onsit={() => undefined} onnotnow={notNow} onwatch={watch} onopenmine={openMine} />
       {:else if claim}
-        <ClaimPage phase={claimPhase} seatName={claim.name} onsit={(n) => void sit(n)} onnotnow={notNow} />
+        <ClaimPage phase={claimPhase} seatName={claim.name} onsit={(n) => void sit(n)} onnotnow={notNow} onwatch={watch} />
       {/if}
     </div>
   {:else if !status.live}
