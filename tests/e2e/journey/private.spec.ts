@@ -160,6 +160,8 @@ test.describe('journey: a private game', () => {
         await expect(b.getByTestId('route-home')).toBeVisible({ timeout: 15_000 });
         await expect(b.getByTestId('toast').filter({ hasText: 'You left the table. The game goes on; your seat is kept.' })).toHaveCount(1);
         await expect.poll(async () => (await state(a)).seats[ben]?.away === true, { timeout: 10_000 }).toBe(true);
+        // His leaving puts a notice on Ann's table; it stays for the HUD toast's 6 s (TableFrame NOTICE_MS), so it is read now.
+        await expect(a.getByTestId('hud-notice')).toContainText('left. The game goes on');
         await expect(b.getByTestId('home-continue')).toBeVisible();
         // The summary carries the room key although Back had already changed the address when it was written.
         const code = link.split('/t/')[1]!.split('/')[0]!;
@@ -171,9 +173,12 @@ test.describe('journey: a private game', () => {
       }, { timeout: 60_000 });
 
       await test.step("a table's notice stays with its table: Ann leaves and opens a practice table, no notice there", async () => {
-        // Ben's leaving and coming back put a notice on Ann's table (Gathering, BringBack).
-        await expect(a.getByTestId('hud-notice')).toBeVisible({ timeout: 15_000 });
+        // Ben leaves again, by the arrow: a fresh notice on Ann's table, and Ann leaves while it shows (its 6 s run on
+        // the real clock, so it is not waited for after Ben's return).
+        await b.getByTestId('leave').click();
+        await expect(a.getByTestId('hud-notice')).toContainText('left. The game goes on', { timeout: 15_000 });
         await leaveByArrow(a);
+        await expect(b.getByTestId('route-home')).toBeVisible();
         await soloOpponent(a, 'ALONE');
         await a.getByTestId('home-primary').click();
         await atTable(a, 'practice');

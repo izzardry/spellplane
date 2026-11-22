@@ -175,6 +175,8 @@ test.describe('bring back a seat other than s0 (K1)', () => {
         await a.clock.runFor(3_100);
         for (const p of [a, b0]) await expect.poll(() => hands(p, ['s0', 's1']), { timeout: 45_000 }).toEqual([7, 7]);
         await sameHash([a, b0]);
+        // Versus is done only while every player is connected: it leaves before anyone leaves the table.
+        for (const p of [a, b0]) await expect(p.getByTestId('versus')).toHaveCount(0, { timeout: 15_000 });
       }, { timeout: 90_000 });
 
       let link = '';
@@ -225,6 +227,8 @@ test.describe('bring back a seat other than s0 (K1)', () => {
         await a.getByTestId('start-short').click();
         for (const p of [a, b, c0]) await expect.poll(() => hands(p, ['s0', 's1', 's2']), { timeout: 45_000 }).toEqual([7, 7, 7]);
         await sameHash([a, b, c0]);
+        // Versus is done only while every player is connected: it leaves before anyone leaves the table.
+        for (const p of [a, b, c0]) await expect(p.getByTestId('versus')).toHaveCount(0, { timeout: 15_000 });
       }, { timeout: 120_000 });
 
       let link = '';
