@@ -151,6 +151,8 @@ test('a network where nobody else connects still seats the player alone, as its 
   // Back at the solo table, the debug hook has the solo session again and no network part of the room it left.
   await page.evaluate(() => (location.hash = '#/solo'));
   await expect.poll(() => page.evaluate(() => window.__spellplane?.net === undefined)).toBe(true);
-  expect(await hook<string>(page, 'session.roomId')).not.toBe(room.roomId);
+  // A page opened on a room creates the sandbox the first time `#/solo` shows (main.ts openSandbox, async): its
+  // session part replaces the room's a moment after the `net` part is gone.
+  await expect.poll(() => hook<string>(page, 'session.roomId')).not.toBe(room.roomId);
   await context.close();
 });
