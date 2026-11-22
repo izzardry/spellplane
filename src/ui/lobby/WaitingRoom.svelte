@@ -25,6 +25,7 @@
   import type { LobbyProps } from '../types';
   import Button from '../design/Button.svelte';
   import Icon from '../design/Icon.svelte';
+  import IconButton from '../design/IconButton.svelte';
   import BoosterFan from '../design/BoosterFan.svelte';
   import Field from '../design/Field.svelte';
   import PresenceDot from '../design/PresenceDot.svelte';
@@ -127,6 +128,11 @@
   let busy = $state(false);
   let failure = $state('');
   let note = $state('');
+  /**
+   * The line a failure or a note was said under: the status slot shows it in place of the line until the line moves on
+   * (one status line, gate M8 finding N16).
+   */
+  let saidUnder = $state<string | null>(null);
   let inviteOpen = $state(false);
   let invitedOnce = false;
   let pickerOpen = $state(false);
@@ -167,15 +173,32 @@
   const drafting = $derived(isLiveDraft(st));
   const packs = $derived(draftPacks(st));
   const pill = $derived(startPill({ state: view, connected, count }));
-  const line = $derived(
-    !drafting || st.stage !== 'lobby'
-      ? missingLine(view, mySeat, host, connected, count)
-      : open > 0
-        ? missingLine(view, mySeat, host, connected, count)
-        : isHost
-          ? 'Everyone is here. Start the draft when you are ready.'
-          : `Waiting for ${(host && st.seats[host]?.name) || 'the host'} to start the draft.`,
-  );
+  /**
+   * The one status line under the one lg primary (visual.md 2.8 StatusLine, board 5; gate M8 finding N16). It says what
+   * the primary does not: what is missing, or what happens next. The primary already shows the creator's count
+   * (START · 3) and a draft's blocker (WAITING · 2 OPEN SEATS, Waiting for Ann), so the line does not repeat them.
+   */
+  const line = $derived.by((): string => {
+    if (held && st.stage === 'lobby') return 'The start waits for you. Press READY again when you are set.';
+    if (!drafting || st.stage !== 'lobby') {
+      if (isHost && count !== null) return 'Everyone is ready. The game starts by itself.';
+      return missingLine(view, mySeat, host, connected, count);
+    }
+    if (open > 0) return shortStart ? missingLine(view, mySeat, host, connected, count) : 'The draft starts when every seat is taken.';
+    return isHost ? 'Everyone is here. Start the draft when you are ready.' : 'Everyone is here.';
+  });
+  // A new failure or note is said under the current line; when the line moves on, the slot shows the line again.
+  $effect(() => {
+    void failure;
+    void note;
+    untrack(() => (saidUnder = line));
+  });
+  /** What the one status slot shows: a failure, else a note, else the line. */
+  const slot = $derived.by((): { kind: 'failure' | 'note' | 'line'; text: string } => {
+    if (failure && saidUnder === line) return { kind: 'failure', text: failure };
+    if (note && saidUnder === line) return { kind: 'note', text: note };
+    return { kind: 'line', text: line };
+  });
   const failedPeers = $derived(new Set(report.pairs.filter((p) => p.state === 'failed').map((p) => p.peer)));
   const code = $derived(codeLabel(link.roomId));
   const seatedCount = $derived(list.filter((c) => c.occupied).length);
@@ -435,7 +458,8 @@
       return;
     }
     held = !held;
-    note = held ? 'Your deck stays locked to your seat. The game does not start until you press READY again.' : '';
+    // The status line says it (the held line above): no second line under the primary.
+    note = '';
   }
 
   function start(): void {
@@ -581,6 +605,16 @@
   }
 </script>
 
+{#snippet statusSlot()}
+  {#if slot.kind === 'failure'}
+    <StatusLine tone="danger" role="alert" data-testid="lobby-failure">{slot.text}</StatusLine>
+  {:else if slot.kind === 'note'}
+    <StatusLine data-testid="lobby-note">{slot.text}</StatusLine>
+  {:else}
+    <StatusLine data-testid="missing-line">{slot.text}</StatusLine>
+  {/if}
+{/snippet}
+
 <main class="room ds-root" data-testid="lobby" aria-labelledby="lobby-title" data-invite={inviteOpen} data-side={inviteOpen || !!rules}>
   <header class="top">
     <Button variant="ghost" size="sm" data-testid="room-home" onclick={home}>← HOME</Button>
@@ -705,12 +739,10 @@
             {:else if shortStart}
               <Button variant="ghost" size="lg" data-testid="start-short" onclick={startShort}>START WITH {seatedCount} PLAYERS</Button>
             {:else}
-              <Button size="lg" disabled data-testid="start-pill">{isHost || open > 0 ? pill.label : `Waiting for ${hostName}`}</Button>
+              <Button size="lg" disabled data-testid="start-pill">{open > 0 ? pill.label : isHost ? pill.label : `Waiting for ${hostName}`}</Button>
             {/if}
           </div>
-          <div class="draft-status"><StatusLine data-testid="missing-line">{line}</StatusLine></div>
-          {#if failure}<p class="ds-status ds-status--danger" role="alert" data-testid="lobby-failure">{failure}</p>{/if}
-          {#if note}<StatusLine data-testid="lobby-note">{note}</StatusLine>{/if}
+          <div class="draft-status">{@render statusSlot()}</div>
           </div>
         </section>
         {:else}
@@ -755,32 +787,35 @@
           {/if}
         </section>
 
+        <!-- One lg primary and one status line (visual.md 2.8, board 5; gate M8 finding N16): READY, then READY ✓ (a
+             tap takes it back), or for the creator START · 3 with a round ghost close beside it that holds the count
+             (the stage primary's searching pattern), or START WITH n PLAYERS. The line says what is missing. -->
         <section class="primary" aria-label="Ready and start">
-          {#if me?.ready}
-            <Button size="lg" pressed={!held} data-testid="ready-on" data-held={held} onclick={toggleHeld}>{held ? 'READY' : 'READY ✓'}</Button>
-          {:else}
-            <Button
-              variant={isHost && pill.kind === 'start' ? 'secondary' : 'primary'}
-              size="lg"
-              data-testid="ready"
-              disabled={busy || !mySeat || (deckChoice !== 'paste' && !deckRefs) || (deckChoice === 'paste' && !deckText.trim())}
-              onclick={pressReady}>READY</Button
-            >
-          {/if}
-          {#if isHost}
-            {#if pill.kind === 'start' && !startBlocked}
+          <div class="go">
+            {#if !me?.ready}
+              <Button
+                variant="primary"
+                size="lg"
+                data-testid="ready"
+                disabled={busy || !mySeat || (deckChoice !== 'paste' && !deckRefs) || (deckChoice === 'paste' && !deckText.trim())}
+                onclick={pressReady}>READY</Button
+              >
+            {:else if held}
+              <Button variant="primary" size="lg" data-testid="ready-on" data-held="true" onclick={toggleHeld}>READY</Button>
+            {:else if isHost && pill.kind === 'start' && !startBlocked}
               <Button variant="primary" size="lg" data-testid="start-game" data-counting={pill.counting} onclick={start}>{pill.label}</Button>
+              {#if pill.counting}
+                <IconButton label="Wait: hold the start" size="lg" variant="ghost" icon="close" data-testid="ready-on" data-held="false" onclick={toggleHeld} />
+              {/if}
             {:else if shortStart}
               <Button variant="ghost" size="lg" data-testid="start-short" onclick={startShort}>START WITH {seatedCount} PLAYERS</Button>
             {:else}
-              <span class="pill ds-t-eyebrow" role="status" data-testid="start-pill">{pill.label}</span>
+              <Button size="lg" pressed data-testid="ready-on" data-held="false" onclick={toggleHeld}>READY ✓</Button>
             {/if}
-          {/if}
-          <p class="line" role="status" data-testid="missing-line">{line}</p>
-          <p class="ds-t-meta" data-testid="ready-count">{readiness(view).ready} of {Object.keys(st.seats).length} players ready.</p>
-          {#if startBlocked}<p class="ds-t-meta" data-testid="start-blocked" hidden={startBlocked === line}>{startBlocked}</p>{/if}
-          {#if failure}<p class="ds-status ds-status--danger" role="alert" data-testid="lobby-failure">{failure}</p>{/if}
-          {#if note}<StatusLine data-testid="lobby-note">{note}</StatusLine>{/if}
+          </div>
+          {@render statusSlot()}
+          <!-- The seats' checks say who is ready; this is the same count for assistive tech. -->
+          <p class="ds-sr-only" data-testid="ready-count">{readiness(view).ready} of {Object.keys(st.seats).length} players ready.</p>
         </section>
         {/if}
       </div>
@@ -1273,21 +1308,19 @@
     margin: 0;
     text-align: center;
   }
-  .primary :global(.ds-btn--lg) {
+  .primary :global(.ds-btn--lg:not(.ds-icon-btn)) {
     min-width: 220px;
   }
-  .pill {
-    display: inline-grid;
-    place-items: center;
-    box-sizing: border-box;
-    min-width: 220px;
-    height: var(--ds-control-sm);
-    padding: 0 var(--ds-space-lg);
-    border-radius: var(--ds-radius-pill);
-    box-shadow: inset 0 0 0 1px var(--ds-border);
+  /* The primary stays centred over its line; while START counts, the round hold button stands 12 px to its right
+     (visual.md 2.8 "Stage primary"). */
+  .go {
+    position: relative;
+    display: flex;
+    align-items: center;
   }
-  .line {
-    font-size: var(--ds-type-body);
+  .go :global(.ds-icon-btn) {
+    position: absolute;
+    left: calc(100% + var(--ds-space-md));
   }
   .calm {
     margin: 0;

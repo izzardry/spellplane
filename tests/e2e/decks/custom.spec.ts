@@ -176,6 +176,11 @@ test('offline: the search is disabled and the list still edits', async ({ page }
   await page.evaluate(() => window.__spellplane!.decks!.setOffline(true));
   await expect(page.getByTestId('card-search')).toBeDisabled();
   await expect(page.getByTestId('search-offline')).toBeVisible();
+  // The row's steppers are the kit's 16 px minus and plus icons (visual.md A6; gate M8 N13).
+  for (const id of ['row-minus', 'row-plus']) {
+    await expect(row(page, 'Llanowar Elves').getByTestId(id)).toHaveText('');
+    await expect(row(page, 'Llanowar Elves').getByTestId(id).locator('svg.ds-icon')).toHaveAttribute('width', '16');
+  }
   await row(page, 'Llanowar Elves').getByTestId('row-plus').click();
   await expect(row(page, 'Llanowar Elves').getByTestId('row-count')).toHaveText('5');
   // IN DECK needs no connection: the deck's own cards, whole, filtered locally.

@@ -8,6 +8,7 @@
 <script lang="ts">
   import { onDestroy, type Snippet } from 'svelte';
   import Button from '../design/Button.svelte';
+  import IconButton from '../design/IconButton.svelte';
   import QrPlate from '../design/QrPlate.svelte';
   import Sheet from '../design/Sheet.svelte';
   import StatusLine from '../design/StatusLine.svelte';
@@ -109,15 +110,22 @@
   <div class="actions">
     {#if compact}{@render linkField()}{/if}
     <Button variant="primary" size={compact ? 'sm' : undefined} data-testid="copy-link" onclick={() => copy('link')}>{copied === 'link' ? 'COPIED ✓' : 'COPY LINK'}</Button>
-    {#if canShare}<Button size={compact ? 'sm' : undefined} data-testid="share" onclick={share}>SHARE</Button>{/if}
+    {#if canShare}
+      {#if compact}
+        <!-- In the plate menu SHARE is a round icon button, so the link field keeps a readable width (gate M8 N11). -->
+        <IconButton label="Share the link" size="sm" icon="share" data-testid="share" onclick={share} />
+      {:else}
+        <Button data-testid="share" onclick={share}>SHARE</Button>
+      {/if}
+    {/if}
   </div>
 {/snippet}
 
 {#snippet presence()}
   {#if status}
     <!-- One status word: the dot carries "waiting", the line says the rest, and wraps inside the sheet (gate M8 N11). -->
-    <div class="presence">
-      <StatusLine data-testid="invite-status">
+    <div class="presence" class:one={compact}>
+      <StatusLine data-testid="invite-status" title={status}>
         {#snippet icon()}<span class="ds-dot {present ? 'ds-dot--here' : 'ds-dot--connecting'}" aria-hidden="true"></span>{/snippet}
         {status}
       </StatusLine>
@@ -252,7 +260,8 @@
   .foot-row {
     display: flex;
   }
-  .compact .actions :global(.ds-btn--primary) {
+  .compact .actions :global(.ds-btn--primary),
+  .compact .actions :global(.ds-icon-btn) {
     flex: none;
   }
   .compact .actions .ds-field {
@@ -292,6 +301,24 @@
   }
   .presence :global(.ds-dot) {
     margin-top: 2px;
+  }
+  /* In the plate menu the state is one line: the name gives way with an ellipsis (gate M8 N11, round 4). */
+  .presence.one {
+    min-width: 0;
+  }
+  .presence.one :global(.ds-status) {
+    align-items: center;
+    max-width: 100%;
+    white-space: nowrap;
+  }
+  .presence.one :global(.ds-status > span:last-child) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .presence.one :global(.ds-dot) {
+    flex: none;
+    margin-top: 0;
   }
   .foot {
     display: flex;
