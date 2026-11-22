@@ -362,6 +362,8 @@ class Engine implements NetEngine {
    */
   private readonly own = new OwnClock({ cap: TICK_CREDIT_MS, hiddenCap: TICK_STALL_MS });
   private hbTimer: ReturnType<typeof setInterval> | null = null;
+  /** When the last heartbeat went out (engine clock): an overdue one goes out with the next message handled. */
+  private lastHbAt = 0;
   /** The message log, a ring of MESSAGE_LOG_LIMIT records whose oldest is at `logStart`. */
   private readonly log: NetMessageRecord[] = [];
   private logStart = 0;
@@ -441,6 +443,7 @@ class Engine implements NetEngine {
       return;
     }
     this.joined = true;
+    this.lastHbAt = this.now();
     this.tickTimer = setInterval(() => this.tick(), TICK_MS);
     this.hbTimer = setInterval(() => this.heartbeat(), HEARTBEAT_MS);
     for (const p of this.opts.transport.peers()) this.onTransportJoin(p);
@@ -1087,6 +1090,10 @@ class Engine implements NetEngine {
     const msg = asWireMessage(channel, raw);
     if (!msg || !validPayload(msg)) return;
     this.record('in', channel, msg, from);
+    // A page whose main thread was blocked (a theme's shaders compiling) handles the queued messages before its overdue
+    // heartbeat timer gets to run, and may block again right after: the heartbeat goes out now, so the others do not
+    // count the whole stall as this page's silence (gate M8 round 3, C1).
+    if (this.now() - this.lastHbAt > HEARTBEAT_MS + TICK_MS) this.heartbeat();
     let e = this.peerMap.get(from);
     if (!e) {
       // A peer we do not know (yet, or any more) speaks to us: start the handshake. Our hello makes it answer, so
@@ -2112,6 +2119,7 @@ class Engine implements NetEngine {
 
   private heartbeat(): void {
     if (this.closed || !this.joined) return;
+    this.lastHbAt = this.now();
     this.send('ctl', { v: PROTOCOL_VERSION, t: 'hb', seq: this.replica.seq(), sequencer: this.sequencer, play: this.replica.play() });
   }
 

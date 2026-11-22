@@ -676,6 +676,21 @@ describe('liveness and the sequencer’s clock', () => {
     await until(() => f.engine.sequencerId() === 'peer1' && f.engine.isSequencing(), 4 * AWAY_AFTER_MS, 'takeover');
   });
 
+  it('a page that was blocked sends its overdue heartbeat with the first message it handles (gate M8 round 3, C1)', async () => {
+    const sim = await connected({ engines: 2, seed: 15, ...DELAY });
+    const [s, f] = sim.peers as [SimPeer, SimPeer];
+    // Both pages are blocked for 3 s (the clock moves on, no timer runs); then the sequencer's page sequences an action.
+    vi.setSystemTime(Date.now() + 3000);
+    const after = Date.now();
+    expect(s.engine.propose(life(s, 'blocked-1'))).toBe(true);
+    await vi.advanceTimersByTimeAsync(60);
+    const log = f.engine.messages().filter((m) => m.at >= after);
+    const firstIn = log.find((m) => m.dir === 'in');
+    expect(firstIn).toBeDefined();
+    // The follower's heartbeat timer is still due later; the heartbeat goes out as it handles that first message.
+    expect(log.find((m) => m.dir === 'out' && m.msg.t === 'hb')?.at).toBe(firstIn!.at);
+  });
+
   it('goes idle → joining → alone → connected, and closed after leave', async () => {
     const sim = makeSim({ engines: 0, seed: 16, ...DELAY });
     const seen: string[] = [];
