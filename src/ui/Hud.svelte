@@ -54,6 +54,7 @@
   import CardFace from './CardFace.svelte';
   import CheatSheet from './CheatSheet.svelte';
   import ContextMenu from './ContextMenu.svelte';
+  import type { MenuAnchor } from './menu';
   import DeckImport from './DeckImport.svelte';
   import HandFan from './HandFan.svelte';
   import TeamHands from './hand/TeamHands.svelte';
@@ -244,7 +245,7 @@
   let inspectId = $state<InstanceId | null>(null);
   let inspectRef = $state<CardRef | null>(null);
   let viewer = $state<{ zone: ZoneId; looked: LookedCard[] | null; looking: 'top' | 'search' | null; shuffleOnClose: boolean } | null>(null);
-  let menu = $state<{ title: string; entries: MenuEntry[]; x: number; y: number; keyboard: boolean } | null>(null);
+  let menu = $state<{ title: string; entries: MenuEntry[]; x: number; y: number; keyboard: boolean; anchor?: MenuAnchor | null } | null>(null);
   let note = $state<{ target: { card: InstanceId } | { item: StackItemId }; x: number; y: number; text: string } | null>(null);
   /** The inline count prompt for draw N (Shift+D) and mill N (table menu). */
   let drawN = $state<{ text: string; what: 'draw' | 'mill' } | null>(null);
@@ -460,6 +461,48 @@
     const hi = vw - (logOpen ? LOG_RESERVE : LAYOUT.edge) - width / 2;
     return hi < lo ? lo : Math.min(Math.max(x, lo), hi);
   }
+  /** Which way a seat's edge faces on screen: a side seat (left or right of the table) or one across it. */
+  const sideOf = (a: SeatAnchor): 'left' | 'right' | null => {
+    const d = ((a.outwardDeg % 360) + 360) % 360;
+    return d > 45 && d < 135 ? 'right' : d > 225 && d < 315 ? 'left' : null;
+  };
+  /** The gap between a side seat's table edge (its middle) and its plate: the edge's pile column stands out about 40 px there. */
+  const SIDE_GAP = 44;
+  /**
+   * How far a side plate that does not fit beside the table moves along its edge, away from that seat's pile column: a
+   * seat's library and graveyard lie on its right hand, which on screen is the outward direction turned a quarter
+   * counter-clockwise (the left seat's piles run down from the edge's middle, the right seat's up), so it goes the other way.
+   */
+  const SIDE_SHIFT = 36;
+  /**
+   * A seat-edge plate's centre (gate M8 finding N4): a side seat's plate stands outside the table beside its edge, clear
+   * of that seat's battlefield and pile column; the plate across the table stays centred on its edge.
+   */
+  function anchorPoint(a: SeatAnchor & { at: { x: number; y: number } }, width: number): { x: number; y: number } {
+    const side = sideOf(a);
+    let x = a.at.x;
+    let y = a.at.y;
+    if (side) {
+      x += (side === 'left' ? -1 : 1) * (SIDE_GAP + width / 2);
+      // Only a plate the window's edge pushes back toward the table moves along the edge, off the pile column.
+      if (Math.abs(anchorX(x, width) - x) > 1) y -= Math.cos(((a.outwardDeg + 90) * Math.PI) / 180) * SIDE_SHIFT;
+    }
+    return { x: Math.round(anchorX(x, width)), y: Math.round(Math.min(Math.max(y, 70), vh - 200)) };
+  }
+  /** The top-left tools' width (measured on resize): the tracker keeps right of them when it moves for the drawer. */
+  let toolsWidth = $state(0);
+  /**
+   * With the activity drawer open the tracker is centred in the room between the tools and the drawer, and drops its
+   * turn number and shortens the name where that room is narrow, so the drawer never covers MAIN 2 and END (gate M8
+   * finding N7). Null: centred in the window.
+   */
+  const trackerRoom = $derived.by<{ centre: number; compact: boolean } | null>(() => {
+    if (!logOpen || !full) return null;
+    const lo = LAYOUT.edge + toolsWidth + LAYOUT.edge;
+    const hi = vw - LOG_RESERVE;
+    if (hi <= lo) return null;
+    return { centre: Math.round((lo + hi) / 2), compact: hi - lo < 720 };
+  });
   let rightWidth = $state(0);
   let stackWidth = $state(0);
   const fanSpan = $derived.by<FanSpan | null>(() => {
@@ -469,7 +512,14 @@
     const right = vw - LAYOUT.edge - Math.max(rightWidth, stackWidth) - clear;
     return right > left ? { left, right } : null;
   });
-  const fitInsets = $derived(fitInsetsFor(vh, false, teamFanShown, (thumbShown ? THUMB_BAR_SPACE_PX : 0) + rowAboveHand, safeInsets));
+  /**
+   * Every other player's plate is compact at a table of three or more chairs, whoever is seated or away: one plate size
+   * for one table size (gate M8 finding N4: 46 px pills in one game, a 72 px plate in another of the same size).
+   */
+  const seatCount = $derived(Object.keys(st.seats).length);
+  // At three or more chairs the side seats' plates stand beside the table on both sides: the fit keeps the same room on
+  // the right as on the left, so the table is centred and each side plate has the window's edge to itself (gate M8 N4).
+  const fitInsets = $derived(fitInsetsFor(vh, false, teamFanShown, (thumbShown ? THUMB_BAR_SPACE_PX : 0) + rowAboveHand, safeInsets, seatCount >= 3 && !touchUi && vw > 1100));
   /** Bottom of the block above the hand (toast, offer, prompt): above the teammate's fan and the thumb bar when shown. */
   const aboveHandBottom = $derived.by(() => {
     const thumb = thumbShown ? THUMB_BAR_SPACE_PX : 0;
@@ -483,8 +533,23 @@
    */
   let aboveEl = $state<HTMLElement | null>(null);
   let aboveHeight = $state(0);
+  /**
+   * On a touch screen the slot above the hand (KEEP and MULLIGAN, the no-deck line) has a row of its own above the row
+   * of the own plate and the primary, so the coach mark stays in that lower row, in the room between the plate and the
+   * primary: below the table's near edge, over no button and no hand card (gate M8 finding N1: stacked above KEEP it
+   * stood at y 383 of an iPad's 834, over the near play area). Null where that room is too narrow for the mark (a
+   * portrait iPad): the mark then stands above the slot, as on a desktop.
+   */
+  const COACH_MIN_WIDTH = 280;
+  const coachRow = $derived.by<{ left: number; right: number } | null>(() => {
+    if (!touchUi || teamFanShown) return null;
+    const left = LAYOUT.edge + plateWidth + LAYOUT.edge;
+    const right = vw - LAYOUT.edge - rightWidth - LAYOUT.edge;
+    return right - left >= COACH_MIN_WIDTH ? { left, right } : null;
+  });
   const coachBottom = $derived.by(() => {
     void vh;
+    if (coachRow) return aboveHandBottom;
     if (!aboveEl || aboveHeight < 8) return aboveHandBottom;
     return `${Math.round(window.innerHeight - aboveEl.getBoundingClientRect().top)}px`;
   });
@@ -749,11 +814,11 @@
   });
 
   // --- Menus ----------------------------------------------------------------------------------------------------
-  function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false, point: { x: number; y: number } | null = keyboard ? null : { x, y }) {
+  function openMenu(card: InstanceId | null, x: number, y: number, keyboard = false, point: { x: number; y: number } | null = keyboard ? null : { x, y }, anchor: MenuAnchor | null = null) {
     const c = card ? st.cards[card] : undefined;
     const next = c
-      ? { title: focusName(c.id), entries: [...cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), ...clipHereEntry(c.id, point)], x, y, keyboard }
-      : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y, keyboard };
+      ? { title: focusName(c.id), entries: [...cardMenu(c, keymap, commands, (a) => runOn(c.id, a)), ...clipHereEntry(c.id, point)], x, y, keyboard, anchor }
+      : { title: 'Table', entries: tableMenu(keymap, (a) => commands.run(a), libraryExtras), x, y, keyboard, anchor };
     // Look, do not touch: only the entries that look; no menu at all when none is left.
     if (viewOnly) next.entries = lookOnly(next.entries);
     menu = next.entries.length > 0 ? next : null;
@@ -797,26 +862,30 @@
     // The menu hands focus back to the element that had it: the mirror, so a screen reader follows the card again.
     if (focus && mirrorEl && (document.activeElement === document.body || document.activeElement === null)) mirrorEl.focus({ preventScroll: true });
     const at = menuAnchor(card);
-    openMenu(card, at.x, at.y, true);
+    openMenu(card, at.x, at.y, true, null, at.anchor);
   }
-  /** Where a keyboard-opened menu stands: at the top right of the card (its focus ring, or its hand or pile element), else mid-screen or at the pointer. */
-  function menuAnchor(card: InstanceId | null): { x: number; y: number } {
+  /**
+   * Where a keyboard-opened menu stands: at the top right of the card (its focus ring, or its hand or pile element), else
+   * mid-screen or at the pointer. With the card's element it also returns that element's kind and box: a menu that does
+   * not fit right of the card stands at its left instead, beside the card rather than over it (gate M8 finding N2).
+   */
+  function menuAnchor(card: InstanceId | null): { x: number; y: number; anchor: MenuAnchor | null } {
     if (card !== null && typeof document !== 'undefined') {
       const sel = CSS.escape(card);
       // The card itself before any other element naming it (a log line's card name comes earlier in the DOM).
-      const els = [
-        document.querySelector(`[data-testid="focus-ring"][data-focus-card="${sel}"] polygon`),
-        document.querySelector(`[data-testid="hand-card"][data-card="${sel}"]`),
-        document.querySelector(`[data-testid="pile-card"][data-card="${sel}"]`),
-        ...document.querySelectorAll(`[data-card="${sel}"]`),
+      const els: [string, Element | null][] = [
+        ['focus-ring', document.querySelector(`[data-testid="focus-ring"][data-focus-card="${sel}"] polygon`)],
+        ['hand-card', document.querySelector(`[data-testid="hand-card"][data-card="${sel}"]`)],
+        ['pile-card', document.querySelector(`[data-testid="pile-card"][data-card="${sel}"]`)],
+        ...[...document.querySelectorAll(`[data-card="${sel}"]`)].map((el): [string, Element] => [(el as HTMLElement).dataset.testid ?? el.tagName.toLowerCase(), el]),
       ];
-      for (const el of els) {
+      for (const [source, el] of els) {
         const r = el?.getBoundingClientRect();
-        if (r && r.width > 0 && r.height > 0) return { x: Math.round(r.right), y: Math.round(r.top) };
+        if (r && r.width > 0 && r.height > 0) return { x: Math.round(r.right), y: Math.round(r.top), anchor: { card, source, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } } };
       }
     }
-    if (!focus && pointerSeen) return { x: pointer.x, y: pointer.y };
-    return { x: Math.round(vw / 2), y: Math.round(vh / 2) };
+    if (!focus && pointerSeen) return { x: pointer.x, y: pointer.y, anchor: null };
+    return { x: Math.round(vw / 2), y: Math.round(vh / 2), anchor: null };
   }
 
   /** Keyless library actions for the table menu (DESIGN "Card manipulation", Library actions: reveal top, mill N). */
@@ -875,7 +944,6 @@
   const seats = $derived(Object.values(st.seats).sort((a, b) => a.index - b.index));
   /** The other players' avatars in the left column; at a four-seat table they are compact so the column fits the screen. */
   const others = $derived(seats.filter((s) => s.id !== me && !isEmptyChair(st, s.id)));
-  const otherAvatars = $derived(others.length);
   /** A spectator's HUD (M3-P5): life and counters without controls. */
   const spectating = untrack(() => session.role === 'spectator');
   const lifeOf = (seat: string) => {
@@ -1571,7 +1639,7 @@
     onopenzone={openViewer}
     ongoto={() => scene?.camera.goToSeat(seat.id)}
     readonly={spectating || viewOnly}
-    compact={!mine && otherAvatars >= 3}
+    compact={!mine && seatCount >= 3}
     away={isAway(seat.id)}
     badge={plateBadge}
     menuTop={plateMenuTop}
@@ -1603,7 +1671,7 @@
   <div class="layer">
     <!-- Top left: the Menu and Undo (docs/design/m7-hud-proposal.md, Always visible). -->
     {#if full}
-    <div class="top-left" data-hud-chrome="tools">
+    <div class="top-left" class:menu-up={menuOpen} data-hud-chrome="tools" bind:offsetWidth={toolsWidth}>
       <nav class="toolbar sp-bar" aria-label="Table tools" data-testid="hud-bar">
         {#if onleave}
           <button type="button" class="ds-btn ds-icon-btn ds-btn--quiet sp-h-md sp-round" data-testid="leave" aria-label="Leave" title="Leave: the game is kept in your history" onclick={() => onleave?.()}
@@ -1642,9 +1710,10 @@
     {/if}
 
     <!-- Top centre: the turn tracker and the plates without a seat edge. -->
-    <div class="top-centre" data-hud-chrome="tracker">
+    <div class="top-centre" data-hud-chrome="tracker" style:left={trackerRoom ? `${trackerRoom.centre}px` : null}>
       {#if full}
       <TurnStrip
+        compact={trackerRoom?.compact ?? false}
         turn={st.turn.number}
         {activeName}
         {activeColour}
@@ -1670,7 +1739,8 @@
       {@const a = anchorOf(seat.id)}
       {#if a?.at}
         <!-- At the seat's table edge (SceneEvents.seatAnchors), moved by a transform when the camera settles. -->
-        <div class="plate-anchor" data-hud-chrome="plate" class:plate-top={a.at.y < vh / 2} class:menu-open={!!openPlates[seat.id]} bind:offsetWidth={anchorWidths[seat.id]} style:transform="translate({Math.round(anchorX(a.at.x, anchorWidths[seat.id] ?? 240))}px, {Math.round(Math.min(Math.max(a.at.y, 70), vh - 200))}px)">{@render plate(seat, false)}</div>
+        {@const at = anchorPoint({ ...a, at: a.at }, anchorWidths[seat.id] ?? 240)}
+        <div class="plate-anchor" data-hud-chrome="plate" data-side={sideOf(a) ?? 'across'} class:plate-top={a.at.y < vh / 2} class:menu-open={!!openPlates[seat.id]} bind:offsetWidth={anchorWidths[seat.id]} style:transform="translate({at.x}px, {at.y}px)">{@render plate(seat, false)}</div>
       {/if}
     {/each}
 
@@ -1800,21 +1870,11 @@
       {#if toast && full}<p class="ds-toast" role="status" data-testid="toast">{toast.text}</p>{/if}
       {#if full}
       {#if untapOffer && !readOnly}
-        <!-- The new turn's offer (DESIGN "Turn flow and confirmation": offered, never done for them); the primary button
-             does the same, so this is a quiet line with its own button and a dismiss. -->
-        <div class="offer ds-pop" data-testid="untap-offer">
-          <span>Your turn.</span>
-          <button
-            type="button"
-            class="ds-btn sp-h-xs sp-pill"
-            title="Untap all and draw (U)"
-            onclick={() => {
-              untapOffer = false;
-              commands.untapAndDraw();
-            }}>Untap all and draw</button
-          >
-          <button type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-xs sp-round x" aria-label="Dismiss" title="Dismiss" onclick={() => (untapOffer = false)}><Icon name="close" size={14} /></button>
-        </div>
+        <!-- The new turn's offer (DESIGN "Turn flow and confirmation": offered, never done for them). The primary button
+             says it ("Untap & draw ▸") just under this place, so the offer is no second visible line over the hand
+             (gate M8 finding N9): it stays as text for assistive technology (the announcer speaks it once), and U or the
+             primary takes it. -->
+        <p class="ds-sr-only" data-testid="untap-offer">Your turn. Untap all and draw: the primary button or U.</p>
       {/if}
       <FocusMirror
         bind:el={mirrorEl}
@@ -1930,7 +1990,7 @@
     onmore={(card, x, y) => openMenu(card, x, y)}
     onpile={pileAction}
   />
-  <CoachMark {coach} touch={touchUi} corner={!touchUi && vw > 1100} bottom={coachBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
+  <CoachMark {coach} touch={touchUi} corner={!touchUi && vw > 1100} row={coachRow} bottom={coachBottom} hidden={sceneReadOnly || viewOnly || spectating || !!prompt || untapOffer || !!shownNotice} />
   <!-- /M7-P5 -->
 
   {#if radial}
@@ -1949,7 +2009,7 @@
   {/if}
 
   {#if menu}
-    <ContextMenu title={menu.title} entries={menu.entries} x={menu.x} y={menu.y} autofocus={menu.keyboard} onclose={() => (menu = null)} />
+    <ContextMenu title={menu.title} entries={menu.entries} x={menu.x} y={menu.y} anchor={menu.anchor ?? null} autofocus={menu.keyboard} onclose={() => (menu = null)} />
   {/if}
 
   {#if note}
@@ -2173,6 +2233,11 @@
     gap: var(--ds-space-sm);
     align-items: flex-start;
     z-index: 40;
+  }
+  /* The open Menu lies over any panel it was opened from (the dictation panel stands at the top left too): its two
+     columns reach where the one long column did not (gate M8 N10). */
+  .top-left.menu-up {
+    z-index: 75;
   }
   /* One row that never wraps (critique, iPad 1: "The toolbar breaks into four rows"). */
   .toolbar {

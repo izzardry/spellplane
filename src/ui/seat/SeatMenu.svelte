@@ -68,7 +68,7 @@
         <p class="meta" data-testid="seat-menu-why">{model.why}</p>
       {:else if model.canBring}
         {#if showing}
-          <BringBack {muster} {table} {seat} onclose={() => (showing = false)} />
+          <BringBack {muster} {table} {seat} compact onclose={() => (showing = false)} />
         {:else}
           {#if model.invite}<p class="meta" data-testid="seat-menu-open">Invite open · made by {model.invite.by}</p>{/if}
           <button type="button" class="ds-btn ds-btn--primary ds-btn--sm full" data-testid="seat-menu-bring" onclick={() => (showing = true)}>BRING {model.name.toUpperCase()} BACK</button>

@@ -5,7 +5,7 @@
   outside closes. `top` renders above the groups (the shell's plate section) and receives the close callback.
 -->
 <script lang="ts">
-  import { onMount, type Snippet } from 'svelte';
+  import { onMount, tick, type Snippet } from 'svelte';
   import Icon from '../design/Icon.svelte';
   import type { HudMenuGroup } from './menu-model';
 
@@ -80,10 +80,21 @@
    * when it opens and when its content grows, it shrinks to the room left below its top (or above its bottom, when it
    * opens upward) and scrolls.
    */
+  /**
+   * The table's Menu set in two columns of groups when one column would not fit the window's height (gate M8 finding
+   * N10: at 900 px "Settings…" was cut and had to be scrolled to); a narrow window keeps one scrolling column.
+   */
+  let columns = $state(false);
   function fit(): void {
     if (!el || typeof window === 'undefined') return;
     const r = el.getBoundingClientRect();
     const margin = 8;
+    if (!top && !columns && window.innerWidth >= 720 && el.scrollHeight > window.innerHeight - margin - Math.max(margin, r.top)) {
+      columns = true;
+      el.style.maxHeight = '';
+      void tick().then(fit);
+      return;
+    }
     if (r.bottom > window.innerHeight - margin) el.style.maxHeight = `${Math.max(120, window.innerHeight - margin - Math.max(margin, r.top))}px`;
     else if (r.top < margin) el.style.maxHeight = `${Math.max(120, r.bottom - margin)}px`;
   }
@@ -106,14 +117,27 @@
     };
   });
   const shown = $derived(groups.filter((g) => g.items.length));
+  /** The groups in two columns: the first takes whole groups until it holds about half of the rows. */
+  const halves = $derived.by((): [HudMenuGroup[], HudMenuGroup[]] => {
+    const rows = (g: HudMenuGroup): number => g.items.length + (g.label ? 1 : 0);
+    const total = shown.reduce((n, g) => n + rows(g), 0);
+    const first: HudMenuGroup[] = [];
+    let n = 0;
+    for (const g of shown) {
+      if (first.length && n + rows(g) / 2 > total / 2) break;
+      first.push(g);
+      n += rows(g);
+    }
+    return [first, shown.slice(first.length)];
+  });
 </script>
 
-<div bind:this={el} class="ds-pop ds-menu sp-menu" class:sp-handing={handing} role="menu" aria-label={label} data-testid={testid} tabindex="-1" onkeydown={key}>
+<div bind:this={el} class="ds-pop ds-menu sp-menu" class:sp-handing={handing} class:sp-columns={columns} data-columns={columns ? '2' : '1'} role="menu" aria-label={label} data-testid={testid} tabindex="-1" onkeydown={key}>
   {#if top}
     <div class="sp-menu-top" data-testid="menu-top-slot">{@render top(onclose)}</div>
     {#if shown.length}<div class="sp-menu-divider" role="separator"></div>{/if}
   {/if}
-  {#each shown as g (g.id)}
+  {#snippet group(g: HudMenuGroup)}
     <div class="ds-menu-group" role="group" aria-label={g.label ?? label} data-group={g.id}>
       {#if g.label}<span class="ds-label" aria-hidden="true">{g.label}</span>{/if}
       {#each g.items as item (item.id)}
@@ -141,7 +165,19 @@
         >
       {/each}
     </div>
-  {/each}
+  {/snippet}
+  {#if columns}
+    <!-- Two columns of whole groups, balanced by their rows; each column starts without a divider. -->
+    <div class="sp-cols">
+      {#each halves as half, ci (ci)}
+        <div class="sp-col">
+          {#each half as g (g.id)}{@render group(g)}{/each}
+        </div>
+      {/each}
+    </div>
+  {:else}
+    {#each shown as g (g.id)}{@render group(g)}{/each}
+  {/if}
 </div>
 
 <style>
@@ -153,6 +189,21 @@
     overflow-y: auto;
     box-sizing: border-box;
     contain: layout paint;
+  }
+  .sp-menu.sp-columns {
+    width: min(600px, calc(100vw - 2 * var(--ds-edge, 16px)));
+    max-width: none;
+  }
+  .sp-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--ds-space-sm);
+    align-items: start;
+  }
+  .sp-col {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
   .sp-menu-top {
     display: grid;

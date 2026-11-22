@@ -15,7 +15,6 @@
   import type { DeckRecord } from '../../../store/types';
   import Badge from '../../design/Badge.svelte';
   import Button from '../../design/Button.svelte';
-  import Chip from '../../design/Chip.svelte';
   import IconButton from '../../design/IconButton.svelte';
   import Pip from '../../design/Pip.svelte';
   import SealBand from '../../design/SealBand.svelte';
@@ -122,8 +121,9 @@
     <div class="name ds-t-list" title={deck.name}>
       <!-- A converted copy keeps its "(custom)" suffix in sight: only the name before it is cut (gate M8 finding F14). -->
       {#if deck.name.endsWith(' (custom)') && deck.name.length > 9}<span class="label">{deck.name.slice(0, -9)}</span><span class="suffix" data-testid="tile-suffix">(custom)</span>{:else}<span class="label">{deck.name}</span>{/if}
-      {#if playing}<span class="check" aria-label="playing">✓</span>{/if}
-      {#if selected}<span class="sel"><Chip variant="on" data-testid="tile-selected">Selected</Chip></span>{/if}
+      <!-- Selected (the deck Home plays with): one round ink check after the name, which keeps the room (gate M8 N6). -->
+      {#if selected}<span class="sel" data-testid="tile-selected" title="Selected: Home plays with this deck" aria-hidden="true">✓</span>
+      {:else if playing}<span class="check" aria-label="playing">✓</span>{/if}
     </div>
     <div class="row ds-t-eyebrow">
       <span class="facts">
@@ -132,10 +132,11 @@
         <span>{cards}</span>
         <span data-testid="tile-kind">{kind === 'sealed' ? 'Booster' : 'Custom'}</span>
       </span>
-      <StrengthPips {band} score={s?.strength?.score} />
+      <!-- The bars and the number; the band's name is on the deck page (the row fits the tile, gate M8 N6). -->
+      <span class="strength"><StrengthPips {band} score={s?.strength?.score} text={false} />{#if band}<span>{s?.strength?.score ?? ''}</span>{/if}</span>
     </div>
     <div class="row">
-      {#if s?.simple && !note}<Chip data-testid="simple-chip">Simple deck</Chip>{:else}<span class="ds-t-meta meta" class:warn={!!note}>{meta}</span>{/if}
+      {#if s?.simple && !note}<span class="ds-t-meta meta simple" data-testid="simple-chip">Simple deck</span>{:else}<span class="ds-t-meta meta" class:warn={!!note}>{meta}</span>{/if}
       <Sparkline values={(s?.curve ?? [0, 0, 0, 0, 0, 0, 0, 0]).slice(0, 7)} label="Mana curve" />
     </div>
   </div>
@@ -219,12 +220,18 @@
   .tile:hover .cover {
     transform: rotate(0deg) translateY(-2px);
   }
+  /* The seal band at −3° across the well's foot (board 0's band), wider than the well so its ends run off the edges, and
+     low enough that it never crosses the cover card's face. */
   .band {
     position: absolute;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    left: -8px;
+    right: -8px;
+    bottom: -6px;
     z-index: 3;
+    transform: rotate(-3deg);
+  }
+  .band :global(.ds-seal) {
+    box-shadow: var(--ds-elevation-raised);
   }
   .reason {
     position: absolute;
@@ -253,16 +260,17 @@
       opacity: 1;
     }
   }
+  /* The text under the well fits the tile's 76 px: a 24 px name row and two 20 px rows (gate M8 finding N6). */
   .text {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: var(--ds-space-sm) var(--ds-space-sm) 0;
+    padding: var(--ds-space-xs) var(--ds-space-sm) 0;
   }
   .name {
     display: flex;
     align-items: center;
-    min-height: 28px;
+    min-height: 24px;
     gap: 4px;
     font-weight: var(--ds-weight-bold);
     min-width: 0;
@@ -282,6 +290,16 @@
     justify-content: space-between;
     gap: var(--ds-space-xs);
     min-width: 0;
+    height: 20px;
+  }
+  .strength {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: none;
+  }
+  .simple {
+    color: var(--ds-ink);
   }
   .facts {
     display: inline-flex;
@@ -299,5 +317,14 @@
   .sel {
     margin-left: auto;
     flex: none;
+    display: inline-grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--ds-accent);
+    color: var(--ds-accent-ink);
+    font-size: var(--ds-type-label);
+    font-weight: var(--ds-weight-bold);
   }
 </style>

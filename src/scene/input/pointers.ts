@@ -1,7 +1,7 @@
 /**
  * Touch pointers to gestures (DESIGN "Input and interaction design", Touch; PLAN M5-P1). Feeds the pure recogniser
- * (scene/input/touch.ts) with the `pointerType === 'touch'` pointer events of one element, stamped with
- * `performance.now()` (the clock its `tick` also runs on), and keeps the last gestures for the debug hook's
+ * (scene/input/touch.ts) with the `pointerType === 'touch'` pointer events of one element, stamped with their own
+ * event time on the `performance.now()` clock (the clock its `tick` also runs on; see touchTime), and keeps the last gestures for the debug hook's
  * `touch.gestures()`. Mouse and pen events are left to their own handling.
  */
 import { createTouchRecognizer, type TouchGesture, type TouchRecognizer, type TouchThresholds } from './touch';
@@ -25,6 +25,17 @@ export function recentGestures(): TouchGesture[] {
 /** Whether a pointer event comes from a finger (DESIGN "Input and interaction design", Touch: mouse and pen keep their handling). */
 export const isTouch = (e: Pick<PointerEvent, 'pointerType'>): boolean => e.pointerType === 'touch';
 
+/**
+ * When a touch pointer event happened, on the `performance.now()` clock: the event's own `timeStamp` (when the finger
+ * moved, which the browser stamps before the event waits for a busy main thread), else `now`. A stamp from another
+ * clock, from the future or from more than a second ago is not trusted. Taps and double-taps are told by the time
+ * between the fingers, not by when a slow frame let their events through (gate M8 finding R3).
+ */
+export function touchTime(e: Pick<Event, 'timeStamp'>, now: number): number {
+  const ts = e.timeStamp;
+  return Number.isFinite(ts) && ts > 0 && ts <= now && now - ts < 1000 ? ts : now;
+}
+
 /** Pointer events of one element to touch gestures. */
 export class TouchPointers {
   readonly recognizer: TouchRecognizer;
@@ -43,7 +54,7 @@ export class TouchPointers {
     if (!isTouch(e)) return false;
     const now = performance.now();
     this.lastTouchAt = now;
-    const s = { id: e.pointerId, x: e.clientX, y: e.clientY, t: now };
+    const s = { id: e.pointerId, x: e.clientX, y: e.clientY, t: touchTime(e, now) };
     switch (e.type) {
       case 'pointerdown':
         this.recognizer.down(s);

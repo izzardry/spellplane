@@ -190,14 +190,43 @@
   .life:focus-within .step {
     opacity: 1;
   }
+  /* A small plate (a table of three or more) keeps its width for the name: the steppers appear over and under the
+     number on hover instead of beside it (gate M8 finding N4: a side plate fits beside the table). */
+  .small {
+    position: relative;
+  }
+  .small .step {
+    position: absolute;
+    left: 50%;
+    margin-left: calc(var(--ds-control-xs) / -2);
+    z-index: 1;
+    background: var(--ds-panel-raised);
+    box-shadow: var(--ds-elevation-raised);
+  }
+  .small .step[data-testid='life-plus'] {
+    bottom: calc(100% + 6px);
+  }
+  .small .step[data-testid='life-minus'] {
+    top: calc(100% + 6px);
+  }
   /* A touch screen has no hover: the steppers stay (docs/design/m7-hud-proposal.md, iPad: 44 pt targets). */
   @media (hover: none) {
+    .small .step {
+      position: static;
+      margin-left: 0;
+      box-shadow: none;
+    }
     .step {
       opacity: 1;
       width: var(--ds-control-md);
       height: var(--ds-control-md);
       min-height: var(--ds-control-md);
     }
+  }
+  :global(.touch-ui) .small .step {
+    position: static;
+    margin: 0 var(--ds-space-sm);
+    box-shadow: none;
   }
   :global(.touch-ui) .step {
     opacity: 1;

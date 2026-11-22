@@ -18,6 +18,23 @@ export interface MenuEntry {
   run: () => void;
 }
 
+/**
+ * The card element a keyboard-opened menu stands beside (gate M8 finding N2): the card, the kind of element found for it
+ * (its focus ring, its hand card, its pile card, …) and that element's box in window CSS px. The menu reports it on its
+ * element, and the debug hook's `hud.menu()` reads it back.
+ */
+export interface MenuAnchor {
+  card: string;
+  source: string;
+  rect: { left: number; top: number; right: number; bottom: number };
+}
+
+/** Where a menu of width `w` starts: right of the anchor point `x`, or, when it does not fit there, ending at the anchor card's left edge (`flipX`) if it fits that side. */
+export function menuLeft(x: number, w: number, vw: number, flipX: number | null, insetLeft = 0, insetRight = 0, margin = 4): number {
+  if (flipX === null || x + w <= vw - Math.max(0, insetRight) - margin) return x;
+  return flipX - w >= Math.max(0, insetLeft) + margin ? flipX - w : x;
+}
+
 /** Card actions in menu order (DESIGN "Card manipulation", "Combat and annotation", "The effect stack"). */
 export const CARD_MENU: readonly ActionId[] = [
   'tap',
@@ -110,9 +127,9 @@ export type HudMenuId =
   | 'keys'
   | 'settings';
 
-export type HudMenuGroupId = 'game' | 'deck' | 'table' | 'view' | 'voice' | 'help';
+export type HudMenuGroupId = 'game' | 'tools' | 'deck' | 'table' | 'view' | 'voice' | 'help';
 
-/** The Menu's groups in order (docs/design/m7-hud-proposal.md: Game, Deck, Table, View, Voice, Help). */
+/** The Menu's groups in order (docs/design/m7-hud-proposal.md: Game, Deck, Table, View, Voice, Help; Tokens and dice split from Game). */
 export const HUD_MENU: readonly { id: HudMenuGroupId; label: string; items: readonly HudMenuSpec[] }[] = [
   {
     id: 'game',
@@ -122,11 +139,18 @@ export const HUD_MENU: readonly { id: HudMenuGroupId; label: string; items: read
       { id: 'mulligan', label: 'Mulligan', icon: 'shuffle', action: 'mulligan', testid: 'menu-mulligan' },
       { id: 'shuffle', label: 'Shuffle library', icon: 'shuffle', action: 'shuffle', testid: 'menu-shuffle' },
       { id: 'untapAll', label: 'Untap all', icon: 'untap', action: 'untapAll', testid: 'menu-untap-all' },
+      { id: 'tidy', label: 'Tidy my side', icon: 'tidy', action: 'tidy', testid: 'menu-tidy' },
+    ],
+  },
+  // Gate M8 finding N10 (visual.md O-7: at most seven rows a group): the table's extras leave Game for their own group.
+  {
+    id: 'tools',
+    label: 'Tokens and dice',
+    items: [
       { id: 'token', label: 'Create token…', icon: 'token', action: 'token', testid: 'open-token' },
       { id: 'clip', label: 'Paperclip (drag onto cards)', icon: 'clip', testid: 'clip-tray' },
       { id: 'rollDie', label: 'Roll a die', icon: 'die', action: 'rollDie', testid: 'menu-roll-die' },
       { id: 'flipCoin', label: 'Flip a coin', icon: 'coin', action: 'flipCoin', testid: 'menu-flip-coin' },
-      { id: 'tidy', label: 'Tidy my side', icon: 'tidy', action: 'tidy', testid: 'menu-tidy' },
       { id: 'ask', label: 'Ask the table…', icon: 'ask', action: 'ask', testid: 'menu-ask' },
     ],
   },

@@ -12,6 +12,7 @@
   import type { Format, LobbySettings, SetCode, TableState } from '../../core/types';
   import type { SetSummary } from '../../data/types';
   import type { LobbySettingsProps } from '../types';
+  import Select from '../design/Select.svelte';
   import {
     currentLobby,
     fieldLabel,
@@ -64,6 +65,8 @@
   // picks it with the other settings; `formatSet` rebuilds the chairs, teams and life totals.
   const FORMAT_NAMES: Readonly<Record<Format, string>> = { '1v1': 'One versus one', ffa3: 'Free-for-all, three players', ffa4: 'Free-for-all, four players', '2hg': 'Two-Headed Giant' };
   const FORMATS = Object.keys(FORMAT_NAMES) as Format[];
+  /** The choices as the select shows them: short enough for the side column's 36 px pill, never cut (gate M8 F5). */
+  const FORMAT_CHOICES: Readonly<Record<Format, string>> = { '1v1': 'One versus one', ffa3: 'Free-for-all · 3', ffa4: 'Free-for-all · 4', '2hg': 'Two-Headed Giant' };
   const formatName = $derived(FORMAT_NAMES[st.format]);
 
   function write(next: LobbySettings): void {
@@ -173,7 +176,7 @@
 </script>
 
 {#snippet setSelect(value: SetCode, testid: string, onchange: (e: Event) => void, label: string, pack?: number)}
-  <select data-testid={testid} data-pack={pack} aria-label={label} disabled={!editable} {value} {onchange}>
+  <Select data-testid={testid} data-pack={pack} aria-label={label} disabled={!editable} {value} {onchange}>
     {#if options.featured.length}
       <optgroup label="Core sets">
         {#each options.featured as s (s.code)}<option value={s.code} selected={s.code === value}>{setLabel(s)}</option>{/each}
@@ -184,7 +187,7 @@
         {#each options.others as s (s.code)}<option value={s.code} selected={s.code === value}>{setLabel(s)}</option>{/each}
       </optgroup>
     {/if}
-  </select>
+  </Select>
 {/snippet}
 
 <section class="settings" data-testid="lobby-settings" data-editable={editable ? 'true' : 'false'} aria-labelledby="lobby-settings-title">
@@ -197,9 +200,9 @@
   <label class="row">
     <span class="key">Table</span>
     {#if editable && st.stage === 'lobby'}
-      <select data-testid="lobby-format-select" aria-label="Table format" value={st.format} onchange={onFormat}>
-        {#each FORMATS as f (f)}<option value={f} selected={f === st.format}>{FORMAT_NAMES[f]}</option>{/each}
-      </select>
+      <Select data-testid="lobby-format-select" aria-label="Table format" title={formatName} value={st.format} onchange={onFormat}>
+        {#each FORMATS as f (f)}<option value={f} selected={f === st.format}>{FORMAT_CHOICES[f]}</option>{/each}
+      </Select>
     {:else}
       <span data-testid="lobby-format">{formatName}</span>
     {/if}
@@ -207,9 +210,9 @@
 
   <label class="row">
     <span class="key">Mode</span>
-    <select data-testid="lobby-mode" disabled={!editable} value={mode} onchange={onMode}>
+    <Select data-testid="lobby-mode" disabled={!editable} value={mode} onchange={onMode}>
       {#each modes as m (m)}<option value={m} selected={m === mode}>{modeLabel(m)}</option>{/each}
-    </select>
+    </Select>
   </label>
   {#if hint}<p class="hint warn" data-testid="lobby-seat-hint">{hint}</p>{/if}
 
@@ -258,9 +261,9 @@
     {/if}
     <label class="row">
       <span class="key">Pass timer</span>
-      <select data-testid="lobby-pass-timer" disabled={!editable} value={passTimer === null ? 'off' : String(passTimer)} onchange={onPassTimer}>
+      <Select data-testid="lobby-pass-timer" disabled={!editable} value={passTimer === null ? 'off' : String(passTimer)} onchange={onPassTimer}>
         {#each passTimerChoices(passTimer) as ms (ms ?? 'off')}<option value={ms === null ? 'off' : String(ms)} selected={ms === passTimer}>{passTimerLabel(ms)}</option>{/each}
-      </select>
+      </Select>
     </label>
   </fieldset>
 
@@ -269,8 +272,8 @@
 
 <style>
   /* A sheet in the waiting room's side column (board 5, visual.md 2.5 A5: settings rows put the label left and the
-     control right, 44 high). The native selects and number fields wear the kit's well (the kit has no select of its
-     own); nothing is cut: the control takes the width its longest choice needs (gate M8 finding F5). */
+     control right, 44 high). The selects are the kit's (a raised 36 px pill over the platform's list), the numbers sit
+     in the kit's well; a row never grows past the sheet: a long choice is cut inside its pill (gate M8 finding F5). */
   .settings {
     box-sizing: border-box;
     display: grid;
@@ -295,14 +298,18 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--ds-space-md);
+    min-width: 0;
     min-height: var(--ds-control-md);
+  }
+  .row > :global(.ds-select) {
+    flex: 0 1 auto;
   }
   .sets {
     align-items: start;
     padding-top: var(--ds-space-xs);
   }
   .key {
-    flex: 0 1 auto;
+    flex: none;
     color: var(--ds-muted);
   }
   .set-list {
@@ -315,8 +322,13 @@
     display: flex;
     align-items: center;
     gap: var(--ds-space-sm);
+    min-width: 0;
+    max-width: 100%;
   }
-  select,
+  .pack-set span {
+    flex: none;
+    color: var(--ds-muted);
+  }
   input[type='number'] {
     box-sizing: border-box;
     flex: 0 1 auto;
@@ -331,7 +343,6 @@
     min-width: 0;
     max-width: 100%;
   }
-  select:focus-visible,
   input:focus-visible {
     outline: 2px solid var(--ds-focus);
     outline-offset: 2px;
@@ -341,7 +352,6 @@
     text-align: right;
     font-variant-numeric: tabular-nums;
   }
-  select:disabled,
   input:disabled {
     color: var(--ds-ink);
     opacity: 0.75;

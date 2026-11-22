@@ -19,6 +19,7 @@
     seat,
     link: given = null,
     onclose = undefined,
+    compact = false,
   }: {
     muster: SessionMuster;
     table: TableState;
@@ -26,6 +27,8 @@
     /** A link this page already made for the seat; without one the component makes it when it opens. */
     link?: string | null;
     onclose?: (() => void) | undefined;
+    /** Inside a plate menu (the seat menu): board 7's compact block with the QR code beside the title. */
+    compact?: boolean;
   } = $props();
 
   let link = $state<string | null>(untrack(() => given ?? muster.inviteLink?.(seat) ?? null));
@@ -84,9 +87,13 @@
   {#if link}
     <InviteSheet
       title="Bring {name} back"
-      text="Send {name} this link, or let them scan the code. It opens this game at their seat. If their browser still has the game, they get their hand back. If not, they sit down again and rebuild their library from their deck list."
+      text={compact
+        ? `Send ${name} this link, or let them scan the code. It opens this game at their seat.`
+        : `Send ${name} this link, or let them scan the code. It opens this game at their seat. If their browser still has the game, they get their hand back. If not, they sit down again and rebuild their library from their deck list.`}
       {link}
-      status={back ? `● ${name} is here` : `○ Waiting for ${name}`}
+      status={back ? `${name} is here` : `Waiting for ${name}`}
+      present={back}
+      {compact}
     >
       {#snippet footer()}
         <p class="meta" data-testid="seat-invite-footer">This link works once, for 24 hours, and only for {name}'s seat.</p>

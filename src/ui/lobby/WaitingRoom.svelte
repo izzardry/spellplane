@@ -187,17 +187,31 @@
   /** Fewer players than chairs, at least two of them ready: START WITH n PLAYERS (journey.md 4.8). */
   const shortStart = $derived(isHost && open > 0 && seatedCount >= 2 && (drafting || list.filter((c) => c.occupied).every((c) => view.seats[c.seat]?.ready)));
 
-  // The table from above, turned so the own chair is at the bottom (DESIGN "Players, seats and formats").
+  // The table from above, turned so the own chair is at the bottom (DESIGN "Players, seats and formats"). Each seat
+  // plate stands outside the table's outline on the edge its chair faces (mock.html board 5, gate M8 finding F5): the
+  // near and far seats under and over the table, the side seats beside it, so two plates never meet across the table.
   const layout = $derived(game.layout(st.format));
   const viewerAngle = $derived(mySeat ? (layout.seats[st.seats[mySeat]?.index ?? 0]?.angle ?? 0) : 0);
-  const MARGIN = 300;
   const rightAngled = $derived(layout.seats.every((s) => s.angle % 90 === 0));
   const box = $derived(!rightAngled ? { w: layout.table.w, d: layout.table.d } : (viewerAngle / 90) % 2 === 1 ? { w: layout.table.d, d: layout.table.w } : { w: layout.table.w, d: layout.table.d });
-  const outer = $derived({ w: box.w + 2 * MARGIN, d: box.d + 2 * MARGIN });
-  function place(x: number, y: number): { left: number; top: number } {
+  type Edge = 'top' | 'bottom' | 'left' | 'right';
+  /** A seat's edge of the table outline and where along it (per cent of the outline's box). */
+  function place(x: number, y: number): { edge: Edge; left: number; top: number } {
     const p = toViewerFrame({ x, y, rot: 0 }, viewerAngle);
-    return { left: ((p.x + outer.w / 2) / outer.w) * 100, top: ((outer.d / 2 - p.y) / outer.d) * 100 };
+    // A chair a little off the middle of its edge (the four-player table's turned seats) is drawn at the middle.
+    const snap = (n: number): number => (Math.abs(n - 50) < 8 ? 50 : Math.max(0, Math.min(100, n)));
+    const u = snap(((p.x + box.w / 2) / box.w) * 100);
+    const v = snap(((box.d / 2 - p.y) / box.d) * 100);
+    if (Math.abs(p.x) / box.w > Math.abs(p.y) / box.d) return p.x < 0 ? { edge: 'left', left: 0, top: v } : { edge: 'right', left: 100, top: v };
+    return p.y > 0 ? { edge: 'top', left: u, top: 0 } : { edge: 'bottom', left: u, top: 100 };
   }
+  /** Whether any seat stands beside the table (three and four players): the seats' box keeps room for those plates. */
+  const sideSeats = $derived(
+    list.some((c) => {
+      const a = layout.seats[c.index]?.zones.avatar;
+      return a ? ['left', 'right'].includes(place(a.x, a.y).edge) : false;
+    }),
+  );
 
   const selected = $derived(deckChoice === 'paste' ? null : (savedDecks.find((d) => d.id === deckChoice) ?? null));
   const showPaste = $derived(deckChoice === 'paste' && (pasting || savedDecks.length === 0 || !!deckText));
@@ -570,17 +584,17 @@
       {#if welcome}<p class="welcome" role="status" data-testid="invite-welcome">◆ {welcome}</p>{/if}
       {#if !isHost && host}<p class="ds-t-meta who-sets" data-testid="setup-owner">{hostName} chooses the setup.</p>{/if}
 
-      <section class="seats" aria-label="Seats">
-        <div class="table-box" style:aspect-ratio="{outer.w} / {outer.d}" style:max-width="min(600px, calc(44vh * {(outer.w / outer.d).toFixed(3)}))">
-          <svg viewBox="{-outer.w / 2} {-outer.d / 2} {outer.w} {outer.d}" aria-hidden="true">
-            <rect class="table" x={-box.w / 2} y={-box.d / 2} width={box.w} height={box.d} rx="60" />
+      <section class="seats" class:sides={sideSeats} aria-label="Seats">
+        <div class="table-box" style:aspect-ratio="{box.w} / {box.d}" style:max-width="min(560px, calc(30vh * {(box.w / box.d).toFixed(3)}))">
+          <svg viewBox="{-box.w / 2} {-box.d / 2} {box.w} {box.d}" aria-hidden="true">
+            <rect class="table" x={-box.w / 2 + 8} y={-box.d / 2 + 8} width={box.w - 16} height={box.d - 16} rx="80" />
           </svg>
           {#each list as c (c.seat)}
             {@const a = layout.seats[c.index]?.zones.avatar}
-            {@const pos = a ? place(a.x, a.y) : { left: 50, top: 50 }}
+            {@const pos = a ? place(a.x, a.y) : { edge: 'bottom' as Edge, left: 50, top: 100 }}
             {@const sc = seatColours[c.colour]}
             {@const failed = cannotConnect(c)}
-            <div class="seat" class:above={pos.top < 50} style:left="{pos.left}%" style:top="{pos.top}%">
+            <div class="seat" data-edge={pos.edge} style:left="{pos.left}%" style:top="{pos.top}%">
               {#if c.occupied}
                 <button
                   type="button"
@@ -601,8 +615,9 @@
                   <span class="who">
                     <span class="name" title={c.name}><span class="nm">{c.name}</span>{#if c.mine || c.seat === host}<span class="ds-t-meta tag">{[c.mine ? 'you' : '', c.seat === host ? 'host' : ''].filter(Boolean).join(' · ')}</span>{/if}</span>
                     <span class="state" data-testid="seat-state">
-                      <PresenceDot state={failed ? 'away' : seatPresence(c)} label={failed ? 'cannot connect' : seatPresence(c)} />
-                      {failed ? 'CANNOT CONNECT' : seatState(c)}
+                      <PresenceDot state={failed ? 'away' : seatPresence(c)} label={failed ? 'CANNOT CONNECT' : seatPresence(c)} />
+                      {#if !failed && seatState(c)}<span class="sep" aria-hidden="true">·</span>{/if}
+                      {failed ? '' : seatState(c)}
                     </span>
                   </span>
                   {#if c.ready}<span class="check" aria-hidden="true">✓</span>{/if}
@@ -623,9 +638,10 @@
                   onclick={() => (mySeat ? (choice.ok ? takeChair(c.seat) : (inviteOpen = true)) : takeChair(c.seat))}
                 >
                   <span class="plus" aria-hidden="true">＋</span>
-                  <span class="who"><span class="name">OPEN SEAT</span><span class="state">{mySeat && choice.ok ? 'MOVE HERE' : 'SIT HERE'}</span></span>
+                  <span class="who"><span class="name">Open seat</span><span class="state">{mySeat && choice.ok ? 'MOVE HERE' : 'SIT HERE'}</span></span>
                 </button>
-                <Button variant="quiet" size="xs" data-testid="seat-invite" onclick={() => (inviteOpen = true)}>INVITE A PLAYER</Button>
+                <!-- The invitation sits inside the open seat's plate, at its end (board 5's seat row ⋯), the same on every edge. -->
+                <span class="invite-at"><Button variant="ghost" size="xs" data-testid="seat-invite" aria-label="Invite a player to this seat" onclick={() => (inviteOpen = true)}>INVITE</Button></span>
               {/if}
               {#if c.team !== null}<span class="ds-t-meta team" data-testid="chair-team">{teams.find((g) => g.team === c.team)?.label ?? ''}</span>{/if}
             </div>
@@ -787,6 +803,7 @@
           code={codeLabel(link.roomId)}
           spectatorLink={watchLink}
           status={open > 0 ? `Waiting for players · ${seatedCount} of ${Object.keys(st.seats).length} here` : `Everyone is here · ${seatedCount} of ${Object.keys(st.seats).length}`}
+          present={open === 0}
           onclose={() => (inviteOpen = false)}
         />
       </aside>
@@ -941,12 +958,18 @@
   .welcome {
     font-size: var(--ds-type-title);
   }
-  /* The seat plates sit on the table's edge, half outside it: the seats' box keeps that half inside the column, so a
-     side seat never runs off the window (gate M8 finding F5). */
+  /* The seat plates stand outside the table's outline (gate M8 finding F5): the seats' box keeps a plate's height above
+     and below the table, and, where seats sit beside it (three and four players), a plate's width on either side. */
   .seats {
+    --plate-w: 280px;
+    --plate-gap: 12px;
     display: grid;
     gap: var(--ds-space-md);
-    padding: var(--ds-space-xxxl) 144px;
+    padding: calc(var(--ds-control-lg) + var(--plate-gap) + var(--ds-space-lg)) 0;
+  }
+  .seats.sides {
+    padding-left: calc(var(--plate-w) + var(--plate-gap));
+    padding-right: calc(var(--plate-w) + var(--plate-gap));
   }
   .table-box {
     position: relative;
@@ -966,15 +989,26 @@
   }
   .seat {
     position: absolute;
-    transform: translate(-50%, -50%);
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: var(--ds-space-xs);
   }
-  /* A seat across the table keeps its extra line on the outside, away from the table. */
-  .seat.above {
+  .seat[data-edge='bottom'] {
+    transform: translate(-50%, var(--plate-gap));
+  }
+  /* A seat across the table keeps its extra line (the team) on the outside, away from the table. */
+  .seat[data-edge='top'] {
     flex-direction: column-reverse;
+    transform: translate(-50%, calc(-100% - var(--plate-gap)));
+  }
+  .seat[data-edge='left'] {
+    align-items: flex-end;
+    transform: translate(calc(-100% - var(--plate-gap)), -50%);
+  }
+  .seat[data-edge='right'] {
+    align-items: flex-start;
+    transform: translate(var(--plate-gap), -50%);
   }
   /* A seat plate (visual.md 2.8 "Seat row"): a raised pill, 56 high; an open seat is a dashed well. */
   .plate {
@@ -982,7 +1016,7 @@
     display: inline-flex;
     align-items: center;
     gap: var(--ds-space-md);
-    width: 288px;
+    width: var(--plate-w);
     height: var(--ds-control-lg);
     padding: 0 var(--ds-space-lg) 0 var(--ds-space-sm);
     border: 0;
@@ -1002,9 +1036,22 @@
     cursor: default;
   }
   .plate.free {
+    padding-right: 96px;
     background: transparent;
     box-shadow: inset 0 0 0 2px var(--ds-border);
     color: var(--ds-muted);
+  }
+  /* The open seat's INVITE sits at the plate's end, over the plate's padding (a sibling, not a button in a button). */
+  .invite-at {
+    position: absolute;
+    top: calc(var(--ds-control-lg) / 2);
+    right: var(--ds-space-md);
+    translate: 0 -50%;
+  }
+  .seat[data-edge='top'] .invite-at {
+    top: auto;
+    bottom: calc(var(--ds-control-lg) / 2);
+    translate: 0 50%;
   }
   .plate:disabled {
     cursor: default;
@@ -1044,13 +1091,17 @@
     flex: none;
     font-weight: normal;
   }
+  /* Presence and deck state in one meta line: "HERE · CHOOSING A DECK" (gate M8 finding N11). */
   .state {
     display: inline-flex;
     align-items: center;
     gap: var(--ds-space-xs);
+    min-width: 0;
+    overflow: hidden;
     white-space: nowrap;
     font-size: var(--ds-type-label);
     letter-spacing: 0.08em;
+    text-transform: uppercase;
     color: var(--ds-muted);
   }
   .plate[data-connect='failed'] .state {
@@ -1260,14 +1311,19 @@
       padding-right: var(--ds-space-lg);
     }
   }
+  /* A narrower column keeps a table between the side seats' plates. */
+  @media (max-width: 960px) {
+    .seats {
+      --plate-w: 224px;
+    }
+  }
   @media (max-width: 720px) {
     .deck-and-start {
       grid-template-columns: minmax(0, 1fr);
     }
-    .plate {
-      width: 176px;
-    }
-    .seats {
+    .seats,
+    .seats.sides {
+      --plate-w: min(100%, 320px);
       padding: 0;
     }
     .table-box {
@@ -1281,9 +1337,16 @@
     .table-box svg {
       display: none;
     }
-    .seat {
-      position: static;
+    .seat,
+    .seat[data-edge] {
+      position: relative;
+      left: auto !important;
+      top: auto !important;
       transform: none;
+      width: var(--plate-w);
+    }
+    .seat .plate {
+      width: 100%;
     }
   }
 </style>

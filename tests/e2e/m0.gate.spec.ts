@@ -183,7 +183,14 @@ test.describe('M0 gate @gate', () => {
     await page.mouse.move(720, 300);
     await evidence(page, 'opening-hand', project);
 
-    const bottomed = hand[hand.length - 1]!;
+    // The step below fetches a Leonin Warleader from the library. The deck has two and the shuffle is the product's own
+    // (unseeded), so both can be in this hand (about 1 % of runs; gate M8 H1): then the card put on the bottom is one of
+    // them, and the library holds a Warleader to fetch on every run. Otherwise it is the hand's last card, as before.
+    const isWarleader = (s: SecretStore, id: string) => FIXTURE_CARDS.get(s.identities[id]!.card.sid)?.name === 'Leonin Warleader';
+    const mulliganed = await secrets(page);
+    const libraryHasWarleader = mulliganed.libraryOrder.some((id) => isWarleader(mulliganed, id));
+    const bottomed = libraryHasWarleader ? hand[hand.length - 1]! : hand.find((id) => isWarleader(mulliganed, id))!;
+    expect(bottomed).toBeTruthy();
     await hoverHand(page, bottomed);
     await page.keyboard.press('Shift+KeyL');
     await expect.poll(async () => (await secrets(page)).libraryOrder.at(-1)).toBe(bottomed);
@@ -198,7 +205,7 @@ test.describe('M0 gate @gate', () => {
     await page.getByTestId('search-library').click();
     await expect(page.getByTestId('pile-card')).toHaveCount(54);
     const sec = await secrets(page);
-    const warleader = sec.libraryOrder.find((id) => FIXTURE_CARDS.get(sec.identities[id]!.card.sid)?.name === 'Leonin Warleader')!;
+    const warleader = sec.libraryOrder.find((id) => isWarleader(sec, id))!;
     expect(warleader).toBeTruthy();
     const pileCard = page.locator(`[data-testid="pile-card"][data-card="${warleader}"]`);
     // A hovered fan card is raised over its neighbours: start from empty table so no other card is raised, then

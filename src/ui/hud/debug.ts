@@ -22,8 +22,16 @@ export interface HudLayoutDebug {
   chrome: { name: string; rect: HudRect }[];
 }
 
+/** The open context menu: its box and, for a keyboard-opened menu, the card element it stands beside (ui/menu.ts MenuAnchor). */
+export interface HudMenuDebug {
+  rect: HudRect;
+  anchor: { card: string; source: string; rect: HudRect } | null;
+}
+
 export interface HudDebug {
   layout(): HudLayoutDebug;
+  /** The open context menu, or null (gate M8 finding N2). */
+  menu(): HudMenuDebug | null;
 }
 
 declare module '../../util/debug' {
@@ -61,5 +69,18 @@ export function hudLayout(root: ParentNode = document): HudLayoutDebug {
 
 /** Register `hud.layout()` for the mounted HUD. */
 export function registerHudDebug(root: () => ParentNode | null): void {
-  registerDebug({ hud: { layout: () => hudLayout(root() ?? document) } });
+  registerDebug({ hud: { layout: () => hudLayout(root() ?? document), menu: () => hudMenu() } });
+}
+
+/** The open context menu as `hud.menu()` reports it. */
+export function hudMenu(): HudMenuDebug | null {
+  const el = document.querySelector<HTMLElement>('[data-testid="context-menu"]');
+  if (!el) return null;
+  let anchor: HudMenuDebug['anchor'];
+  try {
+    anchor = el.dataset.anchor ? (JSON.parse(el.dataset.anchor) as HudMenuDebug['anchor']) : null;
+  } catch {
+    anchor = null;
+  }
+  return { rect: rectOf(el), anchor };
 }

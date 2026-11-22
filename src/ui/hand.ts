@@ -95,9 +95,11 @@ const NO_SAFE_AREA = { top: 0, right: 0, bottom: 0, left: 0 } as const;
  * `safe` are the device's safe-area insets (the iPad's home indicator and rounded corners, M5-P1): the screen layer sits
  * inside them, so each edge's inset grows by its own.
  */
-export function fitInsets(vh: number, logOpen: boolean, teamFan = false, extraBottom = 0, safe: { top: number; right: number; bottom: number; left: number } = NO_SAFE_AREA): string {
+export function fitInsets(vh: number, logOpen: boolean, teamFan = false, extraBottom = 0, safe: { top: number; right: number; bottom: number; left: number } = NO_SAFE_AREA, sides = false): string {
   const team = teamFan ? TEAM_FAN_INSET.gap + Math.round(vh * TEAM_FAN_HEIGHT) + TEAM_FAN_INSET.label : 0;
   const px = (v: number) => Math.max(0, Math.round(v));
   const bottom = Math.round(vh * SCREEN_LAYER.handCardViewportFraction) + FIT_INSET.handGap + team + px(extraBottom) + px(safe.bottom);
-  return `${FIT_INSET.top + px(safe.top)} ${(logOpen ? FIT_INSET.log : 0) + px(safe.right)} ${bottom} ${FIT_INSET.avatars + px(safe.left)}`;
+  // `sides`: side seats' plates stand on both sides of the table (three or more chairs), so the right keeps the left's room.
+  const right = Math.max(logOpen ? FIT_INSET.log : 0, sides ? FIT_INSET.avatars : 0);
+  return `${FIT_INSET.top + px(safe.top)} ${right + px(safe.right)} ${bottom} ${FIT_INSET.avatars + px(safe.left)}`;
 }

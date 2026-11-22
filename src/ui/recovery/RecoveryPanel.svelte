@@ -113,7 +113,7 @@
 
 {#if visible && !importing}
   <aside class="recovery ds-root" data-ds-layer="sheet" data-testid="recovery" data-phase={status.phase} data-running={running || busy} aria-live="polite">
-    {#if title}<h2 data-testid="recovery-title">{title}</h2>{/if}
+    {#if title}<h2 data-testid="recovery-title"><span class="mark" aria-hidden="true"></span>{title}</h2>{/if}
 
     {#if status.phase === 'lost' && !running}
       <p data-testid="recovery-lost">{lostText(status)}</p>
@@ -131,8 +131,10 @@
     {/if}
 
     {#if canStart}
+      <!-- One row: the hand size and the one filled button, the arithmetic under it in meta type (gate M8 finding N5:
+           a shorter panel stays above a left seat's plate). -->
       <div class="row">
-        <label>
+        <label class="hand">
           New hand
           <input
             class="ds-input"
@@ -145,15 +147,13 @@
           />
           cards
         </label>
-        <span class="muted" data-testid="recovery-sizes">
-          Deck {status.deckSize} − {status.publicCards} on the table − {count} in hand = library {libraryAfter(status, count)}
-        </span>
-      </div>
-      <div class="row">
         <button type="button" class="ds-btn ds-btn--primary ds-btn--sm" data-testid="recovery-start" onclick={() => (importing = true)}>
           {status.phase === 'agreed' && count === status.hand ? 'Re-import deck and finish' : 'Re-import deck and propose'}
         </button>
       </div>
+      <p class="muted sizes" data-testid="recovery-sizes">
+        Deck {status.deckSize} − {status.publicCards} on the table − {count} in hand = library {libraryAfter(status, count)}
+      </p>
     {/if}
 
     {#if status.phase === 'committed' && !running && !busy}
@@ -192,18 +192,38 @@
     background: var(--ds-panel);
     color: var(--ds-ink);
     box-shadow: var(--ds-elevation-pop);
-    border-left: 4px solid var(--ds-danger);
     border-radius: var(--ds-radius-sheet);
-    padding: var(--ds-space-md) var(--ds-space-lg);
+    padding: var(--ds-space-lg) 20px;
     font-family: var(--ds-font-body);
     font-size: var(--ds-type-small);
   }
   /* A compact panel at the top left, so it stays above a left seat's plate: the title in body size, bold. */
   h2 {
+    display: flex;
+    align-items: baseline;
+    gap: var(--ds-space-sm);
     margin: 0 0 var(--ds-space-xs);
     font-family: var(--ds-font-body);
     font-size: var(--ds-type-body);
     font-weight: var(--ds-weight-bold);
+  }
+  /* A small danger dot before the title says "attention" without a red bar along the panel's edge. */
+  .mark {
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ds-danger);
+    translate: 0 -1px;
+  }
+  .hand {
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+  .sizes {
+    margin: var(--ds-space-xs) 0 0;
+    font-size: var(--ds-type-label);
   }
   p {
     margin: var(--ds-space-xs) 0;
@@ -240,8 +260,10 @@
     margin: 0 var(--ds-space-xs);
     padding: 0 var(--ds-space-sm);
     border: none;
-    border-radius: var(--ds-radius-sm);
+    border-radius: var(--ds-radius-pill);
     background: var(--ds-chip);
+    box-shadow: var(--ds-elevation-well);
+    text-align: right;
     color: var(--ds-ink);
     font-family: var(--ds-font-body);
     font-size: var(--ds-type-body);
