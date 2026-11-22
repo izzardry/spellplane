@@ -7,11 +7,12 @@
  * scenario is about) and the scanner must find it there: the scenario is not vacuous.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Action } from '../../../src/core/actions';
 import type { SecretStore, TableState } from '../../../src/core/types';
 import { HEAD_KEYS } from '../../../src/net/validate';
 import { PROTOCOL_VERSION } from '../../../src/net/messages';
 import type { LoopbackOptions } from '../../../src/net/loopback';
-import { forbiddenFor, leakScan, type LeakScanInput } from '../../leak/leak';
+import { forbiddenFor, leakScan, type Disclosure, type LeakScanInput } from '../../leak/leak';
 import { closeAll, FAKE_TIMERS, fixtureDeck, net, observedBy, settle, trackDisclosures, until, waitConverged, type Browser } from '../session/harness';
 import { playScript } from '../session/script';
 import { lostHiddenCards } from '../../../src/session/resume';
@@ -122,7 +123,7 @@ describe('rejoin leaks (M8-P5)', () => {
   });
 
   describe('a lost browser brought back by link', () => {
-    it('PL-3 and PL-4: the lost cards go to nobody, not even the claimant; the rebuilt hand and library reach nobody else', async () => {
+    it('PL-3 and PL-4: the lost cards go to nobody, not even the claimant; the claim page holds no seat and none of Ann\'s cards; the rebuilt hand and library reach nobody else', async () => {
       const network = net({ seed: 303, ...FAULTS });
       const p = await playScript(network, browsers);
       // Ben's browser is replaced by a blank profile: what it held is the old owner.
@@ -134,8 +135,20 @@ describe('rejoin leaks (M8-P5)', () => {
       const link = await bringBack(p.A, 's1');
       expect(link).toMatch(/^(https?:\/\/[^?#]*)?#\/t\/[a-z]+-[a-z]+-[a-z]*-?\d+\/[\w-]{22}\/rejoin\/s[0-3]\/[\w-]{22}$/);
       const blank = await replaceBrowser(network, browsers, link, 'newben');
+      // K1 (gate M8 round 4): the claim page holds no seat. No seat of the table is its own (not the empty secret store's
+      // s0, Ann's), it holds no hand, and nothing of Ann's hidden cards reached it: only what she showed everyone.
+      const ann = (): { state: TableState; secrets: SecretStore } => ({ state: p.a.engine.confirmedState(), secrets: p.a.secrets() });
+      const annActions = (): Action[] => p.a.log().flatMap((e) => (e.kind === 'action' ? [e.action] : []));
+      const shownToAll = (): Disclosure[] =>
+        p.shownToB.filter((d) => annActions().some((a) => (a.type === 'reveal' && a.instanceId === d.instanceId) || (a.type === 'flip' && a.card === d.instanceId && a.ref !== undefined)));
+      const pre = blank.session!;
+      expect(pre.engine.seat()).toBeNull();
+      expect(Object.keys(pre.getState().seats)).not.toContain(pre.seat);
+      expect(pre.secrets().hand).toEqual([]);
+      cleanButSensitive({ observed: await observedBy(network, blank), owner: ann(), disclosed: shownToAll() }, { t: 'syncRes', snapshot: null, tail: [], leak: hiddenToken(ann()) });
       await settle(blank.session!.claimSeat());
       await waitConverged([p.a, blank.session!], 'the claim');
+      expect(blank.session!.seat).toBe('s1');
       // PL-3: none of old Ben's hidden cards in Ann's or the new browser's observed data.
       const oldBen = { state: old.state, secrets: old.secrets };
       const toNew = { observed: await observedBy(network, blank), owner: oldBen, disclosed: [] };
@@ -155,6 +168,8 @@ describe('rejoin leaks (M8-P5)', () => {
       const rebuilt = { state: b.engine.confirmedState(), secrets: b.secrets() };
       const input = { observed: await observedBy(network, p.A), owner: rebuilt, disclosed: shownToAnn };
       cleanButSensitive(input, { t: 'head', leak: hiddenToken(rebuilt) });
+      // K1: seated at s1 and recovered, the new browser still holds nothing of Ann's hidden cards.
+      cleanButSensitive({ observed: await observedBy(network, blank), owner: ann(), disclosed: shownToAll() }, { t: 'head', leak: hiddenToken(ann()) });
     });
   });
 

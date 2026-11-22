@@ -48,7 +48,11 @@
   let wantPerPack = $state(false);
   let failure = $state('');
 
-  const me = untrack(() => session.seat);
+  // The viewer's seat, read again with every state: a claim or a chair move changes it (K1, gate M8 round 4).
+  const me = $derived.by(() => {
+    void st;
+    return session.seat;
+  });
   const lobby = $derived(currentLobby(st));
   const editable = $derived(lobbyEditable(st, me));
   const host = $derived(hostSeat(st));

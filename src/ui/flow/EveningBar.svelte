@@ -11,7 +11,11 @@
 
   let { session, evening, state: table, answer = false }: FlowProps & { answer?: boolean } = $props();
 
-  const me = $derived(session.seat);
+  // Read again with every state: a claim or a chair move changes the seat (K1, gate M8 round 4).
+  const me = $derived.by(() => {
+    void table;
+    return session.seat;
+  });
   const status = $derived(stageStatus(table, me));
   const offers = $derived(proposals(table, me));
   const open = $derived(openProposal(table));

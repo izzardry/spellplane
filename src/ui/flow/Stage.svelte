@@ -48,6 +48,12 @@
   // USE A STARTER DECK in the waiting room: M8-P6's generator over the table's card source (M8-P4 fix).
   const starter = $derived(roomStarter(roomStarterPool(props.cardData)));
   const stage = $derived<StageId>(st.stage);
+  // The viewer's seat, read again with every state (K1, gate M8 round 4): the draft, the builder and the HUD (its hand
+  // fan, plates and scene camera) are mounted per seat, so a claim or a take-over mounts them again for the new seat.
+  const viewer = $derived.by(() => {
+    void st;
+    return props.session.seat;
+  });
   const evening = $derived(props.session.evening);
   const draft = $derived(props.session.draft);
   // The post-game audit of a networked session (M5-P2, session/audit.ts); none in solo play or for a spectator.
@@ -71,20 +77,22 @@
     </div>
   {:else if stage === 'draft'}
     {#if draft}
-      <DraftView session={props.session} {draft} createSurface={createDraftSurface} faces={props.faces} cardData={props.cardData} {theme} />
+      {#key viewer}
+        <DraftView session={props.session} {draft} createSurface={createDraftSurface} faces={props.faces} cardData={props.cardData} {theme} />
+      {/key}
     {:else}
       <p class="unavailable" role="alert" data-testid="stage-unavailable">This browser has no set data, so it cannot draft.</p>
     {/if}
   {:else if stage === 'build'}
     {#if draft}
-      {#key st.draft?.startSeq ?? -1}
+      {#key `${st.draft?.startSeq ?? -1}:${viewer}`}
         <BuilderView session={props.session} {draft} createSurface={createBuilderSurface} faces={props.faces} cardData={props.cardData} {theme} decks={props.decks} sets={props.sets} />
       {/key}
     {:else}
       <p class="unavailable" role="alert" data-testid="stage-unavailable">This browser has no set data, so it cannot build a deck here.</p>
     {/if}
   {:else}
-    {#key st.games ?? 0}
+    {#key `${st.games ?? 0}:${viewer}`}
       <Hud session={props.session} createScene={props.createScene} faces={props.faces} cardData={props.cardData} game={props.game} {theme} settings={props.settings} parseDecklist={props.parseDecklist} {evening} {...props.shell ?? {}} />
     {/key}
   {/if}

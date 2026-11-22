@@ -10,7 +10,7 @@
   in the HUD's ordinary confirmation prompt ("new hand of 7?"). Not modal: the table stays live under it.
 -->
 <script lang="ts">
-  import Icon from '../design/Icon.svelte';
+  import IconButton from '../design/IconButton.svelte';
   import { onMount, untrack } from 'svelte';
   import type { CardDataSource } from '../../data/types';
   import { canRecover, ownPublishedIds, recoveryProblem, recoveryStatus, type RecoveryStatus } from '../../session/resume';
@@ -166,10 +166,12 @@
 
     {#if failure}<p class="error" data-testid="recovery-error">{failure}</p>{/if}
     {#if done && status.phase === 'none' && !running}
-      <p data-testid="recovery-done">
-        Recovered: a new library of {done.library} and a hand of {done.hand}.
-        <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" aria-label="Dismiss" onclick={() => (done = null)}><Icon name="close" size={16} /></button>
-      </p>
+      <!-- One row: the text, and the close at the right of it (visual.md O-1: icon actions at the right of the title row;
+           gate M8 finding N17). -->
+      <div class="done-row">
+        <p data-testid="recovery-done">Recovered: a new library of {done.library} and a hand of {done.hand}.</p>
+        <IconButton label="Dismiss" icon="close" variant="quiet" size="xs" class="done-close" data-testid="recovery-done-close" onclick={() => (done = null)} />
+      </div>
     {/if}
   </aside>
 {/if}
@@ -268,6 +270,19 @@
     color: var(--ds-ink);
     font-family: var(--ds-font-body);
     font-size: var(--ds-type-body);
+  }
+  .done-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--ds-space-sm);
+  }
+  .done-row p {
+    flex: 1;
+    min-width: 0;
+    margin: var(--ds-space-xs) 0 0;
+  }
+  .done-row :global(.done-close) {
+    flex: none;
   }
   .muted {
     color: var(--ds-muted);

@@ -144,6 +144,7 @@
   data-typing={typing ? 'true' : 'false'}
   data-testid="avatar"
   data-seat={seat.id}
+  data-me={me ? 'true' : 'false'}
   data-line-seat={seat.id}
   data-away={away ? 'true' : 'false'}
   aria-label="{seat.name}{me ? ' (you)' : ''}{away ? ' (away)' : ''}"
