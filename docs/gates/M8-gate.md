@@ -743,3 +743,23 @@ The WebKit set matches the Chromium set, apart from:
 **Is everything green apart from the local WebKit run?** Yes. `pnpm check`, CI (twice, no flaky test), every gate in Chromium and every other gate in WebKit are green, and K1 is fixed. The local WebKit run of gate M4 fails on F20, 2 of 6 times, which is a test race. With F20 fixed, no blocking finding is open.
 
 **Real Safari:** not measured (not asked this round).
+
+## Round 5 follow-up: F20 (22 Nov 2026, on `0e98dd4`)
+
+The gate is green. `0e98dd4` changes only the gate specs' `hoverHand` helper (M0, M1, M3, M4). It now releases a card still grown from an earlier hover, then jumps to the target card's lower strip in one pointer move. No retries were added, and no threshold changed.
+
+| Run | Result |
+| --- | --- |
+| `pnpm e2e:gate -- M4 --project=webkit --grep "Wyrm: the scripted" --repeat-each=10` | 10 passed |
+| Gates M0, M1, M3, both browsers | 2, 4 and 2 passed |
+| Gate M4, both browsers | First run: pw-guard exit 3, a macOS prompt on the dev Mac during a Chromium test; it was gone a minute later. The single rerun passed 12 of 12. |
+| `pnpm check` | green: 341 files, 4582 tests |
+| CI run 45013298842, attempts 1 and 2 | both green: check and 8 e2e shards (4 Chromium, 4 Linux WebKit) |
+
+M2, M5, M7 and M8 are as in round 5, on `3d082b6`: green in both browsers. No file they use has changed since.
+
+| # | Severity | Status |
+| --- | --- | --- |
+| F20 | blocking | fixed |
+| N13 (remaining glyphs), N18, hovered card covering neighbours' lower strips | minor | open |
+| Q1 | design question | open, for the owner |
