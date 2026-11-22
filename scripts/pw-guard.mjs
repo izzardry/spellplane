@@ -291,17 +291,53 @@ function canConnect(ws) {
     sock.once('error', () => done(false));
   });
 }
-async function waitForRemote(ws) {
+/**
+ * The local end of an SSH -L tunnel accepts connections even when nothing listens on the browser Mac, so with an
+ * sshHost the guard also reads serve.sh's status file there: 'ready …', 'paused …' (WindowServer's IOSurface count is
+ * near the level at which it aborted on 21 Nov 2026), 'nosession …' (nobody logged in at its console, WebKit cannot
+ * launch) or 'stopped …'. Returns null when the file cannot be read (older serve.sh, SSH trouble): then only the
+ * port is checked, as before.
+ */
+function remoteStatus(host) {
+  if (!host) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const p = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', host, 'cat ~/spellplane-pw/status 2>/dev/null'], {
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    let out = '';
+    const timer = setTimeout(() => { p.kill('SIGTERM'); resolve(null); }, 10_000);
+    p.stdout.on('data', (d) => { out += d; });
+    p.once('exit', () => {
+      clearTimeout(timer);
+      const line = out.trim().split('\n')[0] || '';
+      const state = line.split(':')[0];
+      resolve(state ? { state, line } : null);
+    });
+    p.once('error', () => { clearTimeout(timer); resolve(null); });
+  });
+}
+async function waitForRemote(remote) {
+  const ws = remote.webkitWs;
   const started = Date.now();
   let lastNote = 0;
-  while (!(await canConnect(ws))) {
+  for (;;) {
+    const status = await remoteStatus(remote.sshHost);
+    const ready = (await canConnect(ws)) && (!status || status.state === 'ready');
+    if (ready) return;
     if (Date.now() - started > MAX_WAIT_MS) {
       release();
-      console.error(`[pw-guard] the remote WebKit server ${ws} stayed unreachable for ${MAX_WAIT_MS / 60_000} min; giving up`);
+      console.error(
+        `[pw-guard] the remote WebKit server ${ws} was not ready for ${MAX_WAIT_MS / 60_000} min` +
+          `${status ? ` (${status.line})` : ''}; giving up`,
+      );
       process.exit(75);
     }
     if (Date.now() - lastNote > 60_000) {
-      console.error(`[pw-guard] waiting for the remote WebKit server ${ws} (configured in ${REMOTE_FILE})`);
+      console.error(
+        status && status.state !== 'ready'
+          ? `[pw-guard] waiting for the remote WebKit server: ${status.line}`
+          : `[pw-guard] waiting for the remote WebKit server ${ws} (configured in ${REMOTE_FILE})`,
+      );
       lastNote = Date.now();
     }
     await sleep(15_000);
@@ -483,7 +519,7 @@ export async function runGuarded(command, args, extraEnv = {}) {
   }
   const remote = remoteWebkitWs();
   if (remote) {
-    await waitForRemote(remote.webkitWs);
+    await waitForRemote(remote);
     const ports = [Number(extraEnv.SPELLPLANE_PW_TUNNEL_PORT ?? e2ePort())];
     if (remote.sshHost) await openTunnel(remote.sshHost, ports);
     env.SPELLPLANE_PW_WEBKIT_WS = remote.webkitWs;
