@@ -85,7 +85,7 @@ import { reconcileSecrets, type LibraryPlacement } from './secrets';
 import { buildFromDeck, Evening, type DraftPort } from './draft';
 import { TeamView } from './team';
 import { MAX_TEAM_CHAT } from '../net/team';
-import { formatTeamSeats, isTeamFormat, teamIdOf } from '../core/teams';
+import { formatTeamSeats, isTeamFormat, spectatorIdOf, teamIdOf } from '../core/teams';
 import { mountCaptions } from './captions';
 import type { CaptionControls } from '../voice/types';
 import type { DraftControls } from '../draft/types';
@@ -333,7 +333,11 @@ class NetTable implements NetSession, SessionRecovery {
   private proposing = 0;
   private driveQueued = false;
   private netQueued = false;
-  private lastSeat: SeatId;
+  /**
+   * The chair this page held last, null while it never held one: a blank browser opened by a re-invite link watches
+   * until its claim is made (K1, gate M8 round 4), so it is nobody's seat, not the empty secret store's `s0`.
+   */
+  private lastSeat: SeatId | null;
   /** The stored record's protocol version at open (the save keeps a higher one: session/persist.ts). */
   private readonly savedProtocol: number | undefined;
   private disposed = false;
@@ -417,7 +421,6 @@ class NetTable implements NetSession, SessionRecovery {
     this.entropy = internals.entropy ?? DEFAULT_ENTROPY;
     this.entries = init.entries;
     this.fold = engine.confirmedState();
-    this.lastSeat = engine.seat() ?? init.secrets.seat;
     this.sec = init.secrets;
     this.hadSave = init.hadSave === true;
     this.knownHeadValue = init.knownHead ?? null;
@@ -429,6 +432,8 @@ class NetTable implements NetSession, SessionRecovery {
       const token = seat === undefined ? null : this.nonces.get('claim', seat);
       if (seat !== undefined && token) this.claimWanted = { seat, token };
     }
+    // A page waiting to claim a seat holds none: it is not the empty secret store's seat (K1, gate M8 round 4).
+    this.lastSeat = engine.seat() ?? (this.claimWanted !== null ? null : init.secrets.seat);
     // A blank browser keeps the link's claim until it is made or refused (persistence.md section 7).
     if (this.claimWanted !== null && engine.seat() === null) this.nonces.set('claim', this.claimWanted.seat, this.claimWanted.token);
     this.followView(engine.state(), 'top');
@@ -610,8 +615,13 @@ class NetTable implements NetSession, SessionRecovery {
 
   // --- Reading -----------------------------------------------------------------------------------------
 
+  /**
+   * The chair this browser holds; while it holds none and never did (a blank browser on the claim page of a re-invite
+   * link), its watcher id (core/teams.ts spectatorIdOf), which no key of `state.seats` matches: the page shows no seat
+   * as its own until the claim is sequenced (K1, gate M8 round 4).
+   */
   get seat(): SeatId {
-    return this.engine.seat() ?? this.lastSeat;
+    return this.engine.seat() ?? this.lastSeat ?? spectatorIdOf(this.peerId);
   }
 
   getState(): TableState {
@@ -2711,12 +2721,14 @@ export async function openNetSession(opts: NetSessionOptions, internals: NetSess
       ...(opts.now ? { now: opts.now } : {}),
     });
   const engine = makeEngine(start);
-  const seat0 = seatOfPeer(engine.confirmedState(), opts.identity.peerId) ?? 's0';
+  // M8-P5: a re-invite link in the address (`#/t/<room>/<key>/rejoin/<seat>/<token>`) when main.ts passed none.
+  const claim = internals.claim ?? claimFromLocation(opts.roomId);
+  // A blank browser opened by a re-invite link holds no seat until its claim is sequenced: its empty secret store is
+  // nobody's (the watcher id), so it never lists seat 0's hand as its own (K1, gate M8 round 4).
+  const seat0 = seatOfPeer(engine.confirmedState(), opts.identity.peerId) ?? (claim && !saved?.secrets ? spectatorIdOf(opts.identity.peerId) : 's0');
   // A save that a newer Spellplane wrote may hold actions this page cannot apply: say so (net/version.ts).
   const newer = saved ? roomVersionNotice({ ...(saved.protocol !== undefined ? { protocol: saved.protocol } : {}) }, PROTOCOL_VERSION) : null;
   const entries: LogEntry[] = [...(saved?.entries ?? []), ...(newer !== null ? [{ kind: 'system' as const, seq: engine.confirmedState().seq, at: (opts.now ?? Date.now)(), level: 'warn' as const, text: newer }] : [])];
-  // M8-P5: a re-invite link in the address (`#/t/<room>/<key>/rejoin/<seat>/<token>`) when main.ts passed none.
-  const claim = internals.claim ?? claimFromLocation(opts.roomId);
   const session = new NetTable(engine, makeEngine, opts, claim ? { ...internals, claim } : internals, {
     secrets: saved?.secrets ?? emptySecretStore(seat0),
     entries,

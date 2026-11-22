@@ -268,7 +268,14 @@
     };
   }
 
-  const me = $derived<SeatId | null>(session.seat);
+  // The viewer's seat follows the session (K1, gate M8 round 4): a claim, a chair move or a take-over changes it, and
+  // each of those is a state change, so it is read again with every state. A page that holds no chair (a blank browser
+  // on the claim page) has none: no plate, menu or badge is its own.
+  const viewer = $derived.by<SeatId>(() => {
+    void st;
+    return session.seat;
+  });
+  const me = $derived<SeatId | null>(Object.hasOwn(st.seats, viewer) ? viewer : null);
   // Seat presence (presence.ts): the plate menu's connection line reads connecting too; the HUD's plates here or away.
   const allPresence = $derived(gather ? seatPresence(st, net.peers, me) : null);
   const presence = $derived.by((): Readonly<Record<SeatId, 'here' | 'away'>> | undefined => {
@@ -351,7 +358,8 @@
 
 {#snippet hud()}
   {#if deps}
-    {#key st.games ?? 0}
+    <!-- Mounted per game and per viewer seat: the HUD, its hand fan and its scene (camera) belong to one seat. -->
+    {#key `${st.games ?? 0}:${viewer}`}
       <Hud session={props.session} createScene={deps.createScene} faces={deps.faces} cardData={deps.cardData} game={deps.game} {theme} settings={deps.settings} parseDecklist={deps.parseDecklist} {...shell} />
     {/key}
   {/if}

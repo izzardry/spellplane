@@ -43,7 +43,11 @@
   let minPassed = $state(false);
   let failed = $state(false);
   let dismissed = $state(false);
-  const me = untrack(() => session.seat);
+  // The viewer's seat, read again with every state: a claim or a chair move changes it (K1, gate M8 round 4).
+  const me = $derived.by(() => {
+    void st;
+    return session.seat;
+  });
 
   const connected = (seat: SeatId): boolean => {
     const peer = st.seats[seat]?.peer;
