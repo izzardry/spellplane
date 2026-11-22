@@ -91,6 +91,34 @@ async function snap(p: Page, name: string, project: string): Promise<void> {
   await shot(p, MS, name, project);
 }
 
+/**
+ * The rules panel in the waiting room's side column, scrolled into view for a screenshot (gate M8 round 4, F5: the Mode
+ * select's short label was below the fold in 07 and 15). Its chosen label fits inside the pill, and the pill inside
+ * the panel; afterwards the column scrolls back, so the next screenshot shows the room as before.
+ */
+async function snapRules(p: Page, name: string, project: string): Promise<void> {
+  const rules = p.getByTestId('lobby-settings');
+  await rules.scrollIntoViewIfNeeded();
+  const modeSelect = rules.getByTestId('lobby-mode');
+  await expect(modeSelect).toBeInViewport();
+  const fit = await modeSelect.evaluate((el) => {
+    const select = el as HTMLSelectElement;
+    const card = select.closest('[data-testid="lobby-settings"]')!.getBoundingClientRect();
+    const box = select.getBoundingClientRect();
+    const cs = getComputedStyle(select);
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    ctx.font = `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const text = select.selectedOptions[0]?.text ?? '';
+    const room = select.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    return { text, inside: box.left >= card.left - 0.5 && box.right <= card.right + 0.5, fits: ctx.measureText(text).width <= room + 0.5 };
+  });
+  expect(fit).toEqual({ text: fit.text, inside: true, fits: true });
+  await snap(p, name, project);
+  await rules.evaluate((el) => {
+    for (let n = el.parentElement; n; n = n.parentElement) if (n.scrollTop > 0) n.scrollTop = 0;
+  });
+}
+
 /** Build a small custom deck through the deck page: four searches, then the land helper. Returns its id. */
 async function buildCustomDeck(p: Page, project: string): Promise<string> {
   await p.getByTestId('new-deck').first().click();
@@ -268,6 +296,7 @@ test.describe('@gate M8-G', () => {
         expect(await copied(a)).toEqual([link]);
         expect((await state(a)).settings.autoSetup).toBe(true);
         await snap(a, '07-waiting-room', project);
+        await snapRules(a, '07c-rules-panel', project);
       }, { timeout: 45_000 });
       await test.step('Ben opens the invite link; both READY', async () => {
         await openSite(b, profile(info, 'b'), link.slice(link.indexOf('#') + 1));
@@ -467,6 +496,7 @@ test.describe('@gate M8-G', () => {
       .toEqual({ draft: { format: 'pass', packs: b.packs, picks: b.picks }, sets: b.sets.length ? b.sets : ['M19'], pickTimer: b.pickTimer });
     expect((await state(page)).settings.autoSetup).toBe(true);
     await snap(page, '15-draft-waiting-room', project);
+    await snapRules(page, '15b-draft-rules-panel', project);
   });
 
   test('7: leave and rejoin; the copy with more moves wins; bring Cy back', async ({ browser }, info) => {

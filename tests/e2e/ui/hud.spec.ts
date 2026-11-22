@@ -337,11 +337,12 @@ test.describe('avatar (DESIGN "Turn flow and confirmation", Life and player coun
     const d = await drafts(page);
     expect(d.map((a) => a.delta)).toEqual([1, -1, -1, -1, -4]);
     expect(d.every((a) => a.type === 'life' && a.seat === 's0')).toBe(true);
-    // M7-P2: every counter and "+ counter" sit under the plate's "⋯".
+    // M7-P2: every counter and "+ counter" (the kit's plus icon and "counter", named "Add a counter") sit under the
+    // plate's "⋯".
     await plateDetails(page, 's0');
     await me.locator('[data-testid="player-counter"][data-kind="poison"]').getByRole('button', { name: /add/i }).click();
     expect((await drafts(page)).at(-1)).toEqual({ type: 'playerCounter', seat: 's0', kind: 'poison', delta: 1 });
-    await me.getByRole('button', { name: '+ counter' }).click();
+    await me.getByRole('button', { name: 'Add a counter' }).click();
     await me.getByTestId('counter-name').fill('energy');
     await page.keyboard.press('Enter');
     expect((await drafts(page)).at(-1)).toEqual({ type: 'playerCounter', seat: 's0', kind: 'energy', delta: 1 });

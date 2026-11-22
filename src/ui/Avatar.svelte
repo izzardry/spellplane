@@ -238,9 +238,9 @@
         {#each allCounters as [kind, n] (kind)}
           <li data-testid="player-counter" data-kind={kind}>
             <span class="kind">{kind}</span>
-            {#if !readonly}<button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-round" aria-label="Remove one {kind}" disabled={n <= 0 && kind === 'poison'} onclick={() => oncounter(kind, -1)}>−</button>{/if}
+            {#if !readonly}<button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-round" aria-label="Remove one {kind}" disabled={n <= 0 && kind === 'poison'} onclick={() => oncounter(kind, -1)}><Icon name="minus" size={16} /></button>{/if}
             <b class="n">{n}</b>
-            {#if !readonly}<button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-round" aria-label="Add one {kind}" onclick={() => oncounter(kind, 1)}>+</button>{/if}
+            {#if !readonly}<button type="button" class="ds-btn ds-btn--quiet sp-h-xs sp-round" aria-label="Add one {kind}" onclick={() => oncounter(kind, 1)}><Icon name="plus" size={16} /></button>{/if}
           </li>
         {/each}
       </ul>
@@ -263,7 +263,7 @@
             onblur={() => (newCounter = null)}
           />
         {:else}
-          <button type="button" class="ds-btn ds-btn--quiet sp-h-xs add" data-testid="add-counter" onclick={() => (newCounter = '')}>+ counter</button>
+          <button type="button" class="ds-btn ds-btn--quiet sp-h-xs add" data-testid="add-counter" aria-label="Add a counter" onclick={() => (newCounter = '')}><Icon name="plus" size={16} />counter</button>
         {/if}
       {/if}
       {#if zones.length}
