@@ -17,19 +17,19 @@ function ids(ctx: HudMenuContext): HudMenuId[] {
 
 describe('HUD menu', () => {
   it('groups the rare tools as the proposal lists them', () => {
-    expect(HUD_MENU.map((g) => g.label)).toEqual(['Game', 'Tokens and dice', 'Deck', 'Table', 'View', 'Voice', 'Help']);
+    expect(HUD_MENU.map((g) => g.label)).toEqual(['Game', 'Tokens and dice', 'Table', 'View', 'Voice', 'Help']);
   });
 
   it('no group holds more than seven rows (visual.md O-7; gate M8 finding N10)', () => {
     for (const g of HUD_MENU) expect(g.items.length, g.label).toBeLessThanOrEqual(7);
   });
 
-  it("keeps every former toolbar function one step away (import deck, token, clip, view, keys, settings, look, voice, dictation, next game, new draft)", () => {
+  it("keeps every former toolbar function one step away (token, clip, view, keys, settings, look, voice, dictation, next game, new draft)", () => {
     const all = ids(player);
-    for (const id of ['importDeck', 'token', 'clip', 'perspective', 'keys', 'settings', 'look', 'voice', 'mute', 'dictation', 'nextGame', 'newDraft', 'rollDie', 'flipCoin', 'drawN', 'mulligan'] as const) expect(all).toContain(id);
+    for (const id of ['token', 'clip', 'perspective', 'keys', 'settings', 'look', 'voice', 'mute', 'dictation', 'nextGame', 'newDraft', 'rollDie', 'flipCoin', 'drawN', 'mulligan'] as const) expect(all).toContain(id);
     // The old toolbar's testids survive on the items that took their function.
     const testids = hudMenu(player, keyOf, () => {}).flatMap((g) => g.items.map((i) => i.testid));
-    for (const t of ['open-deck-import', 'clip-tray', 'perspective', 'open-cheat-sheet', 'open-settings', 'open-theme-settings', 'open-speech-settings', 'propose-nextGame', 'propose-newDraft']) expect(testids).toContain(t);
+    for (const t of ['clip-tray', 'perspective', 'open-cheat-sheet', 'open-settings', 'open-theme-settings', 'open-speech-settings', 'propose-nextGame', 'propose-newDraft']) expect(testids).toContain(t);
   });
 
   it('shows keys beside items, never inside their labels', () => {
@@ -49,7 +49,6 @@ describe('HUD menu', () => {
   it('a spectator gets only the view and help tools; voice items need live voice', () => {
     const spec = ids({ spectator: true, voice: true, captions: true, proposals: [] });
     expect(spec).not.toContain('token');
-    expect(spec).not.toContain('importDeck');
     expect(spec).not.toContain('dictation');
     expect(spec).toEqual(expect.arrayContaining(['fitTable', 'perspective', 'look', 'keys', 'settings', 'voice']));
     expect(hudMenuOffers('voice', { ...player, voice: false })).toBe(false);
@@ -60,8 +59,8 @@ describe('HUD menu', () => {
     let pressed = 0;
     const groups = hudMenu(player, keyOf, (id) => ran.push(id), { clip: () => pressed++ });
     const items = groups.flatMap((g) => g.items);
-    items.find((i) => i.id === 'importDeck')!.run!();
-    expect(ran).toEqual(['importDeck']);
+    items.find((i) => i.id === 'token')!.run!();
+    expect(ran).toEqual(['token']);
     const clip = items.find((i) => i.id === 'clip')!;
     expect(clip.run).toBeUndefined();
     clip.onpointerdown!({} as PointerEvent);
@@ -76,8 +75,10 @@ describe('HUD menu', () => {
 });
 
 describe('HUD menu and the shell (HudShellProps)', () => {
-  it('offers "Import deck…" only when the table imports (the sandbox)', () => {
-    expect(ids({ ...player, importDeck: false })).not.toContain('importDeck');
-    expect(ids({ ...player, importDeck: true })).toContain('importDeck');
+  it('never offers "Import deck…": a deck is chosen before the table, and the sandbox imports from its no-deck line (journey.md 4.10; gate M8 N10)', () => {
+    const testids = (ctx: HudMenuContext) => hudMenu(ctx, keyOf, () => {}).flatMap((g) => g.items.map((i) => i.testid));
+    expect(testids(player)).not.toContain('open-deck-import');
+    expect(testids({ ...player, spectator: true })).not.toContain('open-deck-import');
+    expect(hudMenu(player, keyOf, () => {}).flatMap((g) => g.items.map((i) => i.label))).not.toContain('Import deck…');
   });
 });

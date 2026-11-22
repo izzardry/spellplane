@@ -26,6 +26,19 @@ export function adoptNotice(e: AdoptEvent): string | null {
   return e.abandonedOwn > 0 ? ADOPT_NOTICE : null;
 }
 
+/** The players' log line after an adopt, in place of the engine's own wording (gate M8 round 3 N12). */
+export const ADOPT_LOG_LINE = 'This table was out of step with the others. The copy with more moves is kept.';
+
+/**
+ * The players' words for an engine system line (gate M8 round 3 N12: "history diverged at seq 65: taking over the
+ * sequencer's history from there." is the engine's diagnostic, not a sentence for the players' log). The repair of a
+ * fork becomes one plain information line, not a warning; every other line passes through unchanged.
+ */
+export function playersLine(level: 'info' | 'warn', text: string): { level: 'info' | 'warn'; text: string } {
+  if (/^history diverged\b/.test(text)) return { level: 'info', text: ADOPT_LOG_LINE };
+  return { level, text };
+}
+
 /** The notice when a player left on purpose (persistence.md section 5). */
 export function leftNotice(name: string): string {
   const who = name.trim() || 'A player';

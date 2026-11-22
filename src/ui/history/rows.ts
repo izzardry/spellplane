@@ -52,6 +52,18 @@ export function rowState(g: GameSummary): string {
   return whose ? `Turn ${g.turn} · ${whose}` : `Turn ${g.turn}`;
 }
 
+/**
+ * The row's one `sm` action (visual.md 2.8 history row, O-5): what a click on the row does, in a word. An ended game is
+ * looked at, a game alone or against the computer is continued, a table that has not started is opened, and a table
+ * with other players is rejoined.
+ */
+export function rowAction(g: GameSummary): string {
+  if (isEnded(g)) return 'View';
+  if (g.kind === 'solo') return 'Continue';
+  if (g.stage === 'lobby') return 'Open';
+  return 'Rejoin';
+}
+
 /** A relative time (`now`, `12 min`, `2 h`, `3 d`). */
 export function relTime(at: number, now: number): string {
   const s = Math.max(0, Math.round((now - at) / 1000));

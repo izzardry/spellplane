@@ -58,6 +58,8 @@ export const ICONS = {
   swap: 'M4 8h14l-4-4M20 16H6l4 4',
   chevronLeft: 'M15 6l-6 6 6 6',
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',
+  // [M8-R4] visual.md 2.7: warning colour comes only with this triangle (a deck short of cards).
+  warning: 'M12 4l9.5 16h-19zM12 10v4M12 17h.01',
 } as const;
 
 export type IconName = keyof typeof ICONS;

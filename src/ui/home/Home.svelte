@@ -447,7 +447,7 @@
       {busy && view.primary.action === 'firstRun' ? 'FETCHING THE DECKS…' : view.primary.label}
       {#snippet trailing()}{#if view.since !== null}<span class="timer" data-testid="home-timer">{elapsed}</span>{/if}{/snippet}
     </Button>
-    {#if view.cancel}<IconButton label="Cancel the search" size="lg" variant="ghost" onclick={() => matchmaker.cancel()} data-testid="home-cancel">✕</IconButton>{/if}
+    {#if view.cancel}<IconButton label="Cancel the search" size="lg" variant="ghost" onclick={() => matchmaker.cancel()} data-testid="home-cancel" icon="close" />{/if}
   </div>
   <StatusLine tone={view.tone} data-testid="home-status">{ready ? (rankedNote ?? view.line ?? '') : slow ? 'Loading your decks…' : ''}</StatusLine>
   {#if view.links.length}

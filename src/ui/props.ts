@@ -19,7 +19,7 @@ export interface HudShellProps {
   onleave?: () => void;
   /** Menu groups shown first, above the HUD's own (journey 4.10 "This game": Leave to home, Invite…, Concede, Declare result…). */
   menuTop?: () => MenuGroup[];
-  /** True at `#/solo`: "Import deck…" is in the Menu and the no-deck line opens the paste dialog. */
+  /** True at `#/solo`: the no-deck line opens the paste dialog (journey.md 4.10: `Import deck…` is not in the Menu). */
   sandbox?: boolean;
   /** Opens the shell's deck picker for a table without a deck (not in the sandbox). */
   onchoosedeck?: () => void;

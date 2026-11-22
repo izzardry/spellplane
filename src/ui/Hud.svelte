@@ -137,8 +137,9 @@
    */
   const viewOnly = $derived(readOnly || !full);
   /**
-   * "Import deck…" and the paste dialog (D7: set-up belongs to Home; only the sandbox imports). A HUD mounted without a
-   * shell (no `onleave`: the pages from before M8, the harness) keeps offering it unless `sandbox` says otherwise.
+   * The paste dialog behind the no-deck line (D7: set-up belongs to Home; only the sandbox imports). A HUD mounted without
+   * a shell (no `onleave`: the pages from before M8, the harness) keeps offering it unless `sandbox` says otherwise.
+   * `Import deck…` left the Menu (journey.md 4.10; gate M8 N10): the no-deck line is the one way in.
    */
   const importOffered = $derived(sandbox ?? onleave === undefined);
   /** A seat's player is away: the table says so (Seat.away) or the shell does (seatPresence). */
@@ -474,9 +475,15 @@
    * counter-clockwise (the left seat's piles run down from the edge's middle, the right seat's up), so it goes the other way.
    */
   const SIDE_SHIFT = 36;
+  /** Half the compact plate's height: at three or more chairs the plate across the table stands on its far edge. */
+  const FAR_PLATE_HALF = 23;
+  /** The lowest top of a plate above the far edge: under the tracker's row (16 + 44) and 8 clear. */
+  const FAR_PLATE_TOP = 68;
   /**
    * A seat-edge plate's centre (gate M8 finding N4): a side seat's plate stands outside the table beside its edge, clear
-   * of that seat's battlefield and pile column; the plate across the table stays centred on its edge.
+   * of that seat's battlefield and pile column. The plate across the table is centred on its edge; at three or more
+   * chairs (where the far seat's edge is short and its piles lie near the middle) it stands above that edge, in the room
+   * the fit keeps there (`fitInsets` `sides`), so it covers neither the LIBRARY label nor the pile (round 3).
    */
   function anchorPoint(a: SeatAnchor & { at: { x: number; y: number } }, width: number): { x: number; y: number } {
     const side = sideOf(a);
@@ -486,6 +493,9 @@
       x += (side === 'left' ? -1 : 1) * (SIDE_GAP + width / 2);
       // Only a plate the window's edge pushes back toward the table moves along the edge, off the pile column.
       if (Math.abs(anchorX(x, width) - x) > 1) y -= Math.cos(((a.outwardDeg + 90) * Math.PI) / 180) * SIDE_SHIFT;
+    } else if (wideSeats && a.at.y < vh / 2) {
+      y = Math.max(a.at.y - FAR_PLATE_HALF - 2, FAR_PLATE_TOP + FAR_PLATE_HALF);
+      return { x: Math.round(anchorX(x, width)), y: Math.round(Math.min(y, vh - 200)) };
     }
     return { x: Math.round(anchorX(x, width)), y: Math.round(Math.min(Math.max(y, 70), vh - 200)) };
   }
@@ -519,7 +529,9 @@
   const seatCount = $derived(Object.keys(st.seats).length);
   // At three or more chairs the side seats' plates stand beside the table on both sides: the fit keeps the same room on
   // the right as on the left, so the table is centred and each side plate has the window's edge to itself (gate M8 N4).
-  const fitInsets = $derived(fitInsetsFor(vh, false, teamFanShown, (thumbShown ? THUMB_BAR_SPACE_PX : 0) + rowAboveHand, safeInsets, seatCount >= 3 && !touchUi && vw > 1100));
+  /** Three or more chairs on a wide desktop window: plates beside the side edges and above the far one (gate M8 N4). */
+  const wideSeats = $derived(seatCount >= 3 && !touchUi && vw > 1100);
+  const fitInsets = $derived(fitInsetsFor(vh, false, teamFanShown, (thumbShown ? THUMB_BAR_SPACE_PX : 0) + rowAboveHand, safeInsets, wideSeats));
   /** Bottom of the block above the hand (toast, offer, prompt): above the teammate's fan and the thumb bar when shown. */
   const aboveHandBottom = $derived.by(() => {
     const thumb = thumbShown ? THUMB_BAR_SPACE_PX : 0;
@@ -1076,7 +1088,7 @@
   const offers = $derived(evening ? proposals(st, me) : []);
   const menuGroups = $derived(
     hudMenu(
-      { spectator: spectating || readOnly, voice: !!liveVoice, captions: !!session.captions, proposals: readOnly ? [] : offers, muted: voice.muted, importDeck: importOffered },
+      { spectator: spectating || readOnly, voice: !!liveVoice, captions: !!session.captions, proposals: readOnly ? [] : offers, muted: voice.muted },
       (a) => keyOf(a),
       runMenu,
       spectating || readOnly ? {} : { clip: clipTrayDown },
@@ -1101,9 +1113,6 @@
       case 'mute':
         if (liveVoice) liveVoice.toggleMute();
         else hooks.voice('mute', 'start');
-        return;
-      case 'importDeck':
-        deckOpen = true;
         return;
       case 'nextGame':
       case 'newDraft':
@@ -1832,22 +1841,10 @@
         <ThumbBar run={(a, phase) => commands.run(a, phase)} keyOf={(a) => keyOf(a)} talking={voice.talking === 'talk'} {resolveLit} />
       </div>
     {/if}
-    <!-- The shell's notice shows in every chrome (a waiting room's "Ben left the table"); the rest only at the full HUD. -->
-    <div class="above-hand" data-testid="above-hand" data-hud-chrome="above-hand" style:bottom={aboveHandBottom} bind:this={aboveEl} bind:offsetHeight={aboveHeight}>
-      {#if full}
-      {#if storageFull && !storageFullDismissed}
-        <div class="state"><EmptyState id="storageFull" action={{ label: 'Storage settings', run: () => openSettings('storage'), testid: 'empty-storage-settings' }} ondismiss={() => (storageFullDismissed = true)} /></div>
-      {/if}
-      {#if noDeck && !deckOpen && !readOnly}
-        <NoDeck onchoose={onchoosedeck} onpaste={importOffered ? () => (deckOpen = true) : undefined} />
-      {/if}
-      {#if !readOnly && openingHandShown(st, me, hand.length, closedGame)}
-        <OpeningHand
-          onkeep={() => closeOpening(gameNumber(st))}
-          onmulligan={() => commands.run('mulligan')}
-        />
-      {/if}
-      {/if}
+    <!-- The status slot (visual.md 2.8 "Status slot", "Table primary": toasts stack above the primary, right-aligned; gate
+         M8 N12): the shell's notice ("Ben left…", the adopt notice) in every chrome, as wide as the primary's cluster so
+         it never covers the hand fan. Without a primary (a waiting room) it takes the primary's place. -->
+    <div class="notice-slot" data-hud-chrome="notice" class:bare={!full || spectating || readOnly} data-testid="notice-slot" style:max-width={full && rightWidth > 0 ? `${Math.max(rightWidth, 240)}px` : null}>
       {#if shownNotice}
         <div class="ds-toast sp-notice" role="status" data-testid="hud-notice" data-notice={shownNotice.id}>
           <span>{shownNotice.text}</span>
@@ -1864,8 +1861,25 @@
               }}>{act.label}</button
             >
           {/if}
-          <button type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-xs sp-round" aria-label="Dismiss" data-testid="hud-notice-close" onclick={() => (shownNotice = null)}><Icon name="close" size={14} /></button>
+          <button type="button" class="ds-btn ds-btn--quiet ds-icon-btn sp-h-xs sp-round" aria-label="Dismiss" data-testid="hud-notice-close" onclick={() => (shownNotice = null)}><Icon name="close" size={16} /></button>
         </div>
+      {/if}
+    </div>
+    <!-- Above the hand: the no-deck line, the opening hand's chips, prompts and the HUD's own toasts. -->
+    <div class="above-hand" data-testid="above-hand" data-hud-chrome="above-hand" style:bottom={aboveHandBottom} bind:this={aboveEl} bind:offsetHeight={aboveHeight}>
+      {#if full}
+      {#if storageFull && !storageFullDismissed}
+        <div class="state"><EmptyState id="storageFull" action={{ label: 'Storage settings', run: () => openSettings('storage'), testid: 'empty-storage-settings' }} ondismiss={() => (storageFullDismissed = true)} /></div>
+      {/if}
+      {#if noDeck && !deckOpen && !readOnly}
+        <NoDeck onchoose={onchoosedeck} onpaste={importOffered ? () => (deckOpen = true) : undefined} />
+      {/if}
+      {#if !readOnly && openingHandShown(st, me, hand.length, closedGame)}
+        <OpeningHand
+          onkeep={() => closeOpening(gameNumber(st))}
+          onmulligan={() => commands.run('mulligan')}
+        />
+      {/if}
       {/if}
       {#if toast && full}<p class="ds-toast" role="status" data-testid="toast">{toast.text}</p>{/if}
       {#if full}
@@ -2282,10 +2296,24 @@
     color: var(--ds-muted);
     box-shadow: var(--ds-elevation-raised);
   }
+  .notice-slot {
+    position: absolute;
+    right: var(--ds-edge);
+    bottom: calc(var(--ds-edge) + var(--ds-control-lg) + 12px);
+    z-index: 36;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    pointer-events: none;
+  }
+  .notice-slot.bare {
+    bottom: var(--ds-edge);
+  }
   .sp-notice {
     display: flex;
     align-items: center;
     gap: var(--ds-space-sm);
+    max-width: 100%;
     pointer-events: auto;
   }
   .talk-cluster {
@@ -2432,10 +2460,16 @@
       --sp-above-row: calc(var(--ds-control-lg) + 24px);
       bottom: calc(22vh + 16px + var(--sp-above-row));
     }
+    .notice-slot:not(.bare) {
+      bottom: calc(22vh + 16px + var(--ds-control-lg) + 12px);
+    }
   }
   .touch-ui .own-avatar,
   .touch-ui .bottom-right {
     bottom: calc(22vh + 16px + var(--thumb-space, 0px));
+  }
+  .touch-ui .notice-slot:not(.bare) {
+    bottom: calc(22vh + 16px + var(--thumb-space, 0px) + var(--ds-control-lg) + 12px);
   }
   .touch-ui .above-hand {
     --sp-above-row: calc(var(--ds-control-lg) + 24px);

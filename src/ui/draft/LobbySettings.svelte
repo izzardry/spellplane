@@ -24,6 +24,7 @@
     lobbyModes,
     mixedSets,
     modeLabel,
+    modeName,
     modeOf,
     packCount,
     passTimerChoices,
@@ -210,7 +211,7 @@
 
   <label class="row">
     <span class="key">Mode</span>
-    <Select data-testid="lobby-mode" disabled={!editable} value={mode} onchange={onMode}>
+    <Select data-testid="lobby-mode" disabled={!editable} title={modeName(mode)} value={mode} onchange={onMode}>
       {#each modes as m (m)}<option value={m} selected={m === mode}>{modeLabel(m)}</option>{/each}
     </Select>
   </label>

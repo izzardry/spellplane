@@ -92,3 +92,15 @@ export async function settled(page: Page): Promise<void> {
     }).length === 0,
   );
 }
+
+/**
+ * Open the deck paste dialog the way a table without the player's deck offers it: the no-deck line above the hand,
+ * "No deck on this table." with "Choose a deck" (journey.md 4.10, m7-adjustments D7). `Import deck…` is not in the Menu
+ * (gate M8 finding N10), so this line is the sandbox's one way in.
+ */
+export async function openDeckImport(page: Page, how: Press = 'click'): Promise<void> {
+  const line = page.getByTestId('no-deck');
+  await expect(line).toContainText('No deck on this table.');
+  await line.getByTestId('empty-import-deck')[how]();
+  await expect(page.getByTestId('deck-import')).toBeVisible();
+}

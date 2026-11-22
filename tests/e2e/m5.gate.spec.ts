@@ -44,7 +44,7 @@ import { UPDATE_NOTICE } from '../../src/util/pwa';
 import type { VoiceTrackState } from '../../src/voice/types';
 import { packLeakScan } from '../leak/draft';
 import { hook, shot } from './helpers/app';
-import { menuItem, openZone, propose } from './helpers/hud';
+import { menuItem, openDeckImport, openZone, propose } from './helpers/hud';
 
 // --------------------------------------------------------------------------------------------------------------------
 // Fixtures and devices
@@ -961,7 +961,7 @@ test.describe('M5 gate @gate', () => {
       await expect
         .poll(() => page.evaluate(() => !!navigator.serviceWorker?.controller && navigator.serviceWorker.controller.state === 'activated'), { timeout: 30_000 })
         .toBe(true);
-      await menuItem(page, 'open-deck-import', 'tap');
+      await openDeckImport(page, 'tap');
       await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
       await page.getByTestId('deck-check').tap();
       await expect(page.getByTestId('deck-import-go')).toBeEnabled({ timeout: 15_000 });
@@ -1183,7 +1183,7 @@ test.describe('M5 gate @gate', () => {
       const touch = label === 'ipad';
       const press = (l: ReturnType<Page['getByTestId']>) => (touch ? l.tap() : l.click());
       await R.step(`${label}: a deck imported through the deck dialog`, async () => {
-        await menuItem(page, 'open-deck-import', touch ? 'tap' : 'click');
+        await openDeckImport(page, touch ? 'tap' : 'click');
         await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
         await press(page.getByTestId('deck-check'));
         await expect(page.getByTestId('deck-import-go')).toBeEnabled({ timeout: 15_000 });

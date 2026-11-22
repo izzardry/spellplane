@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import type { SecretStore } from '../../../src/core/types';
 import { BACKUP_FILE_FORMAT, BACKUP_FILE_VERSION, type BackupFile } from '../../../src/store/types';
 import { hook } from '../helpers/app';
-import { menuItem } from '../helpers/hud';
+import { openDeckImport } from '../helpers/hud';
 import { appUrl, call, decklist, fixturesScript, freshProfile, noNetwork, waitForSession } from './helpers';
 
 test('the storage section shows the estimate and persistence; the persistence prompt is answered once', async ({ context, page }, info) => {
@@ -134,7 +134,7 @@ test('Scryfall out of reach: the deck import says so clearly and stops working, 
   const outside = await noNetwork(context);
   await page.goto(appUrl({ profile: freshProfile(info) }));
   await waitForSession(page);
-  await menuItem(page, 'open-deck-import', 'click');
+  await openDeckImport(page, 'click');
   await page.getByTestId('deck-text').fill('4 Shock\n20 Mountain');
   await page.getByTestId('deck-check').click();
   const dialog = page.getByTestId('deck-import');

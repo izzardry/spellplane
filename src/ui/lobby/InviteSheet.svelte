@@ -126,16 +126,17 @@
 {/snippet}
 
 {#if compact}
-  <!-- Board 7's block inside the plate menu: no second sheet in the popover, the 124 px code beside the title and its two
-       lines, then the link, COPY LINK and the state (visual.md 2.8 "Plate menu"; gate M8 finding N11). -->
+  <!-- Board 7's block inside the plate menu: no second sheet in the popover, the 124 px code beside a one-line strong
+       title and two lines of reading text, then the link, COPY LINK, the state and one row of quiet actions (visual.md
+       2.8 "Plate menu"; gate M8 findings N11, round 3). -->
   <section class="compact" aria-label={title} data-testid="invite-sheet" data-compact="true">
     <div class="beside">
       <div class="qr small" data-testid="invite-qr">
         <QrPlate {matrix} size={124} label="QR code of the link" data-testid="qr-plate" />
       </div>
       <div class="words">
-        <h2 class="ds-t-heading">{title}</h2>
-        <p class="ds-t-meta">{text}</p>
+        <h2 class="ds-t-strong title" title={title}>{title}</h2>
+        <p class="ds-t-reading text" data-testid="invite-text">{text}</p>
       </div>
     </div>
     {@render linkAndStatus()}
@@ -202,8 +203,28 @@
   .qr.small {
     flex: none;
   }
-  .compact h2 {
+  .compact .words {
+    min-width: 0;
+    flex: 1;
+    align-content: start;
+  }
+  .compact .title {
     margin: 0;
+    font-size: 13px;
+    line-height: 18px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .compact .text {
+    font-size: 12px;
+  }
+  .compact .presence :global(.ds-status) {
+    padding: 0;
+  }
+  .compact .foot {
+    padding-top: var(--ds-space-sm);
+    align-items: center;
   }
   .compact .actions :global(.ds-btn--primary) {
     flex: 1;

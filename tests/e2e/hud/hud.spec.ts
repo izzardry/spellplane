@@ -137,8 +137,13 @@ test.describe('the Menu: rare tools one step away', () => {
     await expect(pop).toHaveCount(0);
     await expect(page.getByTestId('open-menu')).toBeFocused();
 
+    // `Import deck…` left the Menu (journey.md 4.10; gate M8 N10): the no-deck line opens the paste dialog.
+    await page.getByTestId('open-menu').click();
+    await expect(pop).toBeVisible();
+    await expect(pop.getByTestId('open-deck-import')).toHaveCount(0);
+    await expect(pop).not.toContainText('Import deck');
+    await page.keyboard.press('Escape');
     const opens: [string, string][] = [
-      ['open-deck-import', 'deck-import'],
       ['open-token', 'token-search'],
       ['open-cheat-sheet', 'cheat-sheet'],
       ['open-settings', 'settings'],

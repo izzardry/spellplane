@@ -12,7 +12,7 @@
   import type { FaceSource } from '../../data/types';
   import { openStores, type LocalStores } from '../../store/stores';
   import type { DeckRecord, DeckStore } from '../../store/types';
-  import Button from '../design/Button.svelte';
+  import IconButton from '../design/IconButton.svelte';
   import StatusLine from '../design/StatusLine.svelte';
   import DeckTile from './parts/DeckTile.svelte';
 
@@ -85,7 +85,7 @@
   >
     <div class="ds-sheet__head">
       <h2 class="ds-t-title">Choose a deck</h2>
-      {#if onclose}<Button variant="quiet" size="sm" aria-label="Close" onclick={onclose}>×</Button>{/if}
+      {#if onclose}<IconButton label="Close" size="sm" variant="quiet" icon="close" onclick={onclose} />{/if}
     </div>
     {#if list && list.length === 0}
       <StatusLine>No decks yet. Make one in Decks.</StatusLine>

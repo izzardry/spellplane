@@ -96,7 +96,7 @@ import type { Channel, Message } from '../net/transport';
 import type { VoiceControls } from '../voice/types';
 import { INVITE_TTL_MS } from '../net/engine';
 import { knownIsNewer, musterStatus } from './muster';
-import { adoptNotice, leftNotice } from './divergence';
+import { adoptNotice, leftNotice, playersLine } from './divergence';
 import { claimFromLocation, newClaimToken, rejoinLink } from './invite';
 import type { ClaimView, KnownHead, MusterStatus, SaveState, SessionMuster } from './types';
 import type { CreateNetSession, DeckImport, EveningControls, LookedCard, NetSession, NetSessionOptions, NetStatusListener, SessionListener, SessionNetStatus, TeamControls } from './types';
@@ -530,7 +530,11 @@ class NetTable implements NetSession, SessionRecovery {
       engine.onState((view) => this.onView(view)),
       engine.onSequenced((a, own) => this.onSequenced(a, own)),
       engine.onRollback((a, reason) => this.onRollback(a, reason)),
-      engine.onSystem((level, text) => this.system(level, text)),
+      // The engine's lines in the players' words (gate M8 N12); the engine keeps its own wording for its diagnostics.
+      engine.onSystem((level, text) => {
+        const line = playersLine(level, text);
+        this.system(line.level, line.text);
+      }),
       engine.onStatus(() => {
         this.netChanged();
         // A replica now in step decides the turn-ups kept from before a reload (`keptTurnUp`).
