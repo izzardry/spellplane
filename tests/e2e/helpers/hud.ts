@@ -78,7 +78,17 @@ export async function offSizes(page: Page): Promise<string[]> {
 }
 
 
-/** Wait until no finite animation or transition runs (a popover's entering scale, a button's eased colour). */
+/**
+ * Wait until no finite animation or transition runs (a popover's entering scale, a button's eased colour). A running
+ * countdown (`role="timer"`, the confirm prompt's ring) restarts its short transition on every tick, so it never
+ * settles before the countdown ends: its animations are left out.
+ */
 export async function settled(page: Page): Promise<void> {
-  await page.waitForFunction(() => document.getAnimations().filter((a) => a.playState === 'running' && a.effect?.getComputedTiming().iterations !== Infinity).length === 0);
+  await page.waitForFunction(() =>
+    document.getAnimations().filter((a) => {
+      if (a.playState !== 'running' || a.effect?.getComputedTiming().iterations === Infinity) return false;
+      const target = a.effect instanceof KeyframeEffect ? a.effect.target : null;
+      return !(target instanceof Element && target.closest('[role="timer"]'));
+    }).length === 0,
+  );
 }
