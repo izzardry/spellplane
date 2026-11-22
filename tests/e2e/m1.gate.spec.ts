@@ -85,12 +85,22 @@ async function hoverTable(page: Page, id: string): Promise<void> {
   await frames(page);
 }
 
-/** Point at a card in the hand fan (low on the card, where no neighbour overlaps it). */
+/**
+ * Point at a card in the hand fan (low on the card, where no neighbour overlaps it). The pointer jumps there in one
+ * move from off the fan: a stepped path can cross a neighbour, which then grows over the target on hover (gate M8
+ * round 5, F20). A card that is still grown from an earlier hover is let go first, so it cannot cover the target.
+ */
 async function hoverHand(page: Page, id: string): Promise<void> {
   const el = page.locator(`[data-testid="hand-card"][data-card="${id}"]`);
+  const grown = page.locator('[data-testid="hand-card"].hovered');
+  if ((await grown.count()) > 0 && !(await el.evaluate((n) => n.classList.contains('hovered')))) {
+    const vp = page.viewportSize()!;
+    await page.mouse.move(vp.width / 2, vp.height * 0.4);
+    await expect(grown).toHaveCount(0);
+  }
   const box = await el.boundingBox({ timeout: 5000 });
   if (!box) throw new Error(`hand card ${id} is not shown`);
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height - 12, { steps: 4 });
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height - 12);
   await expect(el).toHaveClass(/hovered/);
 }
 
