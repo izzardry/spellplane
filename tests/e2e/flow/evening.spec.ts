@@ -114,6 +114,10 @@ test('a reload in each stage returns to that stage with the same pool, deck and 
   await a.getByTestId('lobby-packs').fill('1');
   await a.getByTestId('lobby-packs').blur();
   await expect.poll(async () => (await state(b)).lobby?.draft).toEqual({ format: 'pass', packs: 1, picks: 1 });
+  // The next-game and new-draft rounds below wait for an answer only while no pass timer runs (lobby setting, host
+  // only): with the default 5 s timer the round timed out during Ben's screenshot of the prompt on Linux WebKit.
+  await a.getByTestId('lobby-pass-timer').selectOption('off');
+  await expect.poll(async () => (await state(b)).settings.passTimerMs).toBeNull();
   await expect(b.getByTestId('room-start-draft')).toHaveCount(0);
   await expect(b.getByTestId('setup-owner')).toContainText('chooses the setup');
   await shot(a, 'M2', 'flow-lobby', info.project.name);
