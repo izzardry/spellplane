@@ -262,7 +262,7 @@
             onblur={() => (newCounter = null)}
           />
         {:else}
-          <button type="button" class="ds-btn ds-btn--quiet sp-h-xs add" data-testid="add-counter" onclick={() => (newCounter = '')}><Icon name="plus" size={16} />counter</button>
+          <button type="button" class="ds-btn ds-btn--quiet sp-h-xs add" data-testid="add-counter" aria-label="Add a counter" onclick={() => (newCounter = '')}><Icon name="plus" size={16} />counter</button>
         {/if}
       {/if}
       {#if zones.length}
