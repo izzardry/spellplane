@@ -1,6 +1,6 @@
 # Gate M8-G, verifier run (21 Nov 2026)
 
-> **Latest:** Round 4 (22 Nov 2026, 05:20 to 06:20, on `2d772f3`) is the last section of this file. Result: red, on one new blocking defect (K1): a player brought back into a fresh browser gets a table whose HUD still belongs to seat `s0`. Everything else is green: `pnpm check`, every gate in Chromium and in WebKit (the Studio is logged in again), and CI on `2d772f3` twice. C1, C2 and W1 are closed.
+> **Latest:** Round 5 (22 Nov 2026, 09:44 to 10:55, on `3d082b6`) is the last section of this file. Result: red, on one flaky gate test (F20): gate M4's Wyrm game fails in WebKit 2 of 6 times, because the gate's pointer path crosses a neighbouring hand card that grows over the target. K1 is fixed and verified in both browsers, and N16, N17 and the N11, N13 and F5 leftovers are fixed. `pnpm check`, every other gate in both browsers, and CI on `3d082b6` twice are green.
 
 ## Final verifier run, after the fix round (21 Nov 2026, 19:57 to 20:45)
 
@@ -593,5 +593,153 @@ The WebKit set matches the Chromium set, apart from:
 | N4, N10, N12, N14, N15, E1, F5 (draft centre); N11 and N13 apart from the leftovers above | — | fixed and seen (screenshots) | — | — | — |
 
 **Is everything green apart from the local WebKit run?** The local WebKit run is green this time. `pnpm check`, every gate in both browsers and CI (twice, no flaky test) are green. The gate is red only on K1, a product defect in the bring-back path.
+
+**Real Safari:** not measured (not asked this round).
+
+## Round 5: verifier run after the K1 and polish3 rounds (22 Nov 2026, 09:44 to 10:55, on `3d082b6`)
+
+- **Result: red, on one flaky gate test (F20).** Gate M4's Wyrm game failed in WebKit: on turn 8 the gate points at one of Ben's hand cards, and the card does not take the hover.
+  - It failed in the gate run, passed in a diagnostic rerun of gate M4 (6 / 6), and failed once more in four repeats.
+  - A flaky test is a failing test, so the gate stays red.
+  - **Cause (from the trace):** the gate's `hoverHand` moves the pointer diagonally in four steps. The third step crosses the target's left neighbour. That card grows as it takes the hover (120 ms), and when the last step arrives later than that, the grown card covers the target point. In the Studio's remote WebKit the steps are slow enough. The trace explains it without K1's change.
+- **K1 is fixed,** in both browsers:
+  - the claim page shows no plate as "you" and no hand;
+  - after `SIT DOWN` and the recovery, the own plate is the claimed seat's;
+  - the fan holds exactly the ids of `hand:<seat>`;
+  - on that seat's turn the primary is `UNTAP & DRAW ▸` and enabled.
+- **Everything else is green:**
+  - `pnpm check`;
+  - gates M0, M1, M2, M3, M5, M7 and M8 in Chromium and in WebKit (the Studio's browser server, logged in);
+  - gate M4 in Chromium;
+  - CI on `3d082b6` twice (run 45001975924: the push and my rerun), with no failed and no flaky test.
+- **Fixed and seen in the screenshots:** K1, N16, N17, the N11 leftover, the N13 leftovers in the plate menu and the deck rows, and F5's Mode label (07c, 15b).
+- **Open:**
+  - F20 (gate M4, WebKit; a test race, with a minor product side: a hovered hand card grows over its neighbours);
+  - N13's last glyphs (minor);
+  - N18 (new, minor): a warning-coloured line without the triangle in the draft room's rules panel;
+  - Q1 (design question): KEEP / MULLIGAN for a player recovered in round one.
+- **Branch:** `m8` at `3d082b6`, the integrator's merges of `m8-k1` and `m8-polish3` plus three test fixes. It is the same as `origin/m8`.
+  - This run committed no product or test change.
+  - The K1 probe was a temporary edit to `resume/claim-seat.spec.ts`. I reverted it after one run.
+
+### Runs (this Mac, one Playwright run at a time, through the pnpm scripts)
+
+| What | Chromium | WebKit (Studio's browser server) |
+| --- | --- | --- |
+| `pnpm check` (oomph reservation r1169, peak 2.1 GB, 140 s) | green. tsc; svelte-check: 2036 files, 0 errors, 0 warnings; eslint clean (module boundaries included); vitest: 341 files, 4582 passed, 1 skipped, 9 todo | — |
+| `pnpm shots -- M8` (gate M8) | 7 / 7, 32 screenshots | 7 / 7, 32 screenshots |
+| `pnpm shots -- M7` (gate M7) | 11 / 11, 29 screenshots. The iPad touch smoke is WebKit only and was skipped | 12 / 12, 30 screenshots, the iPad touch smoke included |
+| `pnpm e2e:gate -- M0` / `M1` / `M2` / `M3` | 1 / 1, 2 / 2, 1 / 1, 1 / 1 | 1 / 1, 2 / 2, 1 / 1, 1 / 1 |
+| `-- M4` | 6 / 6 | **5 / 6: the Wyrm game failed (F20).** No "WebGL: context lost" (F16) |
+| `-- M5` | 6 / 6 | 6 / 6 |
+| K1 probe: `pnpm e2e -- tests/e2e/resume/claim-seat.spec.ts` with a temporary read-only probe and a screenshot at the end of each test (reverted) | 2 / 2; output under K1 | 2 / 2; output under K1 |
+| Diagnostic only: `pnpm e2e:gate -- M4 --project=webkit` | — | 6 / 6 |
+| Diagnostic only: the Wyrm game with `--repeat-each=4` | — | **3 / 4: repeat 3 failed the same way (F20).** Its trace is the evidence below |
+| Full `pnpm e2e` | not rerun by me. CI ran it twice on this commit; the integrator ran it here in both browsers on `a21f905` (1907 passed, 79 skipped) | — |
+
+- **WebKit:** every WebKit run went through the guard's tunnel to the Studio. There was no `paused` or `nosession` wait.
+- **Guard:** no exit 3, 4 or 5, and no wait in any of my runs.
+- No log has a retried test. The diagnostic runs do not change the result: the gate run had a failure, and the repeats reproduced it.
+
+### CI on `3d082b6` (run 45001975924): green twice
+
+| Attempt | Result |
+| --- | --- |
+| 1 (the `m8` push, 08:15 to 08:43 UTC) | green. `check`: 341 files, 4582 passed. Chromium: 947 passed, 46 skipped. Linux WebKit: 960 passed, 33 skipped. 0 failed, 0 flaky |
+| 2 (my rerun, 08:44 to 09:07 UTC) | green, with the same counts. 0 failed, 0 flaky |
+
+- The integrator's three runs before it (44995761434, 44997840501, 44999660528) failed on four test races, each fixed in `b99264f`, `bae997e` and `3d082b6`: `flow/evening.spec.ts:99`, `session/net.spec.ts:139`, `resume/claim-seat.spec.ts:157` and `journey/private.spec.ts:118`. All four passed on both attempts here.
+- **Watch item, not a finding:** `journey/solo.spec.ts:59` failed once on Linux WebKit on the `m8-polish3` branch (the integrator's report). It passed in both browsers on both attempts on `3d082b6`.
+
+### K1: verified in both browsers
+
+- **Gate M8, test 7** (7 / 7 in each browser) now asserts it:
+  - Cy's own plate is `s2`;
+  - the fan's ids equal `hand:s2`.
+- **Screenshots 19, 19b and 19c** in both browsers:
+  - 19, before `SIT DOWN`: no plate says "you", and the table is seen from seat 0's side, as a spectator sees it.
+  - 19b, after `SIT DOWN`: "Your turn", Cy's plate at the bottom with "you", seven card backs (her lost hand), and the recovery panel.
+  - 19c, after the recovery: Cy's seven new faces in the fan, and `UNTAP & DRAW ▸` filled and enabled.
+- **`resume/claim-seat.spec.ts`** (new, 2 / 2 in each browser) brings back `s1` of a 1v1 and `s2` of a 4 FFA started with three players. It checks the claim page, the own plate, the fan, the other plates' hand counts, the scene's view and the primary on the claimed seat's turn.
+- **My probe** added one read at the end of each of those two tests, on the claimed seat's turn:
+
+| Browser, seat | Session seat | Own plate | `data-me` plates | Fan ids = `hand:<seat>` ids | Primary |
+| --- | --- | --- | --- | --- | --- |
+| Chromium, `s1` (1v1) | `s1` | `s1`, "JADE NEWT you 20" | `s1` only | yes, 7 of 7 | `UNTAP & DRAW ▸`, enabled |
+| Chromium, `s2` (4 FFA) | `s2` | `s2`, "IVORY CROW you 20" | `s2` only | yes, 7 of 7 | `UNTAP & DRAW ▸`, enabled |
+| WebKit, `s1` (1v1) | `s1` | `s1`, "INDIGO MOTH you 20" | `s1` only | yes, 7 of 7 | `UNTAP & DRAW ▸`, enabled |
+| WebKit, `s2` (4 FFA) | `s2` | `s2`, "THISTLE SNIPE you 20" | `s2` only | yes, 7 of 7 | `UNTAP & DRAW ▸`, enabled |
+
+- **Hidden information:** the claim page holds no hand and none of the seated players' hidden cards (the spec's scan, and `tests/sim/resume/leak-rejoin.test.ts`, which gained the claim-page scenario).
+
+### F20: gate M4's Wyrm game in WebKit, the hover lands on the wrong hand card
+
+- **What failed:** the Wyrm game (Ann starts in Wyrm and switches to Stonetable mid-game), in WebKit. It failed in the gate run and in one of four repeats.
+  - **Gate run:** two recorded steps failed with `expect(locator).toHaveClass(/hovered/)` on one of Ben's hand cards:
+    - `turn 8 (Ben)`: the drag of his land out of the fan;
+    - `turn 8: Ben casts Shock at Ann`: the hover before `C`.
+  - **Repeat 3:** only `turn 8 (Ben)` failed, on the Mountain he had just fetched.
+  - Every other step passed, both times.
+- **How often:** 2 failures in 6 WebKit runs of the Wyrm game today. It passed in the other three WebKit games, in Chromium, and in round 4's one WebKit run.
+- **Cause, from repeat 3's trace:**
+  - Ben's fan held nine cards, with Shock and then the Mountain at its right end.
+  - `hoverHand` (`tests/e2e/m4.gate.spec.ts:102`) moves the pointer from (720, 330) to the Mountain's lower edge at (1073, 888) in four steps.
+  - The third step, at about (985, 748), is over Shock. Shock takes the hover, and `fanLayout` (`src/ui/hand.ts`) grows it to the full card size, on top of every card, over 120 ms.
+  - The fourth step lands inside the grown Shock, which now covers the Mountain completely. The screencast frame shows Shock enlarged and the Mountain hidden under it, and the Mountain never gets a `pointerenter`.
+  - Locally the four steps take less than 120 ms; through the Studio's tunnel they take longer. So whether it fails depends on timing, and on whether the target's neighbour lies on the path.
+  - So the HUD's remount on the viewer's seat (new with K1) is not needed to explain it: the trace shows the hover held by Shock, on a live HUD.
+- **Product side (minor):** a hovered hand card grows over its neighbours, their lower edges included. While it is hovered, the cards under it cannot be pointed at: the pointer has to leave the grown card first. A player who slides right along a full fan from Shock cannot reach the Mountain from below.
+- **Why it blocks the gate:** a flaky test is a failing test, and the gate needs every gate test green in both browsers.
+- **Fix:**
+  - **The test:** make `hoverHand` reach the card from straight below its lower edge, outside the fan (move to (x, viewport bottom) first, then up), so no other card is crossed. Do not add retries.
+  - **Optionally, the product:** keep the other cards' lower strips reachable while one card is hovered. For example, let the grown card's extra area above and beside its slot ignore the pointer. Record it in DECISIONS.
+  - **Proof:** `pnpm e2e:gate -- M4 --project=webkit --grep "Wyrm: the scripted" --repeat-each=10`, green.
+- **Evidence:** repeat 3's trace and error context, copied from `test-results/`, are in the run's scratch folder (not committed).
+
+### Screenshot review (Chromium and WebKit; `artifacts/shots/M8/` at 1440 × 900 and 1280 × 800, `artifacts/shots/M7/` at 1440 × 900)
+
+Each screenshot was judged against:
+- `mock.html` (boards 1, 2, 3, 5, 6 and 7);
+- `visual.md` 2.4 to 2.9;
+- `journey.md` 4.8 and 4.11;
+- the owner's request;
+- the round 4 findings.
+
+The WebKit set matches the Chromium set, apart from:
+- the pixel density;
+- the generated names;
+- WebKit's `SHARE` (Web Share) in the invite blocks;
+- the scroll of 07 (below).
+
+| Screen | Verdict |
+| --- | --- |
+| 01, 02a, 03, 05, 06, 09, 11, 13, 13a, 13b, 13c, 14, 16, 21 | As in round 4. Nothing in them changed this round. |
+| 02 Deck page | **N13 fixed for the deck rows:** the rows' `−` and `+` are the kit's round 28 px icon buttons with the 16 px minus and plus. |
+| 07 Waiting room (1280 × 800) | **N16 fixed:** one `lg` `READY` and one status line ("Waiting for one more player."). The disabled pill and the two extra lines are gone. In Chromium the room is scrolled about 100 px, so the open seat and the invite sheet's title are under the header. It was the same in round 4. WebKit's 07 shows the top, so this is probably the spec's click, not the product. |
+| 07b Start counting | **N16 fixed:** `START · 3` (ink, `lg`) with a round `lg` ghost close 12 px to its right that holds the count (board 4's searching pattern), and one line: "Everyone is ready. The game starts by itself." No second `lg` pill. |
+| 07c, 15b Rules panel (new) | **F5 seen:** "Own decks" and "Booster draft" fit their pills, and the pills fit the panel (the spec measures both). **N18 (new, minor):** in 15b the panel shows "Booster draft is for 2 to 4 players; 1 is seated." in the warning colour without the triangle. visual.md 2.7 keeps `warning` for a short deck, with the triangle. With the centre's `WAITING · 3 OPEN SEATS` and its line, the room says it three times. |
+| 15 Draft waiting room | As in round 4, with **N16 fixed:** the disabled `WAITING · 3 OPEN SEATS` and one line, "The draft starts when every seat is taken." |
+| 17 Plate menu (away) | **N13 fixed:** the counter's `−` / `+` and `+ COUNTER` are SVG icons. The rest is as in round 4. |
+| 18 Bring back | **N11 leftover fixed:** the state is one line with an ellipsis ("WAITING FOR SAFFRON MO…"). In WebKit `SHARE` is a round `sm` icon button at the end of the link row, and the link field shows about 23 characters ("http://localhost:4545/s"). |
+| 19 Claim page | **K1 fixed:** behind the scrim no plate says "you"; the page watches from seat 0's side. |
+| 19b Recovery | **K1 fixed:** "Your turn", Cy's plate at the bottom with "you", her seven lost cards as backs, and `UNTAP & DRAW ▸` filled. **Q1:** `KEEP` / `MULLIGAN` show above the fan (see the findings). |
+| 19c Recovery done (new) | **N17 fixed:** "Recovered: a new library of 53 and a hand of 7." with the close icon at the right of the text row. **K1:** Cy's seven new faces are in the fan. |
+| 04, 08, 12, 12b, 20 Tables | As in round 4. The `▸` in `UNTAP & DRAW ▸` is a text glyph (N13 below). |
+| M7 goldfish, smoke, tilt, feel, entry, HUD menu | As in round 4. **Plate menu:** the steppers and `+ COUNTER` are SVG icons. The selection strip keeps `-` and `+` as text (DECISIONS `[M8-R5]`: its spec reads them as button names). |
+
+### Findings, round 5
+
+| # | Severity | Status | Finding | Design | Fix |
+| --- | --- | --- | --- | --- | --- |
+| F20 | blocking (a flaky gate test) | new | Gate M4's Wyrm game fails in WebKit, 2 of 6 runs: the gate's diagonal pointer path to a hand card crosses its neighbour. The neighbour grows on hover and covers the target before the last step arrives. Product side (minor): a hovered hand card covers its neighbours' lower edges. | CLAUDE.md "A flaky test is a failing test"; DESIGN hand fan | `hoverHand` approaches from straight below the fan, with no retries. Optionally keep the neighbours' lower strips pointable. Prove it with `--repeat-each=10` in WebKit. |
+| N13 | minor | leftover | Text glyphs still stand for icons: the waiting room's `← HOME`, `SETUP ✎` and `INVITE ⇪`; the seat cards' `✓` (WebKit's Fira Code draws it like `√`); `READY ✓` and `COPIED ✓`; the table primary's `▸`; and the touch selection strip's `-` / `+`. | visual.md A6; mock board 7 (`chevronRight` icon on the primary) | The kit's `arrowLeft`, `edit`, `share`, `check` and `chevronRight` icons. For the strip, change the spec to read `aria-label`s. |
+| N18 | minor | new | The draft room's rules panel shows "Booster draft is for 2 to 4 players; 1 is seated." as warning-coloured text without the triangle. While seats are open it repeats what the centre already says. | visual.md 2.7 (`warning` only with the triangle, for a short deck); 2.8 StatusLine | Show it only when the start is blocked for this reason and the centre does not say so; else as muted meta text. |
+| Q1 | design question | open (integrator's note) | A player recovered in round one gets `KEEP` / `MULLIGAN` (19b, 19c: turn 3 is Cy's first turn). `openingHandShown` shows them in round one while the seat has nothing in play, and the closed flag is per tab, so a new browser shows them again. | journey.md 4.11 is silent | Owner: keep them (the recovered hand is a new opening hand) or hide them after a recovery. Record it in DECISIONS. |
+| K1 | — | fixed (both browsers: gate M8 test 7, claim-seat spec, probe, 19/19b/19c) | — | — | — |
+| N16, N17, F5 | — | fixed and seen (07, 07b, 07c, 15, 15b, 19c) | — | — | — |
+| N11, N13 | — | the round 4 leftovers fixed (18; 02, 17, M7 plate menu); N13's other glyphs stay open above | — | — | — |
+| F16 | — | not reproduced | Gate M4 in WebKit logged no context loss in any of the three runs (the gate run, the rerun, the repeats). | — | — |
+
+**Is everything green apart from the local WebKit run?** Yes. `pnpm check`, CI (twice, no flaky test), every gate in Chromium and every other gate in WebKit are green, and K1 is fixed. The local WebKit run of gate M4 fails on F20, 2 of 6 times, which is a test race. With F20 fixed, no blocking finding is open.
 
 **Real Safari:** not measured (not asked this round).
