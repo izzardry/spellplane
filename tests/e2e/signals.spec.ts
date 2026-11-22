@@ -880,6 +880,8 @@ test.describe('theme switcher', () => {
       const actsBefore = await sentActs(a);
       const hashBefore = await hash(a);
       const switchAt = await a.evaluate(() => Date.now());
+      const roles = async () => ({ a: await hook<string>(a, 'net.self'), b: await hook<string>(b, 'net.self'), aSeq: await hook<string>(a, 'net.sequencer'), bSeq: await hook<string>(b, 'net.sequencer') });
+      const rolesBefore = await roles();
       // M7-P2 (taken by M8-C): Dusk left the picker; the switch goes through the debug hook.
       await setTheme(a, 'dusk');
       await expect.poll(() => currentTheme(a)).toBe('dusk');
@@ -896,7 +898,16 @@ test.describe('theme switcher', () => {
         const at = (await hook<{ dir: string; at: number }[]>(p, 'net.messages')).filter((m) => m.dir === dir && m.at >= switchAt - 3000).map((m) => m.at);
         return at.slice(1).map((x, i) => x - at[i]!).filter((g) => g > 1500);
       };
-      const silences = acts.length === actsBefore ? '' : `; gaps A heard ${JSON.stringify(await gaps(a, 'in'))}, B sent ${JSON.stringify(await gaps(b, 'out'))}`;
+      // And who sequenced before and after, and A's message timeline (ms from the switch, direction, type).
+      const timeline = async () =>
+        (await hook<{ dir: string; channel: string; at: number; msg: { t?: string; action?: Record<string, unknown> } }[]>(a, 'net.messages'))
+          .filter((m) => m.at >= switchAt - 1000 && m.channel !== 'pres')
+          .map((m) => `${m.at - switchAt}${m.dir === 'in' ? '<' : '>'}${m.msg.t}${m.msg.action ? `:${JSON.stringify(m.msg.action)}` : ''}`)
+          .slice(0, 80);
+      const silences =
+        acts.length === actsBefore
+          ? ''
+          : `; gaps A heard ${JSON.stringify(await gaps(a, 'in'))}, B sent ${JSON.stringify(await gaps(b, 'out'))}; roles before ${JSON.stringify(rolesBefore)}, after ${JSON.stringify(await roles())}; A's peers ${JSON.stringify(await hook(a, 'net.peers'))}; A's timeline ${JSON.stringify(await timeline())}`;
       expect(
         acts.length,
         `act/prv messages sent across the switch: ${JSON.stringify(acts.slice(actsBefore).map((m) => ({ channel: m.channel, t: (m.msg as { t?: string }).t, type: ((m.msg as { action?: { type?: string } }).action ?? {}).type })))}${silences}`,
