@@ -1651,7 +1651,7 @@
   <div class="layer">
     <!-- Top left: the Menu and Undo (docs/design/m7-hud-proposal.md, Always visible). -->
     {#if full}
-    <div class="top-left" data-hud-chrome="tools" bind:offsetWidth={toolsWidth}>
+    <div class="top-left" class:menu-up={menuOpen} data-hud-chrome="tools" bind:offsetWidth={toolsWidth}>
       <nav class="toolbar sp-bar" aria-label="Table tools" data-testid="hud-bar">
         {#if onleave}
           <button type="button" class="ds-btn ds-icon-btn ds-btn--quiet sp-h-md sp-round" data-testid="leave" aria-label="Leave" title="Leave: the game is kept in your history" onclick={() => onleave?.()}
@@ -2213,6 +2213,11 @@
     gap: var(--ds-space-sm);
     align-items: flex-start;
     z-index: 40;
+  }
+  /* The open Menu lies over any panel it was opened from (the dictation panel stands at the top left too): its two
+     columns reach where the one long column did not (gate M8 N10). */
+  .top-left.menu-up {
+    z-index: 75;
   }
   /* One row that never wraps (critique, iPad 1: "The toolbar breaks into four rows"). */
   .toolbar {

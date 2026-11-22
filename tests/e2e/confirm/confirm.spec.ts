@@ -198,7 +198,9 @@ test.describe('hold stops the timer', () => {
     expect((await remote(page, 's2', { type: 'respond', round: 'r1', seat: 's2', response: 'hold' })).refused).toBeNull();
     await expect(prompt.getByTestId('confirm-holder')).toContainText('Cleo is responding');
     await expect(prompt.getByTestId('prompt-hold')).toHaveCount(0);
-    await hoverNothing(page);
+    // The window's top-left corner, off the table: at a three-chair table the fit centres the table between the side
+    // seats' plates (gate M8 N4), so the usual empty point (720, 160) can lie on a card there and H would move it to hand.
+    await page.mouse.move(4, 4);
     await page.keyboard.press('KeyH');
     await page.waitForTimeout(200);
     expect(await page.evaluate(() => window.__confirmHarness!.refused().length)).toBe(0);
