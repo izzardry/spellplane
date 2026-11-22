@@ -1,6 +1,6 @@
 # Gate M8-G, verifier run (21 Nov 2026)
 
-> **Latest:** Round 2 (23:04 to 23:40, on `c2e34bc`) is the last section of this file. Result: red (W1 WebKit down, CI red with N1, N2 and R3, a flaky gate M0 spec, H1).
+> **Latest:** Round 3 (22 Nov 2026, 01:46 to 02:15, on `e5c2db3`) is the last section of this file. Result: red. CI fails one test (C1, the theme-switch race), and WebKit could not run on this Mac (W1). `pnpm check`, every gate in Chromium (M0 five times) and CI's Linux WebKit are green.
 
 ## Final verifier run, after the fix round (21 Nov 2026, 19:57 to 20:45)
 
@@ -345,3 +345,115 @@ I judged each screenshot against `mock.html` (boards 1, 2, 3, 5 and 7 from their
 | F16 | needs triage | unverified (WebKit) | — | — | — |
 
 **Real Safari:** not measured (the task did not ask for it this round, and the Studio is down).
+
+---
+
+## Round 3: verifier run after the CI and polish rounds (22 Nov 2026, 01:46 to 02:15)
+
+- **Result: red.**
+  - `pnpm check` is green, and every gate passes in Chromium. Gate M0 passed 5 / 5, so H1 is fixed.
+  - **CI on `e5c2db3` is red with 1 test,** `signals.spec.ts:841` (the theme switch) in Chromium. Linux WebKit is green: 957 passed, 0 failed.
+  - **WebKit could not run on this Mac (W1).** The Studio is still at the login window.
+- **Branch:** `m8` at `e5c2db3`, the integrator's merge of `m8-ci` and `m8-polish` plus the `settled()` fix. It is the same as `origin/m8`. This run changed no product code and no test.
+- **Fixed by the two rounds:**
+  - On CI: N1, N2 and R3. Locally: H1.
+  - In the screenshots: F8, N4 (one small leftover), N5, N6, N7, N8 and N9. F5, N10 and N11 are mostly fixed.
+- **Still open:**
+  - C1 (blocking): the theme-switch race on CI.
+  - C2 (blocking, intermittent): the Wyrm signal threshold, which failed once on an `m8-ci` CI run.
+  - W1 (environment).
+  - Minor leftovers of F5, N4, N10 and N11, and the new minor findings N12 to N15.
+
+### Runs (this Mac, one Playwright run at a time, through the pnpm scripts)
+
+| What | Chromium | WebKit |
+| --- | --- | --- |
+| `pnpm check` (oomph reservation r1078, peak 2.0 GB, 152 s) | green. tsc; svelte-check: 2032 files, 0 errors, 0 warnings; eslint clean (module boundaries included); vitest: 339 files, 4572 passed, 1 skipped, 9 todo | — |
+| `pnpm shots -- M8` (gate M8) | 7 / 7, 29 screenshots | not run (W1) |
+| `pnpm shots -- M7` (gate M7) | 11 / 11, 29 screenshots. The iPad touch smoke is WebKit only and was skipped | not run (W1) |
+| `pnpm e2e:gate -- M0 --repeat-each=5` | **5 / 5** (H1 confirmed fixed) | **hung at connect** (W1); stopped by pid |
+| `-- M1` / `M2` / `M3` | 2 / 2, 1 / 1, 1 / 1 | not run (W1) |
+| `-- M4` | 6 / 6 (the four scripted games, the screenshot matrix, the 300-card perf), 6.5 min | not run (W1) |
+| `-- M5` | 6 / 6 | not run (W1) |
+| Full `pnpm e2e` | not run locally. CI ran it on `e5c2db3` (below) | — |
+
+- **WebKit (W1):** I checked the Studio over SSH, reading only. `ioreg` reports `kCGSSessionUserNameKey = "unknown"` and `kCGSessionLoginDoneKey = No`. Its browser server (`serve.sh`, pid 43450) is still running.
+  - At 02:05 I started one probe, `pnpm e2e:gate -- M0 --project=webkit`. The Studio launched `Playwright.app`, which stayed at 72 MB for 1:39 and never opened a page. This is the same failure as in rounds 1 and 2.
+  - At 02:07 I stopped the probe on this Mac by its pids: the Playwright worker and runner (33413, 33146), then the test build's preview server (33223, 33218, 33167). The guard then closed its SSH tunnel.
+  - By 02:13 the Studio's WebKit process was gone, so its server cleaned up after itself.
+  - I did not touch the Studio, its server or `pw-remote.json`, and I did not wait or retry. No WebKit gate ran. F16 and the iPad smoke are still unverified.
+- **The guard returned no exit 3, 4 or 5** in any run.
+
+### CI on `e5c2db3` (run 44968154817, 00:45 to 01:11 UTC): red, 1 failing test
+
+- `check` is green.
+- **Chromium:** 943 passed, 1 failed, 46 skipped.
+- **Linux WebKit:** 957 passed, 0 failed, 33 skipped.
+- No test is reported flaky.
+
+| Test | Browser | Failure | History |
+| --- | --- | --- | --- |
+| `signals.spec.ts:841`: two players at one table use different themes, and a switch sends nothing and changes nothing for the other | Chromium (shard 3) | `act/prv messages sent across the switch: sequencerClaim, away`, `expect(9).toBe(7)` | This race has been reported several times before. Round 0 saw it on `8d8fb9d`, and the fix round added a stall guard for the switching page's own main thread. It still fails on 2 of the last 3 CI runs on `m8` and `m8-ci`: failed on 44959168579 (`bfae9a3`) and 44968154817 (`e5c2db3`), passed on 44961556452 (`c10e724`). It passes locally. |
+
+Fixed on CI compared with run 44954804379 on `c2e34bc` (all pass on `e5c2db3`):
+- **N1:** `nokeys/coach.spec.ts:118` (iPad coach mark), Linux WebKit.
+- **N2:** `a11y/keyboard.spec.ts:219`, Chromium and Linux WebKit.
+- **R3:** all of `touch/gestures.spec.ts` (`:121`, `:250`, `:386`, `:109`, `:383`), Linux WebKit.
+
+Seen on the integrator's branch run, not on `e5c2db3`:
+- `signals.spec.ts:516` (Wyrm, speaking) failed on 44961556452 with `changed 0.01974, noise 0`, against a threshold of `>= 0.02`.
+
+### Screenshot review (Chromium; `artifacts/shots/M8/` at 1440 × 900 and 1280 × 800, `artifacts/shots/M7/` at 1440 × 900)
+
+Each screenshot was judged against:
+- `mock.html` (boards 1, 2, 3, 5 and 7, read from their markup);
+- `visual.md` 2.4 to 2.9;
+- `journey.md` 4.8, 4.10 and 4.11;
+- the owner's request;
+- the round 2 findings.
+
+| Screen | Verdict |
+| --- | --- |
+| 01 Home first run, 02a New deck, 09 Game over, 11 Match found, 13a Booster setup, 14 Draft night | Good, as before. |
+| 03, 05 Home with the deck as hero | Layout right: the fan over the arena, the facts in O-6 order, the four mode cards, one filled `PLAY`, the `CONTINUE` strip and the saved toast. **Evidence gap (E1):** the fan draws five card backs, because `pageFaces` (`ui/home/deps.ts`) returns only `url` faces and `?faces=placeholder` gives none. The tiles do show placeholder faces, so no screenshot shows the hero's cover face. |
+| 02 Deck page; 13, 13b Booster deck and its copy | **F8 fixed:** the copy's name reads in full, "M19 boosters · 22 Nov (custom)". The top row follows board 3: back, name, kind chip, pips, `CARDS`, `STRENGTH`, round undo and redo, `SAMPLE HAND`, `⋯`, `DONE` (the one filled button). `SIMPLE DECK` sits beside `MANA CURVE`. The count reads "1 card". The found card's `×4` badge is whole. |
+| 02b, 10, 13c Decks library | **N6 fixed.** The tiles show the name, then pips, size and kind with the strength bars and number at the right, then a meta line with the sparkline. Nothing is clipped. The selected tile shows "Imported deck" in full with one round ink check. The seal band (`🔒 M19 × 6`) lies across the well's foot under the cover. **N15:** a short deck's meta line, "26 cards short", is danger red with no triangle. |
+| 06, 21 History | Names and the made-up guest names are right. **N14:** the row's bottom-right control is a quiet `Remove` ×, drawn as a glyph about 7 px tall. There is no `sm` action. A click on the row opens the game. There is still no detail column and no `TODAY` group (later, as before). |
+| 04 Sparring table (1440 × 900) | **N9 fixed:** the own chair has no name tag, and no toast repeats the primary. The fan clears the plate and the primary. |
+| 08, 12 Private and matched tables (1280 × 800) | **N9 fixed:** no untap toast above the hand (the primary reads `UNTAP & DRAW ▸`) and no name tag. F17 and F6 stay fixed. |
+| 12b, 20 4 FFA tables (1280 × 800) | **N4 fixed for the side seats:** compact plates of one size stand outside the table, clear of each side seat's library column. In 20 one chair is empty and has no plate, which is right for three players. **Leftover (minor):** the plate across the table, centred on its edge, covers that seat's `LIBRARY` label and the right part of its library pile (12b and 20). |
+| 07, 07b Waiting room (1280 × 800) | **N11 fixed:** the seat reads "HERE · CHOOSING A DECK". The invite sheet's line is one sentence, "WAITING FOR PLAYERS · 1 OF 2 HERE", with a solid dot once everyone is here. **F5:** the rules panel uses the kit `Select` (raised pills with a chevron). Leftover (minor): at 1280 the Mode select's label is cut ("Constructed decks (no…"). The screenshot is scrolled, so the far seat is out of view; the header stays. |
+| 15 Draft waiting room (1440 × 900) | **F5 fixed:** the four seats stand around the table outline, each `INVITE` inside its plate, and "Free-for-all · 4" fits its card. Board 5's centre (set buttons, pick timer, the `lg` primary as `WAITING FOR …`) is still a ghost status pill (minor, carried). |
+| 16 Gathering | Good. |
+| 17 Plate menu (away) | **N7 fixed:** with the drawer open, the tracker is centred in the room left of it. The name is cut to "Ivory Moth'…", and `MAIN 2` and `END` are clear of the eye button. **N12:** the activity log shows the engine line "history diverged at seq 65: taking over the sequencer's history from there." in the warning colour. The adopt notice ("The table with more moves is kept; …") is a wide toast centred over the near battlefield (x 360 to 910, y 548 to 608), not in the status slot above the primary. Behind the popover it reads "The table w… …ves are played agai…". |
+| 18 Bring back | **N11 mostly fixed:** there is no second sheet inside the popover. A 124 px code stands beside the title, followed by the link, `COPY LINK` (`sm`, filled) and one status line. Leftover (minor): the title is in heading type and wraps to three lines ("Bring / Ivory / Moth back"), and the text runs five lines, not board 7's two. The link footer (`MAKE A NEW LINK`, `TAKE THE INVITE BACK`, `CLOSE`) stacks under it, so the popover still runs past an 800 px window (it scrolls). |
+| 19 Claim page | **N8 fixed:** `SIT DOWN AS IVORY MOTH` is filled and last, beside the ghost `WATCH INSTEAD` in one row at the right. `Not now` is the card's round close button, and the warning sits above the buttons. |
+| 19b Recovery | **N5 fixed:** the 400 px panel ends at y 315, clear of the left plate (from y 343). It has a danger dot, the hand stepper, one filled button and the arithmetic under it. |
+| Every shell screen | **N13:** the settings button's ⚙ and the × close and remove buttons are text glyphs about 8 px tall inside 44 px and 36 px circles: the shell's top bar, the history row, and the booster sheet's close. A6 asks for 20 px icons in `md` and 16 px in `sm`. |
+| M7 goldfish, smoke (four looks) | F17 stays fixed. **N9 fixed in Kitchen Table and Codex:** no "Your turn · Untap all and draw" toast; the primary carries it. The coach mark sits over the plate. |
+| M7 tilt (four looks × three poses) | F15 stays fixed: at first person the own piles are inside the window in every look. |
+| M7 feel, entry, plate menu | Good, as before. |
+| M7 HUD menu | **N10 partly fixed:** two balanced columns, GAME with five rows and TOKENS AND DICE with five. The menu fits 900 px, so `Settings…` shows. Still open (minor): `Import deck…` stays under DECK in the sandbox menu, so journey 4.10 is not yet followed. |
+
+### Findings, round 3
+
+| # | Severity | Status | Finding | Design | Fix |
+| --- | --- | --- | --- | --- | --- |
+| C1 | blocking (CI) | open, recurring | `signals.spec.ts:841` fails on CI in Chromium. Across the switch to Dusk, page A sends `sequencerClaim` and `away`, so it took over the table and marked B away. It failed on 2 of the last 3 runs and passes locally. The fix round's guard covers only a stall of the switching page's own main thread. The cause on CI is not proven: either A's guard misses its own stall, or B goes silent while A compiles the lit pipeline under SwiftShader on a two-core runner. | PLAN quality gates (CI green; a flaky test is a failing test); the net engine's presence and sequencer rules | Put both pages' beat gaps and A's measured stall in the assertion message, then run the spec under CI's conditions. If B fell silent, the claim timeout must outlast a lit theme's first compile, or the engine must wait out a peer's short silence before it claims. Do not lengthen the test's wait. |
+| C2 | blocking (flaky) | open, intermittent | `signals.spec.ts:516` (Wyrm, speaking) measured 0.01974 against a threshold of 0.02 on CI run 44961556452 (`m8-ci`). It passed on `e5c2db3`. A threshold at the measured value fails at random. | PLAN quality gates | Find why Wyrm's speaking signal changes only 2 % of the measured area under SwiftShader. Make the signal clearly visible in Wyrm (product), or set the threshold from a margin over the noise floor with a recorded reason. |
+| W1 | blocking | open (environment) | WebKit unverified on this Mac: the Studio is at the login window, and its WebKit never opens a page. No WebKit gate ran (M0 to M5, M7, M8), and F16 and the iPad smoke are unverified. CI's Linux WebKit is green on `e5c2db3` (957 / 0), which is this round's WebKit evidence. | PLAN Gate M8-G (Chromium and WebKit) | The owner logs in at the Studio's console. Then run `pnpm shots -- M8`, `pnpm shots -- M7` and `pnpm e2e:gate -- M0 … M5` with `--project=webkit`. |
+| N4 | minor | leftover | In 4 FFA the plate across the table, centred on its edge, covers that seat's `LIBRARY` label and part of its library pile. | visual.md 2.8 player plate | Move the far plate off the pile column the way the side plates move, or let it stand above the table's top edge. |
+| F5 | minor | leftover | At 1280 the rules panel's Mode select cuts its label ("Constructed decks (no…"). Board 5's centre is still a ghost status pill. | journey.md 4.8, board 5 | Short option labels for the mode, as the format has. Board 5's `lg` primary `WAITING FOR …`. |
+| N10 | minor | leftover | `Import deck…` is still in the sandbox's HUD menu. | journey.md 4.10 | Move it to the sandbox's "No deck on this table" line, and update gate M0's spec to import there. |
+| N11 | minor | leftover | The plate menu's Bring back has a three-line heading-type title, five lines of text and a stacked link footer, so the popover runs past an 800 px window. | visual.md 2.8 plate menu; board 7 | Title in `t-strong`, two lines of reading text, and the link footer as one row of `xs` quiet buttons, or in the `⋯`. |
+| N12 | minor | new | The activity log shows the engine line "history diverged at seq 65: taking over the sequencer's history from there." in the warning colour. The adopt notice is a wide toast centred over the near battlefield, not in the status slot above the primary. | owner: "technical and boxy panels"; visual.md 2.8 status slot | Keep the engine line in diagnostics (the debug hook or the audit panel), not in the players' log. Show the adopt notice in the status slot. |
+| N13 | minor | new | Text glyphs stand in for icons (⚙ in the top bar, × in the history row and the booster sheet) and render about 8 px tall in 44 px and 36 px circles. | visual.md A6 | Use the kit's icon set at 20 px (`md`) and 16 px (`sm`). |
+| N14 | minor | new | A history row has no `sm` action at bottom right. Its only control there is a destructive `Remove` ×. | visual.md 2.8 history row, O-4, O-5 | One `sm` button (`CONTINUE`, `REJOIN`, `OPEN`), ink on the selected row; Remove in an overflow menu. |
+| N15 | minor | new | A deck that is short of cards shows its meta line in danger red with no triangle. | visual.md 2.7 (warning only with a triangle; red for destructive or lost for good) | `--ds-warning` with the triangle icon. |
+| E1 | minor (evidence) | new | Home's fan shows card backs under `?faces=placeholder`, so no screenshot shows the hero's cover face. | visual.md 2.8 deck hero | Let `pageFaces` hand the fan a placeholder face as the tiles do, so the gate can show it. |
+| N1, N2, R3, H1, F8, N5, N6, N7, N8, N9 | — | fixed and seen (CI, gates, screenshots) | — | — | — |
+| F16 | needs triage | unverified (WebKit) | — | — | — |
+
+**Is everything green apart from the local WebKit run? No.** CI fails C1. Without C1 and C2, the rest is green: `pnpm check`, every gate in Chromium, gate M0 five times, and CI's Linux WebKit. The open design findings are all minor.
+
+**Real Safari:** not measured (not asked this round; the Studio is down).
