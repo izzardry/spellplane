@@ -165,6 +165,29 @@ test.describe('the seat menu (persistence.md section 7)', () => {
     expect(await seriousViolations(page)).toEqual([]);
   });
 
+  test('BRING BEN BACK where Web Share exists: one status line, SHARE as a round icon, a readable link field', async ({ page }) => {
+    // Gate M8 round 4, N11: in WebKit a third SHARE pill squeezed the field to "http://localho", and the state wrapped.
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'share', { configurable: true, value: async () => undefined });
+    });
+    await openGather(page, 'menus');
+    const away = page.getByTestId('menu-away');
+    await away.getByTestId('seat-menu-bring').click();
+    await expect(away.getByTestId('seat-invite')).toHaveAttribute('data-link', /rejoin/);
+    const share = away.getByTestId('share');
+    await expect(share).toHaveAccessibleName('Share the link');
+    await expect(share).toHaveText('');
+    const status = away.getByTestId('invite-status');
+    await expect(status).toHaveText('Waiting for Ben');
+    expect((await status.boundingBox())!.height).toBeLessThanOrEqual(26);
+    // The field keeps at least 20 characters of the link in view.
+    expect((await away.getByTestId('share-link').boundingBox())!.width).toBeGreaterThanOrEqual(160);
+    // The row stays inside the block: the field, COPY LINK and the round SHARE end at the block's right edge.
+    const block = (await away.getByTestId('invite-sheet').boundingBox())!;
+    const end = (await share.boundingBox())!;
+    expect(end.x + end.width).toBeLessThanOrEqual(block.x + block.width + 0.5);
+  });
+
   test('NOT SAVING shows on the own plate when this browser cannot save', async ({ page }) => {
     await openGather(page, 'menus', { saving: 'no' });
     await expect(page.getByTestId('badges').locator('[data-kind="notSaving"]')).toHaveText('NOT SAVING');

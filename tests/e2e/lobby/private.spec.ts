@@ -81,7 +81,7 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
     expect(await a.evaluate(() => (window as unknown as { __copied: string[] }).__copied)).toEqual([link]);
     await a.clock.runFor(2100);
     await expect(a.getByTestId('copy-link')).toHaveText('COPY LINK');
-    await expect(a.getByTestId('start-pill')).toHaveText('WAITING · 1 OPEN SEAT');
+    await expect(a.getByTestId('missing-line')).toHaveText('Waiting for one more player.');
     // The launcher's part (Home's CREATE GAME): a table with automatic setup.
     await dispatch(a, { type: 'settings', settings: { autoSetup: true } });
   });
@@ -92,14 +92,16 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
     await expect(chair(b, 's1')).toHaveAttribute('data-mine', 'true', { timeout: 15_000 });
     await expect(chair(a, 's1')).toContainText('Ben');
     await expect(b.getByTestId('invite-sheet')).toHaveCount(0);
-    await expect(a.getByTestId('start-pill')).toHaveText('WAITING · 0 OF 2 READY');
+    await expect(a.getByTestId('ready-count')).toHaveText('0 of 2 players ready.');
     await ready(a, 'gw-m19-60.txt');
-    await expect(a.getByTestId('start-pill')).toHaveText('WAITING · 1 OF 2 READY');
+    await expect(a.getByTestId('ready-count')).toHaveText('1 of 2 players ready.');
+    await expect(a.getByTestId('missing-line')).toHaveText('Waiting for Ben to be ready.');
     await expect(b.getByTestId('missing-line')).toHaveText('Choose a deck and press READY.');
     await expect(chair(b, 's0')).toContainText('DECK READY · 60');
     // The creator takes READY back before Ben is ready, so the count cannot start (and race the spec) while it looks.
     await a.getByTestId('ready-on').click();
-    await expect(a.getByTestId('start-pill')).toHaveText('WAITING · 0 OF 2 READY');
+    await expect(a.getByTestId('ready-on')).toHaveAttribute('data-held', 'true');
+    await expect(a.getByTestId('ready-count')).toHaveText('0 of 2 players ready.');
     await ready(b, 'ur-m19-60.mtga.txt');
     await expect(chair(a, 's1')).toContainText('DECK READY · 60');
     // Deck names stay with their owner: each pasted list was saved as "Deck with …" in its own library only, and
@@ -115,7 +117,7 @@ test('private table: invite, seats, ready, START · 3, versus, seven cards each,
   });
 
   await test.step('un-ready holds START; READY again counts START · 3 and it presses itself when the clock runs 3 s', async () => {
-    await expect(a.getByTestId('start-pill')).toHaveText('WAITING · 1 OF 2 READY');
+    await expect(a.getByTestId('ready-count')).toHaveText('1 of 2 players ready.');
     await expect(a.getByTestId('start-game')).toHaveCount(0);
     await a.clock.runFor(5000);
     expect((await state(a)).stage).toBe('lobby');

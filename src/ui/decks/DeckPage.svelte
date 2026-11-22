@@ -643,9 +643,9 @@
             <div class="ghead"><span class="ds-t-eyebrow">{g.title}</span><span class="ds-t-eyebrow">{g.n}</span></div>
             {#each g.rows as r (r.sid)}
               <div class="drow" data-testid="deck-row" data-sid={r.sid} data-name={r.card?.name ?? ''}>
-                <IconButton size="xs" label="Remove one {r.card?.name ?? 'card'}" onclick={() => removeCard(r.sid)} data-testid="row-minus" disabled={sealed && board === 'side'}>−</IconButton>
+                <IconButton size="xs" label="Remove one {r.card?.name ?? 'card'}" onclick={() => removeCard(r.sid)} data-testid="row-minus" icon="minus" disabled={sealed && board === 'side'} />
                 <b class="q" data-testid="row-count" class:warn={copies && r.card?.name === copies.name}>{r.n}</b>
-                <IconButton size="xs" label="Add one {r.card?.name ?? 'card'}" onclick={() => addSid(r.sid, sealed ? 'main' : board)} data-testid="row-plus" disabled={sealed && !(r.card && isLandCard(r.card) && /\bBasic\b/.test(r.card.type_line)) && !deck.side.some((x) => x.sid === r.sid)}>+</IconButton>
+                <IconButton size="xs" label="Add one {r.card?.name ?? 'card'}" onclick={() => addSid(r.sid, sealed ? 'main' : board)} data-testid="row-plus" disabled={sealed && !(r.card && isLandCard(r.card) && /\bBasic\b/.test(r.card.type_line)) && !deck.side.some((x) => x.sid === r.sid)} icon="plus" />
                 <span class="nm" title={r.card?.name ?? r.sid}>{r.card?.name ?? `Unknown card ${r.sid.slice(0, 8)}`}</span>
                 <span class="cost">{generic(r.card)}{#each costPips(r.card) as p, i (i)}<Pip colour={p} size={14} />{/each}</span>
               </div>

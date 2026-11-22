@@ -14,7 +14,11 @@
   let { session }: { session: TableSession } = $props();
   let st = $state.raw<TableState>(untrack(() => session.getState()));
   onMount(() => session.subscribe((s) => (st = s)));
-  const seat = $derived(session.role === 'spectator' ? null : session.seat);
+  // Read again with every state: a claim or a chair move changes the seat (K1, gate M8 round 4).
+  const seat = $derived.by(() => {
+    void st;
+    return session.role === 'spectator' ? null : session.seat;
+  });
   const offer = $derived(concedeOffer(st, seat));
   // The team's life and poison in Two-Headed Giant (waiting.ts lifeOf, poisonOf).
   const key = $derived(seat ? `${st.games ?? 0}:${lifeOf(st, seat)}:${poisonOf(st, seat)}` : '');

@@ -48,7 +48,11 @@
 
   let st = $state.raw<TableState>(untrack(() => session.getState()));
   onMount(() => session.subscribe((s) => (st = s)));
-  const me = untrack(() => session.seat);
+  // The viewer's seat, read again with every state: a claim or a chair move changes it (K1, gate M8 round 4).
+  const me = $derived.by(() => {
+    void st;
+    return session.seat;
+  });
   const seated = $derived(session.role !== 'spectator' && st.seats[me] !== undefined && (st.seats[me]!.peer !== undefined || st.seats[me]!.name !== ''));
   const rated = $derived(record?.rated ? { before: record.rated.before, after: record.rated.after } : null);
   // The turn the game ended on: kept from when this result came in, so LOOK AT THE TABLE and later turns leave the

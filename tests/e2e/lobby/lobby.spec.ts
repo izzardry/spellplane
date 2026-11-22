@@ -129,7 +129,8 @@ test('Ready commits the deck, the host starts, the opponent hand shows as backs 
   await expect(chair(a, 's1')).toContainText('Ben');
 
   // Only the host (lowest chair) may start, and only when everyone is ready.
-  await expect(a.getByTestId('start-blocked')).toContainText('Waiting for everyone to press Ready');
+  await expect(a.getByTestId('missing-line')).toContainText('Choose a deck and press READY');
+  await expect(a.getByTestId('start-game')).toHaveCount(0);
   // Ready never fails silently: a list without a single known card is refused, and a list with unknown lines needs a
   // second press.
   await a.getByTestId('lobby-deck-text').fill('4 Nonexistent Card Name\n2 Another Missing Card');
@@ -151,7 +152,8 @@ test('Ready commits the deck, the host starts, the opponent hand shows as backs 
   }
   await expect(a.getByTestId('ready-count')).toHaveText('2 of 2 players ready.');
   await expect(chair(b, 's0')).toHaveAttribute('data-ready', 'true');
-  await expect(b.getByTestId('start-blocked')).toContainText('Waiting for Ann to start the game');
+  await expect(b.getByTestId('missing-line')).toHaveText('Waiting for Ann to start the game.');
+  await expect(b.getByTestId('start-game')).toHaveCount(0);
 
   // Ready published commitments only: no Scryfall id or salt of Ann's deck in Ben's state.
   const annSecrets = await hook<SecretStore>(a, 'secrets');

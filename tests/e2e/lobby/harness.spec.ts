@@ -33,6 +33,17 @@ async function frozenClock(page: Page): Promise<void> {
   await page.clock.install({ time: t0 });
   await page.clock.pauseAt(t0 + 60_000);
 }
+/**
+ * Board 5 and visual.md 2.8 (gate M8 finding N16): the room's centre holds one lg primary (the given one; a round hold
+ * button beside START · 3 is not a pill) and one visible status line under it.
+ */
+async function expectOnePrimaryOneLine(page: Page, primary: string): Promise<void> {
+  const centre = page.locator('section[aria-label="Ready and start"]');
+  await expect(centre.locator('.ds-btn--lg:not(.ds-icon-btn)')).toHaveCount(1);
+  await expect(centre.getByTestId(primary).and(page.locator('.ds-btn--lg:not(.ds-icon-btn)'))).toBeVisible();
+  await expect(centre.locator('.ds-status:visible')).toHaveCount(1);
+  await expect(centre.locator('p:not(.ds-sr-only):visible')).toHaveCount(1);
+}
 const closeInvite = (page: Page) => page.getByTestId('invite-sheet').getByRole('button', { name: 'Close' }).click();
 
 test.describe('lobby harness (M8-P4)', () => {
@@ -47,7 +58,9 @@ test.describe('lobby harness (M8-P4)', () => {
     await closeInvite(page);
     await expect(page.getByTestId('invite-sheet')).toHaveCount(0);
     await expect(chair(page, 's1')).toHaveAttribute('data-occupied', 'false');
-    await expect(page.getByTestId('start-pill')).toHaveText('WAITING · 1 OPEN SEAT');
+    // One lg primary and one status line (gate M8 finding N16): no disabled WAITING pill under READY.
+    await expect(page.getByTestId('start-pill')).toHaveCount(0);
+    await expectOnePrimaryOneLine(page, 'ready');
     await expect(page.getByTestId('missing-line')).toHaveText('Waiting for one more player.');
     await expect(page.getByTestId('setup-summary')).toHaveText('PRIVATE GAME · 1V1 · ANY DECK · PASS 5 S');
     // The newest saved deck is in the slot; its name shows only in my own slot.
@@ -63,14 +76,16 @@ test.describe('lobby harness (M8-P4)', () => {
     const ben = chair(page, 's1');
     await expect(ben).toContainText('Ben');
     await expect(ben).toContainText('CHOOSING A DECK');
-    await expect(page.getByTestId('start-pill')).toHaveText('WAITING · 0 OF 2 READY');
+    await expect(page.getByTestId('ready-count')).toHaveText('0 of 2 players ready.');
+    await expectOnePrimaryOneLine(page, 'ready');
     // Ben readies with a deck of his own library (BEN_DECKS): the room shows its state and size, never its name.
     await page.evaluate(() => window.__lobbyHarness!.readyAs('s1', 'deck-ben'));
     await expect(ben).toContainText('DECK READY · 40');
     await expect(page.getByTestId('missing-line')).toHaveText('Choose a deck and press READY.');
     await expect(page.locator('body')).not.toContainText('Ben Secret Brew');
     expect(JSON.stringify(await state(page))).not.toContain('Ben Secret Brew');
-    await expect(page.getByTestId('start-pill')).toHaveText('WAITING · 1 OF 2 READY');
+    await expect(page.getByTestId('ready-count')).toHaveText('1 of 2 players ready.');
+    await expectOnePrimaryOneLine(page, 'ready');
     await designAudit(page);
     expect(await seriousViolations(page)).toEqual([]);
   });
@@ -96,6 +111,7 @@ test.describe('lobby harness (M8-P4)', () => {
     await harness(page, 'view=room&format=ffa3&ben=1&annReady=1&benReady=1');
     await expect(page.getByTestId('start-pill')).toHaveCount(0);
     await expect(page.getByTestId('start-short')).toHaveText('START WITH 2 PLAYERS');
+    await expectOnePrimaryOneLine(page, 'start-short');
     await expect(page.getByTestId('missing-line')).toHaveText('Waiting for one more player.');
     await page.getByTestId('start-short').click();
     await expect.poll(async () => (await state(page)).stage).toBe('match');
@@ -129,17 +145,28 @@ test.describe('lobby harness (M8-P4)', () => {
 
   test('a guest tapping READY ✓ is told the deck stays locked; the creator un-readying holds the start', async ({ page }) => {
     await harness(page, 'view=room&ben=1&annReady=1&benReady=1&me=s1');
+    await expectOnePrimaryOneLine(page, 'ready-on');
+    await expect(page.getByTestId('ready-on')).toHaveText('READY ✓');
     await page.getByTestId('ready-on').click();
+    // The note takes the status line's place: still one line under the primary.
     await expect(page.getByTestId('lobby-note')).toHaveText('Your deck stays locked to your seat. Ask Ann to wait if you need a moment.');
+    await expectOnePrimaryOneLine(page, 'ready-on');
     await frozenClock(page);
     await harness(page, 'view=room&ben=1&annReady=1&benReady=1&auto=1');
     await expect(page.getByTestId('start-game')).toHaveText('START · 3');
+    // The count is the one lg primary (no READY ✓ pill above it); the round hold button stands beside it.
+    await expectOnePrimaryOneLine(page, 'start-game');
+    await expect(page.getByTestId('ready-on')).toHaveAttribute('aria-label', 'Wait: hold the start');
+    await expect(page.getByTestId('missing-line')).toHaveText('Everyone is ready. The game starts by itself.');
     await page.clock.runFor(1000);
     await expect(page.getByTestId('start-game')).toHaveText('START · 2');
     // Un-readying stops the running count; the clock runs on and nothing starts.
     await page.getByTestId('ready-on').click();
     await expect(page.getByTestId('start-game')).toHaveCount(0);
-    await expect(page.getByTestId('start-pill')).toHaveText('WAITING · 1 OF 2 READY');
+    await expect(page.getByTestId('ready-on')).toHaveAttribute('data-held', 'true');
+    await expect(page.getByTestId('ready-on')).toHaveText('READY');
+    await expect(page.getByTestId('missing-line')).toHaveText('The start waits for you. Press READY again when you are set.');
+    await expectOnePrimaryOneLine(page, 'ready-on');
     // The count line reads the same held view as the pill.
     await expect(page.getByTestId('ready-count')).toHaveText('1 of 2 players ready.');
     await page.clock.runFor(5000);
@@ -208,6 +235,12 @@ test.describe('lobby harness (M8-P4)', () => {
     await expect(page.getByTestId('setup-summary')).toHaveText('DRAFT NIGHT · 1V1 · LIVE DRAFT · PASS 5 S');
     await expect(page.getByTestId('ready')).toHaveCount(0);
     await expect(page.getByTestId('change-deck')).toHaveCount(0);
+    // One lg primary and one status line in the draft room too (gate M8 finding N16).
+    const draftCentre = page.locator('section[aria-label="The draft"]');
+    await expect(draftCentre.locator('.ds-btn--lg')).toHaveCount(1);
+    await expect(page.getByTestId('room-start-draft')).toHaveText('START THE DRAFT');
+    await expect(draftCentre.locator('.ds-status:visible')).toHaveCount(1);
+    await expect(page.getByTestId('missing-line')).toHaveText('Everyone is here. Start the draft when you are ready.');
     await page.getByTestId('setup-edit').click();
     await expect(page.getByTestId('setup-boosters')).toBeVisible();
     await designAudit(page);
@@ -222,6 +255,11 @@ test.describe('lobby harness (M8-P4)', () => {
     await expect(page.getByTestId('slot-boosters')).toBeVisible();
     await expect(page.getByTestId('setup-edit')).toHaveCount(0);
     await expect(page.getByTestId('setup-owner')).toHaveText('Ann chooses the setup.');
+    // The guest's primary names whom the draft waits for; the line does not say it again.
+    await expect(page.getByTestId('start-pill')).toHaveText('Waiting for Ann');
+    await expect(page.getByTestId('missing-line')).toHaveText('Everyone is here.');
+    await expect(draftCentre.locator('.ds-btn--lg')).toHaveCount(1);
+    await expect(draftCentre.locator('.ds-status:visible')).toHaveCount(1);
   });
 
   test('the invite sheet: QR on a white plate, the link, COPY LINK writes it and reads COPIED ✓ for 2 s', async ({ page }) => {

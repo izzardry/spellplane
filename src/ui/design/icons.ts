@@ -60,6 +60,8 @@ export const ICONS = {
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',
   // [M8-R4] visual.md 2.7: warning colour comes only with this triangle (a deck short of cards).
   warning: 'M12 4l9.5 16h-19zM12 10v4M12 17h.01',
+  // [M8-R5] The system share sheet, as an icon button in the plate menu's link row (gate M8 finding N11).
+  share: 'M12 3v12M8 7l4-4 4 4M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7',
 } as const;
 
 export type IconName = keyof typeof ICONS;

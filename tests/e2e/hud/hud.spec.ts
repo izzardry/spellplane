@@ -215,7 +215,14 @@ test.describe('plates: life you click or scrub, counters only when used', () => 
     const me = page.locator('[data-testid="avatar"][data-seat="s0"]');
     await expect(me.getByTestId('counter-chip')).toHaveCount(0);
     const plate = await plateDetails(page, 's0');
-    await plate.locator('[data-testid="player-counter"][data-kind="poison"]').getByRole('button', { name: /add/i }).click();
+    // The steppers are the kit's 16 px minus and plus icons, not text glyphs (visual.md A6; gate M8 N13).
+    const poison = plate.locator('[data-testid="player-counter"][data-kind="poison"]');
+    for (const name of [/remove/i, /add/i]) {
+      const step = poison.getByRole('button', { name });
+      await expect(step).toHaveText('');
+      await expect(step.locator('svg.ds-icon')).toHaveAttribute('width', '16');
+    }
+    await poison.getByRole('button', { name: /add/i }).click();
     expect((await drafts(page)).at(-1)).toEqual({ type: 'playerCounter', seat: 's0', kind: 'poison', delta: 1 });
     await expect(me.locator('[data-testid="counter-chip"][data-kind="poison"]')).toContainText('1');
     await plate.getByTestId('add-counter').click();
