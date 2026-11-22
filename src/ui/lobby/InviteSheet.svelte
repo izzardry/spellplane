@@ -98,16 +98,22 @@
   });
 </script>
 
-{#snippet linkAndStatus()}
+{#snippet linkField()}
   <label class="ds-field ds-field--square">
     <span class="ds-sr-only">Link</span>
     <input class="ds-field__input link" data-testid="share-link" readonly value={link} bind:this={field} onfocus={(e) => (e.currentTarget as HTMLInputElement).select()} />
   </label>
+{/snippet}
+
+{#snippet copyRow()}
   <div class="actions">
+    {#if compact}{@render linkField()}{/if}
     <Button variant="primary" size={compact ? 'sm' : undefined} data-testid="copy-link" onclick={() => copy('link')}>{copied === 'link' ? 'COPIED ✓' : 'COPY LINK'}</Button>
     {#if canShare}<Button size={compact ? 'sm' : undefined} data-testid="share" onclick={share}>SHARE</Button>{/if}
   </div>
-  {#if code}<p class="ds-t-meta code" data-testid="invite-code">Game code: <span class="mono">{code}</span></p>{/if}
+{/snippet}
+
+{#snippet presence()}
   {#if status}
     <!-- One status word: the dot carries "waiting", the line says the rest, and wraps inside the sheet (gate M8 N11). -->
     <div class="presence">
@@ -117,6 +123,13 @@
       </StatusLine>
     </div>
   {/if}
+{/snippet}
+
+{#snippet linkAndStatus()}
+  {@render linkField()}
+  {@render copyRow()}
+  {#if code}<p class="ds-t-meta code" data-testid="invite-code">Game code: <span class="mono">{code}</span></p>{/if}
+  {@render presence()}
   {#if spectatorLink || footer}
     <div class="foot">
       {#if spectatorLink}<Button variant="ghost" size="sm" data-testid="spectator-link" onclick={() => copy('watch')}>{copied === 'watch' ? 'COPIED ✓' : 'SPECTATOR LINK'}</Button>{/if}
@@ -127,8 +140,8 @@
 
 {#if compact}
   <!-- Board 7's block inside the plate menu: no second sheet in the popover, the 124 px code beside a one-line strong
-       title and two lines of reading text, then the link, COPY LINK, the state and one row of quiet actions (visual.md
-       2.8 "Plate menu"; gate M8 findings N11, round 3). -->
+       title, two lines of reading text, the state and one row of quiet actions; under it the link and COPY LINK in one
+       row (visual.md 2.8 "Plate menu"; gate M8 findings N11, round 3). -->
   <section class="compact" aria-label={title} data-testid="invite-sheet" data-compact="true">
     <div class="beside">
       <div class="qr small" data-testid="invite-qr">
@@ -137,9 +150,14 @@
       <div class="words">
         <h2 class="ds-t-strong title" title={title}>{title}</h2>
         <p class="ds-t-reading text" data-testid="invite-text">{text}</p>
+        <div class="words-foot">
+          {@render presence()}
+          {#if footer}<div class="foot-row">{@render footer()}</div>{/if}
+        </div>
       </div>
     </div>
-    {@render linkAndStatus()}
+    <!-- The link and COPY LINK share one sm row under the code (gate M8 N11, round 3: the popover fits 800 px). -->
+    {@render copyRow()}
   </section>
 {:else}
   <Sheet label={title} width="narrow" {onclose} data-testid="invite-sheet">
@@ -210,7 +228,7 @@
   }
   .compact .title {
     margin: 0;
-    font-size: 13px;
+    font-size: 12px;
     line-height: 18px;
     white-space: nowrap;
     overflow: hidden;
@@ -222,12 +240,26 @@
   .compact .presence :global(.ds-status) {
     padding: 0;
   }
-  .compact .foot {
-    padding-top: var(--ds-space-sm);
-    align-items: center;
+  .compact .words {
+    align-self: stretch;
+    grid-template-rows: auto auto 1fr;
+  }
+  .words-foot {
+    display: grid;
+    align-content: end;
+    gap: var(--ds-space-xs);
+  }
+  .foot-row {
+    display: flex;
   }
   .compact .actions :global(.ds-btn--primary) {
+    flex: none;
+  }
+  .compact .actions .ds-field {
     flex: 1;
+    min-width: 0;
+    height: var(--ds-control-sm);
+    padding: 0 12px;
   }
   .link {
     font-family: var(--ds-font-mono);

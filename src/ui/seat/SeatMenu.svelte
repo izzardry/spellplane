@@ -56,7 +56,7 @@
 </script>
 
 {#if model}
-  <div class="seat-menu" data-testid="seat-menu" data-seat={seat}>
+  <div class="seat-menu" class:bringing={showing && model.kind === 'away' && !model.why && model.canBring} data-testid="seat-menu" data-seat={seat}>
     {#if model.kind === 'own'}
       <p class="line" class:danger={model.notSaving} data-testid="seat-menu-saved">{model.saved}</p>
       {#if onleave}<button type="button" class="ds-btn ds-btn--quiet ds-btn--sm" data-testid="seat-menu-leave" onclick={() => onleave?.()}>Leave table</button>{/if}
@@ -109,5 +109,10 @@
   }
   .full {
     width: 100%;
+  }
+  /* Board 7's bring-back block uses the popover's own inset, so the text beside the code keeps two lines (gate M8 N11). */
+  .seat-menu.bringing {
+    padding-left: 0;
+    padding-right: 0;
   }
 </style>

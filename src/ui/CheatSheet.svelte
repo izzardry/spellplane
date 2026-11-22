@@ -3,6 +3,7 @@
   interaction design", Discoverable: `?` opens a cheat sheet; all keys are remappable).
 -->
 <script lang="ts">
+  import Icon from './design/Icon.svelte';
   import type { ActionId, KeyChord, KeyContext, Keymap } from '../games/types';
   import { cheatSheet, chordFromEvent, chordToString, RESERVED_KEYS } from './keymap';
 
@@ -54,7 +55,7 @@
     <h2>Keys</h2>
     <span class="hint">Hover a card and press a key. Keys act on the selection when the hovered card is selected.</span>
     <button class="ds-btn sp-h-xs" type="button" onclick={onreset} data-testid="reset-keys">Reset to defaults</button>
-    <button class="ds-btn sp-h-xs" type="button" onclick={onclose} aria-label="Close">×</button>
+    <button class="ds-btn sp-h-xs" type="button" onclick={onclose} aria-label="Close"><Icon name="close" size={16} /></button>
   </header>
   {#if capturing}
     <p class="capture" data-testid="capture">Press the new key for “{capturing.label}”, or Esc to cancel. {message}</p>

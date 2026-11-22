@@ -26,8 +26,11 @@ export function adoptNotice(e: AdoptEvent): string | null {
   return e.abandonedOwn > 0 ? ADOPT_NOTICE : null;
 }
 
-/** The players' log line after an adopt, in place of the engine's own wording (gate M8 round 3 N12). */
-export const ADOPT_LOG_LINE = 'This table was out of step with the others. The copy with more moves is kept.';
+/**
+ * The players' log line after an adopt, in place of the engine's own wording (gate M8 round 3 N12): the notice's own
+ * sentence, so the log says it once whether the notice comes too or not (the session writes a line only once in a row).
+ */
+export const ADOPT_LOG_LINE = ADOPT_NOTICE;
 
 /**
  * The players' words for an engine system line (gate M8 round 3 N12: "history diverged at seq 65: taking over the

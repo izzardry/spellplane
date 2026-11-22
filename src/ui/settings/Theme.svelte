@@ -6,6 +6,7 @@
   loads the group says so; a chunk that cannot be loaded leaves the current theme and says why. Nothing here is modal.
 -->
 <script lang="ts">
+  import IconButton from '../design/IconButton.svelte';
   import { onMount, tick, untrack } from 'svelte';
   import { LISTED_THEME_IDS, lookOfTheme, THEME_IDS, THEME_LABELS, type ThemeId } from '../../themes/index';
   import { lookContext } from '../design/look';
@@ -70,7 +71,7 @@
 <section class="theme" data-testid="theme-settings" aria-label="Theme settings" data-theme={st.theme.id} aria-busy={st.loading !== null}>
   <header>
     <h2>Look</h2>
-    {#if onclose}<button type="button" class="x" data-testid="theme-close" onclick={onclose} aria-label="Close">×</button>{/if}
+    {#if onclose}<span class="x"><IconButton label="Close" size="sm" variant="quiet" icon="close" data-testid="theme-close" onclick={onclose} /></span>{/if}
   </header>
   <fieldset data-testid="theme-picker">
     <legend>Look of the table and the controls, for this browser</legend>
@@ -146,12 +147,7 @@
     font-size: var(--ds-type-title, 18px);
   }
   .x {
-    font: inherit;
-    font-size: 16px;
-    background: none;
-    color: inherit;
-    border: none;
-    cursor: pointer;
+    display: inline-flex;
   }
   fieldset {
     margin: 8px 0 0;

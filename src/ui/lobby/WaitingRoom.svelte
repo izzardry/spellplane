@@ -680,18 +680,21 @@
              they are drafted, one set button per pack and the pick timer (the creator changes them), then the lg primary
              and one status line. Nothing to choose here: the deck is drafted at this table. -->
         <section class="draft-centre" aria-label="The draft" data-testid="deck-slot" data-kind="boosters">
-          <p class="ds-t-eyebrow">Live booster draft</p>
-          <BoosterFan sets={packs} count={packs.length} width={112} label="Closed boosters: your deck is drafted at this table" data-testid="slot-boosters" />
+          <div class="draft-packs">
+            <p class="ds-t-eyebrow">Live booster draft</p>
+            <BoosterFan sets={packs} count={packs.length} width={88} label="Closed boosters: your deck is drafted at this table" data-testid="slot-boosters" />
+          </div>
+          <div class="draft-info">
           <h2 class="ds-t-heading" data-testid="draft-heading">{packs.length} booster{packs.length === 1 ? '' : 's'} each</h2>
           <p class="ds-t-meta">15 cards a pack · {draftHow} · your deck is drafted here</p>
           <div class="draft-sets" data-testid="draft-sets">
             {#each packs as code, i (i)}
-              <Button size="sm" disabled={!isHost} aria-label="Pack {i + 1}: {code}{isHost ? ', change the boosters' : ''}" data-testid="draft-pack-set" onclick={() => (boostersOpen = true)}>
+              <Button size="sm" disabled={!isHost} title="Pack {i + 1}: {code}{isHost ? ' (change the boosters)' : ''}" data-testid="draft-pack-set" onclick={() => (boostersOpen = true)}>
                 {#snippet icon()}<span class="ds-t-meta pack-no">{i + 1}</span>{/snippet}{code}{#if isHost}<Icon name="chevronDown" size={16} />{/if}
               </Button>
             {/each}
             {#if pickTimerShown}
-              <Button size="sm" variant="ghost" disabled={!isHost} pressed={pickTimerOn} aria-label={pickTimerOn ? 'Pick timer on' : 'Pick timer off'} data-testid="draft-pick-timer" onclick={togglePickTimer}>
+              <Button size="sm" variant="ghost" disabled={!isHost} pressed={pickTimerOn} title={isHost ? 'Pick timer on or off' : 'The pick timer'} data-testid="draft-pick-timer" onclick={togglePickTimer}>
                 {#snippet icon()}<Icon name="clock" size={16} />{/snippet}{pickTimerOn ? `${Math.round(pickTimerMs(0) / 1000)} s a pick` : 'No pick timer'}
               </Button>
             {/if}
@@ -708,6 +711,7 @@
           <div class="draft-status"><StatusLine data-testid="missing-line">{line}</StatusLine></div>
           {#if failure}<p class="ds-status ds-status--danger" role="alert" data-testid="lobby-failure">{failure}</p>{/if}
           {#if note}<StatusLine data-testid="lobby-note">{note}</StatusLine>{/if}
+          </div>
         </section>
         {:else}
         <section class="slot" aria-label="Your deck" data-testid="deck-slot" data-kind={me?.ready ? 'ready' : selected ? 'deck' : 'empty'}>
@@ -1169,7 +1173,17 @@
   .deck-and-start.draft {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* The boosters beside what they mean and the primary, so the whole centre stays in an 800 px window under the seats. */
   .draft-centre {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: var(--ds-space-xl) var(--ds-space-xxl);
+    min-width: 0;
+  }
+  .draft-packs,
+  .draft-info {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -1183,10 +1197,7 @@
   .draft-centre :global([data-testid='slot-boosters']) {
     margin-top: var(--ds-space-sm);
   }
-  .draft-centre h2 {
-    margin-top: var(--ds-space-xs);
-  }
-  .draft-centre > .ds-t-meta {
+  .draft-info > .ds-t-meta {
     margin-top: var(--ds-space-xs);
   }
   .draft-sets {
@@ -1200,7 +1211,7 @@
     margin-right: 2px;
   }
   .draft-go {
-    margin-top: 28px;
+    margin-top: var(--ds-space-xl);
   }
   .draft-go :global(.ds-btn--lg) {
     min-width: 240px;

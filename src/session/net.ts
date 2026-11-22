@@ -533,7 +533,7 @@ class NetTable implements NetSession, SessionRecovery {
       // The engine's lines in the players' words (gate M8 N12); the engine keeps its own wording for its diagnostics.
       engine.onSystem((level, text) => {
         const line = playersLine(level, text);
-        this.system(line.level, line.text);
+        this.systemOnce(line.level, line.text);
       }),
       engine.onStatus(() => {
         this.netChanged();
@@ -2241,7 +2241,7 @@ class NetTable implements NetSession, SessionRecovery {
 
   /** A plain notice for the table (persistence.md sections 5 and 6): into the log and to the notice listeners. */
   private notice(text: string): void {
-    this.system('info', text);
+    this.systemOnce('info', text);
     for (const l of [...this.noticeListeners]) {
       try {
         l(text);
@@ -2436,6 +2436,13 @@ class NetTable implements NetSession, SessionRecovery {
 
   private system(level: 'info' | 'warn', text: string): void {
     this.entries.push({ kind: 'system', seq: this.engine.seq(), at: this.now(), level, text });
+  }
+
+  /** A system line, unless the log's last entry already says the same (the adopt notice and the engine's repair line). */
+  private systemOnce(level: 'info' | 'warn', text: string): void {
+    const last = this.entries.at(-1);
+    if (last?.kind === 'system' && last.text === text) return;
+    this.system(level, text);
   }
 
   /** A system line placed after the entry of action `afterSeq` (and the system lines already after it), else at the end (M5-P2 audit verdicts). */
