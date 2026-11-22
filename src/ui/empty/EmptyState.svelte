@@ -3,6 +3,7 @@
   action and an optional dismiss. Inline and never modal (DESIGN "Input and interaction design", Nothing modal).
 -->
 <script lang="ts">
+  import IconButton from '../design/IconButton.svelte';
   import { EMPTY_STATES, type EmptyStateId } from './states';
 
   let {
@@ -29,7 +30,7 @@
   {#if action || ondismiss}
     <span class="actions">
       {#if action}<button type="button" data-testid={action.testid ?? 'empty-state-action'} onclick={action.run}>{action.label}</button>{/if}
-      {#if ondismiss}<button type="button" class="x" data-testid="empty-state-dismiss" aria-label="Dismiss {s.title.toLowerCase()}" onclick={ondismiss}>×</button>{/if}
+      {#if ondismiss}<span class="x"><IconButton label="Dismiss {s.title.toLowerCase()}" size="xs" variant="quiet" icon="close" data-testid="empty-state-dismiss" onclick={ondismiss} /></span>{/if}
     </span>
   {/if}
 </div>
@@ -72,9 +73,6 @@
   }
   .x {
     margin-left: auto;
-    background: none;
-    border: none;
-    color: inherit;
-    font-size: 16px;
+    display: inline-flex;
   }
 </style>

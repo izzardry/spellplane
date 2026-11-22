@@ -8,7 +8,7 @@
  * a decklist: the HUD's "Imported N cards"). The scan covers each element's ::before and ::after too.
  */
 import { expect, test, type Page } from '@playwright/test';
-import { menuItem } from '../helpers/hud';
+import { openDeckImport } from '../helpers/hud';
 import { decklist, freshProfile, openSolo } from '../solo/helpers';
 
 interface Offender {
@@ -117,7 +117,7 @@ const OPENERS: Opener[] = [
     name: 'toast',
     open: async (page) => {
       // Importing a decklist raises the HUD's toast ("Imported 60 cards and a 3-card sideboard") over the table.
-      await menuItem(page, 'open-deck-import');
+      await openDeckImport(page);
       await page.getByTestId('deck-text').fill(decklist('gw-m19-60.txt'));
       await page.getByTestId('deck-check').click();
       await page.getByTestId('deck-import-go').click();

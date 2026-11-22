@@ -260,7 +260,7 @@
         {/if}
       </span>
       <span bind:this={gearButton}>
-        <IconButton label="Settings and more" onclick={() => ((gearOpen = !gearOpen), (profileOpen = false))} aria-expanded={gearOpen} data-testid="shell-gear">⚙</IconButton>
+        <IconButton label="Settings and more" onclick={() => ((gearOpen = !gearOpen), (profileOpen = false))} aria-expanded={gearOpen} data-testid="shell-gear" icon="settings" />
       </span>
       {#if gearOpen}
         <div class="shell__gear"><MenuPopover bind:open={gearOpen} anchor={gearButton} groups={gearGroups} label="More" placement="below" testid="gear-menu" /></div>

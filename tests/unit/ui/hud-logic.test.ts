@@ -483,6 +483,8 @@ describe('screen-anchored layer and seats (gate M0 findings)', () => {
     expect(fitInsets(900, false)).toBe('74 0 206 190');
     // Two-Headed Giant: the teammate's fan above the own one is kept clear too (12 gap + 126 cards + 22 label).
     expect(fitInsets(900, true, true)).toBe('74 316 366 190');
+    // Three or more chairs: the side plates' room on the right too, and room above the far edge for the plate across.
+    expect(fitInsets(900, false, false, 0, undefined, true)).toBe('124 190 206 190');
   });
 
   it('an untaken seat without cards is an empty chair (no avatar); a named, taken or occupied seat is not', () => {

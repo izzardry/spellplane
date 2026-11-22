@@ -4,6 +4,7 @@
   Also reveal top and mill N. Cards in the viewer take hover keys, the context menu, middle-click inspect and drag out to the table.
 -->
 <script lang="ts">
+  import Icon from './design/Icon.svelte';
   import type { CardRef, InstanceId } from '../core/types';
   import type { FaceSource } from '../data/types';
   import type { TextureSource } from '../util/texture';
@@ -109,7 +110,7 @@
         {/if}
       </div>
     {/if}
-    <button type="button" class="ds-btn sp-h-xs close" onclick={onclose} aria-label="Close {title}">×</button>
+    <button type="button" class="ds-btn sp-h-xs close" onclick={onclose} aria-label="Close {title}"><Icon name="close" size={16} /></button>
   </header>
   {#if hidden && !looking}
     <p class="hidden-note" data-testid="hidden-note">{own && kind === 'library' ? 'Hidden. Look at the top cards or search to see them.' : 'Hidden. Only the count is known.'}</p>

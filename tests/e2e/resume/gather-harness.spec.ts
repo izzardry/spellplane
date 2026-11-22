@@ -143,7 +143,9 @@ test.describe('the seat menu (persistence.md section 7)', () => {
       await away.getByTestId('seat-menu-bring').click();
       await expect(away.getByTestId('seat-invite')).toHaveAttribute('data-link', /#\/t\/amber-fox-93\/[\w-]{22}\/rejoin\/s1\/[\w-]{22}$/);
       await expect(away.getByTestId('invite-sheet')).toContainText('Bring Ben back');
-      await expect(away.getByTestId('seat-invite-footer')).toHaveText("This link works once, for 24 hours, and only for Ben's seat.");
+      // Board 7's compact block (gate M8 N11): the rule is in the two lines beside the code, the actions in one row.
+      await expect(away.getByTestId('invite-text')).toHaveText('Opens this game at their seat, once, within 24 hours.');
+      await expect(away.getByTestId('seat-invite-actions')).toBeVisible();
       await away.getByTestId('seat-invite-new').click();
       await away.getByTestId('seat-invite-back').click();
       await expect(away.getByTestId('seat-menu-bring')).toBeVisible();

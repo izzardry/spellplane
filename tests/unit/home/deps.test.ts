@@ -45,6 +45,7 @@ describe('launchDeps', () => {
     const faces: FaceSource = { faceFor: async (r) => (r.sid === 'u' ? { kind: 'url', url: 'blob:x' } : ({ kind: 'placeholder', face: {} } as never)) };
     const f = pageFaces({ faces } as TableDeps);
     expect(await f({ sid: 'u' })).toBe('blob:x');
+    // A placeholder face is drawn on a canvas as the tiles do (gate M8 E1); without a DOM it falls back to the back.
     expect(await f({ sid: 'p' })).toBeNull();
     expect(await pageFaces(null)({ sid: 'u' })).toBeNull();
   });

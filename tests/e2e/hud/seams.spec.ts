@@ -53,15 +53,15 @@ test.describe('HudShellProps on ?harness=ui', () => {
     await expect(pop).toHaveCount(0);
   });
 
-  test('sandbox: "Import deck…" is in the Menu only with it', async ({ page }) => {
-    await setShell(page, { onleave: true, sandbox: false });
-    await page.getByTestId('open-menu').click();
-    await expect(page.getByTestId('menu-popover')).toBeVisible();
-    await expect(page.getByTestId('open-deck-import')).toHaveCount(0);
-    await page.keyboard.press('Escape');
-    await setShell(page, { sandbox: true });
-    await page.getByTestId('open-menu').click();
-    await expect(page.getByTestId('open-deck-import')).toBeVisible();
+  test('sandbox: "Import deck…" is never in the Menu, with or without it (journey.md 4.10; gate M8 N10)', async ({ page }) => {
+    for (const sandbox of [false, true]) {
+      await setShell(page, { onleave: true, sandbox });
+      await page.getByTestId('open-menu').click();
+      await expect(page.getByTestId('menu-popover')).toBeVisible();
+      await expect(page.getByTestId('open-deck-import'), `sandbox ${sandbox}`).toHaveCount(0);
+      await expect(page.getByTestId('menu-popover')).not.toContainText('Import deck');
+      await page.keyboard.press('Escape');
+    }
   });
 
   test('onchoosedeck: a table without my deck shows the no-deck line with "Choose a deck"', async ({ page }) => {

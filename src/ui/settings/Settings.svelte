@@ -7,6 +7,7 @@
   shortcut to the display section.
 -->
 <script lang="ts">
+  import IconButton from '../design/IconButton.svelte';
   import { onMount, untrack } from 'svelte';
   import type { TableSession } from '../../session/types';
   import type { StorageStatus } from '../../store/quota';
@@ -117,7 +118,7 @@
   <header>
     <h2>Settings</h2>
     <span class="note">For this browser only.</span>
-    {#if onclose}<button type="button" class="x" data-testid="settings-close" aria-label="Close settings" onclick={onclose}>×</button>{/if}
+    {#if onclose}<span class="x"><IconButton label="Close settings" size="sm" variant="quiet" icon="close" data-testid="settings-close" onclick={onclose} /></span>{/if}
   </header>
   <div class="tabs" role="tablist" aria-label="Settings sections">
     {#each SETTINGS_SECTIONS as s (s.id)}
@@ -211,14 +212,7 @@
   }
   .x {
     margin-left: auto;
-    font: inherit;
-    font-size: 16px;
-    background: none;
-    color: inherit;
-    border: none;
-    cursor: pointer;
-    min-width: 32px;
-    min-height: 32px;
+    display: inline-flex;
   }
   .tabs {
     display: flex;
@@ -286,8 +280,7 @@
     margin: 0;
   }
   @media (pointer: coarse) {
-    .tabs button,
-    .x {
+    .tabs button {
       min-height: 44px;
     }
   }

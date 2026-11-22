@@ -88,7 +88,7 @@
     <InviteSheet
       title="Bring {name} back"
       text={compact
-        ? `Send ${name} this link, or let them scan the code. It opens this game at their seat.`
+        ? 'Opens this game at their seat, once, within 24 hours.'
         : `Send ${name} this link, or let them scan the code. It opens this game at their seat. If their browser still has the game, they get their hand back. If not, they sit down again and rebuild their library from their deck list.`}
       {link}
       status={back ? `${name} is here` : `Waiting for ${name}`}
@@ -96,12 +96,21 @@
       {compact}
     >
       {#snippet footer()}
-        <p class="meta" data-testid="seat-invite-footer">This link works once, for 24 hours, and only for {name}'s seat.</p>
-        <div class="row">
-          <button type="button" class="ds-btn ds-btn--ghost ds-btn--xs" data-testid="seat-invite-new" disabled={busy} onclick={make}>MAKE A NEW LINK</button>
-          <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" data-testid="seat-invite-back" disabled={busy} onclick={takeBack}>Take the invite back</button>
-          {#if onclose}<button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" data-testid="seat-invite-close" onclick={() => onclose?.()}>Close</button>{/if}
-        </div>
+        {#if compact}
+          <!-- One row of quiet actions under the link (gate M8 N11, round 3): the rule is in the text above. -->
+          <!-- Beside the code, under the state: the menu itself closes on Esc or a press outside, so no Close here. -->
+          <div class="row one" data-testid="seat-invite-actions">
+            <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" data-testid="seat-invite-new" disabled={busy} onclick={make}>New link</button>
+            <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" data-testid="seat-invite-back" disabled={busy} onclick={takeBack}>Take back</button>
+          </div>
+        {:else}
+          <p class="meta" data-testid="seat-invite-footer">This link works once, for 24 hours, and only for {name}'s seat.</p>
+          <div class="row">
+            <button type="button" class="ds-btn ds-btn--ghost ds-btn--xs" data-testid="seat-invite-new" disabled={busy} onclick={make}>MAKE A NEW LINK</button>
+            <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" data-testid="seat-invite-back" disabled={busy} onclick={takeBack}>Take the invite back</button>
+            {#if onclose}<button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" data-testid="seat-invite-close" onclick={() => onclose?.()}>Close</button>{/if}
+          </div>
+        {/if}
       {/snippet}
     </InviteSheet>
   {:else}
@@ -135,4 +144,11 @@
     gap: var(--ds-space-sm);
     flex-wrap: wrap;
   }
+  .row.one {
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: var(--ds-space-xs);
+    margin-left: -12px;
+  }
+
 </style>

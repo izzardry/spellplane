@@ -4,6 +4,7 @@
   the player asks for it here, with its size and where it comes from stated first; nothing about it loads before (PLAN M3-P4 acceptance).
 -->
 <script lang="ts">
+  import IconButton from '../design/IconButton.svelte';
   import { onMount, untrack } from 'svelte';
   import type { SpeechSettingsProps } from '../types';
   import type { SpeechEngineId, SpeechEngineInfo } from '../../voice/types';
@@ -101,7 +102,7 @@
 <section class="speech" class:embedded data-testid="speech-settings" aria-label="Dictation settings" style={top !== undefined ? `top: ${top}px; max-height: calc(100vh - ${top + 48}px)` : undefined}>
   <header>
     <h2>Dictation</h2>
-    {#if onclose}<button type="button" class="x" onclick={onclose} aria-label="Close">×</button>{/if}
+    {#if onclose}<span class="x"><IconButton label="Close" size="sm" variant="quiet" icon="close" onclick={onclose} /></span>{/if}
   </header>
 
   {#if statement.available}
@@ -223,6 +224,7 @@
   .confirm button,
   .x {
     margin-left: 4px;
+    display: inline-flex;
   }
   .error {
     color: var(--sp-danger, #b00020);

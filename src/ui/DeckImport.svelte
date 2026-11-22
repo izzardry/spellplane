@@ -4,6 +4,7 @@
   are shown with near matches and never block the rest). Not modal: the table stays live under it.
 -->
 <script lang="ts">
+  import Icon from './design/Icon.svelte';
   import type { CardDataSource } from '../data/types';
   import type { DeckImport } from '../session/types';
   import { checkDeck, errorName, replaceName, type CheckedDeck, type ParseDecklist } from './deck';
@@ -57,7 +58,7 @@
 <section class="dialog" data-testid="deck-import" data-ds-layer="dialog" aria-label="Import a deck">
   <header>
     <h2>Import a deck</h2>
-    <button type="button" class="ds-btn ds-btn--quiet ds-btn--sm ds-icon-btn ds-icon-only" onclick={onclose} aria-label="Close">×</button>
+    <button type="button" class="ds-btn ds-btn--quiet ds-btn--sm ds-icon-btn ds-icon-only" onclick={onclose} aria-label="Close"><Icon name="close" size={16} /></button>
   </header>
   <textarea
     bind:this={area}

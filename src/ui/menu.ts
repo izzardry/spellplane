@@ -115,7 +115,6 @@ export type HudMenuId =
   | 'flipCoin'
   | 'tidy'
   | 'ask'
-  | 'importDeck'
   | 'nextGame'
   | 'newDraft'
   | 'fitTable'
@@ -127,7 +126,7 @@ export type HudMenuId =
   | 'keys'
   | 'settings';
 
-export type HudMenuGroupId = 'game' | 'tools' | 'deck' | 'table' | 'view' | 'voice' | 'help';
+export type HudMenuGroupId = 'game' | 'tools' | 'table' | 'view' | 'voice' | 'help';
 
 /** The Menu's groups in order (docs/design/m7-hud-proposal.md: Game, Deck, Table, View, Voice, Help; Tokens and dice split from Game). */
 export const HUD_MENU: readonly { id: HudMenuGroupId; label: string; items: readonly HudMenuSpec[] }[] = [
@@ -154,7 +153,6 @@ export const HUD_MENU: readonly { id: HudMenuGroupId; label: string; items: read
       { id: 'ask', label: 'Ask the table…', icon: 'ask', action: 'ask', testid: 'menu-ask' },
     ],
   },
-  { id: 'deck', label: 'Deck', items: [{ id: 'importDeck', label: 'Import deck…', icon: 'deck', testid: 'open-deck-import' }] },
   {
     id: 'table',
     label: 'Table',
@@ -202,11 +200,6 @@ export interface HudMenuContext {
   proposals: readonly ('nextGame' | 'newDraft')[];
   /** Muted now (the Mute item reads "Unmute"). */
   muted?: boolean;
-  /**
-   * "Import deck…" is offered (docs/design/m8/m7-adjustments.md D7: only in the sandbox, HudShellProps.sandbox). Absent
-   * means offered, for the menu's own callers from before M8.
-   */
-  importDeck?: boolean;
 }
 
 /** Whether a Menu item is offered in this context. */
@@ -215,8 +208,6 @@ export function hudMenuOffers(id: HudMenuId, ctx: HudMenuContext): boolean {
     case 'nextGame':
     case 'newDraft':
       return ctx.proposals.includes(id);
-    case 'importDeck':
-      return ctx.importDeck !== false && !ctx.spectator;
     case 'voice':
       return ctx.voice;
     case 'mute':

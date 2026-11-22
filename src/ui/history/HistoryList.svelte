@@ -17,7 +17,7 @@
   import { isEnded } from '../../store/games';
   import type { GameStore, GameSummary } from '../../store/types';
   import { summaryHash } from '../play/launch';
-  import { codeText, relTime, rowLine, rowState, rowTitle, shows, type HistoryFilter } from './rows';
+  import { codeText, relTime, rowAction, rowLine, rowState, rowTitle, shows, type HistoryFilter } from './rows';
 
   let {
     games,
@@ -157,9 +157,16 @@
             </span>
           </a>
           <span class="hrow__right">
-            <span class="hrow__time">{relTime(g.lastPlayedAt, now())}</span>
-            <span class="hrow__code">{codeText(g.code)}</span>
-            <IconButton label="Remove" size="sm" variant="quiet" onclick={() => void remove(g)} data-testid="history-remove">×</IconButton>
+            <span class="hrow__top">
+              <span class="hrow__time">{relTime(g.lastPlayedAt, now())}</span>
+              <span class="hrow__code">{codeText(g.code)}</span>
+            </span>
+            <!-- O-4, O-5: the row's one action bottom right; Remove first in the row and behind a divider, never next to it. -->
+            <span class="hrow__actions">
+              <IconButton label="Remove" size="sm" variant="quiet" icon="trash" onclick={() => void remove(g)} data-testid="history-remove" />
+              <span class="hrow__divider" aria-hidden="true"></span>
+              <Button size="sm" aria-label="{rowAction(g)} {rowTitle(g)}" onclick={() => onopen(g)} data-testid="history-action">{rowAction(g)}</Button>
+            </span>
           </span>
         </li>
       {/each}
@@ -196,6 +203,9 @@
   .hrow__line { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ds-muted); }
   .hrow__state { font-size: 13px; }
   .hrow__right { display: flex; flex-direction: column; align-items: flex-end; justify-content: space-between; gap: 4px; flex: none; }
+  .hrow__top { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+  .hrow__actions { display: flex; align-items: center; gap: 8px; }
+  .hrow__divider { width: 1px; height: 24px; background: var(--ds-border); }
   .hrow__time { font-size: 11px; color: var(--ds-muted); }
   .hrow__code { font-size: 10px; letter-spacing: 0.08em; color: var(--ds-muted); }
   @media (max-width: 600px) {

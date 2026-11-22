@@ -12,6 +12,7 @@
   import type { BoosterSetup } from '../../store/types';
   import BoosterFan from '../design/BoosterFan.svelte';
   import Button from '../design/Button.svelte';
+  import IconButton from '../design/IconButton.svelte';
   import Segmented from '../design/Segmented.svelte';
   import StatusLine from '../design/StatusLine.svelte';
   import Stepper from '../design/Stepper.svelte';
@@ -93,7 +94,7 @@
   >
     <div class="ds-sheet__head">
       <h2 class="ds-t-title">Boosters</h2>
-      {#if onclose}<Button variant="quiet" size="sm" aria-label="Close" onclick={onclose}>×</Button>{/if}
+      {#if onclose}<IconButton label="Close" size="sm" variant="quiet" icon="close" onclick={onclose} />{/if}
     </div>
     <div class="fan"><BoosterFan sets={Array.from({ length: Math.min(3, value.packs) }, () => set)} count={value.packs} width={80} label="{value.packs} boosters of {set}" /></div>
     {#if mode === 'draft'}

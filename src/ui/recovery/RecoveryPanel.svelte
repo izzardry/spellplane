@@ -10,6 +10,7 @@
   in the HUD's ordinary confirmation prompt ("new hand of 7?"). Not modal: the table stays live under it.
 -->
 <script lang="ts">
+  import Icon from '../design/Icon.svelte';
   import { onMount, untrack } from 'svelte';
   import type { CardDataSource } from '../../data/types';
   import { canRecover, ownPublishedIds, recoveryProblem, recoveryStatus, type RecoveryStatus } from '../../session/resume';
@@ -167,7 +168,7 @@
     {#if done && status.phase === 'none' && !running}
       <p data-testid="recovery-done">
         Recovered: a new library of {done.library} and a hand of {done.hand}.
-        <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" aria-label="Dismiss" onclick={() => (done = null)}>×</button>
+        <button type="button" class="ds-btn ds-btn--quiet ds-btn--xs" aria-label="Dismiss" onclick={() => (done = null)}><Icon name="close" size={16} /></button>
       </p>
     {/if}
   </aside>
