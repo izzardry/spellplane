@@ -9,7 +9,7 @@ WebKit's GPU helper has grown to 9 GB in e2e runs (20 Nov 2026), so WebKit can r
   zsh reads a running script as it goes, so overwriting it in place makes a running copy execute the new text.
   A user must be logged in at the console. For real Safari (`pnpm perf -- --safari`) also: Safari ▸ Develop ▸ Allow
   Remote Automation, and `sudo safaridriver --enable` once.
-- **Dev Mac, per session:** `ssh -L 39333:127.0.0.1:39333 <browser-mac> 'zsh ~/spellplane-pw/serve.sh 39333 4096'`
+- **Dev Mac, per session:** `ssh -tt -L 39333:127.0.0.1:39333 <browser-mac> 'zsh ~/spellplane-pw/serve.sh 39333 4096'` (`-tt` gives the session a terminal, so closing it hangs up the server and its browsers on the browser Mac; without it they keep running there)
   (keeps the browser Mac awake, listens on its 127.0.0.1 only, kills a WebKit process over 4096 MB or all of them
   when oomph there says critical), and `~/.config/spellplane/pw-remote.json`:
   `{"webkitWs": "ws://127.0.0.1:39333/", "sshHost": "<browser-mac>"}`.

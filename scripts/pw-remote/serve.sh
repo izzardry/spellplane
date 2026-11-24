@@ -1,6 +1,7 @@
 #!/bin/zsh
 # Playwright WebKit server for Spellplane's e2e, run on the second Mac (the "browser Mac") over SSH from the dev Mac:
-#   ssh -L 39333:127.0.0.1:39333 <browser-mac> 'zsh ~/spellplane-pw/serve.sh 39333 4096'
+#   ssh -tt -L 39333:127.0.0.1:39333 <browser-mac> 'zsh ~/spellplane-pw/serve.sh 39333 4096'
+# (-tt matters: without a terminal, closing the session sends no hangup and the server keeps running there).
 # It keeps that Mac awake while it runs, listens on 127.0.0.1 only (reached through the SSH tunnel), and kills any
 # Playwright WebKit process whose physical footprint passes LIMIT_MB (WebKit's GPU helper has grown to 9 GB), or all
 # of them when oomph says memory is critical. Closing the SSH session stops everything it started.
@@ -29,7 +30,7 @@ SRV=
 webkit_pids() { pgrep -f 'ms-playwright/webkit-' ; }
 ios_count() { ioclasscount IOSurface 2>/dev/null | sed -E 's/.*= ([0-9]+).*/\1/' ; }
 console_ok() { ioreg -n Root -d1 -a 2>/dev/null | grep -A1 kCGSessionLoginDoneKey | grep -q '<true/>' ; }
-say() { echo "[browser-mac] $(date +%H:%M:%S) $*" ; }
+say() { echo "[browser-mac] $(date +%H:%M:%S) $*" 2>/dev/null ; }
 set_status() { print -r -- "$*" > "$STATUS.tmp" && mv "$STATUS.tmp" "$STATUS" ; }
 # Ask WebKit processes to quit first; SIGKILL only what is still there 3 s later (a SIGKILLed GPU helper's graphics
 # memory has stayed held by no process for up to an hour).
@@ -50,7 +51,9 @@ stop_server() {
   stop_webkit
 }
 cleanup() { stop_server; set_status "stopped: serve.sh is not running"; }
-trap cleanup EXIT INT TERM HUP
+# PIPE too: after the SSH session closes, a write to its output kills the script without running cleanup.
+trap cleanup EXIT
+trap 'cleanup; exit' INT TERM HUP PIPE
 
 start_server
 say "Playwright $(./node_modules/.bin/playwright --version) server on 127.0.0.1:$PORT (pid $SRV), limit ${LIMIT_MB} MB per process, pause at ${IOS_PAUSE} IOSurfaces (resume below ${IOS_RESUME})"
